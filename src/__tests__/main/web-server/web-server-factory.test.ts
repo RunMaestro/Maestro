@@ -78,6 +78,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setDeletePlaybookCallback = vi.fn();
 			setGetSettingsCallback = vi.fn();
 			setSetSettingCallback = vi.fn();
+			// Added with `maestro-cli open`: the factory wires this on every build,
+			// so omitting it makes every test in this file throw.
+			setOpenModalCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();
 			broadcastSettingsChanged = vi.fn();
 			setCreateGroupCallback = vi.fn();

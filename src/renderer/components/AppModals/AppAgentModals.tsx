@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { selectModalData, useModalStore } from '../../stores/modalStore';
+import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
 import type {
 	Theme,
 	Session,
@@ -152,11 +153,16 @@ export const AppAgentModals = memo(function AppAgentModals({
 }: AppAgentModalsProps) {
 	// Self-sourced (Tier 1B): the re-authentication modal is opened from the
 	// agent-error listener and from Cue pipeline failures, neither of which
-	// routes through App.tsx's modal props.
+	// routes through App.tsx's modal props. It is keyed by PROVIDER - the roster
+	// of blocked agents lives in authOutageStore and grows while the dialog is
+	// open, so it is read live rather than captured at open time.
 	const reauthData = useModalStore(selectModalData('reauth'));
 	const closeReauthModal = useModalStore((s) => s.closeModal);
-	const reauthSession = reauthData
-		? sessions.find((s) => s.id === reauthData.sessionId)
+	const reauthOutage = useAuthOutageStore(selectAuthOutage(reauthData?.providerKey));
+	// Any blocked agent can host the login shell; they share the credential
+	// store. The first is the one that failed first.
+	const reauthSession = reauthOutage
+		? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId)
 		: undefined;
 
 	return (
@@ -196,12 +202,11 @@ export const AppAgentModals = memo(function AppAgentModals({
 			)}
 
 			{/* --- PROVIDER RE-AUTHENTICATION MODAL --- */}
-			{reauthData && reauthSession && (
+			{reauthOutage && reauthSession && (
 				<ReauthModal
 					theme={theme}
+					outage={reauthOutage}
 					session={reauthSession}
-					message={reauthData.message}
-					fromPipeline={reauthData.fromPipeline}
 					onClose={() => closeReauthModal('reauth')}
 				/>
 			)}

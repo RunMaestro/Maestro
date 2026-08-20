@@ -6,7 +6,7 @@
  * name, live status dot, query count, and a 7-day activity sparkline.
  *
  * Worktree children render with a dashed accent border, a "WT" badge,
- * and their checked-out branch, so a parent and its worktrees are
+ * and their checked-out branch - so a parent and its worktrees are
  * visually distinguishable at a glance.
  *
  * A fuzzy filter above the grid narrows the cards live as the user types,
@@ -18,30 +18,26 @@ import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { stripLeadingEmojis } from '../../../shared/emojiUtils';
-// Token/cost for an agent lives in the Agent Detail modal (double-click a card),
-// not on the card itself - four stats made the tile too crowded to scan.
+import { compareNamesIgnoringEmojis, stripLeadingEmojis } from '../../../shared/emojiUtils';
 import { formatAgeShort } from '../../../shared/formatters';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { EscCloseButton } from '../ui/EscCloseButton';
-import { Sparkline } from './Sparkline';
+import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { EntityTile } from './EntityTile';
 import {
-	AGENT_OVERVIEW_SORT_OPTIONS,
 	buildSessionSparkline,
 	getSessionAutoPercent,
 	getSessionQueryCount,
 	getStatusColor,
 	isSessionHighlighted,
-	sortAgentOverviewSessions,
 	type SortMode,
 } from './agentOverviewUtils';
 
 /** Per-card stat we should visually emphasize. Mirrors `SortMode` minus `name`
  *  (the default sort has no per-card highlight). */
 type HighlightedStat = 'created' | 'queries' | 'tabs' | 'auto' | null;
-const EMPTY_AUTO_PERCENT_LABEL = String.fromCharCode(8212);
 
 interface AgentCardProps {
 	session: Session;
@@ -73,10 +69,7 @@ const AgentCard = memo(function AgentCard({
 	onShowDetails,
 }: AgentCardProps) {
 	const isWorktree = Boolean(session.parentSessionId);
-	const isBusy = session.state === 'busy';
-	const statusColor = getStatusColor(session.state, theme);
 	const isClickable = Boolean(onShowDetails);
-	const [isHovered, setIsHovered] = useState(false);
 
 	const { queryCount, sparklineData, autoPercent } = useMemo(() => {
 		const sessionByDay = data.bySessionByDay?.[session.id];
@@ -89,36 +82,10 @@ const AgentCard = memo(function AgentCard({
 	}, [data, session, visibleSessions]);
 
 	const tabCount = session.aiTabs?.length ?? 0;
-	const sparklineColor = isWorktree ? theme.colors.accent : statusColor;
-
-	// When the dashboard filter selects this card's agent, the 1px default
-	// border is replaced with a 2px solid accent border. Worktree dashing is
-	// suppressed for the duration. The highlight outranks the worktree
-	// affordance, and the existing "WT" badge keeps the worktree distinction
-	// visible. While hovered (clickable cards only), we promote the border to
-	// the accent color so the tile reads as actionable.
-	const border = isSelected
-		? `2px solid ${theme.colors.accent}`
-		: isHovered && isClickable
-			? `1px solid ${theme.colors.accent}`
-			: isWorktree
-				? `1px dashed ${theme.colors.accent}99`
-				: `1px solid ${theme.colors.border}`;
-	const backgroundColor =
-		isHovered && isClickable ? `${theme.colors.accent}12` : theme.colors.bgActivity;
-
-	const handleClick = onShowDetails ? () => onShowDetails(session) : undefined;
-	const handleKeyDown = onShowDetails
-		? (e: React.KeyboardEvent<HTMLDivElement>) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					onShowDetails(session);
-				}
-			}
-		: undefined;
+	const statusColor = getStatusColor(session.state, theme);
 
 	const autoPctLabel = autoPercent === null ? 'no recorded queries' : `${autoPercent}% auto`;
-	const ageLabel = session.createdAt ? formatAgeShort(session.createdAt) : null;
+	const ageLabel = session.createdAt ? formatAgeShort(session.createdAt) : undefined;
 	const ageTitle = session.createdAt
 		? `Created ${new Date(session.createdAt).toLocaleString()}`
 		: undefined;
@@ -127,170 +94,60 @@ const AgentCard = memo(function AgentCard({
 	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}${
 		ageLabel ? `, age ${ageLabel}` : ''
 	}`;
-	const ariaLabel = isClickable ? `${baseAriaLabel}. View detailed stats.` : baseAriaLabel;
 
 	return (
-		<div
-			className={`card-enter relative p-3 rounded-lg flex flex-col gap-1.5 transition-colors ${
-				isClickable ? 'cursor-pointer focus:outline-none focus-visible:ring-2' : ''
-			}`}
-			style={{
-				backgroundColor,
-				border,
-				animationDelay: `${animationIndex * 60}ms`,
-				transitionDuration: '120ms',
-				...(isClickable ? ({ '--tw-ring-color': theme.colors.accent } as React.CSSProperties) : {}),
-			}}
-			data-testid="agent-card"
-			data-selected={isSelected ? 'true' : undefined}
-			data-clickable={isClickable ? 'true' : undefined}
-			role={isClickable ? 'button' : 'group'}
-			tabIndex={isClickable ? 0 : undefined}
-			onClick={handleClick}
-			onKeyDown={handleKeyDown}
-			onMouseEnter={isClickable ? () => setIsHovered(true) : undefined}
-			onMouseLeave={isClickable ? () => setIsHovered(false) : undefined}
-			aria-label={ariaLabel}
-		>
-			<div className="flex items-center gap-2 min-w-0">
-				<span
-					className="flex-shrink-0 w-2 h-2 rounded-full"
-					style={{
-						backgroundColor: statusColor,
-						animation: isBusy ? 'status-pulse 1.4s ease-in-out infinite' : undefined,
-					}}
-					aria-hidden="true"
-					data-testid="agent-card-status-dot"
-				/>
-				<span
-					className="text-sm font-medium truncate flex-1 min-w-0"
-					style={{ color: theme.colors.textMain }}
-					title={session.name}
-				>
-					{session.name}
-				</span>
-				{isWorktree && (
-					<span
-						className="flex-shrink-0 px-1 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide"
-						style={{
-							backgroundColor: `${theme.colors.accent}20`,
-							color: theme.colors.accent,
-						}}
-						data-testid="agent-card-wt-badge"
-					>
-						WT
-					</span>
-				)}
-				{ageLabel && (
-					<span
-						className="flex-shrink-0 text-[10px] tabular-nums"
-						style={{
-							color: highlightedStat === 'created' ? theme.colors.accent : theme.colors.textDim,
-							fontWeight: highlightedStat === 'created' ? 600 : undefined,
-						}}
-						title={ageTitle}
-						data-testid="agent-card-age"
-						data-highlighted={highlightedStat === 'created' ? 'true' : undefined}
-					>
-						{ageLabel}
-					</span>
-				)}
-			</div>
-			{isWorktree && session.worktreeBranch && (
-				<div
-					className="text-[11px] truncate"
-					style={{ color: theme.colors.textDim }}
-					title={session.worktreeBranch}
-					data-testid="agent-card-branch"
-				>
-					{session.worktreeBranch}
-				</div>
-			)}
-			<div className="flex items-end justify-between gap-2 mt-auto">
-				<div className="flex items-end gap-3 min-w-0">
-					<div className="flex flex-col min-w-0">
-						<span
-							className="text-[9px] uppercase tracking-wide"
-							style={{
-								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textDim,
-							}}
-						>
-							Queries
-						</span>
-						<span
-							className="text-base font-semibold"
-							style={{
-								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textMain,
-							}}
-							data-testid="agent-card-query-count"
-							data-highlighted={highlightedStat === 'queries' ? 'true' : undefined}
-						>
-							{queryCount}
-						</span>
-					</div>
-					<div className="flex flex-col min-w-0">
-						<span
-							className="text-[9px] uppercase tracking-wide"
-							style={{
-								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textDim,
-							}}
-						>
-							Tabs
-						</span>
-						<span
-							className="text-base font-semibold"
-							style={{
-								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textMain,
-							}}
-							data-testid="agent-card-tab-count"
-							data-highlighted={highlightedStat === 'tabs' ? 'true' : undefined}
-						>
-							{tabCount}
-						</span>
-					</div>
-					<div className="flex flex-col min-w-0">
-						<span
-							className="text-[9px] uppercase tracking-wide"
-							style={{
-								color: highlightedStat === 'auto' ? theme.colors.accent : theme.colors.textDim,
-							}}
-						>
-							Auto %
-						</span>
-						<span
-							className="text-base font-semibold"
-							style={{
-								color:
-									highlightedStat === 'auto' && autoPercent !== null
-										? theme.colors.accent
-										: autoPercent === null
-											? theme.colors.textDim
-											: theme.colors.textMain,
-							}}
-							data-testid="agent-card-auto-pct"
-							data-highlighted={highlightedStat === 'auto' ? 'true' : undefined}
-							title={
-								autoPercent === null
-									? 'No recorded queries'
-									: `${autoPercent}% of queries from Auto Run / Cue`
-							}
-						>
-							{autoPercent === null ? EMPTY_AUTO_PERCENT_LABEL : `${autoPercent}%`}
-						</span>
-					</div>
-				</div>
-				<div className="flex-shrink-0 opacity-80 pointer-events-none">
-					<Sparkline data={sparklineData} color={sparklineColor} width={70} height={22} />
-				</div>
-			</div>
-		</div>
+		<EntityTile
+			theme={theme}
+			testId="agent-card"
+			title={session.name}
+			statusColor={statusColor}
+			statusPulsing={session.state === 'busy'}
+			age={ageLabel}
+			ageTitle={ageTitle}
+			ageHighlighted={highlightedStat === 'created'}
+			badges={isWorktree ? [{ label: 'WT', testId: 'agent-card-wt-badge' }] : undefined}
+			subtitle={isWorktree ? (session.worktreeBranch ?? undefined) : undefined}
+			subtitleTestId="agent-card-branch"
+			stats={[
+				{
+					label: 'Queries',
+					value: String(queryCount),
+					highlighted: highlightedStat === 'queries',
+					testId: 'agent-card-query-count',
+				},
+				{
+					label: 'Tabs',
+					value: String(tabCount),
+					highlighted: highlightedStat === 'tabs',
+					testId: 'agent-card-tab-count',
+				},
+				{
+					label: 'Auto %',
+					value: autoPercent === null ? '\u2014' : `${autoPercent}%`,
+					highlighted: highlightedStat === 'auto',
+					muted: autoPercent === null,
+					testId: 'agent-card-auto-pct',
+					title:
+						autoPercent === null
+							? 'No recorded queries'
+							: `${autoPercent}% of queries from Auto Run / Cue`,
+				},
+			]}
+			sparkline={sparklineData}
+			sparklineColor={isWorktree ? theme.colors.accent : statusColor}
+			animationIndex={animationIndex}
+			isSelected={isSelected}
+			isDashed={isWorktree}
+			onClick={onShowDetails ? () => onShowDetails(session) : undefined}
+			ariaLabel={isClickable ? `${baseAriaLabel}. View detailed stats.` : baseAriaLabel}
+		/>
 	);
 });
 
 interface AgentOverviewCardsProps {
 	/** All known sessions (terminal-only sessions are filtered out) */
 	sessions: Session[];
-	/** Aggregated stats used for per-session query counts and sparklines */
+	/** Aggregated stats - used for per-session query counts and sparklines */
 	data: StatsAggregation;
 	/** Current theme for color-aware styling */
 	theme: Theme;
@@ -300,7 +157,7 @@ interface AgentOverviewCardsProps {
 	 * the top of the dashboard. `null` means no filter is active.
 	 */
 	activeFilterKey?: string | null;
-	/** Click handler for the per-card "view stats" icon, opens the per-agent
+	/** Click handler for the per-card "view stats" icon - opens the per-agent
 	 *  stats sub-modal. When omitted, the icon is not rendered. */
 	onShowAgentDetails?: (session: Session) => void;
 }
@@ -334,6 +191,14 @@ function scoreSessionForFilter(session: Session, query: string): number | null {
 	return best < 0 ? null : best;
 }
 
+const SORT_OPTIONS: SegmentedOption<SortMode>[] = [
+	{ value: 'name', label: 'Name' },
+	{ value: 'created', label: 'Created' },
+	{ value: 'queries', label: 'Queries' },
+	{ value: 'tabs', label: 'Tabs' },
+	{ value: 'auto', label: 'Auto %' },
+];
+
 export const AgentOverviewCards = memo(function AgentOverviewCards({
 	sessions,
 	data,
@@ -361,13 +226,56 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		capturesFocus: false,
 	});
 
-	// Terminal sessions aren't "agents". Exclude them so the card row
+	// Terminal sessions aren't "agents" - exclude them so the card row
 	// matches the agent count shown elsewhere in the dashboard. Default sort
 	// is alphabetical (ascending), ignoring any leading emoji prefix to match
 	// how the Left Bar's session list orders names; the user can switch to
 	// query or tab count (descending) via the sort control above the grid.
 	const activeSessions = useMemo(() => {
-		return sortAgentOverviewSessions(sessions, data, sortMode);
+		const filtered = sessions.filter((s) => s.toolType !== 'terminal');
+		const byName = (a: Session, b: Session) => compareNamesIgnoringEmojis(a.name, b.name);
+
+		if (sortMode === 'name') {
+			return filtered.slice().sort(byName);
+		}
+
+		// Pre-sort alphabetically so equal counts fall back to a stable, scannable order.
+		const alphabetical = filtered.slice().sort(byName);
+
+		if (sortMode === 'created') {
+			// Most-recent-first. Sessions missing `createdAt` (legacy data) sink
+			// to the bottom rather than masquerading as the newest agent.
+			return alphabetical.slice().sort((a, b) => {
+				const aTs = a.createdAt ?? 0;
+				const bTs = b.createdAt ?? 0;
+				return bTs - aTs;
+			});
+		}
+
+		if (sortMode === 'queries') {
+			return alphabetical
+				.slice()
+				.sort(
+					(a, b) =>
+						getSessionQueryCount(b, data, alphabetical) -
+						getSessionQueryCount(a, data, alphabetical)
+				);
+		}
+
+		if (sortMode === 'tabs') {
+			return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
+		}
+
+		// 'auto' - descending by auto %, sessions with no recorded queries
+		// sink to the bottom so the leaderboard isn't polluted by null cards.
+		return alphabetical.slice().sort((a, b) => {
+			const aPct = getSessionAutoPercent(a, data);
+			const bPct = getSessionAutoPercent(b, data);
+			if (aPct === null && bPct === null) return 0;
+			if (aPct === null) return 1;
+			if (bPct === null) return -1;
+			return bPct - aPct;
+		});
 	}, [sessions, data, sortMode]);
 
 	// Live fuzzy filter. With the default Name sort we re-rank by match score so
@@ -438,34 +346,14 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-						role="radiogroup"
-						aria-label="Sort agents"
-						data-testid="agent-overview-sort"
-					>
-						{AGENT_OVERVIEW_SORT_OPTIONS.map((opt, i) => {
-							const isActive = sortMode === opt.value;
-							return (
-								<button
-									key={opt.value}
-									type="button"
-									onClick={() => setSortMode(opt.value)}
-									className="px-2 py-1 text-xs transition-colors"
-									style={{
-										backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
-										color: isActive ? theme.colors.accent : theme.colors.textDim,
-										borderLeft: i === 0 ? undefined : `1px solid ${theme.colors.border}`,
-									}}
-									aria-pressed={isActive}
-									data-testid={`agent-overview-sort-${opt.value}`}
-								>
-									{opt.label}
-								</button>
-							);
-						})}
-					</div>
+					<SegmentedControl
+						value={sortMode}
+						onChange={setSortMode}
+						options={SORT_OPTIONS}
+						theme={theme}
+						ariaLabel="Sort agents"
+						testId="agent-overview-sort"
+					/>
 				</div>
 			</div>
 			{filteredSessions.length === 0 ? (

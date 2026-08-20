@@ -183,7 +183,7 @@ describe('HistoryEntryItem', () => {
 			/>
 		);
 		expect(
-			screen.getByTitle('Task completed successfully and human-validated')
+			screen.getByTitle('Task completed successfully, and you marked it as checked')
 		).toBeInTheDocument();
 	});
 

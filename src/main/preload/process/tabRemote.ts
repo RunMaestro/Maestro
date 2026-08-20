@@ -106,5 +106,19 @@ export function createTabRemoteApi() {
 			ipcRenderer.on('remote:refreshFileTree', handler);
 			return () => ipcRenderer.removeListener('remote:refreshFileTree', handler);
 		},
+
+		/**
+		 * Subscribe to a remote request to open one of the app's modals /
+		 * dashboards (from `maestro-cli open`). `surface` is a `UiSurface.id`
+		 * and `tab` (when present) has already been validated against it in
+		 * the main process.
+		 */
+		onRemoteOpenModal: (
+			callback: (params: { surface: string; tab?: string }) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: { surface: string; tab?: string }) => callback(params);
+			ipcRenderer.on('remote:openModal', handler);
+			return () => ipcRenderer.removeListener('remote:openModal', handler);
+		},
 	};
 }

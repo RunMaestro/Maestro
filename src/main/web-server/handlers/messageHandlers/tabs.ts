@@ -12,6 +12,12 @@ import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import {
+	UI_SURFACES,
+	resolveUiSurface,
+	resolveUiSurfaceTab,
+	surfaceTabIds,
+} from '../../../../shared/uiSurfaces';
 
 /**
  * Handle select_tab message - select a tab within a session
@@ -837,4 +843,68 @@ export async function handleListTerminalTabs(
 			requestId: message.requestId,
 		});
 	}
+}
+
+/**
+ * Handle open_modal message - open one of the app's modals / dashboards by
+ * `UiSurface.id`, optionally on a specific tab. Both the surface and the tab
+ * are validated here so the renderer only ever receives ids it can act on.
+ */
+export function handleOpenModal(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const surfaceName = typeof message.surface === 'string' ? message.surface : '';
+	const tabName =
+		typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
+
+	const sendResult = (success: boolean, error?: string) => {
+		ctx.send(client, {
+			type: 'open_modal_result',
+			success,
+			error,
+			requestId: message.requestId,
+		});
+	};
+
+	const surface = resolveUiSurface(surfaceName);
+	if (!surface) {
+		sendResult(
+			false,
+			`Unknown surface "${surfaceName}". Valid surfaces: ${UI_SURFACES.map((s) => s.id).join(', ')}`
+		);
+		return;
+	}
+
+	let tabId: string | undefined;
+	if (tabName !== undefined) {
+		const tab = resolveUiSurfaceTab(surface, tabName);
+		if (!tab) {
+			const valid = surfaceTabIds(surface);
+			sendResult(
+				false,
+				valid.length > 0
+					? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
+					: `${surface.label} has no tabs.`
+			);
+			return;
+		}
+		tabId = tab.id;
+	}
+
+	logger.info(
+		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}`,
+		LOG_CONTEXT
+	);
+
+	if (!ctx.callbacks.openModal) {
+		sendResult(false, 'Opening modals is not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.openModal({ surface: surface.id, tab: tabId })
+		.then((success) => sendResult(success, success ? undefined : 'Maestro window is not available'))
+		.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 }

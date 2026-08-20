@@ -164,14 +164,17 @@ export interface AgentErrorModalData {
 	historicalError?: AgentError;
 }
 
-/** Provider re-authentication modal data */
+/**
+ * Provider re-authentication modal data.
+ *
+ * Addressed by PROVIDER, not by agent: one expired token blocks every agent
+ * that shares the credential store, and they are all fixed by one login. The
+ * roster of blocked agents (and the error text) lives in `authOutageStore`
+ * keyed by this value, so it stays correct as more agents fail while the prompt
+ * is already open.
+ */
 export interface ReauthModalData {
-	/** The agent whose provider rejected its credentials. */
-	sessionId: string;
-	/** Message from the provider, shown so the user sees what actually failed. */
-	message?: string;
-	/** True when the failure came from a Cue pipeline rather than a chat turn. */
-	fromPipeline?: boolean;
+	providerKey: string;
 }
 
 /** Delete agent modal data */
@@ -193,7 +196,10 @@ export interface QuitConfirmModalData {
 }
 
 export interface CueModalData {
-	initialTab?: 'dashboard' | 'pipeline';
+	/** Tab the modal opens on. Values match `CueModalTab` in
+	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
+	 *  `shared/uiSurfaces.ts`. */
+	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'activity' | 'backup';
 }
 
 /** Cue YAML editor data */
@@ -1025,7 +1031,7 @@ export function getModalActions() {
 
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
-		openCueModalWithTab: (tab: 'dashboard' | 'pipeline') =>
+		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>) =>
 			openModal('cueModal', { initialTab: tab }),
 
 		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)

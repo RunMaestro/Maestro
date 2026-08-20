@@ -1,12 +1,19 @@
 /**
- * ReauthModal - run a provider's login flow without leaving the app.
+ * ReauthModal - re-authenticate a PROVIDER, and put its agents back to work.
  *
- * An expired token takes every agent AND every Cue pipeline down at once, and
- * the old recovery path ("Use Terminal") only dropped the user into terminal
- * mode with the command still to be typed. That is easy to miss when the
- * failure happened overnight in a pipeline, so this modal is deliberately loud:
- * it owns the screen, states what is wrong, and runs the login command in an
- * embedded PTY so the whole flow finishes here.
+ * Scoped to the provider, not to the agent that happened to fail first. One
+ * expired token blocks every agent sharing that credential store plus any Cue
+ * pipeline they own, and one login fixes all of them - so this is one dialog
+ * naming the whole blast radius, never one dialog per agent.
+ *
+ * It is deliberately loud and self-contained: the old recovery path only
+ * dropped the user into terminal mode with the command still to type, which is
+ * easy to miss when the failure happened overnight in a pipeline. Here the
+ * login runs in an embedded PTY and finishes without leaving the dialog.
+ *
+ * Closing with "Resume agents" replays the turn each blocked agent died on
+ * (see `resolveAuthOutage`), so the queued messages that piled up behind the
+ * failure run in order without the user hunting for them.
  *
  * The PTY is a real terminal tab process (`process:spawnTerminalTab`), so the
  * provider's TUI, its device-code prompts, and SSH remotes all behave exactly
@@ -15,11 +22,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyRound, Terminal as TerminalIcon } from 'lucide-react';
+import { KeyRound, Terminal as TerminalIcon, Users } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { XTerminal, type XTerminalHandle } from './XTerminal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { resolveAuthOutage, type AuthOutage } from '../stores/authOutageStore';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import {
@@ -31,23 +40,26 @@ import type { Session, Theme } from '../types';
 
 export interface ReauthModalProps {
 	theme: Theme;
-	/** The agent whose provider needs re-authentication. */
+	/** The provider outage this dialog is resolving. */
+	outage: AuthOutage;
+	/**
+	 * An agent backed by the failed provider, used to run the login in the right
+	 * place (its cwd, its custom binary path, its SSH remote). Any blocked agent
+	 * will do - they share the credential store, which is the whole point.
+	 */
 	session: Session;
-	/** The provider's own error text, shown so the user sees what actually failed. */
-	message?: string;
-	/** True when a Cue pipeline hit this, not a chat turn - changes the lede. */
-	fromPipeline?: boolean;
 	onClose: () => void;
 }
 
 type ReauthStatus = 'starting' | 'running' | 'failed' | 'exited';
 
-export function ReauthModal({ theme, session, message, fromPipeline, onClose }: ReauthModalProps) {
+export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProps) {
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const shellArgs = useSettingsStore((s) => s.shellArgs);
 	const shellEnvVars = useSettingsStore((s) => s.shellEnvVars);
+	const sessions = useSessionStore((s) => s.sessions);
 
 	const terminalRef = useRef<XTerminalHandle | null>(null);
 	// One PTY per modal open. Two parts of this key are load-bearing:
@@ -68,7 +80,18 @@ export function ReauthModal({ theme, session, message, fromPipeline, onClose }: 
 		[session.toolType, session.customPath]
 	);
 	const commandLine = login ? formatAgentLoginCommand(login) : null;
-	const agentName = getAgentDisplayName(session.toolType);
+	const agentName = getAgentDisplayName(outage.toolType);
+
+	// Names of the blocked agents, resolved live: more of them can fail while
+	// this dialog is open, and each one joins the outage rather than raising a
+	// second prompt, so the count here has to keep up.
+	const blockedNames = useMemo(() => {
+		const byId = new Map(sessions.map((s) => [s.id, s.name]));
+		return outage.blocked
+			.map((b) => byId.get(b.sessionId))
+			.filter((name): name is string => !!name);
+	}, [sessions, outage.blocked]);
+	const blockedCount = outage.blocked.length;
 
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
@@ -173,13 +196,29 @@ export function ReauthModal({ theme, session, message, fromPipeline, onClose }: 
 		terminalRef.current?.focus();
 	}, []);
 
+	/** Login done: close the outage and replay what every blocked agent lost. */
+	const handleResume = useCallback(() => {
+		resolveAuthOutage(outage.providerKey, true);
+		onClose();
+	}, [outage.providerKey, onClose]);
+
+	/**
+	 * Dismiss without resuming. The agents keep their error state and their held
+	 * queues, so nothing is lost - but we do NOT restart them, because the user
+	 * closing this dialog is not evidence that the login succeeded.
+	 */
+	const handleDismiss = useCallback(() => {
+		resolveAuthOutage(outage.providerKey, false);
+		onClose();
+	}, [outage.providerKey, onClose]);
+
 	const statusLine =
 		status === 'failed'
 			? spawnError
 			: status === 'exited'
-				? 'The login session ended. Click Done to resume, or reopen this dialog to try again.'
+				? 'The login session ended. Resume to re-run everything that failed.'
 				: status === 'running'
-					? 'Complete the provider login above. This dialog stays open until you are done.'
+					? 'Complete the provider login above, then resume.'
 					: 'Starting the login shell...';
 
 	const statusColor =
@@ -194,11 +233,11 @@ export function ReauthModal({ theme, session, message, fromPipeline, onClose }: 
 			theme={theme}
 			title="Please reauthenticate the provider."
 			priority={MODAL_PRIORITIES.REAUTH}
-			onClose={onClose}
+			onClose={handleDismiss}
 			width={760}
 			maxHeight="80vh"
 			resizeKey="modal-reauth"
-			defaultSize={{ width: 760, height: 520 }}
+			defaultSize={{ width: 760, height: 560 }}
 			minSize={{ width: 480, height: 320 }}
 			zIndex={10002}
 			headerIcon={<KeyRound className="w-5 h-5" style={{ color: theme.colors.warning }} />}
@@ -215,29 +254,51 @@ export function ReauthModal({ theme, session, message, fromPipeline, onClose }: 
 					</div>
 					<button
 						type="button"
-						onClick={onClose}
+						onClick={handleDismiss}
+						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						Not Now
+					</button>
+					<button
+						type="button"
+						onClick={handleResume}
 						className="px-4 py-2 rounded transition-colors"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
 						}}
+						data-testid="reauth-resume"
 					>
-						Done
+						{blockedCount > 1 ? `Resume ${blockedCount} Agents` : 'Resume Agent'}
 					</button>
 				</div>
 			}
 		>
 			<div className="flex flex-col gap-3 flex-1 min-h-0 p-4">
 				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
-					<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected the stored
-					credentials for <span className="font-medium">{session.name}</span>
-					{fromPipeline ? ' while running a Cue pipeline' : ''}. Every agent and Cue pipeline on
-					this provider stays down until you log in again.
+					<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected its stored
+					credentials
+					{outage.fromPipeline ? ', taking Cue pipelines down with it' : ''}.{' '}
+					{blockedCount > 1
+						? `All ${blockedCount} agents on this provider are stopped until you log in again.`
+						: 'This agent is stopped until you log in again.'}{' '}
+					Their queued messages are held, not lost.
 				</p>
 
-				{message && (
+				{blockedNames.length > 0 && (
+					<div
+						className="flex items-start gap-2 text-xs select-text"
+						style={{ color: theme.colors.textDim }}
+					>
+						<Users className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+						<span className="min-w-0">{blockedNames.join(', ')}</span>
+					</div>
+				)}
+
+				{outage.message && (
 					<p className="text-xs select-text" style={{ color: theme.colors.textDim }}>
-						{message}
+						{outage.message}
 					</p>
 				)}
 
@@ -261,7 +322,7 @@ export function ReauthModal({ theme, session, message, fromPipeline, onClose }: 
 				) : (
 					<p className="text-sm" style={{ color: theme.colors.error }}>
 						{agentName} has no login command Maestro can run. Re-authenticate it from a terminal,
-						then reopen this agent.
+						then resume.
 					</p>
 				)}
 

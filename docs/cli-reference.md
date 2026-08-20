@@ -308,6 +308,16 @@ Open a URL as a browser tab in the Maestro desktop app
 | `--background`     | Create the tab without focusing it or switching agents (use for agent research, then close-browser when done) | -       |
 | `--json`           | Output as JSON (for scripting)                                                                                | -       |
 
+## `maestro-cli open [surface]`
+
+Open a Maestro modal or dashboard (use --list to see every surface)
+
+| Option            | Description                                             | Default |
+| ----------------- | ------------------------------------------------------- | ------- |
+| `-t, --tab <tab>` | Deep-link to a tab within the surface                   | -       |
+| `--list`          | List every openable surface, its tabs, and its shortcut | -       |
+| `--json`          | Output as JSON (for scripting)                          | -       |
+
 ## `maestro-cli close-browser <tab-id>`
 
 Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
@@ -458,15 +468,22 @@ List all Cue subscriptions across agents
 
 ## `maestro-cli cue schedule`
 
-Schedule a one-shot Cue task (or --list / --cancel pending tasks)
+Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 
 | Option                     | Description                                                                                           | Default |
 | -------------------------- | ----------------------------------------------------------------------------------------------------- | ------- |
-| `--in <duration>`          | Fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                   | -       |
-| `--at <timestamp>`         | Fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local time)                                         | -       |
-| `--list`                   | List all pending one-shot tasks across agents                                                         | -       |
-| `--cancel <name>`          | Cancel a pending one-shot task by name                                                                | -       |
-| `-a, --agent <id-or-name>` | Target agent (required when creating)                                                                 | -       |
+| `--in <duration>`          | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                         | -       |
+| `--at <timestamp>`         | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                    | -       |
+| `--daily-at <times>`       | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                             | -       |
+| `--days <days>`            | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                             | -       |
+| `--every <duration>`       | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                     | -       |
+| `--list`                   | List scheduled tasks across agents                                                                    | -       |
+| `--kind <kind>`            | Filter --list by kind: once, daily, interval, all (default: all)                                      | -       |
+| `--cancel <name>`          | Cancel a scheduled task by name                                                                       | -       |
+| `--reschedule <name>`      | Change when an existing task fires (pass the timing flag too)                                         | -       |
+| `--pause <name>`           | Disable a task without deleting it                                                                    | -       |
+| `--resume <name>`          | Re-enable a paused task                                                                               | -       |
+| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes other modes)                                             | -       |
 | `-p, --prompt <text>`      | Prompt to send when the task fires                                                                    | -       |
 | `--notify`                 | Show a toast notification when the task fires                                                         | -       |
 | `--sticky`                 | Make the notify toast sticky (requires --notify)                                                      | -       |

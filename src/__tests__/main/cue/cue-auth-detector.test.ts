@@ -7,11 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-	detectCueAuthFailure,
-	reportCueAuthFailure,
-	resetReportedAuthFailures,
-} from '../../../main/cue/cue-auth-detector';
+import { detectCueAuthFailure, reportCueAuthFailure } from '../../../main/cue/cue-auth-detector';
 import type { CueRunResult } from '../../../shared/cue/contracts';
 
 const markAuthRequired = vi.fn();
@@ -98,7 +94,6 @@ describe('detectCueAuthFailure', () => {
 describe('reportCueAuthFailure', () => {
 	beforeEach(() => {
 		markAuthRequired.mockClear();
-		resetReportedAuthFailures();
 	});
 
 	function makeWindow() {
@@ -151,27 +146,39 @@ describe('reportCueAuthFailure', () => {
 		expect(markAuthRequired).toHaveBeenCalled();
 	});
 
-	it('prompts once per provider until a run succeeds again', () => {
+	// Deduplication belongs to the renderer's auth-outage store, which groups
+	// every blocked agent into ONE prompt. Suppressing repeats here instead
+	// would drop agents off that roster, and an agent that is never reported is
+	// never resumed - so every failure is reported, every time.
+	it('reports every blocked agent rather than deduplicating', () => {
 		const win = makeWindow();
 		const failure = makeResult({ stderr: 'OAuth token has expired' });
 
 		expect(reportCueAuthFailure(win as never, failure, 'claude-code')).toBe(true);
-		// A dismissed prompt must not be thrown back at the user on the next tick.
-		expect(reportCueAuthFailure(win as never, failure, 'claude-code')).toBe(false);
-		expect(win.webContents.send).toHaveBeenCalledTimes(1);
+		expect(
+			reportCueAuthFailure(win as never, { ...failure, sessionId: 'agent-2' }, 'claude-code')
+		).toBe(true);
 
-		// A successful run means the new credentials took, so a later expiry
-		// prompts again.
-		reportCueAuthFailure(win as never, makeResult({ status: 'completed' }), 'claude-code');
-		expect(reportCueAuthFailure(win as never, failure, 'claude-code')).toBe(true);
 		expect(win.webContents.send).toHaveBeenCalledTimes(2);
+		expect(
+			win.webContents.send.mock.calls.map(
+				(call: unknown[]) => (call[1] as { sessionId: string }).sessionId
+			)
+		).toEqual(['agent-1', 'agent-2']);
 	});
 
-	it('tracks a local and a remote install of the same agent separately', () => {
+	it('tells the renderer which SSH remote expired so it groups separately', () => {
 		const win = makeWindow();
-		const failure = makeResult({ stderr: 'OAuth token has expired' });
+		reportCueAuthFailure(
+			win as never,
+			makeResult({ stderr: 'OAuth token has expired' }),
+			'claude-code',
+			'remote-uuid'
+		);
 
-		expect(reportCueAuthFailure(win as never, failure, 'claude-code')).toBe(true);
-		expect(reportCueAuthFailure(win as never, failure, 'claude-code', 'remote-uuid')).toBe(true);
+		expect(win.webContents.send).toHaveBeenCalledWith(
+			'agent:authExpired',
+			expect.objectContaining({ sshRemoteId: 'remote-uuid' })
+		);
 	});
 });

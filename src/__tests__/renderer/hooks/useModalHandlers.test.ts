@@ -29,6 +29,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 
 import { useModalHandlers } from '../../../renderer/hooks/modal/useModalHandlers';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -70,6 +71,9 @@ beforeEach(() => {
 
 	// Reset stores
 	useModalStore.setState({ modals: new Map() });
+	// Auth outages are provider-scoped and deliberately deduplicate, so a
+	// leftover outage would stop the next test's prompt from opening.
+	useAuthOutageStore.setState({ outages: {} });
 	useSessionStore.setState({
 		sessions: [],
 		activeSessionId: '',
@@ -805,6 +809,10 @@ describe('useModalHandlers', () => {
 				...useAgentStore.getState(),
 				authenticateAfterError: mockAuth,
 			});
+			// The provider is resolved from the agent, so it has to exist.
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', toolType: 'claude-code' })],
+			});
 			getModalActions().setAgentErrorModalSessionId('session-1');
 
 			const inputRef = createInputRef();
@@ -819,7 +827,7 @@ describe('useModalHandlers', () => {
 			// re-authentication terminal instead of returning focus to the composer.
 			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
 			expect(useModalStore.getState().getData('reauth')).toMatchObject({
-				sessionId: 'session-1',
+				providerKey: 'claude-code',
 			});
 		});
 	});

@@ -16,6 +16,7 @@ import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { openBrowser, closeBrowser } from './commands/open-browser';
+import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
@@ -481,6 +482,18 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openBrowser);
 
+// Open modal command - bring up a Maestro surface (Cue, Settings, Usage
+// Dashboard, ...) in the running desktop app, optionally on a given tab. Prints
+// the hotkey / command-palette / click paths too, so an agent that opens a
+// surface for the user can also teach them how to reach it by hand.
+program
+	.command('open [surface]')
+	.description('Open a Maestro modal or dashboard (use --list to see every surface)')
+	.option('-t, --tab <tab>', 'Deep-link to a tab within the surface')
+	.option('--list', 'List every openable surface, its tabs, and its shortcut')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(openModal);
+
 // Close browser command - close a browser tab opened via open-browser
 program
 	.command('close-browser <tab-id>')
@@ -633,18 +646,28 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
 
-// Cue schedule - author / inspect / cancel one-shot `time.once` subscriptions.
-// Primary agent surface for "in 20 minutes do X" or "remind me at 4pm…" - writes
-// directly to the agent's `.maestro/cue.yaml` so it works without the desktop
-// app running. See `cue-schedule.ts` for the full flag matrix.
+// Cue schedule - author / inspect / edit / cancel Scheduled Tasks (the
+// clock-driven subscriptions: time.once, time.scheduled, time.heartbeat).
+// Primary agent surface for "in 20 minutes do X", "remind me at 4pm…", and
+// "every weekday at 9am…" - writes directly to the agent's `.maestro/cue.yaml`
+// so it works without the desktop app running. The same tasks are listed and
+// editable in the app under Maestro Cue → Scheduled Tasks. See
+// `cue-schedule.ts` for the full flag matrix.
 cue
 	.command('schedule')
-	.description('Schedule a one-shot Cue task (or --list / --cancel pending tasks)')
-	.option('--in <duration>', 'Fire after a relative delay (e.g. 30s, 20m, 2h, 1d)')
-	.option('--at <timestamp>', 'Fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local time)')
-	.option('--list', 'List all pending one-shot tasks across agents')
-	.option('--cancel <name>', 'Cancel a pending one-shot task by name')
-	.option('-a, --agent <id-or-name>', 'Target agent (required when creating)')
+	.description('Create a scheduled task (or --list / --cancel / --reschedule / --pause)')
+	.option('--in <duration>', 'One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)')
+	.option('--at <timestamp>', 'One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)')
+	.option('--daily-at <times>', 'Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)')
+	.option('--days <days>', 'Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)')
+	.option('--every <duration>', 'Repeating: fire on an interval (e.g. 30m, 2h, 1d)')
+	.option('--list', 'List scheduled tasks across agents')
+	.option('--kind <kind>', 'Filter --list by kind: once, daily, interval, all (default: all)')
+	.option('--cancel <name>', 'Cancel a scheduled task by name')
+	.option('--reschedule <name>', 'Change when an existing task fires (pass the timing flag too)')
+	.option('--pause <name>', 'Disable a task without deleting it')
+	.option('--resume <name>', 'Re-enable a paused task')
+	.option('-a, --agent <id-or-name>', 'Target agent (required when creating; scopes other modes)')
 	.option('-p, --prompt <text>', 'Prompt to send when the task fires')
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')

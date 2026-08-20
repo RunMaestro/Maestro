@@ -16,6 +16,7 @@ import {
 } from '../../../renderer/hooks/agent/useAgentListeners';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type { Session, AITab, AgentError } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -173,6 +174,9 @@ function createMockDeps(overrides: Partial<UseAgentListenersDeps> = {}): UseAgen
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Auth outages are provider-scoped and deliberately deduplicate, so a
+	// leftover outage would stop the next test's prompt from opening.
+	useAuthOutageStore.setState({ outages: {} });
 
 	// Reset captured handlers
 	onDataHandler = undefined;
@@ -1088,7 +1092,8 @@ describe('useAgentListeners', () => {
 
 			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
 			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
-			expect(useModalStore.getState().getData('reauth')?.sessionId).toBe('sess-1');
+			// Keyed by provider: one login fixes every agent sharing the credentials.
+			expect(useModalStore.getState().getData('reauth')?.providerKey).toBe('claude-code');
 		});
 
 		it('does not open modal for session_not_found errors', () => {

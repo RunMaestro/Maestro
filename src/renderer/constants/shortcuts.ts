@@ -1,4 +1,7 @@
-import type { Shortcut } from '../types';
+// Import from the shared type module rather than `../types`: the CLI reads
+// these defaults (to print a surface's hotkey in `maestro-cli open`), and
+// `../types` drags renderer-only, DOM-dependent modules into that build.
+import type { Shortcut } from '../../shared/shortcut-types';
 
 export const DEFAULT_SHORTCUTS = {
 	toggleSidebar: {

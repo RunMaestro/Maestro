@@ -26,6 +26,8 @@ export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';
 
 export { RadioGroup } from './RadioGroup';
 export type { RadioGroupProps, RadioOption } from './RadioGroup';
+export { SegmentedControl } from './SegmentedControl';
+export type { SegmentedControlProps, SegmentedOption } from './SegmentedControl';
 
 export { Spinner } from './Spinner';
 export type { SpinnerProps } from './Spinner';

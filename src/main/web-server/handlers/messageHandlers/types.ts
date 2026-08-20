@@ -120,6 +120,8 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
 		config: { cwd?: string; shell?: string; name?: string | null; command?: string }

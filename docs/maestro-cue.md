@@ -59,7 +59,9 @@ Open the Cue modal to monitor and manage all automation activity.
 
 - Press `Cmd+K` / `Ctrl+K` and search for "Maestro Cue"
 
-The modal has three tabs - **Dashboard**, **Pipeline Editor**, and **Activity Log** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
+The modal has five tabs - **Dashboard**, **Scheduled Tasks**, **Pipeline Editor**, **Activity Log**, and **Backup** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
+
+**From an agent:** ask any Maestro agent to open it and it will run `maestro-cli open cue`, optionally on a tab (`maestro-cli open cue --tab scheduled`). See [Opening a surface from the CLI](./cli-reference#maestro-cli-open).
 
 ## Dashboard
 
@@ -84,6 +86,34 @@ Each row has three action buttons:
 - **View in Pipeline** - Jump to the Pipeline Editor filtered to that agent.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
+
+## Scheduled Tasks
+
+The Scheduled Tasks tab is the clock-driven slice of Cue in one list: every task that fires at a time rather than in response to a file change, a PR, or another agent. Three kinds live here:
+
+| Kind             | YAML event       | Fires                                                     |
+| ---------------- | ---------------- | --------------------------------------------------------- |
+| **Once**         | `time.once`      | A single time, then the task removes itself from the YAML |
+| **At set times** | `time.scheduled` | At chosen `HH:MM` times, optionally only on chosen days   |
+| **Interval**     | `time.heartbeat` | Every N minutes                                           |
+
+Each row shows the task label and subscription name, the agent that runs it, how it repeats, its schedule, and a countdown to the next fire. A paused task is dimmed and marked `paused`.
+
+Three buttons per row:
+
+- **Pause / Resume** - Flips `enabled` in the YAML. The task stays on disk, it just stops firing. Use this instead of deleting a task you will want back.
+- **Edit** - Change when the task fires, its prompt, its notification, or its label. The agent and the recurrence kind are fixed once a task exists: both are identity on disk, so switching either means cancelling and creating a new task.
+- **Cancel** - Deletes the task from the agent's `cue.yaml`. This asks for confirmation and cannot be undone.
+
+**New Task** opens a form: pick the agent, pick how it repeats, set the time (a one-shot offers `15m` / `1h` / `4h` / `1d` quick picks), and give it a prompt, a toast notification, or both. A notification can be made sticky so it waits for you to dismiss it.
+
+Tasks created here and tasks created with `maestro-cli cue schedule` are the same objects in the same file - both surfaces read and write through one module, so the list is always the whole truth. That also means an agent can schedule work for you and you can see, re-time, or cancel it here:
+
+```bash
+maestro-cli cue schedule --in 20m --agent "Cyber Stocks" --prompt "Check the deploy status."
+maestro-cli cue schedule --daily-at 09:00 --days mon,tue,wed,thu,fri --agent Pedsidian --prompt "Draft the standup notes."
+maestro-cli cue schedule --list
+```
 
 ## Pipeline Editor
 

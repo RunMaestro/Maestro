@@ -94,6 +94,7 @@ import {
 	handleToggleBookmark,
 	handleOpenFileTab,
 	handleOpenBrowserTab,
+	handleOpenModal,
 	handleWriteTerminalTab,
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
@@ -294,6 +295,10 @@ export class WebSocketMessageHandler {
 
 			case 'list_terminal_tabs':
 				void handleListTerminalTabs(this.ctx, client, message);
+				break;
+
+			case 'open_modal':
+				handleOpenModal(this.ctx, client, message);
 				break;
 
 			case 'open_browser_tab':

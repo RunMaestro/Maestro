@@ -185,4 +185,18 @@ export function registerTabCallbacks(
 		mainWindow.webContents.send('remote:refreshFileTree', sessionId);
 		return true;
 	});
+
+	server.setOpenModalCallback(async (params) => {
+		const mainWindow = getMainWindow();
+		if (!mainWindow) {
+			logger.warn('mainWindow is null for openModal', 'WebServer');
+			return false;
+		}
+		if (!isWebContentsAvailable(mainWindow)) {
+			logger.warn('webContents is not available for openModal', 'WebServer');
+			return false;
+		}
+		mainWindow.webContents.send('remote:openModal', params);
+		return true;
+	});
 }

@@ -27,6 +27,7 @@ import {
 import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
+import { reportAuthFailure } from '../../stores/authOutageStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
@@ -434,11 +435,20 @@ export function useModalHandlers(
 
 	// Hand off to the re-authentication terminal rather than the bare terminal
 	// tab: the login flow finishes inside the modal, so the user never has to
-	// remember the provider's login command.
+	// remember the provider's login command. Registering the failure first is
+	// what scopes the dialog to the provider and puts this agent on the list to
+	// resume - reached when the user opens a historical error by hand, so the
+	// outage may not exist yet.
 	const handleAuthenticateAfterError = useCallback((sessionId: string) => {
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		const { providerKey } = reportAuthFailure({
+			sessionId,
+			message: session?.agentError?.message ?? 'The provider rejected the stored credentials.',
+			tabId: session?.agentErrorTabId,
+		});
 		useAgentStore.getState().authenticateAfterError(sessionId);
 		getModalActions().setAgentErrorModalSessionId(null);
-		getModalActions().openReauthModal({ sessionId });
+		if (providerKey) getModalActions().openReauthModal({ providerKey });
 	}, []);
 
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
