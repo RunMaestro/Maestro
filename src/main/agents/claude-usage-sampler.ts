@@ -95,13 +95,16 @@ export interface SampleUsageOptions {
  * `auth_state` is optional for back-compat with older maestro-p builds that
  * didn't emit the field - readers treat its absence as `'authenticated'`.
  */
+// `resets_at` is optional per window - claude paints no "Resets ..." row for a
+// window with nothing running in it, and rejecting the envelope over that
+// discarded the panel's real percentages (see the parser's module docblock).
 interface StatusWireEnvelope {
 	type: 'status';
 	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
-	session: { percent: number; resets_at: string };
-	week_all_models: { percent: number; resets_at: string };
-	week_sonnet_only: { percent: number; resets_at: string };
+	session: { percent: number; resets_at?: string };
+	week_all_models: { percent: number; resets_at?: string };
+	week_sonnet_only: { percent: number; resets_at?: string; label?: string };
 }
 
 /**
@@ -206,18 +209,27 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		sampledAt: new Date().toISOString(),
 		configDirKey: resolveConfigDirKey(childEnv),
 		authState: parsed.auth_state ?? 'authenticated',
-		session: {
-			percent: parsed.session.percent,
-			resetsAt: parsed.session.resets_at,
-		},
-		weekAllModels: {
-			percent: parsed.week_all_models.percent,
-			resetsAt: parsed.week_all_models.resets_at,
-		},
+		session: toStoreWindow(parsed.session),
+		weekAllModels: toStoreWindow(parsed.week_all_models),
 		weekSonnetOnly: {
-			percent: parsed.week_sonnet_only.percent,
-			resetsAt: parsed.week_sonnet_only.resets_at,
+			...toStoreWindow(parsed.week_sonnet_only),
+			...(parsed.week_sonnet_only.label ? { label: parsed.week_sonnet_only.label } : {}),
 		},
+	};
+}
+
+/**
+ * snake_case wire window to camelCase store window. Absent `resets_at` stays
+ * absent rather than becoming `undefined`-valued, so the persisted JSON is the
+ * same shape it always was for windows that do carry a reset.
+ */
+function toStoreWindow(window: { percent: number; resets_at?: string }): {
+	percent: number;
+	resetsAt?: string;
+} {
+	return {
+		percent: window.percent,
+		...(window.resets_at ? { resetsAt: window.resets_at } : {}),
 	};
 }
 
@@ -260,10 +272,14 @@ function isStatusWireEnvelope(obj: unknown): obj is StatusWireEnvelope {
 	);
 }
 
-function isWireWindow(value: unknown): value is { percent: number; resets_at: string } {
+// `resets_at` and `label` are accepted only as strings when present; a window
+// carrying just a percentage is valid (see the StatusWireEnvelope comment).
+function isWireWindow(value: unknown): value is { percent: number; resets_at?: string } {
 	if (!value || typeof value !== 'object') return false;
 	const w = value as Record<string, unknown>;
-	return typeof w.percent === 'number' && typeof w.resets_at === 'string';
+	if (typeof w.percent !== 'number') return false;
+	if (w.resets_at !== undefined && typeof w.resets_at !== 'string') return false;
+	return w.label === undefined || typeof w.label === 'string';
 }
 
 /**

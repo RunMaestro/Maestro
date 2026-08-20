@@ -27,17 +27,24 @@
 // --------
 // - Match section headers against a whitespace-stripped, lowercased view
 //   of each line so "Current session" and "Currentsession" both hit.
-// - Use a fuzzy header for the Sonnet section (`/^currentweek\([a-z]*nly\)/`)
-//   to absorb the character-drop variants.
+// - Match the second weekly window by SHAPE (`Current week (<anything>)`
+//   that isn't the all-models one) rather than by model name: Anthropic has
+//   already renamed that bucket from "(Sonnet only)" to "(Opus)" to
+//   "(Fable)", and each rename silently zeroed the bar. The scraped name
+//   rides along as `label` so the dashboard can print the live one.
 // - Percent and reset patterns allow `\s*` (not `\s+`) for the same reason.
-// - Sonnet has best-effort fallbacks: borrow `resets_at` from
-//   `week_all_models` when its own line is too garbled, and synthesize a
-//   { percent: 0, resets_at } placeholder if the whole section is missing
-//   so downstream consumers always see a populated field.
-// - Sonnet specifically does NOT use the inline-scan fallback for resets -
-//   when its line is polluted, the polluted prefix is the *prior* section's
-//   trailing reset (a cursor-positioning carryover), so inline-scanning
-//   would lock onto the wrong value.
+// - A percentage alone is enough to keep a section. `resets_at` is omitted
+//   when no "Resets ..." row was painted - claude leaves it out for a window
+//   with nothing running in it (an idle 0% session), and failing the whole
+//   parse over it threw away the weekly numbers that WERE painted. That is
+//   exactly the panel a fully-consumed account renders, so the account the
+//   user most needs to see was the one that never cached.
+// - The secondary week borrows `resets_at` from `week_all_models` when its
+//   own line is too garbled (same weekly cadence in every real capture).
+// - The secondary week specifically does NOT use the inline-scan fallback for
+//   resets - when its line is polluted, the polluted prefix is the *prior*
+//   section's trailing reset (a cursor-positioning carryover), so
+//   inline-scanning would lock onto the wrong value.
 //
 // Signature deviation from the playbook
 // -------------------------------------
@@ -91,7 +98,25 @@ const RESET_SPEC_RE = new RegExp(RESET_SPEC_BODY, 'i');
 // matching kind wins on any given line).
 const SESSION_HEADER_RE = /currentsession/;
 const ALL_MODELS_HEADER_RE = /currentweek\(allmodels\)/;
-const SONNET_HEADER_RE = /currentweek\([a-z]*nly\)/;
+// The second weekly window is named after whatever the plan meters separately,
+// and that name MOVES with the model lineup: real captures have carried
+// "(Sonnet only)", "(Opus)", and now "(Fable)". Matching a hard-coded model
+// name silently zeroed the bar every time Anthropic shipped a new tier, so
+// match ANY `Current week (...)` and let `findSectionMarkers` exclude the
+// all-models window by name.
+const SECONDARY_WEEK_HEADER_RE = /currentweek\([^)]*\)/;
+
+// Pull the human-readable bucket name out of the raw (uncompressed) header so
+// the dashboard can label the bar "Week (Fable)" instead of a stale
+// "Week (Sonnet only)". Runs against the raw line because the compressed key
+// has already lost the spaces and casing.
+const SECONDARY_WEEK_LABEL_RE = /current\s*week\s*\(([^)]{1,40})\)/i;
+
+// Cursor damage drops whole characters, so the historical "(Sonnet only)"
+// bucket renders as "(Sonet nly)" / "(Sonnet nly)" in real captures. When the
+// compressed label ends in `nly` it is that bucket - restore the clean name
+// rather than printing the mangled scrape.
+const SONNET_LABEL_RE = /^[a-z]*nly$/;
 
 const MONTH_INDEX: Record<string, number> = {
 	jan: 0,
@@ -159,11 +184,20 @@ function segmentGluedPanel(stripped: string): string {
 interface SectionMarker {
 	kind: 'session' | 'week_all_models' | 'week_sonnet_only';
 	startIndex: number;
+	/** Scraped bucket name, secondary weekly window only (`Fable`, `Sonnet only`). */
+	label?: string;
 }
 
 interface SectionExtract {
 	percent: number;
-	resetsAt: string;
+	/**
+	 * Undefined when the panel painted a percentage but no "Resets ..." row.
+	 * Claude omits that row for a window with nothing running in it (a 0%
+	 * session), and treating the omission as a parse failure threw away the
+	 * whole snapshot - including the weekly percentages that WERE painted.
+	 */
+	resetsAt?: string;
+	label?: string;
 }
 
 export function parseUsage(raw: string, nowIso: string, configDir: string): StatusSnapshot | null {
@@ -223,7 +257,7 @@ export function parseUsage(raw: string, nowIso: string, configDir: string): Stat
 	);
 	if (!allModelsExtract) return null;
 
-	const sonnetExtract = resolveSonnet(lines, markers, nowIso, allModelsExtract);
+	const secondaryWeekExtract = resolveSecondaryWeek(lines, markers, nowIso, allModelsExtract);
 
 	// `auth_state` intentionally omitted on the authenticated path. Readers
 	// treat absence as `'authenticated'` (see StatusSnapshot in json-emitter.ts
@@ -231,15 +265,28 @@ export function parseUsage(raw: string, nowIso: string, configDir: string): Stat
 	// wire envelope byte-compatible with snapshots written before this field
 	// existed - fixtures don't need rewriting and on-disk caches don't need a
 	// migration.
+	// `resets_at` / `label` are emitted only when they were actually scraped -
+	// `JSON.stringify` drops `undefined`, so a window with no painted reset row
+	// ships without the field rather than with a fabricated timestamp.
 	return {
 		type: 'status',
 		config_dir: configDir,
-		session: { percent: sessionExtract.percent, resets_at: sessionExtract.resetsAt },
-		week_all_models: {
-			percent: allModelsExtract.percent,
-			resets_at: allModelsExtract.resetsAt,
-		},
-		week_sonnet_only: { percent: sonnetExtract.percent, resets_at: sonnetExtract.resetsAt },
+		session: toWireWindow(sessionExtract),
+		week_all_models: toWireWindow(allModelsExtract),
+		week_sonnet_only: toWireWindow(secondaryWeekExtract),
+	};
+}
+
+/** Shape one extracted section into its wire window, omitting absent fields. */
+function toWireWindow(extract: SectionExtract): {
+	percent: number;
+	resets_at?: string;
+	label?: string;
+} {
+	return {
+		percent: extract.percent,
+		...(extract.resetsAt ? { resets_at: extract.resetsAt } : {}),
+		...(extract.label ? { label: extract.label } : {}),
 	};
 }
 
@@ -266,24 +313,54 @@ function findSectionMarkers(lines: string[]): SectionMarker[] {
 	const claimed = new Set<SectionMarker['kind']>();
 	for (let i = 0; i < lines.length; i++) {
 		const key = compressedKey(lines[i]);
-		// Priority order: session > all_models > sonnet. If a line matches
-		// multiple header patterns (unlikely in real /usage output, but
+		// Priority order: session > all_models > secondary week. If a line
+		// matches multiple header patterns (unlikely in real /usage output, but
 		// possible with extreme cursor-positioning damage), the higher-
 		// priority kind claims it. `claimed` enforces single-marker-per-
 		// kind so a stray repeat-mention in a later line can't override
 		// the first sighting.
+		//
+		// The secondary branch tests `!ALL_MODELS_HEADER_RE` explicitly rather
+		// than leaning on the else-if: its pattern matches ANY
+		// `Current week (...)`, so a repeated all-models header (already
+		// claimed) would otherwise fall through and be mis-claimed as the
+		// secondary window.
 		if (!claimed.has('session') && SESSION_HEADER_RE.test(key)) {
 			markers.push({ kind: 'session', startIndex: i });
 			claimed.add('session');
 		} else if (!claimed.has('week_all_models') && ALL_MODELS_HEADER_RE.test(key)) {
 			markers.push({ kind: 'week_all_models', startIndex: i });
 			claimed.add('week_all_models');
-		} else if (!claimed.has('week_sonnet_only') && SONNET_HEADER_RE.test(key)) {
-			markers.push({ kind: 'week_sonnet_only', startIndex: i });
+		} else if (
+			!claimed.has('week_sonnet_only') &&
+			SECONDARY_WEEK_HEADER_RE.test(key) &&
+			!ALL_MODELS_HEADER_RE.test(key)
+		) {
+			markers.push({
+				kind: 'week_sonnet_only',
+				startIndex: i,
+				label: extractSecondaryWeekLabel(lines[i]),
+			});
 			claimed.add('week_sonnet_only');
 		}
 	}
 	return markers;
+}
+
+/**
+ * Scrape the secondary weekly bucket's display name out of its header line.
+ * Returns undefined when the name is empty or all-digits so the dashboard
+ * falls back to its own wording instead of printing a garbled fragment.
+ */
+function extractSecondaryWeekLabel(line: string): string | undefined {
+	const m = line.match(SECONDARY_WEEK_LABEL_RE);
+	if (!m) return undefined;
+	const label = m[1].replace(/\s+/g, ' ').trim();
+	if (!label || !/[a-z]/i.test(label)) return undefined;
+	// Repair the known cursor-damage variants of the legacy "(Sonnet only)"
+	// bucket rather than surfacing "Sonet nly" in the UI.
+	if (SONNET_LABEL_RE.test(compressedKey(label))) return 'Sonnet only';
+	return label;
 }
 
 function getSectionWindow(
@@ -316,9 +393,12 @@ function extractSection(
 	if (!resetsAt && allowInlineScan) {
 		resetsAt = inlineScanResetsAt(windowLines, nowIso);
 	}
-	if (!resetsAt) return null;
 
-	return { percent, resetsAt };
+	// A missing reset row is NOT a parse failure. Claude omits it for a window
+	// with nothing running in it, and dropping the section over it discarded
+	// every other window in the panel along with it.
+	const label = markers.find((m) => m.kind === kind)?.label;
+	return { percent, ...(resetsAt ? { resetsAt } : {}), ...(label ? { label } : {}) };
 }
 
 function findPercent(windowLines: string[]): number | null {
@@ -351,31 +431,26 @@ function inlineScanResetsAt(windowLines: string[], nowIso: string): string | nul
 	return null;
 }
 
-function resolveSonnet(
+function resolveSecondaryWeek(
 	lines: string[],
 	markers: SectionMarker[],
 	nowIso: string,
 	allModels: SectionExtract
 ): SectionExtract {
-	// Inline scan is OFF for Sonnet: the polluted line often begins with
-	// the prior section's trailing reset timestamp, and an inline scan
-	// would lock onto the wrong value (per playbook architectural note).
-	const sonnet = extractSection(lines, markers, 'week_sonnet_only', nowIso, false);
-	if (sonnet) return sonnet;
-
-	// Section header was found and percent parsed, but no resets - borrow
-	// from week_all_models (same rolling window in real captures).
-	const windowLines = getSectionWindow(lines, markers, 'week_sonnet_only');
-	if (windowLines) {
-		const percent = findPercent(windowLines);
-		if (percent !== null) {
-			return { percent, resetsAt: allModels.resetsAt };
-		}
+	// Inline scan is OFF here: the polluted line often begins with the prior
+	// section's trailing reset timestamp, and an inline scan would lock onto
+	// the wrong value (per playbook architectural note).
+	const secondary = extractSection(lines, markers, 'week_sonnet_only', nowIso, false);
+	if (secondary) {
+		// Its own reset row is frequently too garbled to parse; both weekly
+		// windows share one cadence in every real capture, so borrow rather
+		// than ship a percentage with no reset time next to it.
+		return secondary.resetsAt ? secondary : { ...secondary, resetsAt: allModels.resetsAt };
 	}
 
 	// Whole section missing - synthesize a placeholder so downstream
 	// consumers always see a populated field.
-	return { percent: 0, resetsAt: allModels.resetsAt };
+	return { percent: 0, ...(allModels.resetsAt ? { resetsAt: allModels.resetsAt } : {}) };
 }
 
 interface ResetSpecGroups {
