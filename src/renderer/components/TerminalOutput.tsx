@@ -23,6 +23,7 @@ import {
 	Share2,
 	Hammer,
 	GitFork,
+	Loader2,
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -30,6 +31,7 @@ import Convert from 'ansi-to-html';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
+import { useTranscriptBackfill } from '../hooks/agent/useTranscriptBackfill';
 import { useDebouncedValue, useThrottledCallback, useProgressiveRenderWindow } from '../hooks';
 import {
 	processLogTextHelper,
@@ -74,6 +76,13 @@ const JUMP_STABILIZE_FRAMES = 10;
 
 /** How long the jump keeps auto-scroll suppressed after landing (~2x the stabilize window). */
 const JUMP_SETTLE_MS = 400;
+
+/**
+ * Distance from the top that triggers loading older history (issue #1407).
+ * Generous enough to fire before the user bottoms out against the first entry,
+ * so the next page is on its way while there is still content to scroll through.
+ */
+const TRANSCRIPT_BACKFILL_TOP_THRESHOLD = 200;
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -1858,11 +1867,39 @@ export const TerminalOutput = memo(
 			}
 		}, []);
 
-		const { startIndex: logStartIndex, revealTo: revealLogIndex } = useProgressiveRenderWindow(
-			filteredLogs.length,
-			`${session.id}-${activeTabId ?? ''}`,
-			{ onBeforeExpand: handleBeforeBackfill }
-		);
+		const {
+			startIndex: logStartIndex,
+			revealTo: revealLogIndex,
+			absorbPrepend: absorbLogPrepend,
+		} = useProgressiveRenderWindow(filteredLogs.length, `${session.id}-${activeTabId ?? ''}`, {
+			onBeforeExpand: handleBeforeBackfill,
+		});
+
+		// ============================================================================
+		// Scroll-to-top history backfill (issue #1407)
+		// ============================================================================
+		// The tab only holds the newest slice of its conversation (500 messages on
+		// resume, 100 after a restart), so scrolling up used to hit a hard stop
+		// mid-conversation. Reaching the top now pages older history back in from
+		// the provider transcript on disk. Entries arrive at the HEAD, so hand the
+		// count to the render window: it shifts by exactly that many, keeping the
+		// visible slice stable and letting the idle loop mount the new history a
+		// chunk at a time instead of one page-sized commit.
+		const historyBackfill = useTranscriptBackfill(session, activeTab, {
+			onPrepend: useCallback(
+				(count: number) => {
+					handleBeforeBackfill();
+					absorbLogPrepend(count);
+				},
+				[handleBeforeBackfill, absorbLogPrepend]
+			),
+		});
+
+		// Kept in a ref so the throttled scroll handler below does not have to
+		// re-create itself (and reset its throttle window) when the hook's
+		// callback identity changes.
+		const loadEarlierRef = useRef(historyBackfill.loadEarlier);
+		loadEarlierRef.current = historyBackfill.loadEarlier;
 
 		useLayoutEffect(() => {
 			const container = scrollContainerRef.current;
@@ -2130,6 +2167,14 @@ export const TerminalOutput = memo(
 			if (atBottom !== prevIsAtBottomRef.current) {
 				prevIsAtBottomRef.current = atBottom;
 				onAtBottomChange?.(atBottom);
+			}
+
+			// Reaching the top pulls the next page of older history in from the
+			// provider transcript (issue #1407). Guarded on the container actually
+			// being scrollable so a short transcript that sits at scrollTop 0 does
+			// not fire a read on every scroll event.
+			if (scrollTop < TRANSCRIPT_BACKFILL_TOP_THRESHOLD && scrollHeight > clientHeight) {
+				loadEarlierRef.current();
 			}
 
 			// Clear new message indicator when user scrolls to bottom
@@ -2599,6 +2644,49 @@ export const TerminalOutput = memo(
 					}}
 					onScroll={handleScroll}
 				>
+					{/* Older-history status row (issue #1407). Only meaningful once the
+					    idle render window has reached the head of the list - above that
+					    point there is still local history left to mount, so "beginning of
+					    conversation" would be a lie. Nothing renders until the user has
+					    actually scrolled up far enough to trigger a read. */}
+					{logStartIndex === 0 && filteredLogs.length > 0 && (
+						<>
+							{historyBackfill.isLoading && (
+								<div
+									className="flex items-center justify-center gap-2 py-3 text-xs"
+									style={{ color: theme.colors.textDim }}
+								>
+									<Loader2 className="w-3.5 h-3.5 animate-spin" />
+									Loading earlier messages...
+								</div>
+							)}
+							{!historyBackfill.isLoading && historyBackfill.error && (
+								<div
+									className="flex items-center justify-center gap-2 py-3 text-xs"
+									style={{ color: theme.colors.textDim }}
+								>
+									{historyBackfill.error}
+									<button
+										onClick={historyBackfill.loadEarlier}
+										className="underline hover:opacity-80 transition-opacity"
+										style={{ color: theme.colors.textMain }}
+									>
+										Retry
+									</button>
+								</div>
+							)}
+							{!historyBackfill.isLoading &&
+								!historyBackfill.error &&
+								historyBackfill.reachedStart && (
+									<div
+										className="flex items-center justify-center py-3 text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										Beginning of conversation
+									</div>
+								)}
+						</>
+					)}
 					{/* Log entries */}
 					{visibleLogs.map((log, visibleIndex) => {
 						// Absolute index into filteredLogs - sibling lookups (echo stripping)
