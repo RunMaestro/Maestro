@@ -57,6 +57,7 @@ import {
 	type AchievementShareGlobalStats,
 } from '../AchievementShareButton';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useElementWidth } from '../../hooks/ui/useElementWidth';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -239,7 +240,6 @@ export function UsageDashboardModal({
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [isExporting, setIsExporting] = useState(false);
-	const [containerWidth, setContainerWidth] = useState(0);
 	const [showNewDataIndicator, setShowNewDataIndicator] = useState(false);
 	const [databaseSize, setDatabaseSize] = useState<number | null>(null);
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
@@ -247,6 +247,9 @@ export function UsageDashboardModal({
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
+	// Drives the responsive breakpoints below. Only measured while open, since a
+	// closed modal has no laid-out content to observe.
+	const containerWidth = useElementWidth(contentRef, isOpen);
 	const tabsRef = useRef<HTMLDivElement>(null);
 	const sectionRefs = useRef<Map<SectionId, HTMLDivElement>>(new Map());
 	const onCloseRef = useRef(onClose);
@@ -473,25 +476,6 @@ export function UsageDashboardModal({
 	}, [isOpen, switchViewMode, VIEW_MODE_TABS]);
 
 	// Track container width for responsive layout
-	useEffect(() => {
-		if (!isOpen || !contentRef.current) return;
-
-		const updateWidth = () => {
-			if (contentRef.current) {
-				setContainerWidth(contentRef.current.offsetWidth);
-			}
-		};
-
-		// Initial measurement
-		updateWidth();
-
-		// Use ResizeObserver to detect width changes
-		const resizeObserver = new ResizeObserver(updateWidth);
-		resizeObserver.observe(contentRef.current);
-
-		return () => resizeObserver.disconnect();
-	}, [isOpen]);
-
 	// Determine responsive breakpoints based on container width
 	const layout = useMemo(() => {
 		// Breakpoints: narrow < 600px, medium 600-900px, wide > 900px

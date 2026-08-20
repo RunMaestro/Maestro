@@ -31,6 +31,9 @@ export type { SortableThProps } from './SortableTh';
 export { Spinner } from './Spinner';
 export type { SpinnerProps } from './Spinner';
 
+export { Pager } from './Pager';
+export type { PagerProps } from './Pager';
+
 export { GhostIconButton } from './GhostIconButton';
 export type { GhostIconButtonProps } from './GhostIconButton';
 

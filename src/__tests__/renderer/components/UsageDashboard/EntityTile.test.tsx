@@ -180,6 +180,17 @@ describe('EntityTile', () => {
 		expect(tile.style.animationDelay).toBe('180ms');
 		expect(tile.className).toContain('card-enter');
 	});
+
+	// Both grids can render far more tiles than the stagger was designed for.
+	// Uncapped, the 100th agent card would sit blank for six seconds and a
+	// full tab list for far longer, so the ramp plateaus instead.
+	it('caps the stagger so a large grid does not leave late tiles blank', () => {
+		const { rerender } = render(<EntityTile {...baseProps} animationIndex={12} />);
+		expect(screen.getByTestId('tile').style.animationDelay).toBe('720ms');
+
+		rerender(<EntityTile {...baseProps} animationIndex={375} />);
+		expect(screen.getByTestId('tile').style.animationDelay).toBe('720ms');
+	});
 });
 
 /** jsdom reports colors as `rgb(r, g, b)`; convert a theme hex for comparison. */
