@@ -13,7 +13,15 @@
 
 /** Families in the order they should be listed, with the id prefixes that select them. */
 const MODEL_FAMILIES: Array<{ label: string; matches: (id: string) => boolean }> = [
-	{ label: 'Claude', matches: (id) => id.startsWith('claude') || id.startsWith('anthropic') },
+	{
+		label: 'Claude',
+		matches: (id) =>
+			id.startsWith('claude') ||
+			id.startsWith('anthropic') ||
+			// Claude Code offers bare aliases alongside dated ids ('opus',
+			// 'sonnet[1m]'), and they are Anthropic models however they are spelled.
+			/^(fable|opus|sonnet|haiku)(\[|-|\.|$)/.test(id),
+	},
 	{
 		label: 'OpenAI',
 		matches: (id) =>
