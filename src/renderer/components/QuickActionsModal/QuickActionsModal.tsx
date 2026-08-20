@@ -622,6 +622,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTileCommands({
 			activeSession,
 			setQuickActionOpen,
+			shortcuts: { tileTerminalBelow: shortcuts.tileTerminalBelow },
 		}),
 		...buildFeatureCommands({
 			activeSession,

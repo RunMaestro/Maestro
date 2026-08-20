@@ -1,16 +1,16 @@
 import type { Session } from '../../../types';
 import type { QuickAction } from '../types';
-import { notifyCenterFlash } from '../../../stores/centerFlashStore';
-import { useSettingsStore } from '../../../stores/settingsStore';
-import { updateSessionWith } from '../../../stores/sessionStore';
-import { useUIStore } from '../../../stores/uiStore';
 import { isWebDesktop } from '../../../utils/runtimeContext';
-import { findLeafByTabRef } from '../../../utils/panelLayout';
-import { canTileNewTab, tileNewTab, type TileableTabKind } from '../../../hooks/tabs/tileNewTab';
+import { tileNewTabInSession } from '../../../services/tileNewTabAction';
+import { canTileNewTab, type TileableTabKind } from '../../../hooks/tabs/tileNewTab';
 
 interface BuildTileCommandsArgs {
 	activeSession: Session | undefined;
 	setQuickActionOpen: (open: boolean) => void;
+	/** Hotkeys to show on the rows that have one. Only the terminal kind does. */
+	shortcuts?: {
+		tileTerminalBelow?: QuickAction['shortcut'];
+	};
 }
 
 /**
@@ -54,6 +54,7 @@ const TILE_KINDS: ReadonlyArray<{ kind: TileableTabKind; label: string; subtext:
 export function buildTileCommands({
 	activeSession,
 	setQuickActionOpen,
+	shortcuts,
 }: BuildTileCommandsArgs): QuickAction[] {
 	if (!canTileNewTab(activeSession) || !activeSession) return [];
 	const sessionId = activeSession.id;
@@ -66,24 +67,10 @@ export function buildTileCommands({
 		id: `tileBelow:${kind}`,
 		label,
 		subtext,
+		shortcut: kind === 'terminal' ? shortcuts?.tileTerminalBelow : undefined,
 		action: () => {
 			setQuickActionOpen(false);
-			// Captured inside the updater so focus is only requested when the tile
-			// actually landed.
-			let paneId: string | null = null;
-			updateSessionWith(sessionId, (s) => {
-				const result = tileNewTab(s, kind, {
-					saveToHistory: useSettingsStore.getState().defaultSaveToHistory,
-					showThinking: useSettingsStore.getState().defaultShowThinking,
-					browserHomeUrl: useSettingsStore.getState().browserHomeUrl,
-				});
-				if (!result) return s;
-				const group = result.session.tabGroups?.find((g) => g.id === result.session.activeGroupId);
-				paneId = group ? (findLeafByTabRef(group.layout, result.ref)?.id ?? null) : null;
-				return result.session;
-			});
-			if (paneId) useUIStore.getState().requestPaneFocus(paneId);
-			else notifyCenterFlash({ color: 'yellow', message: 'Nothing here to tile with' });
+			tileNewTabInSession(sessionId, kind);
 		},
 	}));
 }

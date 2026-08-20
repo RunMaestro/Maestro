@@ -763,6 +763,8 @@ The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the 
 | **Tile New File Below**     | New blank file tab takes the bottom half              |
 | **Tile New Terminal Below** | New terminal takes the bottom half                    |
 
+**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab. The other three stay in Quick Actions.
+
 Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half, and the new pane takes focus, so you can start typing in it right away.
 
 If a tile is already on screen, the split happens inside the pane you are working in rather than under the whole grid. That is what lets you build a layout one command at a time: tile a terminal under your chat, click into the terminal, then tile a browser under that.

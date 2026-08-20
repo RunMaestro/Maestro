@@ -159,6 +159,7 @@ These act on the tiled set showing in the Main Panel. See [Tiling Tabs](./genera
 | Maximize / Restore Pane   | `Ctrl+Cmd+Z`       | `Ctrl+Win+Z`       |
 | Rebalance Panes           | `Ctrl+Cmd+=`       | `Ctrl+Win+=`       |
 | Close Focused Pane        | `Ctrl+Cmd+W`       | `Ctrl+Win+W`       |
+| Tile New Terminal Below   | `Cmd+Shift+J`      | `Ctrl+Shift+J`     |
 
 <Note>
 The pane family deliberately requires **both** Ctrl and Cmd so it can never collide with the plain-Cmd equivalents (`Cmd+W` closes a tab, `Ctrl+Cmd+W` closes a pane). On Windows and Linux the second modifier is the Windows / Super key.
@@ -170,7 +171,7 @@ Maximize expands the focused pane to fill the panel and hides the rest; press it
 
 Closing a pane returns its tab to the tab bar rather than closing it. When only one pane is left the group dissolves and that tab goes back to the bar too.
 
-To create a tile without a drag, run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four.
+To create a tile without a drag, run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four. The terminal one also has a key of its own, `Cmd+Shift+J`: one modifier away from `Cmd+J` (new terminal tab), because a terminal beside your work is the split people reach for most.
 
 ## Input & Output
 

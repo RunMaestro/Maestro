@@ -244,6 +244,16 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
+	// The one "tile a NEW tab" command with a hotkey. It sits on Cmd+Shift+J, one
+	// modifier away from Cmd+J (open a new terminal tab), because a terminal is the
+	// thing users want beside their work often enough to earn a key. The other
+	// tileable kinds (AI, file, browser) stay palette-only - "Tile ... Below".
+	tileTerminalBelow: {
+		id: 'tileTerminalBelow',
+		label: 'Tile New Terminal Below',
+		keys: ['Meta', 'Shift', 'j'],
+		windowScoped: true,
+	},
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)

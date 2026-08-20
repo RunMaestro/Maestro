@@ -6,6 +6,13 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
+// Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
+// wiring rather than re-running the layout transform (covered in tileNewTab.test).
+const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession: vi.fn() }));
+vi.mock('../../../renderer/services/tileNewTabAction', () => ({
+	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
+}));
+
 /**
  * Creates a minimal mock context with all required handler functions.
  * The keyboard handler requires these functions to be present to avoid
@@ -606,6 +613,28 @@ describe('useMainKeyboardHandler', () => {
 
 			// Cmd+J should open a new terminal tab even when file preview overlay is open
 			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
+		});
+
+		it('tiles a new terminal below on tileTerminalBelow (Cmd+Shift+J)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockHandleOpenTerminalTab = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileTerminalBelow',
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'j', metaKey: true, shiftKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', 'terminal');
+			// The tiled twin must not also run the plain "new terminal tab" path.
+			expect(mockHandleOpenTerminalTab).not.toHaveBeenCalled();
 		});
 
 		it('should allow tab cycle shortcut with brace characters when layers are open', () => {

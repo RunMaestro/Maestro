@@ -12,6 +12,7 @@ import { selectActiveSession, updateSessionWith, useSessionStore } from '../../s
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -581,6 +582,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				}
 				trackShortcut('toggleMode');
+			} else if (ctx.isShortcut(e, 'tileTerminalBelow')) {
+				// Cmd+Shift+J: the tiled twin of Cmd+J. Instead of a new terminal tab
+				// that takes over the panel, split the current view and put the terminal
+				// in the bottom half. tileNewTabInSession focuses the new pane; it
+				// flashes and no-ops when the agent has nothing on screen to tile with.
+				e.preventDefault();
+				if (ctx.activeSessionId) {
+					tileNewTabInSession(ctx.activeSessionId, 'terminal');
+					trackShortcut('tileTerminalBelow');
+				}
 			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
 				e.preventDefault();
 				if (useSessionStore.getState().sessions.length > 0) {
