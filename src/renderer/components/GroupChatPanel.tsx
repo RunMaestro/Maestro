@@ -6,6 +6,7 @@
  * the MainPanel when a group chat is active.
  */
 
+import { useCallback, useEffect, useRef } from 'react';
 import type {
 	Theme,
 	GroupChat,
@@ -18,6 +19,11 @@ import type {
 import { GroupChatHeader } from './GroupChatHeader';
 import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
+import { OutputSearchBar } from './TerminalOutput/components/OutputSearchBar';
+import { useUIStore } from '../stores/uiStore';
+import { groupChatOutputSearchKey } from '../utils/outputSearch';
+import { useLayerStack } from '../contexts/LayerStackContext';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 
 interface GroupChatPanelProps {
 	theme: Theme;
@@ -116,6 +122,65 @@ export function GroupChatPanel({
 	ghCliAvailable,
 	onPublishMessageGist,
 }: GroupChatPanelProps): JSX.Element {
+	const searchKey = groupChatOutputSearchKey(groupChat.id);
+	const searchSlot = useUIStore((s) => s.outputSearchByKey?.[searchKey]);
+	const outputSearchOpen = searchSlot?.open ?? false;
+	const outputSearchQuery = searchSlot?.query ?? '';
+	const outputSearchRegex = searchSlot?.regex ?? false;
+
+	const setOutputSearchOpen = useCallback(
+		(open: boolean) => {
+			useUIStore.getState().setOutputSearchOpen(searchKey, open);
+		},
+		[searchKey]
+	);
+	const setOutputSearchQuery = useCallback(
+		(query: string) => {
+			useUIStore.getState().setOutputSearchQuery(searchKey, query);
+		},
+		[searchKey]
+	);
+	const setOutputSearchRegex = useCallback(
+		(regex: boolean) => {
+			useUIStore.getState().setOutputSearchRegex(searchKey, regex);
+		},
+		[searchKey]
+	);
+
+	const closeSearch = useCallback(() => {
+		setOutputSearchOpen(false);
+		setOutputSearchQuery('');
+		inputRef?.current?.focus();
+	}, [setOutputSearchOpen, setOutputSearchQuery, inputRef]);
+
+	// Esc closes the Find bar the same way AI chat does (layer stack, not a local listener).
+	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
+	const layerIdRef = useRef<string>();
+	useEffect(() => {
+		if (!outputSearchOpen) return;
+		layerIdRef.current = registerLayer({
+			type: 'overlay',
+			priority: MODAL_PRIORITIES.SLASH_AUTOCOMPLETE,
+			blocksLowerLayers: false,
+			capturesFocus: true,
+			focusTrap: 'none',
+			onEscape: closeSearch,
+			allowClickOutside: true,
+			ariaLabel: 'Group Chat Search',
+		});
+		return () => {
+			if (layerIdRef.current) {
+				unregisterLayer(layerIdRef.current);
+			}
+		};
+	}, [outputSearchOpen, registerLayer, unregisterLayer, closeSearch]);
+
+	useEffect(() => {
+		if (outputSearchOpen && layerIdRef.current) {
+			updateLayerHandler(layerIdRef.current, closeSearch);
+		}
+	}, [outputSearchOpen, updateLayerHandler, closeSearch]);
+
 	return (
 		<div className="flex flex-col h-full" style={{ backgroundColor: theme.colors.bgMain }}>
 			<GroupChatHeader
@@ -132,6 +197,23 @@ export function GroupChatPanel({
 				onToggleRightPanel={onToggleRightPanel}
 				shortcuts={shortcuts}
 			/>
+
+			{/* Spike: open/close Find bar only. Match highlight + next/prev come next. */}
+			{outputSearchOpen && (
+				<OutputSearchBar
+					theme={theme}
+					outputSearchQuery={outputSearchQuery}
+					outputSearchRegex={outputSearchRegex}
+					regexError={null}
+					currentMatchIndex={0}
+					totalMatches={0}
+					setOutputSearchQuery={setOutputSearchQuery}
+					setOutputSearchRegex={setOutputSearchRegex}
+					goToNextMatch={() => {}}
+					goToPrevMatch={() => {}}
+					onClose={closeSearch}
+				/>
+			)}
 
 			<GroupChatMessages
 				ref={messagesRef}

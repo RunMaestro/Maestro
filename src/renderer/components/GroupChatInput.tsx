@@ -37,6 +37,8 @@ import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
 import { logger } from '../utils/logger';
 import { useDebouncedCallback } from '../hooks/utils/useThrottle';
+import { useUIStore } from '../stores/uiStore';
+import { groupChatOutputSearchKey } from '../utils/outputSearch';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -282,6 +284,14 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		(e: React.KeyboardEvent) => {
 			// Handle hotkeys that should work even when input has focus
 			if (e.metaKey || e.ctrlKey) {
+				// Cmd+F: open transcript Find (group chat has no TerminalOutput to catch this).
+				// Alt must be excluded: Opt+Cmd+F is cross-tab search and is not available here.
+				if (e.key === 'f' && !e.shiftKey && !e.altKey) {
+					e.preventDefault();
+					e.stopPropagation();
+					useUIStore.getState().setOutputSearchOpen(groupChatOutputSearchKey(groupChatId), true);
+					return;
+				}
 				// Cmd+R: Toggle read-only mode
 				if (e.key === 'r') {
 					e.preventDefault();
@@ -357,6 +367,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			setReadOnlyMode,
 			stagedImages,
 			onOpenLightbox,
+			groupChatId,
 		]
 	);
 
