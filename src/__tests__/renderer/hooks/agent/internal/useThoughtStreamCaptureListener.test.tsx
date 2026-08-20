@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useThoughtStreamCaptureListener } from '../../../../../renderer/hooks/agent/internal/useThoughtStreamCaptureListener';
+import {
+	useThoughtStreamCaptureListener,
+	THOUGHT_FLUSH_MS,
+} from '../../../../../renderer/hooks/agent/internal/useThoughtStreamCaptureListener';
 import { useThoughtStreamStore } from '../../../../../renderer/stores/thoughtStreamStore';
 
 // Capture the registered onThinkingChunk handler so tests can drive it directly.
@@ -9,8 +12,16 @@ const mockUnsubscribe = vi.fn();
 
 const SESSION_ID = 'session-abc';
 
+/** Run the coalescing timer so buffered chunks land in the store. */
+function flush() {
+	act(() => {
+		vi.advanceTimersByTime(THOUGHT_FLUSH_MS);
+	});
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.useFakeTimers();
 	thinkingHandler = undefined;
 
 	(window as any).maestro = {
@@ -24,22 +35,15 @@ beforeEach(() => {
 		},
 	};
 
-	// rAF runs the callback synchronously so we can assert without waiting a frame.
-	vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-		cb(0);
-		return 1;
-	});
-	vi.stubGlobal('cancelAnimationFrame', vi.fn());
-
 	useThoughtStreamStore.setState({
 		panelSessionId: null,
 		minimized: false,
 		buffers: {},
-		capturing: {},
 	});
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
 
@@ -48,12 +52,11 @@ describe('useThoughtStreamCaptureListener', () => {
 		// Regression: Auto Run spawns its agent as `{sessionId}-batch-{timestamp}`,
 		// which never matched REGEX_AI_TAB, so every chunk was dropped.
 		renderHook(() => useThoughtStreamCaptureListener());
-		// Capture the base session, as the Auto Run card's "View Thoughts" does.
-		act(() => useThoughtStreamStore.getState().openPanel(SESSION_ID));
 
 		act(() => {
 			thinkingHandler?.(`${SESSION_ID}-batch-1699999999999`, 'auto-run reasoning ');
 		});
+		flush();
 
 		const entries = useThoughtStreamStore.getState().buffers[SESSION_ID]?.entries ?? [];
 		expect(entries).toHaveLength(1);
@@ -62,11 +65,11 @@ describe('useThoughtStreamCaptureListener', () => {
 
 	it('captures interactive `-ai-` tab thinking chunks too', () => {
 		renderHook(() => useThoughtStreamCaptureListener());
-		act(() => useThoughtStreamStore.getState().openPanel(SESSION_ID));
 
 		act(() => {
 			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'interactive reasoning');
 		});
+		flush();
 
 		const entries = useThoughtStreamStore.getState().buffers[SESSION_ID]?.entries ?? [];
 		expect(entries).toHaveLength(1);
@@ -74,27 +77,64 @@ describe('useThoughtStreamCaptureListener', () => {
 		expect(entries[0].tabId).toBe('tab1');
 	});
 
-	it('drops chunks for a session that is not capturing', () => {
+	// The reason capture is ambient: by the time a user goes looking at a wedged
+	// run, the reasoning that explains it has already streamed past.
+	it('buffers with no panel open so a later open has history to show', () => {
 		renderHook(() => useThoughtStreamCaptureListener());
-		// No openPanel - nothing is capturing.
+		expect(useThoughtStreamStore.getState().panelSessionId).toBeNull();
 
 		act(() => {
-			thinkingHandler?.(`${SESSION_ID}-batch-1699999999999`, 'ignored');
+			thinkingHandler?.(`${SESSION_ID}-batch-1699999999999`, 'reasoning nobody watched');
 		});
+		flush();
 
-		expect(useThoughtStreamStore.getState().buffers[SESSION_ID]).toBeUndefined();
+		const entries = useThoughtStreamStore.getState().buffers[SESSION_ID]?.entries ?? [];
+		expect(entries).toHaveLength(1);
+		expect(entries[0].text).toBe('reasoning nobody watched');
 	});
 
-	it('does not cross-contaminate a different session', () => {
+	it('keeps parallel sessions in their own buffers', () => {
 		renderHook(() => useThoughtStreamCaptureListener());
-		act(() => useThoughtStreamStore.getState().openPanel(SESSION_ID));
 
 		act(() => {
-			// Chunk for a DIFFERENT base session - must not land in SESSION_ID's buffer.
+			thinkingHandler?.(`${SESSION_ID}-batch-1700000000000`, 'mine');
 			thinkingHandler?.('other-session-batch-1700000000000', 'not mine');
 		});
+		flush();
 
-		expect(useThoughtStreamStore.getState().buffers[SESSION_ID]?.entries ?? []).toHaveLength(0);
-		expect(useThoughtStreamStore.getState().buffers['other-session']).toBeUndefined();
+		const state = useThoughtStreamStore.getState();
+		expect(state.buffers[SESSION_ID].entries.map((e) => e.text)).toEqual(['mine']);
+		expect(state.buffers['other-session'].entries.map((e) => e.text)).toEqual(['not mine']);
+	});
+
+	it('coalesces chunks inside one flush window into a single entry', () => {
+		renderHook(() => useThoughtStreamCaptureListener());
+
+		act(() => {
+			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'one ');
+			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'two ');
+			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'three');
+		});
+		// Nothing has landed yet - the timer has not fired.
+		expect(useThoughtStreamStore.getState().buffers[SESSION_ID]).toBeUndefined();
+		flush();
+
+		const entries = useThoughtStreamStore.getState().buffers[SESSION_ID].entries;
+		expect(entries).toHaveLength(1);
+		expect(entries[0].text).toBe('one two three');
+	});
+
+	it('lands mid-coalesce chunks on unmount instead of dropping them', () => {
+		const { unmount } = renderHook(() => useThoughtStreamCaptureListener());
+
+		act(() => {
+			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'last words');
+		});
+		act(() => unmount());
+
+		const entries = useThoughtStreamStore.getState().buffers[SESSION_ID]?.entries ?? [];
+		expect(entries).toHaveLength(1);
+		expect(entries[0].text).toBe('last words');
+		expect(mockUnsubscribe).toHaveBeenCalled();
 	});
 });

@@ -181,6 +181,8 @@ The runner will:
 
 While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
 
+Thoughts are buffered from the moment the agent starts thinking, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+
 It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
 
 - **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
@@ -188,15 +190,16 @@ It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flo
 - **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
 - **Search** - filter the captured thoughts with the search box; matches are highlighted.
 
-The button doubles as the live indicator: while capturing it pulses and reads **Capturing**.
+The button highlights once there are buffered thoughts waiting to be read, and its tooltip gives the count.
 
-**Open, minimize, close:**
+**Open, minimize, close, clear:**
 
-- **Open** starts capturing for that agent and shows the panel.
-- **Minimize** collapses the panel but **keeps capturing** in the background, so you can reopen it later and review everything since you opened it.
-- **Close** stops capturing and clears that agent's buffer.
+- **Open** shows the panel, already backfilled with everything the agent has thought so far.
+- **Minimize** collapses the panel and keeps recording.
+- **Close** hides the panel and keeps recording, so reopening it later still has the run's history.
+- **Clear** (the trash icon) is the only thing that discards a buffer.
 
-Capture is in-memory only - it does not survive an app restart, and the buffer is bounded so a long run can't grow memory without limit (the oldest thoughts are dropped once the cap is reached, noted as "trimmed" in the panel header). Running several Auto Runs at once? Each agent captures into its own independent stream; opening the panel for one agent never mixes in another's thoughts.
+Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: thoughts per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 
 ## Session Isolation
 

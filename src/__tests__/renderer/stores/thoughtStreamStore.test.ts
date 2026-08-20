@@ -3,18 +3,23 @@
  *
  * Covers the in-memory Thought Stream capture lifecycle:
  * - open / minimize / restore / close semantics
- * - capture gating (appendThought is a no-op unless capturing)
- * - minimize keeps capturing; close stops AND clears
- * - per-session buffer cap / trimmed flag
- * - the selectIsCapturing selector
+ * - ambient capture (thoughts buffer with no panel ever opened)
+ * - close and minimize both keep the buffer; only clearBuffer discards
+ * - per-session entry cap, per-session character cap, session LRU eviction
+ * - the selectThoughtCount / live selectors
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useThoughtStreamStore,
-	selectIsCapturing,
+	selectThoughtCount,
+	selectLastAppendAt,
+	isThoughtStreamLive,
 	groupThoughtsIntoBlocks,
 	THOUGHT_BLOCK_GAP_MS,
+	THOUGHT_LIVE_WINDOW_MS,
 	MAX_THOUGHTS_PER_SESSION,
+	MAX_THOUGHT_CHARS_PER_SESSION,
+	MAX_CAPTURED_SESSIONS,
 	type ThoughtEntry,
 } from '../../../renderer/stores/thoughtStreamStore';
 
@@ -31,7 +36,6 @@ function reset() {
 		panelSessionId: null,
 		minimized: false,
 		buffers: {},
-		capturing: {},
 	});
 }
 
@@ -43,33 +47,43 @@ describe('thoughtStreamStore', () => {
 		expect(s.panelSessionId).toBeNull();
 		expect(s.minimized).toBe(false);
 		expect(s.buffers).toEqual({});
-		expect(s.capturing).toEqual({});
 	});
 
-	it('openPanel focuses the session, starts capture, and seeds an empty buffer', () => {
+	it('openPanel focuses the session and seeds an empty buffer when it has not thought', () => {
 		useThoughtStreamStore.getState().openPanel(SID);
 		const s = useThoughtStreamStore.getState();
 		expect(s.panelSessionId).toBe(SID);
 		expect(s.minimized).toBe(false);
-		expect(s.capturing[SID]).toBe(true);
-		expect(s.buffers[SID]).toEqual({ entries: [], trimmed: false });
+		expect(s.buffers[SID]).toEqual({ entries: [], trimmed: false, chars: 0, lastAppendAt: 0 });
 	});
 
-	it('appendThought records into the buffer while capturing', () => {
+	it('appendThought records into the buffer', () => {
 		const store = useThoughtStreamStore.getState();
 		store.openPanel(SID);
 		store.appendThought(SID, TAB, 'first thought ');
 		store.appendThought(SID, TAB, 'second thought');
-		const entries = useThoughtStreamStore.getState().buffers[SID].entries;
-		expect(entries).toHaveLength(2);
-		expect(entries[0].text).toBe('first thought ');
-		expect(entries[0].tabId).toBe(TAB);
-		expect(entries[1].text).toBe('second thought');
+		const buf = useThoughtStreamStore.getState().buffers[SID];
+		expect(buf.entries).toHaveLength(2);
+		expect(buf.entries[0].text).toBe('first thought ');
+		expect(buf.entries[0].tabId).toBe(TAB);
+		expect(buf.entries[1].text).toBe('second thought');
+		expect(buf.chars).toBe('first thought '.length + 'second thought'.length);
+		expect(buf.lastAppendAt).toBeGreaterThan(0);
 	});
 
-	it('appendThought is a no-op when the session is not capturing', () => {
-		useThoughtStreamStore.getState().appendThought(SID, TAB, 'ignored');
-		expect(useThoughtStreamStore.getState().buffers[SID]).toBeUndefined();
+	// The whole point of the feature: you open the stream BECAUSE a run wedged,
+	// so the history has to already be there.
+	it('buffers ambiently for a session whose panel was never opened', () => {
+		useThoughtStreamStore.getState().appendThought(SID, TAB, 'thought nobody was watching');
+		const s = useThoughtStreamStore.getState();
+		expect(s.panelSessionId).toBeNull();
+		expect(s.buffers[SID].entries).toHaveLength(1);
+
+		// Opening later shows that backlog rather than a fresh empty buffer.
+		s.openPanel(SID);
+		const after = useThoughtStreamStore.getState();
+		expect(after.buffers[SID].entries).toHaveLength(1);
+		expect(after.buffers[SID].entries[0].text).toBe('thought nobody was watching');
 	});
 
 	it('appendThought ignores empty text', () => {
@@ -79,7 +93,7 @@ describe('thoughtStreamStore', () => {
 		expect(useThoughtStreamStore.getState().buffers[SID].entries).toHaveLength(0);
 	});
 
-	it('minimize keeps capturing and preserves the buffer', () => {
+	it('minimize preserves the buffer and keeps recording', () => {
 		const store = useThoughtStreamStore.getState();
 		store.openPanel(SID);
 		store.appendThought(SID, TAB, 'thinking...');
@@ -87,20 +101,19 @@ describe('thoughtStreamStore', () => {
 		const s = useThoughtStreamStore.getState();
 		expect(s.minimized).toBe(true);
 		expect(s.panelSessionId).toBe(SID);
-		expect(s.capturing[SID]).toBe(true);
-		// capture continues while minimized
 		s.appendThought(SID, TAB, ' more');
 		expect(useThoughtStreamStore.getState().buffers[SID].entries).toHaveLength(2);
 	});
 
-	it('restore un-minimizes without touching capture', () => {
+	it('restore un-minimizes without touching the buffer', () => {
 		const store = useThoughtStreamStore.getState();
 		store.openPanel(SID);
+		store.appendThought(SID, TAB, 'kept');
 		store.minimizePanel();
 		store.restorePanel();
 		const s = useThoughtStreamStore.getState();
 		expect(s.minimized).toBe(false);
-		expect(s.capturing[SID]).toBe(true);
+		expect(s.buffers[SID].entries).toHaveLength(1);
 	});
 
 	it('reopening a minimized session preserves its existing buffer', () => {
@@ -115,44 +128,29 @@ describe('thoughtStreamStore', () => {
 		expect(s.buffers[SID].entries[0].text).toBe('kept');
 	});
 
-	it('closePanel stops capture, clears the buffer, and hides the panel', () => {
+	it('closePanel hides the panel but keeps the buffer and keeps recording', () => {
 		const store = useThoughtStreamStore.getState();
 		store.openPanel(SID);
-		store.appendThought(SID, TAB, 'gone after close');
+		store.appendThought(SID, TAB, 'survives the close');
 		store.closePanel();
 		const s = useThoughtStreamStore.getState();
 		expect(s.panelSessionId).toBeNull();
 		expect(s.minimized).toBe(false);
-		expect(s.capturing[SID]).toBeUndefined();
-		expect(s.buffers[SID]).toBeUndefined();
+		expect(s.buffers[SID].entries).toHaveLength(1);
+
+		s.appendThought(SID, TAB, ' and after');
+		expect(useThoughtStreamStore.getState().buffers[SID].entries).toHaveLength(2);
 	});
 
-	it('stopCapture clears one session without disturbing another', () => {
-		const store = useThoughtStreamStore.getState();
-		store.openPanel(SID);
-		store.appendThought(SID, TAB, 'a');
-		// background-capture a second session
-		useThoughtStreamStore.setState((prev) => ({
-			capturing: { ...prev.capturing, 'session-2': true },
-			buffers: { ...prev.buffers, 'session-2': { entries: [], trimmed: false } },
-		}));
-		store.appendThought('session-2', 'tab-b', 'b');
-		store.stopCapture(SID);
-		const s = useThoughtStreamStore.getState();
-		expect(s.capturing[SID]).toBeUndefined();
-		expect(s.buffers[SID]).toBeUndefined();
-		expect(s.capturing['session-2']).toBe(true);
-		expect(s.buffers['session-2'].entries).toHaveLength(1);
-	});
-
-	it('clearBuffer empties entries but keeps capturing', () => {
+	it('clearBuffer discards entries and resets the counters', () => {
 		const store = useThoughtStreamStore.getState();
 		store.openPanel(SID);
 		store.appendThought(SID, TAB, 'x');
 		store.clearBuffer(SID);
-		const s = useThoughtStreamStore.getState();
-		expect(s.buffers[SID].entries).toHaveLength(0);
-		expect(s.capturing[SID]).toBe(true);
+		const buf = useThoughtStreamStore.getState().buffers[SID];
+		expect(buf.entries).toHaveLength(0);
+		expect(buf.chars).toBe(0);
+		expect(buf.trimmed).toBe(false);
 	});
 
 	it('caps the buffer at MAX_THOUGHTS_PER_SESSION and sets trimmed', () => {
@@ -171,9 +169,59 @@ describe('thoughtStreamStore', () => {
 		);
 	});
 
+	// The entry cap alone does not bound memory - one flush can carry a whole
+	// reasoning paragraph - so the character budget is the cap that actually holds.
+	it('caps the buffer at MAX_THOUGHT_CHARS_PER_SESSION by dropping whole oldest entries', () => {
+		const store = useThoughtStreamStore.getState();
+		const chunk = 'x'.repeat(MAX_THOUGHT_CHARS_PER_SESSION / 4);
+		for (let i = 0; i < 6; i++) store.appendThought(SID, TAB, chunk);
+		const buf = useThoughtStreamStore.getState().buffers[SID];
+		expect(buf.chars).toBeLessThanOrEqual(MAX_THOUGHT_CHARS_PER_SESSION);
+		expect(buf.chars).toBe(buf.entries.reduce((n, e) => n + e.text.length, 0));
+		expect(buf.entries.length).toBeLessThan(6);
+		expect(buf.trimmed).toBe(true);
+	});
+
+	it('keeps the newest thought even when it alone blows the character budget', () => {
+		const store = useThoughtStreamStore.getState();
+		store.appendThought(SID, TAB, 'y'.repeat(MAX_THOUGHT_CHARS_PER_SESSION + 100));
+		const buf = useThoughtStreamStore.getState().buffers[SID];
+		expect(buf.entries).toHaveLength(1);
+		expect(buf.chars).toBe(MAX_THOUGHT_CHARS_PER_SESSION + 100);
+	});
+
+	// Ambient capture means a whole fleet buffers in parallel, so cold sessions
+	// have to age out or an all-day app grows without limit.
+	describe('cross-session eviction', () => {
+		it('evicts the least-recently-active session past MAX_CAPTURED_SESSIONS', () => {
+			const store = useThoughtStreamStore.getState();
+			for (let i = 0; i < MAX_CAPTURED_SESSIONS + 3; i++) {
+				store.appendThought(`sess-${i}`, TAB, `t${i}`);
+			}
+			const { buffers } = useThoughtStreamStore.getState();
+			expect(Object.keys(buffers)).toHaveLength(MAX_CAPTURED_SESSIONS);
+			// The three oldest are gone, the newest survive.
+			expect(buffers['sess-0']).toBeUndefined();
+			expect(buffers['sess-2']).toBeUndefined();
+			expect(buffers[`sess-${MAX_CAPTURED_SESSIONS + 2}`]).toBeDefined();
+		});
+
+		it('never evicts the session the panel is focused on', () => {
+			const store = useThoughtStreamStore.getState();
+			store.appendThought('watched', TAB, 'the run being diagnosed');
+			store.openPanel('watched');
+			for (let i = 0; i < MAX_CAPTURED_SESSIONS + 5; i++) {
+				store.appendThought(`noise-${i}`, TAB, `n${i}`);
+			}
+			const { buffers } = useThoughtStreamStore.getState();
+			expect(Object.keys(buffers)).toHaveLength(MAX_CAPTURED_SESSIONS);
+			expect(buffers['watched'].entries).toHaveLength(1);
+		});
+	});
+
 	// N parallel Auto Runs must each capture into their own buffer - a thought
 	// from one run must never leak into another. The store is keyed by sessionId
-	// on both `capturing` and `buffers`, and the capture listener routes every
+	// in `buffers`, and the capture listener routes every
 	// IPC chunk by its parsed sessionId, so independence is structural; these
 	// tests guard against a regression that reintroduces a shared accumulator.
 	describe('parallel Auto Run independence', () => {
@@ -203,7 +251,7 @@ describe('thoughtStreamStore', () => {
 			expect(buffers['run-b'].entries.every((e) => e.tabId === 'tab-b')).toBe(true);
 		});
 
-		it('closing one run leaves the others capturing untouched', () => {
+		it('closing one run leaves every buffer intact', () => {
 			const store = useThoughtStreamStore.getState();
 			['run-a', 'run-b', 'run-c'].forEach((sid) => store.openPanel(sid));
 			store.appendThought('run-a', 'tab-a', 'a');
@@ -215,12 +263,9 @@ describe('thoughtStreamStore', () => {
 			store.closePanel();
 
 			const s = useThoughtStreamStore.getState();
-			expect(s.capturing['run-c']).toBeUndefined();
-			expect(s.buffers['run-c']).toBeUndefined();
-			expect(s.capturing['run-a']).toBe(true);
-			expect(s.capturing['run-b']).toBe(true);
 			expect(s.buffers['run-a'].entries).toHaveLength(1);
 			expect(s.buffers['run-b'].entries).toHaveLength(1);
+			expect(s.buffers['run-c'].entries).toHaveLength(1);
 		});
 
 		it('per-session cap trims only the overflowing run', () => {
@@ -240,14 +285,24 @@ describe('thoughtStreamStore', () => {
 		});
 	});
 
-	it('selectIsCapturing reflects capture state', () => {
+	it('selectThoughtCount reports how much is buffered', () => {
 		const store = useThoughtStreamStore.getState();
-		expect(selectIsCapturing(SID)(useThoughtStreamStore.getState())).toBe(false);
-		store.openPanel(SID);
-		expect(selectIsCapturing(SID)(useThoughtStreamStore.getState())).toBe(true);
-		expect(selectIsCapturing(undefined)(useThoughtStreamStore.getState())).toBe(false);
-		store.closePanel();
-		expect(selectIsCapturing(SID)(useThoughtStreamStore.getState())).toBe(false);
+		expect(selectThoughtCount(SID)(useThoughtStreamStore.getState())).toBe(0);
+		expect(selectThoughtCount(undefined)(useThoughtStreamStore.getState())).toBe(0);
+		store.appendThought(SID, TAB, 'a');
+		store.appendThought(SID, TAB, 'b');
+		expect(selectThoughtCount(SID)(useThoughtStreamStore.getState())).toBe(2);
+	});
+
+	it('selectLastAppendAt drives the live indicator', () => {
+		const store = useThoughtStreamStore.getState();
+		expect(selectLastAppendAt(SID)(useThoughtStreamStore.getState())).toBe(0);
+		store.appendThought(SID, TAB, 'thinking');
+		const at = selectLastAppendAt(SID)(useThoughtStreamStore.getState());
+		expect(isThoughtStreamLive(at, at)).toBe(true);
+		expect(isThoughtStreamLive(at, at + THOUGHT_LIVE_WINDOW_MS + 1)).toBe(false);
+		// A session that never thought is never "live".
+		expect(isThoughtStreamLive(0)).toBe(false);
 	});
 });
 
