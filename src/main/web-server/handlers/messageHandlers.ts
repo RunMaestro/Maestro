@@ -3416,11 +3416,14 @@ export class WebSocketMessageHandler {
 	/**
 	 * Handle update_session_config message - update an agent's editable
 	 * per-session config (nudge / new-session message, custom path / args / env
-	 * vars, model, effort, context window, Claude token-source tri-state). Only
-	 * the keys present in `configPatch` are applied; a key with value `null`
-	 * clears that field. These are spawn-time settings (they take effect on the
-	 * next launch), so unlike cwd/SSH the renderer applies them even while the
+	 * vars, model, effort, context window, Claude token-source tri-state) or its
+	 * Left Bar bookmark. Only the keys present in `configPatch` are applied; a key
+	 * with value `null` clears that field. The spawn-time settings take effect on
+	 * the next launch, so unlike cwd/SSH the renderer applies them even while the
 	 * agent process is alive.
+	 *
+	 * A `configPatch.tabId` retargets the patch at one AI tab inside the agent
+	 * (starred / hasUnread / saveToHistory). The renderer owns both allowlists.
 	 */
 	private handleUpdateSessionConfig(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;

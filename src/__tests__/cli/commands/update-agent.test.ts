@@ -248,6 +248,58 @@ describe('update-agent command', () => {
 		);
 	});
 
+	it('sends bookmarked in the config patch for --bookmark', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { bookmark: 'true' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_config',
+				configPatch: { bookmarked: true },
+			}),
+			'update_session_config_result'
+		);
+	});
+
+	it('sends bookmarked:false for --bookmark false rather than dropping the key', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { bookmark: 'no' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ configPatch: { bookmarked: false } }),
+			'update_session_config_result'
+		);
+	});
+
+	it('rejects a non-boolean --bookmark value before contacting the app', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn();
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { bookmark: 'maybe' });
+
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--bookmark expects'));
+		expect(sendCommand).not.toHaveBeenCalled();
+	});
+
 	it('rejects an invalid --token-source value before contacting the app', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		const sendCommand = vi.fn();

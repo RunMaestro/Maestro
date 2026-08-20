@@ -75,7 +75,16 @@ import {
 } from './commands/auto-run-control';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
-import { tabNew, tabClose, tabRename, tabStar } from './commands/tab';
+import {
+	tabNew,
+	tabClose,
+	tabRename,
+	tabStar,
+	tabMove,
+	tabUnread,
+	tabSaveToHistory,
+} from './commands/tab';
+import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
@@ -730,6 +739,7 @@ program
 		'Claude token source: api | tui | dynamic (Claude Code agents only)'
 	)
 	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
 		'Switch the agent provider (resets tabs + clears provider config; requires --force)'
@@ -744,6 +754,21 @@ program
 	.description('Rename an agent in the Maestro desktop app')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, newName, options) => renameAgent(agentId, newName, options));
+
+// Bookmark commands - pin/unpin an agent in the Left Bar's Bookmarks section.
+// Mirrors the "Add Bookmark" context-menu item and Cmd+Shift+B. These are
+// explicit set operations, not a toggle, so re-running is idempotent.
+program
+	.command('bookmark <agent-id>')
+	.description("Bookmark an agent (pins it to the Left Bar's Bookmarks section)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => setBookmark(agentId, true, options));
+
+program
+	.command('unbookmark <agent-id>')
+	.description("Remove an agent's bookmark")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => setBookmark(agentId, false, options));
 
 // Focus agent command - select/focus an agent (and optionally a tab) in the UI
 program
@@ -794,6 +819,37 @@ tab
 	.description('Unstar a tab')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabStar(tabId, false, options));
+
+tab
+	.command('unread <tab-id>')
+	.description('Mark a tab unread (flags it for the human in the tab bar)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => tabUnread(tabId, true, options));
+
+tab
+	.command('read <tab-id>')
+	.description("Clear a tab's unread marker")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => tabUnread(tabId, false, options));
+
+tab
+	.command('save-to-history <tab-id> <bool>')
+	.description("Enable/disable synopsizing this tab's completions into History (true/false)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, bool, options) => {
+		const v = String(bool).trim().toLowerCase();
+		if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(v)) {
+			console.error(`Invalid value "${bool}". Use true or false.`);
+			process.exit(1);
+		}
+		return tabSaveToHistory(tabId, ['true', '1', 'yes', 'on'].includes(v), options);
+	});
+
+tab
+	.command('move <tab-id> <position>')
+	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, position, options) => tabMove(tabId, position, options));
 
 // Create SSH remote command - add a new SSH remote configuration
 program

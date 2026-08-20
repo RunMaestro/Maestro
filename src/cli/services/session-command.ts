@@ -60,19 +60,33 @@ export function resolveAgentOrFail(agentId: string, json?: boolean): string {
 	}
 }
 
+export interface DesktopTabEntry {
+	tabId: string;
+	agentId: string;
+}
+
+/**
+ * Every open AI tab across all desktop agents, in tab-bar order within each
+ * agent. Callers that care about position (tab reordering) rely on that
+ * ordering, so do not sort the result.
+ */
+export async function listDesktopTabs(): Promise<DesktopTabEntry[]> {
+	const res = await withMaestroClient((client) =>
+		client.sendCommand<{ sessions?: DesktopTabEntry[] }>(
+			{ type: 'list_desktop_sessions' },
+			'desktop_sessions_list'
+		)
+	);
+	return res.sessions ?? [];
+}
+
 /**
  * Resolve the agent (session) that owns a desktop tab by querying the running
  * app's open-tab list. Accepts an exact tab ID or a unique prefix. Throws on
  * not-found or ambiguous prefix so callers fail loudly.
  */
 export async function resolveTabOwner(tabId: string): Promise<{ agentId: string; tabId: string }> {
-	const res = await withMaestroClient((client) =>
-		client.sendCommand<{ sessions?: Array<{ tabId: string; agentId: string }> }>(
-			{ type: 'list_desktop_sessions' },
-			'desktop_sessions_list'
-		)
-	);
-	const list = res.sessions ?? [];
+	const list = await listDesktopTabs();
 	const exact = list.find((s) => s.tabId === tabId);
 	if (exact) return { agentId: exact.agentId, tabId: exact.tabId };
 	const matches = list.filter((s) => s.tabId.startsWith(tabId));
