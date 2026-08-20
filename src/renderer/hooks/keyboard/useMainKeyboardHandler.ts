@@ -12,7 +12,8 @@ import { selectActiveSession, updateSessionWith, useSessionStore } from '../../s
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
-import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
+import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 
@@ -1376,6 +1377,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openTerminalSearch();
 					trackShortcut('searchTerminal');
+				} else if (ctx.activeGroupChatId) {
+					// Group chat replaces MainPanel/TerminalOutput, so Find must open here.
+					// When the Right Bar history tab is focused, leave Cmd+F to that panel's filter.
+					const groupRightTab = useGroupChatStore.getState().groupChatRightTab;
+					if (ctx.activeFocus === 'right' && groupRightTab === 'history') {
+						trackShortcut('filterHistory');
+					} else {
+						e.preventDefault();
+						useUIStore
+							.getState()
+							.setOutputSearchOpen(groupChatOutputSearchKey(ctx.activeGroupChatId), true);
+						trackShortcut('searchOutput');
+					}
 				} else if (ctx.activeFocus === 'main') {
 					// Main panel search - handled by TerminalOutput component, just track here
 					trackShortcut('searchOutput');
