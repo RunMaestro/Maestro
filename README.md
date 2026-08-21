@@ -126,6 +126,7 @@ npm run dev
 | Toggle Sidebar      | `Cmd+B`           | `Ctrl+B`            |
 | New Tab             | `Cmd+T`           | `Ctrl+T`            |
 | Usage Dashboard     | `Opt+Cmd+U`       | `Alt+Ctrl+U`        |
+| Concerto Stage      | `Opt+C`           | `Alt+C`             |
 | All Shortcuts       | `Cmd+/`           | `Ctrl+/`            |
 
 [Full keyboard shortcut reference](https://docs.runmaestro.ai/keyboard-shortcuts)

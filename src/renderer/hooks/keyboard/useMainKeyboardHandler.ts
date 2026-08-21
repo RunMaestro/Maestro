@@ -6,7 +6,8 @@ import {
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
 import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -314,6 +315,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.activeFocus === 'right' &&
 					ctx.activeRightTab === 'files' &&
 					ctx.fileTreeFilterOpen;
+				// The Concerto keys stay live through the guard. The stage is a
+				// workspace surface, not a dialog, so its own toggle has to be able to
+				// close it - a toggle that only ever opens is a dead keypress. And
+				// cadenzas float ABOVE every modal, so the only way to stash a stack of
+				// them while something else is open is to let this key through.
+				const isConcertoToggleShortcut =
+					(ctx.isShortcut(e, 'toggleConcerto') || ctx.isShortcut(e, 'toggleCadenzas')) &&
+					ctx.encoreFeatures?.concerto === true;
 				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
 				const isFontSizeShortcut =
 					(e.metaKey || e.ctrlKey) &&
@@ -363,6 +372,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
 						!isFontSizeShortcut &&
+						!isConcertoToggleShortcut &&
 						!isPromptComposerCycleShortcut
 					) {
 						return;
@@ -392,6 +402,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isFileFilterRefocusShortcut &&
 						!isOutputSearchGlobalShortcut &&
 						!isOutputSearchRefocusShortcut &&
+						!isConcertoToggleShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
@@ -815,6 +826,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
 				trackShortcut('openCue');
+			} else if (ctx.isShortcut(e, 'toggleConcerto') && ctx.encoreFeatures?.concerto) {
+				// Toggle, not open: the stage is a window the user parks and brings
+				// back, and its panels keep running either way.
+				e.preventDefault();
+				getModalActions().toggleConcertoStage();
+				trackShortcut('toggleConcerto');
+			} else if (ctx.isShortcut(e, 'toggleCadenzas') && ctx.encoreFeatures?.concerto) {
+				e.preventDefault();
+				toggleAllCadenzas();
+				trackShortcut('toggleCadenzas');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

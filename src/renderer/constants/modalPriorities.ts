@@ -297,6 +297,12 @@ export const MODAL_PRIORITIES = {
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
 
+	/** Concerto stage - the agent-composed movement panels in one resizable
+	 * window. Sits below the plugin band and every settings-level modal, so a
+	 * modal opened on top of the stage takes Escape first and the stage stays up
+	 * behind it. */
+	CONCERTO_STAGE: 415,
+
 	/** Reserved band for community-plugin panels/modals. Plugin UI is allocated
 	 * sequentially from PLUGIN_PANEL_BASE up to (but not reaching) SSH_REMOTE/
 	 * Settings, so plugins always sit below first-party settings-level modals and

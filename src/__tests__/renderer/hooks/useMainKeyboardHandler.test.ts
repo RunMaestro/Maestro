@@ -418,6 +418,52 @@ describe('useMainKeyboardHandler', () => {
 			// The event should NOT be prevented when Tab is pressed with layers open
 		});
 
+		it('keeps the Concerto keys live while a modal is open', () => {
+			// The stage is a modal itself, so a toggle blocked by the modal guard
+			// could only ever open it; cadenzas float above every modal, so stashing
+			// them has to work from anywhere too.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: true },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
+		it('still blocks the Concerto keys when the Encore Feature is off', () => {
+			useModalStore.getState().closeModal('concertoStage');
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: false },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+		});
+
 		it('should allow layout shortcuts (Alt+Cmd+Arrow) when modals are open', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 

@@ -22,7 +22,12 @@ export interface UiSurfaceTab {
 }
 
 /** Encore Feature flag that must be on for a surface to exist. */
-export type UiSurfaceEncoreFlag = 'directorNotes' | 'usageStats' | 'symphony' | 'maestroCue';
+export type UiSurfaceEncoreFlag =
+	| 'directorNotes'
+	| 'usageStats'
+	| 'symphony'
+	| 'maestroCue'
+	| 'concerto';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -56,6 +61,17 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 ];
 
 export const UI_SURFACES: UiSurface[] = [
+	{
+		id: 'concerto',
+		label: 'Concerto',
+		aliases: ['concerto-stage', 'stage', 'movement'],
+		modal: 'concertoStage',
+		description: 'The Concerto stage: agent-composed interactive views in one resizable window.',
+		shortcutId: 'toggleConcerto',
+		commandPalette: 'Show Concerto Stage',
+		click: 'Concerto in the Left Bar hamburger menu',
+		encore: 'concerto',
+	},
 	{
 		id: 'cue',
 		label: 'Maestro Cue',

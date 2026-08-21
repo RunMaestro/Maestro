@@ -491,6 +491,8 @@ interface MaestroAPI {
 		) => () => void;
 		onRemoteCadenzaFlash: (callback: (id: string) => void) => () => void;
 		flashCadenza: (id: string) => void;
+		onRemoteCadenzaHidden: (callback: (hidden: boolean) => void) => () => void;
+		setCadenzasHidden: (hidden: boolean) => void;
 		onRemoteMovement: (
 			callback: (
 				params: {

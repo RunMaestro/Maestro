@@ -390,7 +390,9 @@ export type ModalId =
 	| 'cueModal'
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
-	| 'pianolaModal';
+	| 'pianolaModal'
+	// Concerto (agent-composed views)
+	| 'concertoStage';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -659,7 +661,7 @@ export const selectModalData =
  * Use this for event handlers and callbacks.
  */
 export function getModalActions() {
-	const { openModal, closeModal, updateModalData } = useModalStore.getState();
+	const { openModal, closeModal, toggleModal, updateModalData } = useModalStore.getState();
 
 	return {
 		// Settings Modal
@@ -1053,6 +1055,14 @@ export function getModalActions() {
 		// Pianola Modal (autonomous manager: rules + decision log)
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
+
+		// Concerto stage. This one flag is the whole truth about whether the stage
+		// is up: the movement store reads it back rather than keeping its own
+		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
+		// panel cannot disagree about it.
+		setConcertoStageOpen: (open: boolean) =>
+			open ? openModal('concertoStage') : closeModal('concertoStage'),
+		toggleConcertoStage: () => toggleModal('concertoStage'),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),

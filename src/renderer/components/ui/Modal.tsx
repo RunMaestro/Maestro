@@ -99,6 +99,16 @@ export interface ModalProps {
 	closeOnBackdropClick?: boolean;
 	/** z-index for the modal. Defaults to 9999 */
 	zIndex?: number;
+	/**
+	 * Keep the modal mounted but inert and off screen. For a modal whose content
+	 * owns live state that must survive being closed - an iframe mid-interaction,
+	 * a running media element - where the usual `{isOpen && <Modal/>}` pattern
+	 * would destroy it. While hidden the overlay is `display: none`, no layer is
+	 * registered (so Escape and the focus trap belong to whatever is underneath),
+	 * and the auto-focus does not run. Callers that have nothing to preserve
+	 * should keep conditionally rendering instead - it is cheaper.
+	 */
+	hidden?: boolean;
 	/** Whether to show the default header. Defaults to true */
 	showHeader?: boolean;
 	/** Whether to show the close button in header. Defaults to true */
@@ -163,6 +173,7 @@ export function Modal({
 	maxHeight = '90vh',
 	closeOnBackdropClick = false,
 	zIndex = 9999,
+	hidden = false,
 	showHeader = true,
 	showCloseButton = true,
 	layerOptions,
@@ -198,11 +209,17 @@ export function Modal({
 		externalRef: cardElementRef,
 	});
 
-	// Register with layer stack for Escape handling and focus management
-	useModalLayer(priority, title, onClose, layerOptions);
+	// Register with layer stack for Escape handling and focus management. A hidden
+	// modal registers nothing: it is on screen for nobody, so it must not eat
+	// Escape or trap focus away from the app behind it.
+	useModalLayer(priority, title, onClose, {
+		...layerOptions,
+		enabled: (layerOptions?.enabled ?? true) && !hidden,
+	});
 
-	// Auto-focus on mount
+	// Auto-focus on mount, and again whenever a hidden modal is shown.
 	useEffect(() => {
+		if (hidden) return;
 		requestAnimationFrame(() => {
 			if (initialFocusRef?.current) {
 				initialFocusRef.current.focus();
@@ -211,7 +228,7 @@ export function Modal({
 				containerRef.current?.focus();
 			}
 		});
-	}, [initialFocusRef]);
+	}, [hidden, initialFocusRef]);
 
 	const handleBackdropClick = (e: React.MouseEvent) => {
 		// Only close if clicking directly on backdrop, not on modal content.
@@ -241,10 +258,11 @@ export function Modal({
 		<div
 			ref={containerRef}
 			className="fixed inset-0 modal-overlay flex items-center justify-center animate-in fade-in duration-200 outline-none"
-			style={{ zIndex }}
+			style={{ zIndex, ...(hidden ? { display: 'none' } : null) }}
 			role="dialog"
 			aria-modal="true"
 			aria-label={title}
+			aria-hidden={hidden || undefined}
 			tabIndex={-1}
 			onClick={handleBackdropClick}
 			onKeyDown={(e) => e.stopPropagation()}

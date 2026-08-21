@@ -345,6 +345,18 @@ src/
 
 ## Critical Implementation Guidelines
 
+### Every Surface Needs Three Ways In and Two Ways Out
+
+A modal, dashboard, or panel the user opens is not done until it has a **hotkey**
+(`DEFAULT_SHORTCUTS` + `useMainKeyboardHandler`), a **command palette** entry
+(`QuickActionsModal/commands/`), and a **menu** item (`HamburgerMenuContent.tsx`,
+skipped only for an in-the-moment show/hide toggle), plus an entry in
+`UI_SURFACES` (`src/shared/uiSurfaces.ts`). It also needs **Escape and a visible
+close control** (`<EscCloseButton>` or the `Modal` X), and a `resizeKey` so its
+size is remembered. If its content owns live state, closing must park it
+(`Modal`'s `hidden` prop), not unmount it. Full rules:
+[UI-PATTERNS.md → Every Surface Needs Three Ways In](docs/agent-guides/UI-PATTERNS.md#every-surface-needs-three-ways-in-and-two-ways-out).
+
 ### Click-Driven Modals: Disable Text Selection
 
 If a modal's primary purpose is _clicking_ (buttons, tabs, list rows, cards, graph nodes, filter chips, toggles), put `select-none` on its root container. Native browser drag-to-select highlighting fires accidentally during normal interactions and looks broken. Inputs and textareas keep working - Chromium preserves form-control selection regardless of ancestor `user-select: none`. For any nested subtree that's content-driven (detail views, code editors, log entry bodies, file paths, AI output, error messages), apply `select-text` on its root to opt back in. Skip the rule entirely on modals whose main purpose is reading or editing text (`CueYamlEditor`, `CueHelpModal`, wizard chat shell, System Log Viewer, confirmation dialogs). Decide click- vs content-driven when adding a new modal - retrofitting later means hunting down every nested view that needs `select-text`. Full rationale in [UI-PATTERNS.md → Text Selection in Modals](docs/agent-guides/UI-PATTERNS.md#text-selection-in-modals).

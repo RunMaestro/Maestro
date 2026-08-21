@@ -122,6 +122,16 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Maestro Cue',
 		keys: ['Alt', 'q'],
 	},
+	toggleConcerto: {
+		id: 'toggleConcerto',
+		label: 'Show/Hide Concerto Stage',
+		keys: ['Alt', 'c'],
+	},
+	toggleCadenzas: {
+		id: 'toggleCadenzas',
+		label: 'Show/Hide All Cadenzas',
+		keys: ['Alt', 'Shift', 'c'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',

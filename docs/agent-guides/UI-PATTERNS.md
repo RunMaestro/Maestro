@@ -6,6 +6,38 @@ Shared UI patterns, component library, and design system conventions for the Mae
 
 ---
 
+## Every Surface Needs Three Ways In and Two Ways Out
+
+A dashboard, modal, or panel the user is meant to open is not finished until all
+of these exist. This is not a style preference: a surface with one entry point is
+a surface most users never find, and one with no visible exit strands anyone on a
+tablet or a remote desktop. Ship them together, in the same change.
+
+**Three ways in:**
+
+| Way                 | Where it goes                                                                                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hotkey**          | `DEFAULT_SHORTCUTS` in `src/renderer/constants/shortcuts.ts`, handled in `useMainKeyboardHandler`                                                                                                                                   |
+| **Command palette** | A `build*Commands()` module under `src/renderer/components/QuickActionsModal/commands/`, wired in `QuickActionsModal.tsx`                                                                                                           |
+| **Menu**            | `HamburgerMenuContent.tsx` for a destination the user navigates to. Skip this one for an in-the-moment toggle (show/hide something already on screen), which belongs on a key and in the palette but not in a menu of places to go. |
+
+Register the surface in `UI_SURFACES` (`src/shared/uiSurfaces.ts`) at the same
+time. One entry gives you `maestro-cli open <surface>`, the `open_modal` bridge
+validation, and the discovery hint that teaches the user the hotkey - and it is
+the list a reviewer checks against.
+
+**Two ways out:** Escape (free via `useModalLayer` / the shared `Modal`) **and** a
+visible control - `<EscCloseButton>` or the `Modal` header's X. Never Escape alone.
+
+**And it should be resizable.** Any surface bigger than a confirm dialog takes a
+`resizeKey` so `useResizableModal` remembers the size the user dragged it to. A
+fixed-size dashboard is wrong on somebody's display.
+
+**Closing must park, never destroy.** If the content owns live state (an iframe,
+a media element, a running view), keep it mounted and pass `hidden` to `Modal`
+instead of unmounting it - see `ConcertoStageModal`. Reopening must return the
+user to exactly what they left.
+
 ## Modal System (LayerStack)
 
 Maestro uses a centralized **LayerStack** to manage all modals, overlays, and search interfaces. Every dismissable UI surface registers with the stack so that Escape always closes the topmost layer first.
