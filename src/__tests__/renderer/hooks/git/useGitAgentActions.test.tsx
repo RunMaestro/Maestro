@@ -204,6 +204,9 @@ describe('useGitAgentActions', () => {
 		expect(mockOpenModal).toHaveBeenCalledWith('gitLog', {
 			cwd: '/test/repo',
 			sshRemoteId: undefined,
+			// Names the agent in the viewer header: the cwd pill alone does not
+			// identify it, since worktrees of one repo share a path prefix.
+			sessionId: 'session-1',
 		});
 	});
 
@@ -271,6 +274,7 @@ describe('useGitAgentActions', () => {
 			expect(mockOpenModal).toHaveBeenCalledWith('gitDiff', {
 				diff: 'diff --git a/x b/x',
 				cwd: '/other/repo',
+				sessionId: 'session-1',
 			});
 		});
 
