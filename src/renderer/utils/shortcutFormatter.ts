@@ -1,76 +1,24 @@
 /**
- * Utility for formatting keyboard shortcuts for display.
+ * Renderer-side keyboard shortcut formatting.
  *
- * Converts internal key names (Meta, Alt, Shift, etc.) to platform-appropriate
- * symbols or text. On macOS, uses symbols (⌘, ⌥, ⇧, ⌃). On Windows/Linux,
- * uses readable text (Ctrl, Alt, Shift).
+ * Thin platform-binding wrapper: the key maps and the pure formatting live in
+ * `src/shared/shortcutKeys.ts` so the CLI and main process can produce the same
+ * strings. This file only answers "are we on macOS?" for the renderer.
  */
 
 import { isMacOSPlatform } from './platformUtils';
+import { formatKeyFor, formatShortcutKeysFor } from '../../shared/shortcutKeys';
 
 // Detect if running on macOS - uses window.maestro.platform (Electron preload bridge)
 function isMac(): boolean {
 	return isMacOSPlatform();
 }
 
-// macOS key symbol mappings
-const MAC_KEY_MAP: Record<string, string> = {
-	Meta: '⌘',
-	Alt: '⌥',
-	Shift: '⇧',
-	Control: '⌃',
-	Ctrl: '⌃',
-	ArrowUp: '↑',
-	ArrowDown: '↓',
-	ArrowLeft: '←',
-	ArrowRight: '→',
-	Backspace: '⌫',
-	Delete: '⌦',
-	Enter: '↩',
-	Return: '↩',
-	Escape: '⎋',
-	Tab: '⇥',
-	Space: '␣',
-};
-
-// Windows/Linux key mappings (more readable text)
-const OTHER_KEY_MAP: Record<string, string> = {
-	Meta: 'Ctrl',
-	Alt: 'Alt',
-	Shift: 'Shift',
-	Control: 'Ctrl',
-	Ctrl: 'Ctrl',
-	ArrowUp: '↑',
-	ArrowDown: '↓',
-	ArrowLeft: '←',
-	ArrowRight: '→',
-	Backspace: 'Backspace',
-	Delete: 'Delete',
-	Enter: 'Enter',
-	Return: 'Enter',
-	Escape: 'Esc',
-	Tab: 'Tab',
-	Space: 'Space',
-};
-
 /**
  * Format a single key for display based on platform.
  */
 export function formatKey(key: string): string {
-	const keyMap = isMac() ? MAC_KEY_MAP : OTHER_KEY_MAP;
-
-	// Check if there's a mapping for this key
-	if (keyMap[key]) {
-		return keyMap[key];
-	}
-
-	// For single character keys, uppercase them
-	if (key.length === 1) {
-		return key.toUpperCase();
-	}
-
-	// For other keys (like F1, F2, etc.), return as-is
-	return key;
+	return formatKeyFor(key, isMac());
 }
 
 /**
@@ -90,10 +38,7 @@ export function formatKey(key: string): string {
  * formatShortcutKeys(['Alt', 'Meta', 'ArrowRight']) // 'Alt+Ctrl+→'
  */
 export function formatShortcutKeys(keys: string[], separator?: string): string {
-	const defaultSeparator = isMac() ? ' ' : '+';
-	const sep = separator ?? defaultSeparator;
-
-	return keys.map(formatKey).join(sep);
+	return formatShortcutKeysFor(keys, isMac(), separator);
 }
 
 /**

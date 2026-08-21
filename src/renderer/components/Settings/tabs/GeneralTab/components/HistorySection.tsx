@@ -2,6 +2,7 @@ import { Clock, History } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface HistorySectionProps {
 	theme: Theme;
@@ -32,10 +33,7 @@ export function HistorySection({
 
 			{defaultSaveToHistory && (
 				<div className="mt-3" data-setting-id="general-synopsis-debounce">
-					<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-						<Clock className="w-3 h-3" />
-						Synopsis Debounce
-					</div>
+					<SettingsSectionHeading icon={Clock}>Synopsis Debounce</SettingsSectionHeading>
 					<ToggleButtonGroup
 						options={[
 							{ value: 0, label: 'Off' },
@@ -48,7 +46,7 @@ export function HistorySection({
 						onChange={setSynopsisDebounceSeconds}
 						theme={theme}
 					/>
-					<p className="text-xs opacity-50 mt-2">
+					<p className="text-xs opacity-70 mt-2">
 						Wait for the agent to be idle this long before generating a History synopsis. Rapid
 						back-to-back completions are coalesced into a single synopsis once the conversation
 						settles, and turns that did no real work (a plain question and answer with no tool use)

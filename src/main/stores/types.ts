@@ -54,6 +54,17 @@ export interface MaestroSettings {
 	fontSize: number;
 	fontFamily: string;
 	customFonts: string[];
+	mediaPlaybackRate: number;
+	/**
+	 * Floating player position plus its per-kind widths. Shape is owned by the
+	 * renderer (`PersistedMediaFloat`); the main process only stores it.
+	 */
+	mediaPlayerFloatRect: unknown;
+	/**
+	 * Play queue, loaded item, and remembered positions. Shape is owned by the
+	 * renderer (`PersistedMediaQueue`); the main process only stores it.
+	 */
+	mediaPlayerQueue: unknown;
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
 	// Web interface authentication
@@ -91,6 +102,11 @@ export interface MaestroSettings {
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.
 	globalShowHotkey: string[];
+	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
+	// the task uses the session's own agent (fully backward compatible).
+	utilityAgentId: string | null;
+	// Optional model override for the utility agent. When null, the agent default model is used.
+	utilityModelId: string | null;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

@@ -275,7 +275,8 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				get: function (sessionId) { return hostCall('sessions.get', { sessionId: sessionId }); },
 				create: function (params) { return hostCall('sessions.create', params || {}); },
 				update: function (sessionId, patch) { return hostCall('sessions.update', { sessionId: sessionId, patch: patch }); },
-				delete: function (sessionId) { return hostCall('sessions.delete', { sessionId: sessionId }); }
+				delete: function (sessionId) { return hostCall('sessions.delete', { sessionId: sessionId }); },
+				focus: function (sessionId, tabId) { return hostCall('sessions.focus', { sessionId: sessionId, tabId: tabId }); }
 			}),
 			transcripts: Object.freeze({
 				read: function (params) { return hostCall('transcripts.read', params); },
@@ -295,6 +296,9 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 					remove: function (id) { return hostCall('ui.hostViewRemove', { id: id }); }
 				}),
 				panelPost: function (panelId, data) { return hostCall('ui.panelPost', { panelId: panelId, data: data }); },
+				openPanel: function (panelId) { return hostCall('ui.openPanel', { panelId: panelId }); },
+				closePanel: function (panelId) { return hostCall('ui.closePanel', { panelId: panelId }); },
+				togglePanel: function (panelId) { return hostCall('ui.togglePanel', { panelId: panelId }); },
 				grouping: Object.freeze({
 					publish: function (params) { return hostCall('ui.groupingPublish', params); },
 					clear: function (id) { return hostCall('ui.groupingClear', { id: id }); }

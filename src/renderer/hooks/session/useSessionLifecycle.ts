@@ -16,11 +16,11 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { AdditionalDirectory, Session, AITab } from '../../types';
+import type { AdditionalDirectory, Session, FailoverConfig } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { generateId } from '../../utils/ids';
+import { switchTabProvider } from '../../utils/providerTabSessions';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -35,6 +35,8 @@ import { collectLeafTabRefs, generateGroupName, resolveTabRefTitle } from '../..
 import type { NavHistoryEntry, NavTabKind } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
+import { clearFailover, getActiveEndpoint } from '../../stores/failoverStore';
+import { failoverArmed, findEndpoint } from '../../../shared/providerFailover';
 
 /**
  * Resolve the active tab of a session into a breadcrumb descriptor (id + kind).
@@ -100,7 +102,10 @@ export interface SessionLifecycleReturn {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[]
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited',
+		failoverConfig?: FailoverConfig
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -181,8 +186,16 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
-			additionalDirectories?: AdditionalDirectory[]
+			additionalDirectories?: AdditionalDirectory[],
+			/** Provenance of `customContextWindow` (finding AD1). */
+			contextWindowSource?: 'user-edited',
+			failoverConfig?: FailoverConfig
 		) => {
+			// Provider Failover: snapshot whether this agent is currently pinned to a
+			// backup endpoint BEFORE the update below, so we can tell after the fact
+			// whether the saved config still covers it.
+			const activeEndpoint = getActiveEndpoint(sessionId);
+
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
@@ -200,6 +213,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customModel,
 						customEffort,
 						customContextWindow,
+						contextWindowSource,
 						sessionSshRemoteConfig,
 						enableMaestroP,
 						maestroPPath,
@@ -208,59 +222,67 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						// cleared on a provider switch below (unlike maestroP fields).
 						retryOnAvailabilityErrors,
 						retryOnTokenExhaustion,
+						failoverConfig,
 					};
 
-					// If provider changed, reset tabs and provider-specific config
+					// If the provider changed, park each tab's provider-specific state and
+					// restore whatever the incoming provider left behind. Tabs, transcripts,
+					// closed-tab history, and file preview tabs are all preserved: none of
+					// them are provider-specific, and switching back has to land the user on
+					// the same conversation they left.
 					if (toolType && toolType !== s.toolType) {
-						const newTabId = generateId();
-						const freshTab: AITab = {
-							id: newTabId,
-							agentSessionId: null,
-							name: null,
-							starred: false,
-							logs: [],
-							inputValue: '',
-							stagedImages: [],
-							createdAt: Date.now(),
-							state: 'idle',
-							saveToHistory: true,
-						};
-
 						Object.assign(updatedFields, {
 							toolType,
-							aiTabs: [freshTab],
-							activeTabId: newTabId,
-							closedTabHistory: [],
-							// Clear provider-specific overrides
+							aiTabs: s.aiTabs.map((tab) => switchTabProvider(tab, s.toolType, toolType)),
+							// Clear provider-specific overrides. These are agent-level config,
+							// not per-tab conversation state, so they are not parked - the edit
+							// modal already resets its own fields on a provider switch.
 							customPath: undefined,
 							customArgs: undefined,
 							customEnvVars: undefined,
 							customModel: undefined,
 							customEffort: undefined,
 							customContextWindow: undefined,
+							// Provenance describes the value cleared above, so it must not
+							// outlive it: a stale 'user-edited' would make the new
+							// provider's window look deliberate (finding AD1).
+							contextWindowSource: undefined,
 							enableMaestroP: undefined,
 							maestroPPath: undefined,
 							maestroPMode: undefined,
-							// Reset file preview tabs and unified tab order
-							filePreviewTabs: [],
-							activeFileTabId: null,
-							unifiedTabOrder: [{ type: 'ai' as const, id: newTabId }],
-							unifiedClosedTabHistory: [],
-							// Reset agent runtime state
-							state: 'idle' as const,
-							aiPid: 0,
-							executionQueue: [],
+							// Endpoint env carries provider-specific base URLs and tokens.
+							failoverConfig: undefined,
 						});
 
-						// Kill the existing AI process for this session
-						window.maestro.process.kill(`${sessionId}-ai`).catch(() => {
-							// Process may not exist - that's fine
-						});
+						// Any turn already in flight keeps running under the provider it was
+						// sent with: settings are codified at send, and this change applies from
+						// the next message. So the agent process is deliberately left alone, and
+						// the session's busy state with it. `turnProvider` on each tab is what
+						// keeps that turn's late events attributed to the old provider.
 					}
 
 					return { ...s, ...updatedFields };
 				})
 			);
+
+			// Provider Failover: the update above may disarm failover or drop the
+			// endpoint this agent is actively pinned to (an explicit edit, or the
+			// provider-switch reset a few lines up, which clears failoverConfig
+			// outright). The live pin is in-memory only (renderer store + main
+			// overlay) and will NOT disappear just because the session record
+			// changed underneath it, so it has to be cleared explicitly here.
+			// clearFailover no-ops when the agent isn't currently pinned, so this
+			// is always safe to check.
+			if (activeEndpoint) {
+				const newConfig = useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === sessionId)?.failoverConfig;
+				const stillCovered =
+					failoverArmed(newConfig) && !!findEndpoint(newConfig, activeEndpoint.id);
+				if (!stillCovered) {
+					void clearFailover(sessionId);
+				}
+			}
 		},
 		[]
 	);
@@ -575,6 +597,17 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			} catch (error) {
 				captureException(error, {
 					extra: { sessionId: id, operation: 'delete-playbooks' },
+				});
+			}
+
+			// Provider Failover: drop any live pin (renderer + main overlay) so a
+			// deleted agent's session id can't keep routing prompts to a backup
+			// provider if it's ever reused. No-op when the agent isn't pinned.
+			try {
+				await clearFailover(id);
+			} catch (error) {
+				captureException(error, {
+					extra: { sessionId: id, operation: 'clear-failover' },
 				});
 			}
 

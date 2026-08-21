@@ -11,6 +11,8 @@
  */
 
 import * as crypto from 'crypto';
+import * as path from 'path';
+import { getWakaTimeManager } from '../wakatime-instance';
 import type { CueEvent, CueRunResult, CueSubscription } from './cue-types';
 import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
@@ -28,6 +30,7 @@ import {
 	getProcessList,
 } from './cue-process-lifecycle';
 import { getOutputParser } from '../parsers';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
@@ -70,6 +73,37 @@ export interface CueExecutionConfig {
  * line and collects text from 'result' events. Falls back to raw stdout when no
  * parser is available or no result-text events are found (e.g. plain-text agents).
  */
+/**
+ * Build the per-run WakaTime heartbeat callback for a Cue run.
+ *
+ * Returns a no-op when WakaTime is not initialized (startup ordering, tests),
+ * so callers never have to null-check. Heartbeats are fire-and-forget and
+ * swallow their own errors: telemetry must not be able to fail a Cue run.
+ */
+function buildCueWakaTimeHeartbeat(
+	heartbeatSessionId: string,
+	projectDir: string | undefined,
+	isRemote: boolean
+): (() => void) | undefined {
+	const manager = getWakaTimeManager();
+	if (!manager) return undefined;
+
+	const projectName = projectDir ? path.basename(projectDir) : heartbeatSessionId;
+	return () => {
+		void manager
+			.sendHeartbeat(heartbeatSessionId, projectName, projectDir, {
+				// A Cue run is unattended by definition, which is what WakaTime's
+				// "ai coding" category means here.
+				source: 'auto',
+				isRemote,
+				origin: 'cue',
+			})
+			.catch(() => {
+				/* never let a heartbeat failure surface in a Cue run */
+			});
+	};
+}
+
 function extractCleanStdout(rawStdout: string, toolType: string): string {
 	if (!rawStdout.trim()) {
 		return rawStdout;
@@ -151,7 +185,9 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		config;
 
 	const startedAt = new Date().toISOString();
-	const startTime = Date.now();
+	// Sleep-aware: a run that spans a lid close must not report the sleep as
+	// agent work time (durationMs feeds the Conductor time credit).
+	const runSpan = beginSleepAwareSpan();
 
 	// Helper to build a failed result
 	const failedResult = (message: string): CueRunResult => ({
@@ -165,7 +201,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		stdout: '',
 		stderr: message,
 		exitCode: null,
-		durationMs: Date.now() - startTime,
+		durationMs: sleepAwareElapsedMs(runSpan),
 		startedAt,
 		endedAt: new Date().toISOString(),
 	});
@@ -218,6 +254,17 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	);
 
 	const sshActuallyUsed = !!spec.sshRemoteUsed;
+
+	// Cue spawns agents directly, so the ProcessManager's WakaTime listener
+	// never sees this run. Beat off the output stream instead. The run gets its
+	// own debounce bucket rather than sharing the desktop chat's, so a Cue run
+	// and a chat session in the same project both register.
+	const wakaHeartbeat = buildCueWakaTimeHeartbeat(
+		`cue:${session.id}:${runId}`,
+		session.projectRoot || session.cwd,
+		sshActuallyUsed
+	);
+
 	const processResult = await runProcess(runId, spec, {
 		toolType: config.toolType,
 		timeoutMs,
@@ -225,6 +272,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
 		stdinPrompt: sshActuallyUsed ? spec.stdinPrompt : undefined,
 		onLog,
+		onActivity: wakaHeartbeat,
 	});
 
 	// 5. Assemble final result
@@ -239,7 +287,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		stdout: extractCleanStdout(processResult.stdout, config.toolType),
 		stderr: processResult.stderr,
 		exitCode: processResult.exitCode,
-		durationMs: Date.now() - startTime,
+		durationMs: sleepAwareElapsedMs(runSpan),
 		startedAt,
 		endedAt: new Date().toISOString(),
 		providerSessionId: extractProviderSessionId(processResult.stdout, config.toolType),

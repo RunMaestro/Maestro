@@ -64,6 +64,7 @@ export interface HistoryGraphData {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	/**
 	 * Per-host entry counts in the same window the buckets cover. Key is
 	 * the entry's `hostname`, or `"__local__"` for entries with no
@@ -85,6 +86,7 @@ interface BucketAggregateLike {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	hostCounts: Record<string, number>;
 }
 
@@ -102,6 +104,7 @@ function aggregateToGraphData(
 		autoCount: agg.autoCount,
 		userCount: agg.userCount,
 		cueCount: agg.cueCount,
+		agentCount: agg.agentCount,
 		hostCounts: agg.hostCounts,
 		cached,
 	};
@@ -117,6 +120,7 @@ function cachedToGraphData(
 		autoCount: number;
 		userCount: number;
 		cueCount: number;
+		agentCount: number;
 		hostCounts: Record<string, number>;
 	},
 	fromCache: boolean
@@ -130,6 +134,7 @@ function cachedToGraphData(
 		autoCount: cached.autoCount,
 		userCount: cached.userCount,
 		cueCount: cached.cueCount,
+		agentCount: cached.agentCount,
 		hostCounts: cached.hostCounts,
 		cached: fromCache,
 	};
@@ -413,6 +418,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
 						cueCount: agg.cueCount,
+						agentCount: agg.agentCount,
 						hostCounts: agg.hostCounts,
 						computedAt: Date.now(),
 					});

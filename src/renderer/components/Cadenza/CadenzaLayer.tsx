@@ -378,6 +378,7 @@ export const CadenzaLayer = memo(function CadenzaLayer({
 	isHud = false,
 }: CadenzaLayerProps) {
 	const cadenzas = useCadenzaStore((s) => s.cadenzas);
+	const hidden = useCadenzaStore((s) => s.hidden);
 	const removeCadenza = useCadenzaStore((s) => s.removeCadenza);
 	const closeCadenza = useCallback(
 		(id: string) => {
@@ -392,12 +393,17 @@ export const CadenzaLayer = memo(function CadenzaLayer({
 	// Linux-unsupported mouse-move forwarding).
 	const reportCardRects = useCallback(() => {
 		if (!isHud) return;
-		const rects = Array.from(document.querySelectorAll('[data-cadenza-card]')).map((el) => {
-			const r = el.getBoundingClientRect();
-			return { x: r.left, y: r.top, width: r.width, height: r.height };
-		});
+		// A stashed layer must claim no hit regions: the cards are still mounted
+		// (so their state survives), but an invisible card that still swallows
+		// clicks would make the HUD window feel haunted.
+		const rects = hidden
+			? []
+			: Array.from(document.querySelectorAll('[data-cadenza-card]')).map((el) => {
+					const r = el.getBoundingClientRect();
+					return { x: r.left, y: r.top, width: r.width, height: r.height };
+				});
 		window.maestro?.process?.setCadenzaHudCardRects?.(rects);
-	}, [isHud]);
+	}, [hidden, isHud]);
 
 	// Observer setup is keyed on the SET of cards (ids), not the array identity, so
 	// a drag (which rewrites the array every pointermove) doesn't tear down and
@@ -423,7 +429,15 @@ export const CadenzaLayer = memo(function CadenzaLayer({
 	if (cadenzas.length === 0) return null;
 
 	return createPortal(
-		<div className="fixed inset-0 pointer-events-none" style={{ zIndex: 100000 }}>
+		// Stashing is a style flag, never a different render branch: unmounting a
+		// card would tear down its iframe and lose whatever the agent is tracking
+		// in it. `visibility: hidden` also makes the subtree unclickable.
+		<div
+			data-testid="cadenza-layer"
+			aria-hidden={hidden || undefined}
+			className="fixed inset-0 pointer-events-none"
+			style={{ zIndex: 100000, visibility: hidden ? 'hidden' : 'visible' }}
+		>
 			{cadenzas.map((view) => (
 				<CadenzaCard key={view.id} view={view} theme={theme} isHud={isHud} onClose={closeCadenza} />
 			))}

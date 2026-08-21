@@ -3,6 +3,7 @@ import {
 	TEXT_PAGE_CLASS,
 	TEXT_PAGE_GUTTER_CLASS,
 	TEXT_PAGE_CONTENT_CLASS,
+	TEXT_BASE_FONT_PX,
 	generateTextProseCss,
 } from '../../../../../renderer/components/FilePreview/textFast/proseStyles';
 import { createMockTheme } from '../../../../helpers/mockTheme';
@@ -71,5 +72,13 @@ describe('generateTextProseCss', () => {
 		const a = generateTextProseCss(makeTheme({ textMain: '#000' }));
 		const b = generateTextProseCss(makeTheme({ textMain: '#fff' }));
 		expect(a).not.toBe(b);
+	});
+
+	it('renders at the base size when no zoom is passed', () => {
+		expect(generateTextProseCss(makeTheme())).toContain(`font-size: ${TEXT_BASE_FONT_PX}px`);
+	});
+
+	it('multiplies the base size by the reader font zoom', () => {
+		expect(generateTextProseCss(makeTheme(), 2)).toContain(`font-size: ${TEXT_BASE_FONT_PX * 2}px`);
 	});
 });

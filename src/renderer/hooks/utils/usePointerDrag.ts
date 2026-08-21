@@ -16,6 +16,17 @@ export interface PointerDragOptions {
 	ignoreButtons?: boolean;
 	/** stopPropagation on the down event (e.g. a resize handle inside a draggable). */
 	stopPropagation?: boolean;
+	/**
+	 * Commit hook, fired once the gesture ends (pointerup or pointercancel).
+	 *
+	 * Deliberately called AFTER the listeners and pointer capture are torn down:
+	 * a drag that commits before cleaning up leaves its move listener attached if
+	 * the commit throws, and the handle then keeps tracking the pointer with no
+	 * button held. Not fired when the gesture is abandoned rather than finished
+	 * (unmount, or a second pointer starting a new drag) - there is nothing to
+	 * commit and the component may already be gone.
+	 */
+	onEnd?: () => void;
 }
 
 export function usePointerDrag() {
@@ -70,6 +81,7 @@ export function usePointerDrag() {
 			const onEnd = (ev: PointerEvent) => {
 				if (ev.pointerId !== pointerId) return;
 				cleanup();
+				opts.onEnd?.();
 			};
 			cleanupRef.current = cleanup;
 			window.addEventListener('pointermove', onMove);

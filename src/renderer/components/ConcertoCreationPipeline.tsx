@@ -24,7 +24,9 @@ const PHASE_LABELS: Record<ConcertoCreationPhase, string> = {
 	testing: 'Testing',
 };
 
-/** Above Movement Concertos (90000), below Cadenza and momentary feedback (100000). */
+/** Above the Concerto stage window (9000) and the modal layer, below Cadenza
+ *  and momentary feedback (100000): the score has to stay readable while the
+ *  stage it reports on is up. */
 const CONCERTO_PIPELINE_Z = 95000;
 const PIPELINE_EDGE_GAP = 12;
 const PIPELINE_DEFAULT_BOTTOM = 64;

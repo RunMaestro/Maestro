@@ -5,6 +5,11 @@
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 
+// Provider Failover config lives in its own module (pure, main+renderer safe) but
+// is re-exported here so consumers of the Session type get it in one import.
+import type { FailoverConfig } from './providerFailover';
+export type { FailoverConfig, FailoverEndpoint, FailoverState } from './providerFailover';
+
 /**
  * Union type of all valid agent IDs.
  * Derived from AGENT_IDS - the single source of truth in agentIds.ts.
@@ -238,6 +243,8 @@ export interface SessionInfo {
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
+	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
+	bookmarked?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */
@@ -274,6 +281,12 @@ export interface SessionInfo {
 	 * via {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnTokenExhaustion?: boolean;
+	/**
+	 * Provider Failover: ordered Anthropic-compatible backup endpoints this agent
+	 * falls back to when resilience would otherwise wait out the primary. Off unless
+	 * explicitly armed. See {@link FailoverConfig} in shared/providerFailover.
+	 */
+	failoverConfig?: FailoverConfig;
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
@@ -296,22 +309,59 @@ export interface UsageStats {
 	 */
 	contextWindowResolved?: boolean;
 	/**
+	 * The model whose window `contextWindow` describes, for providers whose window
+	 * is model-dependent (currently Oh My Pi). Consumers that preserve a resolved
+	 * window across an unresolved delta (see `mergeContextWindow`) scope that
+	 * preservation to the SAME model so a mid-session model switch to a model that
+	 * is absent from the primed catalog can't leave the gauge stuck on the previous
+	 * model's window. Undefined for providers with a single static window.
+	 */
+	contextWindowModel?: string;
+	/**
+	 * True when this usage event exists ONLY to correct a previously emitted
+	 * context window (Oh My Pi's catalog primed after the first turn's fallback
+	 * usage was already emitted - see `pushResolvedOmpContextWindow`). The token
+	 * and cost fields are a REPLAY of that already-counted turn, so accumulating
+	 * consumers must NOT add them again: update the context window and leave every
+	 * token/cost total untouched. Undefined for ordinary per-turn usage events.
+	 */
+	contextWindowCorrectionOnly?: boolean;
+	/**
+	 * Monotonic sequence number stamped by main's context-timeline capture log
+	 * (`src/main/process-listeners/context-timeline-log.ts`) as the event goes
+	 * out on `process:usage`. The renderer records it on the Context Timeline
+	 * point it builds, so a renderer that later hydrates from the main-side log
+	 * can dedup hydrated captures against live ones exactly. Undefined for usage
+	 * events that never passed through that listener (unit tests, replays).
+	 */
+	captureSeq?: number;
+	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
 	 * These are already included in outputTokens but tracked separately for UI display.
 	 */
 	reasoningTokens?: number;
 	/**
-	 * Pre-normalization absolute token totals, set ONLY for providers whose CLI
-	 * reports cumulative session usage that we delta-normalize before emitting
-	 * (currently Codex - see normalizeUsageToDelta in StdoutHandler). For those
-	 * providers the top-level fields above are per-turn DELTAS, which are correct
-	 * for token accumulation but wrong for context-fill display: the cumulative
-	 * total is what actually occupies the model window. Consumers that plot
-	 * context occupancy (the Context Timeline inspector) read from here when
-	 * present and fall back to the top-level fields otherwise. Undefined for
-	 * per-call providers (Claude, Copilot, OpenCode), whose top-level fields are
-	 * already absolute for the current turn.
+	 * Absolute context-occupancy snapshot for the turn, set by providers whose
+	 * top-level fields above are NOT occupancy. Two sources today:
+	 *
+	 * - Codex: its CLI reports cumulative session usage which we delta-normalize
+	 *   before emitting (see normalizeUsageToDelta in StdoutHandler), so the
+	 *   top-level fields are per-turn DELTAS - correct for token accumulation,
+	 *   wrong for context fill. The pre-normalization cumulative total is the
+	 *   occupancy.
+	 * - Claude Code: its result message sums every internal API call of the turn,
+	 *   so the top-level fields are token SPEND and a tool-heavy turn can exceed
+	 *   the window entirely. Its parser attaches the LAST internal call's usage
+	 *   here, which is real occupancy (a single call's input is what was
+	 *   physically sent to the model). Note `outputTokens` in that case is the
+	 *   last call's output, not the turn's - occupancy consumers read the input
+	 *   side.
+	 *
+	 * Consumers that plot context occupancy (the Context Timeline inspector, the
+	 * context gauge) read from here when present and fall back to the top-level
+	 * fields otherwise. Undefined for providers whose top-level fields are already
+	 * absolute for the current turn (Copilot, OpenCode).
 	 */
 	absoluteUsage?: {
 		inputTokens: number;
@@ -322,8 +372,23 @@ export interface UsageStats {
 	};
 }
 
-// History entry types for the History panel
-export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
+/**
+ * History entry types for the History panel.
+ *
+ * - `USER`  - an interactive turn the user typed themselves.
+ * - `AUTO`  - an Auto Run (playbook / goal) task the engine dispatched.
+ * - `CUE`   - a turn triggered by a Cue subscription.
+ * - `AGENT` - an ordinary message proxied in from ANOTHER agent (a cross-agent
+ *   `@mention` consult). It is a normal turn, not automation: the only thing
+ *   that differs from `USER` is who typed it. Consults were originally logged as
+ *   `AUTO`, which made them render as Auto Run tasks and inflated the Auto Run
+ *   counts; `normalizeHistoryEntryType` in `shared/history.ts` re-maps those
+ *   legacy entries on read.
+ *
+ * Adding a member here? `ALL_HISTORY_ENTRY_TYPES` (shared/history.ts) is the
+ * single list every filter/validator iterates - update it, not a local copy.
+ */
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT';
 
 export interface HistoryEntry {
 	id: string;
@@ -392,6 +457,34 @@ export interface Playbook {
 		createPROnCompletion: boolean;
 		prTargetBranch?: string;
 	};
+}
+
+/**
+ * Playbook status file contract (`.maestro/STATUS.json`).
+ *
+ * A running playbook / Auto Run can write this file to surface rich execution
+ * context to the Maestro UI. The main process watches for the file and pushes
+ * its contents to the renderer, which displays them in the Auto Run progress
+ * panel. Every field is optional so partial writes still render usefully.
+ *
+ * This is the single canonical declaration of the shape. The preload bridge,
+ * renderer types, and ambient `global.d.ts` all reference this type rather than
+ * redeclaring it.
+ */
+export interface PlaybookStatus {
+	/** Current feature or work item identifier (e.g. "F-13") */
+	feature?: string;
+	/** Current phase of the playbook (e.g. "IMPLEMENT", "VERIFY", "SPECIFY") */
+	phase?: string;
+	/** Human-readable summary of current progress */
+	summary?: string;
+	/** Test results from the current phase */
+	tests?: {
+		pass: number;
+		fail: number;
+	};
+	/** Relative path to a relevant artifact file */
+	artifact?: string;
 }
 
 // Document entry in the batch run queue (runtime version with IDs)
@@ -483,6 +576,13 @@ export interface AgentConfig {
 	available: boolean;
 	path?: string;
 	customPath?: string;
+	/**
+	 * Every detected installation path for this agent's binary, in priority
+	 * order. Only populated when detection finds more than one, so the UI can
+	 * offer a chooser (e.g. an nvm-managed `codex` alongside a
+	 * `codex-multi-auth-codex` wrapper).
+	 */
+	allPaths?: string[];
 	requiresPty?: boolean;
 	hidden?: boolean;
 	configOptions?: AgentConfigOption[];

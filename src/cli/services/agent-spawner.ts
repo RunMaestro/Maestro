@@ -22,6 +22,7 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
@@ -152,7 +153,8 @@ function resolveAgentOverrides(
 	toolType: ToolType,
 	def: ReturnType<typeof getAgentDefinition>,
 	baseArgs: string[],
-	overrides: SpawnOverrides
+	overrides: SpawnOverrides,
+	readOnlyMode?: boolean
 ): { args: string[]; userCustomEnvVars?: Record<string, string> } {
 	const agentConfigValues = readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
@@ -161,6 +163,7 @@ function resolveAgentOverrides(
 		sessionCustomEffort: overrides.customEffort,
 		sessionCustomArgs: overrides.customArgs,
 		sessionCustomEnvVars: overrides.customEnvVars,
+		readOnlyMode,
 	});
 	const userCustomEnvVars =
 		overrides.customEnvVars ??
@@ -432,7 +435,8 @@ async function spawnClaudeAgent(
 		'claude-code',
 		def,
 		preOverrideArgs,
-		overrides
+		overrides,
+		readOnlyMode
 	);
 
 	// Inject the Maestro system prompt via `--append-system-prompt(-file)`. The
@@ -502,6 +506,15 @@ async function spawnClaudeAgent(
 			now: new Date(),
 		},
 		cliSpawnCoreDeps
+	);
+
+	// Beat WakaTime for the life of the run. CLI-spawned agents never reach the
+	// desktop's ProcessManager listener, so without this their time goes
+	// unrecorded under Maestro entirely.
+	const wakaHeartbeat = buildCliWakaTimeHeartbeat(
+		`cli:${cwd}`,
+		cwd,
+		Boolean(sshRemoteConfig?.enabled)
 	);
 
 	// SSH-wrap if a remote is configured; otherwise append prompt locally.
@@ -616,6 +629,7 @@ async function spawnClaudeAgent(
 
 		// Handle stdout - parse stream-json format
 		child.stdout?.on('data', (data: Buffer) => {
+			wakaHeartbeat?.();
 			jsonBuffer += data.toString();
 
 			// Process complete lines
@@ -843,7 +857,8 @@ async function spawnJsonLineAgent(
 		toolType,
 		def,
 		preOverrideArgs,
-		overrides
+		overrides,
+		readOnlyMode
 	);
 
 	// Pass only the user-level env (no agent defaults) so shell-provided values
@@ -895,6 +910,14 @@ async function spawnJsonLineAgent(
 			: [...baseArgs, '--', effectivePrompt];
 
 	const agentCommand = getAgentCommand(toolType);
+
+	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
+	// WakaTime listener, so they beat from their own output stream.
+	const wakaHeartbeat = buildCliWakaTimeHeartbeat(
+		`cli:${cwd}`,
+		cwd,
+		Boolean(sshRemoteConfig?.enabled)
+	);
 
 	let spawnCommand = agentCommand;
 	let spawnArgs = localArgs;
@@ -999,6 +1022,7 @@ async function spawnJsonLineAgent(
 		};
 
 		child.stdout?.on('data', (data: Buffer) => {
+			wakaHeartbeat?.();
 			jsonBuffer += data.toString();
 			const lines = jsonBuffer.split('\n');
 			jsonBuffer = lines.pop() || '';

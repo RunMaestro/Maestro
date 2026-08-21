@@ -17,6 +17,7 @@ import {
 	type CopilotShutdownWaitResult,
 } from '../CopilotShutdownWaiter';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { isSupersededGeneration } from '../generation';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -97,6 +98,25 @@ export class ExitHandler {
 		// disk so the rendered text matches what Copilot truly finished
 		// with (not the stale planning narration our parent saw last).
 		await this.awaitCopilotShutdown(sessionId, managedProcess);
+
+		// The main guard. `awaitCopilotShutdown` is the only suspension point in
+		// this method, so it is the only place a replacement can claim the session
+		// id mid-flight, and this is the earliest point the question can be asked
+		// for everything downstream. (That method has awaits of its OWN and emits
+		// from inside them, so it carries a second check at its emit site - this
+		// one runs after it has already returned.) Every step below emits
+		// into shared per-session state (batch-mode result text, the stream-json
+		// remainder, the streamedText fallback, usage, agent-error, query-complete,
+		// the final flush, exit), so a guard placed any lower silently lets some of
+		// this process's output land in the successor's turn.
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing all exit side effects',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
@@ -303,23 +323,42 @@ export class ExitHandler {
 		// before the exit event, so listeners see all data before exit fires.
 		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
-		const currentProcess = this.processes.get(sessionId);
-		if (currentProcess && currentProcess !== managedProcess) {
-			logger.warn('[ProcessManager] Ignoring stale process exit', 'ProcessManager', {
-				sessionId,
-				exitingPid: managedProcess.pid,
-				currentPid: currentProcess.pid,
-			});
+		// Re-checked immediately before settling the turn: `flushDataBuffer` above
+		// is async-adjacent enough that a replacement can still land between the
+		// two points.
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing exit event',
+				'ProcessManager',
+				{ sessionId, code }
+			);
 			return;
 		}
 
-		// Release ownership before notifying listeners. Replay handlers can spawn
-		// the next process synchronously from `exit` without replacing this one
-		// before its final buffered data has been emitted.
-		if (currentProcess === managedProcess) {
+		// Release ownership BEFORE notifying listeners. A replay handler can spawn
+		// the next process synchronously from `exit`, and it must find the key free
+		// rather than racing this one's teardown. Only OUR entry is deleted:
+		// deleting unconditionally would untrack a successor that already claimed
+		// the key, leaving a process the user cannot stop.
+		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
 		}
 		this.emitter.emit('exit', sessionId, code);
+	}
+
+	/**
+	 * True when a newer spawn has taken over this session id, so this process's
+	 * remaining work must not touch shared per-session state.
+	 *
+	 * Generation first: it stays meaningful after the successor deletes its own
+	 * map entry, which is exactly when an identity check silently starts passing
+	 * again. The map comparison is kept as a fallback for processes registered
+	 * without a generation.
+	 */
+	private isSuperseded(sessionId: string, managedProcess: ManagedProcess): boolean {
+		if (isSupersededGeneration(sessionId, managedProcess.spawnGeneration)) return true;
+		const current = this.processes.get(sessionId);
+		return current !== undefined && current !== managedProcess;
 	}
 
 	/**
@@ -407,6 +446,20 @@ export class ExitHandler {
 					managedProcess.contextWindow && managedProcess.contextWindow > 0
 						? managedProcess.contextWindow
 						: FALLBACK_CONTEXT_WINDOW;
+				// This method has its own awaits (the shutdown wait plus two disk
+				// reads), so a replacement can claim the session id before we get
+				// here - and `usage` is keyed by sessionId alone, so it would land on
+				// the live successor and misreport its context gauge with the dead
+				// turn's token counts. handleExit's guard runs only after this method
+				// RETURNS, so it cannot cover this emit.
+				if (this.isSuperseded(sessionId, managedProcess)) {
+					logger.warn(
+						'[ProcessManager] Session re-spawned during Copilot reconciliation, dropping usage',
+						'ProcessManager',
+						{ sessionId, agentSessionId }
+					);
+					return;
+				}
 				this.emitter.emit('usage', sessionId, {
 					inputTokens: usage.inputTokens,
 					outputTokens: usage.outputTokens,

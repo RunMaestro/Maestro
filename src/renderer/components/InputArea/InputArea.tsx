@@ -3,6 +3,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	useComposerInputStore,
 	selectAiComposerValue,
+	selectAiCommandMode,
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
@@ -33,6 +34,12 @@ import { SlashCommandPopover } from './overlays/SlashCommandPopover';
 import { TabCompletionPopover } from './overlays/TabCompletionPopover';
 import type { InputAreaProps } from './types';
 import { filterCommandHistory, getCurrentCommandHistory } from './utils/commandHistory';
+import { resolveCommandCwd } from '../../services/shellCommand';
+import { CommandModeBar } from './components/CommandModeBar';
+import { AiCommandProposal } from './components/AiCommandProposal';
+import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
+import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import { codifyTurnSettings } from '../../utils/providerTabSessions';
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -162,13 +169,19 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// PERF: Memoize derived state to avoid recalculation on every render
 	const isResumingSession = !!activeTab?.agentSessionId;
+	const commandMode = useComposerInputStore(selectAiCommandMode);
 	const canAttachImages = useMemo(() => {
+		// Neither command rung has anywhere to put an image: one pipes the draft to
+		// a shell, the other asks for a command line. Hide the affordance rather
+		// than leaving a button that stages an attachment the send path drops on
+		// the floor.
+		if (commandMode !== 'off') return false;
 		// Check if images are supported - depends on whether we're resuming an existing session
 		// If the active tab has an agentSessionId, we're resuming and need to check supportsImageInputOnResume
 		return isResumingSession
 			? hasCapability('supportsImageInputOnResume')
 			: hasCapability('supportsImageInput');
-	}, [isResumingSession, hasCapability]);
+	}, [isResumingSession, hasCapability, commandMode]);
 
 	// PERF: Memoize mode-related derived state
 	const { showQueueingBorder } = useMemo(() => {
@@ -198,7 +211,38 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode ? selectTerminalComposerValue : selectAiComposerValue
 	);
 
+	// Command mode: the AI composer is holding a shell command line, so it picks
+	// up the terminal's CLI affordances (the `$` prefix, the mode bar, and Tab
+	// completion over files, dirs, branches, tags, and prior commands). Read from
+	// the store rather than sniffed from the text - the `!` is consumed on entry,
+	// so the draft looks like any other string.
+	const isShellCommandDraft = !isTerminalMode && commandMode === 'shell';
+	// AI command mode holds prose, not a command line, so it gets NONE of those
+	// shell affordances - completing a branch name into an English sentence is
+	// noise, and a `$` in front of "delete the build output" is a lie.
+	const isAiCommandDraft = !isTerminalMode && commandMode === 'ai';
+	const isShellInput = isTerminalMode || isShellCommandDraft;
+
+	// The in-flight suggestion / proposed command for THIS tab, if any. Parked
+	// per tab, so switching away and back finds the same card waiting.
+	const aiCommandEntry = useAiCommandStore(selectAiCommandEntry(session.id, session.activeTabId));
+	const setAiCommandChoice = useAiCommandStore((s) => s.setAiCommandChoice);
+	// What the bar advertises. While a request is in flight the entry's stamp
+	// wins: settings are codified at send time, so changing the model mid-request
+	// applies from the NEXT one, and the bar must not claim otherwise.
+	const { turnModel, turnEffort } = useMemo(
+		() => codifyTurnSettings(activeTab, session),
+		[activeTab, session]
+	);
+	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : turnModel;
+	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : turnEffort;
+
 	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
+	// Non-reactive store handles for the change handler below.
+	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
+	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
+
+	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 
 	const currentCommandHistory = useMemo(
 		() => getCurrentCommandHistory(session, isTerminalMode),
@@ -279,6 +323,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode,
 		slashCommandOpen,
 		atMentionOpen,
+		commandMode,
+		setCommandMode: setAiCommandMode,
+		// Read at call time, not from the `inputValue` closure: onChange fires
+		// before setInputValue lands, so the store still holds the pre-edit text -
+		// which is exactly what "was the composer empty?" needs to test.
+		getPreviousValue: getAiValueAtCallTime,
 		keystrokeResizeScheduledRef,
 		setInputValue,
 		setSlashCommandOpen,
@@ -461,7 +511,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 			<TabCompletionPopover
 				isOpen={tabCompletionOpen}
-				isTerminalMode={isTerminalMode}
+				isShellInput={isShellInput}
 				isGitRepo={session.isGitRepo}
 				suggestions={tabCompletionSuggestions}
 				selectedIndex={selectedTabCompletionIndex}
@@ -507,10 +557,43 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								: theme.colors.bgMain,
 						}}
 					>
+						{(isShellCommandDraft || isAiCommandDraft) && (
+							<CommandModeBar
+								theme={theme}
+								mode={isAiCommandDraft ? 'ai' : 'shell'}
+								cwd={resolveCommandCwd(session)}
+								remoteName={session.sshRemote?.name}
+								isGitRepo={session.isGitRepo}
+								model={aiCommandModel}
+								effort={aiCommandEffort}
+							/>
+						)}
+
+						{isAiCommandDraft && aiCommandEntry && (
+							<AiCommandProposal
+								theme={theme}
+								entry={aiCommandEntry}
+								onAccept={() => acceptAiCommand(session, aiCommandEntry)}
+								onDismiss={() => {
+									// Hand the request back so the user can refine it, and put the
+									// caret where they can: declining is nearly always "that is not
+									// what I meant", not "never mind".
+									setInputValue(dismissAiCommand(aiCommandEntry));
+									inputRef.current?.focus();
+								}}
+								onChoose={(choice) =>
+									setAiCommandChoice(aiCommandKey(session.id, aiCommandEntry.tabId), choice)
+								}
+							/>
+						)}
+
 						<InputTextarea
 							session={session}
 							theme={theme}
 							isTerminalMode={isTerminalMode}
+							isCommandModeDraft={isShellCommandDraft}
+							isAiCommandDraft={isAiCommandDraft}
+							awaitingAiCommand={!!aiCommandEntry}
 							inputValue={inputValue}
 							spellCheckEnabled={spellCheckEnabled}
 							inputRef={inputRef}

@@ -12,7 +12,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	TerminalOutput,
@@ -20,6 +19,7 @@ import {
 } from '../../../renderer/components/TerminalOutput';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 
 // Mock dependencies
@@ -182,6 +182,8 @@ describe('TerminalOutput', () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		useSettingsStore.setState({ showToolCalls: true });
+		// A jump left behind by one test would fire inside the next one.
+		useUIStore.setState({ pendingLogJump: null });
 	});
 
 	afterEach(() => {
@@ -379,6 +381,337 @@ describe('TerminalOutput', () => {
 			const combinedText = markdownBlocks.map((el) => el.textContent).join('|');
 			expect(combinedText).not.toContain('response.Unknown command');
 			expect(combinedText).not.toContain('/nonexistentStart of a later response.');
+		});
+	});
+
+	describe('command-mode cards are never merged into a response group', () => {
+		const lsOutput = '\u001b[1m\u001b[36mnode_modules\u001b[0m tailwind.config.mjs\n';
+
+		function commandCard(overrides: Partial<LogEntry> = {}): LogEntry {
+			return createLogEntry({
+				id: 'card-1',
+				// `source: 'stdout'` is correct - the body really is terminal output.
+				// That is precisely why grouping used to swallow it.
+				source: 'stdout',
+				text: lsOutput,
+				shellCommand: {
+					command: 'ls',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+				},
+				...overrides,
+			});
+		}
+
+		function renderLogs(logs: LogEntry[], propOverrides: Record<string, unknown> = {}) {
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			return render(<TerminalOutput {...createDefaultProps({ session, ...propOverrides })} />);
+		}
+
+		it('gives the command its own row instead of appending it to the agent reply', () => {
+			// The reported bug: `!ls` output was concatenated onto the tail of the
+			// preceding agent message and rendered as markdown, ANSI codes and all.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'rather than guess now.', source: 'stdout' }),
+				commandCard(),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(2);
+
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('guess now.node_modules');
+			expect(markdown).not.toContain('node_modules');
+		});
+
+		it('renders the card chrome rather than a markdown bubble', () => {
+			// NOTE: this file stubs ansi-to-html to a passthrough, so the ANSI ->
+			// colour conversion itself is asserted in ShellCommandCard.test.tsx
+			// (which uses the real converter). What matters here is that the entry
+			// reaches the card at all, instead of being flattened into markdown.
+			renderLogs([commandCard()]);
+
+			// Card-only chrome: the command in the header and its exit status.
+			expect(screen.getByText('ls')).toBeInTheDocument();
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			// The output must NOT have gone through the markdown renderer.
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('node_modules');
+		});
+
+		it('keeps a card between two replies from stitching them together', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'Before.', source: 'stdout' }),
+				commandCard(),
+				createLogEntry({ id: 'resp-2', text: 'After.', source: 'stdout' }),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('Before.After.');
+		});
+
+		it('gives each of several commands its own row', () => {
+			const logs: LogEntry[] = [
+				commandCard({ id: 'card-1' }),
+				commandCard({ id: 'card-2' }),
+				commandCard({ id: 'card-3' }),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+		});
+
+		it('offers delete on a finished card when the transcript is editable', () => {
+			// The card takes an early return and never reaches the shared hover
+			// toolbar, so it has to carry the affordance itself - this asserts the
+			// props actually arrive from TerminalOutput.
+			renderLogs([commandCard()], { onDeleteLog: vi.fn() });
+
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
+		});
+
+		it('repaints a finished card that produced no output at all', () => {
+			// Regression: the LogItem memo compared `log.text`, which never changes
+			// for a silent command (`!true`), so the card stayed frozen mid-run -
+			// spinner up, Stop offered, and delete hidden behind its finished gate.
+			// Both `tabs` (what this file's getActiveTab mock reads) and `aiTabs`
+			// (what TerminalOutput's active-tab useMemo keys on). A session carrying
+			// only one of them can never repaint on a rerender, which would make
+			// this test assert the harness rather than the component.
+			const sessionWith = (log: LogEntry) => {
+				const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [log], isUnread: false }];
+				return createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			};
+			const onDeleteLog = vi.fn();
+
+			const running = commandCard({
+				text: '',
+				shellCommand: { command: 'true', cwd: '/repo', status: 'running' },
+			});
+			const { rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(running), onDeleteLog })} />
+			);
+			expect(screen.queryByTestId('shell-command-delete')).not.toBeInTheDocument();
+
+			const finished = commandCard({
+				text: '',
+				shellCommand: {
+					command: 'true',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+					durationMs: 12,
+				},
+			});
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(finished), onDeleteLog })} />
+			);
+
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			expect(screen.queryByText('Stop')).not.toBeInTheDocument();
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
+		});
+	});
+
+	describe('cross-tab search jump anchors', () => {
+		it('tags every rendered row with its entry id', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'A question', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'An answer', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			const ids = Array.from(container.querySelectorAll('[data-log-id]')).map((el) =>
+				el.getAttribute('data-log-id')
+			);
+			expect(ids).toEqual(['user-1', 'resp-1']);
+		});
+
+		it('anchors a collapsed response group to its first entry id', () => {
+			// resp-2 and resp-3 merge into the row owned by resp-1, so a jump
+			// targeting any of them has to resolve to that one anchor.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'Part 1. ', source: 'stdout' }),
+				createLogEntry({ id: 'resp-2', text: 'Part 2. ', source: 'stdout' }),
+				createLogEntry({ id: 'resp-3', text: 'Part 3.', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			const ids = Array.from(container.querySelectorAll('[data-log-id]')).map((el) =>
+				el.getAttribute('data-log-id')
+			);
+			expect(ids).toEqual(['resp-1']);
+		});
+
+		/**
+		 * jsdom has no layout engine, so the real scroll positions can't be
+		 * asserted. What these cover is the arbitration: a pending jump has to
+		 * reach the target row, and the two things that scroll the transcript on
+		 * their own (follow-the-tail auto-scroll, saved-position restore) have to
+		 * stand down while it does. Getting that wrong is what left the user on
+		 * the right tab but the wrong message.
+		 */
+		function setupJump(logs: LogEntry[], logId: string, extraProps = {}) {
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			useUIStore.getState().setPendingLogJump({ sessionId: session.id, tabId: 'tab-1', logId });
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, ...extraProps })} />
+			);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-log-id]'));
+			for (const row of rows) {
+				row.scrollIntoView = vi.fn();
+				Object.defineProperty(row, 'offsetParent', {
+					get: () => document.body,
+					configurable: true,
+				});
+			}
+			return { container, scrollContainer, scrollToSpy, rows };
+		}
+
+		const rowById = (rows: HTMLElement[], id: string) =>
+			rows.find((r) => r.getAttribute('data-log-id') === id)!;
+
+		it('scrolls to the jumped-to entry and flashes it', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'A question', source: 'user' }),
+				createLogEntry({ id: 'user-2', text: 'The hit', source: 'user' }),
+			];
+			const { rows } = setupJump(logs, 'user-2');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			const target = rowById(rows, 'user-2');
+			expect(target.scrollIntoView).toHaveBeenCalled();
+			expect(target.classList.contains('jump-flash')).toBe(true);
+			expect(rowById(rows, 'user-1').scrollIntoView).not.toHaveBeenCalled();
+		});
+
+		it('resolves a hit inside a collapsed group to the row that renders it', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'Part 1. ', source: 'stdout' }),
+				createLogEntry({ id: 'resp-2', text: 'Part 2.', source: 'stdout' }),
+			];
+			// resp-2 has no row of its own; the jump must land on resp-1's row.
+			const { rows } = setupJump(logs, 'resp-2');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(rowById(rows, 'resp-1').scrollIntoView).toHaveBeenCalled();
+		});
+
+		it('does not let auto-scroll yank the view back to the bottom', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'A reply', source: 'stdout' }),
+			];
+			const { scrollToSpy } = setupJump(logs, 'user-1');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('does not let the saved scroll position override the jump', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'A reply', source: 'stdout' }),
+			];
+			const { scrollContainer, rows } = setupJump(logs, 'user-1', { initialScrollTop: 900 });
+
+			// jsdom clamps every scrollTop to 0 (no layout), so the restored VALUE
+			// can't be asserted - watch for the assignment itself instead.
+			const scrollTopWrites = vi.fn();
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				get: () => 0,
+				set: scrollTopWrites,
+				configurable: true,
+			});
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollTopWrites).not.toHaveBeenCalled();
+			expect(rowById(rows, 'user-1').scrollIntoView).toHaveBeenCalled();
+		});
+
+		it('consumes the jump so it does not re-fire on the next render', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' })];
+			setupJump(logs, 'user-1');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(useUIStore.getState().pendingLogJump).toBeNull();
+		});
+
+		it('ignores a jump aimed at a different tab', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			useUIStore.getState().setPendingLogJump({
+				sessionId: session.id,
+				tabId: 'tab-2',
+				logId: 'user-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			const row = container.querySelector<HTMLElement>('[data-log-id="user-1"]')!;
+			row.scrollIntoView = vi.fn();
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(row.scrollIntoView).not.toHaveBeenCalled();
+			// Still pending: the tab it belongs to hasn't rendered it yet.
+			expect(useUIStore.getState().pendingLogJump).not.toBeNull();
 		});
 	});
 
@@ -2047,6 +2380,86 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Fix lint issues (2/2)')).toBeInTheDocument();
 		});
 
+		it('expands the task list card to show individual task items', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'TodoWrite',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								todos: [
+									{
+										content: 'Fix lint issues',
+										status: 'completed',
+										activeForm: 'Fixing lint issues',
+									},
+									{ content: 'Run tests', status: 'in_progress', activeForm: 'Running tests' },
+									{ content: 'Build project', status: 'pending', activeForm: 'Building project' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Collapsed by default - individual items are not rendered
+			expect(screen.queryByText('Fix lint issues')).not.toBeInTheDocument();
+			expect(screen.queryByText('Build project')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Expand task list' }));
+
+			expect(screen.getByText('Fix lint issues')).toBeInTheDocument();
+			expect(screen.getByText('Build project')).toBeInTheDocument();
+			// In-progress task uses its present-tense activeForm
+			expect(screen.getByText('Running tests')).toBeInTheDocument();
+		});
+
+		it('renders a task list card for Codex update_plan payloads', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'update_plan',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								plan: [
+									{ step: 'Read the failing spec', status: 'completed' },
+									{ step: 'Patch the parser', status: 'in_progress' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Patch the parser (1/2)')).toBeInTheDocument();
+			// Generic key/value fallback is suppressed for checklist payloads
+			expect(screen.queryByText('plan: [2]')).not.toBeInTheDocument();
+		});
+
 		it('renders Bash tool with command detail', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -2100,7 +2513,7 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('npm run test')).not.toBeInTheDocument();
 		});
 
-		it('hides tool logs when the tab has Thinking off (even with showToolCalls on)', () => {
+		it('shows tool logs when the tab has Thinking off but showToolCalls is on', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
 					text: 'Bash',
@@ -2116,9 +2529,40 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			// showToolCalls is on (beforeEach), but Thinking is off for this tab, so
-			// tool cells are part of the hidden "behind the scenes" activity.
+			// The two settings are independent: showToolCalls alone decides whether
+			// tool cells are drawn, so Thinking off must not suppress them.
 			useSettingsStore.setState({ showToolCalls: true });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Bash')).toBeInTheDocument();
+			expect(screen.getByText('npm run test')).toBeInTheDocument();
+		});
+
+		it('hides tool logs when showToolCalls is off even with Thinking sticky', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { command: 'npm run test' } } },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs,
+						isUnread: false,
+						showThinking: 'sticky',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// The other direction of the same independence: a tab that keeps its
+			// reasoning chain still honours a global "no tool cells" preference.
+			useSettingsStore.setState({ showToolCalls: false });
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
@@ -2813,6 +3257,11 @@ describe('TerminalOutput', () => {
 				tabs: [
 					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
 				],
+				// TerminalOutput's activeTab memo keys off the real `aiTabs` field (this
+				// suite's `tabs` fixture only feeds the mocked getActiveTab), so a rerender
+				// that only changes `tabs` never busts the memo. Give it a real reference to
+				// depend on; content is irrelevant since getActiveTab still reads `tabs`.
+				aiTabs: [] as any,
 				activeTabId: 'tab-1',
 			});
 
@@ -2872,6 +3321,8 @@ describe('TerminalOutput', () => {
 						isUnread: false,
 					},
 				],
+				// New reference so the activeTab memo (keyed on aiTabs) actually recomputes.
+				aiTabs: [{}] as any,
 			};
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 			await act(async () => {
@@ -3221,6 +3672,221 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('model / effort pill rendering', () => {
+		it('labels each response with the model and effort its turn was sent with', () => {
+			// The point of the pills: the user switched configuration mid-conversation,
+			// so each response has to say which one produced it.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by opus',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-2',
+					text: 'answered by sonnet',
+					source: 'stdout',
+					turnModel: 'sonnet',
+					turnEffort: 'low',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.getByText('sonnet')).toBeInTheDocument();
+			expect(screen.getByText('low')).toBeInTheDocument();
+		});
+
+		it('renders on non-Claude agents, which have no token-source pill', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					turnModel: 'gpt-5',
+					turnEffort: 'medium',
+				}),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('gpt-5')).toBeInTheDocument();
+			expect(screen.getByText('medium')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
+		it('omits a pill whose value is unset, meaning the agent default applied', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout', turnModel: 'opus' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pills on user messages', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('keeps the pills when a system banner leads the response group', () => {
+			// Same collapse trap the token-source pill hit: the combined entry is
+			// built from `[0]`, which here is the banner and carries no stamp.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'banner',
+					text: 'Adaptive Mode: switched from API Limits to Time Limits.',
+					source: 'system',
+				}),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'streamed response',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'xhigh',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('xhigh');
+		});
+	});
+
+	describe('progressive transcript rendering (#1342)', () => {
+		// Switching to an agent with a long transcript used to mount every entry in
+		// one synchronous commit, freezing the UI for seconds on the PREVIOUS agent's
+		// view. The newest entries must render immediately; the rest backfills later.
+		const createLongTranscript = (count: number): LogEntry[] =>
+			Array.from({ length: count }, (_, i) =>
+				createLogEntry({
+					id: `log-${i}`,
+					text: `Message ${i}`,
+					source: i % 2 === 0 ? 'user' : 'stdout',
+				})
+			);
+
+		const renderedIndices = (container: HTMLElement): number[] =>
+			Array.from(container.querySelectorAll('[data-log-index]')).map((el) =>
+				Number(el.getAttribute('data-log-index'))
+			);
+
+		it('bounds the first commit instead of mounting the whole transcript', () => {
+			const logs = createLongTranscript(400);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			const indices = renderedIndices(container);
+			expect(indices.length).toBeLessThan(logs.length);
+			// The newest entry is what the user is looking at - it must be present.
+			expect(screen.getByText('Message 399')).toBeInTheDocument();
+			// Ancient history is deferred, not dropped (see backfill test below).
+			expect(screen.queryByText('Message 0')).not.toBeInTheDocument();
+		});
+
+		it('keeps absolute log indices so message navigation still targets correctly', () => {
+			const logs = createLongTranscript(400);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			const indices = renderedIndices(container);
+			// Indices are offsets into the full log list, not into the rendered window,
+			// so the last one is 399 rather than (window length - 1).
+			expect(indices[indices.length - 1]).toBe(399);
+			expect(indices[0]).toBeGreaterThan(0);
+		});
+
+		it('backfills the deferred history over subsequent idle ticks', async () => {
+			const logs = createLongTranscript(40);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(renderedIndices(container).length).toBeLessThan(40);
+
+			// jsdom has no requestIdleCallback, so the hook uses its setTimeout fallback.
+			await act(async () => {
+				vi.advanceTimersByTime(500);
+			});
+
+			expect(renderedIndices(container).length).toBe(40);
+			expect(screen.getByText('Message 0')).toBeInTheDocument();
+		});
+
+		it('renders short transcripts in full immediately', () => {
+			const logs = createLongTranscript(5);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(renderedIndices(container)).toEqual([0, 1, 2, 3, 4]);
 		});
 	});
 });

@@ -34,6 +34,7 @@ import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboa
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { requestFileDeletion } from '../../services/fileDeletion';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
@@ -46,6 +47,7 @@ import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLin
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
+import { remarkAlert } from '../Markdown/remarkAlert';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -53,7 +55,9 @@ import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
+import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
 	getLanguageFromFilename,
@@ -68,6 +72,7 @@ import {
 	LARGE_FILE_PREVIEW_LIMIT,
 	pickPreviewTier,
 	scanLineStats,
+	canScaleFontForView,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -80,6 +85,9 @@ import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
+import { computeTocWidth } from '../Toc';
+import { FontScaleControl } from '../ui/FontScaleControl';
+import { useFontScale } from '../../hooks/ui/useFontScale';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
 import {
@@ -88,7 +96,9 @@ import {
 	domGetTopLineByAttr,
 	domScrollToLineByAttr,
 } from './lineSync';
-import { rehypeSourceLine } from './rehypeSourceLine';
+import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
+import { useStableCallback } from '../../hooks/utils/useStableCallback';
+import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -105,6 +115,13 @@ const TextPreviewFast = lazy(() => import('./textFast'));
 // million-line files where even the Fast tiers would struggle to parse +
 // render. CM6 is ~300 KB gz so we keep it well off the main bundle.
 const GiantPreview = lazy(() => import('./giantPreview'));
+
+// Font-zoom persistence key. Shared by every file preview tab: the size a user
+// reads at is a property of their eyes, not of the file they opened.
+const FONT_SCALE_STORAGE_KEY = 'filePreview.fontScale';
+
+// Unzoomed font size of the syntax-highlighted code view, in CSS pixels.
+const CODE_BASE_FONT_PX = 13;
 
 export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
@@ -154,6 +171,11 @@ export const FilePreview = React.memo(
 		ref
 	) {
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
+		// Reader font zoom for the preview / edit pane. One shared preference
+		// across file tabs (persisted by useFontScale), applied to whichever tier
+		// is currently mounted.
+		const fontScaleControl = useFontScale(FONT_SCALE_STORAGE_KEY);
+		const { fontScale } = fontScaleControl;
 		const [fileStats, setFileStats] = useState<FileStats | null>(null);
 		const [showStatsBar, setShowStatsBar] = useState(
 			() => initialScrollTop === undefined || initialScrollTop <= 10
@@ -345,13 +367,26 @@ export const FilePreview = React.memo(
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
+		// Playable audio/video never reaches this component: the open path diverts
+		// it to the floating player before a tab can be created. This flag is the
+		// backstop for anything that slips through (a tab restored from a build
+		// that still made them), so a stream URL renders the "open externally" card
+		// instead of being dumped on screen as text.
+		const isMedia = useMemo(
+			() => (file ? getOpenedMediaKind(file.name, file.content) !== null : false),
+			[file]
+		);
+
 		// Check for binary files - either by extension or by content analysis
 		// Memoize to avoid recalculating on every render (content analysis can be expensive)
+		// Media counts as binary so every "text-only" guard below (edit mode,
+		// preview tiers, TOC, search) excludes it, and it lands on the binary card.
 		const isBinary = useMemo(() => {
 			if (!file) return false;
 			if (isImage) return false;
+			if (isMedia) return true;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
-		}, [isImage, file]);
+		}, [isImage, isMedia, file]);
 
 		// Any non-binary, non-image file can be edited as text
 		const isEditableText = !isImage && !isBinary;
@@ -382,6 +417,21 @@ export const FilePreview = React.memo(
 		// the auto-picked tier. The PreviewTierChip in the header lets the user
 		// flip between modes; selection is persisted via onPreviewTierChange.
 		const previewTier = previewTierOverride ?? autoTier;
+
+		// Offer the font-zoom control only where it moves type (see
+		// canScaleFontForView for which views opt out and why).
+		const canScaleFont =
+			!!file &&
+			canScaleFontForView({
+				isEditing: markdownEditMode,
+				isEditableText,
+				isImage,
+				isBinary,
+				isMermaid,
+				isCsv,
+				isJsonlView: isJsonl || (isJson && searchMode === 'jq'),
+				isRenderedHtml: isHtml && htmlRenderMode,
+			});
 
 		// For very large files, truncate content for syntax highlighting to prevent freezes
 		const displayContent = useMemo(() => {
@@ -560,23 +610,9 @@ export const FilePreview = React.memo(
 			return extractHeadings(file.content);
 		}, [isMarkdown, file?.content]);
 
-		// Compute dynamic ToC overlay width based on longest heading text
-		const tocWidth = useMemo(() => {
-			if (tocEntries.length === 0) return 200;
-			const MIN_WIDTH = 200;
-			const MAX_WIDTH = 500;
-			const CHAR_WIDTH = 7.5; // approximate px per character at ~0.8rem
-			const BASE_PADDING = 24; // px padding inside buttons
-			const HEADER_EXTRA = 100; // "CONTENTS" header + headings count badge
-
-			let maxNeeded = HEADER_EXTRA;
-			for (const entry of tocEntries) {
-				const indent = (entry.level - 1) * 12 + 8;
-				const textWidth = entry.text.length * CHAR_WIDTH;
-				maxNeeded = Math.max(maxNeeded, indent + textWidth + BASE_PADDING);
-			}
-			return Math.min(Math.max(Math.ceil(maxNeeded), MIN_WIDTH), MAX_WIDTH);
-		}, [tocEntries]);
+		// Dynamic ToC overlay width - shared with Director's Notes so an equally
+		// long heading yields an equally wide panel on both surfaces.
+		const tocWidth = useMemo(() => computeTocWidth(tocEntries), [tocEntries]);
 
 		const scrollMarkdownToBoundary = useCallback((direction: 'top' | 'bottom') => {
 			// Use contentRef which is the actual scrollable container
@@ -607,6 +643,9 @@ export const FilePreview = React.memo(
 		const remarkPlugins = useMemo(
 			() => [
 				...REMARK_GFM_PLUGINS,
+				// GitHub `[!NOTE]`-style callouts. Runs right after GFM, matching the
+				// chat stack, so the marker is still the head of a single text node.
+				remarkAlert,
 				remarkFrontmatter,
 				remarkFrontmatterTable,
 				remarkHighlight,
@@ -630,9 +669,9 @@ export const FilePreview = React.memo(
 		// web-desktop build that bridge targets the HOST machine, not the browser
 		// user's device, so opening a local path there is meaningless - surface a
 		// toast instead. http/mailto links open the same way in both builds.
-		const handleExternalLinkClick = useCallback((href: string, opts?: { ctrlKey?: boolean }) => {
-			if (/^file:\/\//.test(href)) {
-				if (isWebDesktop()) {
+		const handleExternalLinkClick = useCallback(
+			(href: string, opts?: { ctrlKey?: boolean }) => {
+				if (/^file:\/\//.test(href) && isWebDesktop()) {
 					notifyToast({
 						color: 'theme',
 						title: 'Open file',
@@ -640,13 +679,95 @@ export const FilePreview = React.memo(
 					});
 					return;
 				}
-				void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
-				return;
-			}
-			if (/^https?:\/\/|^mailto:/.test(href)) {
-				openUrl(href, opts);
-			}
-		}, []);
+				// A file:// target Maestro can render stays inside the app (preview
+				// tab or player); only OS-owned types go to the default app.
+				if (openFileUrl(href, (path) => onFileClick?.(path))) return;
+				if (/^https?:\/\/|^mailto:/.test(href)) {
+					openUrl(href, opts);
+				}
+			},
+			[onFileClick]
+		);
+
+		// Ticking a task checkbox in the rendered preview writes the file straight
+		// to disk, so back-to-back clicks need two guards. `pendingTaskContentRef`
+		// holds the document the previous click produced, because `file.content` is
+		// still the pre-write copy until the tab re-reads it - toggling twice from
+		// the stale copy would undo the first flip. `taskWriteChainRef` serializes
+		// the writes so the last click, not the fastest write, wins on disk.
+		const pendingTaskContentRef = useRef<string | null>(null);
+		const taskWriteChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+		useEffect(() => {
+			pendingTaskContentRef.current = null;
+		}, [file?.content]);
+
+		const handleToggleTask = useCallback(
+			async (line: number): Promise<boolean> => {
+				if (!file || !onSave) return false;
+				if (hasChanges) {
+					// The preview renders the file on disk, not the unsaved buffer, so a
+					// write here would silently drop the user's in-editor edits.
+					notifyToast({
+						color: 'yellow',
+						title: 'Unsaved Changes',
+						message: 'Save or discard your edits before ticking tasks.',
+					});
+					return false;
+				}
+
+				const base = pendingTaskContentRef.current ?? file.content;
+				const result = toggleTaskCheckboxAtLine(base, line);
+				// No task marker on that line: the render is out of step with the
+				// source. Leave the file alone rather than rewriting the wrong line.
+				if (!result) return false;
+				pendingTaskContentRef.current = result.content;
+
+				const revert = () => {
+					// Only roll back if no later click has already moved past us.
+					if (pendingTaskContentRef.current === result.content) {
+						pendingTaskContentRef.current = base;
+					}
+				};
+
+				const write = taskWriteChainRef.current.then(() => onSave(file.path, result.content));
+				taskWriteChainRef.current = write.catch(() => {});
+
+				try {
+					if ((await write) === false) {
+						// User cancelled the save-location dialog.
+						revert();
+						return false;
+					}
+					// Keep the file-change poller from flagging our own write.
+					try {
+						const stat = await window.maestro?.fs?.stat(file.path, sshRemoteId);
+						if (stat?.modifiedAt) {
+							lastModifiedRef.current = new Date(stat.modifiedAt).getTime();
+						}
+					} catch {
+						// Non-critical - worst case the banner appears briefly
+					}
+					return true;
+				} catch (err) {
+					revert();
+					logger.error('Failed to toggle task checkbox:', undefined, err);
+					notifyToast({
+						color: 'red',
+						title: 'Save Failed',
+						message: err instanceof Error ? err.message : 'Could not update the task.',
+					});
+					return false;
+				}
+			},
+			[file, onSave, hasChanges, sshRemoteId]
+		);
+
+		// Pinned to one identity before it reaches the component map below. The
+		// handler closes over `file`, so it is reborn every time the content
+		// changes - and rebuilding that map remounts the whole rendered document,
+		// which throws away the reader's scroll position mid-click.
+		const stableToggleTask = useStableCallback(handleToggleTask);
 
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
@@ -663,6 +784,9 @@ export const FilePreview = React.memo(
 				enableBionifyReadingMode: effectiveBionifyReadingMode,
 				bionifyIntensity,
 				bionifyAlgorithm,
+				// Clickable task checkboxes, paired with `rehypeSourceLine` above.
+				// A preview with nowhere to save to stays read-only.
+				onTaskToggle: onSave ? stableToggleTask : undefined,
 			});
 			return {
 				...components,
@@ -703,14 +827,18 @@ export const FilePreview = React.memo(
 				// Fixes MAESTRO-8Q
 				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
+			// `file.path` only: depending on the whole object would rebuild this map
+			// (and remount the rendered document) on every content change.
 		}, [
 			onFileClick,
 			handleExternalLinkClick,
 			theme,
 			cwd,
-			file,
+			file?.path,
 			showRemoteImages,
 			sshRemoteId,
+			onSave,
+			stableToggleTask,
 			effectiveBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
@@ -723,6 +851,13 @@ export const FilePreview = React.memo(
 		const headerIconClass = 'w-4 h-4';
 		const headerBtnClass =
 			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
+
+		// Delete the previewed file. Shared with the command palette's
+		// "File: Delete" entry, so both raise the same confirmation.
+		const handleDeleteFile = useCallback(() => {
+			if (!file?.path) return;
+			requestFileDeletion({ path: file.path, sshRemoteId });
+		}, [file?.path, sshRemoteId]);
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1289,6 +1424,15 @@ export const FilePreview = React.memo(
 				} else {
 					failClipboardToast('Failed to Copy Image');
 				}
+			} else if (isMedia) {
+				// The "content" of a media tab is an internal stream URL, which is
+				// useless on the clipboard. Copy the file path instead.
+				const ok = await safeClipboardWrite(file.path);
+				if (ok) {
+					flashCopiedToClipboard(undefined, 'Path Copied');
+				} else {
+					failClipboardToast('Failed to Copy Path');
+				}
 			} else {
 				const ok = await safeClipboardWrite(file.content);
 				if (ok) {
@@ -1572,6 +1716,7 @@ export const FilePreview = React.memo(
 					wordWrap={fileEditWordWrap}
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
+					onDelete={handleDeleteFile}
 				/>
 
 				{/* File changed on disk banner */}
@@ -1640,12 +1785,41 @@ export const FilePreview = React.memo(
 					</div>
 				)}
 
-				{/* Content - isolated scroll to prevent scroll chaining */}
+				{/* Content - isolated scroll to prevent scroll chaining.
+				    `--fp-font-scale` is the font-zoom multiplier; the tier
+				    stylesheets (rich prose, markdown Fast) read it from here so a
+				    zoom is a repaint, not a re-parse. */}
 				<div
 					ref={contentRef}
 					className="flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin"
-					style={{ overscrollBehavior: 'contain' }}
+					style={
+						{
+							overscrollBehavior: 'contain',
+							'--fp-font-scale': String(fontScale),
+						} as React.CSSProperties
+					}
 				>
+					{/* Floating font zoom - pinned to the top-right of the pane, the
+					    mirror of the Table of Contents button at the bottom-right.
+					    Sticky (not absolute) so it stays put while the pane scrolls
+					    without depending on a positioned ancestor. Drops below the
+					    find bar when that is open so the two never overlap. */}
+					{canScaleFont && (
+						<div
+							className={`sticky z-20 h-0 flex justify-end pointer-events-none ${
+								searchOpen ? 'top-14' : 'top-0'
+							}`}
+						>
+							<FontScaleControl
+								theme={theme}
+								control={fontScaleControl}
+								variant="floating"
+								target={markdownEditMode ? 'editor' : 'preview'}
+								className="pointer-events-auto"
+								testId="file-preview-font-scale"
+							/>
+						</div>
+					)}
 					{/* Floating Search */}
 					{searchOpen && (
 						<div className="sticky top-0 z-10 pb-4" ref={jqHelpRef}>
@@ -1985,6 +2159,7 @@ export const FilePreview = React.memo(
 							spellCheck={spellCheckEnabled}
 							wrap={fileEditWordWrap}
 							showLineNumbers={fileEditShowLineNumbers}
+							fontScale={fontScale}
 							onLineNumberContextMenu={(lineNumber, event) => {
 								setLineCtxMenu({
 									lineNumber,
@@ -2089,6 +2264,7 @@ export const FilePreview = React.memo(
 								theme={theme}
 								containerRef={markdownContainerRef}
 								filePath={file.path}
+								fontScale={fontScale}
 							/>
 						</Suspense>
 					) : isMarkdown && previewTier === 'fast' && !markdownEditMode ? (
@@ -2124,9 +2300,14 @@ export const FilePreview = React.memo(
 							className="file-preview-content prose prose-sm max-w-none"
 							style={{ color: theme.colors.textMain }}
 						>
-							{/* Scoped prose styles to avoid CSS conflicts with other prose containers */}
+							{/* Scoped prose styles to avoid CSS conflicts with other prose
+							    containers. The base size reads the font-zoom variable set on the
+							    scroll container - Tailwind's `prose-sm` pins it in absolute rem
+							    otherwise and swallows the zoom. Everything below is in `em`, so
+							    it follows. */}
 							<style>{`
-              .file-preview-content.prose h1 { color: ${theme.colors.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
+              .file-preview-content.prose { font-size: calc(0.875rem * var(--fp-font-scale, 1)); }
+            .file-preview-content.prose h1 { color: ${theme.colors.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
               .file-preview-content.prose h2 { color: ${theme.colors.success}; font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
               .file-preview-content.prose h3 { color: ${theme.colors.warning}; font-size: 1.17em; font-weight: bold; margin: 0.83em 0; }
               .file-preview-content.prose h4 { color: ${theme.colors.textMain}; font-size: 1em; font-weight: bold; margin: 1em 0; opacity: 0.9; }
@@ -2179,6 +2360,7 @@ export const FilePreview = React.memo(
 								theme={theme}
 								containerRef={markdownContainerRef}
 								filePath={file.path}
+								fontScale={fontScale}
 							/>
 						</Suspense>
 					) : isReadableText && !markdownEditMode ? (
@@ -2215,7 +2397,10 @@ export const FilePreview = React.memo(
 							<BionifyTextBlock
 								ref={markdownContainerRef}
 								className="prose prose-sm max-w-none whitespace-pre-wrap break-words"
-								style={{ color: theme.colors.textMain }}
+								style={{
+									color: theme.colors.textMain,
+									fontSize: `calc(0.875rem * ${fontScale})`,
+								}}
 								enabled={effectiveBionifyReadingMode}
 								intensity={bionifyIntensity}
 								algorithm={bionifyAlgorithm}
@@ -2245,6 +2430,7 @@ export const FilePreview = React.memo(
 								theme={theme}
 								containerRef={markdownContainerRef}
 								filePath={file.path}
+								fontScale={fontScale}
 							/>
 						</Suspense>
 					) : (
@@ -2285,7 +2471,7 @@ export const FilePreview = React.memo(
 									margin: 0,
 									padding: '24px',
 									background: 'transparent',
-									fontSize: '13px',
+									fontSize: `${CODE_BASE_FONT_PX * fontScale}px`,
 								}}
 								showLineNumbers
 								PreTag="div"

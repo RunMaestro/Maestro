@@ -66,4 +66,9 @@ export interface TextPreviewFastProps {
 	containerRef: React.MutableRefObject<HTMLDivElement | null>;
 	/** Optional file path (only used for stable debugging logs / keys). */
 	filePath?: string;
+	/**
+	 * Reader font zoom (1 = unzoomed). Scales the page font size AND the fixed
+	 * virtualizer page height, which have to move together.
+	 */
+	fontScale?: number;
 }

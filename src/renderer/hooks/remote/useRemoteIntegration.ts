@@ -15,6 +15,7 @@ import {
 	getMovementSnapshot,
 	useMovementStore,
 } from '../../stores/movementStore';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
@@ -178,8 +179,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				receiptChannel?: string
 			) => {
+				// Delivery receipt for the web server's `executeCommand` promise.
+				// Every early return below must answer it, or the caller waits out
+				// the main-side timeout and reads the drop as a generic failure.
+				// The accept ack itself is sent further downstream, by
+				// handleRemoteCommand, once the prompt reaches the spawn logic.
+				const rejectDelivery = (reason: string) => {
+					if (receiptChannel) {
+						window.maestro.process.sendRemoteCommandReceipt(receiptChannel, false, reason);
+					}
+				};
 				// Log metadata only at info level - remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
 				// main process applies in web-server-factory; the truncated
@@ -207,6 +219,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				if (!targetSession) {
 					logger.warn('[useRemoteIntegration] Session not found, dropping command');
+					rejectDelivery('session-not-found');
 					return;
 				}
 
@@ -219,6 +232,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						undefined,
 						targetSession.state
 					);
+					rejectDelivery('session-busy');
 					return;
 				}
 				logger.info(
@@ -269,7 +283,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force, images },
+						detail: { sessionId, command, inputMode, tabId, force, images, receiptChannel },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -656,26 +670,30 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					queueLength?: number;
 					itemId?: string;
 					error?: string;
+					reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
 
 				try {
 					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 					if (!session) {
-						reply({ success: false, error: 'Session not found' });
+						reply({ success: false, error: 'Session not found', reason: 'session-not-found' });
 						return;
 					}
 
 					// Resolve the target tab. An explicit --tab that no longer exists is
 					// an error - never silently reroute to the active tab, which would
 					// mislead callers chaining the returned tabId. No --tab -> active tab.
+					// The `tab-not-found` reason is what lets a dispatch callback (which
+					// has no caller listening for the error) fall back to agent-level
+					// delivery instead of dropping the wake; see deliverCallback.
 					const requestedTab = tabId ? session.aiTabs?.find((t) => t.id === tabId) : undefined;
 					if (tabId && !requestedTab) {
-						reply({ success: false, error: `Tab not found: ${tabId}` });
+						reply({ success: false, error: `Tab not found: ${tabId}`, reason: 'tab-not-found' });
 						return;
 					}
 					const targetTab = requestedTab ?? getActiveTab(session);
 					if (!targetTab) {
-						reply({ success: false, error: 'Session has no AI tabs' });
+						reply({ success: false, error: 'Session has no AI tabs', reason: 'no-ai-tabs' });
 						return;
 					}
 					const resolvedTabId = targetTab.id;
@@ -856,6 +874,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 			}
 		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
+	// The main process has already validated the surface and tab, so this is a
+	// straight hand-off to the shared opener.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenModal((params) => {
+			openUiSurface(params.surface, params.tab);
+		});
 		return () => {
 			unsubscribe();
 		};
@@ -1097,10 +1127,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// CLI once the browser tab actually exists.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenBrowserTab(
-			(sessionId: string, url: string, responseChannel: string) => {
+			(
+				sessionId: string,
+				url: string,
+				responseChannel: string,
+				options: { background?: boolean }
+			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openBrowserTab', {
-						detail: { sessionId, url, responseChannel },
+						detail: { sessionId, url, responseChannel, background: options?.background === true },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote close browser tab from CLI/web interface. The owning agent
+	// is resolved by tab id in the App-level listener, so the caller only needs
+	// the id handed back by open-browser.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteCloseBrowserTab(
+			(tabId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:closeBrowserTab', {
+						detail: { tabId, responseChannel },
 					})
 				);
 			}
@@ -1117,12 +1170,44 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribe = window.maestro.process.onRemoteOpenTerminalTab(
 			(
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null },
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
 				responseChannel: string
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openTerminalTab', {
 						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote writes into an existing terminal tab from CLI/web interface.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteWriteTerminalTab(
+			(sessionId: string, payload: { tabRef?: string; data: string }, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:writeTerminalTab', {
+						detail: { sessionId, ...payload, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote terminal tab listing from CLI/web interface.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteListTerminalTabs(
+			(sessionId: string | undefined, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:listTerminalTabs', {
+						detail: { sessionId, responseChannel },
 					})
 				);
 			}
@@ -1662,7 +1747,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prevSessionStatesRef.current.set(session.id, session.state);
 				}
 
-				if (!session.aiTabs || session.aiTabs.length === 0) return;
+				// An empty aiTabs array is a valid state and still has to be broadcast,
+				// otherwise remote clients keep rendering tabs the user already closed.
+				if (!session.aiTabs) return;
 
 				// Create a hash of tab properties that should trigger a broadcast when changed
 				const tabsHash = session.aiTabs

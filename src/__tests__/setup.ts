@@ -240,6 +240,7 @@ const mockMaestro = {
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
 		onUserInput: vi.fn().mockReturnValue(() => {}),
+		sendRemoteCommandReceipt: vi.fn(),
 	},
 	debug: {
 		createPackage: vi.fn().mockResolvedValue({ success: true }),
@@ -327,6 +328,16 @@ const mockMaestro = {
 			uncommittedChanges: 0,
 		}),
 	},
+	attachments: {
+		// Mirrors userData/attachments/{sessionId}/{filename} on the host.
+		save: vi.fn((sessionId: string, _base64: string, filename: string) =>
+			Promise.resolve({ success: true, path: `/userData/attachments/${sessionId}/${filename}` })
+		),
+		load: vi.fn().mockResolvedValue({ success: true, dataUrl: '' }),
+		delete: vi.fn().mockResolvedValue({ success: true }),
+		list: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/userData/attachments' }),
+	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
 		readFile: vi.fn().mockResolvedValue(''),
@@ -347,6 +358,10 @@ const mockMaestro = {
 			folderCount: 10,
 		}),
 		homeDir: vi.fn().mockResolvedValue('/home/testuser'),
+	},
+	// Tab lifecycle notifications (renderer -> main); fire-and-forget
+	tabs: {
+		notifyAiTabClosed: vi.fn(),
 	},
 	agents: {
 		detect: vi.fn().mockResolvedValue([]),
@@ -389,6 +404,8 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		// Bulk capabilities used to prime the renderer capability cache
+		getAllCapabilities: vi.fn().mockResolvedValue({}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
@@ -460,6 +477,9 @@ const mockMaestro = {
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
+		// Transcript mirror (starred + snoozed retention)
+		snapshotStarredTranscript: vi.fn().mockResolvedValue(undefined),
+		releaseSnoozedTranscript: vi.fn().mockResolvedValue(undefined),
 	},
 	autorun: {
 		readDoc: vi.fn().mockResolvedValue({ success: true, content: '' }),

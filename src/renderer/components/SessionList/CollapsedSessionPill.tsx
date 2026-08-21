@@ -3,6 +3,7 @@ import type { Session, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
 import { hasNoClaudeProviderSession } from '../SessionItem';
 import { SessionTooltipContent } from './SessionTooltipContent';
+import { CornerDot } from '../ui/CornerDot';
 
 interface CollapsedSessionPillProps {
 	session: Session;
@@ -139,12 +140,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 							}
 						}}
 					>
-						{hasUnreadTabs && isLast && (
-							<div
-								className="absolute -right-0.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full"
-								style={{ backgroundColor: theme.colors.error }}
-							/>
-						)}
+						{hasUnreadTabs && isLast && <CornerDot color={theme.colors.error} placement="right" />}
 						<div
 							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity shadow-xl"
 							style={{

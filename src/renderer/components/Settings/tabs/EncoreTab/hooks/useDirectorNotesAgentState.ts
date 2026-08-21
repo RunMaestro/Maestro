@@ -49,10 +49,17 @@ export function useDirectorNotesAgentState({
 		agentConfiguration.handleAgentChange(agentId);
 	};
 
-	const persistCustomConfig = () => {
+	// Shared by onCustomPathBlur/onCustomArgsBlur/onEnvVarsBlur. Optional
+	// `pathValue` is for the path chooser specifically: it calls this in the
+	// same handler as the change that sets customPath, so reading
+	// agentConfiguration.customPath back out of this closure would still see
+	// the path from before that update landed. The args/env-var blur paths call
+	// this with no argument, unaffected, and keep reading current state as
+	// before.
+	const persistCustomConfig = (pathValue?: string) => {
 		setDirectorNotesSettings({
 			...directorNotesSettings,
-			customPath: agentConfiguration.customPath || undefined,
+			customPath: (pathValue ?? agentConfiguration.customPath) || undefined,
 			customArgs: agentConfiguration.customArgs || undefined,
 			customEnvVars:
 				Object.keys(agentConfiguration.customEnvVars).length > 0

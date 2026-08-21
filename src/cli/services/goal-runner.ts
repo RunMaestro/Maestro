@@ -45,6 +45,13 @@ export interface RunGoalOptions {
 	writeHistory?: boolean;
 	/** Emit a `verbose` event carrying the full per-iteration prompt. */
 	verbose?: boolean;
+	/**
+	 * Run-scoped model override. Wins over `session.customModel` for every spawn
+	 * this run makes; the stored session is never modified.
+	 */
+	model?: string;
+	/** Run-scoped reasoning effort override (same contract as `model`). */
+	effort?: string;
 }
 
 /** Human label for a goal run's exit reason (mirrors the desktop wording). */
@@ -83,7 +90,8 @@ function iterationSynopsis(response: string | undefined, iteration: number): str
 async function requestHandoffBlurb(
 	session: SessionInfo,
 	agentSessionId: string,
-	appendSystemPrompt: string | undefined
+	appendSystemPrompt: string | undefined,
+	runOverrides: { model?: string; effort?: string } = {}
 ): Promise<{ blurb: string; usageStats?: UsageStats }> {
 	try {
 		const result = await captureCliRun(
@@ -96,8 +104,8 @@ async function requestHandoffBlurb(
 			},
 			() =>
 				spawnAgent(session.toolType, session.cwd, GOAL_SYNOPSIS_REQUEST_PROMPT, agentSessionId, {
-					customModel: session.customModel,
-					customEffort: session.customEffort,
+					customModel: runOverrides.model ?? session.customModel,
+					customEffort: runOverrides.effort ?? session.customEffort,
 					customArgs: session.customArgs,
 					customEnvVars: session.customEnvVars,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
@@ -127,7 +135,7 @@ export async function* runGoal(
 	goalConfig: GoalRunConfig,
 	options: RunGoalOptions = {}
 ): AsyncGenerator<JsonlEvent> {
-	const { writeHistory = true, verbose = false } = options;
+	const { writeHistory = true, verbose = false, model: runModel, effort: runEffort } = options;
 	const runStartTime = Date.now();
 
 	const gitBranch = getGitBranch(session.cwd);
@@ -236,8 +244,8 @@ export async function* runGoal(
 				},
 				() =>
 					spawnAgent(session.toolType, session.cwd, prompt, undefined, {
-						customModel: session.customModel,
-						customEffort: session.customEffort,
+						customModel: runModel ?? session.customModel,
+						customEffort: runEffort ?? session.customEffort,
 						customArgs: session.customArgs,
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
@@ -346,7 +354,8 @@ export async function* runGoal(
 				const handoff = await requestHandoffBlurb(
 					session,
 					result.agentSessionId,
-					appendSystemPrompt
+					appendSystemPrompt,
+					{ model: runModel, effort: runEffort }
 				);
 				if (handoff.usageStats) {
 					totalInputTokens += handoff.usageStats.inputTokens || 0;

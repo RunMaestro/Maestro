@@ -186,10 +186,22 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteOpenBrowserTabResponse: vi.fn(),
+		onRemoteCloseBrowserTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCloseBrowserTabResponse: vi.fn(),
 		onRemoteOpenTerminalTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		sendRemoteOpenTerminalTabResponse: vi.fn(),
+		onRemoteWriteTerminalTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteWriteTerminalTabResponse: vi.fn(),
+		onRemoteListTerminalTabs: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteListTerminalTabsResponse: vi.fn(),
 		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -218,6 +230,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		onRemoteSetSetting: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		// Added with `maestro-cli open`: the hook subscribes to this on mount, so
+		// leaving it out makes every test in this file throw before it asserts.
+		onRemoteOpenModal: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		sendRemoteSetSettingResponse: vi.fn(),
@@ -555,6 +572,91 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
 			expect(dispatchEventSpy).not.toHaveBeenCalled();
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		// The receipt is what `maestro-cli dispatch` reports as success, so a
+		// command this listener drops must say so rather than time out into a
+		// generic failure - and the accept ack belongs downstream, not here.
+		it('rejects the delivery receipt when the session is unknown', () => {
+			const deps = createDeps({ sessions: [] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'nonexistent',
+					'test command',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'receipt-1'
+				);
+			});
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-1',
+				false,
+				'session-not-found'
+			);
+		});
+
+		it('rejects the delivery receipt when the session is busy', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'test command',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'receipt-2'
+				);
+			});
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-2',
+				false,
+				'session-busy'
+			);
+		});
+
+		it('forwards the receipt channel to handleRemoteCommand without acking it here', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'test command',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'receipt-3'
+				);
+			});
+
+			const event = dispatchEventSpy.mock.calls
+				.map(([e]) => e as CustomEvent)
+				.find((e) => e.type === 'maestro:remoteCommand');
+			expect(event?.detail).toEqual(
+				expect.objectContaining({ sessionId: 'session-1', receiptChannel: 'receipt-3' })
+			);
+			expect(window.maestro.process.sendRemoteCommandReceipt).not.toHaveBeenCalled();
 
 			dispatchEventSpy.mockRestore();
 		});
@@ -1084,6 +1186,9 @@ describe('useRemoteIntegration', () => {
 				expect.objectContaining({
 					success: false,
 					error: expect.stringContaining('ghost-tab'),
+					// Machine-readable cause: this is what lets a dispatch callback
+					// fall back to agent-level delivery instead of dropping the wake.
+					reason: 'tab-not-found',
 				})
 			);
 		});
@@ -1100,7 +1205,33 @@ describe('useRemoteIntegration', () => {
 			expect(deps.setSessions).not.toHaveBeenCalled();
 			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
 				'chan-nosession',
-				expect.objectContaining({ success: false, error: 'Session not found' })
+				expect.objectContaining({
+					success: false,
+					error: 'Session not found',
+					reason: 'session-not-found',
+				})
+			);
+		});
+
+		it('acks a distinct reason when the session has no AI tabs at all', () => {
+			const session = createMockSession({ id: 'session-1', aiTabs: [], activeTabId: undefined });
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.('session-1', 'x', 'chan-notabs');
+			});
+
+			expect(deps.setSessions).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+				'chan-notabs',
+				expect.objectContaining({
+					success: false,
+					error: 'Session has no AI tabs',
+					reason: 'no-ai-tabs',
+				})
 			);
 		});
 	});

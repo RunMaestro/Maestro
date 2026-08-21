@@ -85,6 +85,7 @@ import {
 	// Tab handlers
 	useTabHandlers,
 	useTerminalTabHandlers,
+	useSnoozeScheduler,
 	// Group chat handlers
 	useGroupChatHandlers,
 	// Modal handlers
@@ -133,12 +134,14 @@ import {
 	useSessionSwitchCallbacks,
 } from './hooks';
 import { SidebarNavSync } from './hooks/session/SidebarNavSync';
+import { usePluginFocusRequestListener } from './hooks/session/usePluginFocusRequestListener';
 import { useSidebarNavStore } from './stores/sidebarNavStore';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
+import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
@@ -172,6 +175,7 @@ import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineW
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
+import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMount';
 
 // Import services
 // gitService - now used in useModalHandlers (Tier 3C)
@@ -184,10 +188,12 @@ import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
+// Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
+// closed tab was tiled, else falls back to the plain standalone-strip restore.
+import { reopenClosedTabWithTiling as reopenUnifiedClosedTab } from './utils/panelLayout';
 import {
 	createTab,
 	closeTab,
-	reopenUnifiedClosedTab,
 	getActiveTab,
 	navigateToNextTab,
 	navigateToPrevTab,
@@ -200,9 +206,9 @@ import {
 	navigateToClosestTerminalTab,
 	hasActiveWizard,
 	findNextUnreadSession,
-	getTabDisplayName,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
+import { getQueueBusyContext } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -226,6 +232,7 @@ function MaestroConsoleInner() {
 		newInstanceModalOpen,
 		duplicatingSessionId,
 		newInstancePresetGroupId,
+		newInstancePresetWorkingDir,
 		// Edit Agent Modal
 		setEditAgentModalOpen,
 		editAgentSession,
@@ -322,6 +329,7 @@ function MaestroConsoleInner() {
 		// Worktree Modals
 		createWorktreeSession,
 		createPRSession,
+		createPRSourceBranch,
 		deleteWorktreeSession,
 		// Tab Switcher Modal
 		setTabSwitcherOpen,
@@ -1025,6 +1033,10 @@ function MaestroConsoleInner() {
 		return sess.filePreviewTabs.find((t) => t.id === sess.activeFileTabId) ?? null;
 	});
 
+	// Wakes snoozed tabs when their time arrives (and on launch, for wakes
+	// missed while Maestro was closed).
+	useSnoozeScheduler();
+
 	// --- TERMINAL TAB HANDLERS ---
 	const { handleOpenTerminalTab, handleSelectTerminalTab, handleCloseTerminalTab } =
 		useTerminalTabHandlers();
@@ -1202,6 +1214,7 @@ function MaestroConsoleInner() {
 		handleClearAgentError,
 		handleOpenQueueBrowser,
 		handleOpenTabSearch,
+		handleOpenCrossTabSearch,
 		handleOpenPromptComposer,
 		handleOpenFuzzySearch,
 		handleOpenCreatePR,
@@ -1221,6 +1234,7 @@ function MaestroConsoleInner() {
 		handleCloseAutoRunSetup,
 		handleCloseBatchRunner,
 		handleCloseTabSwitcher,
+		handleCloseCrossTabSearch,
 		handleCloseFileSearch,
 		handleClosePromptComposer,
 		handleCloseCreatePRModal,
@@ -1577,6 +1591,7 @@ function MaestroConsoleInner() {
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
 		handleFileSearchSelect,
+		handleCrossTabSearchJump,
 	} = useSessionSwitchCallbacks({
 		setActiveSessionId,
 		handleResumeSession,
@@ -1641,6 +1656,12 @@ function MaestroConsoleInner() {
 	// the timer when autoResumeOnLimit is off. `resumeAutoRunAfterError` is the
 	// shared entry point that unblocks both spec- and goal-driven Auto Runs.
 	useAutoResumeCoordinator({ resumeAutoRunAfterError });
+
+	// --- AGENT CAPABILITY CACHE PRIMING ---
+	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
+	// run outside the active session's tree (CLI/web dispatch) see real values
+	// instead of the conservative defaults.
+	useCapabilitiesPriming();
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
 		updateSessionWith(activeSessionIdRef.current, (s) => ({
@@ -1829,38 +1850,6 @@ function MaestroConsoleInner() {
 		recoveryError: sessionRecoveryError,
 	} = useSessionRecovery({ processInputRef });
 
-	// Force Send: dispatch a queued item immediately with forceParallel=true.
-	// Mirrors the user's manual flow (copy text → delete queued → Cmd+Shift+Enter)
-	// but as a single click. Only useful when another tab in this agent is busy
-	// AND this tab is idle - processInput(forceParallel:true) then sends now.
-	const handleForceSendQueuedItem = useCallback(
-		(itemId: string) => {
-			const sessionId = activeSessionIdRef.current;
-			const session = sessionsRef.current.find((s) => s.id === sessionId);
-			if (!session) return;
-			const item = session.executionQueue.find((i) => i.id === itemId);
-			if (!item) return;
-			const text = item.type === 'command' ? (item.command ?? '') : (item.text ?? '');
-			const images = item.images && item.images.length > 0 ? item.images : undefined;
-			// Image-only messages have empty text but should still dispatch.
-			// processInput's own emptiness check (line ~207) requires text OR images.
-			if (!text && !images) return;
-
-			// Remove the item from the queue first so processInput doesn't see a duplicate.
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
-			}));
-
-			// Pass the queued item's images directly through processInput options.
-			// Routing them via setStagedImages would race with processInput's stale
-			// closure of stagedImages (deps include it), causing images to drop on the
-			// floor in both the chat log entry and the agent spawn payload.
-			processInput(text, { forceParallel: true, images });
-		},
-		[processInput]
-	);
-
 	// Run a plugin command macro: send its templated prompt to the active agent
 	// through the same input path as a typed message. Empty/whitespace prompts are
 	// ignored by processInput's own emptiness check.
@@ -1871,18 +1860,13 @@ function MaestroConsoleInner() {
 		[processInput]
 	);
 
-	// Build (tab→busy summary) lookup used by the Force Send button to decide
-	// visibility and to populate the confirmation modal's "other tabs working"
-	// list. Computed from the current session's tab states at call time.
+	// Build (tab→busy summary) lookup used by the inline Force Send button to
+	// decide visibility and to populate the confirmation modal's "other tabs
+	// working" list. Computed from the current agent's tab states at call time.
 	const getForceSendContext = useCallback((item: QueuedItem) => {
 		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return null;
-		const targetTab = session.aiTabs.find((t) => t.id === item.tabId);
-		const targetTabBusy = targetTab?.state === 'busy';
-		const otherBusyTabs = session.aiTabs
-			.filter((t) => t.id !== item.tabId && t.state === 'busy')
-			.map((t) => ({ id: t.id, displayName: getTabDisplayName(t) }));
-		return { targetTabBusy, otherBusyTabs };
+		return getQueueBusyContext(session, item);
 	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
@@ -2273,6 +2257,10 @@ function MaestroConsoleInner() {
 		abortBatchOnError: abortAutoRunBatchOnError,
 	});
 
+	// Plugin `sessions.focus` (e.g. Agent Flow node-jump) writes main's store,
+	// which is invisible to the live renderer store - apply it via canonical helpers.
+	usePluginFocusRequestListener();
+
 	// --- GROUP MANAGEMENT ---
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)
 	const {
@@ -2379,7 +2367,18 @@ function MaestroConsoleInner() {
 		handleReorderQueueItems,
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
-	} = useQueueHandlers();
+		handleForceSendQueueItem,
+	} = useQueueHandlers({ processQueuedItem });
+
+	// Force Send from the inline chat list: the item always belongs to the active
+	// agent, so this is the queue browser's handler with the session pinned.
+	const handleForceSendQueuedItem = useCallback(
+		(itemId: string) => {
+			const sessionId = activeSessionIdRef.current;
+			if (sessionId) handleForceSendQueueItem(sessionId, itemId);
+		},
+		[handleForceSendQueueItem]
+	);
 
 	// Symphony contribution handler - extracted to useSymphonyContribution hook
 	const { handleStartContribution } = useSymphonyContribution({
@@ -2495,6 +2494,7 @@ function MaestroConsoleInner() {
 		handleNavForward,
 		toggleUnreadFilter,
 		setTabSwitcherOpen,
+		handleOpenCrossTabSearch,
 		showUnreadOnly,
 		stagedImages,
 		handleSetLightboxImage,
@@ -2741,6 +2741,7 @@ function MaestroConsoleInner() {
 		toggleUnreadFilter,
 		handleOpenTabSearch,
 		handleOpenOutputSearch,
+		handleOpenCrossTabSearch,
 		handleCloseAllTabs,
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
@@ -2984,6 +2985,9 @@ function MaestroConsoleInner() {
 			{/* Owns Left Bar sort/nav/starred subscriptions; memoized so App wakes
 			    do not re-run this host. Must sit under WindowProvider (ownsSession). */}
 			<SidebarNavSync />
+			{/* The ONE mount for modal-placement plugin panels: serves both the
+			    Settings launch button and a plugin summoning its own overlay. */}
+			<PluginModalPanelMount theme={theme} />
 			<AppShell
 				theme={theme}
 				fontFamily={fontFamily}
@@ -3194,6 +3198,7 @@ function MaestroConsoleInner() {
 						onCreateSession={createNewSession}
 						duplicatingSessionId={duplicatingSessionId}
 						newInstancePresetGroupId={newInstancePresetGroupId}
+						newInstancePresetWorkingDir={newInstancePresetWorkingDir}
 						onCloseEditAgentModal={handleCloseEditAgentModal}
 						onSaveEditAgent={handleSaveEditAgent}
 						editAgentSession={editAgentSession}
@@ -3231,6 +3236,7 @@ function MaestroConsoleInner() {
 						onCloseCreateWorktreeModal={handleCloseCreateWorktreeModal}
 						onCreateWorktree={handleCreateWorktree}
 						createPRSession={createPRSession}
+						createPRSourceBranch={createPRSourceBranch}
 						onCloseCreatePRModal={handleCloseCreatePRModal}
 						onPRCreated={handlePRCreated}
 						deleteWorktreeSession={deleteWorktreeSession}
@@ -3268,8 +3274,6 @@ function MaestroConsoleInner() {
 						setAgentSessionsOpen={setAgentSessionsOpen}
 						setMemoryViewerOpen={setMemoryViewerOpen}
 						setActiveAgentSessionId={setActiveAgentSessionId}
-						setGitDiffPreview={setGitDiffPreview}
-						setGitLogOpen={setGitLogOpen}
 						isAiMode={activeSession?.inputMode === 'ai'}
 						onQuickActionsRenameTab={handleQuickActionsRenameTab}
 						onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
@@ -3357,6 +3361,8 @@ function MaestroConsoleInner() {
 						onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
 						onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 						onCloseTabSwitcher={handleCloseTabSwitcher}
+						onCloseCrossTabSearch={handleCloseCrossTabSearch}
+						onCrossTabSearchJump={handleCrossTabSearchJump}
 						onTabSelect={handleUtilityTabSelect}
 						onFileTabSelect={handleUtilityFileTabSelect}
 						onTerminalTabSelect={handleSelectTerminalTab}
@@ -3416,6 +3422,7 @@ function MaestroConsoleInner() {
 						onReorderQueueItems={handleReorderQueueItems}
 						onTogglePauseQueueItem={handleTogglePauseQueueItem}
 						onEditQueueItem={handleEditQueueItem}
+						onForceSendQueueItem={handleForceSendQueueItem}
 						// AppGroupChatModals props
 						onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
 						onCreateGroupChat={handleCreateGroupChat}

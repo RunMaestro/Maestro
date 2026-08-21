@@ -33,6 +33,8 @@ Use markdown checkboxes in your documents:
 
 **Tip**: Press `Cmd+L` (Mac) or `Ctrl+L` (Windows/Linux) to quickly insert a new checkbox at your cursor position.
 
+**Ticking a box by hand**: in the Auto Run panel's rendered preview, click a checkbox to toggle it and the document is rewritten on disk - useful for marking something you finished yourself, or for re-arming a task by unticking it. The boxes are read-only while an Auto Run is executing that document, matching its disabled editor.
+
 ### Task Granularity: Two Approaches
 
 There are two viable ways to structure work across Auto Run documents. Pick the one that fits your project - they can also coexist.
@@ -74,6 +76,12 @@ Auto Run supports running multiple documents in sequence:
    - **Duplicate** - Add the same document multiple times
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
+
+## Model Override
+
+The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.
+
+The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`. See [CLI](cli.md#per-run-model-override).
 
 ## Fresh Context: Task vs Document
 
@@ -175,6 +183,8 @@ The runner will:
 
 While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
 
+Thoughts are buffered from the moment the agent starts thinking, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+
 It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
 
 - **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
@@ -182,15 +192,19 @@ It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flo
 - **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
 - **Search** - filter the captured thoughts with the search box; matches are highlighted.
 
-The button doubles as the live indicator: while capturing it pulses and reads **Capturing**.
+The button highlights once there are buffered thoughts waiting to be read, and its tooltip gives the count.
 
-**Open, minimize, close:**
+**Open, close, clear:**
 
-- **Open** starts capturing for that agent and shows the panel.
-- **Minimize** collapses the panel but **keeps capturing** in the background, so you can reopen it later and review everything since you opened it.
-- **Close** stops capturing and clears that agent's buffer.
+- **Open** shows the panel, already backfilled with everything the agent has thought so far.
+- **Close** (the X, or Escape) hides the panel and keeps recording, so reopening it later still has the run's history.
+- **Clear** (the trash icon) is the only thing that discards a buffer.
 
-Capture is in-memory only - it does not survive an app restart, and the buffer is bounded so a long run can't grow memory without limit (the oldest thoughts are dropped once the cap is reached, noted as "trimmed" in the panel header). Running several Auto Runs at once? Each agent captures into its own independent stream; opening the panel for one agent never mixes in another's thoughts.
+There is no minimize. It used to mean "hide the panel but keep capturing," which is what closing does now. The panel takes no keyboard focus, so your shortcuts keep working while it is open.
+
+Once a run finishes, the Right Panel's run card goes away and takes its **View Thoughts** button with it. The buffer outlives the run, so a **Thoughts** button appears at the bottom of the Auto Run panel for as long as there is something buffered to read.
+
+Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: thoughts per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 
 ## Session Isolation
 
@@ -246,7 +260,7 @@ For editing complex Auto Run documents, use the **Expanded Editor** - a fullscre
 **To open the Expanded Editor:**
 
 - Click the **expand icon** (↗️) in the top-right corner of the Auto Run panel
-- Or press `Cmd+Shift+E` (Mac) / `Ctrl+Shift+E` (Windows/Linux) to toggle - works from anywhere in the interface, even when the Auto Run panel is closed
+- Or press `Cmd+Shift+3` (Mac) / `Ctrl+Shift+3` (Windows/Linux) to toggle - works from anywhere in the interface, even when the Auto Run panel is closed
 - Or open the Command Palette (`Cmd+K`) and pick **Auto Run Expanded Preview**
 
 ![Expanded Auto Run Editor](./screenshots/autorun-expanded.png)
@@ -261,7 +275,7 @@ The Expanded Editor provides:
 
 Click **Collapse** or press `Esc` to return to the sidebar panel view.
 
-> **Maestro Pro Tip - a scratch pad from anywhere:** Because `Cmd+Shift+E` and the Command Palette open the Expanded Editor from anywhere (the Auto Run panel doesn't need to be open), it doubles as an always-available scratch pad. Keep a throwaway document in your Auto Run folder and, as ideas surface mid-session, pop open the editor and jot down tasks you want to kick off later. When you wrap up your interactive work, run that document to dispatch the whole batch at once.
+> **Maestro Pro Tip - a scratch pad from anywhere:** Because `Cmd+Shift+3` and the Command Palette open the Expanded Editor from anywhere (the Auto Run panel doesn't need to be open), it doubles as an always-available scratch pad. Keep a throwaway document in your Auto Run folder and, as ideas surface mid-session, pop open the editor and jot down tasks you want to kick off later. When you wrap up your interactive work, run that document to dispatch the whole batch at once.
 
 ## Saving Documents
 

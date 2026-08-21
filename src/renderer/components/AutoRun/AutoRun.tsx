@@ -4,16 +4,21 @@ import {
 	useEffect,
 	useCallback,
 	memo,
+	useMemo,
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeSlug from 'rehype-slug';
+import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
 // Module-level constant - react-markdown re-parses the document if rehypePlugins
 // changes by reference, so the array must be hoisted out of render.
-const REHYPE_PLUGINS = [rehypeSlug];
+// rehypeSourceLine runs first so it reads the original source positions before
+// any later plugin rewrites the tree. It stamps each task checkbox with the line
+// its `- [ ]` marker lives on, which is what makes the box clickable.
+const REHYPE_PLUGINS = [rehypeSourceLine, rehypeSlug];
 
 // Memoized ReactMarkdown wrapper. AutoRunInner re-renders on every keystroke in
 // the AI input (input state lives in App.tsx and cascades down), and ReactMarkdown
@@ -45,14 +50,17 @@ import { AutoRunLightbox } from './AutoRunLightbox';
 import { AutoRunSearchBar } from './AutoRunSearchBar';
 import { AutoRunToolbar } from './AutoRunToolbar';
 import { AutoRunErrorBanner } from './AutoRunErrorBanner';
+import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
-import { useThoughtStreamStore } from '../../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectThoughtCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
+import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
+import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
@@ -62,6 +70,7 @@ import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 
 // Inner implementation component
@@ -128,17 +137,17 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	}, [isAutoRunActive]);
 	const isStopping = batchRunState?.isStopping || false;
 
-	// Thought Stream restore affordance. While a run is active the brain /
+	// Thought Stream reopen affordance. While a run is active the brain /
 	// "View Thoughts" button lives on the Right Panel's active-run card, but that
-	// card is gated on `isRunning` and disappears once the run completes. If the
-	// user had minimized the Thought Stream, it would be left with no way back -
-	// so once the run is done we surface a restore button in the footer for this
-	// session's minimized stream, until they dismiss it with the panel's X.
+	// card is gated on `isRunning` and disappears once the run completes - which
+	// is exactly when someone wants to read back why the run did what it did.
+	// The buffer outlives the run, so once the run is done we surface the entry
+	// point here for as long as there is something buffered to read.
 	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
-	const thoughtStreamMinimized = useThoughtStreamStore((s) => s.minimized);
-	const restoreThoughtStream = useThoughtStreamStore((s) => s.restorePanel);
-	const showRestoreThoughtStream =
-		!isAutoRunActive && thoughtStreamMinimized && thoughtStreamSessionId === sessionId;
+	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
+	const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+	const showOpenThoughtStream =
+		!isAutoRunActive && bufferedThoughts > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
 	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
@@ -193,6 +202,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onExternalSavedContentChange,
 	});
 
+	// Unchecked tasks that read as human-only steps. Auto Run would dispatch
+	// these to an agent that cannot finish them, so the run stalls. Warn while
+	// the author still has the document open, before they hit Run.
+	const humanOnlyTasks = useMemo(() => findHumanOnlyTasks(localContent), [localContent]);
+
 	// Track mode before auto-run to restore when it ends
 	const modeBeforeAutoRunRef = useRef<'edit' | 'preview' | null>(null);
 	const [helpModalOpen, setHelpModalOpen] = useState(false);
@@ -200,6 +214,30 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const previewRef = useRef<HTMLDivElement>(null);
 	const documentSelectorRef = useRef<AutoRunDocumentSelectorHandle>(null);
+
+	// Move the editor caret to a 0-indexed document line, switching to edit
+	// mode first when the user is reading the rendered preview.
+	const handleJumpToLine = useCallback(
+		(line: number) => {
+			setMode('edit');
+			const offset = localContent
+				.split('\n')
+				.slice(0, line)
+				.reduce((sum, text) => sum + text.length + 1, 0);
+			// Defer so the textarea exists when we came from preview mode.
+			requestAnimationFrame(() => {
+				const textarea = textareaRef.current;
+				if (!textarea) return;
+				textarea.focus();
+				textarea.setSelectionRange(offset, offset);
+				// setSelectionRange does not scroll, so place the line a third of
+				// the way down rather than leaving the caret offscreen.
+				const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
+				textarea.scrollTop = Math.max(0, line * lineHeight - textarea.clientHeight / 3);
+			});
+		},
+		[localContent, setMode]
+	);
 
 	// Bionify reading mode (global setting; disabled while search highlights are active)
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
@@ -324,6 +362,60 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		sshRemoteId,
 		onShowFlash,
 	]);
+
+	// Latest content, read by the preview's checkbox handler. Keeping it in a ref
+	// leaves the toggle callback reference-stable, so the memoized markdown
+	// components (and the parse behind them) survive every content change.
+	const localContentRef = useRef(localContent);
+	useEffect(() => {
+		localContentRef.current = localContent;
+	}, [localContent]);
+
+	// Tick a task off straight from the rendered preview. Preview is a first-class
+	// way to work a playbook, so checking a box must not require a trip through
+	// edit mode. Resolves false when nothing was written, which reverts the box.
+	const handleToggleTask = useCallback(
+		async (line: number): Promise<boolean> => {
+			if (!folderPath || !selectedFile) return false;
+
+			const result = toggleTaskCheckboxAtLine(localContentRef.current, line);
+			// No task marker on that line: the render is out of step with the
+			// source. Leave the document alone rather than rewriting the wrong line.
+			if (!result) return false;
+
+			pushUndoState();
+			setLocalContent(result.content);
+			lastUndoSnapshotRef.current = result.content;
+
+			try {
+				await window.maestro.autorun.writeDoc(
+					folderPath,
+					selectedFile + '.md',
+					result.content,
+					sshRemoteId
+				);
+				setSavedContent(result.content);
+				return true;
+			} catch (err) {
+				logger.error('Failed to save toggled task:', undefined, err);
+				notifyToast({
+					color: 'red',
+					title: 'Could not save task',
+					message: err instanceof Error ? err.message : String(err),
+				});
+				return false;
+			}
+		},
+		[
+			folderPath,
+			selectedFile,
+			sshRemoteId,
+			setLocalContent,
+			setSavedContent,
+			pushUndoState,
+			lastUndoSnapshotRef,
+		]
+	);
 
 	// Image handling hook (attachments, paste, upload, lightbox)
 	const {
@@ -546,6 +638,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
+			// Locked documents belong to the running Auto Run - leave their
+			// checkboxes read-only, matching the disabled editor.
+			onTaskToggle: isLocked ? undefined : handleToggleTask,
 		});
 
 	// Keep the document selector badge in sync with the bottom-panel counter.
@@ -563,7 +658,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			tabIndex={-1}
 			onKeyDown={(e) => {
 				// CMD+E to toggle edit/preview (without Shift)
-				// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
+				// Cmd+Shift+E is left to the global handler ("Edit Last Queued Message")
 				// Skip if edit mode is locked (during Auto Run) - matches button disabled state
 				if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
 					e.preventDefault();
@@ -634,6 +729,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					isRecoverable={batchError.recoverable || false}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+				/>
+			)}
+
+			{/* Human-step warning - unchecked tasks no agent can complete */}
+			{folderPath && selectedFile && (
+				<AutoRunHumanStepBanner
+					theme={theme}
+					tasks={humanOnlyTasks}
+					onSelectLine={isLocked ? undefined : handleJumpToLine}
 				/>
 			)}
 
@@ -715,7 +819,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							tabIndex={0}
 							onKeyDown={(e) => {
 								// CMD+E to toggle edit/preview (without Shift)
-								// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
+								// Cmd+Shift+E is left to the global handler ("Edit Last Queued Message")
 								// Skip if edit mode is locked (during Auto Run) - matches button disabled state
 								if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
 									e.preventDefault();
@@ -834,16 +938,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						)}
 					</button>
 					{/* Thought Stream restore: a temporary home for a minimized stream once the run completes and the Right Panel's active-run card (with its brain button) is gone. Vanishes when dismissed via the panel's X (which clears panelSessionId). */}
-					{showRestoreThoughtStream && (
+					{showOpenThoughtStream && (
 						<button
-							onClick={restoreThoughtStream}
+							onClick={() => openThoughtStream(sessionId)}
 							className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title="Restore the minimized Thought Stream"
+							title={`Read this run's ${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'}`}
 						>
 							<Brain className="w-3 h-3" />
 							Thoughts

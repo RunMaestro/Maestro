@@ -5,9 +5,43 @@ import { useThrottledCallback } from '../../../hooks';
 const PROGRAMMATIC_SCROLL_GUARD_MS = 100;
 /** Slack (px) for treating scrollTop as still parked at the recorded bottom. */
 const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
+/** Slack (px) within which the transcript counts as scrolled to the bottom. */
+const AT_BOTTOM_SLACK_PX = 50;
+
+/**
+ * The two facts every scroll path needs about the container. `handleScroll` and
+ * `handleScrollInner` MUST agree on both - the unthrottled wrapper records the
+ * user's intent and the throttled inner persists it, so a divergence between
+ * them would let the two disagree about where the user actually is. Measuring
+ * in one place makes that impossible rather than merely unlikely.
+ */
+function measureScrollState(
+	container: HTMLElement,
+	isProgrammatic: boolean,
+	programmaticTargetTop: number
+): { scrollTop: number; atBottom: boolean; parkedAtProgrammaticTarget: boolean } {
+	const { scrollTop, scrollHeight, clientHeight } = container;
+	return {
+		scrollTop,
+		atBottom: scrollHeight - scrollTop - clientHeight < AT_BOTTOM_SLACK_PX,
+		// A programmatic bottom-jump (observer re-pin or the pin button) fires its
+		// own scroll event. Streaming content only grows scrollHeight, so our
+		// scrollTop stays parked at the recorded bottom target; a genuine user
+		// scroll-up drops scrollTop below it.
+		parkedAtProgrammaticTarget:
+			isProgrammatic && scrollTop >= programmaticTargetTop - PROGRAMMATIC_TARGET_EPSILON_PX,
+	};
+}
 
 interface UseTerminalOutputScrollOptions {
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
+	/**
+	 * Inner wrapper whose height equals the scrollable content height. Optional so
+	 * callers (and tests) that do not render one keep the previous behaviour; when
+	 * present it gets a ResizeObserver that re-pins the bottom on content growth
+	 * that arrives without a DOM mutation (image decode, font load, late layout).
+	 */
+	contentRef?: React.RefObject<HTMLElement | null>;
 	initialScrollTop?: number;
 	initialIsAtBottom?: boolean;
 	sessionId: string;
@@ -19,6 +53,7 @@ interface UseTerminalOutputScrollOptions {
 
 export function useTerminalOutputScroll({
 	scrollContainerRef,
+	contentRef,
 	initialScrollTop,
 	initialIsAtBottom,
 	sessionId,
@@ -41,6 +76,12 @@ export function useTerminalOutputScroll({
 
 	const [autoScrollPaused, setAutoScrollPaused] = useState(false);
 
+	// Guard flag: a cross-tab search jump is landing, so the follow-the-tail
+	// auto-scroll must stand down. Switching tabs re-renders every row, and the
+	// MutationObserver below reacts to that by slamming the container to the
+	// bottom - which is what used to eat the scroll to the hit.
+	const jumpInFlightRef = useRef(false);
+
 	const isProgrammaticScrollRef = useRef(false);
 	// Absolute scrollTop the last programmatic bottom-jump parked at. A stream
 	// only grows scrollHeight, so our scrollTop stays here until the user
@@ -55,18 +96,15 @@ export function useTerminalOutputScroll({
 
 	const handleScrollInner = useCallback(() => {
 		if (!scrollContainerRef.current) return;
-		const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
-		const atBottom = scrollHeight - scrollTop - clientHeight < 50;
-		// A programmatic bottom-jump (observer re-pin or the pin button) fires its
-		// own scroll event. Streaming content only grows scrollHeight, so our
-		// scrollTop stays parked at the recorded bottom target; a genuine user
-		// scroll-up drops scrollTop below it. Ignore ONLY events that are still
-		// parked at that target while the guard is armed; handle everything else -
-		// including a user scroll-up within the guard window - as a real position
-		// change so it correctly pauses auto-scroll. (#1140)
-		const parkedAtProgrammaticTarget =
-			isProgrammaticScrollRef.current &&
-			scrollTop >= programmaticTargetTopRef.current - PROGRAMMATIC_TARGET_EPSILON_PX;
+		// Ignore ONLY events that are still parked at the programmatic target while
+		// the guard is armed; handle everything else - including a user scroll-up
+		// within the guard window - as a real position change so it correctly
+		// pauses auto-scroll. (#1140)
+		const { scrollTop, atBottom, parkedAtProgrammaticTarget } = measureScrollState(
+			scrollContainerRef.current,
+			isProgrammaticScrollRef.current,
+			programmaticTargetTopRef.current
+		);
 		if (atBottom || !parkedAtProgrammaticTarget) {
 			userScrolledAwayRef.current = !atBottom;
 			setIsAtBottom(atBottom);
@@ -77,6 +115,15 @@ export function useTerminalOutputScroll({
 			if (atBottom !== prevIsAtBottomRef.current) {
 				prevIsAtBottomRef.current = atBottom;
 				onAtBottomChange?.(atBottom);
+				// The flag and the offset MUST be persisted together. The debounced
+				// save below is dropped on unmount (see the cleanup effect), so a
+				// swap within 200ms of crossing the boundary would otherwise store
+				// `isAtBottom: false` with no matching scrollTop - and the remount
+				// restore, which requires `initialScrollTop > 0`, then skips and the
+				// mount-time bottom jump snaps the user back down. Writing both
+				// halves in the same tick, in both directions, keeps the saved pair
+				// coherent no matter when the component goes away. (Y1)
+				onScrollPositionChange?.(scrollTop);
 			}
 
 			if (atBottom) {
@@ -113,11 +160,11 @@ export function useTerminalOutputScroll({
 	const handleScroll = useCallback(() => {
 		const container = scrollContainerRef.current;
 		if (container) {
-			const { scrollTop, scrollHeight, clientHeight } = container;
-			const atBottom = scrollHeight - scrollTop - clientHeight < 50;
-			const parkedAtProgrammaticTarget =
-				isProgrammaticScrollRef.current &&
-				scrollTop >= programmaticTargetTopRef.current - PROGRAMMATIC_TARGET_EPSILON_PX;
+			const { atBottom, parkedAtProgrammaticTarget } = measureScrollState(
+				container,
+				isProgrammaticScrollRef.current,
+				programmaticTargetTopRef.current
+			);
 
 			// The throttled handler persists position and updates UI state, but the
 			// user's scroll-away intent must become authoritative immediately.
@@ -195,7 +242,7 @@ export function useTerminalOutputScroll({
 			// A newly-appended entry (e.g. a tall tool badge) must not pause a user
 			// who is already following the bottom. Re-measuring the container here
 			// would read the PRE-scroll position - the MutationObserver's rAF jump
-			// has not run yet - so any entry taller than the 50px slack looks like a
+			// has not run yet - so any entry taller than the at-bottom slack looks like a
 			// scroll-up and spuriously pauses follow, and the stream then stops
 			// sticking to the bottom. Trust the tracked follow state instead: while
 			// following, mark the new content read and let the observer pin to the new
@@ -221,7 +268,12 @@ export function useTerminalOutputScroll({
 			requestAnimationFrame(() => {
 				// Re-check isAtBottomRef inside the rAF so a scroll-up that happens
 				// after schedule but before paint cancels the yank (#1140).
-				if (scrollContainerRef.current && isAtBottomRef.current && !userScrolledAwayRef.current) {
+				if (
+					scrollContainerRef.current &&
+					isAtBottomRef.current &&
+					!userScrolledAwayRef.current &&
+					!jumpInFlightRef.current
+				) {
 					jumpToBottom();
 				}
 			});
@@ -247,8 +299,31 @@ export function useTerminalOutputScroll({
 			characterData: true,
 		});
 
-		return () => observer.disconnect();
-	}, [autoScrollPaused, scrollContainerRef, jumpToBottom]);
+		// Content can grow WITHOUT any DOM mutation - an image decoding, a web font
+		// loading, markdown or tool-badge layout settling after the initial commit.
+		// The MutationObserver above is blind to that, and for a freshly swapped-in
+		// idle agent no mutations arrive at all, so the mount-time jump's one-frame
+		// scrollHeight reading is all we would ever get and the view lands above the
+		// live bottom. Watch the content wrapper instead: it is the only element
+		// whose height tracks the scrollable content (observing the scroll container
+		// would only fire on viewport resize). Same gate, same rAF, same
+		// jumpToBottom choke point, so the #1140 guard bookkeeping stays in one place.
+		const content = contentRef?.current;
+		let resizeObserver: ResizeObserver | undefined;
+		if (content && typeof ResizeObserver !== 'undefined') {
+			resizeObserver = new ResizeObserver(() => {
+				if (isAtBottomRef.current) {
+					scrollToBottom();
+				}
+			});
+			resizeObserver.observe(content);
+		}
+
+		return () => {
+			observer.disconnect();
+			resizeObserver?.disconnect();
+		};
+	}, [autoScrollPaused, scrollContainerRef, contentRef, jumpToBottom]);
 
 	// Declared BEFORE the restore effect on purpose. React runs effects in
 	// declaration order, so on mount and every tab switch this clears the latch
@@ -262,7 +337,13 @@ export function useTerminalOutputScroll({
 	}, [sessionId, activeTabId]);
 
 	useEffect(() => {
-		if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
+		// `>= 0`, not `> 0`: scrolling to the ABSOLUTE TOP of an overflowing
+		// transcript persists `scrollTop: 0` with `isAtBottom: false`, which is a
+		// perfectly ordinary deliberate position. Requiring a positive offset made
+		// that one spot unrestorable, so returning to a tab left at the very top
+		// snapped it to the live bottom. `initialIsAtBottom !== false` below is the
+		// real gate; the offset only needs to exist. (Y1 review)
+		if (initialScrollTop !== undefined && initialScrollTop >= 0 && !hasRestoredScrollRef.current) {
 			hasRestoredScrollRef.current = true;
 			// Only restore a saved absolute offset when the user had deliberately
 			// scrolled up when they left (initialIsAtBottom === false). When they
@@ -274,11 +355,15 @@ export function useTerminalOutputScroll({
 			// re-trigger this. (J1)
 			if (initialIsAtBottom !== false) return;
 			requestAnimationFrame(() => {
+				// A cross-tab search jump asked for a specific message in this tab.
+				// That beats the position the tab was left at - restoring here would
+				// scroll straight back off the hit.
+				if (jumpInFlightRef.current) return;
 				if (scrollContainerRef.current) {
 					const { scrollHeight, clientHeight } = scrollContainerRef.current;
 					const maxScroll = Math.max(0, scrollHeight - clientHeight);
 					const targetScroll = Math.min(initialScrollTop, maxScroll);
-					if (targetScroll < maxScroll - 50) {
+					if (targetScroll < maxScroll - AT_BOTTOM_SLACK_PX) {
 						// Flip isAtBottomRef first so the observer's live at-bottom
 						// check sees the restored position this frame (#1140).
 						userScrolledAwayRef.current = true;
@@ -296,11 +381,30 @@ export function useTerminalOutputScroll({
 
 	useEffect(() => {
 		return () => {
+			// The pending 200ms scrollTop save is DROPPED here, not flushed, on
+			// purpose. `onScrollPositionChange` (see useScrollLogHandlers) resolves
+			// its target from `selectActiveSession` AT CALL TIME, and during an agent
+			// swap the store already points at the NEW session by the time this
+			// component unmounts - so flushing would write the outgoing agent's
+			// offset into the incoming agent's tab. The cost is now only that up to
+			// the last ~200ms of scrolling REFINEMENT is not persisted, never the
+			// coherence of the saved pair: handleScrollInner writes the flag and the
+			// offset together, synchronously, whenever the at-bottom boundary is
+			// crossed (Y1), so a dropped debounce can only cost precision within a
+			// position that was already saved. Removing even that imprecision would
+			// need the callback to carry the owning sessionId/tabId, which is out of
+			// scope here.
 			if (scrollSaveTimerRef.current) {
 				clearTimeout(scrollSaveTimerRef.current);
 			}
 			window.clearTimeout(programmaticGuardTimerRef.current);
 		};
+	}, []);
+
+	const pauseForJump = useCallback(() => {
+		isAtBottomRef.current = false;
+		setAutoScrollPaused(true);
+		setIsAtBottom(false);
 	}, []);
 
 	const scrollToBottomAndResume = useCallback(() => {
@@ -339,5 +443,14 @@ export function useTerminalOutputScroll({
 		isAutoScrollActive: !autoScrollPaused,
 		handleScroll,
 		scrollToBottomAndResume,
+		/** True while a cross-tab jump is landing; suppresses follow-the-tail. */
+		jumpInFlightRef,
+		/**
+		 * Stay on a jumped-to hit instead of following the tail. Scrolling back to
+		 * the bottom resumes auto-scroll (see handleScrollInner), so this leaves the
+		 * same state a manual scroll-up would. Flips the refs before the state so
+		 * the observers' live reads see the pause this frame, not next render.
+		 */
+		pauseForJump,
 	};
 }

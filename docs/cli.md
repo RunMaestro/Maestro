@@ -159,6 +159,56 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 
 Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
+### Dispatch with Callback (`--notify-on-complete`)
+
+`dispatch` is fire-and-forget: it returns a tab id and exits, and nothing tells the caller when that delegated run finished. `--notify-on-complete` closes that loop. When the dispatch finishes, Maestro starts a **real turn in the calling agent's live tab** carrying the result plus a handle to the full output, so an orchestrator can run build -> review -> fix -> verify without a human relaying "it's done, carry on".
+
+```bash
+# Delegate a review, and wake me when it is done
+maestro-cli dispatch <reviewer-agent> "review the diff on feat/x" \
+	--new-tab \
+	--notify-on-complete <orchestrator-agent>
+```
+
+The response echoes the armed callback:
+
+```json
+{
+	"success": true,
+	"agentId": "reviewer-...",
+	"sessionId": "tab-xyz",
+	"tabId": "tab-xyz",
+	"callbackId": "cb_01j...",
+	"notifyOnComplete": "orchestrator-..."
+}
+```
+
+| Flag                              | Description                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------- |
+| `--notify-on-complete <agent-id>` | Agent to wake when this dispatch finishes. Requires `--new-tab` or `--tab`                |
+| `--callback-tab <id>`             | Specific caller tab to wake. Default: the caller's active AI tab                          |
+| `--callback-prompt <text>`        | Replace the default wake-up prompt body. `{{DISPATCH_*}}` variables below are substituted |
+| `--callback-timeout <seconds>`    | Give up and fire a `timeout` callback after this long. Default 3600, hard cap 86400       |
+
+**Semantics**
+
+- **Correlated.** The callback is bound to the `(target agent, target tab)` pair established at dispatch time, and only arms once the dispatched process actually starts. Other tabs of the same agent, and a predecessor turn a `--queue`d dispatch is waiting behind, never trigger it. This is why an explicit `--new-tab` or `--tab` is required.
+- **Fires exactly once**, on final completion. A second exit is a no-op.
+- **Auto Run aware.** If the dispatched prompt starts an Auto Run, the callback waits for the whole batch, not for task 1. A 6-task run wakes the caller once.
+- **Carries a handle, not just a slice.** The inlined result is capped at 5000 characters (same as Cue's `{{CUE_SOURCE_OUTPUT}}`); `{{DISPATCH_TARGET_ID}}` and `{{DISPATCH_TAB_ID}}` let the caller read the untruncated transcript with `maestro-cli session show <tabId>`.
+- **Busy-safe delivery.** The wake-up turn goes through the same execution queue `dispatch --queue` uses, so a busy caller gets it on its next idle turn instead of having it dropped or interleaved.
+- **Self-cleaning.** Entries live in a main-process registry, never in `cue.yaml`. They expire on timeout and are dropped when the dispatch is rejected. They do not survive a desktop restart.
+- **Non-blocking.** The dispatching turn ends normally; the callback opens a new turn later.
+
+**Callback prompt variables** (usable in `--callback-prompt`):
+
+`{{DISPATCH_CALLBACK_ID}}`, `{{DISPATCH_TARGET_ID}}`, `{{DISPATCH_TARGET_NAME}}`, `{{DISPATCH_TAB_ID}}`, `{{DISPATCH_STATUS}}` (`completed` | `failed` | `timeout` | `cancelled`), `{{DISPATCH_EXIT_CODE}}`, `{{DISPATCH_DURATION}}`, `{{DISPATCH_OUTPUT}}`, `{{DISPATCH_OUTPUT_TRUNCATED}}`, `{{DISPATCH_TASKS_COMPLETED}}`, `{{DISPATCH_TASKS_TOTAL}}`, `{{DISPATCH_PROMPT}}`.
+
+> [!NOTE]
+> `{{DISPATCH_OUTPUT}}` is another agent's output landing in your agent's prompt - the same trust model as Cue's `{{CUE_SOURCE_OUTPUT}}` and cross-agent consults. The default wrapper fences it and labels it as untrusted data. Keep that fencing if you supply your own `--callback-prompt`.
+
+Additional error cases: a callback agent that cannot be resolved (`AGENT_NOT_FOUND`), a callback that targets the dispatch tab itself, a tab that already has an armed callback (`CALLBACK_ALREADY_ARMED`), and callback flags passed without `--notify-on-complete` (all `INVALID_OPTIONS`).
+
 ### Listing Sessions
 
 Browse an agent's session history, sorted most recent to oldest. Supports pagination with limit/skip and keyword search.
@@ -529,11 +579,28 @@ maestro-cli tab close <tab-id>
 maestro-cli tab rename <tab-id> "Docs"
 maestro-cli tab star <tab-id>
 maestro-cli tab unstar <tab-id>
+
+# Flag a tab for the human with the unread dot, or clear it
+maestro-cli tab unread <tab-id>
+maestro-cli tab read <tab-id>
+
+# Turn the tab's History synopsis on or off
+maestro-cli tab save-to-history <tab-id> false
+
+# Move a tab in the tab bar (0-based index, or "first" / "last")
+maestro-cli tab move <tab-id> first
+maestro-cli tab move <tab-id> 2
+
+# Pin an agent to the Bookmarks section at the top of the Left Bar
+maestro-cli bookmark <agent-id>
+maestro-cli unbookmark <agent-id>
 ```
 
 Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`).
 
 An agent running inside Maestro gets its **own** tab ID in its system prompt (the `Tab ID` line under Session Information, from the `{{TAB_ID}}` variable), so you can just tell it "close this tab" or "rename this tab to Docs" and it will act on the right one. Every other entry in `session list` is a different live conversation, so agents are instructed never to guess a tab ID from that list.
+
+Bookmark, unread, star, and save-to-history are explicit set operations rather than toggles, so re-running a script lands on the same state either way. Read the current values back with `maestro-cli show agent <id> --json` (field `bookmarked`) and `maestro-cli session list --json` (field `starred`). `bookmark` also has a flag form, `maestro-cli update-agent <id> --bookmark true`, for when you are already changing other agent settings in the same call.
 
 ### Listing Resources
 
@@ -576,6 +643,9 @@ maestro-cli playbook <playbook-id> --wait --verbose
 # Debug mode for troubleshooting
 maestro-cli playbook <playbook-id> --debug
 
+# Run this playbook on a different model than the agent's default
+maestro-cli playbook <playbook-id> --model opus --effort high
+
 # Clean orphaned playbooks (for deleted sessions)
 maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
@@ -604,15 +674,20 @@ maestro-cli goal-run <agent-id> "Tidy the codebase" --verbose
 
 # Run without writing history entries
 maestro-cli goal-run <agent-id> "Quick experiment" --no-history
+
+# Pursue the goal on a different model than the agent's default
+maestro-cli goal-run <agent-id> "Port the parser to the new API" --model opus --effort high
 ```
 
-| Option                   | Description                                              | Default    |
-| ------------------------ | -------------------------------------------------------- | ---------- |
-| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock    | _(none)_   |
-| `--max-iterations <n>`   | Cap the number of iterations                             | Infinite   |
-| `--no-history`           | Do not write history entries                             | Writes     |
-| `--json`                 | Output as JSON lines (for scripting)                     | Human text |
-| `--verbose`              | Show the full prompt sent to the agent on each iteration | Off        |
+| Option                   | Description                                                                   | Default       |
+| ------------------------ | ----------------------------------------------------------------------------- | ------------- |
+| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock                         | _(none)_      |
+| `--max-iterations <n>`   | Cap the number of iterations                                                  | Infinite      |
+| `--no-history`           | Do not write history entries                                                  | Writes        |
+| `--json`                 | Output as JSON lines (for scripting)                                          | Human text    |
+| `--verbose`              | Show the full prompt sent to the agent on each iteration                      | Off           |
+| `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | Agent default |
+| `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | Agent default |
 
 The run writes an immediate "started" history entry (recording the goal and exit criteria), one entry per iteration, and a final summary with the stop reason and final progress. Goal-Driven runs honor the same per-agent SSH remote and model/effort/args overrides as `playbook`, and refuse to start if the agent is already busy in the desktop app or another CLI instance.
 
@@ -635,9 +710,45 @@ maestro-cli run-doc plans/migrate.md --agent <agent-id> --wait --loop
 
 # JSON output for scripting; skip history writes
 maestro-cli run-doc plans/spec.md --agent <agent-id> --json --no-history
+
+# Run this document on a different model than the agent's default
+maestro-cli run-doc plans/spec.md --agent <agent-id> --model opus --effort high
 ```
 
-`run-doc` accepts the same execution flags as `playbook` (`--dry-run`, `--no-history`, `--json`, `--debug`, `--verbose`, `--no-synopsis`, `--wait`) plus `--prompt`, `--loop`, `--max-loops`, and `--reset-on-completion`. When no `--prompt` is given it uses the default Auto Run prompt.
+`run-doc` accepts the same execution flags as `playbook` (`--dry-run`, `--no-history`, `--json`, `--debug`, `--verbose`, `--no-synopsis`, `--wait`, `--model`, `--effort`) plus `--prompt`, `--loop`, `--max-loops`, and `--reset-on-completion`. When no `--prompt` is given it uses the default Auto Run prompt.
+
+#### Per-run model override
+
+All four Auto Run entry points - `playbook`, `run-doc`, `goal-run`, and
+`auto-run` - accept `--model <model>` and `--effort <effort>`. Both are
+**run-scoped**: they apply to every agent spawn the run makes (including the
+per-task synopsis and goal-handoff spawns) and take precedence over the agent's
+configured model, but nothing is written back to the agent. When the run ends,
+the agent is exactly as it was.
+
+```bash
+maestro-cli playbook <playbook-id> --model opus
+maestro-cli run-doc plans/spec.md --agent <agent-id> --model opus
+maestro-cli goal-run <agent-id> "Ship the migration" --model opus --effort high
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus
+```
+
+Notes:
+
+- Omitting the flags keeps the existing behavior exactly: the run uses the
+  agent's configured model and effort.
+- Valid values are provider-specific (for example `sonnet` / `opus` for Claude
+  Code). The CLI passes the value through rather than validating it against the
+  provider's model list.
+- `--effort` only does something on providers that expose a reasoning-effort
+  setting; it is ignored elsewhere.
+- The headless commands (`playbook`, `run-doc`, `goal-run`) print a
+  `Model: <value> (this run only)` line in human-readable (non-`--json`) output
+  so you can confirm which model the run used. JSONL output is unchanged.
+  `auto-run` hands the run to the desktop app, so confirm that one in the
+  desktop UI instead.
+- The desktop Auto Run launch modal has the same two pickers, both defaulting to
+  "Use agent default". See [Auto Run](autorun-playbooks.md).
 
 > **`playbook` vs `run-doc` vs `auto-run --launch`:** use `playbook <id>` for a saved playbook and `run-doc <docs>` for raw documents - both run headlessly with no desktop dependency. `auto-run --launch` instead hands the run to the running desktop app (needed only when you want the run to appear and be controlled in the desktop UI).
 
@@ -960,6 +1071,42 @@ The `send` command always outputs JSON (no `--json` flag needed).
 
 Commands for interacting with the running Maestro desktop app. These are especially useful for AI agents to trigger UI updates after creating or modifying files.
 
+#### Open a Maestro Surface (Modal or Dashboard)
+
+Bring up one of Maestro's modals or dashboards in the running app, optionally on a specific tab. This is how an agent answers "where do I see X?" by _showing_ you rather than describing a menu path.
+
+```bash
+# Every openable surface, with its tabs and hotkey
+maestro-cli open --list
+
+# Open Maestro Cue
+maestro-cli open cue
+
+# Deep-link to a tab
+maestro-cli open cue --tab scheduled
+maestro-cli open settings --tab shortcuts
+maestro-cli open usage-dashboard --tab cue
+```
+
+| Flag              | Description                                             |
+| ----------------- | ------------------------------------------------------- |
+| `-t, --tab <tab>` | Deep-link to a tab within the surface                   |
+| `--list`          | List every openable surface, its tabs, and its shortcut |
+| `--json`          | Output as JSON (for scripting)                          |
+
+Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` value matches either the tab id (`scheduled`) or its label (`"Scheduled Tasks"`).
+
+On success the command also prints how to reach that surface by hand:
+
+```
+Opened Maestro Cue (scheduled tab) in Maestro.
+You can also reach Maestro Cue yourself: press Alt+Q, or open the command palette and search "Maestro Cue", or click the lightning-bolt icon in the Left Bar footer.
+```
+
+That second line is the point: an agent should relay it, so opening a surface for you teaches you the hotkey instead of making you ask again next time.
+
+Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Director's Notes, the Usage Dashboard) refuse to open and say so in a toast rather than silently doing nothing or turning your setting back on.
+
 #### Open a File
 
 Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent - the file must live inside that agent's `cwd`. Pass `--no-switch` to skip switching the Maestro UI to the resulting agent/tab.
@@ -977,8 +1124,10 @@ maestro-cli open-file <file-path> [-a <id>] [--no-switch]
 
 Open a URL as a browser tab in the Maestro desktop app. Only `http(s)` URLs are accepted; scheme-less inputs like `localhost:3000` or `example.com:8080` are auto-prefixed with `https://`.
 
+By default this **switches the UI** to the target agent and makes the new tab visible. Pass `--background` to create the tab without moving the user: the active agent is left alone and whatever tab they were looking at stays on screen. Either way the command prints the new tab's ID, which is the handle for `close-browser`.
+
 ```bash
-# Open in the active agent
+# Open in the active agent (switches the UI to it)
 maestro-cli open-browser https://docs.runmaestro.ai
 
 # Scheme-less - gets https:// prepended
@@ -986,11 +1135,32 @@ maestro-cli open-browser localhost:3000
 
 # Target a specific agent
 maestro-cli open-browser https://github.com/RunMaestro/Maestro -a <agent-id>
+
+# Background tab - does not switch agents or change the visible tab
+maestro-cli open-browser https://example.com/docs --background -a <agent-id>
 ```
 
-| Flag               | Description                                       |
-| ------------------ | ------------------------------------------------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to the active agent) |
+| Flag               | Description                                                      |
+| ------------------ | ---------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to the active agent)                |
+| `--background`     | Create the tab without focusing it or switching the active agent |
+
+<Note>
+	Agents doing research should always pass `--background` and then `close-browser` when finished. A
+	foreground tab pulls the window away from whatever the user is doing, potentially mid-keystroke.
+</Note>
+
+#### Close a Browser Tab
+
+Close a browser tab by the ID that `open-browser` returned. The owning agent is resolved from the tab ID, so no `--agent` is needed. Exits non-zero if no such tab exists, so cleanup scripts can tell a real close from a no-op.
+
+```bash
+maestro-cli close-browser <tab-id>
+```
+
+| Flag     | Description                    |
+| -------- | ------------------------------ |
+| `--json` | Output as JSON (for scripting) |
 
 #### Open a Terminal Tab
 
@@ -1003,6 +1173,9 @@ maestro-cli open-terminal
 # Custom cwd, shell, and tab label
 maestro-cli open-terminal --cwd ./packages/api --shell bash --name "API tests"
 
+# Start a dev server in a named terminal
+maestro-cli open-terminal --name "Dev server" --command "npm run dev"
+
 # Target a specific agent
 maestro-cli open-terminal -a <agent-id> --name "Build watch"
 ```
@@ -1013,6 +1186,56 @@ maestro-cli open-terminal -a <agent-id> --name "Build watch"
 | `--cwd <path>`     | Working directory for the terminal (must be inside the agent's cwd) | agent's cwd |
 | `--shell <bin>`    | Shell binary to use                                                 | `zsh`       |
 | `--name <label>`   | Display name for the tab                                            | -           |
+| `--command <cmd>`  | Command to run once the shell is ready                              | -           |
+
+`--command` is stored as the tab's startup command, the same field the tab's right-click "Startup Command…" menu writes. The command runs as soon as the shell finishes loading its rc files, and it runs again if the tab is restarted or the app is reopened. That is what you want for `npm run dev`; for a one-shot command that should not come back, close the tab when it finishes, or use `send-terminal` instead.
+
+The command prints the new tab's ID. Keep it: it is the handle for `send-terminal --tab`.
+
+#### Run a Command in an Existing Terminal Tab
+
+`open-terminal` makes a new terminal. `send-terminal` types into one that is already open, which is what you want to drive a shell the user is watching.
+
+```bash
+# Run something in the agent's active terminal
+maestro-cli send-terminal "npm test"
+
+# Target a terminal by the ID open-terminal printed, or by its tab name
+maestro-cli send-terminal --tab <tab-id> "git status"
+maestro-cli send-terminal --tab "Dev server" "npm run build"
+
+# Stop whatever is running (Ctrl-C)
+maestro-cli send-terminal --tab "Dev server" --control C
+
+# Type the command but leave it unexecuted, so a human can read it first
+maestro-cli send-terminal --no-enter "rm -rf ./dist"
+```
+
+| Flag                 | Description                                                  | Default                     |
+| -------------------- | ------------------------------------------------------------ | --------------------------- |
+| `-a, --agent <id>`   | Target agent by ID                                           | active agent                |
+| `--tab <id-or-name>` | Terminal tab ID, or its display name                         | the agent's active terminal |
+| `--control <letter>` | Send a control character instead of a command (`C` = Ctrl-C) | -                           |
+| `--no-enter`         | Type the command without pressing Enter                      | Enter is sent               |
+
+Notes:
+
+- A tab **ID** is matched across every agent, so an ID from `open-terminal` works without `--agent`. A tab **name** is matched only within the target agent, because names collide (three projects can each have a "Dev server").
+- With no `--tab`, the agent's active terminal receives the command. If several terminals are open and none is active, the command fails rather than guessing.
+- The terminal must have a running shell. A tab that has never been displayed has no shell yet: open it with `open-terminal --command` instead, or select it in the app first.
+- Text is typed into the shell verbatim. If something is already half-typed at the prompt, your command lands on the end of it.
+
+#### List Open Terminal Tabs
+
+Terminal tabs live in the desktop app, so this asks the running app rather than reading from disk.
+
+```bash
+maestro-cli list terminals              # every agent
+maestro-cli list terminals -a <agent-id>
+maestro-cli list terminals --json
+```
+
+Each row is `state | active-marker | tabId | agent | name | cwd`, with the startup command appended when the tab has one. `*` marks the agent's active terminal (the one `send-terminal` writes to by default).
 
 #### Refresh the File Tree
 
@@ -1170,6 +1393,12 @@ maestro-cli auto-run doc1.md --agent <agent-id> --launch \
 maestro-cli auto-run doc1.md --agent <agent-id> --launch \
   --worktree --branch feature/auto-x --worktree-path ../repo-auto-x \
   --create-pr --pr-target-branch develop
+
+# Run this one auto-run on a different model than the agent's default
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus
+
+# Override the reasoning effort too (provider-dependent)
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus --effort high
 ```
 
 | Flag                          | Description                                                                                     |
@@ -1186,6 +1415,15 @@ maestro-cli auto-run doc1.md --agent <agent-id> --launch \
 | `--worktree-path <path>`      | Filesystem path for the worktree (must be a sibling of the repo, not nested inside it)          |
 | `--create-pr`                 | Open a GitHub PR when the auto-run completes successfully                                       |
 | `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo's default branch)                                |
+| `--model <model>`             | Model to use for this run only, overriding the agent's configured default                       |
+| `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                   |
+
+`--model` and `--effort` are **run-scoped**: they apply to every task spawn in
+this auto-run and are never written back to the agent. The agent's interactive
+tabs keep using its configured default, and the override disappears when the run
+ends. Omit them to use the agent default. They are honored in worktree mode too,
+without changing the child worktree session's own configured model. See
+[Per-run model override](#per-run-model-override) for the full picture.
 
 Worktree mode reuses the desktop app's Auto Run pipeline: the app creates the
 worktree (or reuses an existing one on the same repo), checks out the requested
@@ -1280,6 +1518,77 @@ maestro-cli cue list --json
 
 Shows each subscription's name, event type, agent, enabled status, and last trigger time.
 
+### Scheduling Tasks
+
+`cue schedule` is the command surface for anything time-driven: a one-shot reminder, a daily job, or a repeating check. It writes straight to the agent's `.maestro/cue.yaml`, so it works with the desktop app closed, and everything it creates shows up in the app under **Maestro Cue → Scheduled Tasks** (`maestro-cli open cue --tab scheduled`).
+
+```bash
+# One-shot, relative
+maestro-cli cue schedule --in 20m --agent "Cyber Stocks" --prompt "Check the deploy status."
+
+# One-shot, absolute (local wall clock or ISO-8601 with an offset)
+maestro-cli cue schedule --at "2026-08-20 16:00" --agent Pedsidian --notify --sticky --message "Push the rc branch"
+
+# Every weekday at 9am
+maestro-cli cue schedule --daily-at 09:00 --days mon,tue,wed,thu,fri --agent Pedsidian --prompt "Draft the standup notes."
+
+# Twice a day, every day
+maestro-cli cue schedule --daily-at 09:00,17:30 --agent Neema --prompt "Sweep the inbox."
+
+# Every 30 minutes
+maestro-cli cue schedule --every 30m --agent "ODIN Market" --prompt "Poll the market feed."
+```
+
+Inspect and edit what is scheduled:
+
+```bash
+# Everything, across every agent
+maestro-cli cue schedule --list
+
+# Only the repeating daily jobs, as JSON
+maestro-cli cue schedule --list --kind daily --json
+
+# Move a task's fire time (pass the timing flag that matches its kind)
+maestro-cli cue schedule --reschedule standup --daily-at 09:15
+
+# Stop it firing without deleting it, then bring it back
+maestro-cli cue schedule --pause standup
+maestro-cli cue schedule --resume standup
+
+# Delete it
+maestro-cli cue schedule --cancel standup
+```
+
+| Flag                       | Description                                                              |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `--in <duration>`          | One-shot, relative (`30s`, `20m`, `2h`, `1d`)                            |
+| `--at <timestamp>`         | One-shot, absolute (ISO-8601 with offset, or `"YYYY-MM-DD HH:MM"` local) |
+| `--daily-at <times>`       | Repeating at `HH:MM` times, comma separated                              |
+| `--days <days>`            | Restrict `--daily-at` to certain days (`mon,tue,...`)                    |
+| `--every <duration>`       | Repeating on an interval (1 minute to 7 days)                            |
+| `--list`                   | List scheduled tasks across agents                                       |
+| `--kind <kind>`            | Filter `--list`: `once`, `daily`, `interval`, `all`                      |
+| `--reschedule <name>`      | Change when an existing task fires                                       |
+| `--pause` / `--resume`     | Flip `enabled` without deleting the task                                 |
+| `--cancel <name>`          | Delete a task                                                            |
+| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes the other modes)            |
+| `-p, --prompt <text>`      | Prompt to send when the task fires                                       |
+| `--notify` / `--sticky`    | Also raise a toast; `--sticky` keeps it up until dismissed               |
+| `-m, --message <text>`     | Toast body (defaults to the label, then the prompt)                      |
+| `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                   |
+| `-l, --label <text>`       | Human-readable label shown in the app                                    |
+| `--pipeline <name>`        | Pipeline to file the task under (default: `Tasks`)                       |
+| `--grace-minutes <n>`      | One-shot only: how late a missed fire may still run (default 360)        |
+| `--keep-on-failure`        | One-shot only: keep the task on disk after a failed run                  |
+| `--json`                   | Output as JSON (for scripting)                                           |
+
+Notes:
+
+- `--in`, `--at`, `--daily-at`, and `--every` are mutually exclusive: a task fires once, on a daily clock, or on an interval.
+- A task with both `--prompt` and `--notify` becomes two subscriptions sharing one fire time (`<name>-prompt` and `<name>-notify`).
+- `--agent` is a hard scope on `--cancel`, `--reschedule`, `--pause`, and `--resume`. When one name exists on two agents the command refuses to guess and lists the candidates.
+- One-shot tasks delete themselves from the YAML after they fire. Repeating tasks stay until you cancel them.
+
 ### Triggering a Subscription
 
 Manually trigger a Cue subscription by name, bypassing its normal event conditions:
@@ -1340,7 +1649,7 @@ maestro-cli director-notes synopsis --json
 | both       | `-d, --days <n>`      | Lookback period in days (defaults to the app's Director's Notes setting) |
 | both       | `-f, --format <type>` | Output format: `json`, `markdown`, `text` (default `text`)               |
 | both       | `--json`              | Shorthand for `--format json`                                            |
-| `history`  | `--filter <type>`     | Filter by entry type: `auto`, `user`, `cue`                              |
+| `history`  | `--filter <type>`     | Filter by entry type: `auto`, `user`, `cue`, `agent`                     |
 | `history`  | `-l, --limit <n>`     | Maximum entries to show (default 100)                                    |
 
 `synopsis` requires the desktop app to be running; `history` reads from disk and works offline. If `encoreFeatures.directorNotes` is disabled, enable it first with `maestro-cli settings set encoreFeatures.directorNotes true`.

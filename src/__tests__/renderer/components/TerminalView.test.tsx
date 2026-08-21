@@ -550,6 +550,73 @@ describe('TerminalView - killed shell keeps the tab (issue #1184)', () => {
 	});
 });
 
+describe('TerminalView - tiled panes spawn their PTY (regression)', () => {
+	// A terminal that is a leaf in the active tab group is on screen without ever
+	// being `activeTerminalTabId`. Spawning used to be gated on the active tab
+	// alone, so a tiled terminal sat on "Starting terminal..." forever - the one
+	// tab kind that broke when tiled. The visible set, not the active tab, is what
+	// drives spawning.
+
+	it('spawns a PTY for a terminal that only has a pane rect', async () => {
+		const tiled = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		// Empty active terminal tab: the panel is showing the group, not a single tab.
+		const session = makeSession([tiled], '');
+		const paneRects = new Map([['tiled-1', { top: 0, left: 0, width: 400, height: 300 }]]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-terminal-tiled-1' })
+		);
+	});
+
+	it('spawns a PTY for every terminal in the group, not just one', async () => {
+		const first = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		const second = makeTab({ id: 'tiled-2', pid: 0, state: 'idle' });
+		const session = makeSession([first, second], '');
+		const paneRects = new Map([
+			['tiled-1', { top: 0, left: 0, width: 400, height: 150 }],
+			['tiled-2', { top: 150, left: 0, width: 400, height: 150 }],
+		]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		const spawnedIds = maestro()
+			.process.spawnTerminalTab.mock.calls.map((c: [{ sessionId: string }]) => c[0].sessionId)
+			.sort();
+		expect(spawnedIds).toEqual(['session-1-terminal-tiled-1', 'session-1-terminal-tiled-2']);
+	});
+
+	it('leaves a terminal that is neither active nor tiled alone', async () => {
+		const tiled = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		const offscreen = makeTab({ id: 'offscreen-1', pid: 0, state: 'idle' });
+		const session = makeSession([tiled, offscreen], '');
+		const paneRects = new Map([['tiled-1', { top: 0, left: 0, width: 400, height: 300 }]]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledTimes(1);
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-terminal-tiled-1' })
+		);
+	});
+});
+
 describe('TerminalView - SSH terminal working directory (regression)', () => {
 	// Regression test suite: SSH terminals must cd to the correct remote directory.
 	// The workingDirOverride in sessionSshRemoteConfig must follow the fallback chain:

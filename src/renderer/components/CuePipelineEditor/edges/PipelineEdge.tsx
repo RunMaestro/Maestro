@@ -1,5 +1,11 @@
 import { memo } from 'react';
-import { getSmoothStepPath, BaseEdge, EdgeLabelRenderer, type EdgeProps } from 'reactflow';
+import {
+	getSmoothStepPath,
+	BaseEdge,
+	EdgeLabelRenderer,
+	Position,
+	type EdgeProps,
+} from 'reactflow';
 import { MessageCircle, FileText } from 'lucide-react';
 import { CUE_COLOR, type EdgeMode } from '../../../../shared/cue-pipeline-types';
 import type { Theme } from '../../../types';
@@ -16,6 +22,47 @@ function ensurePipelineDashStyle() {
 		`@keyframes pipeline-node-pulse { 0%, 100% { box-shadow: 0 0 12px var(--node-color-40); } 50% { box-shadow: 0 0 20px var(--node-color-60), 0 0 6px var(--node-color-30); } }`,
 	].join('\n');
 	document.head.appendChild(style);
+}
+
+/** React Flow's own default stub length for `getSmoothStepPath`. */
+const DEFAULT_STEP_OFFSET = 20;
+
+/**
+ * Pick the stub length for the orthogonal router.
+ *
+ * `getSmoothStepPath` leaves a straight stub of `offset` px at BOTH ends before
+ * it turns, so it needs `2 * offset` px of clearance between the handles. With
+ * less room than that the router doubles back on itself and draws hooks and
+ * stray jogs instead of one clean elbow. Shrinking the stub to half the
+ * available clearance keeps the path to a single right-angle no matter how
+ * close the two nodes sit.
+ *
+ * Only applies to facing handles with the target genuinely AHEAD of the source
+ * on the routing axis. A backwards edge, or one between mixed axes, has to loop
+ * around the node body and needs the full stub to do it.
+ */
+export function resolveStepOffset(
+	sourceX: number,
+	sourceY: number,
+	targetX: number,
+	targetY: number,
+	sourcePosition: Position,
+	targetPosition: Position
+): number {
+	let clearance: number | null = null;
+	if (sourcePosition === Position.Right && targetPosition === Position.Left) {
+		clearance = targetX - sourceX;
+	} else if (sourcePosition === Position.Left && targetPosition === Position.Right) {
+		clearance = sourceX - targetX;
+	} else if (sourcePosition === Position.Bottom && targetPosition === Position.Top) {
+		clearance = targetY - sourceY;
+	} else if (sourcePosition === Position.Top && targetPosition === Position.Bottom) {
+		clearance = sourceY - targetY;
+	}
+	if (clearance === null || clearance <= 0 || clearance >= DEFAULT_STEP_OFFSET * 2) {
+		return DEFAULT_STEP_OFFSET;
+	}
+	return clearance / 2;
 }
 
 export interface PipelineEdgeData {
@@ -58,6 +105,7 @@ export const PipelineEdge = memo(function PipelineEdge({
 		sourcePosition,
 		targetPosition,
 		borderRadius: 0,
+		offset: resolveStepOffset(sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition),
 	});
 
 	return (

@@ -295,6 +295,15 @@ export class CodexOutputParser implements AgentOutputParser {
 
 	// Cached context window - read once from config
 	private contextWindow: number;
+	/**
+	 * Provenance of `contextWindow`: true only once Codex itself reported a
+	 * `model_context_window` (turn_context or token_count). The constructor seed
+	 * below is a config value or a static-table lookup, never provider truth, so
+	 * it deliberately leaves this false. Emitted as `usage.contextWindowReported`
+	 * so `StdoutHandler.buildUsageStats` can mark the window authoritative
+	 * (finding P1) without guessing from the number alone.
+	 */
+	private contextWindowReported = false;
 	private model: string;
 
 	// Track tool name from tool_call to carry over to tool_result
@@ -379,6 +388,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (msg.type === 'turn_context' && msg.payload) {
 			if (msg.payload.model_context_window) {
 				this.contextWindow = msg.payload.model_context_window;
+				this.contextWindowReported = true;
 			}
 			if (msg.payload.model) {
 				this.model = msg.payload.model;
@@ -503,6 +513,19 @@ export class CodexOutputParser implements AgentOutputParser {
 			const reasoningOutputTokens = tokenUsage.reasoning_output_tokens || 0;
 			const totalOutputTokens = outputTokens + reasoningOutputTokens;
 
+			// Cache the window the same way `turn_context` does. Without this the
+			// denominator flaps inside a single turn whenever Codex carries
+			// `model_context_window` in `token_count` but not in an earlier
+			// `turn_context`: this event reports the real window with the flag set
+			// (renderer rank 2), then `turn.completed` falls back through
+			// `extractUsageFromRaw` to the constructor's config or lookup-table seed
+			// with the flag clear (rank 3, the stored override wins). The value-level
+			// flap predates the flag, but the flag makes it cross a precedence tier.
+			if (payload.info.model_context_window) {
+				this.contextWindow = payload.info.model_context_window;
+				this.contextWindowReported = true;
+			}
+
 			return {
 				type: 'usage',
 				usage: {
@@ -511,8 +534,50 @@ export class CodexOutputParser implements AgentOutputParser {
 					cacheReadTokens: cachedInputTokens,
 					cacheCreationTokens: 0,
 					contextWindow: payload.info.model_context_window || this.contextWindow,
+					// Authoritative when this payload carried the window itself, or when an
+					// earlier turn_context reported the cached one. A config / static-table
+					// seed leaves the flag off (see `contextWindowReported`).
+					contextWindowReported: payload.info.model_context_window
+						? true
+						: this.contextWindowReported,
 					reasoningTokens: reasoningOutputTokens,
 				},
+				raw: msg,
+			};
+		}
+
+		// error: the turn failed server-side. Codex reports these through
+		// EventMsg::Error, which carries its text in `payload.message` rather
+		// than the top-level `error` field the legacy shapes use. Without this
+		// branch the event fell through to a benign `system` event and the user
+		// just watched the agent go quiet with no explanation (see #1378, where
+		// remote compaction 404'd mid-conversation).
+		if (payload.type === 'error' && payload.message) {
+			return {
+				type: 'error',
+				text: payload.message,
+				raw: msg,
+			};
+		}
+
+		// stream_error: a transient stream failure that Codex retries on its own
+		// ("stream error: ...; retrying 1/5"). Surface it as progress text, NOT
+		// as an error - flagging it would pause a session that is about to
+		// recover on its own, and the once-only `errorEmitted` latch in
+		// StdoutHandler would then swallow the real error if the retries do run
+		// out.
+		//
+		// `isReasoning` keeps it OUT of `streamedText`. That buffer is what
+		// ExitHandler emits as the final answer when a turn ends without a result
+		// message - so on a turn that retries and then dies, the user would have
+		// been handed "stream error: ...; retrying 1/5" as the agent's response.
+		// Visible as progress, never the answer.
+		if (payload.type === 'stream_error' && payload.message) {
+			return {
+				type: 'text',
+				text: payload.message,
+				isPartial: true,
+				isReasoning: true,
 				raw: msg,
 			};
 		}
@@ -836,8 +901,13 @@ export class CodexOutputParser implements AgentOutputParser {
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
 			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			// Context window from Codex config (~/.codex/config.toml) or model lookup table
+			// Context window from Codex config (~/.codex/config.toml) or model lookup
+			// table, unless a turn_context or token_count already replaced it with
+			// Codex's own value. Both cache it now, so once either has reported a
+			// window this reads the real one for the rest of the session instead of
+			// dropping back to the seed mid-turn.
 			contextWindow: this.contextWindow,
+			contextWindowReported: this.contextWindowReported,
 			// Store reasoning tokens separately for UI display
 			reasoningTokens: reasoningOutputTokens,
 		};
@@ -910,10 +980,27 @@ export class CodexOutputParser implements AgentOutputParser {
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 
-		if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
+		// Current format (v0.111.0+): errors arrive wrapped in an `event_msg`
+		// envelope with the text in `payload.message`. `stream_error` is
+		// deliberately NOT treated as an error here - Codex retries those
+		// itself, and raising one would both pause a recovering session and
+		// burn StdoutHandler's once-only `errorEmitted` latch.
+		if (obj.type === 'event_msg') {
+			const payload = obj.payload as CodexPayload | undefined;
+			if (payload?.type === 'error' && typeof payload.message === 'string' && payload.message) {
+				parsedJson = parsed;
+				errorText = payload.message;
+			}
+		} else if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
 			parsedJson = parsed;
-			errorText = extractErrorText(obj.error as CodexRawMessage['error']);
-			if (errorText === 'Unknown error') errorText = null;
+			// Legacy shapes carry the text in `error`; the bare exec-JSON `error`
+			// event carries it in `message`. Fall back to `message` instead of
+			// discarding the event as "Unknown error".
+			errorText = extractErrorText(obj.error as CodexRawMessage['error'], '');
+			if (!errorText && typeof obj.message === 'string') {
+				errorText = obj.message;
+			}
+			if (!errorText || errorText === 'Unknown error') errorText = null;
 		}
 
 		if (!errorText) {

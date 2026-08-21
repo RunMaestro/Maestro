@@ -78,12 +78,22 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
+// listSessions now serves unchanged transcripts from the on-disk parse cache,
+// which resolves its location through electron's userData path.
+vi.mock('electron', () => ({
+	app: { getPath: vi.fn().mockReturnValue('/mock/userData') },
+}));
+
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================
 
 import { ClaudeSessionStorage } from '../../main/storage/claude-session-storage';
 import { computeClaudeUsageCost } from '../../main/utils/pricing';
+import {
+	SessionInfoCache,
+	setSessionInfoCacheForTest,
+} from '../../main/storage/session-info-cache';
 import Store from 'electron-store';
 import fs from 'fs/promises';
 
@@ -138,6 +148,10 @@ describe('ClaudeSessionStorage', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Fresh parse cache per test: these cases reuse one project path and one
+		// set of file stats while varying the transcript CONTENT, which the real
+		// (mtime + size) fingerprint is entitled to treat as unchanged.
+		setSessionInfoCacheForTest('claude-code', new SessionInfoCache('claude-code', '/mock/cache'));
 		storage = new ClaudeSessionStorage();
 	});
 
@@ -545,10 +559,24 @@ describe('ClaudeSessionStorage', () => {
 		});
 
 		it('should return empty array when project directory does not exist', async () => {
-			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+			// The missing directory surfaces on readdir - listing no longer pays for a
+			// separate existence check before enumerating.
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+			);
 
 			const sessions = await storage.listSessions('/nonexistent/path');
 			expect(sessions).toEqual([]);
+		});
+
+		it('should rethrow when the session directory is unreadable', async () => {
+			// EACCES/EIO are real faults - swallowing them would report a user's
+			// existing transcripts as "no sessions".
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+			);
+
+			await expect(storage.listSessions('/test/project')).rejects.toThrow('EACCES');
 		});
 	});
 

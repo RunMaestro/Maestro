@@ -60,6 +60,7 @@ import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
+import { registerAiCommandHandlers } from './aiCommand';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
@@ -73,6 +74,8 @@ import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import { registerTabsHandlers } from './tabs';
+import { registerContextTimelineHandlers } from './context-timeline';
 import { registerAgentRunHandlers } from './agent-run';
 import {
 	registerWindowsHandlers,
@@ -134,6 +137,7 @@ export { registerNotificationsHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
+export { registerAiCommandHandlers };
 export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
@@ -151,6 +155,7 @@ export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerTabsHandlers };
 export { registerAgentRunHandlers };
 export { registerWindowsHandlers };
 export { wireWindowRegistryBroadcast };
@@ -250,7 +255,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
-		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 	});
 	registerSystemHandlers({
 		getMainWindow: deps.getMainWindow,
@@ -291,6 +295,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
 	});
 	// Register marketplace handlers
 	registerMarketplaceHandlers({
@@ -367,6 +372,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register tab lifecycle handlers (renderer -> main tab-close notification)
+	registerTabsHandlers();
+	// Register Context Timeline capture handlers (per-agent turn history backfill)
+	registerContextTimelineHandlers();
 	// Register AgentRun control-plane handlers (neutral run/campaign ledger)
 	registerAgentRunHandlers({
 		getProcessManager: deps.getProcessManager,

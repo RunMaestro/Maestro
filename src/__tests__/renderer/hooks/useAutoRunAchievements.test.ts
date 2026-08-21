@@ -802,7 +802,9 @@ describe('useAutoRunAchievements', () => {
 			});
 
 			expect(mockUpdateAutoRunProgress).toHaveBeenCalledTimes(1);
-			expect(mockUpdateAutoRunProgress).toHaveBeenCalledWith(120000);
+			// Tagged 'cue' so the credit also lands in the Cue subtotal the About
+			// card shows, not just in the shared cumulative total.
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalledWith(120000, 'cue');
 		});
 
 		it('ignores unrelated Cue activity payloads', () => {

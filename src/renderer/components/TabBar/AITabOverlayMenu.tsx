@@ -13,6 +13,7 @@ import {
 	Share2,
 	ChevronsLeft,
 	ChevronsRight,
+	Clock,
 	X,
 } from 'lucide-react';
 import type { AITab, Theme } from '../../types';
@@ -37,6 +38,7 @@ export interface AITabOverlayMenuProps {
 	onRenameClick: (e: React.MouseEvent) => void;
 	onMarkUnreadClick: (e: React.MouseEvent) => void;
 	onExportHtmlClick: (e: React.MouseEvent) => void;
+	onSnoozeClick: (e: React.MouseEvent) => void;
 	onCopyContextClick: (e: React.MouseEvent) => void;
 	onCopyContextWithReasoningClick: (e: React.MouseEvent) => void;
 	onSummarizeAndContinueClick: (e: React.MouseEvent) => void;
@@ -55,6 +57,7 @@ export interface AITabOverlayMenuProps {
 	onSummarizeAndContinue?: (tabId: string) => void;
 	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	onExportHtml?: (tabId: string) => void;
+	onSnooze?: (tabId: string) => void;
 	onPublishGist?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
@@ -81,6 +84,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onRenameClick,
 	onMarkUnreadClick,
 	onExportHtmlClick,
+	onSnoozeClick,
 	onCopyContextClick,
 	onCopyContextWithReasoningClick,
 	onSummarizeAndContinueClick,
@@ -98,6 +102,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onSummarizeAndContinue,
 	onCopyContext,
 	onExportHtml,
+	onSnooze,
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
@@ -225,6 +230,18 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<Download className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Export as HTML
+					</button>
+				)}
+
+				{/* Snooze - hide the tab until a chosen moment, then bring it back */}
+				{onSnooze && (
+					<button
+						onClick={onSnoozeClick}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+					>
+						<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Snooze Tab
 					</button>
 				)}
 

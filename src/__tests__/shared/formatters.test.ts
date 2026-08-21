@@ -23,7 +23,6 @@ import {
 	getBasename,
 	joinPath,
 	formatSshTarget,
-	formatDurationLong,
 } from '../../shared/formatters';
 
 describe('shared/formatters', () => {
@@ -729,42 +728,13 @@ describe('shared/formatters', () => {
 		});
 	});
 
-	// ==========================================================================
-	// formatDurationLong tests
-	// ==========================================================================
-	describe('formatDurationLong', () => {
-		it('returns 0s for sub-second, zero, negative, and non-finite inputs', () => {
-			expect(formatDurationLong(0)).toBe('0s');
-			expect(formatDurationLong(999)).toBe('0s');
-			expect(formatDurationLong(-5000)).toBe('0s');
-			expect(formatDurationLong(NaN)).toBe('0s');
-			expect(formatDurationLong(Infinity)).toBe('0s');
-		});
-
-		it('formats seconds and minutes', () => {
-			expect(formatDurationLong(45_000)).toBe('45s');
-			expect(formatDurationLong(90_000)).toBe('1m 30s');
-			expect(formatDurationLong(300_000)).toBe('5m');
-		});
-
-		it('formats hours with trailing minutes', () => {
-			expect(formatDurationLong(2 * 3_600_000 + 15 * 60_000)).toBe('2h 15m');
-			expect(formatDurationLong(3_600_000)).toBe('1h');
-		});
-
-		it('ladders into days and weeks instead of dumping raw seconds', () => {
-			// The bug this fixes: 546831.66s of time-spent used to render literally.
-			expect(formatDurationLong(546_831_660)).toBe('6d 7h');
-			expect(formatDurationLong(23 * 86_400_000)).toBe('3w 2d');
-		});
-
-		it('ladders into years and skips months (weeks feed straight into years)', () => {
-			// 420 days = 1y (365d) + 55d remainder -> 7w
-			expect(formatDurationLong(420 * 86_400_000)).toBe('1y 7w');
-		});
-
-		it('shows only the top unit when the next unit is zero', () => {
-			expect(formatDurationLong(7 * 86_400_000)).toBe('1w');
+	// Duration formatters live in shared/duration.ts and are covered by
+	// duration.test.ts. This asserts the compatibility re-export still resolves,
+	// since ~50 call sites import them from this module's path.
+	describe('duration re-exports', () => {
+		it('re-exports the duration formatters', () => {
+			expect(formatActiveTime(2 * 60 * 60 * 1000 + 30 * 60 * 1000)).toBe('2H 30M');
+			expect(formatElapsedTime(500)).toBe('500ms');
 		});
 	});
 });

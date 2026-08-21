@@ -10,6 +10,7 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { captureException } from '../utils/sentry';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useKeyboardShortcutHelpers } from '../hooks/keyboard';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { LightboxModal } from './LightboxModal';
 
 interface QueuedItemEditModalProps {
@@ -43,6 +44,12 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	const { isShortcut } = useKeyboardShortcutHelpers({ shortcuts, tabShortcuts });
+
+	const resize = useResizableTextarea({
+		sizeKey: 'queued-item-edit',
+		minHeight: 80,
+		externalRef: textareaRef,
+	});
 
 	// Focus the textarea on open, cursor at end.
 	useEffect(() => {
@@ -111,10 +118,17 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 		);
 	};
 
-	// Parity with the composer: Cmd+Y opens the carousel on the first image. Once
-	// inside, LightboxModal owns the in-carousel keys (Cmd+E annotate, Cmd+C copy,
-	// Delete/Backspace remove, arrows navigate). No-ops when nothing is attached.
+	// Cmd/Ctrl+Enter saves from anywhere in the body, including the textarea where
+	// plain Enter has to stay a newline. Parity with the composer: Cmd+Y opens the
+	// carousel on the first image; once inside, LightboxModal owns the in-carousel
+	// keys (Cmd+E annotate, Cmd+C copy, Delete/Backspace remove, arrows navigate).
 	const handleKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			e.stopPropagation();
+			handleSave();
+			return;
+		}
 		if (images.length === 0) return;
 		if (isShortcut(e.nativeEvent, 'openImageCarousel')) {
 			e.preventDefault();
@@ -160,6 +174,7 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 							backgroundColor: theme.colors.bgMain,
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
+							...resize.style,
 						}}
 					/>
 

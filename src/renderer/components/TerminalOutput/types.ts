@@ -132,6 +132,15 @@ export interface TerminalOutputProps {
 	getForceSendContext?: (
 		item: QueuedItem
 	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/**
+	 * Whether this chat view answers the global Force Send keyboard shortcut
+	 * (`maestro:triggerForceSendQueued`). The single view is the only chat on
+	 * screen, so it defaults to true. A tiled group mounts one chat per AI pane,
+	 * and the event is global - without this gate every pane with a queue would
+	 * pop its own confirmation. Only the focused pane (the one the shared AI input
+	 * targets) sets it.
+	 */
+	forceSendShortcutEnabled?: boolean;
 	onInterrupt?: () => void; // Callback to interrupt the current process
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom

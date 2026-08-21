@@ -4,6 +4,9 @@ import { tags as t } from '@lezer/highlight';
 import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../../constants/themes';
 
+/** Unzoomed editor font size, in CSS pixels. */
+export const EDITOR_BASE_FONT_PX = 13;
+
 /**
  * Build a CodeMirror 6 theme extension from the app's Theme object.
  *
@@ -21,9 +24,15 @@ import type { Theme } from '../../../constants/themes';
  *   - strings           → warning
  *   - comments          → textDim
  *
+ * `fontScale` is the reader's font zoom (1 = unzoomed). It lives in the theme
+ * rather than in a CSS rule because CM6 injects its own scoped stylesheet for
+ * `.cm-scroller`; an app-level rule of equal specificity would win or lose on
+ * injection order. CM6 re-measures line heights on reconfigure, so scrolling
+ * and the gutter stay aligned after a zoom.
+ *
  * Pure: theme in, extension out. No side effects, no DOM.
  */
-export function buildEditorTheme(theme: Theme): Extension {
+export function buildEditorTheme(theme: Theme, fontScale = 1): Extension {
 	const c = theme.colors;
 	const isDark = theme.mode !== 'light';
 
@@ -37,7 +46,7 @@ export function buildEditorTheme(theme: Theme): Extension {
 			'.cm-scroller': {
 				fontFamily:
 					'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-				fontSize: '13px',
+				fontSize: `${EDITOR_BASE_FONT_PX * fontScale}px`,
 				lineHeight: '1.6',
 			},
 			'.cm-content': {

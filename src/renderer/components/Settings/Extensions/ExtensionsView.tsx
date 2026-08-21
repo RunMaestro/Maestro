@@ -5,12 +5,16 @@
  * Mounted in EncoreTab in place of the old plugins-only section.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Search, FolderPlus, Puzzle } from 'lucide-react';
 import type { EncoreFeatureFlags, Theme } from '../../../types';
 import type { ReactNode } from 'react';
+import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { useGridColumnCount } from '../../../hooks/ui/useGridColumnCount';
+import { useListNavigation } from '../../../hooks/keyboard/useListNavigation';
+import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { useExtensions } from './useExtensions';
-import { ExtensionsGrid } from './ExtensionsGrid';
+import { ExtensionsGrid, ACTIVE_EXTENSION_TILE_SELECTOR } from './ExtensionsGrid';
 import { ExtensionDetails } from './ExtensionDetails';
 import { FirstPartyEnableModal } from './FirstPartyEnableModal';
 import {
@@ -18,6 +22,7 @@ import {
 	CATEGORY_LABELS,
 	filterExtensions,
 	type CategoryFilter,
+	type UnifiedExtension,
 } from './extensionModel';
 
 interface ExtensionsViewProps {
@@ -59,6 +64,48 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	// enable/disable/uninstall (and disappears if the plugin is removed).
 	const selected = selectedKey ? extensions.find((e) => e.key === selectedKey) : undefined;
 
+	// Keyboard navigation over the tile grid. The active index lives HERE rather
+	// than in the grid because the grid unmounts while the details pane is open -
+	// keeping it here is what lets Escape drop the user back on the tile they
+	// opened instead of resetting them to the first one.
+	const gridRef = useRef<HTMLDivElement>(null);
+	const columns = useGridColumnCount(gridRef, visible.length);
+	const [returnFocusToGrid, setReturnFocusToGrid] = useState(false);
+
+	const openDetails = useCallback((ext: UnifiedExtension) => setSelectedKey(ext.key), []);
+
+	const {
+		selectedIndex: activeIndex,
+		setSelectedIndex: setActiveIndex,
+		handleKeyDown: handleGridKeyDown,
+	} = useListNavigation({
+		listLength: visible.length,
+		columns,
+		enablePageNavigation: true,
+		// Enter arrives here rather than through the tile's own click: the hook
+		// calls preventDefault, which suppresses the button's default activation,
+		// so the details pane opens exactly once.
+		onSelect: (index) => {
+			const ext = visible[index];
+			if (ext) openDetails(ext);
+		},
+		enabled: !selected,
+	});
+
+	// While the details pane is open it owns Escape: back to the grid, not out of
+	// the whole Settings modal. Non-blocking / no focus trap so the rest of
+	// Settings (search, tab switching) keeps working underneath.
+	const closeDetails = useCallback(() => {
+		setSelectedKey(null);
+		setReturnFocusToGrid(true);
+	}, []);
+	useModalLayer(MODAL_PRIORITIES.EXTENSION_DETAILS, 'Extension Details', closeDetails, {
+		enabled: Boolean(selected),
+		blocksLowerLayers: false,
+		capturesFocus: false,
+		focusTrap: 'none',
+	});
+
 	return (
 		<div data-testid="extensions-view" data-setting-id="encore-plugins">
 			{/* Settings-search anchor: Pianola is managed as a marketplace tile in
@@ -71,15 +118,19 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Plugins
 				</h3>
-				<button
-					type="button"
-					data-testid="extensions-install"
-					onClick={() => void installPlugin()}
-					className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-				>
-					<FolderPlus className="w-3.5 h-3.5" /> Install plugin…
-				</button>
+				{/* Installing belongs to the marketplace grid, not to one plugin's
+				    details pane - showing it there reads as "install this plugin". */}
+				{!selected && (
+					<button
+						type="button"
+						data-testid="extensions-install"
+						onClick={() => void installPlugin()}
+						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<FolderPlus className="w-3.5 h-3.5" /> Install plugin…
+					</button>
+				)}
 			</div>
 			<p className="text-xs mb-4" style={{ color: theme.colors.textDim }}>
 				Built-in Encore features and community plugins. Enable what you want; everything else stays
@@ -113,7 +164,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					ext={selected}
 					contributions={contributions}
 					busy={busyId === selected.id}
-					onBack={() => setSelectedKey(null)}
+					onBack={closeDetails}
 					onTogglePlugin={togglePlugin}
 					onToggleBuiltin={toggleBuiltin}
 					onUninstall={uninstallPlugin}
@@ -159,6 +210,15 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 								data-testid="extensions-search"
 								value={query}
 								onChange={(e) => setQuery(e.target.value)}
+								onKeyDown={(e) => {
+									// Down out of the search box is the way into the grid without
+									// reaching for Tab, which has to cross the only-installed toggle.
+									if (e.key !== 'ArrowDown') return;
+									e.preventDefault();
+									gridRef.current
+										?.querySelector<HTMLButtonElement>(ACTIVE_EXTENSION_TILE_SELECTOR)
+										?.focus();
+								}}
 								placeholder="Search extensions…"
 								className="bg-transparent flex-1 text-sm outline-none"
 								style={{ color: theme.colors.textMain }}
@@ -185,7 +245,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 								}}
 							>
 								<span
-									className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
+									className="absolute left-0 top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
 									style={{ transform: onlyInstalled ? 'translateX(18px)' : 'translateX(2px)' }}
 								/>
 							</span>
@@ -196,7 +256,12 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					<ExtensionsGrid
 						theme={theme}
 						extensions={visible}
-						onSelect={(ext) => setSelectedKey(ext.key)}
+						onSelect={openDetails}
+						activeIndex={activeIndex}
+						onActiveIndexChange={setActiveIndex}
+						onKeyDown={handleGridKeyDown}
+						gridRef={gridRef}
+						autoFocusActive={returnFocusToGrid}
 					/>
 				</>
 			)}

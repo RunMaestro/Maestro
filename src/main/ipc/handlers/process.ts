@@ -8,6 +8,8 @@ import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import { logger } from '../../utils/logger';
+import { setFailoverOverlay } from '../../process-manager/failover-overlay';
+import { REGEX_AI_SUFFIX } from '../../constants';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -21,7 +23,7 @@ import { shellEscape } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
-import { getDefaultShell } from '../../stores/defaults';
+import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
@@ -237,6 +239,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			await addBreadcrumb('agent', `Kill: ${sessionId}`, { sessionId });
 			return processManager.kill(sessionId);
 		})
+	);
+
+	// Provider Failover: pin an agent to a backup endpoint's env (or clear the pin
+	// with `env: null` to go back to primary). The renderer awaits this before it
+	// fires the failover retry, so the very next spawn already carries the swap -
+	// relying on session persistence to propagate it would race the spawn.
+	ipcMain.handle(
+		'process:setFailoverOverlay',
+		withIpcErrorLogging(
+			handlerOpts('setFailoverOverlay'),
+			async (sessionId: string, env: Record<string, string> | null, model?: string) => {
+				setFailoverOverlay(sessionId.replace(REGEX_AI_SUFFIX, ''), env, model);
+			}
+		)
 	);
 
 	// Resize PTY dimensions
@@ -456,7 +472,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							remoteParts.push(envExports.join(' && '));
 						}
 
-						remoteParts.push('exec "$SHELL"');
+						// `-l` makes the remote shell a LOGIN shell, matching what the user gets from
+						// a plain `ssh host`. Because we pass a remote command, sshd runs it under a
+						// non-login shell, so without `-l` the login profiles never run. On macOS that
+						// means /etc/zprofile never calls /usr/libexec/path_helper, and the terminal is
+						// missing every /etc/paths + /etc/paths.d entry (/opt/homebrew/bin, TeX, etc.)
+						// while still having the ~/.zshrc additions. Local terminals already spawn with
+						// `-l -i` (see PtySpawner), so this keeps remote terminals consistent.
+						remoteParts.push('exec "$SHELL" -l');
 						sshArgs.push(remoteParts.join(' && '));
 
 						return processManager.spawn({
@@ -517,13 +540,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				);
 				const processManager = requireProcessManager(getProcessManager);
 
-				// Get the shell from settings if not provided
-				// Custom shell path takes precedence over the selected shell ID
-				let shell = config.shell || settingsStore.get('defaultShell', getDefaultShell());
-				const customShellPath = settingsStore.get('customShellPath', '');
-				if (customShellPath && customShellPath.trim()) {
-					shell = customShellPath.trim();
-				}
+				// Get the shell from settings if not provided. Shared with AI command
+				// mode, which has to name this exact shell to the model.
+				const shell = config.shell || resolveConfiguredShell(settingsStore);
 
 				// Get shell env vars for passing to runCommand
 				const shellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
@@ -566,6 +585,26 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					shellEnvVars,
 					sshRemoteConfig
 				);
+			}
+		)
+	);
+
+	// Terminate an in-flight process:runCommand. Needed because a one-shot
+	// command can block forever (a program waiting on stdin, `tail -f`, a
+	// runaway build) and runCommand's child isn't in the ProcessManager's
+	// process map, so process:kill can't reach it.
+	ipcMain.handle(
+		'process:cancelCommand',
+		withIpcErrorLogging(
+			handlerOpts('cancelCommand'),
+			async (config: { sessionId: string }): Promise<boolean> => {
+				const processManager = requireProcessManager(getProcessManager);
+				const cancelled = processManager.cancelCommand(config.sessionId);
+				logger.debug(`Cancel command requested`, LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					cancelled,
+				});
+				return cancelled;
 			}
 		)
 	);

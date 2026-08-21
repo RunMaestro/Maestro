@@ -49,7 +49,10 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
-import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import {
+	StdoutHandler,
+	pushResolvedOmpContextWindow,
+} from '../../../../main/process-manager/handlers/StdoutHandler';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
@@ -1117,6 +1120,7 @@ describe('StdoutHandler', () => {
 				cacheCreationTokens?: number;
 				costUsd?: number;
 				contextWindow?: number;
+				contextWindowReported?: boolean;
 				reasoningTokens?: number;
 				model?: string;
 			} | null
@@ -1310,6 +1314,64 @@ describe('StdoutHandler', () => {
 			});
 		});
 
+		it('sets contextWindowResolved when a non-omp parser flags a provider-reported window', () => {
+			// The parser saw the window in the provider's own payload (e.g. codex's
+			// model_context_window), so the value is authoritative and must outrank
+			// the session's stored customContextWindow in the renderer (finding P1).
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				costUsd: 0.05,
+				contextWindow: 400000,
+				contextWindowReported: true,
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				// Spawn config carries a different number; the reported one wins.
+				contextWindow: 200000,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(400000);
+			expect(stats.contextWindowResolved).toBe(true);
+		});
+
+		it('does not set contextWindowResolved for an unflagged usage payload', () => {
+			// Same window value, but the parser injected it from config or a static
+			// table rather than reading it from the provider. Provenance is only
+			// knowable at the parser, so an unflagged window stays a fallback.
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				costUsd: 0.05,
+				contextWindow: 400000,
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				contextWindow: 200000,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(400000);
+			expect(stats.contextWindowResolved).toBeUndefined();
+		});
+
 		it('resolves the omp model window from the local catalog and flags it authoritative', () => {
 			__resetOmpModelCatalogForTests();
 			const catalogKey = computeOmpCatalogKey('/usr/local/bin/omp', undefined);
@@ -1341,6 +1403,68 @@ describe('StdoutHandler', () => {
 			const stats = usageSpy.mock.calls[0][1];
 			expect(stats.contextWindow).toBe(1_000_000);
 			expect(stats.contextWindowResolved).toBe(true);
+		});
+
+		it('pushes a corrected window once when a late catalog prime lands', () => {
+			__resetOmpModelCatalogForTests();
+			const catalogKey = computeOmpCatalogKey('/usr/local/bin/omp', undefined);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+
+			// The spawn stamped the key, but the prime exceeded the spawn cap so the
+			// catalog is still empty when the first turn's usage arrives.
+			const { handler, emitter, processes, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				contextWindow: 200000,
+				ompModelCatalogKey: catalogKey,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			expect(usageSpy).toHaveBeenCalledTimes(1);
+			expect(usageSpy.mock.calls[0][1].contextWindow).toBe(200000);
+			expect(usageSpy.mock.calls[0][1].contextWindowResolved).toBeUndefined();
+			expect(proc.pendingOmpUsagePush?.model).toBe('claude-opus-4-8');
+
+			// Late prime lands: the corrected window is pushed without a second turn.
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }], catalogKey);
+			expect(pushResolvedOmpContextWindow(processes, emitter, sessionId, catalogKey)).toBe(true);
+
+			expect(usageSpy).toHaveBeenCalledTimes(2);
+			const corrected = usageSpy.mock.calls[1][1];
+			expect(corrected.contextWindow).toBe(1_000_000);
+			expect(corrected.contextWindowResolved).toBe(true);
+			// Token/cost fields are zeroed AT THE SOURCE: the correction re-emits
+			// through the ProcessManager EventEmitter, so every on('usage') consumer
+			// sees it. Zeroing here keeps the replayed (already-counted) turn from
+			// landing twice in any accumulating consumer.
+			expect(corrected.inputTokens).toBe(0);
+			expect(corrected.outputTokens).toBe(0);
+			expect(corrected.cacheReadInputTokens).toBe(0);
+			expect(corrected.cacheCreationInputTokens).toBe(0);
+			expect(corrected.totalCostUsd).toBe(0);
+			expect(corrected.reasoningTokens).toBe(0);
+			// Flagged correction-only so accumulating consumers update the window
+			// without re-counting the replayed turn's tokens/cost.
+			expect(corrected.contextWindowCorrectionOnly).toBe(true);
+			expect(corrected.contextWindowModel).toBe('claude-opus-4-8');
+
+			// Pending payload is cleared, so a repeat call cannot double-emit.
+			expect(proc.pendingOmpUsagePush).toBeUndefined();
+			expect(pushResolvedOmpContextWindow(processes, emitter, sessionId, catalogKey)).toBe(false);
+			expect(usageSpy).toHaveBeenCalledTimes(2);
 		});
 
 		it('does not resolve a mismatched-identity catalog (different binary/env)', () => {
@@ -2512,9 +2636,9 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(emitted.message).not.toContain('claude login');
 		});
 
-		it('uses claude login for claude-code even when the pattern message is generic', () => {
+		it('uses the claude login command even when the pattern message is generic', () => {
 			// Pattern-58 style message: no login command in the text. The
-			// agentId map must still produce "claude login" so Claude SSH
+			// agentId map must still produce "claude /login" so Claude SSH
 			// users keep actionable guidance.
 			const mockParser = mockAuthParser(
 				'claude-code',
@@ -2540,20 +2664,20 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(errorSpy).toHaveBeenCalledTimes(1);
 			const emitted = errorSpy.mock.calls[0][1];
 			expect(emitted.message).toBe(
-				'Authentication failed on remote host "build-box". SSH into the remote and run "claude login" to re-authenticate.'
+				'Authentication failed on remote host "build-box". SSH into the remote and run "claude /login" to re-authenticate.'
 			);
-			expect(emitted.message).toContain('claude login');
+			expect(emitted.message).toContain('claude /login');
 		});
 
 		it('omits a login command for agents without a known CLI login', () => {
 			const mockParser = mockAuthParser(
-				'opencode',
+				'hermes',
 				'Authentication required. Please configure your credentials.'
 			);
 
 			const { handler, sessionId, emitter } = createTestContext({
 				isStreamJsonMode: true,
-				toolType: 'opencode',
+				toolType: 'hermes',
 				outputParser: mockParser as any,
 				sshRemoteId: 'remote-1',
 				sshRemoteHost: 'build-box',
@@ -2572,8 +2696,33 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(emitted.message).toBe(
 				'Authentication failed on remote host "build-box". SSH into the remote to re-authenticate.'
 			);
-			expect(emitted.message).not.toContain('claude login');
+			expect(emitted.message).not.toContain('claude /login');
 			expect(emitted.message).not.toContain('grok login');
+		});
+
+		it('names the TUI slash command for agents whose login is not a one-liner', () => {
+			const mockParser = mockAuthParser('factory-droid', 'Authentication failed.');
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'factory-droid',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'authentication failed' }) + '\n'
+			);
+
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "droid" then type "/login" to re-authenticate.'
+			);
 		});
 	});
 

@@ -27,6 +27,7 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'github.issue': 'Issue',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
+	'webhook.received': 'Webhook',
 };
 
 /**
@@ -81,6 +82,20 @@ function validateTriggerConfig(
 			) {
 				errors.push(
 					`"${pipelineName}": ${label} trigger has an empty "repo" - leave blank or set "owner/repo"`
+				);
+			}
+			break;
+		case 'webhook.received':
+			// Mirrors the YAML validator: a webhook with no secret is a remote
+			// trigger anyone on the machine can fire, so block it at save time
+			// rather than letting the loader reject the whole file on restart.
+			if (
+				(typeof cfg.webhook_secret_env !== 'string' ||
+					cfg.webhook_secret_env.trim().length === 0) &&
+				(typeof cfg.webhook_secret !== 'string' || cfg.webhook_secret.trim().length === 0)
+			) {
+				errors.push(
+					`"${pipelineName}": ${label} trigger needs a secret environment variable - webhooks must be authenticated`
 				);
 			}
 			break;

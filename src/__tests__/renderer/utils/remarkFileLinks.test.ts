@@ -867,4 +867,35 @@ describe('remarkFileLinks', () => {
 			);
 		});
 	});
+
+	describe('malformed percent-encoding in link targets (MAESTRO-XS)', () => {
+		// decodeURIComponent throws URIError on a stray '%'. This plugin runs
+		// inside the unified transform, so the throw escaped react-markdown's
+		// render and blanked the entire message body in chat.
+		const cases = [
+			['a bare percent', '[see](100% done.md)'],
+			['a truncated escape', '[see](report%E0%A4%A.md)'],
+			['an invalid hex pair', '[see](weird%ZZ.md)'],
+			['a trailing percent', '[see](draft%)'],
+		];
+
+		for (const [label, markdown] of cases) {
+			it(`does not throw on ${label}`, async () => {
+				await expect(
+					processMarkdown(markdown, sampleFileTree, '', '/project')
+				).resolves.toBeTruthy();
+			});
+		}
+
+		it('leaves an unresolvable malformed target as-is', async () => {
+			const result = await processMarkdown('[see](100% done.md)', sampleFileTree, '');
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('still resolves valid escapes to maestro-file:// links', async () => {
+			const tree: FileNode[] = [{ name: 'My Notes.md', type: 'file', path: 'My Notes.md' }];
+			const result = await processMarkdown('[notes](My%20Notes.md)', tree, '');
+			expect(result).toContain('maestro-file://My Notes.md');
+		});
+	});
 });

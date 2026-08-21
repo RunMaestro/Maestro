@@ -1230,6 +1230,126 @@ describe('applyAgentConfigOverrides', () => {
 		applyAgentConfigOverrides(agent, baseArgs, {});
 		expect(baseArgs).toEqual(['--print']);
 	});
+
+	// -- readOnlyMode: read-only flags must not be overridable --
+	//
+	// buildAgentArgs emits readOnlyArgs BEFORE these overrides are appended, so
+	// a repeat of the same flag would win on the CLI. OpenCode is the live case:
+	// plan mode is `--agent plan`, and a user selecting an OpenCode agent stores
+	// `--agent <name>` in their per-agent custom args.
+	describe('readOnlyMode flag pinning', () => {
+		const openCodeLike = makeAgent({
+			readOnlyArgs: ['--agent', 'plan'],
+			configOptions: [
+				{
+					key: 'model',
+					type: 'text',
+					label: 'Model',
+					description: 'Model',
+					default: '',
+					argBuilder: (val: any) => (val ? ['--model', String(val)] : []),
+				},
+			],
+		});
+
+		it('drops a custom-args --agent that would override plan mode', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomArgs: '--agent prometheus --verbose',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan', '--verbose']);
+		});
+
+		it('drops the `--agent=name` spelling too', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomArgs: '--agent=prometheus --verbose',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan', '--verbose']);
+		});
+
+		it('reports customArgsSource as none when every custom arg was dropped', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomArgs: '--agent prometheus',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan']);
+			expect(result.customArgsSource).toBe('none');
+		});
+
+		it('keeps the custom --agent when not in read-only mode', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run'], {
+				sessionCustomArgs: '--agent prometheus --verbose',
+			});
+			expect(result.args).toEqual(['run', '--agent', 'prometheus', '--verbose']);
+		});
+
+		it('leaves non-conflicting flags alone in read-only mode', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomModel: 'anthropic/claude-sonnet-4-20250514',
+				sessionCustomArgs: '--verbose',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual([
+				'run',
+				'--agent',
+				'plan',
+				'--model',
+				'anthropic/claude-sonnet-4-20250514',
+				'--verbose',
+			]);
+		});
+
+		it('drops a config option that builds a pinned read-only flag', () => {
+			const agent = makeAgent({
+				readOnlyArgs: ['--agent', 'plan'],
+				configOptions: [
+					{
+						key: 'agent',
+						type: 'text',
+						label: 'Agent',
+						description: 'Agent',
+						default: '',
+						argBuilder: (val: any) => (val ? ['--agent', String(val)] : []),
+					},
+				],
+			});
+			const result = applyAgentConfigOverrides(agent, ['run', '--agent', 'plan'], {
+				agentConfigValues: { agent: 'prometheus' },
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan']);
+		});
+
+		// Regression: a pinned flag with no value of its own (e.g. Codex's
+		// `--skip-git-repo-check`) used to eat whatever unrelated token followed
+		// it, since stripFlags couldn't tell a boolean switch from a value-taking
+		// one and only checked whether the next token looked like a flag.
+		const codexLike = makeAgent({
+			readOnlyArgs: [
+				'--sandbox',
+				'read-only',
+				'--dangerously-bypass-approvals-and-sandbox',
+				'--skip-git-repo-check',
+			],
+		});
+
+		it('does not eat an unrelated custom arg following a boolean pinned flag', () => {
+			const result = applyAgentConfigOverrides(codexLike, ['exec'], {
+				sessionCustomArgs: '--foo bar --skip-git-repo-check my-value',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['exec', '--foo', 'bar', 'my-value']);
+		});
+
+		it('still eats the value for a pinned flag that genuinely takes one', () => {
+			const result = applyAgentConfigOverrides(codexLike, ['exec'], {
+				sessionCustomArgs: '--sandbox danger-full-access --other-flag keep-me',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['exec', '--other-flag', 'keep-me']);
+		});
+	});
 });
 
 // ---------------------------------------------------------------------------

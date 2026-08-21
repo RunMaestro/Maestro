@@ -160,6 +160,11 @@ vi.mock('lucide-react', () => ({
 			📁
 		</span>
 	),
+	Bot: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="bot-icon" className={className} style={style}>
+			🤖
+		</span>
+	),
 	Files: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="files-icon" className={className} style={style}>
 			🗂️
@@ -1666,8 +1671,7 @@ describe('FileExplorerPanel', () => {
 
 			expect(defaultProps.handleFileClick).toHaveBeenCalledWith(
 				expect.objectContaining({ name: 'helpers.ts' }),
-				'src/utils/helpers.ts',
-				expect.any(Object)
+				'src/utils/helpers.ts'
 			);
 		});
 	});

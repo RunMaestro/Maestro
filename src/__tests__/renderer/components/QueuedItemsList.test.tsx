@@ -1,7 +1,9 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 
@@ -24,7 +26,13 @@ function setup(overrides: Record<string, unknown> = {}) {
 		onTogglePauseQueuedItem: vi.fn(),
 		...overrides,
 	};
-	const utils = render(<QueuedItemsList {...(props as any)} />);
+	// The confirmation modals register with the layer stack, so the provider has to
+	// be in the tree for any test that opens one.
+	const utils = render(
+		<LayerStackProvider>
+			<QueuedItemsList {...(props as any)} />
+		</LayerStackProvider>
+	);
 	return { ...props, ...utils };
 }
 
@@ -46,6 +54,40 @@ describe('QueuedItemsList pause/hold', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();
 		expect(screen.queryByText('HELD')).toBeNull();
+	});
+});
+
+describe('QueuedItemsList force-send shortcut gate', () => {
+	// Shape the Force Send button/shortcut needs: this tab idle, another tab busy.
+	const forceSendProps = {
+		forcedParallelEnabled: true,
+		onForceSendQueuedItem: vi.fn(),
+		getForceSendContext: () => ({
+			targetTabBusy: false,
+			otherBusyTabs: [{ id: 'tab-2', displayName: 'Tab 2' }],
+		}),
+		activeTabId: 'tab-1',
+	};
+
+	function fireShortcut() {
+		act(() => {
+			window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
+		});
+	}
+
+	it('opens the confirmation when the list answers the shortcut (single-view default)', () => {
+		setup(forceSendProps);
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
+		fireShortcut();
+		expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+	});
+
+	it('ignores the shortcut when disabled, so only one tiled pane can respond', () => {
+		setup({ ...forceSendProps, shortcutEnabled: false });
+		fireShortcut();
+		// The per-item button is still there; the confirmation modal is not.
+		expect(screen.getByTitle(/Force send this message now/i)).toBeInTheDocument();
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
 	});
 });
 
@@ -119,5 +161,119 @@ describe('QueuedItemsList drag-to-reorder', () => {
 		fireEvent.mouseUp(window);
 
 		expect(onReorderItems).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The edit-message modal is opened from two places: the pencil on a queued row,
+ * and the "Edit Last Queued Message" shortcut, which has no path into this
+ * component. Both go through `uiStore.editingQueuedItemId`, so these tests drive
+ * the store rather than the component's internals.
+ */
+describe('QueuedItemsList edit modal', () => {
+	const editable = item({ id: 'q1', text: 'a queued message' });
+
+	function renderList(queue: QueuedItem[] = [editable]) {
+		const onEditQueuedItem = vi.fn();
+		const utils = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					onEditQueuedItem={onEditQueuedItem}
+				/>
+			</LayerStackProvider>
+		);
+		return { onEditQueuedItem, ...utils };
+	}
+
+	beforeEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	afterEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	it('opens the modal for the item named by uiStore, with no click involved', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		renderList();
+
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('a queued message');
+	});
+
+	it('records the clicked row in uiStore and opens its modal', () => {
+		renderList();
+		fireEvent.click(screen.getByTitle('Edit message and images'));
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+		expect(screen.getByPlaceholderText('Message to send…')).toBeInTheDocument();
+	});
+
+	it('clears the id when the item is dispatched out of the queue', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		const { rerender } = renderList();
+
+		rerender(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[item({ id: 'q2', text: 'the next one' })]}
+					theme={mockTheme}
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
+	});
+
+	// "Edit Last Queued Message" can target a message on another tab and switch to
+	// it. If this list cleared the id just because the item is not in ITS slice,
+	// it would race that switch and cancel the open before the new tab renders.
+	it('keeps the id when the item is queued for a tab other than this one', () => {
+		useUIStore.getState().setEditingQueuedItemId('q-other');
+		render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[editable, item({ id: 'q-other', tabId: 'tab-2' })]}
+					theme={mockTheme}
+					activeTabId="tab-1"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-other');
+		// Not rendered here - the owning tab's list opens it once we land there.
+		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
+	});
+
+	it('opens the modal once the owning tab is the active one', () => {
+		useUIStore.getState().setEditingQueuedItemId('q-other');
+		const queue = [editable, item({ id: 'q-other', tabId: 'tab-2', text: 'from the other tab' })];
+		const { rerender } = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					activeTabId="tab-1"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		rerender(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					activeTabId="tab-2"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('from the other tab');
 	});
 });

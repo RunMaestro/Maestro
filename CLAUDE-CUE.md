@@ -95,6 +95,21 @@ Two facts that aren't obvious:
 - **`prompt_file` is resolved at config load time, not run time.** `materializeCueConfig` reads the file and replaces it with inline `prompt`. A missing `prompt_file` is a **warning, not an error** - the subscription is kept with `prompt = ''` and fails loudly only when it tries to run (`cue-executor.ts` ⇒ `failedResult('...has no prompt content')`). This is the most common "my sub silently doesn't work" cause.
 - **`pipeline_name` and visual node keys (`target_node_key`, `fan_out_node_keys`) are renderer concerns** that the engine ignores - but the normalizer must allowlist them or the editor's visual round-trip breaks (multiple separate canvas nodes silently collapse into one). See `cue-config-normalizer.ts:normalizeSubscription`.
 
+## Scheduled Tasks (`cue-scheduled-tasks.ts`)
+
+The three clock events - `time.once`, `time.scheduled`, `time.heartbeat` - are exposed to users as one concept, **Scheduled Tasks**. Two surfaces edit them and both go through `src/main/cue/cue-scheduled-tasks.ts`:
+
+- `maestro-cli cue schedule` (create / `--list` / `--reschedule` / `--pause` / `--resume` / `--cancel`), which works with the desktop app closed.
+- The Cue modal's **Scheduled Tasks** tab, over `cue:listScheduledTasks` / `createScheduledTask` / `updateScheduledTask` / `cancelScheduledTask`.
+
+Rules worth knowing before editing it:
+
+- **Wire shapes live in `src/shared/cue/scheduled-tasks.ts`** so the renderer can type against them without importing `main/`. Pure helpers (duration/time parsing, label truncation, schedule description) live there too and are shared with the CLI.
+- **Writes never trigger a reload.** They land in `.maestro/cue.yaml` atomically and the engine's YAML watcher picks them up. Forcing a refresh races the watcher.
+- **`updateScheduledTask` refuses cross-kind timing patches.** Setting `fire_at` on a `time.scheduled` sub would leave both a `fire_at` and `schedule_times` in the file, which the validator rejects; changing HOW a task repeats means cancel + recreate, which is what the UI offers.
+- **Next-fire projection is one-way.** `time.once` reads `fire_at`; `time.scheduled` calls `calculateNextScheduledTime` (the same helper the trigger source uses); `time.heartbeat` returns `null`, because an interval's phase lives in engine run state, not YAML. Don't fake a projection for it.
+- **Agent lists come from the sessions store, not `getStatus()`.** Creating a task must work for an agent that has no `cue.yaml` yet, and `getStatus()` only knows agents that already have one.
+
 ## Concurrency, queue, and persistence
 
 `CueRunManager` (`cue-run-manager.ts`) owns these rules:
@@ -141,6 +156,15 @@ System sleep / app suspension can leave the engine paused mid-day. Handled in fo
   - `time.scheduled`: `{ reconciled: true, missedCount, mostRecentSlotMs, matched_time, matched_day, sleepDurationMs }` for the **most recent** missed slot only - long sleeps don't queue one run per slot.
   - `file.changed` / `agent.completed` / `task.pending` are NOT reconciled (FSEvents survives sleep, fan-in state is durable, task scanner re-scans on next tick).
 - **`cue-engine.ts:reconcileAfterWake`** - the resume-time entry point. Stops the heartbeat (so its 30s tick can't clobber `last_seen` mid-reconcile), runs `detectSleepAndReconcile`, then calls `pollNow()` on every trigger source that exposes it (currently the GitHub poller - fires an immediate `gh pr/issue list` so PRs/issues that appeared during sleep surface within seconds instead of waiting up to `poll_minutes`). Re-starts the heartbeat in a `finally` block. Idempotent against multiple resume events from the same wake.
+
+## Timezone changes (laptop crossing zones)
+
+`time.scheduled` matches a local wall clock, so the engine's view of "what time is it" has to follow the laptop. V8 caches the local timezone the first time a `Date` needs it and never re-reads it; Chromium refreshes its **renderers** on an OS timezone change but leaves the **main** process (where the whole engine runs) stale. Without help, a flight from CST to PST would keep firing schedules on the old clock until the app restarted.
+
+- **`utils/timezone-watcher.ts`** - polls every 60s (and on `powerMonitor.on('resume')`) for the real system zone, using two independent signals: the `/etc/localtime` symlink target on POSIX (a live syscall, uncacheable) and, as the cross-platform fallback, ICU's default zone. It also compares ICU's current UTC offset against `getTimezoneOffset()` to catch a stale cache when the zone ID itself did not move. On a change it assigns `process.env.TZ`, which is what makes Node reset V8's `DateCache`. No restart.
+- **`cue-engine.ts:handleTimeZoneChange`** - runs after the process has switched zones. Matching needs no repair (each 60s tick re-reads the clock), but every source's cached next-fire projection does, so it calls the optional `onTimeZoneChange()` on each source. Only `time.scheduled` implements it; interval sources and `time.once` are fixed points on the epoch timeline that a zone change does not move.
+- **Ordering matters on resume.** `index.ts` calls `timeZoneWatcher.check()` **before** `cueEngine.reconcileAfterWake()` so a laptop that flew while asleep computes its missed local slots in the zone it woke up in.
+- **`TZ` set before launch wins.** If the environment pinned `TZ` (containers, `TZ=UTC npm start`), the watcher logs once and stays inert.
 
 ## Trigger source contract
 
@@ -194,6 +218,16 @@ Single SQLite database, WAL mode. Tables:
 - **`cue-output-filter.ts`** truncates per-source chain output to `SOURCE_OUTPUT_MAX_CHARS` (5000) and applies the optional `include_output_from` / `forward_output_from` filters before injecting into downstream prompts.
 - **Shell executor** uses local `bash -c <cmd>` (or remote-shell wrapping under SSH); CLI executor invokes `maestro-cli send` with a 5000ms timeout cap.
 
+## Auth expiry detection (`cue-auth-detector.ts`)
+
+Because Cue spawns its own agents (above) instead of going through the ProcessManager, none of the streaming error classification that produces `agent:error` ever sees a pipeline run. An expired provider token therefore used to take every pipeline down silently: runs kept failing in the background and the user only found out when they typed a message by hand.
+
+`reportCueAuthFailure(mainWindow, result, toolType, sshRemoteId?)` runs on the completion path in `src/main/index.ts`, just before `recordCueHistoryEntry`. It re-uses the SAME pattern bank as the interactive path (`getErrorPatterns` / `matchErrorPattern` in `src/main/parsers/error-patterns.ts`) over the head of stderr and both ends of stdout, capped at 4000 chars each.
+
+- On a match it calls `capabilitySnapshots.markAuthRequired(...)` (so the Settings -> Agents pill flips for a pipeline-only failure too) and sends `agent:authExpired` to the renderer, which opens the re-authentication modal.
+- **It prompts once per provider**, keyed by `toolType` plus SSH remote id. Expired credentials fail every run, and a busy board can fire several a minute. The key is dropped as soon as a run for that provider completes, which is the only reliable signal that new credentials took. `resetReportedAuthFailures()` is the test seam.
+- It never throws: a reporting failure must not take down the run bookkeeping that follows it.
+
 ## Telemetry
 
 Telemetry submission to `runmaestro.ai/api/v1/cue/stats` is **gated on both Encore flags** (`encoreFeatures.maestroCue` AND `encoreFeatures.usageStats`) - same predicate as `cue-stats.ts:isCueStatsEnabled`. Older app versions don't have the code path, so back-compat is automatic.
@@ -241,7 +275,8 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 7. **`ChainDepth` is unique to chain step, not run.** Two parallel fan-out runs at depth 3 each show depth 3, not 3 and 4. The depth guard counts steps from the originating trigger, not total runs in flight.
 8. **`HEARTBEAT_INTERVAL_MS` is the floor for `time.heartbeat` reconciliation granularity.** A subscription with `interval_minutes: 0.1` (6s) WILL accumulate "missed" intervals that get fired as a single catch-up event after sleep - because the reconciler does `Math.floor(gapMs / intervalMs)`. Sub-minute intervals + sleep events == mass dispatch. Either reject sub-minute intervals in validation or cap reconciled `missedCount` at 1.
 9. **Sentry `operation` tags are part of the alerting contract.** `cue:heartbeat`, `cue:finalizeOutputRunStatus`, `cue:shell:sshWrap`, `cue:cliExecutor` are referenced by oncall paging rules. Don't refactor away the per-call-site tags.
-10. **Restored queue entries lose `pipelineName`.** This is by design (no schema column). If we ever care to preserve labels across crashes, add a column to `cue_event_queue` and thread it through `PersistableQueueEntry`.
+10. **A timezone change can repeat or skip one `time.scheduled` slot.** Local-time semantics: fly west and the wall clock rewinds past a slot that already fired today, so it fires again; fly east and a slot can be stepped over. This is deliberate - `handleTimeZoneChange` never synthesizes a catch-up for a slot that occurred in neither zone. Sleep-gap catch-ups are unaffected (the zone is applied before the reconciler runs).
+11. **Restored queue entries lose `pipelineName`.** This is by design (no schema column). If we ever care to preserve labels across crashes, add a column to `cue_event_queue` and thread it through `PersistableQueueEntry`.
 
 ## Common change recipes
 

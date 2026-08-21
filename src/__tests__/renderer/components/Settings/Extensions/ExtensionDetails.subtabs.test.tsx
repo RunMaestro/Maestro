@@ -10,7 +10,8 @@
  * These tests defend:
  * - which sub-tab opens first (configurable → Settings, else Permissions),
  * - that capability/service disclosure is gated behind the Permissions tab,
- * - the disabled first-party hint, Pianola's moved Open-Pianola entry, and the
+ * - the disabled first-party hint, Pianola's moved Open-Pianola entry (which
+ *   dismisses Settings so its modal is not hidden behind it), and the
  *   plugin Configure (grant + edit) → setting-inputs flow,
  * - that the removed action-row affordances (extension-configure-builtin, and
  *   extension-configure / extension-open-pianola in the action row) are gone.
@@ -26,6 +27,7 @@ import {
 } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import type { EncoreFeatureFlags, Theme } from '../../../../../renderer/types';
 import type { PluginRecord } from '../../../../../shared/plugins/plugin-registry';
+import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import type {
 	AggregatedContributions,
 	SettingContribution,
@@ -223,6 +225,18 @@ describe('ExtensionDetails sub-tabs - Pianola', () => {
 		const openBtn = screen.getByTestId('extension-open-pianola');
 		// Open Pianola lives INSIDE the Settings panel, not the action row.
 		expect(screen.getByTestId('extension-settings-panel').contains(openBtn)).toBe(true);
+	});
+
+	it('closes Settings when Open Pianola is clicked, so the modal is not hidden behind it', () => {
+		useModalStore.getState().closeAll();
+		useModalStore.getState().openModal('settings', { tab: 'general' });
+		renderDetails({ ext: builtinTile('pianola', true) });
+
+		fireEvent.click(screen.getByTestId('extension-open-pianola'));
+
+		// Settings is the topmost modal, so it MUST be gone before Pianola shows.
+		expect(useModalStore.getState().isOpen('settings')).toBe(false);
+		expect(useModalStore.getState().isOpen('pianolaModal')).toBe(true);
 	});
 
 	it('shows the disabled hint on the Settings tab when Pianola is off', () => {

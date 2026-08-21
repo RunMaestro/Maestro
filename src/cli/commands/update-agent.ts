@@ -30,8 +30,8 @@ interface UpdateAgentOptions {
 	syncHistoryToRemote?: string;
 	provider?: string;
 	force?: boolean;
-	// Editable per-session config (the Edit Agent modal fields). Empty-string
-	// values clear the field; see buildConfigPatch.
+	// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
+	// bookmark). Empty-string values clear the field; see buildConfigPatch.
 	nudge?: string;
 	newSessionMessage?: string;
 	customPath?: string;
@@ -43,6 +43,7 @@ interface UpdateAgentOptions {
 	contextWindow?: string;
 	tokenSource?: string;
 	maestroPPath?: string;
+	bookmark?: string;
 	json?: boolean;
 }
 
@@ -81,6 +82,9 @@ function parseEnvVars(entries: string[]): Record<string, string> {
 // Build the per-session config patch from the editable flags. Only keys the
 // caller touched are included. A `null` value clears the field on the renderer
 // side; for string fields an empty value (e.g. `--nudge ""`) maps to null.
+// `--bookmark` rides along here because it goes through the same allowlisted
+// `update_session_config` message, even though it is UI state rather than a
+// spawn-time setting.
 function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> | undefined {
 	const patch: Record<string, unknown> = {};
 	const strField = (value: string | undefined, key: string) => {
@@ -96,6 +100,10 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 	strField(options.effort, 'customEffort');
 	strField(options.maestroPPath, 'maestroPPath');
 
+	if (options.bookmark !== undefined) {
+		patch.bookmarked = parseBool(options.bookmark, '--bookmark');
+	}
+
 	if (options.clearEnv) {
 		patch.customEnvVars = {};
 	} else if (options.env && options.env.length > 0) {
@@ -106,6 +114,8 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		const raw = options.contextWindow.trim().toLowerCase();
 		if (raw === '' || raw === 'none' || raw === '0') {
 			patch.customContextWindow = null;
+			// Clearing the value clears its provenance with it.
+			patch.contextWindowSource = null;
 		} else {
 			const n = Number(raw);
 			if (!Number.isFinite(n) || n < 0) {
@@ -114,6 +124,10 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 				);
 			}
 			patch.customContextWindow = Math.floor(n);
+			// Typing `--context-window` is unambiguously a deliberate choice, so it
+			// outranks a provider-reported window (finding AD1). No seed to compare
+			// against here, unlike the edit modal.
+			patch.contextWindowSource = 'user-edited';
 		}
 	}
 
@@ -156,7 +170,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -426,6 +440,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			maestroPPath: 'maestro-p path',
 		};
 		for (const [key, value] of Object.entries(applied.config)) {
+			// Derived marker, not something the caller typed - it is implied by
+			// `--context-window` and printing it just adds noise (finding AD1).
+			if (key === 'contextWindowSource') continue;
 			const label = labels[key] ?? key;
 			if (value === null) {
 				console.log(`  ${label}: (cleared)`);

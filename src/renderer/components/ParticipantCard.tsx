@@ -11,7 +11,6 @@ import {
 	Check,
 	DollarSign,
 	RotateCcw,
-	Server,
 	UserMinus,
 	Eye,
 	EyeOff,
@@ -25,6 +24,7 @@ import { parsePeekOutput, formatPeekLines } from '../utils/peekOutputParser';
 import { formatTimestamp } from '../../shared/formatters';
 import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
+import { SshRemotePill } from './ui/SshRemotePill';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -173,13 +173,7 @@ export function ParticipantCard({
 			<div className="flex items-center gap-2 mt-1.5 flex-wrap">
 				{/* SSH Remote pill - shown when running on SSH remote */}
 				{participant.sshRemoteName && (
-					<span
-						className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full shrink-0 border border-purple-500/30 text-purple-500 bg-purple-500/10"
-						title={`SSH Remote: ${participant.sshRemoteName}`}
-					>
-						<Server className="w-2.5 h-2.5 shrink-0" />
-						<span className="uppercase">{participant.sshRemoteName}</span>
-					</span>
+					<SshRemotePill remoteName={participant.sshRemoteName} size="sm" />
 				)}
 				{/* Session ID pill */}
 				{isPending ? (

@@ -350,19 +350,39 @@ export function createAgentSessionsApi() {
 				starred
 			),
 
+		/**
+		 * Mirror a session's transcript so it survives provider-side deletion.
+		 * `reason` records why the copy is kept ('starred' by default, 'snoozed'
+		 * for a tab put away until later); a mirror lives until every reason is
+		 * released.
+		 */
 		snapshotStarredTranscript: (
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			sessionName?: string
+			sessionName?: string,
+			reason?: 'starred' | 'snoozed'
 		): Promise<void> =>
 			ipcRenderer.invoke(
 				'agentSessions:snapshotStarredTranscript',
 				agentId,
 				projectPath,
 				sessionId,
-				sessionName
+				sessionName,
+				reason
 			),
+
+		/**
+		 * Release a snooze's hold on a mirrored transcript (on wake or dismiss).
+		 * Rehydrates the provider file first, so letting go of the snooze can never
+		 * be what loses the conversation.
+		 */
+		releaseSnoozedTranscript: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string
+		): Promise<void> =>
+			ipcRenderer.invoke('agentSessions:releaseSnoozedTranscript', agentId, projectPath, sessionId),
 	};
 }
 

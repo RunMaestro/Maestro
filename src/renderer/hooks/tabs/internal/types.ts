@@ -59,10 +59,21 @@ export interface AITabHandlersReturn {
 	handleToggleTabEnterToSend: () => void;
 }
 
+/**
+ * What opening a playable audio/video file should do.
+ *
+ * `play` (the default) hands it to the floating player and starts it. `queue`
+ * appends it instead, leaving whatever is playing alone - that is how opening
+ * ten files at once plays the first and lines up the other nine.
+ *
+ * Ignored for everything that is not media.
+ */
+export type MediaOpenMode = 'play' | 'queue';
+
 export interface FilePreviewTabHandlersReturn {
 	handleOpenFileTab: (
 		file: FileTabOpenParams,
-		options?: { openInNewTab?: boolean; targetSessionId?: string }
+		options?: { openInNewTab?: boolean; targetSessionId?: string; mediaMode?: MediaOpenMode }
 	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;
 	handleCloseFileTab: (tabId: string) => void;
@@ -75,9 +86,12 @@ export interface FilePreviewTabHandlersReturn {
 	handleFileTabScrollPositionChange: (tabId: string, scrollTop: number) => void;
 	handleFileTabSearchQueryChange: (tabId: string, searchQuery: string) => void;
 	handleReloadFileTab: (tabId: string) => Promise<void>;
-	handleFileTabNavigateBack: () => Promise<void>;
-	handleFileTabNavigateForward: () => Promise<void>;
-	handleFileTabNavigateToIndex: (index: number) => Promise<void>;
+	// `tabId` defaults to the active file tab. A tiled file pane passes its own id:
+	// focusing a file pane does not set `activeFileTabId`, so the default would
+	// navigate whichever other file tab happens to be active.
+	handleFileTabNavigateBack: (tabId?: string) => Promise<void>;
+	handleFileTabNavigateForward: (tabId?: string) => Promise<void>;
+	handleFileTabNavigateToIndex: (index: number, tabId?: string) => Promise<void>;
 	handleClearFilePreviewHistory: () => void;
 	handleNewFileTab: () => void;
 }

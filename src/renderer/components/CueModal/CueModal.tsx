@@ -32,6 +32,8 @@ import { useCueToggle } from '../../hooks/cue/useCueToggle';
 import { CueModalHeader, type CueModalTab } from './CueModalHeader';
 import { CueDashboard } from './CueDashboard';
 import { ActivityLog } from './ActivityLog';
+import { PipelineListTab } from './PipelineListTab';
+import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
 
@@ -74,6 +76,15 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 				toolType: s.toolType,
 				projectRoot: s.projectRoot,
 			})),
+		[allSessions]
+	);
+
+	// Agents that can own a scheduled task. Terminal agents are excluded: they
+	// have no AI turn to send a prompt into.
+	const activeSessionId = useSessionStore((state) => state.activeSessionId);
+	const scheduledTaskAgents = useMemo(
+		() =>
+			allSessions.filter((s) => s.toolType !== 'terminal').map((s) => ({ id: s.id, name: s.name })),
 		[allSessions]
 	);
 
@@ -158,6 +169,13 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		nonce: string;
 	} | null>(null);
 
+	// Jump to the graph tab with a specific pipeline pre-selected. The nonce is
+	// what lets the editor re-apply the same target on a repeat click.
+	const handleViewInGraph = useCallback((pipelineId: string | null) => {
+		setPendingPipelineId({ id: pipelineId, nonce: generateId() });
+		setActiveTab('pipeline');
+	}, []);
+
 	const handleViewInPipeline = useCallback(
 		(session: CueSessionStatus) => {
 			// Find the pipeline by session-membership, not by color. Multiple
@@ -172,10 +190,9 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						node.data.sessionId === session.sessionId
 				)
 			);
-			setPendingPipelineId({ id: pipeline?.id ?? null, nonce: generateId() });
-			setActiveTab('pipeline');
+			handleViewInGraph(pipeline?.id ?? null);
 		},
-		[dashboardPipelines]
+		[dashboardPipelines, handleViewInGraph]
 	);
 
 	const handleRemoveCue = useCallback(
@@ -241,7 +258,14 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	// Cmd/Ctrl+Shift+[/] cycles between tabs. Disabled while help is open
 	// so the help view's keyboard handlers stay in charge.
-	const tabsRef = useRef<readonly CueModalTab[]>(['dashboard', 'pipeline', 'activity', 'backup']);
+	const tabsRef = useRef<readonly CueModalTab[]>([
+		'dashboard',
+		'scheduled',
+		'pipeline',
+		'pipeline-list',
+		'activity',
+		'backup',
+	]);
 	useEffect(() => {
 		const handleTabCycle = (e: KeyboardEvent) => {
 			if (showHelpRef.current) return;
@@ -303,6 +327,8 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						<ResizeHandles
 							onResizeStart={resizableModal.onResizeStart}
 							accentColor={theme.colors.accent}
+							onResetSize={resizableModal.onResetSize}
+							canReset={resizableModal.canReset}
 						/>
 
 						<CueModalHeader
@@ -343,6 +369,26 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									onStopAll={stopAll}
 								/>
 							</div>
+						) : activeTab === 'scheduled' ? (
+							<ScheduledTasksTab
+								theme={theme}
+								active
+								agents={scheduledTaskAgents}
+								defaultAgentId={activeSessionId ?? undefined}
+							/>
+						) : activeTab === 'pipeline-list' ? (
+							<PipelineListTab
+								theme={theme}
+								pipelines={dashboardPipelines}
+								graphSessions={graphSessions}
+								activeRuns={activeRuns}
+								activityLog={activityLog}
+								loading={loading || graphInitialLoading}
+								error={error || graphError}
+								onRetry={handleRetry}
+								onViewInGraph={handleViewInGraph}
+								onTriggerSubscription={triggerSubscription}
+							/>
 						) : activeTab === 'activity' ? (
 							<div className="flex-1 min-h-0 px-5 py-4 select-text">
 								<ActivityLog

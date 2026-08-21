@@ -127,15 +127,29 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **CONSOLIDATE:** Extend `setup.ts` to cover all namespaces, remove 117 local setups
 - **Estimated savings:** ~1,755 lines (avg ~15 lines per instance)
 
-### 12. Formatter Duplication - formatDuration (22 redundant definitions)
+### 12. Formatter Duplication - formatDuration (RESOLVED 2026-08-12)
 
 - **Evidence:** SCAN-FORMATTERS.md, "formatDuration / formatElapsed / formatTime definitions"
 - **Count:** 22 local `formatDuration` definitions; 9 identical copies in UsageDashboard alone
 - **NOTE (re-vetted 2026-03-28):** Count increased from 21 to 22 since original scan. New `formatDuration` added in `CueModal/cueModalUtils.ts:25` (Cue feature on rc).
 - **NOTE (re-vetted 2026-04-01):** Count confirmed at 22. CueModal/cueModalUtils.ts:25 entry verified.
-- **KEEP:** `src/shared/formatters.ts:144` (`formatElapsedTime`) and `src/shared/performance-metrics.ts:336` (`formatDuration`)
-- **REMOVE:** 22 local re-definitions including all 9 UsageDashboard copies, `AboutModal.tsx`, `FirstRunCelebration.tsx`, `SymphonyModal.tsx`, `Toast.tsx`, `AIOverviewTab.tsx`, `useContributorStats.ts`, `groupChatExport.ts`, `tabExport.ts`, `cli/output/formatter.ts` (2), `CueModal/cueModalUtils.ts`
-- **Estimated savings:** ~210 lines
+- **RESOLVED 2026-08-12:** Most call sites had already been converted to import
+  aliases of the shared formatters. The rest were hand-rolled unit ladders, which
+  is the part that mattered: they had drifted on ladder ceiling, zero-padding, and
+  rounding. Consolidated onto one engine in `src/shared/duration.ts`
+  (`humanizeDuration` plus presets), re-exported from `formatters.ts` so no import
+  path broke. Every remaining ladder migrated: `ProcessMonitor/runtime.ts`,
+  `PlaygroundPanel/utils/achievementTime.ts` (byte-identical twins),
+  `RetryCountdownBanner.tsx`, `SessionDetailStatsPanel.tsx`,
+  `AchievementShareButton.tsx`, three `formatYAxisDuration` copies in
+  UsageDashboard, `conductorBadges.formatCumulativeTime`, `cli/commands/cue-schedule.ts`,
+  `cli/commands/director-notes-history.ts`, `cli/services/agent-busy.ts`.
+  Equivalence checked across ~16k boundary and random values per function.
+- **KEEP:** `src/shared/duration.ts` (all humanized durations) and
+  `src/shared/performance-metrics.ts` `formatDuration` (two-decimal profiling spans only)
+- **STILL OPEN:** `conductorBadges.formatTimeRemaining` uses a 30-day month and appends
+  " remaining"; `cli/output/formatter.ts formatDurationSeconds` uses an integer-seconds
+  bracket. Both would change user-visible output if folded in.
 
 ### 13. SpecKit/OpenSpec Parallel Implementation (~2,431 lines, ~1,100 removable)
 

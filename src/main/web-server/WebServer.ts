@@ -67,9 +67,14 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenModalCallback,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
+	CloseBrowserTabCallback,
 	OpenTerminalTabCallback,
+	WriteTerminalTabCallback,
+	WriteTerminalTabPayload,
+	ListTerminalTabsCallback,
 	NewAITabWithPromptCallback,
 	EnqueueCommandCallback,
 	ListQueueCallback,
@@ -449,6 +454,10 @@ export class WebServer {
 		this.callbackRegistry.setOpenFileTabCallback(callback);
 	}
 
+	setOpenModalCallback(callback: OpenModalCallback): void {
+		this.callbackRegistry.setOpenModalCallback(callback);
+	}
+
 	setRefreshFileTreeCallback(callback: RefreshFileTreeCallback): void {
 		this.callbackRegistry.setRefreshFileTreeCallback(callback);
 	}
@@ -457,8 +466,20 @@ export class WebServer {
 		this.callbackRegistry.setOpenBrowserTabCallback(callback);
 	}
 
+	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
+		this.callbackRegistry.setCloseBrowserTabCallback(callback);
+	}
+
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
 		this.callbackRegistry.setOpenTerminalTabCallback(callback);
+	}
+
+	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
+		this.callbackRegistry.setWriteTerminalTabCallback(callback);
+	}
+
+	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
+		this.callbackRegistry.setListTerminalTabsCallback(callback);
 	}
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
@@ -467,6 +488,20 @@ export class WebServer {
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
 		this.callbackRegistry.setEnqueueCommandCallback(callback);
+	}
+
+	/**
+	 * Enqueue a prompt into a session's execution queue from inside the main
+	 * process (not from a web client). Used by dispatch callbacks to deliver a
+	 * wake-up turn into the caller's live tab: busy callers queue instead of
+	 * being rejected, which is exactly the `dispatch --queue` semantics.
+	 */
+	enqueueCommandFromMain(
+		sessionId: string,
+		command: string,
+		tabId?: string
+	): ReturnType<CallbackRegistry['enqueueCommand']> {
+		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId);
 	}
 
 	setListQueueCallback(callback: ListQueueCallback): void {
@@ -935,14 +970,20 @@ export class WebServer {
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
 			openFileTab: async (sessionId: string, filePath: string, switchToAgent: boolean) =>
 				this.callbackRegistry.openFileTab(sessionId, filePath, switchToAgent),
+			openModal: async (params) => this.callbackRegistry.openModal(params),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
-			openBrowserTab: async (sessionId: string, url: string) =>
-				this.callbackRegistry.openBrowserTab(sessionId, url),
+			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
+				this.callbackRegistry.openBrowserTab(sessionId, url, options),
+			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
 			openTerminalTab: async (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null }
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string }
 			) => this.callbackRegistry.openTerminalTab(sessionId, config),
+			writeTerminalTab: async (sessionId: string, payload: WriteTerminalTabPayload) =>
+				this.callbackRegistry.writeTerminalTab(sessionId, payload),
+			listTerminalTabs: async (sessionId?: string) =>
+				this.callbackRegistry.listTerminalTabs(sessionId),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			enqueueCommand: async (
@@ -1067,7 +1108,7 @@ export class WebServer {
 			) => this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt, sourceAgentId),
 			// Cue pipeline-layout mutations operate directly on the
 			// main-process layout file via the mutation primitives - no
-			// renderer round-trip needed. The Pipeline Editor (when open)
+			// renderer round-trip needed. The Pipeline Graph (when open)
 			// keeps its own in-memory state, so CLI edits made while the
 			// editor is open will be overwritten on the editor's next
 			// save. The CLI surface documents this; we don't gate here.

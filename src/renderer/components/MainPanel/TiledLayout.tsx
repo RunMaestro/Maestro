@@ -23,7 +23,7 @@ import {
 	Loader2,
 } from 'lucide-react';
 
-import { TerminalOutput } from '../TerminalOutput';
+import { TerminalOutput, type TerminalOutputProps } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { hasDraft } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -42,12 +42,16 @@ import {
 	updateSplitSizes,
 } from '../../utils/panelLayout';
 import { usePaneDrag } from '../../hooks/tabs/usePaneDrag';
+import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { withMonoFallback } from '../../../shared/fontStack';
 import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useTabStore } from '../../stores/tabStore';
+import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
+import { outputSearchKeyFor } from '../../utils/outputSearch';
+import type { FileNode } from '../../types/fileTree';
 import type {
 	PaneRects,
 	PanelLayoutNode,
@@ -86,6 +90,112 @@ export interface PaneTabActions {
 	/** Close the tab this pane references (MainPanel dispatches to the per-kind close). */
 	onCloseTab?: (ref: UnifiedTabRef) => void;
 }
+
+/**
+ * The interactive half of an AI pane's chat view. A tiled AI pane renders the
+ * SAME TerminalOutput the single view does, so without these handlers its
+ * transcript is read-only: no Force Send / remove / pause / edit / reorder on
+ * queued items, no delete-message, no replay, no fork, no session recovery, no
+ * file links, no lightbox. Bundled as one object (and picked straight off
+ * TerminalOutputProps so the shapes cannot drift) and published through
+ * PaneViewContext, so it reaches every pane without threading a prop through
+ * LayoutNode/PaneFrame.
+ *
+ * Every handler here is either addressed by id (queue item, log entry) or keyed
+ * to the session's ACTIVE AI tab. That is safe from any pane: PaneFrame focuses
+ * a pane on mousedown, and focusPaneInSession syncs `activeTabId` to the focused
+ * AI pane - so by the time a click handler inside a pane runs, that pane's tab is
+ * already the active one. Scroll-position persistence is deliberately NOT here:
+ * a wheel scroll never focuses a pane, so a background pane would write its
+ * scroll offset onto the focused pane's tab.
+ */
+export type PaneChatActions = Partial<
+	Pick<
+		TerminalOutputProps,
+		| 'onDeleteLog'
+		| 'onRemoveQueuedItem'
+		| 'onTogglePauseQueuedItem'
+		| 'onEditQueuedItem'
+		| 'onReorderQueuedItem'
+		| 'onForceSendQueuedItem'
+		| 'forcedParallelEnabled'
+		| 'getForceSendContext'
+		| 'onInterrupt'
+		| 'setLightboxImage'
+		| 'setMarkdownEditMode'
+		| 'onReplayMessage'
+		| 'onForkConversation'
+		| 'onSessionRecover'
+		| 'isRecoveringSession'
+		| 'sessionRecoveryError'
+		| 'fileTree'
+		| 'cwd'
+		| 'onFileClick'
+		| 'onFileSaved'
+		| 'onShowErrorDetails'
+		| 'userMessageAlignment'
+		| 'ghCliAvailable'
+		| 'onPublishMessageGist'
+		| 'onOpenInTab'
+	>
+> & {
+	/**
+	 * The SHARED composer textarea (one per panel, targeting the focused pane) and
+	 * the App-level transcript end marker. Both are singletons on purpose:
+	 *   - inputRef: Escape inside a pane returns the caret to the composer, and the
+	 *     composer is shared, so every pane gets the same ref.
+	 *   - logsEndRef: the "Jump to Bottom" shortcut scrolls
+	 *     `logsEndRef.current.parentElement`, so exactly ONE pane may claim it -
+	 *     the focused one. Unfocused panes get their own local ref (see
+	 *     PaneContent) or the shortcut would scroll whichever pane rendered last.
+	 */
+	inputRef?: TerminalOutputProps['inputRef'];
+	logsEndRef?: TerminalOutputProps['logsEndRef'];
+};
+
+/**
+ * View handlers for tiled FILE panes. The single view binds the app's tab-id-keyed
+ * file-tab handlers to the ACTIVE file tab via useFilePreviewHandlers; a tiled file
+ * pane runs that same hook against its OWN tab id, so it takes the UNBOUND handlers
+ * plus the display props the preview needs (file links, fuzzy search). Without them
+ * a tiled preview was a dead document: wiki/file links did nothing, scroll and find
+ * state were forgotten on every switch, and breadcrumb navigation was inert.
+ *
+ * Deliberately absent: publish-gist, open-in-graph, and open-in-browser. Those
+ * arrive already bound to the ACTIVE file tab (zero-arg), and focusing a file pane
+ * does NOT set `activeFileTabId` - so from a pane they would act on the wrong file.
+ * They need tab-id-addressable versions first.
+ */
+export interface PaneFileActions {
+	onFileTabClose?: (tabId: string) => void;
+	onFileTabEditModeChange?: (tabId: string, editMode: boolean) => void;
+	onFileTabEditContentChange?: (
+		tabId: string,
+		editContent: string | undefined,
+		savedContent?: string
+	) => void;
+	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
+	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
+	onReloadFileTab?: (tabId: string) => void;
+	/** Breadcrumb history jump, addressed by tab id so a pane drives its own. */
+	onFileTabNavigateToIndex?: (index: number, tabId?: string) => void;
+	fileTree?: FileNode[];
+	onFileClick?: (path: string) => void;
+	onOpenFuzzySearch?: () => void;
+	onShortcutUsed?: (shortcutId: string) => void;
+}
+
+/**
+ * Carries the per-kind view handlers from the TiledLayout root down to each pane.
+ * Null members mean "nothing wired" (tests, previews), in which case a pane falls
+ * back to the read-only rendering it had before.
+ */
+interface PaneViewActions {
+	chat: PaneChatActions | null;
+	file: PaneFileActions | null;
+}
+
+const PaneViewContext = React.createContext<PaneViewActions>({ chat: null, file: null });
 
 /**
  * Registry the recursive layout nodes use to report their transparent slot
@@ -136,6 +246,17 @@ export interface TiledLayoutProps {
 	onPaneRectsChange?: (rects: PaneRects) => void;
 	/** Per-kind pane dropdown action handlers, threaded to each pane's chevron menu. */
 	paneTabActions?: PaneTabActions;
+	/**
+	 * Chat interaction handlers for AI panes (queue actions incl. Force Send,
+	 * delete/replay/fork, recovery, file links, lightbox). Published via context
+	 * so every AI pane gets the same interactive chat the single view has.
+	 */
+	paneChatActions?: PaneChatActions;
+	/**
+	 * File-tab handlers for file panes (save, edit, scroll/find memory, reload,
+	 * links, breadcrumb history). Same idea as paneChatActions, per-kind.
+	 */
+	paneFileActions?: PaneFileActions;
 }
 
 /**
@@ -163,83 +284,240 @@ function PaneMissingTab({ theme }: { theme: Theme }) {
 }
 
 /**
- * A tiled file-preview pane wired to behave IDENTICALLY to the single-view file
- * tab: edit/preview toggling, edit-content persistence, preview-tier and HTML-render
- * mode, and save all flow through the same per-tab store fields the single view uses.
- * The single-view handlers in MainPanelContent are keyed to the ACTIVE file tab, so a
- * tiled pane (which may not be the active file tab) drives the tab-id-keyed store
- * actions directly. Reads its own tab reactively so edit-mode/content changes re-render
- * just this pane.
+ * A tiled file-preview pane wired to behave IDENTICALLY to the single-view file tab.
+ * The single view binds the app's tab-id-keyed file handlers to the ACTIVE file tab
+ * through `useFilePreviewHandlers`; this pane runs that SAME hook against its own tab
+ * id, so save (including the untitled / moved-on-disk prompts), edit-content
+ * persistence, scroll memory, find-query memory, and reload all behave identically
+ * without a second copy of that logic. Preview-tier and HTML-render mode go straight
+ * to the tab-id-keyed store actions, as they already did.
+ *
+ * Reads its own tab reactively so edit-mode / content / scroll changes re-render just
+ * this pane.
  */
 function TiledFilePane({
 	fileTabId,
 	session,
 	theme,
+	actions,
 }: {
 	fileTabId: string;
 	session: Session;
 	theme: Theme;
+	actions: PaneFileActions | null;
 }) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	// Subscribe to THIS tab via the session store so edit-mode / edit-content / tier /
 	// html-mode changes re-render the pane (the session prop is a snapshot that alone
 	// wouldn't update). The tabStore setters below all mutate the ACTIVE session's file
 	// tabs, and a tiled file pane's session IS the active session (its group is active).
-	const fileTab = useSessionStore((s) =>
-		s.sessions.find((x) => x.id === session.id)?.filePreviewTabs?.find((t) => t.id === fileTabId)
+	const fileTab = useSessionStore(
+		(s) =>
+			s.sessions
+				.find((x) => x.id === session.id)
+				?.filePreviewTabs?.find((t) => t.id === fileTabId) ?? null
 	);
 	const store = useTabStore.getState();
 
-	// SSH remote id, resolved the same way MainPanelContent's file preview does, so
-	// stat/save target the remote workspace for SSH sessions.
-	const sshRemoteId =
-		session.sshRemoteId ||
-		(session.sessionSshRemoteConfig?.enabled
-			? session.sessionSshRemoteConfig.remoteId
-			: undefined) ||
-		undefined;
+	// Same binding the single view uses, pointed at THIS pane's tab instead of the
+	// active one. Gives the pane the identical file object, cwd, SSH id, and handlers.
+	const {
+		memoizedFilePreviewFile,
+		filePreviewCwd,
+		filePreviewSshRemoteId,
+		handleFilePreviewEditModeChange,
+		handleFilePreviewSave,
+		handleFilePreviewEditContentChange,
+		handleFilePreviewScrollPositionChange,
+		handleFilePreviewSearchQueryChange,
+		handleFilePreviewReload,
+	} = useFilePreviewHandlers({
+		activeSession: session,
+		activeFileTabId: fileTabId,
+		activeFileTab: fileTab,
+		onFileTabEditModeChange: actions?.onFileTabEditModeChange,
+		onFileTabEditContentChange: actions?.onFileTabEditContentChange,
+		onFileTabScrollPositionChange: actions?.onFileTabScrollPositionChange,
+		onFileTabSearchQueryChange: actions?.onFileTabSearchQueryChange,
+		onReloadFileTab: actions?.onReloadFileTab,
+	});
 
-	const handleSave = React.useCallback(
-		async (path: string, content: string): Promise<boolean> => {
-			if (!path) return false;
-			await window.maestro.fs.writeFile(path, content, sshRemoteId);
-			// Persist the saved content, clear the pending edit buffer, and leave edit
-			// mode - mirroring the single-view save. Written directly to the active
-			// session's file tab (a tiled file pane's session is the active session).
-			updateSessionWith(session.id, (s) => ({
-				...s,
-				filePreviewTabs: (s.filePreviewTabs ?? []).map((t) =>
-					t.id === fileTabId ? { ...t, content, editContent: undefined, editMode: false } : t
-				),
-			}));
-			return true;
-		},
-		[fileTabId, session.id, sshRemoteId]
+	// Breadcrumb history, derived from THIS tab (the single view derives the same
+	// slices for the active tab in getTabDerivedState).
+	const history = fileTab?.navigationHistory ?? [];
+	const navIndex = fileTab?.navigationIndex ?? (history.length > 0 ? history.length - 1 : -1);
+	const navigateToIndex = actions?.onFileTabNavigateToIndex;
+	const goToIndex = React.useCallback(
+		(index: number) => navigateToIndex?.(index, fileTabId),
+		[navigateToIndex, fileTabId]
 	);
 
-	if (!fileTab) return <PaneMissingTab theme={theme} />;
+	if (!fileTab || !memoizedFilePreviewFile) return <PaneMissingTab theme={theme} />;
 
 	return (
 		<div className="flex-1 overflow-hidden select-text">
 			<React.Suspense fallback={null}>
 				<FilePreview
-					file={{ name: fileTab.name, path: fileTab.path, content: fileTab.content }}
-					onClose={() => {}}
+					file={memoizedFilePreviewFile}
+					onClose={() => actions?.onFileTabClose?.(fileTabId)}
 					isTabMode={true}
 					theme={theme}
 					shortcuts={shortcuts}
 					markdownEditMode={fileTab.editMode ?? false}
-					setMarkdownEditMode={(v: boolean) => store.setFileTabEditMode(fileTabId, v)}
-					onSave={handleSave}
+					setMarkdownEditMode={handleFilePreviewEditModeChange}
+					onSave={handleFilePreviewSave}
 					externalEditContent={fileTab.editContent}
-					onEditContentChange={(content) => store.updateFileTabEditContent(fileTabId, content)}
+					onEditContentChange={handleFilePreviewEditContentChange}
 					previewTierOverride={fileTab.previewTierOverride}
 					onPreviewTierChange={(tier) => store.setFileTabPreviewTier(fileTabId, tier)}
 					htmlRenderMode={fileTab.htmlRenderMode}
 					onHtmlRenderModeChange={(value) => store.setFileTabHtmlRenderMode(fileTabId, value)}
-					sshRemoteId={sshRemoteId}
+					sshRemoteId={filePreviewSshRemoteId}
+					// File/wiki links inside the document, resolved against the same tree
+					// and proximity cwd the single view uses.
+					fileTree={actions?.fileTree}
+					cwd={filePreviewCwd}
+					onFileClick={actions?.onFileClick}
+					onOpenFuzzySearch={actions?.onOpenFuzzySearch}
+					onShortcutUsed={actions?.onShortcutUsed}
+					// Scroll + find-query memory, so switching away and back lands where
+					// the user left off instead of jumping to the top with a cleared term.
+					initialScrollTop={fileTab.scrollTop}
+					onScrollPositionChange={handleFilePreviewScrollPositionChange}
+					initialSearchQuery={fileTab.searchQuery}
+					onSearchQueryChange={handleFilePreviewSearchQueryChange}
+					// On-disk change detection + reload.
+					lastModified={fileTab.lastModified}
+					onReloadFile={handleFilePreviewReload}
+					// Breadcrumb navigation across this tab's own visit history.
+					canGoBack={navIndex > 0}
+					canGoForward={navIndex < history.length - 1}
+					onNavigateBack={navigateToIndex ? () => goToIndex(navIndex - 1) : undefined}
+					onNavigateForward={navigateToIndex ? () => goToIndex(navIndex + 1) : undefined}
+					backHistory={history.slice(0, navIndex)}
+					forwardHistory={history.slice(navIndex + 1)}
+					currentHistoryIndex={navIndex}
+					onNavigateToIndex={navigateToIndex ? goToIndex : undefined}
+					// Transient deep-link scroll target, cleared once consumed.
+					pendingScrollToLine={fileTab.pendingScrollToLine}
+					onPendingScrollToLineConsumed={() => store.clearFileTabPendingScrollToLine(fileTabId)}
 				/>
 			</React.Suspense>
+		</div>
+	);
+}
+
+/**
+ * A tiled AI pane wired to behave IDENTICALLY to the single-view chat. Everything
+ * the single view offers is present here: the queue controls (Force Send included),
+ * message actions, session recovery, Find, transcript scroll memory, and the two
+ * keyboard affordances that need real refs (Escape back to the composer, Jump to
+ * Bottom).
+ *
+ * Two things must be per-PANE rather than per-panel, and both were previously inert:
+ *   - Find (Cmd+F). Its state is already scoped per agent+AI-tab in uiStore, so the
+ *     pane just reads its OWN slot key. Sharing the panel's slot would have made one
+ *     Find bar open in every pane at once with a single shared term.
+ *   - Scroll position + at-bottom (which also clears the unread badge). These CANNOT
+ *     go through the active-tab handlers: scrolling with the wheel never focuses a
+ *     pane, so a background pane would write its offset onto the focused pane's tab.
+ *     They drive the tab-id-keyed store actions instead - the same ones the
+ *     single-view handlers now delegate to.
+ */
+function TiledAiPane({
+	aiTabId,
+	session,
+	theme,
+	isFocused,
+	actions,
+}: {
+	aiTabId: string;
+	session: Session;
+	theme: Theme;
+	isFocused: boolean;
+	actions: PaneChatActions | null;
+}) {
+	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
+	const maxOutputLines = useSettingsStore((s) => s.maxOutputLines);
+	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
+	const activeFocus = useUIStore((s) => s.activeFocus);
+
+	// This pane's own Find slot, keyed the same way MainPanelContent keys the
+	// single view's - so a search survives tiling/untiling the tab.
+	const searchKey = outputSearchKeyFor(session.id, aiTabId);
+	const searchSlot = useUIStore((s) => s.outputSearchByKey?.[searchKey]);
+	const setOutputSearchOpen = React.useCallback(
+		(v: boolean | ((prev: boolean) => boolean)) =>
+			useUIStore.getState().setOutputSearchOpen(searchKey, v),
+		[searchKey]
+	);
+	const setOutputSearchQuery = React.useCallback(
+		(v: string | ((prev: string) => string)) =>
+			useUIStore.getState().setOutputSearchQuery(searchKey, v),
+		[searchKey]
+	);
+	const setOutputSearchRegex = React.useCallback(
+		(v: boolean | ((prev: boolean) => boolean)) =>
+			useUIStore.getState().setOutputSearchRegex(searchKey, v),
+		[searchKey]
+	);
+
+	const onScrollPositionChange = React.useCallback(
+		(scrollTop: number) => useTabStore.getState().setAiTabScrollTop(aiTabId, scrollTop),
+		[aiTabId]
+	);
+	const onAtBottomChange = React.useCallback(
+		(isAtBottom: boolean) => useTabStore.getState().setAiTabAtBottom(aiTabId, isAtBottom),
+		[aiTabId]
+	);
+
+	const outputRef = React.useRef<HTMLDivElement>(null);
+	// Fallbacks for the shared singletons. The local logsEndRef is what UNFOCUSED
+	// panes register, keeping the app-level one pointed at the focused transcript.
+	const localInputRef = React.useRef<HTMLTextAreaElement>(null);
+	const localLogsEndRef = React.useRef<HTMLDivElement>(null);
+	const noop = React.useCallback(() => {}, []);
+
+	const aiTab = session.aiTabs?.find((t) => t.id === aiTabId);
+	if (!aiTab) return <PaneMissingTab theme={theme} />;
+
+	// Scope the session to this pane's AI tab so TerminalOutput renders the
+	// correct conversation (it reads logs off the active tab).
+	const paneSession: Session = { ...session, activeTabId: aiTab.id, inputMode: 'ai' };
+
+	return (
+		<div className="flex-1 overflow-hidden flex flex-col select-text">
+			<TerminalOutput
+				ref={outputRef}
+				session={paneSession}
+				theme={theme}
+				fontFamily={fontFamily}
+				activeFocus={activeFocus}
+				maxOutputLines={maxOutputLines}
+				markdownEditMode={chatRawTextMode}
+				{...actions}
+				// Spread last: these either override a bundle value or supply the
+				// required prop when no bundle is wired.
+				setLightboxImage={actions?.setLightboxImage ?? noop}
+				setMarkdownEditMode={actions?.setMarkdownEditMode ?? noop}
+				setActiveFocus={useUIStore.getState().setActiveFocus}
+				inputRef={actions?.inputRef ?? localInputRef}
+				logsEndRef={isFocused && actions?.logsEndRef ? actions.logsEndRef : localLogsEndRef}
+				outputSearchOpen={searchSlot?.open ?? false}
+				outputSearchQuery={searchSlot?.query ?? ''}
+				outputSearchRegex={searchSlot?.regex ?? false}
+				setOutputSearchOpen={setOutputSearchOpen}
+				setOutputSearchQuery={setOutputSearchQuery}
+				setOutputSearchRegex={setOutputSearchRegex}
+				onScrollPositionChange={onScrollPositionChange}
+				onAtBottomChange={onAtBottomChange}
+				initialScrollTop={aiTab.scrollTop}
+				initialIsAtBottom={aiTab.isAtBottom}
+				// Only the focused pane answers the global Force Send shortcut;
+				// focusPaneInSession keeps activeTabId on the focused AI pane.
+				forceSendShortcutEnabled={session.activeTabId === aiTab.id}
+				projectRoot={session.fullPath}
+			/>
 		</div>
 	);
 }
@@ -249,60 +527,30 @@ function PaneContent({
 	tab,
 	session,
 	theme,
+	isFocused,
 }: {
 	tab: UnifiedTabRef;
 	session: Session;
 	theme: Theme;
+	isFocused: boolean;
 }) {
-	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
-	const maxOutputLines = useSettingsStore((s) => s.maxOutputLines);
-	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
-
-	// Local, per-pane refs. In this static read/display prototype the panes are not
-	// interactive (no input wiring, no output search), so search state and setters
-	// are inert - the display renderer still needs the props to satisfy its API.
-	const outputRef = React.useRef<HTMLDivElement>(null);
-	const inputRef = React.useRef<HTMLTextAreaElement>(null);
-	const logsEndRef = React.useRef<HTMLDivElement>(null);
-	const noop = React.useCallback(() => {}, []);
+	// Per-kind view handlers published by the TiledLayout root.
+	const { chat, file } = React.useContext(PaneViewContext);
 
 	if (tab.type === 'ai') {
-		const aiTab = session.aiTabs?.find((t) => t.id === tab.id);
-		if (!aiTab) return <PaneMissingTab theme={theme} />;
-		// Scope the session to this pane's AI tab so TerminalOutput renders the
-		// correct conversation (it reads logs off the active tab).
-		const paneSession: Session = { ...session, activeTabId: aiTab.id, inputMode: 'ai' };
 		return (
-			<div className="flex-1 overflow-hidden flex flex-col select-text">
-				<TerminalOutput
-					ref={outputRef}
-					session={paneSession}
-					theme={theme}
-					fontFamily={fontFamily}
-					activeFocus="main"
-					outputSearchOpen={false}
-					outputSearchQuery=""
-					outputSearchRegex={false}
-					setOutputSearchOpen={noop}
-					setOutputSearchQuery={noop}
-					setOutputSearchRegex={noop}
-					setActiveFocus={noop}
-					setLightboxImage={noop}
-					inputRef={inputRef}
-					logsEndRef={logsEndRef}
-					maxOutputLines={maxOutputLines}
-					markdownEditMode={chatRawTextMode}
-					setMarkdownEditMode={noop}
-					projectRoot={session.fullPath}
-				/>
-			</div>
+			<TiledAiPane
+				aiTabId={tab.id}
+				session={session}
+				theme={theme}
+				isFocused={isFocused}
+				actions={chat}
+			/>
 		);
 	}
 
 	if (tab.type === 'file') {
-		const fileTab = session.filePreviewTabs?.find((t) => t.id === tab.id);
-		if (!fileTab) return <PaneMissingTab theme={theme} />;
-		return <TiledFilePane fileTabId={fileTab.id} session={session} theme={theme} />;
+		return <TiledFilePane fileTabId={tab.id} session={session} theme={theme} actions={file} />;
 	}
 
 	// Terminal and browser tabs are kept-alive overlays mounted at the panel level
@@ -902,16 +1150,29 @@ function PaneFrame({
 					)}
 				</button>
 			</div>
-			<PaneContent tab={node.tab} session={session} theme={theme} />
+			<PaneContent tab={node.tab} session={session} theme={theme} isFocused={isFocused} />
 		</div>
 	);
 }
 
 /**
- * Draggable divider between two sibling panes in a split. Mirrors
- * useResizablePanel: during the drag it writes flex-grow directly onto the two
- * neighboring pane wrappers (no re-render per frame), and on mouseup it commits
- * the final fractional sizes to the group's layout via a single store update.
+ * Draggable divider between two sibling panes in a split. During the drag it
+ * writes flex-grow directly onto the two neighboring pane wrappers (no re-render
+ * per frame), and on release it commits the final fractional sizes to the group's
+ * layout via a single store update.
+ *
+ * Runs on usePointerDrag - the same pointer-capture primitive behind every other
+ * drag in the app - rather than hand-rolled document mouse listeners, because the
+ * hand-rolled version could get stuck mid-resize and never release:
+ *   - It committed BEFORE removing its listeners, so a throw anywhere in the
+ *     store update (which re-renders every pane synchronously) left `mousemove`
+ *     attached and the divider kept following the pointer with no button held.
+ *   - No pointer capture: a tiled browser pane is a <webview> overlay stacked
+ *     above this layout (and a tiled terminal pane re-enables pointer events over
+ *     its own rect), so a drag whose pointer crossed one could lose the event
+ *     stream and never see its mouseup.
+ *   - No `pointercancel` and no unmount cleanup, so a gesture the system took
+ *     over, or a group/tab switch mid-drag, leaked the listeners permanently.
  */
 function SplitDivider({
 	direction,
@@ -926,38 +1187,36 @@ function SplitDivider({
 	onCommit: () => void;
 }) {
 	const [isDragging, setIsDragging] = React.useState(false);
+	const startDrag = usePointerDrag();
+	const isRow = direction === 'row';
 
-	const onMouseDown = React.useCallback(
-		(e: React.MouseEvent) => {
-			e.preventDefault();
-			e.stopPropagation();
+	const onPointerDown = React.useCallback(
+		(e: React.PointerEvent<HTMLElement>) => {
+			// Left button only. A right-click on the divider used to arm a phantom
+			// drag that nothing would ever release.
+			if (e.button !== 0) return;
 			setIsDragging(true);
-			const start = direction === 'row' ? e.clientX : e.clientY;
-
-			const handleMove = (moveEvent: MouseEvent) => {
-				const current = direction === 'row' ? moveEvent.clientX : moveEvent.clientY;
-				onDrag(current - start);
-			};
-			const handleUp = () => {
-				setIsDragging(false);
-				onCommit();
-				document.removeEventListener('mousemove', handleMove);
-				document.removeEventListener('mouseup', handleUp);
-			};
-			document.addEventListener('mousemove', handleMove);
-			document.addEventListener('mouseup', handleUp);
+			startDrag(e, (dx, dy) => onDrag(isRow ? dx : dy), {
+				stopPropagation: true,
+				onEnd: () => {
+					setIsDragging(false);
+					onCommit();
+				},
+			});
 		},
-		[direction, onDrag, onCommit]
+		[isRow, onDrag, onCommit, startDrag]
 	);
 
-	const isRow = direction === 'row';
 	return (
 		<div
-			onMouseDown={onMouseDown}
+			onPointerDown={onPointerDown}
 			className={`shrink-0 ${isRow ? 'cursor-col-resize' : 'cursor-row-resize'}`}
 			style={{
 				[isRow ? 'width' : 'height']: '4px',
 				backgroundColor: isDragging ? theme.colors.accent : 'transparent',
+				// Keep the browser from claiming the gesture as a scroll/pan on touch,
+				// which would cancel the drag the moment it started.
+				touchAction: 'none',
 			}}
 			// Wider transparent hit area is handled by the 4px band; keep the visual
 			// subtle until hover/drag so the layout reads clean.
@@ -1076,6 +1335,8 @@ export const TiledLayout = React.memo(function TiledLayout({
 	zoomedPaneId,
 	onPaneRectsChange,
 	paneTabActions,
+	paneChatActions,
+	paneFileActions,
 }: TiledLayoutProps) {
 	// Zoom/maximize: render only the focused (zoomed) leaf full-panel. Non-persisted
 	// and controlled by the caller; fall back to the full layout if the id is stale.
@@ -1205,32 +1466,40 @@ export const TiledLayout = React.memo(function TiledLayout({
 		};
 	}, []);
 
+	// One context value for every pane kind, rebuilt only when a bundle changes.
+	const viewActions = React.useMemo<PaneViewActions>(
+		() => ({ chat: paneChatActions ?? null, file: paneFileActions ?? null }),
+		[paneChatActions, paneFileActions]
+	);
+
 	return (
 		<PaneSlotContext.Provider value={registry}>
-			<div
-				ref={containerRef}
-				className="flex-1 min-h-0 overflow-hidden flex flex-col"
-				data-tour="tiled-layout"
-			>
-				{zoomedLeaf && zoomedLeaf.kind === 'leaf' ? (
-					<PaneFrame
-						node={zoomedLeaf}
-						group={group}
-						session={session}
-						theme={theme}
-						isFocused={true}
-						paneTabActions={paneTabActions}
-					/>
-				) : (
-					<LayoutNode
-						node={group.layout}
-						group={group}
-						session={session}
-						theme={theme}
-						paneTabActions={paneTabActions}
-					/>
-				)}
-			</div>
+			<PaneViewContext.Provider value={viewActions}>
+				<div
+					ref={containerRef}
+					className="flex-1 min-h-0 overflow-hidden flex flex-col"
+					data-tour="tiled-layout"
+				>
+					{zoomedLeaf && zoomedLeaf.kind === 'leaf' ? (
+						<PaneFrame
+							node={zoomedLeaf}
+							group={group}
+							session={session}
+							theme={theme}
+							isFocused={true}
+							paneTabActions={paneTabActions}
+						/>
+					) : (
+						<LayoutNode
+							node={group.layout}
+							group={group}
+							session={session}
+							theme={theme}
+							paneTabActions={paneTabActions}
+						/>
+					)}
+				</div>
+			</PaneViewContext.Provider>
 		</PaneSlotContext.Provider>
 	);
 });

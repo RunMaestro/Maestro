@@ -44,6 +44,30 @@ export function getDefaultShell(): string {
 	return process.platform === 'darwin' ? 'zsh' : 'bash';
 }
 
+/** The settings shape `resolveConfiguredShell` needs. Kept structural so both
+ * the real electron-store and a test double satisfy it. */
+export interface ShellSettingsReader {
+	get(key: 'defaultShell', defaultValue: string): string;
+	get(key: 'customShellPath', defaultValue: string): string;
+}
+
+/**
+ * The shell a one-off command actually runs in: the user's explicit custom
+ * shell path when they set one, otherwise their selected shell, otherwise the
+ * platform default.
+ *
+ * Shared because `process:runCommand` and AI command mode must agree. The
+ * suggestion prompt names this shell to the model, so if the two ever resolved
+ * differently the model would be told `zsh` while the command ran under
+ * PowerShell - and the answer would be syntactically wrong through no fault of
+ * the model.
+ */
+export function resolveConfiguredShell(store: ShellSettingsReader): string {
+	const customShellPath = store.get('customShellPath', '');
+	if (customShellPath && customShellPath.trim()) return customShellPath.trim();
+	return store.get('defaultShell', getDefaultShell());
+}
+
 // ============================================================================
 // Store Defaults
 // ============================================================================
@@ -58,6 +82,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
 	terminalFontFamily: '',
 	customFonts: [],
+	mediaPlaybackRate: 1,
+	mediaPlayerFloatRect: null,
+	mediaPlayerQueue: null,
 	logLevel: 'info',
 	defaultShell: getDefaultShell(),
 	webAuthEnabled: false,
@@ -76,6 +103,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	totalActiveTimeMs: 0,
 	lastSelectedPromptId: null,
 	modalSizes: {},
+	concertoStageFloating: false,
+	concertoStagePosition: null,
 	spellCheck: false,
 	usageRefreshIntervals: {},
 	annotatorPenColor: '#9146FF',
@@ -90,6 +119,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// Utility agent for auxiliary tasks (tab naming, context grooming); null = use session agent
+	utilityAgentId: null,
+	utilityModelId: null,
 	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
 	coworkingBrowserInteraction: [],
 	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)

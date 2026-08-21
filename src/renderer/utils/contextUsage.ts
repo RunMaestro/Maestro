@@ -241,9 +241,21 @@ export function calculateContextDisplay(
 		if (
 			fallbackPercentage != null &&
 			Number.isFinite(fallbackPercentage) &&
-			fallbackPercentage >= 0
+			fallbackPercentage > 0
 		) {
 			// Accumulated multi-tool turn: derive tokens from preserved percentage.
+			//
+			// The guard is `> 0`, not `>= 0`: a zero fallback is the ABSENCE of a
+			// prior measurement, not a measurement of zero. Accepting it computed
+			// `tokens = round(0/100 * window) = 0` and returned `trustworthy: true`,
+			// which latched the gauge (and the Context Details popover) at 0% for the
+			// whole life of any session whose first turn already overflowed the
+			// window (finding Q1).
+			//
+			// Accepted edge case: a session whose stored contextUsage legitimately
+			// rounded to 0 (real usage under 0.5%) now produces an untrustworthy
+			// overflow frame, so callers hold their previous values - which are also
+			// zero - and the rendered result is identical. Nothing is lost.
 			const boundedFallback = Math.min(100, fallbackPercentage);
 			tokens = Math.round((boundedFallback / 100) * contextWindow);
 		} else {
@@ -255,9 +267,94 @@ export function calculateContextDisplay(
 		}
 	}
 
-	const percentage = tokens <= 0 ? 0 : Math.min(100, Math.round((tokens / contextWindow) * 100));
+	// NOT clamped to 100 (finding R1, Decision 2). A `Math.min(100, ...)` here
+	// laundered a genuine over-limit measurement into a flat, indistinguishable
+	// `100%` on the header pill and the Context Window popover, which is the same
+	// symptom the Context Timeline had. The header now reports whatever it
+	// actually measured, matching `computeOverLimitDisplay`'s `truePercentage`
+	// for the same tokens/window pair.
+	//
+	// The two paths above keep their own bounds and are deliberately unchanged:
+	// the untrustworthy-zeros branch (#762) still returns zeros, and the
+	// accumulated-turn fallback is still bounded by `Math.min(100, ...)` at the
+	// FALLBACK, because a stored `contextUsage` is 0-100 by construction and a
+	// percentage recovered from it is not an over-limit measurement. So today
+	// this expression only exceeds 100 if a caller supplies a numerator above
+	// its own window directly; it is the laundering that is removed, not a new
+	// number that is invented.
+	const percentage = tokens <= 0 ? 0 : Math.round((tokens / contextWindow) * 100);
 
 	return { tokens, percentage, contextWindow, trustworthy };
+}
+
+/**
+ * Result of an over-limit display calculation.
+ *
+ * The finding-R1 invariant: the label, the bar width and the color of a context
+ * row must ALL derive from this one return value, so they cannot disagree.
+ */
+export interface OverLimitDisplayResult {
+	/**
+	 * The UNCLAMPED usage percentage of this measurement against its OWN window.
+	 * An over-limit point reads e.g. `147`. 0 when the window is unknown.
+	 */
+	truePercentage: number;
+	/**
+	 * How much of the rendered track this point fills, 0-1. Measured against
+	 * `scaleMax` (the shared per-panel headroom scale) when one is supplied,
+	 * otherwise against the point's own window.
+	 */
+	fillFraction: number;
+	/** True when this measurement exceeds its own context window. */
+	overLimit: boolean;
+}
+
+/**
+ * Compute the display math for one context measurement, including the
+ * over-limit case (finding R1).
+ *
+ * Before this helper, an over-limit point was rendered as a full-width bar
+ * labelled `100%` or `~`, so the panel stopped conveying information exactly
+ * when the context story got interesting. `truePercentage` is deliberately
+ * NOT clamped: showing `147%` is the numeric floor of the fix.
+ *
+ * The per-panel headroom scale (Decision 3) is expressed through `scaleMax`:
+ * callers pass `max(window, observedPeakTokens)` across the rendered points so
+ * over-limit bars extend proportionally past the 100% tick, which sits at
+ * `window / scaleMax`. Only the SCALE maximum is shared - `truePercentage` uses
+ * each point's own `contextWindow`, so a mid-session window change cannot
+ * retroactively distort older rows.
+ *
+ * @param contextTokens - Tokens measured for this point
+ * @param contextWindow - The window this point was measured against (0 = unknown)
+ * @param scaleMax - Optional shared track maximum; defaults to `contextWindow`
+ * @returns True percentage, fill fraction (0-1) and the over-limit flag
+ */
+export function computeOverLimitDisplay(
+	contextTokens: number,
+	contextWindow: number,
+	scaleMax?: number
+): OverLimitDisplayResult {
+	if (!contextWindow || contextWindow <= 0 || !Number.isFinite(contextWindow)) {
+		return { truePercentage: 0, fillFraction: 0, overLimit: false };
+	}
+
+	const tokens = Number.isFinite(contextTokens) && contextTokens > 0 ? contextTokens : 0;
+	const truePercentage = Math.round((tokens / contextWindow) * 100);
+	const overLimit = tokens > contextWindow;
+
+	// A scaleMax below the window would push in-window points past the track, so
+	// an unusable value falls back to the window itself. The bound is
+	// `>= contextWindow`, not `> 0`: a positive-but-too-small scale is exactly
+	// the case the comment warns about, and merely checking positivity let it
+	// through - `(100k, 200k, 100k)` returned a full bar for a half-full window.
+	const effectiveScale =
+		scaleMax != null && Number.isFinite(scaleMax) && scaleMax >= contextWindow
+			? scaleMax
+			: contextWindow;
+	const fillFraction = Math.min(1, Math.max(0, tokens / effectiveScale));
+
+	return { truePercentage, fillFraction, overLimit };
 }
 
 /**

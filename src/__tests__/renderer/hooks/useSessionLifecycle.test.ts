@@ -23,8 +23,10 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useFailoverStore } from '../../../renderer/stores/failoverStore';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockFileTab } from '../../helpers/mockTab';
+import type { FailoverConfig } from '../../../shared/providerFailover';
+import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 
@@ -105,10 +107,13 @@ beforeEach(() => {
 		preFilterActiveTabId: null,
 	});
 
+	useFailoverStore.setState({ states: {} });
+
 	// Mock window.maestro APIs
 	(window as any).maestro = {
 		process: {
 			kill: vi.fn().mockResolvedValue(undefined),
+			setFailoverOverlay: vi.fn().mockResolvedValue(undefined),
 		},
 		stats: {
 			recordSessionClosed: vi.fn(),
@@ -236,8 +241,13 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customPath).toBeUndefined();
 		});
 
-		it('resets tabs and provider-specific config when toolType changes', () => {
-			const tab = createMockAITab({ id: 'old-tab', agentSessionId: 'old-session' });
+		it('preserves tabs and parks the old provider session when toolType changes', () => {
+			const tab = createMockAITab({
+				id: 'old-tab',
+				agentSessionId: 'claude-session',
+				logs: [{ id: 'log-1', timestamp: 1, source: 'user', text: 'hello' }] as any,
+				usageStats: { inputTokens: 10 } as any,
+			});
 			const session = createMockSession({
 				id: 'session-1',
 				name: 'My Agent',
@@ -264,32 +274,91 @@ describe('useSessionLifecycle', () => {
 			});
 
 			const updated = useSessionStore.getState().sessions[0];
-			// Provider changed
 			expect(updated.toolType).toBe('opencode');
-			// Tabs reset to a single fresh tab
+
+			// The tab and its transcript survive - same tab, same logs, still active.
 			expect(updated.aiTabs).toHaveLength(1);
+			expect(updated.aiTabs[0].id).toBe('old-tab');
+			expect(updated.aiTabs[0].logs).toHaveLength(1);
+			expect(updated.activeTabId).toBe('old-tab');
+
+			// The incoming provider starts fresh in the live slot...
 			expect(updated.aiTabs[0].agentSessionId).toBeNull();
-			expect(updated.aiTabs[0].logs).toEqual([]);
-			expect(updated.activeTabId).toBe(updated.aiTabs[0].id);
-			expect(updated.activeTabId).not.toBe('old-tab');
-			// Provider-specific config cleared
+			expect(updated.aiTabs[0].usageStats).toBeUndefined();
+			// ...while the outgoing provider's session is parked for the trip back.
+			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toEqual({
+				agentSessionId: 'claude-session',
+				usageStats: { inputTokens: 10 },
+				customModel: undefined,
+				customEffort: undefined,
+			});
+			// The live provider must never hold a parked entry of its own.
+			expect(updated.aiTabs[0].providerSessions?.['opencode']).toBeUndefined();
+
+			// Agent-level provider-specific config is still cleared.
 			expect(updated.customPath).toBeUndefined();
 			expect(updated.customArgs).toBeUndefined();
 			expect(updated.customEnvVars).toBeUndefined();
 			expect(updated.customModel).toBeUndefined();
 			expect(updated.customEffort).toBeUndefined();
 			expect(updated.customContextWindow).toBeUndefined();
-			// File preview tabs reset
-			expect(updated.filePreviewTabs).toEqual([]);
-			expect(updated.activeFileTabId).toBeNull();
-			// Unified tab order reset to single entry
-			expect(updated.unifiedTabOrder).toHaveLength(1);
-			expect(updated.unifiedTabOrder[0]).toEqual({ type: 'ai', id: updated.aiTabs[0].id });
-			// Runtime state reset
-			expect(updated.state).toBe('idle');
-			expect(updated.aiPid).toBe(0);
-			// Existing AI process killed
-			expect((window as any).maestro.process.kill).toHaveBeenCalledWith('session-1-ai');
+
+			// A running turn is codified at send, so nothing is killed.
+			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
+		});
+
+		it('restores a provider session when switching back to it', () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				agentSessionId: 'codex-session',
+				providerSessions: { 'claude-code': { agentSessionId: 'claude-session' } },
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex' as any,
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'My Agent', 'claude-code' as any);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Back on Claude: its original session is live again, Codex is parked.
+			expect(updated.aiTabs[0].agentSessionId).toBe('claude-session');
+			expect(updated.aiTabs[0].providerSessions?.['codex']?.agentSessionId).toBe('codex-session');
+			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toBeUndefined();
+		});
+
+		it('preserves closed-tab history and file preview tabs across a provider change', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				closedTabHistory: [{ tab: createMockAITab({ id: 'gone' }), index: 0, closedAt: 1 }] as any,
+				unifiedClosedTabHistory: [{ kind: 'ai', index: 0, closedAt: 1 }] as any,
+				filePreviewTabs: [{ id: 'file-1' }] as any,
+				activeFileTabId: 'file-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Undo (Cmd+Shift+T) must still work after a provider change.
+			expect(updated.closedTabHistory).toHaveLength(1);
+			expect(updated.unifiedClosedTabHistory).toHaveLength(1);
+			expect(updated.filePreviewTabs).toHaveLength(1);
+			expect(updated.activeFileTabId).toBe('file-1');
 		});
 
 		it('does not reset tabs when toolType is same as current', () => {
@@ -345,6 +414,183 @@ describe('useSessionLifecycle', () => {
 			expect(updated.cwd).toBe('/projects/myapp');
 			// Provider changed
 			expect(updated.toolType).toBe('codex');
+		});
+
+		// Regression: clearAllFailoverOverlays/clearFailover were defined and
+		// documented as the feature's teardown path but had zero call sites - an
+		// agent left pinned to a backup could keep routing prompts (and the
+		// primary's credentials) there indefinitely after the user disarmed
+		// failover or removed the endpoint. These wire handleSaveEditAgent's
+		// existing save flow into that teardown.
+		describe('Provider Failover teardown wiring', () => {
+			const backupEndpoint = {
+				id: 'backup-1',
+				label: 'Backup',
+				env: { ANTHROPIC_BASE_URL: 'https://backup.example.com' },
+			};
+			const armedConfig: FailoverConfig = { enabled: true, endpoints: [backupEndpoint] };
+
+			function pinToBackup(sessionId: string) {
+				useFailoverStore.getState().setState(sessionId, {
+					endpointId: 'backup-1',
+					since: Date.now(),
+					exhausted: ['backup-1'],
+				});
+			}
+
+			it('clears the live pin when the saved config disarms failover', async () => {
+				const session = createMockSession({ id: 'session-1', failoverConfig: armedConfig });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				pinToBackup('session-1');
+
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					result.current.handleSaveEditAgent(
+						'session-1',
+						session.name,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						{ ...armedConfig, enabled: false }
+					);
+				});
+
+				expect((window as any).maestro.process.setFailoverOverlay).toHaveBeenCalledWith(
+					'session-1',
+					null,
+					undefined
+				);
+				expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
+			});
+
+			it('clears the live pin when the saved config removes the endpoint it is pinned to', async () => {
+				const session = createMockSession({ id: 'session-1', failoverConfig: armedConfig });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				pinToBackup('session-1');
+
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					result.current.handleSaveEditAgent(
+						'session-1',
+						session.name,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						{ enabled: true, endpoints: [] }
+					);
+				});
+
+				expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
+			});
+
+			it('does not touch the live pin when the save leaves the pinned endpoint intact', async () => {
+				const session = createMockSession({ id: 'session-1', failoverConfig: armedConfig });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				pinToBackup('session-1');
+
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					result.current.handleSaveEditAgent(
+						'session-1',
+						'Renamed while pinned',
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						armedConfig
+					);
+				});
+
+				expect((window as any).maestro.process.setFailoverOverlay).not.toHaveBeenCalled();
+				expect(useFailoverStore.getState().states['session-1']).toEqual({
+					endpointId: 'backup-1',
+					since: expect.any(Number),
+					exhausted: ['backup-1'],
+				});
+			});
+
+			it('clears the live pin on a provider switch even though the caller still passes the old config', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code' as any,
+					failoverConfig: armedConfig,
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				pinToBackup('session-1');
+
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					// The modal doesn't know to clear failoverConfig itself on a
+					// provider switch - the reducer does that. This proves the
+					// pin-clearing check reads the POST-update session, not the
+					// caller's raw argument.
+					result.current.handleSaveEditAgent(
+						'session-1',
+						session.name,
+						'codex' as any,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						armedConfig
+					);
+				});
+
+				expect(useSessionStore.getState().sessions[0].failoverConfig).toBeUndefined();
+				expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
+			});
 		});
 	});
 
@@ -798,6 +1044,33 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.playbooks.deleteAll).toHaveBeenCalledWith('session-1');
+		});
+
+		// Regression: clearFailover was documented as running "when an agent is
+		// deleted" but had no call site, so a deleted agent's stale pin (and the
+		// primary credential routed with it) could outlive the session it belonged
+		// to if the session id were ever reused.
+		it('clears any live Provider Failover pin during cleanup', async () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useFailoverStore.getState().setState('session-1', {
+				endpointId: 'backup-1',
+				since: Date.now(),
+				exhausted: ['backup-1'],
+			});
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			await act(async () => {
+				await result.current.performDeleteSession(session, false);
+			});
+
+			expect((window as any).maestro.process.setFailoverOverlay).toHaveBeenCalledWith(
+				'session-1',
+				null,
+				undefined
+			);
+			expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
 		});
 
 		it('removes session from store and activates next session', async () => {

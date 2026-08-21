@@ -122,13 +122,16 @@ function resolveMovementBody(options: MovementAddOptions): string | undefined {
 	return resolveBody(options.body, options.htmlFile ?? options.bodyFile);
 }
 
-/** Parse an optional numeric flag, exiting on a non-number. */
-function parseNum(name: string, raw: string | undefined): number | undefined {
+/** Parse an optional numeric flag, honoring the command's output mode on failure. */
+function parseNum(
+	name: string,
+	raw: string | undefined,
+	json: boolean | undefined
+): number | undefined {
 	if (raw === undefined) return undefined;
 	const n = Number(raw);
 	if (!Number.isFinite(n)) {
-		console.error(`Error: --${name} must be a number`);
-		process.exit(1);
+		failMovementCommand(`--${name} must be a number`, json);
 	}
 	return n;
 }
@@ -241,10 +244,10 @@ export async function movementAdd(id: string, options: MovementAddOptions): Prom
 			op: 'add',
 			id,
 			viewType,
-			x: parseNum('x', options.x),
-			y: parseNum('y', options.y),
-			width: parseNum('width', options.width),
-			height: parseNum('height', options.height),
+			x: parseNum('x', options.x, options.json),
+			y: parseNum('y', options.y, options.json),
+			width: parseNum('width', options.width, options.json),
+			height: parseNum('height', options.height, options.json),
 			title: options.title,
 			body,
 		},
@@ -263,10 +266,10 @@ export async function movementBegin(id: string, options: MovementBeginOptions): 
 			op: 'begin',
 			id,
 			viewType: 'html',
-			x: parseNum('x', options.x),
-			y: parseNum('y', options.y),
-			width: parseNum('width', options.width),
-			height: parseNum('height', options.height),
+			x: parseNum('x', options.x, options.json),
+			y: parseNum('y', options.y, options.json),
+			width: parseNum('width', options.width, options.json),
+			height: parseNum('height', options.height, options.json),
 			title,
 		},
 		options.json,
@@ -282,10 +285,10 @@ export async function movementUpdate(id: string, options: MovementAddOptions): P
 			op: 'update',
 			id,
 			viewType,
-			x: parseNum('x', options.x),
-			y: parseNum('y', options.y),
-			width: parseNum('width', options.width),
-			height: parseNum('height', options.height),
+			x: parseNum('x', options.x, options.json),
+			y: parseNum('y', options.y, options.json),
+			width: parseNum('width', options.width, options.json),
+			height: parseNum('height', options.height, options.json),
 			title: options.title,
 			body: resolveMovementBody(options),
 		},
@@ -296,8 +299,8 @@ export async function movementUpdate(id: string, options: MovementAddOptions): P
 
 export async function movementMove(id: string, options: MovementMoveOptions): Promise<void> {
 	requireId(id, 'move', options.json);
-	const x = parseNum('x', options.x);
-	const y = parseNum('y', options.y);
+	const x = parseNum('x', options.x, options.json);
+	const y = parseNum('y', options.y, options.json);
 	if (x === undefined || y === undefined) {
 		console.error('Error: movement move requires --x and --y');
 		process.exit(1);
@@ -330,8 +333,8 @@ export async function movementProgress(
 	}
 	const phase = options.phase as ConcertoCreationPhase;
 	const notes = parseProgressNotes(options.notes, options.json);
-	const steps = parseNum('steps', options.steps) ?? notes?.length ?? 1;
-	const step = parseNum('step', options.step) ?? 1;
+	const steps = parseNum('steps', options.steps, options.json) ?? notes?.length ?? 1;
+	const step = parseNum('step', options.step, options.json) ?? 1;
 	if (!Number.isInteger(steps) || steps < 1 || steps > CONCERTO_PROGRESS_MAX_STEPS) {
 		failMovementCommand(
 			`--steps must be an integer from 1 through ${CONCERTO_PROGRESS_MAX_STEPS}`,

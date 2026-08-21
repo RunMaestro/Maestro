@@ -124,6 +124,7 @@ export interface UseSettingsReturn {
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
 	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
@@ -285,6 +286,10 @@ export interface UseSettingsReturn {
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	showTerminalTabsInUnreadFilter: boolean;
+	setShowTerminalTabsInUnreadFilter: (value: boolean) => void;
+	showBrowserTabsInUnreadFilter: boolean;
+	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	useCmd0AsLastTab: boolean;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;
@@ -355,6 +360,12 @@ export interface UseSettingsReturn {
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+
+	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
+	utilityAgentId: string | null;
+	setUtilityAgentId: (value: string | null) => void;
+	utilityModelId: string | null;
+	setUtilityModelId: (value: string | null) => void;
 
 	// Where new tabs are inserted in the tab bar (per content type)
 	newTabPlacement: 'end' | 'after-current';

@@ -5,6 +5,7 @@ import {
 	validatePathReference,
 	type FileTreeIndices,
 } from './matcher';
+import { safeDecodeURIComponent } from '../../../shared/stringUtils';
 import {
 	IMAGE_EMBED_PATTERN,
 	MAESTRO_DEEP_LINK_PATTERN,
@@ -91,7 +92,7 @@ function rewriteStandardLinks(
 			continue;
 		}
 
-		const decoded = safeDecode(hrefAttr);
+		const decoded = safeDecodeURIComponent(hrefAttr);
 		let resolved: string | null = null;
 
 		if (projectRoot && decoded.startsWith('/')) {
@@ -104,7 +105,7 @@ function rewriteStandardLinks(
 				resolved = relative;
 			} else {
 				// Outside projectRoot - emit a file:// URL so the click handler can
-				// hand it to shell.openPath.
+				// route it through openFileUrl (preview tab, player, or the OS).
 				token.attrSet('href', `file://${absolute}`);
 				continue;
 			}
@@ -116,18 +117,6 @@ function rewriteStandardLinks(
 
 		token.attrSet('href', `maestro-file://${resolved}`);
 		token.attrSet('data-maestro-file', resolved);
-	}
-}
-
-function safeDecode(s: string): string {
-	try {
-		return decodeURIComponent(s);
-	} catch (err) {
-		// Only swallow URIError (malformed percent-encoding, e.g. "%E0%A4%A").
-		// Any other error is unexpected and should surface - masking it would
-		// hide bugs (out-of-memory, polyfill regressions, etc.).
-		if (err instanceof URIError) return s;
-		throw err;
 	}
 }
 

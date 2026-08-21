@@ -1,4 +1,7 @@
-import type { Shortcut } from '../types';
+// Import from the shared type module rather than `../types`: the CLI reads
+// these defaults (to print a surface's hotkey in `maestro-cli open`), and
+// `../types` drags renderer-only, DOM-dependent modules into that build.
+import type { Shortcut } from '../../shared/shortcut-types';
 
 export const DEFAULT_SHORTCUTS = {
 	toggleSidebar: {
@@ -57,7 +60,7 @@ export const DEFAULT_SHORTCUTS = {
 	toggleAutoRunExpanded: {
 		id: 'toggleAutoRunExpanded',
 		label: 'Auto Run Expanded Preview',
-		keys: ['Meta', 'Shift', 'e'],
+		keys: ['Meta', 'Shift', '3'],
 	},
 	openBatchRunner: {
 		id: 'openBatchRunner',
@@ -85,6 +88,11 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'View Execution Queue',
 		keys: ['Meta', 'Shift', 'x'],
 	},
+	editLastQueuedMessage: {
+		id: 'editLastQueuedMessage',
+		label: 'Edit Last Queued Message',
+		keys: ['Meta', 'Shift', 'e'],
+	},
 	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
@@ -96,6 +104,11 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'p'],
 	},
 	openWizard: { id: 'openWizard', label: 'New Agent Wizard', keys: ['Meta', 'Shift', 'n'] },
+	openModelEffort: {
+		id: 'openModelEffort',
+		label: 'Change Tabs Model and Effort',
+		keys: ['Alt', 'Meta', '.'],
+	},
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
 	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
@@ -108,6 +121,16 @@ export const DEFAULT_SHORTCUTS = {
 		id: 'openCue',
 		label: 'Maestro Cue',
 		keys: ['Alt', 'q'],
+	},
+	toggleConcerto: {
+		id: 'toggleConcerto',
+		label: 'Show/Hide Concerto Stage',
+		keys: ['Alt', 'c'],
+	},
+	toggleCadenzas: {
+		id: 'toggleCadenzas',
+		label: 'Show/Hide All Cadenzas',
+		keys: ['Alt', 'Shift', 'c'],
 	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
@@ -142,6 +165,11 @@ export const DEFAULT_SHORTCUTS = {
 	focusActiveTab: {
 		id: 'focusActiveTab',
 		label: 'Focus Active Tab',
+		keys: ['Alt', 'Meta', 'ArrowUp'],
+	},
+	searchAllTabs: {
+		id: 'searchAllTabs',
+		label: 'Search Messages (All Agent Tabs)',
 		keys: ['Alt', 'Meta', 'f'],
 	},
 	editClipboardImage: {
@@ -226,6 +254,16 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
+	// The one "tile a NEW tab" command with a hotkey. It sits on Cmd+Shift+J, one
+	// modifier away from Cmd+J (open a new terminal tab), because a terminal is the
+	// thing users want beside their work often enough to earn a key. The other
+	// tileable kinds (AI, file, browser) stay palette-only - "Tile ... Below".
+	tileTerminalBelow: {
+		id: 'tileTerminalBelow',
+		label: 'Tile New Terminal Below',
+		keys: ['Meta', 'Shift', 'j'],
+		windowScoped: true,
+	},
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)
@@ -293,6 +331,7 @@ export const TAB_SHORTCUTS = {
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },
+	snoozeTab: { id: 'snoozeTab', label: 'Snooze Tab', keys: ['Alt', 'Meta', 's'] },
 	closeTabsLeft: {
 		id: 'closeTabsLeft',
 		label: 'Close Tabs to Left',

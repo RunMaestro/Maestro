@@ -4,6 +4,11 @@
 
 Command-line interface, playbook system, batch processing, and agent spawning for headless Maestro automation.
 
+Before adding a command that mirrors something a user does by clicking, read
+[CLI-UI-PARITY.md](CLI-UI-PARITY.md): it records which UI actions are already
+scriptable, which are not, and the one write path (`update_session_config`) that
+new per-agent and per-tab state should go through.
+
 ---
 
 ## Overview
@@ -164,7 +169,7 @@ maestro-cli show playbook <id> [--json]
 Run a playbook (batch execution of Auto Run documents).
 
 ```bash
-maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait]
+maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>]
 ```
 
 Options:
@@ -175,6 +180,7 @@ Options:
 - `--debug` - Detailed debug output
 - `--verbose` - Show full prompt sent to agent on each iteration
 - `--wait` - Wait for agent to become available if busy
+- `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
 
 This command is lazy-loaded to avoid eager resolution of prompt templates.
 
@@ -183,7 +189,7 @@ This command is lazy-loaded to avoid eager resolution of prompt templates.
 Launch a Goal-Driven Auto Run: instead of working through a checklist of documents (the `playbook` command), pursue a single free-text objective. Each iteration spawns a FRESH agent that makes one increment of progress, self-reports how far along it is via Maestro markers, and exits, repeating until the goal is reached, a deadlock is declared, the iteration limit is hit, or progress stalls.
 
 ```bash
-maestro-cli goal-run <agent-id> "<goal>" [--exit-criteria <text>] [--max-iterations <n>] [--no-history] [--json] [--verbose]
+maestro-cli goal-run <agent-id> "<goal>" [--exit-criteria <text>] [--max-iterations <n>] [--no-history] [--json] [--verbose] [--model <model>] [--effort <effort>]
 ```
 
 Options:
@@ -193,6 +199,7 @@ Options:
 - `--no-history` - Skip writing history entries
 - `--json` - Output as JSON Lines (events: `goal_start`, `goal_iteration_start`, `goal_iteration_complete`, `goal_complete`)
 - `--verbose` - Show full prompt sent to agent on each iteration
+- `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
 
 Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the desktop `useGoalRunner` hook. Both drive the SAME pure engine in `src/shared/goalDriven/*` (marker parsing + exit evaluation) so CLI and desktop behave identically. Like `playbook`, it is lazy-loaded, refuses to start when the agent is busy (`services/agent-busy.ts`), and threads per-agent SSH remote + model/effort/args/env overrides into every spawn.
 
@@ -201,7 +208,7 @@ Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the
 Run one or more raw Auto Run `.md` documents without a saved playbook. Mirrors `playbook` but builds an ephemeral `Playbook` on the fly (`src/cli/commands/run-doc.ts`), then drives it through the same `batch-processor` generator. Headless and self-contained - it does **not** route through the desktop renderer (unlike `auto-run --launch`), so it runs whether or not the Maestro window is open. This is the path group-chat participants use to execute a document they just wrote.
 
 ```bash
-maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait]
+maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait] [--model <model>] [--effort <effort>]
 ```
 
 - `-a, --agent <id>` (required) - target agent by ID (full/partial) or display name
@@ -210,6 +217,21 @@ maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [-
 - Busy-state detection and `--wait` are shared with `playbook` via `src/cli/services/agent-busy.ts` (`checkAgentBusy`, `waitForAgentAvailable`).
 
 Note: `resolveAgentId()` in `src/cli/services/storage.ts` resolves `--agent` by ID first, then falls back to an exact case-insensitive display-name match, so name targeting works across `run-doc`, `playbook` lookups, `list playbooks`, and `auto-run`.
+
+### Per-run model override
+
+`--model <model>` and `--effort <effort>` are registered on all four Auto Run entry points (`playbook`, `run-doc`, `goal-run`, `auto-run` in `src/cli/index.ts`). The value is **run-scoped**: it wins over `session.customModel` / `session.customEffort` for every spawn the run makes, and nothing is ever written back to the session, so the agent's interactive tabs are unaffected and the override dies with the run. Resolution order for an Auto Run spawn is `run override -> session.customModel -> agent default`.
+
+Threading, by entry point:
+
+- **Headless (`playbook`, `run-doc`, `goal-run`)** - the flag rides the command's options object into `services/goal-runner.ts` (`RunGoalOptions`) or `services/batch-processor.ts` (`runPlaybook` options), and both pass `runModel ?? session.customModel` / `runEffort ?? session.customEffort` at every `spawnAgent` call site. `agent-spawner.ts` already accepted `customModel` / `customEffort`, so it needed no change. Note the synopsis and goal-handoff spawns take the override too, so the summary runs on the same model as the work it summarizes.
+- **Desktop-routed (`auto-run`)** - the flags travel in the `configure_auto_run` WebSocket message (`commands/auto-run.ts`), are validated as optional non-empty strings in `handleConfigureAutoRun` (`src/main/web-server/handlers/messageHandlers.ts`), pass through `ConfigureAutoRunCallback` (`src/main/web-server/types.ts`) and `CallbackRegistry.configureAutoRun`, and land on the `BatchRunConfig` built in `useAppRemoteEventListeners.ts`. From there the desktop runners apply them via `spawnAgentForSession`'s `modelOverride` / `effortOverride` options.
+
+Conventions to preserve when touching this:
+
+- **Spread-when-set everywhere.** Producers use `...(model && { model })` so an unset override is absent, never an empty string. The CLI trims first (`options.model?.trim() || undefined`), so `--model "   "` reads as unset.
+- **No CLI-side validation.** Valid model names are provider-specific and only the desktop/provider layer knows them, so the CLI passes the value through. The WebSocket boundary rejects non-strings and blank strings, nothing more.
+- **The override is config, not session state.** In particular `buildWorktreeSession` (`src/renderer/utils/worktreeSession.ts`) still copies the PARENT session's `customModel` into a worktree child - do not "fix" that to use the run override. Worktree dispatch gets the override for free because it hands the same `BatchRunConfig` to the same runners.
 
 ### `send <agent-id> <message>`
 

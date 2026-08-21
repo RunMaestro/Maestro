@@ -16,6 +16,7 @@
 
 import { create } from 'zustand';
 import type { Session, SettingsTab, AgentError } from '../types';
+import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { logger } from '../utils/logger';
@@ -88,6 +89,8 @@ export interface NewInstanceModalData {
 	duplicatingSessionId: string | null;
 	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set - duplicates inherit the source's group). */
 	presetGroupId?: string | null;
+	/** When set, seeds the working directory (and a default name from its basename). Ignored if duplicatingSessionId is set - duplicates inherit the source's cwd. */
+	presetWorkingDir?: string | null;
 }
 
 /** Edit agent modal data */
@@ -118,6 +121,21 @@ export interface RenameInstanceModalData {
 export interface RenameTabModalData {
 	tabId: string;
 	initialName: string;
+}
+
+/** Snooze tab modal data - which AI tab is being snoozed, and how to label it */
+export interface SnoozeTabModalData {
+	tabId: string;
+	tabLabel: string;
+}
+
+/**
+ * Model & effort modal data. Only the tab id travels: the modal resolves the
+ * agent, the option lists, and the tab > session > agent-default ladder from
+ * the stores itself, so an opener can't hand it a stale snapshot.
+ */
+export interface ModelEffortModalData {
+	tabId: string;
 }
 
 /** Terminal tab startup command modal data */
@@ -155,6 +173,19 @@ export interface AgentErrorModalData {
 	historicalError?: AgentError;
 }
 
+/**
+ * Provider re-authentication modal data.
+ *
+ * Addressed by PROVIDER, not by agent: one expired token blocks every agent
+ * that shares the credential store, and they are all fixed by one login. The
+ * roster of blocked agents (and the error text) lives in `authOutageStore`
+ * keyed by this value, so it stays correct as more agents fail while the prompt
+ * is already open.
+ */
+export interface ReauthModalData {
+	providerKey: string;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -174,7 +205,10 @@ export interface QuitConfirmModalData {
 }
 
 export interface CueModalData {
-	initialTab?: 'dashboard' | 'pipeline';
+	/** Tab the modal opens on. Values match `CueModalTab` in
+	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
+	 *  `shared/uiSurfaces.ts`. */
+	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
 }
 
 /** Cue YAML editor data */
@@ -186,6 +220,12 @@ export interface CueYamlEditorData {
 /** Worktree modal data (create/delete/PR) */
 export interface WorktreeModalData {
 	session: Session;
+	/**
+	 * PR only: the branch to open the PR from. Worktree children carry it on the
+	 * session, but a plain git agent doesn't - the opener knows the live branch,
+	 * so it passes it rather than making the modal host re-derive it.
+	 */
+	sourceBranch?: string;
 }
 
 /** Group chat modal data (delete/rename/edit) */
@@ -196,6 +236,42 @@ export interface GroupChatModalData {
 /** Git diff preview data */
 export interface GitDiffModalData {
 	diff: string;
+	/**
+	 * Repo the diff was taken from, used to resolve files clicked inside the
+	 * viewer. Optional: opened without it (keyboard shortcut, command palette)
+	 * the viewer follows the active agent. The Left Bar's right-click menu passes
+	 * it so it can diff an agent that isn't active.
+	 */
+	cwd?: string;
+}
+
+/**
+ * Git log viewer data. Optional: opened without it (keyboard shortcut, command
+ * palette) the viewer follows the active agent. The Left Bar's right-click menu
+ * passes an explicit target so it can show the log of an agent that isn't active.
+ */
+export interface GitLogModalData {
+	cwd: string;
+	sshRemoteId?: string;
+}
+
+/** Git command runner data - which streaming operation the console modal runs */
+export interface GitCommandRunnerData {
+	sessionId: string;
+	operation: GitStreamingOperation;
+	/** Repo directory the command runs in (already resolved for terminal/worktree agents). */
+	cwd: string;
+	sshRemoteId?: string;
+	/** Current branch, shown in the modal title. */
+	branch?: string;
+}
+
+/** Branch switcher data - fuzzy branch picker for an agent's repo */
+export interface BranchSwitcherModalData {
+	sessionId: string;
+	cwd: string;
+	sshRemoteId?: string;
+	currentBranch?: string;
 }
 
 /** Tour modal data */
@@ -239,14 +315,19 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
+	| 'reauth'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
+	| 'crossTabSearch'
 	| 'fuzzyFileSearch'
 	| 'promptComposer'
 	// Tab Management
 	| 'renameTab'
 	| 'terminalStartupCommand'
+	| 'snoozeTab'
+	| 'modelEffort'
+	| 'snoozedTabs'
 	// Group Management
 	| 'renameGroup'
 	// Session Operations
@@ -273,6 +354,8 @@ export type ModalId =
 	// Git
 	| 'gitDiff'
 	| 'gitLog'
+	| 'gitCommandRunner'
+	| 'branchSwitcher'
 	// Wizard & Tour
 	| 'wizardResume'
 	| 'tour'
@@ -307,7 +390,9 @@ export type ModalId =
 	| 'cueModal'
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
-	| 'pianolaModal';
+	| 'pianolaModal'
+	// Concerto (agent-composed views)
+	| 'concertoStage';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -321,12 +406,15 @@ export interface ModalDataMap {
 	confirm: ConfirmModalData;
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
+	snoozeTab: SnoozeTabModalData;
+	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
+	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
@@ -335,6 +423,9 @@ export interface ModalDataMap {
 	renameGroupChat: GroupChatModalData;
 	editGroupChat: GroupChatModalData;
 	gitDiff: GitDiffModalData;
+	gitLog: GitLogModalData;
+	gitCommandRunner: GitCommandRunnerData;
+	branchSwitcher: BranchSwitcherModalData;
 	tour: TourModalData;
 	standingOvation: StandingOvationData;
 	firstRunCelebration: FirstRunCelebrationData;
@@ -570,7 +661,7 @@ export const selectModalData =
  * Use this for event handlers and callbacks.
  */
 export function getModalActions() {
-	const { openModal, closeModal, updateModalData } = useModalStore.getState();
+	const { openModal, closeModal, toggleModal, updateModalData } = useModalStore.getState();
 
 	return {
 		// Settings Modal
@@ -863,6 +954,10 @@ export function getModalActions() {
 		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
 			openModal('agentError', { sessionId, historicalError: error }),
 
+		// Provider Re-authentication Modal
+		openReauthModal: (data: ReauthModalData) => openModal('reauth', data),
+		closeReauthModal: () => closeModal('reauth'),
+
 		// Worktree Modals
 		setWorktreeConfigModalOpen: (open: boolean) =>
 			open ? openModal('worktreeConfig') : closeModal('worktreeConfig'),
@@ -882,6 +977,10 @@ export function getModalActions() {
 		// Tab Switcher Modal
 		setTabSwitcherOpen: (open: boolean) =>
 			open ? openModal('tabSwitcher') : closeModal('tabSwitcher'),
+
+		// Cross-Tab Message Search Modal
+		setCrossTabSearchOpen: (open: boolean) =>
+			open ? openModal('crossTabSearch') : closeModal('crossTabSearch'),
 
 		// Fuzzy File Search Modal
 		setFuzzyFileSearchOpen: (open: boolean) =>
@@ -918,6 +1017,14 @@ export function getModalActions() {
 		// Git Log Viewer
 		setGitLogOpen: (open: boolean) => (open ? openModal('gitLog') : closeModal('gitLog')),
 
+		// Git command runner (streaming pull/push/fetch console)
+		openGitCommandRunner: (data: GitCommandRunnerData) => openModal('gitCommandRunner', data),
+		closeGitCommandRunner: () => closeModal('gitCommandRunner'),
+
+		// Branch switcher (fuzzy branch picker)
+		openBranchSwitcher: (data: BranchSwitcherModalData) => openModal('branchSwitcher', data),
+		closeBranchSwitcher: () => closeModal('branchSwitcher'),
+
 		// Tour Overlay
 		setTourOpen: (open: boolean) =>
 			open ? openModal('tour', { fromWizard: false }) : closeModal('tour'),
@@ -937,7 +1044,7 @@ export function getModalActions() {
 
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
-		openCueModalWithTab: (tab: 'dashboard' | 'pipeline') =>
+		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>) =>
 			openModal('cueModal', { initialTab: tab }),
 
 		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)
@@ -948,6 +1055,14 @@ export function getModalActions() {
 		// Pianola Modal (autonomous manager: rules + decision log)
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
+
+		// Concerto stage. This one flag is the whole truth about whether the stage
+		// is up: the movement store reads it back rather than keeping its own
+		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
+		// panel cannot disagree about it.
+		setConcertoStageOpen: (open: boolean) =>
+			open ? openModal('concertoStage') : closeModal('concertoStage'),
+		toggleConcertoStage: () => toggleModal('concertoStage'),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
@@ -1020,6 +1135,7 @@ export function useModalActions() {
 	const wizardResumeModalOpen = useModalStore(selectModalOpen('wizardResume'));
 	const wizardResumeData = useModalStore(selectModalData('wizardResume'));
 	const agentErrorData = useModalStore(selectModalData('agentError'));
+	const reauthData = useModalStore(selectModalData('reauth'));
 	const worktreeConfigModalOpen = useModalStore(selectModalOpen('worktreeConfig'));
 	const createWorktreeModalOpen = useModalStore(selectModalOpen('createWorktree'));
 	const createWorktreeData = useModalStore(selectModalData('createWorktree'));
@@ -1028,6 +1144,7 @@ export function useModalActions() {
 	const deleteWorktreeModalOpen = useModalStore(selectModalOpen('deleteWorktree'));
 	const deleteWorktreeData = useModalStore(selectModalData('deleteWorktree'));
 	const tabSwitcherOpen = useModalStore(selectModalOpen('tabSwitcher'));
+	const crossTabSearchOpen = useModalStore(selectModalOpen('crossTabSearch'));
 	const fuzzyFileSearchOpen = useModalStore(selectModalOpen('fuzzyFileSearch'));
 	const promptComposerOpen = useModalStore(selectModalOpen('promptComposer'));
 	const mergeSessionModalOpen = useModalStore(selectModalOpen('mergeSession'));
@@ -1039,6 +1156,7 @@ export function useModalActions() {
 	const groupChatInfoOpen = useModalStore(selectModalOpen('groupChatInfo'));
 	const gitDiffData = useModalStore(selectModalData('gitDiff'));
 	const gitLogOpen = useModalStore(selectModalOpen('gitLog'));
+	const gitLogData = useModalStore(selectModalData('gitLog'));
 	const tourOpen = useModalStore(selectModalOpen('tour'));
 	const tourData = useModalStore(selectModalData('tour'));
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
@@ -1065,6 +1183,7 @@ export function useModalActions() {
 		newInstanceModalOpen,
 		duplicatingSessionId: newInstanceData?.duplicatingSessionId ?? null,
 		newInstancePresetGroupId: newInstanceData?.presetGroupId ?? null,
+		newInstancePresetWorkingDir: newInstanceData?.presetWorkingDir ?? null,
 
 		// Edit Agent Modal
 		editAgentModalOpen,
@@ -1187,17 +1306,24 @@ export function useModalActions() {
 		// Agent Error Modal
 		agentErrorModalSessionId: agentErrorData?.sessionId ?? null,
 
+		// Provider Re-authentication Modal
+		reauthModalData: reauthData ?? null,
+
 		// Worktree Modals
 		worktreeConfigModalOpen,
 		createWorktreeModalOpen,
 		createWorktreeSession: createWorktreeData?.session ?? null,
 		createPRModalOpen,
 		createPRSession: createPRData?.session ?? null,
+		createPRSourceBranch: createPRData?.sourceBranch,
 		deleteWorktreeModalOpen,
 		deleteWorktreeSession: deleteWorktreeData?.session ?? null,
 
 		// Tab Switcher Modal
 		tabSwitcherOpen,
+
+		// Cross-Tab Message Search Modal
+		crossTabSearchOpen,
 
 		// Fuzzy File Search Modal
 		fuzzyFileSearchOpen,
@@ -1218,11 +1344,15 @@ export function useModalActions() {
 		showEditGroupChatModal: editGroupChatData?.groupChatId ?? null,
 		showGroupChatInfo: groupChatInfoOpen,
 
-		// Git Diff Viewer
+		// Git Diff Viewer. `gitDiffCwd` is set only when the diff was taken for a
+		// specific agent (Left Bar menu); otherwise the viewer follows the active one.
 		gitDiffPreview: gitDiffData?.diff ?? null,
+		gitDiffCwd: gitDiffData?.cwd ?? null,
 
-		// Git Log Viewer
+		// Git Log Viewer. The target is set only when the log was opened for a
+		// specific agent (Left Bar menu); otherwise the viewer follows the active one.
 		gitLogOpen,
+		gitLogTarget: gitLogData ?? null,
 
 		// Tour Overlay
 		tourOpen,

@@ -10,7 +10,7 @@ The `window.maestro` API exposes the following namespaces:
 
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
-- `process` - Spawn, write, kill, resize
+- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands)
 - `fs` - readDir, readFile
 - `dialog` - Folder selection
 - `shells` - Detect available shells
@@ -26,8 +26,9 @@ The `window.maestro` API exposes the following namespaces:
 ## Git Integration
 
 - `git` - Status, diff, isRepo, numstat, branches, tags, info
-- `git` - Worktree support: worktreeInfo, getRepoRoot, worktreeSetup, worktreeCheckout
+- `git` - Worktree support: worktreeInfo, getRepoRoot, worktreeSetup, worktreeRunSetup, worktreeCheckout
 - `git` - PR creation: createPR, checkGhCli, getDefaultBranch
+- `git` - Remote sync: runCommand/cancelCommand/onCommandOutput (streaming pull/push/fetch), checkoutBranch
 
 ## Web & Live Sessions
 

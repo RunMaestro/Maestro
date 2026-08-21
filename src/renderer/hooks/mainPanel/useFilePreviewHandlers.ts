@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react';
 import type { Session, FilePreviewTab } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { getFileTabFileName } from '../../utils/tabHelpers';
 
 interface UseFilePreviewHandlersParams {
 	activeSession: Session | null;
@@ -40,7 +41,7 @@ export function useFilePreviewHandlers({
 	const memoizedFilePreviewFile = useMemo(() => {
 		if (!activeFileTab) return null;
 		return {
-			name: activeFileTab.name + activeFileTab.extension,
+			name: getFileTabFileName(activeFileTab),
 			content: activeFileTab.content,
 			path: activeFileTab.path,
 		};

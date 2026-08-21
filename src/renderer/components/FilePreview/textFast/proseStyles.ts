@@ -9,6 +9,12 @@ export const TEXT_PAGE_GUTTER_CLASS = 'text-fast-gutter';
 /** CSS class applied to the line-content column inside each page. */
 export const TEXT_PAGE_CONTENT_CLASS = 'text-fast-content';
 
+/** Unzoomed page font size, in CSS pixels. */
+export const TEXT_BASE_FONT_PX = 13;
+
+/** Page line-height multiplier. Fixed so page heights stay predictable. */
+export const TEXT_LINE_HEIGHT = 1.6;
+
 /**
  * Generate the scoped stylesheet for the Fast tier text preview.
  *
@@ -17,18 +23,22 @@ export const TEXT_PAGE_CONTENT_CLASS = 'text-fast-content';
  * monospace font, theme-aware colors, and a fixed line-height so virtualizer
  * page heights are predictable.
  *
+ * `fontScale` is the reader's font zoom. It multiplies the base size here and
+ * the virtualizer's page height in the component - the two MUST use the same
+ * number, or the fixed-size virtualization drifts against what is painted.
+ *
  * Lives in its own module so the styling decisions are independently
  * unit-testable (string-contains assertions against the generated CSS).
  */
-export function generateTextProseCss(theme: Theme): string {
+export function generateTextProseCss(theme: Theme, fontScale = 1): string {
 	const c = theme.colors;
 	return `
 		.${TEXT_PAGE_CLASS} {
 			display: grid;
 			grid-template-columns: auto 1fr;
 			font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-			font-size: 13px;
-			line-height: 1.6;
+			font-size: ${TEXT_BASE_FONT_PX * fontScale}px;
+			line-height: ${TEXT_LINE_HEIGHT};
 			color: ${c.textMain};
 		}
 		.${TEXT_PAGE_GUTTER_CLASS} {

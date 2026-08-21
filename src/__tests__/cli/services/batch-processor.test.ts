@@ -59,6 +59,7 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(),
+	readHistory: vi.fn(),
 }));
 
 // Mock cli-activity
@@ -89,9 +90,11 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from '../../../cli/services/agent-spawner';
-import { addHistoryEntry, readGroups } from '../../../cli/services/storage';
+import { addHistoryEntry, readGroups, readHistory } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { logger } from '../../../main/utils/logger';
+import type { HistoryEntry } from '../../../shared/types';
 
 describe('batch-processor', () => {
 	// Helper to create mock session
@@ -132,6 +135,8 @@ describe('batch-processor', () => {
 		vi.mocked(readGroups).mockReturnValue([
 			{ id: 'group-456', name: 'Test Group', emoji: '🧪', collapsed: false },
 		]);
+		// By default, no persisted history so reconciliation is a no-op.
+		vi.mocked(readHistory).mockReturnValue([]);
 		// By default, return 0 tasks to prevent infinite loops
 		vi.mocked(readDocAndCountTasks).mockReturnValue({ content: '', taskCount: 0 });
 		vi.mocked(readDocAndGetTasks).mockReturnValue({ content: '', tasks: [] });
@@ -462,6 +467,87 @@ describe('batch-processor', () => {
 			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
 			expect(promptArg).toContain('Custom prompt for processing');
 			expect(promptArg).toContain('My task');
+		});
+
+		describe('per-run model/effort override', () => {
+			/** Feed the loop exactly one task, then report the document as drained. */
+			const singleTask = (): void => {
+				let callCount = 0;
+				vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+					callCount++;
+					if (callCount <= 3) return { content: '- [ ] My task', taskCount: 1 };
+					return { content: '', taskCount: 0 };
+				});
+			};
+
+			it('lets the run model/effort win over the session values on the task spawn', async () => {
+				singleTask();
+				const session = mockSession({ customModel: 'opus', customEffort: 'high' });
+
+				await collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+						effort: 'low',
+					})
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'low' });
+				// Run-scoped: the session object is never rewritten.
+				expect(session.customModel).toBe('opus');
+				expect(session.customEffort).toBe('high');
+			});
+
+			it('falls back to the session values when no run override is given', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks'
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+			});
+
+			it('falls back per field when only the model is overridden', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks',
+						{ model: 'sonnet' }
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+			});
+
+			it('applies the run override to the synopsis spawn too', async () => {
+				singleTask();
+				vi.mocked(spawnAgent).mockResolvedValue({
+					success: true,
+					response: '**Summary:** ok\n**Details:** ok',
+					agentSessionId: 'claude-session-123',
+				});
+
+				await collectEvents(
+					runPlaybook(mockSession({ customModel: 'opus' }), mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+					})
+				);
+
+				// Index 0 = task spawn, index 1 = synopsis resume.
+				expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+				const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'sonnet' });
+			});
 		});
 
 		it('should track usage statistics', async () => {
@@ -1005,6 +1091,203 @@ describe('batch-processor', () => {
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
 			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
+		});
+	});
+
+	describe('runPlaybook - history reconciliation', () => {
+		// Completes exactly one checkbox in the current run, with the given usage.
+		const oneTaskRun = (taskCost = 0.01) => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: taskCost,
+					contextWindow: 200000,
+				},
+			});
+		};
+
+		// Minimal AUTO per-task history entry (carries completedTaskCount, like a
+		// real persisted task row).
+		const taskEntry = (timestamp: number, cost: number): HistoryEntry => ({
+			id: `e-${timestamp}`,
+			type: 'AUTO',
+			timestamp,
+			summary: '[tasks] Task completed',
+			fullResponse: '',
+			projectPath: '/path/to/project',
+			sessionId: 'session-123',
+			success: true,
+			elapsedTimeMs: 1000,
+			completedTaskCount: 1,
+			usageStats: {
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: cost,
+				contextWindow: 200000,
+			},
+		});
+
+		it('reconciles cumulative totals across a restart (no intervening summary)', async () => {
+			oneTaskRun(0.01);
+			// History holds 3 task rows from before a restart plus this run's 1 row.
+			// None are preceded by an "Auto Run completed" summary, so all belong to
+			// the same logical session and the totals should span the restart.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				taskEntry(4, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(4);
+			expect(complete?.totalCost).toBeCloseTo(0.07, 5);
+		});
+
+		it('does not absorb a previously-completed run on the same session', async () => {
+			oneTaskRun(0.01);
+			// A prior run wrote 3 task rows then an "Auto Run completed" summary
+			// (t=4). This run added 1 row (t=5). Only rows after the last summary
+			// should count.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				{
+					id: 'summary-1',
+					type: 'AUTO',
+					timestamp: 4,
+					summary: 'Auto Run completed: 3 tasks in 1 loop',
+					fullResponse: '',
+					projectPath: '/path/to/project',
+					sessionId: 'session-123',
+					success: true,
+					elapsedTimeMs: 3000,
+				},
+				taskEntry(5, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.01, 5);
+		});
+
+		// The boundary IS the final summary row. A run that writes none leaves the
+		// next run nothing to scan back to, so the next aggregation sweeps up this
+		// run's task rows and reports the two added together.
+		it('writes a boundary summary even for a single-pass non-looping run', async () => {
+			oneTaskRun(0.01);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			const session = mockSession();
+			await collectEvents(runPlaybook(session, mockPlaybook({ loopEnabled: false }), '/playbooks'));
+
+			const summaries = vi
+				.mocked(addHistoryEntry)
+				.mock.calls.map((call) => call[0].summary as string);
+			expect(summaries.some((s) => /^Auto Run completed:/.test(s))).toBe(true);
+		});
+
+		it('reconciles and writes a boundary when the agent halts the run', async () => {
+			// Halt returns early, so it used to skip reconciliation entirely: the
+			// complete event carried this process's raw counters, and no boundary row
+			// was written at all.
+			// The halt marker is read back off the DOCUMENT after the agent runs,
+			// not off the agent's response. Call 1 is the pre-scan and call 2 the
+			// loop's own read - the marker must not appear until the post-read, or
+			// the pre-existing-halt guard rejects the run before it starts.
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '<!-- maestro:halt: needs review -->', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.01,
+					contextWindow: 200000,
+				},
+			});
+			// Three task rows survive from before a restart; this run adds one.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				taskEntry(4, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.halted).toBe(true);
+			// Reconciled across the restart rather than reporting only this process.
+			expect(complete?.totalTasksCompleted).toBe(4);
+			expect(complete?.totalCost).toBeCloseTo(0.07, 5);
+
+			const summaries = vi
+				.mocked(addHistoryEntry)
+				.mock.calls.map((call) => call[0].summary as string);
+			expect(summaries.some((s) => /^Auto Run halted:/.test(s))).toBe(true);
+		});
+
+		it('does not undercount the current run when history lags behind', async () => {
+			// Current run completes one task; history read returns nothing (e.g. the
+			// per-task write has not been flushed yet). Reconciliation must keep the
+			// in-memory total, not clobber it to zero.
+			oneTaskRun(0.05);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.05, 5);
+		});
+
+		it('falls back to in-memory counters and warns when history read throws', async () => {
+			oneTaskRun(0.05);
+			vi.mocked(readHistory).mockImplementation(() => {
+				throw new Error('disk read failed');
+			});
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.05, 5);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'History reconciliation failed, using in-memory counters',
+				session.name,
+				expect.objectContaining({ sessionId: session.id })
+			);
 		});
 	});
 

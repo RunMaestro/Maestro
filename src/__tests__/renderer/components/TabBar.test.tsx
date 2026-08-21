@@ -142,6 +142,11 @@ vi.mock('lucide-react', async (importOriginal) => ({
 			🕐
 		</span>
 	),
+	Layers: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="layers-icon" className={className} style={style}>
+			▤
+		</span>
+	),
 	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="message-square-icon" className={className} style={style}>
 			💬
@@ -1099,7 +1104,7 @@ describe('TabBar', () => {
 			expect(mockOnOpenTabSearch).toHaveBeenCalled();
 		});
 
-		it('opens search popover and calls onOpenOutputSearch when Search Message History clicked', () => {
+		it('opens search popover and calls onOpenOutputSearch when the this-tab entry is clicked', () => {
 			const mockOnOpenOutputSearch = vi.fn();
 			render(
 				<TabBar
@@ -1116,9 +1121,46 @@ describe('TabBar', () => {
 
 			// Click the search button to open the popover
 			fireEvent.click(screen.getByTitle('Search…'));
-			// Click "Search Message History" in the popover
-			fireEvent.click(screen.getByText('Search Message History'));
+			// Click the this-tab message search entry in the popover
+			fireEvent.click(screen.getByText('Search Messages (this tab)'));
 			expect(mockOnOpenOutputSearch).toHaveBeenCalled();
+		});
+
+		it('calls onOpenCrossTabSearch when the all-tabs entry is clicked', () => {
+			const mockOnOpenCrossTabSearch = vi.fn();
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+					onOpenCrossTabSearch={mockOnOpenCrossTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByText('Search Messages (all agent tabs)'));
+			expect(mockOnOpenCrossTabSearch).toHaveBeenCalled();
+		});
+
+		it('hides the all-tabs entry when no handler is supplied', () => {
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Search…'));
+			expect(screen.queryByText('Search Messages (all agent tabs)')).not.toBeInTheDocument();
 		});
 	});
 

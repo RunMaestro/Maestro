@@ -28,7 +28,9 @@ import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { Spinner } from '../ui/Spinner';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 import { formatNumber, formatDurationLong } from '../../../shared/formatters';
+import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -36,8 +38,13 @@ import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
 import { logger } from '../../utils/logger';
 import { daysToLookbackHours, bucketCountForLookback } from './lookback';
 import { NarrativeSections } from './NarrativeSections';
+import { richSectionId } from './directorNotesToc';
 import { NarrativeParseError } from './NarrativeParseError';
-import type { DirectorNotesNarrative } from '../../../shared/directorNotesNarrative';
+import {
+	looksLikeStructuredOutput,
+	STRUCTURED_OUTPUT_UNPARSED_MESSAGE,
+	type DirectorNotesNarrative,
+} from '../../../shared/directorNotesNarrative';
 import {
 	StatCardGrid,
 	SectionCard,
@@ -67,6 +74,8 @@ interface RichOverviewProps {
 	narrative?: DirectorNotesNarrative | null;
 	/** Set when the structured output failed to parse; renders the overt error banner. */
 	narrativeError?: string | null;
+	/** Set when `narrative` was salvaged from unparseable output; renders the banner alongside it. */
+	narrativeRecovery?: string | null;
 	/** Lookback window in days; drives the IPC query. */
 	lookbackDays: number;
 	/** Forwarded to the narrative MarkdownRenderer (matches Plain-mode behavior). */
@@ -81,6 +90,7 @@ export function RichOverview({
 	synopsis,
 	narrative,
 	narrativeError,
+	narrativeRecovery,
 	lookbackDays,
 	enableBionifyReadingMode = false,
 	chatMath = false,
@@ -123,13 +133,14 @@ export function RichOverview({
 	const failureColor = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
 
 	const timelineBuckets = richStats?.timelineBuckets ?? [];
-	const totalsTrend = timelineBuckets.map((b) => b.auto + b.user + b.cue);
+	const totalsTrend = timelineBuckets.map((b) => b.auto + b.user + b.cue + (b.agent ?? 0));
 
 	const totalEntries = richStats?.totalEntries ?? 0;
 	const agentCount = richStats?.agentCount ?? 0;
 	const autoCount = richStats?.autoCount ?? 0;
 	const userCount = richStats?.userCount ?? 0;
 	const cueCount = richStats?.cueCount ?? 0;
+	const agentEntryCount = richStats?.agentEntryCount ?? 0;
 	const successCount = richStats?.successCount ?? 0;
 	const failureCount = richStats?.failureCount ?? 0;
 	const successRate = richStats?.successRate ?? 0;
@@ -178,11 +189,13 @@ export function RichOverview({
 		{ label: 'User', value: userCount, color: userColor },
 		{ label: 'Auto', value: autoCount, color: autoColor },
 		{ label: 'Cue', value: cueCount, color: CUE_COLOR },
+		{ label: 'Agent', value: agentEntryCount, color: AGENT_COLOR },
 	];
 
 	const agentBars: BarDatum[] = (richStats?.perAgent ?? []).map((a) => ({
 		label: a.agentName,
 		value: a.entryCount,
+		atLeast: a.truncated,
 	}));
 
 	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
@@ -202,7 +215,12 @@ export function RichOverview({
 			)}
 
 			{/* Activity timeline */}
-			<SectionCard theme={theme} title="Activity Timeline" icon={Activity}>
+			<SectionCard
+				theme={theme}
+				id={richSectionId('Activity Timeline')}
+				title="Activity Timeline"
+				icon={Activity}
+			>
 				<ChartErrorBoundary theme={theme} chartName="Activity Timeline">
 					<ActivityTimeline
 						theme={theme}
@@ -216,7 +234,12 @@ export function RichOverview({
 			    (a split bar and a 132px donut), so stacking them wasted a screen of
 			    vertical space. Collapses to one column on a narrow modal. */}
 			<div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
-				<SectionCard theme={theme} title="Success vs Failure" icon={CheckCircle2}>
+				<SectionCard
+					theme={theme}
+					id={richSectionId('Success vs Failure')}
+					title="Success vs Failure"
+					icon={CheckCircle2}
+				>
 					<ChartErrorBoundary theme={theme} chartName="Success vs Failure">
 						<SuccessFailureWidget
 							theme={theme}
@@ -227,28 +250,63 @@ export function RichOverview({
 					</ChartErrorBoundary>
 				</SectionCard>
 
-				<SectionCard theme={theme} title="Source Breakdown" icon={PieChart}>
+				<SectionCard
+					theme={theme}
+					id={richSectionId('Source Breakdown')}
+					title="Source Breakdown"
+					icon={PieChart}
+				>
 					<ChartErrorBoundary theme={theme} chartName="Source Breakdown">
 						<TypeBreakdown theme={theme} slices={slices} />
 					</ChartErrorBoundary>
 				</SectionCard>
 			</div>
 
-			{/* Per-agent activity */}
-			<SectionCard theme={theme} title="Agent Activity" icon={Users}>
+			{/* Per-agent activity. The unit is spelled out: a bare "5.0K" beside an
+			    agent name is unreadable without knowing what was counted. */}
+			<SectionCard
+				theme={theme}
+				id={richSectionId('Agent Activity')}
+				title="Agent Activity"
+				icon={Users}
+			>
 				<ChartErrorBoundary theme={theme} chartName="Agent Activity">
-					<AgentActivityBars theme={theme} data={agentBars} />
+					<AgentActivityBars
+						theme={theme}
+						data={agentBars}
+						unitLabel="history entries in this window"
+						atLeastHint={`At least this many. This agent's history file is full at its ${formatNumber(
+							MAX_ENTRIES_PER_SESSION
+						)}-entry retention limit, so older runs were already discarded and the real total is higher.`}
+					/>
 				</ChartErrorBoundary>
 			</SectionCard>
 
 			{/* AI narrative slot. Priority: structured narrative -> overt parse
 			    failure -> legacy markdown fallback (e.g. a cached result that only
 			    has markdown). A parse failure surfaces loudly here while the
-			    deterministic widgets above keep rendering normally. */}
+			    deterministic widgets above keep rendering normally. A salvaged
+			    narrative renders with the banner above it, never silently. */}
 			{narrative ? (
-				<NarrativeSections theme={theme} narrative={narrative} />
-			) : narrativeError ? (
-				<NarrativeParseError theme={theme} error={narrativeError} rawOutput={synopsis} />
+				<>
+					{narrativeError && (
+						<NarrativeParseError
+							theme={theme}
+							error={narrativeError}
+							rawOutput={synopsis}
+							recovery={narrativeRecovery}
+						/>
+					)}
+					<NarrativeSections theme={theme} narrative={narrative} />
+				</>
+			) : narrativeError || looksLikeStructuredOutput(synopsis) ? (
+				// Same invariant as Plain Mode: JSON-shaped output with no narrative
+				// is not a report, so it never reaches MarkdownRenderer below.
+				<NarrativeParseError
+					theme={theme}
+					error={narrativeError ?? STRUCTURED_OUTPUT_UNPARSED_MESSAGE}
+					rawOutput={synopsis}
+				/>
 			) : (
 				synopsis && (
 					<SectionCard theme={theme} title="AI Narrative" icon={FileText}>

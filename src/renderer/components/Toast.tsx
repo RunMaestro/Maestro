@@ -4,12 +4,27 @@ import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
-import { formatDurationParts as formatDuration } from '../../shared/formatters';
+import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { Z_LAYERS } from '../constants/zLayers';
+import { CopyIconButton } from './ui';
 
 interface ToastContainerProps {
 	theme: Theme;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
+}
+
+/**
+ * Flatten a toast into the plain text a user would want on the clipboard:
+ * the context line, the title, the body, and any action URL. Exported for tests.
+ */
+export function buildToastClipboardText(toast: ToastType): string {
+	const context = [toast.group, toast.project, toast.tabName].filter(Boolean).join(' · ');
+	const lines = [context, toast.title, toast.message, toast.actionUrl];
+	return lines
+		.filter((line): line is string => Boolean(line && line.trim()))
+		.join('\n')
+		.trim();
 }
 
 const ToastItem = memo(function ToastItem({
@@ -207,8 +222,11 @@ const ToastItem = memo(function ToastItem({
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if needed) */}
-					{(toast.group || toast.project || toast.tabName) && (
+					{/* Line 1: Group + Agent/Project name + Tab name, with the arrival time
+					    pinned right (wraps to line 2 if needed). The row renders for the
+					    timestamp alone, so every toast is stamped, not just the ones that
+					    carry agent context. */}
+					{(toast.group || toast.project || toast.tabName || toast.timestamp > 0) && (
 						<div
 							className="flex flex-wrap items-center gap-2 text-xs mb-1"
 							style={{ color: theme.colors.textDim }}
@@ -243,6 +261,15 @@ const ToastItem = memo(function ToastItem({
 								>
 									{toast.tabName}
 								</span>
+							)}
+							{toast.timestamp > 0 && (
+								<time
+									className="ml-auto flex-shrink-0 tabular-nums"
+									dateTime={new Date(toast.timestamp).toISOString()}
+									title={formatTimestamp(toast.timestamp, 'full')}
+								>
+									{formatTimestamp(toast.timestamp, 'smart')}
+								</time>
 							)}
 						</div>
 					)}
@@ -281,7 +308,7 @@ const ToastItem = memo(function ToastItem({
 					)}
 
 					{/* Duration badge */}
-					{toast.taskDuration && toast.taskDuration > 0 && (
+					{typeof toast.taskDuration === 'number' && toast.taskDuration > 0 && (
 						<div
 							className="flex items-center gap-1 text-xs mt-2"
 							style={{ color: theme.colors.textDim }}
@@ -299,35 +326,47 @@ const ToastItem = memo(function ToastItem({
 					)}
 				</div>
 
-				{/* Close button - emphasized when toast is dismissible (sticky) */}
-				<button
-					onClick={handleClose}
-					className="flex-shrink-0 p-1 rounded transition-colors"
-					style={
-						toast.dismissible
-							? {
-									color: getTypeColor(),
-									backgroundColor: `${getTypeColor()}1F`,
-									boxShadow: `0 0 0 1px ${getTypeColor()}40 inset`,
-								}
-							: { color: theme.colors.textDim }
-					}
-					title={toast.dismissible ? 'Dismiss' : undefined}
-					aria-label={toast.dismissible ? 'Dismiss notification' : 'Close'}
-				>
-					<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M6 18L18 6M6 6l12 12"
-						/>
-					</svg>
-				</button>
+				{/* Right rail: close on top, copy pinned to the bottom */}
+				<div className="flex-shrink-0 self-stretch flex flex-col items-center justify-between gap-2">
+					{/* Close button - emphasized when toast is dismissible (sticky) */}
+					<button
+						onClick={handleClose}
+						className="p-1 rounded transition-colors"
+						style={
+							toast.dismissible
+								? {
+										color: getTypeColor(),
+										backgroundColor: `${getTypeColor()}1F`,
+										boxShadow: `0 0 0 1px ${getTypeColor()}40 inset`,
+									}
+								: { color: theme.colors.textDim }
+						}
+						title={toast.dismissible ? 'Dismiss' : undefined}
+						aria-label={toast.dismissible ? 'Dismiss notification' : 'Close'}
+					>
+						<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+
+					{/* Copy the toast text - never navigates, even on a clickable toast */}
+					<CopyIconButton
+						value={() => buildToastClipboardText(toast)}
+						theme={theme}
+						title="Copy notification text"
+						iconClassName="w-3.5 h-3.5"
+						testId="toast-copy-button"
+					/>
+				</div>
 			</div>
 
 			{/* Progress bar - hidden for dismissible (sticky) toasts */}
-			{!toast.dismissible && toast.duration && toast.duration > 0 && (
+			{!toast.dismissible && typeof toast.duration === 'number' && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"
 					style={{
@@ -365,7 +404,7 @@ export const ToastContainer = memo(function ToastContainer({
 	return createPortal(
 		<div
 			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: 100000 }}
+			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST }}
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (

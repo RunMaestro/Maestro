@@ -6,6 +6,13 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
+// Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
+// wiring rather than re-running the layout transform (covered in tileNewTab.test).
+const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession: vi.fn() }));
+vi.mock('../../../renderer/services/tileNewTabAction', () => ({
+	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
+}));
+
 /**
  * Creates a minimal mock context with all required handler functions.
  * The keyboard handler requires these functions to be present to avoid
@@ -411,6 +418,52 @@ describe('useMainKeyboardHandler', () => {
 			// The event should NOT be prevented when Tab is pressed with layers open
 		});
 
+		it('keeps the Concerto keys live while a modal is open', () => {
+			// The stage is a modal itself, so a toggle blocked by the modal guard
+			// could only ever open it; cadenzas float above every modal, so stashing
+			// them has to work from anywhere too.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: true },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
+		it('still blocks the Concerto keys when the Encore Feature is off', () => {
+			useModalStore.getState().closeModal('concertoStage');
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: false },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+		});
+
 		it('should allow layout shortcuts (Alt+Cmd+Arrow) when modals are open', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
@@ -606,6 +659,28 @@ describe('useMainKeyboardHandler', () => {
 
 			// Cmd+J should open a new terminal tab even when file preview overlay is open
 			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
+		});
+
+		it('tiles a new terminal below on tileTerminalBelow (Cmd+Shift+J)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockHandleOpenTerminalTab = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileTerminalBelow',
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'j', metaKey: true, shiftKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', 'terminal');
+			// The tiled twin must not also run the plain "new terminal tab" path.
+			expect(mockHandleOpenTerminalTab).not.toHaveBeenCalled();
 		});
 
 		it('should allow tab cycle shortcut with brace characters when layers are open', () => {
@@ -3814,6 +3889,96 @@ describe('useMainKeyboardHandler', () => {
 			expect(openModalSpy).not.toHaveBeenCalledWith('editGroupChat', expect.anything());
 
 			openModalSpy.mockRestore();
+		});
+	});
+
+	describe('searchAllTabs (cross-tab message search)', () => {
+		/**
+		 * The handler must resolve the agent from the store, NOT from
+		 * `ctx.activeSession`. The multi-window work drops `activeSession` from the
+		 * keyboard context, and a branch reading it there went silently dead: the
+		 * guard was always falsy while preventDefault had already run, so the
+		 * shortcut ate the keystroke with no visible effect. These tests pin the
+		 * store-resolved behavior by omitting `activeSession` from the context.
+		 */
+		const dispatchOptCmdF = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'ƒ', // macOS rewrites Alt+F
+						code: 'KeyF',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		it('opens cross-tab search using the store-resolved agent', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: 't1', aiTabs: [{ id: 't1' }] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				// Deliberately omitted: activeSession. The branch must not need it.
+				activeSession: undefined,
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			dispatchOptCmdF();
+			expect(handleOpenCrossTabSearch).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not fire in a group chat', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: 't1', aiTabs: [{ id: 't1' }] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: 'gc1',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			dispatchOptCmdF();
+			expect(handleOpenCrossTabSearch).not.toHaveBeenCalled();
+		});
+
+		it('leaves the keystroke unconsumed when the agent has no AI tabs', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: null, aiTabs: [] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			const evt = new KeyboardEvent('keydown', {
+				key: 'ƒ',
+				code: 'KeyF',
+				altKey: true,
+				metaKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			act(() => {
+				window.dispatchEvent(evt);
+			});
+
+			expect(handleOpenCrossTabSearch).not.toHaveBeenCalled();
+			// Must not silently swallow the key when it cannot act.
+			expect(evt.defaultPrevented).toBe(false);
 		});
 	});
 });

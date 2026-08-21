@@ -3,8 +3,16 @@
  * Each tile shows an icon, name, one-line description, a category badge, a
  * state pill, and (for plugins) a tier + trust badge. Clicking a tile opens
  * the details pane.
+ *
+ * The grid is arrow-navigable. It uses a roving tabindex - exactly one tile is
+ * tabbable at a time - so Tab moves past the whole grid in one press while the
+ * arrows walk it, which is the standard composite-widget contract. Tiles stay
+ * native `<button>`s, so Enter and Space activate them without extra wiring.
+ * The active index is owned by the parent, because it has to survive the grid
+ * unmounting while the details pane is open.
  */
 
+import { useEffect, useRef } from 'react';
 import {
 	Puzzle,
 	Database,
@@ -25,7 +33,22 @@ interface ExtensionsGridProps {
 	theme: Theme;
 	extensions: UnifiedExtension[];
 	onSelect: (ext: UnifiedExtension) => void;
+	/** Index of the keyboard-active tile, owned by the parent. */
+	activeIndex: number;
+	/** Sync the parent when the pointer moves the active tile. */
+	onActiveIndexChange: (index: number) => void;
+	/** Arrow/Home/End handling, from the parent's `useListNavigation`. */
+	onKeyDown: (e: React.KeyboardEvent) => void;
+	/** Measured by the parent, which owns the navigation math. */
+	gridRef: React.RefObject<HTMLDivElement>;
+	/** Focus the active tile on mount - set when returning from the details
+	 * pane, so Escape puts the user back where they left off. */
+	autoFocusActive?: boolean;
 }
+
+/** Finds the one tabbable tile. Shared so callers outside this file (the search
+ * box handing focus down to the grid) do not restate the attribute. */
+export const ACTIVE_EXTENSION_TILE_SELECTOR = '[data-testid="extension-card"][data-active="true"]';
 
 const BUILTIN_ICONS: Record<string, LucideIcon> = {
 	usageStats: Database,
@@ -45,7 +68,33 @@ const TRUST_META: Record<
 	unsigned: { label: 'Unsigned', icon: Shield, color: 'textDim' },
 };
 
-export function ExtensionsGrid({ theme, extensions, onSelect }: ExtensionsGridProps) {
+export function ExtensionsGrid({
+	theme,
+	extensions,
+	onSelect,
+	activeIndex,
+	onActiveIndexChange,
+	onKeyDown,
+	gridRef,
+	autoFocusActive = false,
+}: ExtensionsGridProps) {
+	// Consumed on the first run: `autoFocusActive` stays true for the life of the
+	// mount, and without this every later arrow press would yank focus back into
+	// the grid from wherever the user actually put it.
+	const pendingAutoFocus = useRef(autoFocusActive);
+
+	// Move real DOM focus with the active tile, but only while focus already sits
+	// inside the grid (or a details-pane close asked us to restore it). Otherwise
+	// merely filtering the list would steal focus out of the search box.
+	useEffect(() => {
+		const grid = gridRef.current;
+		if (!grid) return;
+		const restoring = pendingAutoFocus.current;
+		pendingAutoFocus.current = false;
+		if (!restoring && !grid.contains(document.activeElement)) return;
+		grid.querySelector<HTMLButtonElement>(ACTIVE_EXTENSION_TILE_SELECTOR)?.focus();
+	}, [activeIndex, gridRef]);
+
 	const stateTone = (ext: UnifiedExtension): string => {
 		if (ext.state === 'enabled') return theme.colors.success;
 		if (ext.state === 'installed') return theme.colors.accent;
@@ -66,15 +115,23 @@ export function ExtensionsGrid({ theme, extensions, onSelect }: ExtensionsGridPr
 
 	return (
 		<div
+			ref={gridRef}
 			data-testid="extensions-grid"
 			className="grid gap-3"
-			style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
+			onKeyDown={onKeyDown}
+			style={{
+				// Never more than 3 across: the per-column floor is a full third of the
+				// row (minus the two gaps), so a 4th column can never fit. Narrower
+				// panels fall back to the 240px floor and drop to 2 or 1 column.
+				gridTemplateColumns: 'repeat(auto-fill, minmax(max(240px, (100% - 1.5rem) / 3), 1fr))',
+			}}
 		>
-			{extensions.map((ext) => {
+			{extensions.map((ext, index) => {
 				const Icon = ext.kind === 'plugin' ? Puzzle : (BUILTIN_ICONS[ext.id] ?? Puzzle);
 				const trust = ext.trust ? TRUST_META[ext.trust] : null;
 				const TrustIcon = trust?.icon;
 				const isEnabled = ext.state === 'enabled';
+				const isActive = index === activeIndex;
 				return (
 					<button
 						key={ext.key}
@@ -85,11 +142,20 @@ export function ExtensionsGrid({ theme, extensions, onSelect }: ExtensionsGridPr
 						data-extension-kind={ext.kind}
 						data-extension-state={ext.state}
 						data-extension-category={ext.category}
-						onClick={() => onSelect(ext)}
-						className="flex flex-col gap-2 rounded-lg border p-3 text-left transition-colors hover:bg-white/5"
+						data-active={isActive ? 'true' : 'false'}
+						tabIndex={isActive ? 0 : -1}
+						onClick={() => {
+							onActiveIndexChange(index);
+							onSelect(ext);
+						}}
+						onFocus={() => onActiveIndexChange(index)}
+						className="flex flex-col gap-2 rounded-lg border p-3 text-left transition-colors hover:bg-white/5 outline-none"
 						style={{
 							borderColor: isEnabled ? theme.colors.accent : theme.colors.border,
 							backgroundColor: isEnabled ? `${theme.colors.accent}08` : 'transparent',
+							// The ring rides the active tile, not :focus - the grid keeps
+							// showing where the cursor is after focus leaves for the search box.
+							boxShadow: isActive ? `0 0 0 2px ${theme.colors.accent}` : undefined,
 						}}
 					>
 						<div className="flex items-start gap-2.5">
@@ -116,7 +182,7 @@ export function ExtensionsGrid({ theme, extensions, onSelect }: ExtensionsGridPr
 									)}
 								</div>
 								<div
-									className="text-xs mt-0.5 line-clamp-2"
+									className="text-xs mt-0.5 line-clamp-3"
 									style={{ color: theme.colors.textDim }}
 								>
 									{ext.description || 'No description provided.'}

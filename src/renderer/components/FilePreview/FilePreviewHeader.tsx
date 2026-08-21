@@ -14,7 +14,9 @@ import {
 	Share2,
 	GitGraph,
 	ExternalLink,
+	FolderOpen,
 	WrapText,
+	Trash2,
 } from 'lucide-react';
 import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
@@ -22,6 +24,7 @@ import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { getRevealLabel } from '../../utils/platformUtils';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
@@ -87,6 +90,9 @@ interface FilePreviewHeaderProps {
 	/** Per-button visibility map. When a key is false, the corresponding
 	 *  toolbar button is hidden (functionality stays reachable via shortcut). */
 	toolbarVisibility: FilePreviewToolbarVisibility;
+	/** Open the delete confirmation for this file. Omitted when the preview is
+	 *  not backed by a deletable on-disk file. */
+	onDelete?: () => void;
 }
 
 export const FilePreviewHeader = React.memo(function FilePreviewHeader({
@@ -138,6 +144,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	wordWrap,
 	setWordWrap,
 	toolbarVisibility,
+	onDelete,
 }: FilePreviewHeaderProps) {
 	const [showBackPopup, setShowBackPopup] = useState(false);
 	const [showForwardPopup, setShowForwardPopup] = useState(false);
@@ -385,6 +392,19 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
+						{/* Reveal in Finder / Explorer / File Manager - local files only */}
+						{toolbarVisibility.revealInFolder && !sshRemoteId && (
+							<HoverTooltip theme={theme} label={getRevealLabel(window.maestro?.platform ?? '')}>
+								<button
+									onClick={() => window.maestro?.shell?.showItemInFolder(file.path)}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="reveal-in-folder-button"
+								>
+									<FolderOpen className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
 						{toolbarVisibility.copyPath && (
 							<HoverTooltip theme={theme} label="Copy full path to clipboard">
 								<button
@@ -393,6 +413,20 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									style={{ color: theme.colors.textDim }}
 								>
 									<Copy className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
+						{/* Delete file - last in the row, and always behind a confirmation.
+						    Same flow as the command palette's "File: Delete" entry. */}
+						{toolbarVisibility.delete && onDelete && (
+							<HoverTooltip theme={theme} label="Delete file">
+								<button
+									onClick={onDelete}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="delete-file-button"
+								>
+									<Trash2 className={headerIconClass} />
 								</button>
 							</HoverTooltip>
 						)}

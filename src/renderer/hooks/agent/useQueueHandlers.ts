@@ -5,13 +5,27 @@
  *   - Remove a queued item from a session
  *   - Switch to a session that has queued items
  *   - Reorder queued items within a session
+ *   - Force send a queued item out of turn
  *
  * Reads from: sessionStore (setSessions, setActiveSessionId)
  */
 
 import { useCallback } from 'react';
+import type { QueuedItem, SessionState } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { applyQueuedItemDispatch, getQueueBusyContext } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
+import { logger } from '../../utils/logger';
+
+// ============================================================================
+// Dependencies interface
+// ============================================================================
+
+export interface UseQueueHandlersDeps {
+	/** Dispatches a queued item to its agent (from useQueueProcessing) */
+	processQueuedItem: (sessionId: string, item: QueuedItem) => Promise<void>;
+}
 
 // ============================================================================
 // Return type
@@ -32,13 +46,17 @@ export interface UseQueueHandlersReturn {
 		itemId: string,
 		patch: { text: string; images: string[] }
 	) => void;
+	/** Dispatch one queued item immediately, out of queue order */
+	handleForceSendQueueItem: (sessionId: string, itemId: string) => void;
 }
 
 // ============================================================================
 // Hook implementation
 // ============================================================================
 
-export function useQueueHandlers(): UseQueueHandlersReturn {
+export function useQueueHandlers({
+	processQueuedItem,
+}: UseQueueHandlersDeps): UseQueueHandlersReturn {
 	// --- Store actions (stable via getState) ---
 	const { setSessions, setActiveSessionId } = useSessionStore.getState();
 
@@ -108,13 +126,19 @@ export function useQueueHandlers(): UseQueueHandlersReturn {
 
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: { text: string; images: string[] }) => {
+			// Re-resolve the pending consult against the EDITED text: the user may
+			// have added or removed an `@agent` mention, and the item's stale flag
+			// would otherwise consult the wrong agent (or nobody) when it dispatches.
+			const crossAgentMention = !!planCrossAgentMentions(patch.text, sessionId);
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					return {
 						...s,
 						executionQueue: s.executionQueue.map((item) =>
-							item.id === itemId ? { ...item, text: patch.text, images: patch.images } : item
+							item.id === itemId
+								? { ...item, text: patch.text, images: patch.images, crossAgentMention }
+								: item
 						),
 					};
 				})
@@ -123,11 +147,67 @@ export function useQueueHandlers(): UseQueueHandlersReturn {
 		[]
 	);
 
+	// Force Send: run this exact item now instead of waiting for its turn. Used by
+	// the Execution Queue browser (any agent, any tab) and by the inline chat
+	// list's Force Send button, so both surfaces share one dispatch path.
+	const handleForceSendQueueItem = useCallback(
+		(sessionId: string, itemId: string) => {
+			const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			const item = session?.executionQueue?.find((i) => i.id === itemId);
+			if (!session || !item) return;
+
+			// A tab runs one turn at a time - never spawn over an in-flight one.
+			const { targetTabBusy, otherBusyTabs } = getQueueBusyContext(session, item);
+			if (targetTabBusy) return;
+
+			// Stamp forceParallel when another tab is mid-turn: it badges the chat log
+			// entry and tells the on-exit dequeue guard this turn was a deliberate
+			// override rather than a normal sequential dispatch.
+			const dispatchItem: QueuedItem =
+				otherBusyTabs.length > 0 ? { ...item, forceParallel: true } : item;
+
+			setSessions((prev) =>
+				prev.map((s) => (s.id === sessionId ? applyQueuedItemDispatch(s, dispatchItem) : s))
+			);
+
+			processQueuedItem(sessionId, dispatchItem).catch((err) => {
+				logger.error('[ForceSend] Dispatch failed, re-queueing item', undefined, err);
+				// Put the item back at the front and release the tab. The agent only
+				// returns to idle if no OTHER tab is still working.
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						const aiTabs = s.aiTabs.map((tab) =>
+							tab.id === dispatchItem.tabId
+								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
+								: tab
+						);
+						const stillWorking = aiTabs.some((tab) => tab.state === 'busy');
+						return {
+							...s,
+							executionQueue: [dispatchItem, ...s.executionQueue],
+							aiTabs,
+							...(stillWorking
+								? {}
+								: {
+										state: 'idle' as SessionState,
+										busySource: undefined,
+										thinkingStartTime: undefined,
+									}),
+						};
+					})
+				);
+			});
+		},
+		[processQueuedItem]
+	);
+
 	return {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
 		handleReorderQueueItems,
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
+		handleForceSendQueueItem,
 	};
 }

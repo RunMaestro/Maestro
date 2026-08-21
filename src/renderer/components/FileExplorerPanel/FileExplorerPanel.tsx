@@ -15,6 +15,7 @@ import {
 	FolderUp,
 	FileText,
 	HardDrive,
+	AlertTriangle,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -28,6 +29,7 @@ import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { dragHasOsFiles } from '../../utils/osFileDrop';
 
 import type { FileExplorerPanelProps } from './types';
+import { isMediaFile } from '../../../shared/mediaTypes';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from './types';
 
 // Sub-components
@@ -41,6 +43,7 @@ import { DeleteFileModal } from './components/DeleteFileModal';
 import { MultiDeleteModal } from './components/MultiDeleteModal';
 import { MoveConflictModal } from './components/MoveConflictModal';
 import { FileTreeRow } from './components/FileTreeRow';
+import { EscCloseButton } from '../ui/EscCloseButton';
 import { FileTreeContextMenu } from './components/FileTreeContextMenu';
 
 // Hooks
@@ -130,6 +133,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const changedAncestors = useMemo(() => buildChangedAncestors(changeMap.keys()), [changeMap]);
 
 	// Coordinator refs with ≥3 cross-hook readers
+	// The truncation warning is tall enough to swallow the top of the tree, so
+	// it can be collapsed down to the hazard icon beside the path. Keyed by
+	// session id rather than a bare boolean: collapsing it for one agent must
+	// not hide a fresh warning when the panel re-renders for another.
+	const [truncationCollapsedFor, setTruncationCollapsedFor] = useState<string | null>(null);
+	const truncationCollapsed = truncationCollapsedFor === session.id;
+	const showTruncationWarning = !session.fileTreeLoading && !!session.fileTreeTruncated;
+
 	const refreshFileTreeRef = useRef(refreshFileTree);
 	const sessionIdRef = useRef(session.id);
 	const lastClickedUnderFilterRef = useRef<string | null>(null);
@@ -174,6 +185,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			flattenedTreeRef,
 		});
 
+	// Drives the context menu's "Add N to Play Queue" entry. Judged by extension,
+	// which is all the menu needs to decide whether to offer the action.
+	const selectedMediaCount = useMemo(
+		() => Array.from(selectedPaths).filter((path) => isMediaFile(path)).length,
+		[selectedPaths]
+	);
+
 	// ── Virtualizer ───────────────────────────────────────────────────────────
 
 	const parentRef = useRef<HTMLDivElement>(null);
@@ -215,7 +233,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	// ── Filter ────────────────────────────────────────────────────────────────
 
-	useFileTreeFilter({
+	const { handleFilterEscape } = useFileTreeFilter({
 		fileTreeFilterOpen,
 		setFileTreeFilterOpen,
 		setFileTreeFilter,
@@ -351,12 +369,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenInExplorer,
 		handleOpenNewFile,
 		handleOpenNewFolder,
+		handleNewAgentHere,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
 		handlePreviewMulti,
+		handleQueueMedia,
 		handleOpenInDefaultAppMulti,
 		handleOpenDeleteMulti,
 		handleDeleteMulti,
@@ -462,15 +482,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 							style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 						/>
-						<div
-							className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								color: theme.colors.textDim,
-							}}
-						>
-							ESC
-						</div>
+						<EscCloseButton
+							theme={theme}
+							variant="adornment"
+							label="Close filter (Esc)"
+							onClose={handleFilterEscape}
+						/>
 					</div>
 				</div>
 			)}
@@ -630,6 +647,18 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							<Server className="w-3.5 h-3.5" />
 						</span>
 					)}
+					{showTruncationWarning && truncationCollapsed && (
+						<button
+							type="button"
+							className="flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+							style={{ color: theme.colors.warning }}
+							onClick={() => setTruncationCollapsedFor(null)}
+							aria-label="Show file scan warning"
+							title="Not all files were loaded into the file panel. Click for options."
+						>
+							<AlertTriangle className="w-3.5 h-3.5" />
+						</button>
+					)}
 					<span
 						className="flex-shrink-0 cursor-pointer opacity-30 hover:opacity-70 transition-opacity"
 						style={{ color: theme.colors.accent }}
@@ -725,7 +754,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								/>
 							);
 						})()}
-					{!session.fileTreeLoading && session.fileTreeTruncated && (
+					{showTruncationWarning && !truncationCollapsed && (
 						<FileTreeTruncatedBanner
 							theme={theme}
 							previousCap={session.fileTreeLoadedCap}
@@ -739,6 +768,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 									maxEntriesOverride: Number.POSITIVE_INFINITY,
 								});
 							}}
+							onCollapse={() => setTruncationCollapsedFor(session.id)}
 						/>
 					)}
 					{!session.fileTreeLoading &&
@@ -930,6 +960,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenBrowserTabAt={onOpenBrowserTabAt}
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
+					selectedMediaCount={selectedMediaCount}
 					onCopyPath={handleCopyPath}
 					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}
@@ -938,9 +969,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenInExplorer={handleOpenInExplorer}
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
+					onNewAgentHere={handleNewAgentHere}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					onPreviewMulti={handlePreviewMulti}
+					onQueueMedia={handleQueueMedia}
 					onOpenInDefaultAppMulti={handleOpenInDefaultAppMulti}
 					onOpenDeleteMulti={handleOpenDeleteMulti}
 					onFocusInGraph={handleFocusInGraph}

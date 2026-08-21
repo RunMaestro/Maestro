@@ -199,6 +199,43 @@ const virtualizer = useVirtualizer({
 });
 ```
 
+## Progressive (Tail-First) Rendering
+
+When rows are individually expensive - each one runs a markdown pipeline, a
+syntax highlighter, or a chart - virtualization is not always the right tool.
+Virtualization needs a measurable row height, and it breaks `querySelector` over
+the full list (in-page search, jump-to-message). Use
+`useProgressiveRenderWindow()` in `src/renderer/hooks/utils/` instead:
+
+```typescript
+// See: src/renderer/components/TerminalOutput.tsx (issue #1342)
+const { startIndex, revealTo } = useProgressiveRenderWindow(
+	logs.length,
+	`${session.id}-${activeTabId}`, // resets the window on conversation switch
+	{ onBeforeExpand: snapshotScrollPosition }
+);
+const visible = logs.slice(startIndex);
+```
+
+It renders the newest slice immediately, then walks `startIndex` toward 0 a
+chunk at a time on `requestIdleCallback`, so a big list hydrates across many
+short tasks that yield to input instead of one multi-second long task. Every row
+still ends up in the DOM, so DOM-walking features keep working once backfill
+completes.
+
+Two things to get right at the call site:
+
+1. **Anchor the scroll.** Backfill prepends content above the viewport. Snapshot
+   `scrollHeight - scrollTop` in `onBeforeExpand` and restore it in a
+   `useLayoutEffect` on `startIndex`, before paint.
+2. **Use `revealTo(index)` for jumps.** Anything that scrolls to a specific row
+   with a bounded retry (see `jumpToElement`, ~30 frames) will time out waiting
+   for backfill to reach deep history. Pull the target in explicitly.
+
+Anything that re-walks the DOM on content change (search highlighting, match
+counts) must take `startIndex` as a dependency, or matches in freshly hydrated
+rows are silently missed.
+
 ## Per-Row DOM Budget
 
 A list row component should aim for **<30 DOM nodes per row**. CDP profiling

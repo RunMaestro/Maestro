@@ -17,8 +17,9 @@ import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
-import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
+import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 
 /**
  * Configuration for document processing
@@ -69,6 +70,13 @@ export interface DocumentProcessorConfig {
 	 * SSH remote ID for remote file operations (when session is SSH-enabled)
 	 */
 	sshRemoteId?: string;
+
+	/**
+	 * Run-scoped model/effort override from the BatchRunConfig. Absent (or with
+	 * absent members) means the spawn falls back to the session's configured
+	 * model/effort, then the agent default.
+	 */
+	runOverrides?: SpawnAgentRunOverrides;
 }
 
 /**
@@ -188,7 +196,9 @@ export interface DocumentProcessorCallbacks {
 	onSpawnAgent: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
+		options?: SpawnAgentRunOverrides
 	) => Promise<{
 		success: boolean;
 		response?: string;
@@ -310,6 +320,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				customPrompt,
 				taskSelectionMode,
 				sshRemoteId,
+				runOverrides,
 			} = config;
 
 			const docFilePath = `${folderPath}/${filename}.md`;
@@ -368,18 +379,20 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				session.newSessionMessage
 			);
 
-			// Capture start time for elapsed time tracking
-			const taskStartTime = Date.now();
+			// Capture start time for elapsed time tracking. Sleep-aware: a task that
+			// spans a lid close must not report the sleep as agent work time.
+			const taskSpan = beginSleepAwareSpan();
 
 			// Spawn agent with the prompt, using effective cwd (may be worktree path)
 			const result = await callbacks.onSpawnAgent(
 				session.id,
 				finalPrompt,
-				effectiveCwd !== session.cwd ? effectiveCwd : undefined
+				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+				runOverrides
 			);
 
-			// Capture elapsed time
-			const elapsedTimeMs = Date.now() - taskStartTime;
+			// Capture elapsed time (machine sleep excluded)
+			const elapsedTimeMs = sleepAwareElapsedMs(taskSpan);
 
 			// Register agent session origin for Auto Run tracking
 			if (result.agentSessionId) {

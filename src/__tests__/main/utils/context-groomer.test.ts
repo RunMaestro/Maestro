@@ -171,6 +171,8 @@ describe('groomContext', () => {
 			agentConfigValues: { model: 'opus' },
 			sessionCustomArgs: '--extra',
 			sessionCustomEnvVars: { API_KEY: 'test' },
+			// Forwarded so a custom arg can't override a read-only flag
+			readOnlyMode: false,
 		});
 	});
 

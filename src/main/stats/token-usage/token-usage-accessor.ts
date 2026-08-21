@@ -64,16 +64,23 @@ const COVERAGE_BY_AGENT: Record<string, TokenCoverage> = {
 	'copilot-cli': 'partial',
 };
 
-/** How long a computed aggregate stays fresh in memory before a recompute. */
+/** How long collected breakdowns stay fresh in memory before a re-collect. */
 const MEMO_TTL_MS = 30_000;
 
 interface MemoEntry {
-	key: string;
 	computedAt: number;
-	aggregate: TokenUsageAggregate;
+	breakdowns: SessionTokenBreakdown[];
 }
 
+/**
+ * The collected breakdowns, not the aggregate: collection is the expensive step
+ * and is query-independent, while aggregating is pure in-memory math over the
+ * same array. Memoizing here means flipping the dashboard's time range or
+ * granularity re-buckets what we already have instead of re-walking storage.
+ */
 let memo: MemoEntry | null = null;
+/** Shared by concurrent callers so a double mount can't run two collections. */
+let inflight: Promise<SessionTokenBreakdown[]> | null = null;
 
 /** Reset the in-memory memo (call on external stats changes / tests). */
 export function invalidateTokenUsageMemo(): void {
@@ -530,14 +537,36 @@ function projectLabel(projectPath: string): string {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-function memoKey(query: TokenUsageQuery): string {
-	return `${query.sinceMs ?? ''}:${query.untilMs ?? ''}:${query.granularity ?? 'day'}`;
+/**
+ * Collected breakdowns for every known session, served from the memo when it is
+ * still fresh. Concurrent callers share one collection.
+ */
+async function loadBreakdowns(force: boolean): Promise<SessionTokenBreakdown[]> {
+	if (!force && memo && Date.now() - memo.computedAt < MEMO_TTL_MS) {
+		return memo.breakdowns;
+	}
+	if (inflight) return inflight;
+
+	inflight = (async () => {
+		const cache = getTokenUsageCache();
+		await cache.load();
+		const breakdowns = await collectBreakdowns(cache);
+		await cache.persist();
+		memo = { computedAt: Date.now(), breakdowns };
+		return breakdowns;
+	})();
+	try {
+		return await inflight;
+	} finally {
+		inflight = null;
+	}
 }
 
 /**
- * Compute the token-usage aggregate for a query. Served from the in-memory memo
- * within {@link MEMO_TTL_MS}; otherwise recomputes from storage (using the
- * persisted per-session cache to avoid re-deriving unchanged sessions).
+ * Compute the token-usage aggregate for a query. The underlying collection is
+ * served from the in-memory memo within {@link MEMO_TTL_MS}, and each agent's
+ * storage serves unchanged transcripts from its own on-disk parse cache, so a
+ * recompute costs only what changed since the last one.
  *
  * @param force - bypass the memo (e.g. an explicit refresh).
  */
@@ -545,18 +574,8 @@ export async function getTokenUsageAggregate(
 	query: TokenUsageQuery = {},
 	force = false
 ): Promise<TokenUsageAggregate> {
-	const key = memoKey(query);
-	if (!force && memo && memo.key === key && Date.now() - memo.computedAt < MEMO_TTL_MS) {
-		return memo.aggregate;
-	}
-
-	const cache = getTokenUsageCache();
-	await cache.load();
-	const breakdowns = await collectBreakdowns(cache);
-	await cache.persist();
-
+	const breakdowns = await loadBreakdowns(force);
 	const result = aggregate(breakdowns, query);
-	memo = { key, computedAt: Date.now(), aggregate: result };
 	logger.debug(
 		`Computed token usage: ${result.totals.sessionCount} sessions, $${result.totals.costUsd.toFixed(2)}`,
 		LOG_CONTEXT

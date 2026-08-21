@@ -1251,7 +1251,7 @@ export interface ListTreeResult {
  *
  * Replaces N per-directory `ls` calls with two `find` invocations bundled into
  * one SSH command (one for directories, one for files). Used by the file
- * explorer to load remote trees in 1–2 round-trips total instead of one per
+ * explorer to load remote trees in 1-2 round-trips total instead of one per
  * directory.
  *
  * Implementation notes:

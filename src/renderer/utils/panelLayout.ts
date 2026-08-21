@@ -9,6 +9,8 @@
 // column with fractional `sizes` (one weight per child, summing to 1).
 
 import type {
+	ClosedTabEntry,
+	ClosedTabTilePlacement,
 	PaneRect,
 	PaneRects,
 	PanelLayoutNode,
@@ -17,7 +19,12 @@ import type {
 	UnifiedTabRef,
 } from '../types';
 import { generateId } from './ids';
-import { getActiveTab, getTabDisplayName } from './tabHelpers';
+import {
+	getActiveTab,
+	getTabDisplayName,
+	reopenUnifiedClosedTab,
+	type ReopenUnifiedClosedTabResult,
+} from './tabHelpers';
 import { getTerminalTabDisplayName } from './terminalTabHelpers';
 import { getBrowserTabLabel } from './browserTabPersistence';
 
@@ -647,6 +654,226 @@ export function breakApartGroup(session: Session, groupId: string): Session {
 }
 
 /**
+ * Describe where `ref`'s pane sits inside whichever group owns it, so a later
+ * reopen can put it back in its tile. Returns null when the ref isn't tiled, when
+ * its group holds a single bare leaf (no sibling to anchor against), or when no
+ * sibling leaf can be resolved.
+ *
+ * The anchor is the nearest sibling in the pane's PARENT split: the leaf closest
+ * to it on the left (so the pane restores after that anchor), falling back to the
+ * closest leaf on the right (restoring before it) when the pane is first in its
+ * split. Anchoring to a neighbor rather than an index keeps the placement valid
+ * even after the group is torn down and rebuilt.
+ *
+ * Call this BEFORE the close mutates the session. (The per-kind close paths don't
+ * touch group layouts, so a post-close session works too, but pre-close is the
+ * contract that can't drift.)
+ */
+export function describeTilePlacement(
+	session: Session,
+	ref: UnifiedTabRef,
+	liveKeys: Set<string> = liveTabRefKeys(session)
+): ClosedTabTilePlacement | null {
+	const group = (session.tabGroups ?? []).find((g) => findLeafByTabRef(g.layout, ref) != null);
+	if (!group) return null;
+
+	// Locate the pane's parent split and its index within it. A pane whose group
+	// layout is a bare leaf has no parent, hence no anchor to restore against.
+	const found = findParentSplit(group.layout, ref);
+	if (!found) return null;
+	const { parent, index } = found;
+
+	// Walk outward from the pane looking for a sibling that still has a LIVE leaf.
+	// Nearest-left wins (the pane restores after it); nearest-right is the fallback
+	// (it restores before). Skipping dead siblings matters when several panes are
+	// closed in one go - anchoring to another closed tab would never resolve.
+	let anchorRef: UnifiedTabRef | null = null;
+	let before = false;
+	for (let i = index - 1; i >= 0 && !anchorRef; i--) {
+		const live = collectLeafTabRefs(parent.children[i]).filter((r) => liveKeys.has(tabRefKey(r)));
+		anchorRef = live[live.length - 1] ?? null;
+	}
+	for (let i = index + 1; i < parent.children.length && !anchorRef; i++) {
+		const live = collectLeafTabRefs(parent.children[i]).filter((r) => liveKeys.has(tabRefKey(r)));
+		anchorRef = live[0] ?? null;
+		if (anchorRef) before = true;
+	}
+	if (!anchorRef) return null;
+
+	return {
+		groupId: group.id,
+		groupName: group.name,
+		groupEmoji: group.emoji,
+		anchorRef,
+		direction: parent.direction,
+		before,
+	};
+}
+
+/**
+ * Find the split that directly contains a leaf referencing `ref`, plus that
+ * leaf's index within it. Null when the ref isn't in the tree or is the root leaf.
+ */
+function findParentSplit(
+	node: PanelLayoutNode,
+	ref: UnifiedTabRef
+): { parent: Extract<PanelLayoutNode, { kind: 'split' }>; index: number } | null {
+	if (node.kind === 'leaf') return null;
+	const index = node.children.findIndex(
+		(child) => child.kind === 'leaf' && sameTabRef(child.tab, ref)
+	);
+	if (index !== -1) return { parent: node, index };
+	for (const child of node.children) {
+		const found = findParentSplit(child, ref);
+		if (found) return found;
+	}
+	return null;
+}
+
+/**
+ * Put `ref` back into the tile described by `placement`, returning the updated
+ * Session - or null when the tile can't be rebuilt (the caller then leaves the
+ * tab as the standalone restore already placed it).
+ *
+ * Two cases, because closing a pane either shrinks a group or destroys it:
+ *  - The group SURVIVED (it had 3+ panes): re-split the anchor's leaf, dropping
+ *    the restored pane back on the side it came from.
+ *  - The group AUTO-DISSOLVED down to its last pane (the common two-pane case):
+ *    the anchor is now a standalone full-screen tab, so rebuild the group around
+ *    the pair, reusing the original group id/name/emoji.
+ *
+ * Either way the restored pane takes focus, the group becomes active, and the
+ * restored ref is pulled out of the standalone strip (a tiled tab is represented
+ * there by its group's ref, never its own).
+ */
+export function restoreTilePlacement(
+	session: Session,
+	placement: ClosedTabTilePlacement,
+	ref: UnifiedTabRef
+): Session | null {
+	const groups = session.tabGroups ?? [];
+	const existing = groups.find((g) => g.id === placement.groupId);
+
+	if (existing) {
+		// Group survived the close: re-split its anchor pane.
+		const anchorLeaf = findLeafByTabRef(existing.layout, placement.anchorRef);
+		if (!anchorLeaf) return null;
+		const layout = splitLeaf(
+			existing.layout,
+			anchorLeaf.id,
+			placement.direction,
+			ref,
+			placement.before
+		);
+		const restoredLeaf = findLeafByTabRef(layout, ref);
+		const withGroup = updateGroupInSession(session, existing.id, (g) => ({
+			...g,
+			layout,
+			focusedPaneId: restoredLeaf?.id ?? g.focusedPaneId,
+		}));
+		return activateRestoredPane(withGroup, existing.id, ref);
+	}
+
+	// Group is gone. Only rebuild it when the anchor is a live tab that isn't
+	// already tiled somewhere else (re-adding it would clone it into two panes).
+	if (!liveTabRefKeys(session).has(tabRefKey(placement.anchorRef))) return null;
+	const anchorTiledElsewhere = groups.some(
+		(g) => findLeafByTabRef(g.layout, placement.anchorRef) != null
+	);
+	if (anchorTiledElsewhere) return null;
+
+	const restoredLeaf = createLeaf(ref);
+	const anchorLeaf = createLeaf(placement.anchorRef);
+	const children = placement.before ? [restoredLeaf, anchorLeaf] : [anchorLeaf, restoredLeaf];
+	const group: TabGroup = {
+		id: placement.groupId,
+		name: placement.groupName,
+		emoji: placement.groupEmoji,
+		layout: {
+			kind: 'split',
+			id: generateId(),
+			direction: placement.direction,
+			children,
+			sizes: [0.5, 0.5],
+		},
+		focusedPaneId: restoredLeaf.id,
+		createdAt: Date.now(),
+	};
+
+	// The group's chip takes the anchor's slot in the strip; both member refs drop
+	// out (normalizeTabGroups would do this anyway, but doing it here means the
+	// strip never renders a frame with the members and the group both present).
+	const order = session.unifiedTabOrder ?? [];
+	const anchorKey = tabRefKey(placement.anchorRef);
+	const groupRef: UnifiedTabRef = { type: 'group', id: group.id };
+	const nextOrder: UnifiedTabRef[] = [];
+	let placed = false;
+	for (const entry of order) {
+		const key = tabRefKey(entry);
+		if (key === anchorKey) {
+			nextOrder.push(groupRef);
+			placed = true;
+			continue;
+		}
+		if (key === tabRefKey(ref)) continue;
+		nextOrder.push(entry);
+	}
+	if (!placed) nextOrder.push(groupRef);
+
+	return activateRestoredPane(
+		{ ...session, tabGroups: [...groups, group], unifiedTabOrder: nextOrder },
+		group.id,
+		ref
+	);
+}
+
+/**
+ * Shared tail of a tile restore: make `groupId` the active view, drop `ref` from
+ * the standalone strip (its group ref stands in for it now), and point the active
+ * tab pointers at the restored pane so the tiled view lands focused on it.
+ */
+function activateRestoredPane(session: Session, groupId: string, ref: UnifiedTabRef): Session {
+	const refKey = tabRefKey(ref);
+	const order = (session.unifiedTabOrder ?? []).filter((entry) => tabRefKey(entry) !== refKey);
+	return {
+		...session,
+		unifiedTabOrder: order,
+		activeGroupId: groupId,
+		// A tiled AI pane routes the shared input area, so activeTabId must follow it.
+		// Non-AI panes hide the input and leave activeTabId alone (mirrors focusPaneInSession).
+		...(ref.type === 'ai' ? { activeTabId: ref.id, inputMode: 'ai' as const } : {}),
+	};
+}
+
+/**
+ * Reopen the most recently closed tab (Cmd+Shift+T), tiling-aware.
+ *
+ * Restores the tab into the standalone strip first, then - when the popped entry
+ * recorded a tile placement - moves it back into the tiled group it was closed
+ * out of, so the undo mirrors the close for both tiled panes and full-screen
+ * tabs. A tab that was never tiled, or whose tile can no longer be rebuilt (its
+ * anchor pane is gone too), keeps the standalone restore.
+ *
+ * Tiling is skipped on a duplicate hit: that path switches to an ALREADY-OPEN tab
+ * rather than restoring one, so pulling it into a rebuilt group would yank a live
+ * tab out of wherever the user currently has it.
+ *
+ * Lives here rather than beside `reopenUnifiedClosedTab` because tabHelpers.ts
+ * must not import this module (it would close an import cycle).
+ */
+export function reopenClosedTabWithTiling(session: Session): ReopenUnifiedClosedTabResult | null {
+	const placement = session.unifiedClosedTabHistory?.[0]?.tilePlacement;
+	const result = reopenUnifiedClosedTab(session);
+	if (!result || !placement || result.wasDuplicate) return result;
+
+	const tiled = restoreTilePlacement(result.session, placement, {
+		type: result.tabType,
+		id: result.tabId,
+	});
+	return tiled ? { ...result, session: tiled } : result;
+}
+
+/**
  * Rename the group `groupId` to `name`, trimming whitespace. A blank name falls
  * back to `fallbackName` (the auto-generated name from the group's first tab), so
  * clearing the field never leaves an unnamed chip. A no-op copy when the group
@@ -1044,7 +1271,7 @@ function parentSplitDirection(node: PanelLayoutNode, leafId: string): 'row' | 'c
 }
 
 /** Id of the first (top-left) leaf in a layout, or null for an empty tree. */
-function firstLeafId(node: PanelLayoutNode): string | null {
+export function firstLeafId(node: PanelLayoutNode): string | null {
 	if (node.kind === 'leaf') return node.id;
 	for (const child of node.children) {
 		const id = firstLeafId(child);
@@ -1187,6 +1414,35 @@ function standaloneFocusPatch(ref: UnifiedTabRef): Partial<Session> {
 	}
 }
 
+/**
+ * Return `unifiedClosedTabHistory` with a `tilePlacement` filled in for every
+ * entry whose tab is a now-dangling leaf in some group, or the original array
+ * (same reference) when there is nothing to stamp.
+ *
+ * Only entries still missing a placement are touched, and only for tabs that are
+ * actually dead - so re-running this is a no-op, and a tab closed while NOT tiled
+ * never picks one up. Bounded work: the history is capped at 25 entries.
+ */
+function stampTilePlacements(
+	session: Session,
+	liveKeys: Set<string>
+): ClosedTabEntry[] | undefined {
+	const history = session.unifiedClosedTabHistory;
+	if (!history?.length) return history;
+
+	let changed = false;
+	const stamped = history.map((entry) => {
+		if (entry.tilePlacement) return entry;
+		const ref: UnifiedTabRef = { type: entry.type, id: entry.tab.id };
+		if (liveKeys.has(tabRefKey(ref))) return entry;
+		const placement = describeTilePlacement(session, ref, liveKeys);
+		if (!placement) return entry;
+		changed = true;
+		return { ...entry, tilePlacement: placement };
+	});
+	return changed ? stamped : history;
+}
+
 export function normalizeTabGroups(session: Session): Session {
 	const groups = session.tabGroups ?? [];
 	if (groups.length === 0) {
@@ -1200,6 +1456,13 @@ export function normalizeTabGroups(session: Session): Session {
 	const liveKeys = liveTabRefKeys(session);
 	const alreadyOrdered = new Set((session.unifiedTabOrder ?? []).map(tabRefKey));
 
+	// Stamp tile placements onto the closed-tab history BEFORE any pruning, while the
+	// dangling leaves still show where their panes sat. The per-kind close paths push
+	// the history entry but know nothing about tiling, so this is the one spot that
+	// can tell Cmd+Shift+T to restore a pane into its tile. Running here means every
+	// close path (single, Cmd+W on a tile, bulk, pane-menu) is covered at once.
+	const nextHistory = stampTilePlacements(session, liveKeys);
+
 	const keptGroups: TabGroup[] = [];
 	const promoted: UnifiedTabRef[] = [];
 	const removedGroupIds = new Set<string>();
@@ -1210,6 +1473,7 @@ export function normalizeTabGroups(session: Session): Session {
 	// Stays false while every group survives with all its leaves intact, so a fully
 	// valid session round-trips as the same reference (cheap no-op on the hot path).
 	let changed = false;
+	if (nextHistory !== session.unifiedClosedTabHistory) changed = true;
 
 	for (const group of groups) {
 		const originalLeafCount = countLeaves(group.layout);
@@ -1316,6 +1580,11 @@ export function normalizeTabGroups(session: Session): Session {
 		tabGroups: keptGroups,
 		unifiedTabOrder: orderChanged ? reconciledOrder : session.unifiedTabOrder,
 		activeGroupId: nextActiveGroupId,
+		// Only written when a placement was actually stamped, so a legacy session with
+		// no history field doesn't gain an undefined one.
+		...(nextHistory !== session.unifiedClosedTabHistory && nextHistory
+			? { unifiedClosedTabHistory: nextHistory }
+			: {}),
 		...(activeSurvivorRef ? standaloneFocusPatch(activeSurvivorRef) : {}),
 	};
 }

@@ -7,14 +7,36 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { shellEscapeForDoubleQuotes } from '../../utils/shell-escape';
 import { getExpandedEnv, resolveSshPath } from '../../utils/cliDetection';
 import { expandTilde } from '../../../shared/pathUtils';
+import { killProcessTreeNow } from '../utils/commandKill';
 import type { CommandResult } from '../types';
 import type { SshRemoteConfig } from '../../../shared/types';
+
+/** Exit code for a command we SIGKILLed. 128+9, the shell convention. */
+const SIGKILL_EXIT_CODE = 137;
 
 /**
  * Runs terminal commands on remote hosts via SSH.
  */
 export class SshCommandRunner {
+	/**
+	 * In-flight SSH commands keyed by sessionId. Killing the local `ssh` client
+	 * drops the channel, which terminates the remote command. Entries are
+	 * removed on exit. Mirrors LocalCommandRunner's registry.
+	 */
+	private running = new Map<string, () => void>();
+
 	constructor(private emitter: EventEmitter) {}
+
+	/**
+	 * Terminate an in-flight command started by `run()`.
+	 * Returns false when nothing is running under that sessionId.
+	 */
+	cancel(sessionId: string): boolean {
+		const kill = this.running.get(sessionId);
+		if (!kill) return false;
+		kill();
+		return true;
+	}
 
 	/**
 	 * Run a terminal command on a remote host via SSH
@@ -112,6 +134,32 @@ export class SshCommandRunner {
 				},
 			});
 
+			let settled = false;
+
+			/** Report the run as finished exactly once. */
+			const settle = (exitCode: number) => {
+				if (settled) return;
+				settled = true;
+				this.running.delete(sessionId);
+				this.emitter.emit('command-exit', sessionId, exitCode);
+				resolve({ exitCode });
+			};
+
+			// Killing the local ssh client drops the channel, which is what ends the
+			// remote command - we have no other handle on it. SIGKILL immediately,
+			// same contract as the local runner: Stop means stopped, now.
+			this.running.set(sessionId, () => {
+				if (childProcess.pid) {
+					killProcessTreeNow(childProcess.pid, { sessionId });
+				}
+				try {
+					childProcess.kill('SIGKILL');
+				} catch {
+					// Already gone.
+				}
+				settle(SIGKILL_EXIT_CODE);
+			});
+
 			// Handle stdout
 			childProcess.stdout?.on('data', (data: Buffer) => {
 				const output = data.toString();
@@ -151,8 +199,7 @@ export class SshCommandRunner {
 					sessionId,
 					exitCode: code,
 				});
-				this.emitter.emit('command-exit', sessionId, code || 0);
-				resolve({ exitCode: code || 0 });
+				settle(code || 0);
 			});
 
 			// Handle errors
@@ -162,8 +209,7 @@ export class SshCommandRunner {
 					error: error.message,
 				});
 				this.emitter.emit('stderr', sessionId, `SSH Error: ${error.message}`);
-				this.emitter.emit('command-exit', sessionId, 1);
-				resolve({ exitCode: 1 });
+				settle(1);
 			});
 		});
 	}

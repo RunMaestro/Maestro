@@ -10,6 +10,11 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	GitCommandOutputChunk,
+	GitRunCommandResult,
+	GitStreamingOperation,
+} from '../../shared/gitUtils';
 
 /**
  * Git worktree information
@@ -108,6 +113,35 @@ export interface GitWorktreeSetupResult {
 	alreadyExisted?: boolean;
 	/** Path of the existing worktree when alreadyExisted is true. */
 	existingPath?: string;
+	error?: string;
+}
+
+/**
+ * Context passed to the post-create setup script, surfaced to it as MAESTRO_*
+ * environment variables.
+ */
+export interface WorktreeSetupScriptContext {
+	/** Absolute path of the newly created worktree (the script's cwd) */
+	worktreePath: string;
+	/** Branch checked out in the new worktree */
+	branchName: string;
+	/** Absolute path of the main repository the worktree was created from */
+	mainRepoPath: string;
+	/** Branch the new branch was based on, when one was specified */
+	baseBranch?: string;
+}
+
+/**
+ * Result of the `git.worktreeRunSetup` IPC.
+ */
+export interface GitWorktreeRunSetupResult {
+	/** True when the script ran and exited 0 (also true when nothing was configured) */
+	success: boolean;
+	/** False when no script was configured, so nothing was executed */
+	ran: boolean;
+	exitCode?: number | string;
+	stdout: string;
+	stderr: string;
 	error?: string;
 }
 
@@ -270,6 +304,50 @@ export function createGitApi() {
 			ipcRenderer.invoke('git:switch', cwd, branchName, sshRemoteId, remoteCwd),
 
 		/**
+		 * Run a network git operation (pull/push/fetch), streaming its output.
+		 *
+		 * Subscribe with `onCommandOutput` BEFORE calling this: chunks start
+		 * arriving as soon as the child process writes them.
+		 */
+		runCommand: (options: {
+			runId: string;
+			operation: GitStreamingOperation;
+			cwd: string;
+			sshRemoteId?: string;
+			remoteCwd?: string;
+			setUpstream?: boolean;
+		}): Promise<GitRunCommandResult> => ipcRenderer.invoke('git:runCommand', options),
+
+		/**
+		 * Terminate an in-flight `runCommand`.
+		 */
+		cancelCommand: (runId: string): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('git:cancelCommand', runId),
+
+		/**
+		 * Subscribe to streamed output from `runCommand`. Returns an unsubscribe.
+		 */
+		onCommandOutput: (callback: (data: GitCommandOutputChunk) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, data: GitCommandOutputChunk) =>
+				callback(data);
+			ipcRenderer.on('git:commandOutput', handler);
+			return () => ipcRenderer.removeListener('git:commandOutput', handler);
+		},
+
+		/**
+		 * Check out a branch in the session's working tree.
+		 * Pass `createTracking` for a branch that only exists on origin.
+		 */
+		checkoutBranch: (
+			cwd: string,
+			branch: string,
+			createTracking?: boolean,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; output?: string; error?: string }> =>
+			ipcRenderer.invoke('git:checkoutBranch', cwd, branch, createTracking, sshRemoteId, remoteCwd),
+
+		/**
 		 * Get commit count
 		 */
 		commitCount: (
@@ -339,6 +417,17 @@ export function createGitApi() {
 				sshRemoteId,
 				baseBranch
 			),
+
+		/**
+		 * Run the configured post-create setup script inside a new worktree.
+		 * A blank script resolves to `{ success: true, ran: false }`.
+		 */
+		worktreeRunSetup: (
+			script: string,
+			context: WorktreeSetupScriptContext,
+			sshRemoteId?: string
+		): Promise<GitWorktreeRunSetupResult> =>
+			ipcRenderer.invoke('git:worktreeRunSetup', script, context, sshRemoteId),
 
 		/**
 		 * Checkout a branch in a worktree

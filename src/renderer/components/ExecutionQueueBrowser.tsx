@@ -12,6 +12,7 @@ import {
 	Pause,
 	Play,
 	Pencil,
+	Hammer,
 } from 'lucide-react';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -19,6 +20,9 @@ import { useEventListener } from '../hooks/utils/useEventListener';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useSettingsStore } from '../stores/settingsStore';
+import { getForceSendEligibility, type ForceSendEligibility } from '../utils/executionQueue';
+import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import {
 	useQueueReorder,
@@ -45,6 +49,8 @@ interface ExecutionQueueBrowserProps {
 		itemId: string,
 		patch: { text: string; images: string[] }
 	) => void;
+	/** Dispatch a queued item immediately, out of queue order */
+	onForceSendItem?: (sessionId: string, itemId: string) => void;
 }
 
 /**
@@ -62,8 +68,17 @@ export function ExecutionQueueBrowser({
 	onReorderItems,
 	onToggleItemPause,
 	onEditItem,
+	onForceSendItem,
 }: ExecutionQueueBrowserProps) {
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
+	// Force Send awaiting confirmation. Only the parallel case confirms - sending
+	// alongside another tab's turn is what can put two agents on the same files.
+	const [forceSendConfirm, setForceSendConfirm] = useState<{
+		sessionId: string;
+		item: QueuedItem;
+	} | null>(null);
+	const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+	const forcedParallelEnabled = useSettingsStore((s) => s.forcedParallelExecution);
 	// The queued item currently being edited (with its owning session), or null.
 	// While set, this browser suspends its own Escape layer so the edit modal's
 	// layer stack (edit < lightbox < annotator) resolves Escape correctly - the
@@ -129,6 +144,31 @@ export function ExecutionQueueBrowser({
 		? sessions.find((s) => s.id === activeSessionId)?.executionQueue?.length || 0
 		: 0;
 
+	// Send now. A plain queue jump goes straight through; running alongside
+	// another tab's in-flight turn asks first, since that is the case that can
+	// put two agents on the same files.
+	const requestForceSend = (
+		session: Session,
+		item: QueuedItem,
+		eligibility: ForceSendEligibility
+	) => {
+		if (!onForceSendItem) return;
+		if (eligibility.requiresParallel) {
+			setForceSendConfirm({ sessionId: session.id, item });
+			return;
+		}
+		onForceSendItem(session.id, item.id);
+	};
+
+	// Recomputed at render so the confirm dialog's busy-tab list stays live while open.
+	const confirmSession = forceSendConfirm
+		? sessions.find((s) => s.id === forceSendConfirm.sessionId)
+		: undefined;
+	const confirmEligibility =
+		confirmSession && forceSendConfirm
+			? getForceSendEligibility(confirmSession, forceSendConfirm.item, { forcedParallelEnabled })
+			: null;
+
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
 			{/* Backdrop */}
@@ -137,7 +177,7 @@ export function ExecutionQueueBrowser({
 			{/* Modal */}
 			<div
 				ref={modalRef}
-				className="relative rounded-lg border shadow-2xl flex flex-col"
+				className="relative rounded-lg border shadow-2xl flex flex-col select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
@@ -152,6 +192,8 @@ export function ExecutionQueueBrowser({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -251,46 +293,59 @@ export function ExecutionQueueBrowser({
 
 								{/* Queue Items */}
 								<div className="space-y-0">
-									{session.executionQueue?.map((item, index) => (
-										<React.Fragment key={item.id}>
-											{/* Drop indicator before this item */}
-											<QueueDropZone
-												theme={theme}
-												isActive={
-													dropIndicator?.key === session.id && dropIndicator?.index === index
-												}
-												onDragOver={() => overDrag(session.id, index)}
-											/>
-											<QueueItemRow
-												item={item}
-												index={index}
-												theme={theme}
-												onRemove={() => onRemoveItem(session.id, item.id)}
-												isPaused={!!item.paused}
-												onTogglePause={
-													onToggleItemPause
-														? () => onToggleItemPause(session.id, item.id)
-														: undefined
-												}
-												onEdit={
-													onEditItem && item.type !== 'command'
-														? () => setEditing({ sessionId: session.id, item })
-														: undefined
-												}
-												onSwitchToSession={() => {
-													onSwitchSession(session.id, item.tabId);
-													onClose();
-												}}
-												isDragging={dragState?.key === session.id && dragState?.fromIndex === index}
-												canDrag={!!onReorderItems && (session.executionQueue?.length || 0) > 1}
-												isAnyDragging={isAnyDragging}
-												onDragStart={() => startDrag(session.id, index)}
-												onDragEnd={endDrag}
-												onDragCancel={cancelDrag}
-												onDragOverItem={(gapIndex) => overDrag(session.id, gapIndex)}
-											/>
-										</React.Fragment>
-									))}
+									{session.executionQueue?.map((item, index) => {
+										const forceSend = onForceSendItem
+											? getForceSendEligibility(session, item, { forcedParallelEnabled })
+											: null;
+										return (
+											<React.Fragment key={item.id}>
+												{/* Drop indicator before this item */}
+												<QueueDropZone
+													theme={theme}
+													isActive={
+														dropIndicator?.key === session.id && dropIndicator?.index === index
+													}
+													onDragOver={() => overDrag(session.id, index)}
+												/>
+												<QueueItemRow
+													item={item}
+													index={index}
+													theme={theme}
+													forceSend={forceSend}
+													onForceSend={
+														forceSend?.canForce
+															? () => requestForceSend(session, item, forceSend)
+															: undefined
+													}
+													onRemove={() => onRemoveItem(session.id, item.id)}
+													isPaused={!!item.paused}
+													onTogglePause={
+														onToggleItemPause
+															? () => onToggleItemPause(session.id, item.id)
+															: undefined
+													}
+													onEdit={
+														onEditItem && item.type !== 'command'
+															? () => setEditing({ sessionId: session.id, item })
+															: undefined
+													}
+													onSwitchToSession={() => {
+														onSwitchSession(session.id, item.tabId);
+														onClose();
+													}}
+													isDragging={
+														dragState?.key === session.id && dragState?.fromIndex === index
+													}
+													canDrag={!!onReorderItems && (session.executionQueue?.length || 0) > 1}
+													isAnyDragging={isAnyDragging}
+													onDragStart={() => startDrag(session.id, index)}
+													onDragEnd={endDrag}
+													onDragCancel={cancelDrag}
+													onDragOverItem={(gapIndex) => overDrag(session.id, gapIndex)}
+												/>
+											</React.Fragment>
+										);
+									})}
 									{/* Final drop zone after all items */}
 									<QueueDropZone
 										theme={theme}
@@ -311,10 +366,68 @@ export function ExecutionQueueBrowser({
 					className="px-4 py-3 border-t text-xs"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					Drag and drop to reorder. Items are processed sequentially per agent to prevent file
-					conflicts.
+					Drag and drop to reorder, or Send Now to run one out of turn. Items are otherwise
+					processed sequentially per agent to prevent file conflicts.
 				</div>
 			</div>
+
+			{/* Force Send confirmation - only reached when the item would run
+			    alongside another tab's in-flight turn. Sits at CONFIRM priority
+			    (above this browser), so Escape resolves to it without the layer
+			    suspension the lower-priority edit modal needs. */}
+			{forceSendConfirm && confirmEligibility && onForceSendItem && (
+				<div onClick={(e) => e.stopPropagation()}>
+					<Modal
+						theme={theme}
+						title="Force Send Message?"
+						headerIcon={<Hammer className="w-5 h-5" style={{ color: theme.colors.warning }} />}
+						priority={MODAL_PRIORITIES.CONFIRM}
+						onClose={() => setForceSendConfirm(null)}
+						width={448}
+						initialFocusRef={forceSendConfirmButtonRef}
+						footer={
+							<ModalFooter
+								theme={theme}
+								onCancel={() => setForceSendConfirm(null)}
+								onConfirm={() => {
+									onForceSendItem(forceSendConfirm.sessionId, forceSendConfirm.item.id);
+									setForceSendConfirm(null);
+								}}
+								confirmLabel="Force Send"
+								confirmButtonRef={forceSendConfirmButtonRef}
+							/>
+						}
+					>
+						<p className="text-sm mb-3" style={{ color: theme.colors.textDim }}>
+							This will send the queued message immediately, running in parallel with the other tab
+							{confirmEligibility.otherBusyTabs.length === 1 ? '' : 's'} currently working in this
+							agent.
+						</p>
+						{confirmEligibility.otherBusyTabs.length > 0 && (
+							<div className="p-3 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
+								<div
+									className="text-xs font-bold tracking-wider mb-2"
+									style={{ color: theme.colors.warning }}
+								>
+									{confirmEligibility.otherBusyTabs.length} OTHER TAB
+									{confirmEligibility.otherBusyTabs.length === 1 ? '' : 'S'} WORKING
+								</div>
+								<ul className="text-sm space-y-1" style={{ color: theme.colors.textMain }}>
+									{confirmEligibility.otherBusyTabs.map((tab) => (
+										<li key={tab.id} className="flex items-center gap-2">
+											<span
+												className="inline-block w-2 h-2 rounded-full"
+												style={{ backgroundColor: theme.colors.warning }}
+											/>
+											<span className="font-mono">{tab.displayName}</span>
+										</li>
+									))}
+								</ul>
+							</div>
+						)}
+					</Modal>
+				</div>
+			)}
 
 			{/* Edit modal - rendered outside the card so a click inside it doesn't
 			    bubble to the backdrop's onClick (which would close the browser).
@@ -337,6 +450,10 @@ interface QueueItemRowProps {
 	item: QueuedItem;
 	index: number;
 	theme: Theme;
+	/** Null when the browser has no Force Send handler wired */
+	forceSend?: ForceSendEligibility | null;
+	/** Set only when the item can actually be sent right now */
+	onForceSend?: () => void;
 	onRemove: () => void;
 	isPaused?: boolean;
 	onTogglePause?: () => void;
@@ -355,6 +472,8 @@ function QueueItemRow({
 	item,
 	index,
 	theme,
+	forceSend,
+	onForceSend,
 	onRemove,
 	isPaused,
 	onTogglePause,
@@ -393,6 +512,21 @@ function QueueItemRow({
 	const timeSinceQueued = Date.now() - item.timestamp;
 	const minutes = Math.floor(timeSinceQueued / 60000);
 	const timeDisplay = minutes < 1 ? 'Just now' : `${minutes}m ago`;
+
+	// Send Now stays visible (dimmed) when it is merely waiting its turn, so the
+	// card explains why the queue is not moving. It is hidden outright only when
+	// the item has no tab left to run on, where the button could never work.
+	const canForceSend = !!forceSend?.canForce && !!onForceSend;
+	const showForceSend = !!forceSend && forceSend.blockedReason !== 'no-target-tab';
+	const otherBusyCount = forceSend?.otherBusyTabs.length ?? 0;
+	const forceSendTitle =
+		forceSend?.blockedReason === 'target-tab-busy'
+			? 'This tab is already working - the message runs when the current turn finishes'
+			: forceSend?.blockedReason === 'needs-forced-parallel'
+				? `Another tab in this agent is working. Turn on Forced Parallel Execution in Settings to send anyway.`
+				: forceSend?.requiresParallel
+					? `Send now, running in parallel with ${otherBusyCount} other working tab${otherBusyCount === 1 ? '' : 's'}`
+					: 'Send this message now, ahead of the rest of the queue';
 
 	// Cleanup copy-feedback timer on unmount
 	useEffect(() => {
@@ -514,70 +648,94 @@ function QueueItemRow({
 						</div>
 					)}
 
-					{/* Action buttons - a horizontal row justified to the bottom-right of
-					    the card, always visible, matching the inline queued-item footer in
-					    the AI chat. Stacking these vertically forced every card to reserve
-					    the height of the whole button column, which wasted space on the
-					    short messages that make up most of the queue. */}
-					<div className="mt-1.5 flex items-center justify-end gap-1">
-						{onEdit && (
+					{/* Action buttons - a horizontal row along the bottom of the card,
+					    always visible, matching the inline queued-item footer in the AI
+					    chat: Send Now on the left, controls on the right. Stacking these
+					    vertically forced every card to reserve the height of the whole
+					    button column, which wasted space on the short messages that make
+					    up most of the queue. */}
+					<div className="mt-1.5 flex items-center gap-1">
+						{showForceSend && (
 							<button
 								onClick={(e) => {
 									e.stopPropagation();
-									onEdit();
+									onForceSend?.();
 								}}
-								className="p-1.5 rounded hover:bg-black/20 transition-all"
-								style={{ color: theme.colors.textDim }}
-								title="Edit message and images"
+								disabled={!canForceSend}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-opacity hover:opacity-80 disabled:cursor-default"
+								style={{
+									backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
+									color: theme.colors.warning,
+									opacity: canForceSend ? 1 : 0.5,
+								}}
+								title={forceSendTitle}
 							>
-								<Pencil className="w-4 h-4" />
+								<Hammer className="w-3.5 h-3.5" />
+								Send Now
 							</button>
 						)}
-						{onTogglePause && (
-							<button
-								onClick={(e) => {
-									e.stopPropagation();
-									onTogglePause();
-								}}
-								className="p-1.5 rounded hover:bg-black/20 transition-all"
-								style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
-								title={isPaused ? 'Resume this message' : 'Hold this message (skip until resumed)'}
-							>
-								{isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-							</button>
-						)}
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onRemove();
-							}}
-							className="p-1.5 rounded hover:bg-red-500/20 transition-all"
-							style={{ color: theme.colors.error }}
-							title="Remove from queue"
-						>
-							<Trash2 className="w-4 h-4" />
-						</button>
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								const text =
-									item.type === 'command'
-										? [item.command, item.commandArgs].filter(Boolean).join(' ')
-										: (item.text ?? '');
-								safeClipboardWrite(text).then((ok) => {
-									if (ok) {
-										setCopied(true);
-										if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
-										copyResetTimerRef.current = setTimeout(() => setCopied(false), 1500);
+						<div className="ml-auto flex items-center gap-1">
+							{onEdit && (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										onEdit();
+									}}
+									className="p-1.5 rounded hover:bg-black/20 transition-all"
+									style={{ color: theme.colors.textDim }}
+									title="Edit message and images"
+								>
+									<Pencil className="w-4 h-4" />
+								</button>
+							)}
+							{onTogglePause && (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										onTogglePause();
+									}}
+									className="p-1.5 rounded hover:bg-black/20 transition-all"
+									style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
+									title={
+										isPaused ? 'Resume this message' : 'Hold this message (skip until resumed)'
 									}
-								});
-							}}
-							className="p-1.5 rounded hover:bg-black/20 transition-all"
-							style={{ color: copied ? theme.colors.success : theme.colors.textDim }}
-							title="Copy to clipboard"
-						>
-							{copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-						</button>
+								>
+									{isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+								</button>
+							)}
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									onRemove();
+								}}
+								className="p-1.5 rounded hover:bg-red-500/20 transition-all"
+								style={{ color: theme.colors.error }}
+								title="Remove from queue"
+							>
+								<Trash2 className="w-4 h-4" />
+							</button>
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									const text =
+										item.type === 'command'
+											? [item.command, item.commandArgs].filter(Boolean).join(' ')
+											: (item.text ?? '');
+									safeClipboardWrite(text).then((ok) => {
+										if (ok) {
+											setCopied(true);
+											if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+											copyResetTimerRef.current = setTimeout(() => setCopied(false), 1500);
+										}
+									});
+								}}
+								className="p-1.5 rounded hover:bg-black/20 transition-all"
+								style={{ color: copied ? theme.colors.success : theme.colors.textDim }}
+								title="Copy to clipboard"
+							>
+								{copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+							</button>
+						</div>
 					</div>
 				</div>
 			</div>

@@ -5,6 +5,10 @@ import { CUE_COLOR, type CueEventType } from '../../../../shared/cue-pipeline-ty
 import { EVENT_COLORS, EVENT_ICONS } from '../cueEventConstants';
 import type { Theme } from '../../../types';
 
+/** Footprint of the Play button (14px icon + 4px padding each side). The hidden
+ *  placeholder and the live button share it so the node never changes width. */
+const PLAY_BUTTON_SIZE = 22;
+
 export interface TriggerNodeDataProps {
 	compositeId: string;
 	eventType: CueEventType;
@@ -159,7 +163,21 @@ export const TriggerNode = memo(function TriggerNode({
 				 *  all use the same resolved target. */}
 				{(() => {
 					const fireTarget = data.subscriptionName || data.pipelineName;
-					if (!data.isSaved || !data.onTriggerPipeline || !fireTarget) return null;
+					if (!data.isSaved || !data.onTriggerPipeline || !fireTarget) {
+						// Hold the button's footprint even while it is hidden. The node
+						// is `width: max-content`, so letting the Play button add itself
+						// on Save would widen the node by its own size, eat the gap to
+						// the first target node, and force the edge router into hooks -
+						// the "my lines were clean until I hit Save" bug. Reserving the
+						// space keeps node geometry identical in both states.
+						return (
+							<div
+								data-testid="trigger-play-placeholder"
+								aria-hidden="true"
+								style={{ width: PLAY_BUTTON_SIZE, flexShrink: 0 }}
+							/>
+						);
+					}
 					return (
 						<button
 							type="button"
@@ -175,6 +193,10 @@ export const TriggerNode = memo(function TriggerNode({
 								display: 'flex',
 								alignItems: 'center',
 								justifyContent: 'center',
+								// Must match the hidden placeholder above exactly.
+								width: PLAY_BUTTON_SIZE,
+								boxSizing: 'border-box',
+								flexShrink: 0,
 								cursor: data.isRunning ? 'default' : 'pointer',
 								color: data.isRunning
 									? (theme?.colors.success ?? '#22c55e')

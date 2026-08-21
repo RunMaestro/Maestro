@@ -144,7 +144,15 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (customEnvVars) payload.customEnvVars = customEnvVars;
 	if (options.model) payload.customModel = options.model;
 	if (options.effort) payload.customEffort = options.effort;
-	if (customContextWindow !== undefined) payload.customContextWindow = customContextWindow;
+	if (customContextWindow !== undefined) {
+		payload.customContextWindow = customContextWindow;
+		// Typing `--context-window` is unambiguously a deliberate choice, exactly as
+		// it is on `update-agent` (finding AD1, review of PR #1362). Without this the
+		// same flag on the same CLI produced two different outcomes: a scripted
+		// create with a lowered budget was silently overridden by the provider's
+		// report and had to be re-applied with `update-agent` to stick.
+		payload.contextWindowSource = 'user-edited';
+	}
 	if (options.providerPath) payload.customProviderPath = options.providerPath;
 	if (sessionSshRemoteConfig) payload.sessionSshRemoteConfig = sessionSshRemoteConfig;
 	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);

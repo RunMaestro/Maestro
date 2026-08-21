@@ -19,7 +19,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { updateSessionWith } from '../../stores/sessionStore';
-import { getTabDisplayName } from '../../utils/tabHelpers';
+import { focusAiTabInSession, getTabDisplayName } from '../../utils/tabHelpers';
 import {
 	notifyStarredSessionsChanged,
 	onStarredSessionsChanged,
@@ -224,14 +224,13 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 			useGroupChatStore.getState().setActiveGroupChatId(null);
 			useSessionStore.getState().setActiveSessionId(item.parentSessionId);
 			if (item.kind === 'open') {
-				updateSessionWith(item.parentSessionId, (s) => ({
-					...s,
-					activeTabId: item.tabId,
-					activeFileTabId: null,
-					activeTerminalTabId: null,
-					activeBrowserTabId: null,
-					inputMode: 'ai',
-				}));
+				// focusAiTabInSession, not a hand-rolled patch: a starred tab that has
+				// been folded into a tiled group has no standalone chip, so setting
+				// activeTabId alone left the panel on whatever was showing (or rendered
+				// the tab as a dedicated view outside its group). The shared transform
+				// activates the owning group and focuses that tab's PANE instead, and
+				// reveals a hidden tab on the way.
+				updateSessionWith(item.parentSessionId, (s) => focusAiTabInSession(s, item.tabId));
 				return;
 			}
 			// Closed session: ask the owning agent to resume it. If it can't be

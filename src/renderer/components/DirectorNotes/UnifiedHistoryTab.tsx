@@ -23,7 +23,7 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from '../History';
-import type { GraphBucket } from '../History/ActivityGraph';
+import type { PrecomputedGraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useThrottledCallback } from '../../hooks';
@@ -36,6 +36,7 @@ import { lookbackHoursToDays, bucketCountForLookback } from './lookback';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { visibleHistoryEntryTypes } from '../../../shared/history';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -66,7 +67,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 		const visibleTypes = useMemo<HistoryEntryType[]>(
-			() => (maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']),
+			() => visibleHistoryEntryTypes(maestroCueEnabled),
 			[maestroCueEnabled]
 		);
 
@@ -93,7 +94,9 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// Pre-computed graph buckets from backend (covers all entries in
 		// the lookback window - server-cached). Independent from the
 		// paginated entry list below.
-		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphBuckets, setGraphBuckets] = useState<PrecomputedGraphBucket[] | undefined>(
+			undefined
+		);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
 			undefined
 		);
@@ -205,15 +208,17 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				let newAuto = 0;
 				let newUser = 0;
 				let newCue = 0;
+				let newAgent = 0;
 				let prepended = 0;
 				for (const entry of uniqueBatch) {
 					if (entry.type === 'AUTO') newAuto++;
 					else if (entry.type === 'USER') newUser++;
 					else if (entry.type === 'CUE') newCue++;
+					else if (entry.type === 'AGENT') newAgent++;
 					if (prependLiveEntry(entry)) prepended++;
 				}
 
-				if (newAuto > 0 || newUser > 0 || newCue > 0) {
+				if (newAuto > 0 || newUser > 0 || newCue > 0 || newAgent > 0) {
 					setHistoryStats((prevStats) => {
 						if (!prevStats) return prevStats;
 						return {
@@ -221,7 +226,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							autoCount: prevStats.autoCount + newAuto,
 							userCount: prevStats.userCount + newUser,
 							cueCount: (prevStats.cueCount ?? 0) + newCue,
-							totalCount: prevStats.totalCount + newAuto + newUser + newCue,
+							agentEntryCount: (prevStats.agentEntryCount ?? 0) + newAgent,
+							totalCount: prevStats.totalCount + newAuto + newUser + newCue + newAgent,
 						};
 					});
 				}
@@ -400,6 +406,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			count: filteredEntries.length,
 			getScrollElement: () => listRef.current,
 			estimateSize,
+			// Key measurements to the ENTRY, not its slot - see the identical note in
+			// HistoryPanel. Without this, filtering leaves each row wearing the
+			// measured height of whatever previously occupied its index, which shows
+			// up as uneven gaps between cards.
+			getItemKey: (index) => filteredEntries[index]?.id ?? index,
 			overscan: 5,
 			gap: 12,
 			initialRect: { width: 300, height: 600 },

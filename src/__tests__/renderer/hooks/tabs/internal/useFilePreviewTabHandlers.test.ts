@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useFilePreviewTabHandlers } from '../../../../../renderer/hooks/tabs/internal/useFilePreviewTabHandlers';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { useMediaPlaybackStore } from '../../../../../renderer/stores/mediaPlaybackStore';
 import {
 	createMockAITab,
 	createMockBrowserTab,
@@ -15,10 +16,153 @@ import {
 describe('useFilePreviewTabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		useMediaPlaybackStore.setState({
+			items: [],
+			activeItemId: null,
+			history: [],
+			playing: false,
+			dismissed: false,
+			pendingAutoplay: false,
+			resumeTimes: {},
+		});
 	});
 
 	afterEach(() => {
 		cleanup();
+	});
+
+	describe('media diversion', () => {
+		// Media is not a document. It never gets a tab, a main panel view, or any
+		// other placement: opening an audio or video file hands it to the floating
+		// player and nothing else.
+		const STREAM = 'maestro-media://stream/tok3n/2f66696c65732f612e6d7033';
+
+		it('opens a media file in the player without creating a tab', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: STREAM,
+				});
+			});
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(0);
+			expect(session.activeFileTabId).toBeFalsy();
+			expect(session.unifiedTabOrder.map((ref) => ref.type)).toEqual(['ai']);
+
+			const media = useMediaPlaybackStore.getState();
+			expect(media.items).toHaveLength(1);
+			expect(media.items[0]).toMatchObject({
+				path: '/files/podcast.mp3',
+				name: 'podcast.mp3',
+				kind: 'audio',
+			});
+			expect(media.pendingAutoplay).toBe(true);
+		});
+
+		it('queues a second file instead of taking the player over', () => {
+			// Queueing an mp4 behind a playing mp3 must leave the mp3 loaded and
+			// audible - the whole point of "Add to Play Queue".
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: STREAM,
+				});
+			});
+			act(() => {
+				useMediaPlaybackStore.getState().consumeAutoplay();
+				useMediaPlaybackStore.getState().setPlaying(true);
+			});
+			const playingId = useMediaPlaybackStore.getState().activeItemId;
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/files/clip.mp4', name: 'clip.mp4', content: STREAM },
+					{ mediaMode: 'queue' }
+				);
+			});
+
+			const media = useMediaPlaybackStore.getState();
+			expect(media.items).toHaveLength(2);
+			expect(media.activeItemId).toBe(playingId);
+			expect(media.playing).toBe(true);
+			expect(media.pendingAutoplay).toBe(false);
+		});
+
+		it('queues without playing even when the loaded track is paused', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: STREAM,
+				});
+			});
+			act(() => {
+				useMediaPlaybackStore.getState().consumeAutoplay();
+				useMediaPlaybackStore.getState().setPlaying(false);
+			});
+			const pausedId = useMediaPlaybackStore.getState().activeItemId;
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/files/clip.mp4', name: 'clip.mp4', content: STREAM },
+					{ mediaMode: 'queue' }
+				);
+			});
+
+			const media = useMediaPlaybackStore.getState();
+			expect(media.activeItemId).toBe(pausedId);
+			expect(media.pendingAutoplay).toBe(false);
+			expect(media.playing).toBe(false);
+		});
+
+		it('stamps the owning agent, so the player says where the file came from', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/clip.mp4',
+					name: 'clip.mp4',
+					content: STREAM,
+				});
+			});
+
+			const item = useMediaPlaybackStore.getState().items[0];
+			expect(item.kind).toBe('video');
+			expect(item.sessionId).toBe(getSession().id);
+			expect(item.sessionName).toBe(getSession().name);
+		});
+
+		it('still opens a tab for remote media, which has no playable stream', () => {
+			// Only local files get a maestro-media:// URL, so a remote .mp3 keeps the
+			// binary "download and open externally" preview.
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: '<binary>',
+					sshRemoteId: 'remote-1',
+				});
+			});
+
+			expect(getSession().filePreviewTabs).toHaveLength(1);
+			expect(useMediaPlaybackStore.getState().items).toHaveLength(0);
+		});
 	});
 
 	it('opens a new file tab next to the active tab', () => {
@@ -362,6 +506,86 @@ describe('useFilePreviewTabHandlers', () => {
 			content: 'b-content',
 			scrollTop: 2,
 			navigationIndex: 1,
+		});
+	});
+
+	// A tiled file pane is not the active file tab (focusing a pane does not set
+	// activeFileTabId), so back / forward / breadcrumb-jump all take an explicit tab
+	// id. Without it a pane would navigate whichever other file tab was active.
+	describe('navigation addressed by tab id', () => {
+		const withTwoFileTabs = () => {
+			const history = [
+				{ path: '/repo/a.ts', name: 'a' },
+				{ path: '/repo/b.ts', name: 'b' },
+				{ path: '/repo/c.ts', name: 'c' },
+			];
+			setupSession({
+				filePreviewTabs: [
+					createMockFileTab({ id: 'active-tab', navigationHistory: history, navigationIndex: 0 }),
+					createMockFileTab({ id: 'pane-tab', navigationHistory: history, navigationIndex: 1 }),
+				],
+				activeFileTabId: 'active-tab',
+			});
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('loaded');
+		};
+
+		it('navigates back on the addressed tab, leaving the active one alone', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[1]).toMatchObject({
+				path: '/repo/a.ts',
+				navigationIndex: 0,
+			});
+			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
+		});
+
+		it('navigates forward on the addressed tab', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[1]).toMatchObject({
+				path: '/repo/c.ts',
+				navigationIndex: 2,
+			});
+		});
+
+		it('still defaults to the active file tab when no id is given', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward();
+			});
+
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				navigationIndex: 1,
+			});
+			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(1);
+		});
+
+		it('does nothing at either end of the history', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				// active-tab sits at index 0 (no back), pane-tab walked to the end below.
+				await result.current.handleFileTabNavigateBack('active-tab');
+				await result.current.handleFileTabNavigateToIndex(2, 'pane-tab');
+				await result.current.handleFileTabNavigateForward('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
+			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(2);
 		});
 	});
 });

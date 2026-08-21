@@ -658,6 +658,27 @@ describe('TabSwitcherModal', () => {
 			expect(screen.getByText('ESC')).toBeInTheDocument();
 		});
 
+		// Pointer-only surfaces (remote desktop, tablet) have no Escape key.
+		it('closes when the ESC pill is clicked', () => {
+			const tabs = [createTestTab()];
+			const onClose = vi.fn();
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={tabs}
+					activeTabId={tabs[0].id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={onClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
 		it('renders dialog with correct ARIA attributes', () => {
 			const tabs = [createTestTab()];
 

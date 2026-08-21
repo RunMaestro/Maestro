@@ -71,7 +71,7 @@ export function DirectorNotesModal({
 	// Tab content refs for focus management
 	const overviewTabRef = useRef<TabFocusHandle>(null);
 	const historyTabRef = useRef<TabFocusHandle>(null);
-	const aiOverviewContentRef = useRef<HTMLDivElement>(null);
+	const aiOverviewTabRef = useRef<TabFocusHandle>(null);
 
 	// Focus the active tab's content area
 	const focusActiveTab = useCallback(
@@ -81,7 +81,9 @@ export function DirectorNotesModal({
 			requestAnimationFrame(() => {
 				if (target === 'overview') overviewTabRef.current?.focus();
 				else if (target === 'history') historyTabRef.current?.focus();
-				else if (target === 'ai-overview') aiOverviewContentRef.current?.focus();
+				// Focuses the tab's own scroll region, not a wrapper: its table-of-
+				// contents hotkey is handled there, and keys don't travel downward.
+				else if (target === 'ai-overview') aiOverviewTabRef.current?.focus();
 			});
 		},
 		[activeTab]
@@ -106,7 +108,9 @@ export function DirectorNotesModal({
 					? historyTabRef
 					: activeTabRef.current === 'overview'
 						? overviewTabRef
-						: null;
+						: activeTabRef.current === 'ai-overview'
+							? aiOverviewTabRef
+							: null;
 			if (tabRef?.current?.onEscape?.()) return;
 			onCloseRef.current();
 		},
@@ -207,6 +211,8 @@ export function DirectorNotesModal({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -265,7 +271,7 @@ export function DirectorNotesModal({
 
 				{/* Tab content */}
 				<div
-					className="flex-1 overflow-hidden min-h-0 flex flex-col"
+					className="flex-1 overflow-hidden min-h-0 flex flex-col select-text"
 					style={{ backgroundColor: theme.colors.bgMain }}
 				>
 					<Suspense
@@ -289,12 +295,12 @@ export function DirectorNotesModal({
 								onLookbackChange={setLookbackHours}
 							/>
 						</div>
-						<div
-							ref={aiOverviewContentRef}
-							tabIndex={0}
-							className={`h-full outline-none ${activeTab === 'ai-overview' ? '' : 'hidden'}`}
-						>
-							<AIOverviewTab theme={theme} onSynopsisReady={handleSynopsisReady} />
+						<div className={`h-full ${activeTab === 'ai-overview' ? '' : 'hidden'}`}>
+							<AIOverviewTab
+								ref={aiOverviewTabRef}
+								theme={theme}
+								onSynopsisReady={handleSynopsisReady}
+							/>
 						</div>
 					</Suspense>
 				</div>

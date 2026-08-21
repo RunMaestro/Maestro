@@ -499,8 +499,8 @@ describe('AutoRunnerHelpModal', () => {
 		it('should render checkbox syntax examples', () => {
 			render(<AutoRunnerHelpModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Checkbox format is mentioned
-			expect(screen.getByText(/- \[ \]/)).toBeInTheDocument();
+			// Checkbox format is mentioned (task format section and the human-step section)
+			expect(screen.getAllByText(/- \[ \]/).length).toBeGreaterThan(0);
 		});
 
 		it('should render file extension examples', () => {

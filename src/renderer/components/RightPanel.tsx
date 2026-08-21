@@ -34,12 +34,14 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectThoughtCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
+import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
+import { sleepAwareElapsedSince } from '../services/systemSleep';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -71,7 +73,7 @@ interface RightPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,
@@ -179,14 +181,12 @@ export const RightPanel = memo(
 		);
 
 		// Thought Stream: brain button on the Auto Run card opens a persistent,
-		// searchable view of the agent's live thinking stream for this session.
-		// While capturing, the same button doubles as the (minimized) status
-		// indicator - it animates and reads "Capturing", and clicking re-expands
-		// the panel. There is no separate floating pill.
+		// searchable view of the agent's thinking stream for this session.
+		// Capture is ambient, so the button reports how much reasoning is already
+		// buffered and waiting to be read - clicking opens (or re-expands) the
+		// panel on that history. There is no separate floating pill.
 		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-		const isCapturingThoughts = useThoughtStreamStore(
-			(s) => !!sessionId && !!s.capturing[sessionId]
-		);
+		const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
@@ -331,7 +331,8 @@ export const RightPanel = memo(
 			}
 		}, []);
 
-		// Update elapsed time display using wall clock time from startTime
+		// Update elapsed time display from startTime, minus any machine sleep, so
+		// the live counter matches the duration the run actually records.
 		// Uses an interval to update every second while running
 		useEffect(() => {
 			if (!currentSessionBatchState?.isRunning || !currentSessionBatchState?.startTime) {
@@ -341,7 +342,7 @@ export const RightPanel = memo(
 
 			// Calculate elapsed immediately
 			const updateElapsed = () => {
-				const elapsed = Date.now() - currentSessionBatchState.startTime!;
+				const elapsed = sleepAwareElapsedSince(currentSessionBatchState.startTime!);
 				setElapsedTime(formatElapsed(elapsed));
 			};
 
@@ -663,6 +664,60 @@ export const RightPanel = memo(
 							)}
 						</div>
 
+						{/* Live playbook status from .maestro/STATUS.json */}
+						{currentSessionBatchState.playbookStatus && (
+							<div
+								className="mb-2 px-2 py-1.5 rounded text-[11px] leading-relaxed"
+								style={{
+									backgroundColor: theme.colors.accent + '10',
+									borderLeft: `2px solid ${theme.colors.accent}`,
+								}}
+							>
+								<div className="flex items-center gap-2 flex-wrap">
+									{currentSessionBatchState.playbookStatus.feature && (
+										<span className="font-mono font-bold" style={{ color: theme.colors.accent }}>
+											{currentSessionBatchState.playbookStatus.feature}
+										</span>
+									)}
+									{currentSessionBatchState.playbookStatus.phase && (
+										<span
+											className="px-1 py-0.5 rounded text-[10px] font-medium uppercase"
+											style={{
+												backgroundColor: theme.colors.accent + '20',
+												color: theme.colors.accent,
+											}}
+										>
+											{currentSessionBatchState.playbookStatus.phase}
+										</span>
+									)}
+									{currentSessionBatchState.playbookStatus.tests && (
+										<span
+											className="text-[10px] font-mono"
+											style={{
+												color:
+													currentSessionBatchState.playbookStatus.tests.fail > 0
+														? theme.colors.error
+														: theme.colors.success,
+											}}
+										>
+											{currentSessionBatchState.playbookStatus.tests.pass}✓
+											{currentSessionBatchState.playbookStatus.tests.fail > 0 &&
+												` ${currentSessionBatchState.playbookStatus.tests.fail}✗`}
+										</span>
+									)}
+								</div>
+								{currentSessionBatchState.playbookStatus.summary && (
+									<div
+										className="mt-1 truncate"
+										style={{ color: theme.colors.textDim }}
+										title={currentSessionBatchState.playbookStatus.summary}
+									>
+										{currentSessionBatchState.playbookStatus.summary}
+									</div>
+								)}
+							</div>
+						)}
+
 						{/* Current document name - for single document runs */}
 						{currentSessionBatchState.documents &&
 							currentSessionBatchState.documents.length === 1 && (
@@ -805,16 +860,18 @@ export const RightPanel = memo(
 
 						{/* Action row - left: the (spec-only) follow-task toggle; right: the
 						    action links + Stop, all on one plane to keep the card compact.
-						    Kept off the status-line row so a long rationale can't clip it. */}
-						<div className="mt-1.5 flex items-center justify-between gap-2">
+						    Kept off the status-line row so a long rationale can't clip it.
+						    Every control here is whitespace-nowrap and must stay legible, so
+						    the row wraps instead of overflowing when the Right Panel is
+						    narrow: `justify-end` + `mr-auto` on the toggle keeps the controls
+						    hard against the right edge on one line, and drops them onto their
+						    own right-aligned line once they no longer fit beside the toggle. */}
+						<div className="mt-1.5 flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5">
 							{/* "Follow active task" only applies to task-based runs that step
 							    through a document. Goal mode iterates a single goal with no
-							    discrete task list to follow, so hide the checkbox there (empty
-							    spacer keeps the controls right-aligned). */}
-							{currentSessionBatchState.goalMode ? (
-								<div />
-							) : (
-								<label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+							    discrete task list to follow, so hide the checkbox there. */}
+							{!currentSessionBatchState.goalMode && (
+								<label className="flex items-center gap-1.5 cursor-pointer shrink-0 mr-auto">
 									<input
 										type="checkbox"
 										checked={autoFollowEnabled}
@@ -827,7 +884,9 @@ export const RightPanel = memo(
 									</span>
 								</label>
 							)}
-							<div className="flex items-center gap-2 shrink-0">
+							{/* Wraps internally too, so the links/Stop stay inside the card even
+							    at the narrowest panel width where they alone can't fit a line. */}
+							<div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5 min-w-0">
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (
 									<span
@@ -847,18 +906,18 @@ export const RightPanel = memo(
 									<button
 										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
-											color: isCapturingThoughts ? theme.colors.accent : theme.colors.textDim,
+											color: bufferedThoughts > 0 ? theme.colors.accent : theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => openThoughtStream(sessionId)}
 										title={
-											isCapturingThoughts
-												? 'Capturing thoughts - click to expand'
+											bufferedThoughts > 0
+												? `${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'} - click to read`
 												: "Peer into the agent's thought stream"
 										}
 									>
-										<Brain className={`w-3 h-3 ${isCapturingThoughts ? 'animate-pulse' : ''}`} />
-										{isCapturingThoughts ? 'Capturing' : 'View Thoughts'}
+										<Brain className="w-3 h-3" />
+										View Thoughts
 									</button>
 								)}
 								{/* View history link - shown on all tabs except history */}

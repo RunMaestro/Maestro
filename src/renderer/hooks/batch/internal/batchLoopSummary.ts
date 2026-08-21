@@ -1,10 +1,13 @@
 import { formatElapsedTime } from '../../../../shared/formatters';
+import { sleepAwareElapsedMs } from '../../../services/systemSleep';
+import type { SleepAwareSpan } from '../../../services/systemSleep';
 import type { HistoryEntry } from '../../../types';
 
 export interface LoopSummaryParams {
 	loopIteration: number;
 	loopTasksCompleted: number;
-	loopStartTime: number;
+	/** Span opened when the loop iteration started. Its elapsed time excludes machine sleep. */
+	loopSpan: SleepAwareSpan;
 	loopTotalInputTokens: number;
 	loopTotalOutputTokens: number;
 	loopTotalCost: number;
@@ -23,7 +26,7 @@ export function createLoopSummaryEntry(params: LoopSummaryParams): Omit<HistoryE
 	const {
 		loopIteration,
 		loopTasksCompleted,
-		loopStartTime,
+		loopSpan,
 		loopTotalInputTokens,
 		loopTotalOutputTokens,
 		loopTotalCost,
@@ -34,7 +37,7 @@ export function createLoopSummaryEntry(params: LoopSummaryParams): Omit<HistoryE
 		tasksDiscoveredForNextLoop,
 	} = params;
 
-	const loopElapsedMs = Date.now() - loopStartTime;
+	const loopElapsedMs = sleepAwareElapsedMs(loopSpan);
 	const loopNumber = loopIteration + 1;
 	const summaryPrefix = isFinal ? `Loop ${loopNumber} (final)` : `Loop ${loopNumber}`;
 	const loopSummary = `${summaryPrefix} completed: ${loopTasksCompleted} task${loopTasksCompleted !== 1 ? 's' : ''} accomplished`;

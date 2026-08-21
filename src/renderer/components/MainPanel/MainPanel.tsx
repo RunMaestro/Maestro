@@ -1,12 +1,4 @@
-import React, {
-	useRef,
-	useCallback,
-	useMemo,
-	useState,
-	useEffect,
-	forwardRef,
-	useImperativeHandle,
-} from 'react';
+import React, { useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { Wand2 } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { FilePreviewHandle } from '../FilePreview';
@@ -17,6 +9,10 @@ import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
+import {
+	useAgentModelEffortOptions,
+	resolveModelEffort,
+} from '../../hooks/agent/useAgentModelEffortOptions';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
@@ -39,8 +35,10 @@ import {
 	computeQueuedTabIds,
 	computeUnreadGroupIds,
 	focusAiTabInSession,
+	getTabDisplayName,
+	groupFocusFields,
 } from '../../utils/tabHelpers';
-import { readEffortFromConfig } from '../../utils/agentEffort';
+import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -54,7 +52,7 @@ import { PianolaDashboardTab } from '../PianolaDashboard/PianolaTabControls';
 import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
 import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
-import type { PaneTabActions } from './TiledLayout';
+import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
 
@@ -158,7 +156,6 @@ export const MainPanel = React.memo(
 			isMobileLandscape = false,
 			showFlashNotification,
 			onOpenWorktreeConfig,
-			onOpenCreatePR,
 			isWorktreeChild,
 			onSummarizeAndContinue,
 			onMergeWith,
@@ -293,6 +290,7 @@ export const MainPanel = React.memo(
 			onToggleUnreadFilter,
 			onOpenTabSearch,
 			onOpenOutputSearch,
+			onOpenCrossTabSearch,
 			onCloseAllTabs,
 			onCloseOtherTabs,
 			onCloseTabsLeft,
@@ -347,6 +345,24 @@ export const MainPanel = React.memo(
 		const activeTab = useMemo(() => derivedActiveTab ?? null, [derivedActiveTab]);
 		const activeTabError = activeTab?.agentError;
 
+		// Whether the agent has any tab at all. An agent is allowed to have zero AI
+		// tabs as long as some other tab kind is still open, so the tab strip has to
+		// key off the union rather than aiTabs alone.
+		const hasAnyTab = useMemo(
+			() =>
+				(activeSession?.aiTabs?.length ?? 0) +
+					(activeSession?.filePreviewTabs?.length ?? 0) +
+					(activeSession?.terminalTabs?.length ?? 0) +
+					(activeSession?.browserTabs?.length ?? 0) >
+				0,
+			[
+				activeSession?.aiTabs,
+				activeSession?.filePreviewTabs,
+				activeSession?.terminalTabs,
+				activeSession?.browserTabs,
+			]
+		);
+
 		// SSH remote name for header display
 		const sshRemoteName = useSshRemoteName(
 			activeSession?.sessionSshRemoteConfig?.enabled,
@@ -363,11 +379,14 @@ export const MainPanel = React.memo(
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
 
-		// Model/Effort pills: available options, current values, and agent-level defaults
-		const [pillModels, setPillModels] = useState<string[]>([]);
-		const [pillEfforts, setPillEfforts] = useState<string[]>([]);
-		const [agentDefaultModel, setAgentDefaultModel] = useState('');
-		const [agentDefaultEffort, setAgentDefaultEffort] = useState('');
+		// Model/Effort pills: available options and agent-level defaults. Shared with
+		// the keyboard-only Model & Effort modal so both show the same truth.
+		const {
+			models: pillModels,
+			efforts: pillEfforts,
+			defaultModel: agentDefaultModel,
+			defaultEffort: agentDefaultEffort,
+		} = useAgentModelEffortOptions(activeSession?.toolType);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		// Navigate to agent/tab when clicking an agent pill in the log viewer
@@ -386,25 +405,24 @@ export const MainPanel = React.memo(
 			[setLogViewerOpen, setActiveSessionId, setSessions]
 		);
 
-		// Activate a tiled tab group: set activeGroupId (so MainPanelContent renders
-		// the group's layout) and clear the standalone active-tab ids/inputMode so no
-		// single-view content competes with the group for the panel.
+		// Activate a tiled tab group (clicking its chip in the tab strip): render the
+		// group's layout and clear the standalone active-tab ids so no single-view
+		// content competes with it for the panel.
+		//
+		// Via groupFocusFields, which also points activeTabId at the group's focused AI
+		// pane. This handler used to set activeGroupId alone, so the shared input area -
+		// which always targets activeTabId - stayed aimed at the standalone tab that was
+		// active before the click. Typing into a visible tile delivered the message to a
+		// conversation that isn't even in the group.
 		const handleGroupSelect = useCallback(
 			(groupId: string) => {
 				if (!activeSession) return;
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === activeSession.id
-							? {
-									...s,
-									activeGroupId: groupId,
-									activeFileTabId: null,
-									activeBrowserTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai',
-								}
-							: s
-					)
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						const group = s.tabGroups?.find((g) => g.id === groupId);
+						return group ? { ...s, ...groupFocusFields(group) } : s;
+					})
 				);
 			},
 			[activeSession, setSessions]
@@ -442,62 +460,12 @@ export const MainPanel = React.memo(
 			[activeSession]
 		);
 
-		// Fetch available models, effort levels, and agent defaults when agent type changes.
-		// Uses a stale flag to prevent race conditions when switching between agents -
-		// without this, a slow response (e.g., `opencode models` subprocess) from the
-		// previous agent can overwrite the current agent's model list.
-		useEffect(() => {
-			if (!activeSession?.toolType) return;
-			let stale = false;
-			const agentId = activeSession.toolType;
-			// Fetch models
-			window.maestro.agents
-				.getModels(agentId)
-				.then((models) => {
-					if (!stale) setPillModels(models);
-				})
-				.catch(() => {
-					if (!stale) setPillModels([]);
-				});
-			// Fetch effort options. Agents use either `effort` (Claude Code) or
-			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both
-			// and use whichever the agent defines, so this stays correct as new
-			// agents are added without touching this file.
-			Promise.all([
-				window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
-				window.maestro.agents
-					.getConfigOptions(agentId, 'reasoningEffort')
-					.catch(() => [] as string[]),
-			])
-				.then(([effortOpts, reasoningOpts]) => {
-					if (stale) return;
-					setPillEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
-				})
-				.catch(() => {
-					if (!stale) setPillEfforts([]);
-				});
-			// Fetch agent-level config for default model/effort
-			window.maestro.agents
-				.getConfig(agentId)
-				.then((config) => {
-					if (stale) return;
-					setAgentDefaultModel(config?.model || '');
-					setAgentDefaultEffort(readEffortFromConfig(config) ?? '');
-				})
-				.catch(() => {
-					if (stale) return;
-					setAgentDefaultModel('');
-					setAgentDefaultEffort('');
-				});
-			return () => {
-				stale = true;
-			};
-		}, [activeSession?.toolType]);
-
 		// Resolved current model/effort: tab override > session override > agent config > empty
-		const resolvedModel = activeTab?.customModel || activeSession?.customModel || agentDefaultModel;
-		const resolvedEffort =
-			activeTab?.customEffort || activeSession?.customEffort || agentDefaultEffort;
+		const { model: resolvedModel, effort: resolvedEffort } = resolveModelEffort(
+			activeTab,
+			activeSession,
+			{ defaultModel: agentDefaultModel, defaultEffort: agentDefaultEffort }
+		);
 
 		const setTabModel = useTabStore((s) => s.setTabModel);
 		const setTabEffort = useTabStore((s) => s.setTabEffort);
@@ -517,6 +485,19 @@ export const MainPanel = React.memo(
 			},
 			[activeTab, setTabEffort]
 		);
+
+		// Opening the snooze picker needs nothing from App.tsx, so it talks to the
+		// modal store directly instead of adding another link to the
+		// App -> useMainPanelProps -> MainPanel -> TabBar prop chain.
+		const handleOpenSnooze = useCallback((tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			const tab = session?.aiTabs.find((t) => t.id === tabId);
+			if (!tab) return;
+			useModalStore.getState().openModal('snoozeTab', {
+				tabId,
+				tabLabel: getTabDisplayName(tab, session?.agentSessionId),
+			});
+		}, []);
 
 		// Expose methods to parent via ref
 		// Holds the latest terminal/browser buffer-action handlers. The imperative
@@ -861,6 +842,38 @@ export const MainPanel = React.memo(
 			]
 		);
 
+		// The UNBOUND (tab-id-keyed) file handlers, bundled for tiled file panes. The
+		// single view binds these to the active file tab via useFilePreviewHandlers; a
+		// pane runs the same hook against its own tab id, so it needs them unbound.
+		const paneFileActions = useMemo<PaneFileActions>(
+			() => ({
+				onFileTabClose,
+				onFileTabEditModeChange,
+				onFileTabEditContentChange,
+				onFileTabScrollPositionChange: props.onFileTabScrollPositionChange,
+				onFileTabSearchQueryChange: props.onFileTabSearchQueryChange,
+				onReloadFileTab: props.onReloadFileTab,
+				onFileTabNavigateToIndex: props.onNavigateToIndex,
+				fileTree: props.fileTree,
+				onFileClick: props.onFileClick,
+				onOpenFuzzySearch: props.onOpenFuzzySearch,
+				onShortcutUsed: props.onShortcutUsed,
+			}),
+			[
+				onFileTabClose,
+				onFileTabEditModeChange,
+				onFileTabEditContentChange,
+				props.onFileTabScrollPositionChange,
+				props.onFileTabSearchQueryChange,
+				props.onReloadFileTab,
+				props.onNavigateToIndex,
+				props.fileTree,
+				props.onFileClick,
+				props.onOpenFuzzySearch,
+				props.onShortcutUsed,
+			]
+		);
+
 		// Group ids that survive the unread filter (any collapsed member is unread), so
 		// the TabBar can gate group chips the same way it gates AI tabs. Only computed
 		// while the filter is active (undefined otherwise -> all groups shown).
@@ -1077,7 +1090,6 @@ export const MainPanel = React.memo(
 								setActiveAgentSessionId={setActiveAgentSessionId}
 								onStopBatchRun={onStopBatchRun}
 								onOpenWorktreeConfig={onOpenWorktreeConfig}
-								onOpenCreatePR={onOpenCreatePR}
 								hasCapability={hasCapability}
 							/>
 						)}
@@ -1110,6 +1122,7 @@ export const MainPanel = React.memo(
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
 									queuedTabIds={queuedTabIds}
+									unreadGroupIds={unreadGroupIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
@@ -1162,9 +1175,11 @@ export const MainPanel = React.memo(
 								/>
 							) : null
 						) : (
-							/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */
-							activeSession.aiTabs &&
-							activeSession.aiTabs.length > 0 &&
+							/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
+							   An agent can sit at zero AI tabs while terminal/file/browser tabs are
+							   open, so gating this on aiTabs alone would hide the whole strip (and
+							   the "+" button) and strand the user in whatever view was last active. */
+							hasAnyTab &&
 							onTabSelect &&
 							onTabClose &&
 							onNewTab && (
@@ -1187,6 +1202,7 @@ export const MainPanel = React.memo(
 									onSummarizeAndContinue={onSummarizeAndContinue}
 									onCopyContext={onCopyContext}
 									onExportHtml={onExportHtml}
+									onSnooze={handleOpenSnooze}
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
@@ -1194,6 +1210,7 @@ export const MainPanel = React.memo(
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
+									onOpenCrossTabSearch={onOpenCrossTabSearch}
 									onCloseAllTabs={onCloseAllTabs}
 									onCloseOtherTabs={onCloseOtherTabs}
 									onCloseTabsLeft={onCloseTabsLeft}
@@ -1380,6 +1397,7 @@ export const MainPanel = React.memo(
 									onCancelMerge={onCancelMerge}
 									onExitWizard={onExitWizard}
 									paneTabActions={paneTabActions}
+									paneFileActions={paneFileActions}
 									onDeleteLog={props.onDeleteLog}
 									onScrollPositionChange={props.onScrollPositionChange}
 									onAtBottomChange={props.onAtBottomChange}

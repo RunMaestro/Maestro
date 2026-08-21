@@ -130,6 +130,7 @@ describe('keyboard shortcut registry wiring', () => {
 				'paneSplitRow',
 				'paneZoom',
 				'quickAction',
+				'tileTerminalBelow',
 			].sort()
 		);
 	});

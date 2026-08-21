@@ -7,17 +7,9 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { DebugPackageOptions } from '../../shared/debugPackage';
 
-/**
- * Debug package options
- */
-export interface DebugPackageOptions {
-	includeLogs?: boolean;
-	includeErrors?: boolean;
-	includeSessions?: boolean;
-	includeGroupChats?: boolean;
-	includeBatchState?: boolean;
-}
+export type { DebugPackageOptions };
 
 /**
  * Document graph file change event

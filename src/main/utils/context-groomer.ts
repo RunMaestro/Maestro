@@ -134,6 +134,8 @@ export interface GroomContextOptions {
 	agentSessionId?: string;
 	/** Use read-only mode (default: false) */
 	readOnlyMode?: boolean;
+	/** Optional model ID override (e.g., when using a utility agent) */
+	modelId?: string;
 	/** Custom timeout in ms (default: 5 minutes) */
 	timeoutMs?: number;
 	/** SSH remote config for running grooming on a remote host */
@@ -144,6 +146,24 @@ export interface GroomContextOptions {
 	sessionCustomArgs?: string;
 	/** Custom environment variables for the agent */
 	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * Model the caller wants this one-shot turn to run under, resolved the same
+	 * way a chat spawn resolves it (tab override, then agent override). Left
+	 * undefined the agent's own default applies, which is what every caller did
+	 * before AI command mode needed to honour the tab's current model.
+	 */
+	sessionCustomModel?: string;
+	/** Effort / reasoning level for this turn. Same resolution as the model. */
+	sessionCustomEffort?: string;
+	/**
+	 * Strip the agent's tool access for this turn (claude: `--tools ""`).
+	 *
+	 * Set it for pure text transforms. Without it, a task-shaped prompt makes the
+	 * model run a full agentic session - reading files, grepping - instead of
+	 * answering, which blows the timeout and returns nothing. Agents that define
+	 * no `noToolsArgs` are left untouched.
+	 */
+	disableTools?: boolean;
 	/** Agent-level config values (from agent config store) for override resolution */
 	agentConfigValues?: Record<string, any>;
 	/** Optional callback for progress updates during grooming */
@@ -184,11 +204,15 @@ export async function groomContext(
 		prompt,
 		agentSessionId,
 		readOnlyMode = false,
+		modelId,
 		timeoutMs = DEFAULT_GROOMING_TIMEOUT_MS,
 		sessionSshRemoteConfig,
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		sessionCustomModel,
+		sessionCustomEffort,
+		disableTools = false,
 		agentConfigValues,
 		onProgress,
 	} = options;
@@ -218,7 +242,7 @@ export async function groomContext(
 		prompt: prompt,
 		cwd: projectRoot,
 		readOnlyMode,
-		modelId: undefined,
+		modelId,
 		yoloMode: false,
 		permissionMode: 'standard' as const,
 		agentSessionId,
@@ -230,8 +254,14 @@ export async function groomContext(
 		agentConfigValues: agentConfigValues ?? {},
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		sessionCustomModel,
+		sessionCustomEffort,
+		readOnlyMode,
 	});
-	const resolvedArgs = configResolution.args;
+	const resolvedArgs =
+		disableTools && agent.noToolsArgs?.length
+			? [...configResolution.args, ...agent.noToolsArgs]
+			: configResolution.args;
 	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
 	const resolvedCommand = sessionCustomPath || agent.command;
 

@@ -696,7 +696,7 @@ To recall recent work, read the file and scan the most recent entries by timesta
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks you to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** — an official repository of community and curated playbooks that users can browse and import directly into their sessions.
+**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks you to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** - an official repository of community and curated playbooks that users can browse and import directly into their sessions.
 
 When a user wants an auto-run document (or playbook), create a detailed multi-document, multi-point Markdown implementation plan in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-XX.md\`, where \`XX\` is the two-digit phase number (01, 02, etc.) and \`$PREFIX\` is the effort name. Always zero-pad phase numbers to ensure correct lexicographic sorting. Break phases by relevant context; do not mix unrelated task results in the same document. If working within a file, group and fix all type issues in that file together. If working with an MCP, keep all related tasks in the same document. Each task must be written as \`- [ ] ...\` so auto-run can execute and check them off with comments on completion.
 
@@ -1558,7 +1558,7 @@ This restriction ensures the wizard can safely run in parallel with other AI ope
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents — the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+**Terminology:** A **Playbook** is a collection of Auto Run documents - the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 When creating Playbooks (collections of Auto Run documents), generate detailed multi-document Markdown implementation plans in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-XX.md\`, where \`XX\` is the two-digit phase number (01, 02, etc.) and \`$PREFIX\` is the effort name. Always zero-pad phase numbers to ensure correct lexicographic sorting. Break phases by relevant context; do not mix unrelated task results in the same document. Each task must be written as \`- [ ] ...\` so auto-run can execute and check them off with comments on completion.
 
@@ -1686,7 +1686,7 @@ This restriction ensures the wizard can safely run in parallel with other AI ope
 
 ## Auto Run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents — the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+**Terminology:** A **Playbook** is a collection of Auto Run documents - the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 When creating Playbooks (collections of Auto Run documents), generate detailed Markdown implementation plans in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-XX.md\`, where \`XX\` is the two-digit phase number (01, 02, etc.) and \`$PREFIX\` is the effort name. Always zero-pad phase numbers to ensure correct lexicographic sorting. Break phases by relevant context; do not mix unrelated task results in the same document. Each task must be written as \`- [ ] ...\` so Auto Run can execute and check them off with comments on completion. Be deliberate about document count and task granularity.
 
@@ -1818,7 +1818,7 @@ Has anything changed since these documents were created? Would you like to conti
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents — the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+**Terminology:** A **Playbook** is a collection of Auto Run documents - the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 When a user wants an auto-run document (or playbook), create a detailed multi-document, multi-point Markdown implementation plan in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-X.md\`, where \`X\` is the phase number and \`$PREFIX\` is the effort name. Break phases by relevant context; do not mix unrelated task results in the same document. If working within a file, group and fix all type issues in that file together. If working with an MCP, keep all related tasks in the same document. Each task must be written as \`- [ ] ...\` so auto-run can execute and check them off with comments on completion. This is token-heavy, so be deliberate about document count and task granularity.
 
@@ -1876,7 +1876,7 @@ This restriction ensures the wizard can safely run in parallel with other AI ope
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** — an official repository of community and curated playbooks that users can browse and import directly into their sessions.
+**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** - an official repository of community and curated playbooks that users can browse and import directly into their sessions.
 
 When a user wants an auto-run document (or playbook), create a detailed multi-document, multi-point Markdown implementation plan in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-X.md\`, where \`X\` is the phase number and \`$PREFIX\` is the effort name.
 

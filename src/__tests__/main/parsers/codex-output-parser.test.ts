@@ -711,6 +711,62 @@ describe('CodexOutputParser', () => {
 				})
 			);
 			expect(usageEvent?.usage?.contextWindow).toBe(200000);
+			// The window came from Codex's own turn_context, so it is authoritative
+			// even though it happens to equal the static fallback constant.
+			expect(usageEvent?.usage?.contextWindowReported).toBe(true);
+		});
+
+		it('should not flag the config/static-table seed as provider-reported', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context and no model_context_window anywhere: the window can
+			// only be the constructor's config / lookup-table seed.
+			const usageEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(usageEvent?.usage?.contextWindow).toBeGreaterThan(0);
+			expect(usageEvent?.usage?.contextWindowReported).toBe(false);
+		});
+
+		// Review of PR #1356 (item 2). `turn_context` cached the reported window on
+		// the instance but `token_count` did not, so when Codex carried
+		// `model_context_window` in `token_count` only, a single turn produced two
+		// different denominators: token_count reported the real window with the
+		// flag set (renderer rank 2), then turn.completed fell back to the
+		// constructor seed with the flag clear (rank 3, stored override wins). The
+		// gauge changed denominator mid-turn.
+		it('should cache a context window reported by token_count, not just turn_context', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context at all - the window arrives only on token_count.
+			const tokenCountEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							model_context_window: 272000,
+							total_token_usage: { input_tokens: 100, output_tokens: 50 },
+						},
+					},
+				})
+			);
+			expect(tokenCountEvent?.usage?.contextWindow).toBe(272000);
+			expect(tokenCountEvent?.usage?.contextWindowReported).toBe(true);
+
+			// The very next event of the same turn must agree. Before the fix this
+			// returned the seed with contextWindowReported false.
+			const completedEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(completedEvent?.usage?.contextWindow).toBe(272000);
+			expect(completedEvent?.usage?.contextWindowReported).toBe(true);
 		});
 
 		it('should handle turn_context without payload', () => {
@@ -811,6 +867,7 @@ describe('CodexOutputParser', () => {
 				expect(event?.usage?.cacheReadTokens).toBe(3000);
 				expect(event?.usage?.cacheCreationTokens).toBe(0);
 				expect(event?.usage?.contextWindow).toBe(400000);
+				expect(event?.usage?.contextWindowReported).toBe(true);
 				expect(event?.usage?.reasoningTokens).toBe(200);
 			});
 
@@ -834,6 +891,8 @@ describe('CodexOutputParser', () => {
 
 				// Should fall back to cached context window (default model)
 				expect(event?.usage?.contextWindow).toBeGreaterThan(0);
+				// ...and that fallback is NOT provider-reported.
+				expect(event?.usage?.contextWindowReported).toBe(false);
 			});
 
 			it('should handle token_count with zero values', () => {
@@ -1491,6 +1550,89 @@ describe('CodexOutputParser', () => {
 			expect(error).not.toBeNull();
 			expect(error?.message).toBe('Connection lost');
 		});
+
+		// Regression: #1378. Codex v0.111.0+ reports turn failures through an
+		// `event_msg` envelope with the text in `payload.message`. These used to
+		// be classified as benign `system` events, so the agent went silent with
+		// no error surfaced and no way for the user to tell what happened.
+		it('should detect an event_msg error payload (remote compact 404)', () => {
+			const obj = {
+				type: 'event_msg',
+				payload: {
+					type: 'error',
+					message:
+						'Error running remote compact task: unexpected status 404 Not Found: {"detail":"Not Found"}, url: https://chatgpt.com/backend-api/codex/responses/compact, cf-ray: a2a245597813f94c-DUS, request id: 83f44823-691b-4721-b52b-b7faf5e78617',
+				},
+			};
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('network_error');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.message).toContain('could not compact this conversation');
+		});
+
+		it('should detect a generic event_msg error payload', () => {
+			const obj = {
+				type: 'event_msg',
+				payload: { type: 'error', message: 'something went sideways' },
+			};
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.message).toBe('something went sideways');
+		});
+
+		// Codex retries stream errors on its own. Raising one would pause a
+		// session that is about to recover, and StdoutHandler's once-only
+		// `errorEmitted` latch would then swallow the real error if the retries
+		// ran out.
+		it('should NOT treat a stream_error payload as an agent error', () => {
+			const obj = {
+				type: 'event_msg',
+				payload: { type: 'stream_error', message: 'stream error: timeout; retrying 1/5' },
+			};
+			expect(parser.detectErrorFromParsed(obj)).toBeNull();
+		});
+
+		it('should fall back to top-level message when error field is absent', () => {
+			const obj = { type: 'error', message: 'unexpected status 500 Internal Server Error' };
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('network_error');
+			expect(error?.message).toContain('HTTP 500');
+		});
+
+		it('should still ignore an error event carrying no text at all', () => {
+			expect(parser.detectErrorFromParsed({ type: 'error' })).toBeNull();
+		});
+	});
+
+	describe('event_msg error events (#1378)', () => {
+		it('should parse an error payload as an error event', () => {
+			const event = parser.parseJsonObject({
+				type: 'event_msg',
+				payload: { type: 'error', message: 'Error running remote compact task: boom' },
+			});
+			expect(event?.type).toBe('error');
+			expect(event?.text).toBe('Error running remote compact task: boom');
+		});
+
+		it('should parse a stream_error payload as partial text, not an error', () => {
+			const event = parser.parseJsonObject({
+				type: 'event_msg',
+				payload: { type: 'stream_error', message: 'stream error: timeout; retrying 1/5' },
+			});
+			expect(event?.type).toBe('text');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.text).toBe('stream error: timeout; retrying 1/5');
+		});
+
+		it('should leave unrelated event_msg types as system events', () => {
+			const event = parser.parseJsonObject({
+				type: 'event_msg',
+				payload: { type: 'task_started' },
+			});
+			expect(event?.type).toBe('system');
+		});
 	});
 
 	describe('tool name carryover for new format', () => {
@@ -1589,6 +1731,36 @@ describe('CodexOutputParser', () => {
 			);
 
 			expect(event?.text).toBe('Plain thinking text');
+		});
+	});
+
+	describe('stream_error stays out of the final answer', () => {
+		// streamedText is what ExitHandler emits as the result when a turn ends
+		// without a result message. Retry diagnostics must never land there.
+		it('marks a retrying stream_error as reasoning', () => {
+			const parser = new CodexOutputParser();
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: { type: 'stream_error', message: 'stream error: reset; retrying 1/5' },
+				})
+			);
+
+			expect(event?.type).toBe('text');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBe(true);
+		});
+
+		it('still treats a real error payload as an error', () => {
+			const parser = new CodexOutputParser();
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: { type: 'error', message: 'Error running remote compact task' },
+				})
+			);
+
+			expect(event?.type).toBe('error');
 		});
 	});
 });

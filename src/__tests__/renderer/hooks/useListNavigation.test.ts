@@ -806,4 +806,91 @@ describe('useListNavigation', () => {
 			expect(event.preventDefault).not.toHaveBeenCalled();
 		});
 	});
+	describe('grid mode (columns > 1)', () => {
+		const grid = (overrides: Record<string, unknown> = {}) =>
+			renderHook(() =>
+				useListNavigation({ listLength: 10, columns: 3, onSelect: vi.fn(), ...overrides })
+			);
+
+		it('moves one tile at a time with left/right', () => {
+			const { result } = grid();
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowRight'));
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowRight'));
+			});
+			expect(result.current.selectedIndex).toBe(2);
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowLeft'));
+			});
+			expect(result.current.selectedIndex).toBe(1);
+		});
+
+		it('moves a whole row at a time with up/down', () => {
+			const { result } = grid();
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowDown'));
+			});
+			expect(result.current.selectedIndex).toBe(3);
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowUp'));
+			});
+			expect(result.current.selectedIndex).toBe(0);
+		});
+
+		it('holds position when a row jump would run off the end', () => {
+			// 10 items / 3 columns: index 8 is in the last full row, and +3 lands
+			// past the end. Clamping to the last item would silently shift columns.
+			const { result } = grid();
+
+			act(() => {
+				result.current.setSelectedIndex(8);
+			});
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowDown'));
+			});
+			expect(result.current.selectedIndex).toBe(8);
+		});
+
+		it('still clamps single steps at the boundaries', () => {
+			const { result } = grid();
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowLeft'));
+			});
+			expect(result.current.selectedIndex).toBe(0);
+
+			act(() => {
+				result.current.setSelectedIndex(9);
+			});
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowRight'));
+			});
+			expect(result.current.selectedIndex).toBe(9);
+		});
+
+		it('leaves left/right alone in list mode, where other things own them', () => {
+			const { result } = renderHook(() => useListNavigation({ listLength: 5, onSelect: vi.fn() }));
+
+			const event = createReactKeyboardEvent('ArrowRight');
+			act(() => {
+				result.current.handleKeyDown(event);
+			});
+
+			expect(result.current.selectedIndex).toBe(0);
+			expect(event.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('wraps across the flattened order when wrap is on', () => {
+			const { result } = grid({ wrap: true });
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowLeft'));
+			});
+			expect(result.current.selectedIndex).toBe(9);
+		});
+	});
 });

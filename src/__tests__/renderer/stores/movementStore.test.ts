@@ -15,6 +15,16 @@ import {
 	MOVEMENT_HTML_DEFAULT_WIDTH,
 	MOVEMENT_HTML_DEFAULT_HEIGHT,
 } from '../../../renderer/stores/movementStore';
+import { getModalActions, useModalStore } from '../../../renderer/stores/modalStore';
+
+/** The stage is a modal, so "is the Concerto layer up" lives in modalStore. */
+function stageOpen(): boolean {
+	return useModalStore.getState().isOpen('concertoStage');
+}
+
+function setStageOpen(open: boolean) {
+	getModalActions().setConcertoStageOpen(open);
+}
 
 function reset() {
 	useMovementStore.setState({
@@ -22,9 +32,9 @@ function reset() {
 		dismissedItems: [],
 		viewportWidth: 0,
 		viewportHeight: 0,
-		hidden: false,
 		flashedId: null,
 	});
+	setStageOpen(false);
 }
 
 describe('applyMovementPayload', () => {
@@ -201,15 +211,15 @@ describe('applyMovementPayload', () => {
 		expect(useMovementStore.getState().items[0]).toMatchObject({ x: 10, y: 10, title: 'new' });
 	});
 
-	it('surfaces new panels but preserves the user stash across live updates', () => {
+	it('raises the stage for a new panel but leaves a closed stage closed on updates', () => {
 		applyMovementPayload({ op: 'add', id: 'a', body: '{"blocks":[]}' });
-		useMovementStore.getState().setHidden(true);
+		setStageOpen(false);
 
 		applyMovementPayload({ op: 'update', id: 'a', body: '{"blocks":[]}' });
-		expect(useMovementStore.getState().hidden).toBe(true);
+		expect(stageOpen()).toBe(false);
 
 		applyMovementPayload({ op: 'add', id: 'b', body: '{"blocks":[]}' });
-		expect(useMovementStore.getState().hidden).toBe(false);
+		expect(stageOpen()).toBe(true);
 	});
 
 	it('move clamps negative coordinates to zero', () => {
@@ -308,11 +318,11 @@ describe('movementStore actions', () => {
 		applyMovementPayload({ op: 'add', id: 'a' });
 		applyMovementPayload({ op: 'add', id: 'b' });
 		useMovementStore.getState().setItemMinimized('a', true);
-		useMovementStore.getState().setHidden(true);
+		setStageOpen(false);
 
 		useMovementStore.getState().surfaceItem('a');
 
-		expect(useMovementStore.getState().hidden).toBe(false);
+		expect(stageOpen()).toBe(true);
 		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['b', 'a']);
 		expect(useMovementStore.getState().items[1].minimized).toBe(false);
 		expect(
@@ -380,6 +390,7 @@ describe('getMovementSnapshot', () => {
 		useMovementStore.getState().setViewport(1920, 1080);
 		applyMovementPayload({ op: 'add', id: 'a', x: 10.6, y: 20.4, width: 300.9, height: 200 });
 		useMovementStore.getState().setMeasuredHeight('a', 260);
+		setStageOpen(true);
 		const snap = getMovementSnapshot();
 		expect(snap).toMatchObject({ width: 1920, height: 1080, hidden: false });
 		expect(snap.items[0]).toMatchObject({
@@ -397,9 +408,8 @@ describe('getMovementSnapshot', () => {
 		applyMovementPayload({ op: 'add', id: 'minimized' });
 		applyMovementPayload({ op: 'add', id: 'front' });
 		useMovementStore.getState().setItemMinimized('minimized', true);
-		useMovementStore.getState().setHidden(true);
 		useMovementStore.getState().surfaceItem('back');
-		useMovementStore.getState().setHidden(true);
+		setStageOpen(false);
 
 		expect(getMovementSnapshot()).toMatchObject({
 			hidden: true,
@@ -414,7 +424,7 @@ describe('getMovementSnapshot', () => {
 describe('selectHasVisibleMovement', () => {
 	beforeEach(reset);
 
-	it('requires a non-minimized item on a non-hidden layer', () => {
+	it('requires at least one panel that is not minimized to the taskbar', () => {
 		applyMovementPayload({ op: 'begin', id: 'design', title: 'Design' });
 		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(true);
 
@@ -422,8 +432,7 @@ describe('selectHasVisibleMovement', () => {
 		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(false);
 
 		useMovementStore.getState().setItemMinimized('design', false);
-		useMovementStore.getState().setHidden(true);
-		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(false);
+		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(true);
 	});
 });
 
@@ -437,12 +446,13 @@ describe('flashItem', () => {
 		vi.useRealTimers();
 	});
 
-	it('un-stashes the overlay, pulses the id, then clears after the timeout', () => {
+	it('reopens the stage, pulses the id, then clears after the timeout', () => {
 		applyMovementPayload({ op: 'add', id: 'deploy' });
 		applyMovementPayload({ op: 'add', id: 'other' });
-		useMovementStore.setState({ hidden: true });
+		setStageOpen(false);
 		useMovementStore.getState().flashItem('deploy');
-		expect(useMovementStore.getState()).toMatchObject({ hidden: false, flashedId: 'deploy' });
+		expect(stageOpen()).toBe(true);
+		expect(useMovementStore.getState().flashedId).toBe('deploy');
 		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['other', 'deploy']);
 		vi.advanceTimersByTime(2200);
 		expect(useMovementStore.getState().flashedId).toBeNull();

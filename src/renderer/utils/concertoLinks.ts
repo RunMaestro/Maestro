@@ -15,6 +15,7 @@
  */
 
 import { useMovementStore } from '../stores/movementStore';
+import { setAllCadenzasHidden } from '../stores/cadenzaStore';
 
 export interface ConcertoTarget {
 	surface: 'movement' | 'cadenza';
@@ -68,6 +69,10 @@ export async function flashConcertoTarget(href: string | undefined | null): Prom
 		if (!useMovementStore.getState().restoreDismissedItem(target.id, revision)) return false;
 		return useMovementStore.getState().flashItem(target.id);
 	} else {
+		// Un-stash first: pointing at a card the user cannot see says nothing. This
+		// runs in the main window, which is the only writer of the stash latch, so
+		// the in-app layer and the HUD window stay in agreement.
+		setAllCadenzasHidden(false);
 		window.maestro?.process?.flashCadenza?.(target.id);
 	}
 	return true;

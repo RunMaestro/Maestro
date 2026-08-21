@@ -61,7 +61,7 @@ import type { AdditionalDirectory } from './types';
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
  *
  * Cue Variables (Cue automation only):
- *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger)
+ *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger, webhook.received)
  *   {{CUE_EVENT_TIMESTAMP}} - Cue event timestamp
  *   {{CUE_TRIGGER_NAME}}   - Cue trigger/subscription name
  *   {{CUE_RUN_ID}}         - Cue run UUID
@@ -102,6 +102,12 @@ import type { AdditionalDirectory } from './types';
  *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  *
  *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
+ *
+ *   {{CUE_WEBHOOK_BODY}}        - Webhook payload, pretty-printed JSON (webhook.received events)
+ *   {{CUE_WEBHOOK_EVENT}}       - Vendor event name, e.g. "pull_request" (webhook.received events)
+ *   {{CUE_WEBHOOK_PATH}}        - Path segment the delivery arrived on (webhook.received events)
+ *   {{CUE_WEBHOOK_DELIVERY_ID}} - Vendor delivery id (webhook.received events)
+ *   {{CUE_WEBHOOK_HEADERS}}     - Request headers as key: value lines, secrets redacted (webhook.received events)
  */
 
 /**
@@ -260,6 +266,17 @@ export interface TemplateContext {
 		fromAgent?: string;
 		// time.once fields - originally-scheduled fire timestamp (ISO-8601 with TZ).
 		fireAt?: string;
+		// webhook.received fields
+		/** Path segment the delivery arrived on (the part after `/cue/`). */
+		webhookPath?: string;
+		/** Vendor event name from `X-GitHub-Event` / `X-GitLab-Event` / etc. */
+		webhookEvent?: string;
+		/** Vendor delivery id, or a locally generated UUID when absent. */
+		webhookDeliveryId?: string;
+		/** Pretty-printed JSON payload (raw text for non-JSON bodies), truncated. */
+		webhookBody?: string;
+		/** Request headers as `key: value` lines, with auth material redacted. */
+		webhookHeaders?: string;
 	};
 }
 
@@ -386,6 +403,31 @@ export const TEMPLATE_VARIABLES = [
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_TRIGGER_NAME}}', description: 'Cue trigger name', cueOnly: true },
+	{
+		variable: '{{CUE_WEBHOOK_BODY}}',
+		description: 'Webhook payload, pretty-printed JSON (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_DELIVERY_ID}}',
+		description: 'Webhook delivery id (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_EVENT}}',
+		description: 'Vendor event name, e.g. "pull_request" (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_HEADERS}}',
+		description: 'Request headers as key: value lines, secrets redacted',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_PATH}}',
+		description: 'Path segment the delivery arrived on (webhook.received events)',
+		cueOnly: true,
+	},
 	{ variable: '{{CWD}}', description: 'Working directory' },
 	{ variable: '{{DATE}}', description: 'Date (YYYY-MM-DD)' },
 	{ variable: '{{DATETIME}}', description: 'Full datetime' },
@@ -423,7 +465,6 @@ export const TEMPLATE_VARIABLES = [
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
-	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
@@ -589,6 +630,13 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 
 		// Cue time.once variables
 		CUE_FIRE_AT: context.cue?.fireAt || '',
+
+		// Cue webhook.received variables
+		CUE_WEBHOOK_PATH: context.cue?.webhookPath || '',
+		CUE_WEBHOOK_EVENT: context.cue?.webhookEvent || '',
+		CUE_WEBHOOK_DELIVERY_ID: context.cue?.webhookDeliveryId || '',
+		CUE_WEBHOOK_BODY: context.cue?.webhookBody || '',
+		CUE_WEBHOOK_HEADERS: context.cue?.webhookHeaders || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.

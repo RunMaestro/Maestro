@@ -49,7 +49,11 @@ AGENT_DISPLAY_NAMES: Record<AgentId, string>  // Human-readable names
 BETA_AGENTS: ReadonlySet<AgentId>              // Agents showing "(Beta)" badge
 getAgentDisplayName(agentId): string           // Get name with fallback
 isBetaAgent(agentId): boolean                  // Check beta status
+getAgentLoginCommand(agentId, customPath?)     // Re-auth command, or null
+formatAgentLoginCommand(login): string         // Render it as a shell line
 ```
+
+**Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
 
 ### Context Windows (`src/shared/agentConstants.ts`)
 
@@ -382,6 +386,36 @@ Sticky mode (`'sticky'`) opts out of all three clear points. Off mode
 suppresses appending in the first place at the renderer's `onThinkingChunk`
 listener.
 
+### Streams vs cards: what may be appended to
+
+A `LogEntry` is one of two things, and coalescing must tell them apart:
+
+- **A stream** - `stdout` / `stderr` / `thinking` text arriving in chunks.
+  Consecutive chunks coalesce into one entry so the transcript isn't one
+  bubble per packet.
+- **A self-contained card** - a `!` command's output, a retry-outage card, a
+  session-recovery prompt, a tool call. Its text is owned by whoever created
+  it and is updated by log id, never appended to.
+
+Cards keep a **natural `source`**: a command-mode card is `source: 'stdout'`
+because its body genuinely is terminal output. So `source` alone cannot tell
+you whether appending is safe, and every site that assumed it could has
+produced a bug - most recently agent replies being concatenated into a `!`
+command's terminal output, because the card was the newest `stdout` entry when
+the next chunk arrived (command mode runs _during_ a turn by design, so this
+was near-certain rather than a rare race).
+
+The rule lives in one place, `renderer/utils/logEntries.ts`:
+
+- `isSelfContainedCard(entry)` - enumerates the card markers
+- `canAppendToLogEntry(entry, source)` - same source **and** not a card
+
+Used by all three coalescing sites (`useBatchedSessionUpdates` AI-tab path,
+its legacy `shellLogs` path, and `useAgentThinkingListener`). Callers keep
+their own policy on top (the 500ms window, session-busy). **Adding a new card
+kind:** add its marker to `isSelfContainedCard` and every site is correct by
+construction.
+
 **Adding a new agent:** make sure your parser tags reasoning deltas with
 `isReasoning: true` and emits tool-use events through the standard
 `tool_use` ParsedEvent type. Verify the tab transitions to `idle` cleanly
@@ -420,15 +454,18 @@ the renderer merges and draws.
    a `toolCallId` it attributes a finalizing event to the most recent still
    `running` entry of the same `toolName`, else appends a fresh entry. Tool
    events are recorded regardless of the `showToolCalls` setting. Visibility is a
-   pure render concern that `TerminalOutput` computes as `showToolCalls &&
-thinkingOn`, hiding `source:'tool'` entries when the setting is off OR the
-   active tab's `showThinking` is `'off'` (tool cells are "behind the scenes"
-   activity that follows the Thinking toggle). The Settings UI mirrors this: the
-   "Show tool calls in responses" switch is grouped under Default Thinking Mode
-   and ghosts out (disabled) when the default mode is Off. Storage is still
-   governed by the thinking/tool log contract above, so the `showThinking`
-   lifecycle can drop stored `thinking`/`tool` entries (for example on exit when
-   not `'sticky'`) independently of `showToolCalls`.
+   pure render concern: `TerminalOutput` reads `showToolCalls` alone and hides
+   `source:'tool'` entries when it is off. **`showToolCalls` and the per-tab
+   `showThinking` mode are independent** - the setting was briefly ANDed with
+   `showThinking !== 'off'`, which made it impossible to read a reasoning chain
+   without the tool noise. The two answer different questions: `showToolCalls`
+   decides whether tool cells are DRAWN, `showThinking` decides how long
+   `thinking`/`tool` entries are RETAINED. Do not re-couple them. The Settings UI
+   groups both under Default Thinking Mode, but the switch is never disabled.
+   Storage is governed by the thinking/tool log contract above, so the
+   `showThinking` lifecycle can still drop stored `thinking`/`tool` entries (on
+   exit, and when new assistant text arrives, unless the tab is `'sticky'`)
+   regardless of `showToolCalls`.
 5. **Render** (`src/renderer/components/TerminalOutput/components/LogItem.tsx` +
    `src/renderer/components/TerminalOutput/utils/toolSummaries.ts`). `LogItem`
    draws the tool badge and its status; `toolSummaries.ts` turns `toolState.input`
@@ -566,6 +603,39 @@ getSshErrorPatterns(): AgentErrorPatterns
 
 Per-agent session storage for reading historical conversations.
 
+### Expected transcript-read failures (`src/main/utils/session-read-errors.ts`)
+
+Provider transcripts under `~/.claude/projects`, `~/.codex/sessions`, etc. belong
+to the agent CLI, not to Maestro. Any code that reads a transcript it merely
+_discovered_ on disk must classify environmental failures instead of reporting
+them, or one unreadable tree pages a Sentry event per file per refresh
+(MAESTRO-W9, MAESTRO-YG/YH/YJ):
+
+```typescript
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
+
+try {
+	const content = await fs.readFile(filePath, 'utf-8');
+	// ...
+} catch (error) {
+	if (error instanceof RangeError) {
+		logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
+	} else if (isExpectedSessionReadError(error)) {
+		logger.warn('Session file not readable', LOG_CONTEXT, { filePath, error });
+	} else {
+		captureException(error); // genuine fault, keep reporting
+	}
+	return null;
+}
+```
+
+Covers `EACCES`, `EPERM`, `ENOENT`, `ENOTDIR`, `EISDIR`, `EBUSY`. Do NOT widen it
+to codes that indicate a Maestro bug (`EMFILE` means we leaked descriptors).
+Pair it with the `RangeError` carve-out for oversized files - they are separate
+boundaries. When quieting one call site, grep the whole file for other
+`captureException` calls on the same failure path (an outer `fs.stat` catch
+usually needs the same guard).
+
 ### Storage Interface (`src/main/agents/session-storage.ts`)
 
 ```typescript
@@ -608,6 +678,43 @@ Subclasses implement:
 | `CodexSessionStorage`        | `codex-session-storage.ts`         | `~/.codex/sessions/YYYY/MM/DD/`                                      | JSONL events            |
 | `OpenCodeSessionStorage`     | `opencode-session-storage.ts`      | `~/.local/share/opencode/opencode.db` (v1.2+) or `storage/` (legacy) | SQLite (or legacy JSON) |
 | `FactoryDroidSessionStorage` | `factory-droid-session-storage.ts` | `~/.factory/sessions/`                                               | JSONL + settings.json   |
+
+### Parse Cache (`src/main/storage/session-info-cache.ts`)
+
+`listSessions()` is enumerate-then-parse for every storage, and the parse is the
+expensive half: a heavy Claude user is 5+ GB of JSONL across ~14k transcripts,
+which is why the Cost & Tokens dashboard used to take ~15 seconds to render every
+single time. `SessionInfoCache` caches the parsed `AgentSessionInfo` keyed by a
+`mtimeMs + size` fingerprint, so only new or grown transcripts are re-read.
+Enumerating and stat-ing all 14k files costs under 100ms.
+
+Use it instead of hand-rolling another mtime map (there are already several):
+
+```typescript
+const files = await this.statProjectSessionFiles(projectDir); // readdir + stat
+const sessions = await getSessionInfoCache(this.agentId).resolve(
+	projectDir, // scope: one cache file per project folder
+	files.map((f) => ({ key: f.filePath, fingerprint: fileFingerprint(f.sizeBytes, f.mtimeMs) })),
+	(ref) => parseSessionFile(...), // only called on a miss; null = skip, not cached
+	{ prune: true } // ONLY when refs cover the whole scope (never for one page)
+);
+```
+
+Rules:
+
+- Attach mutable metadata (origin, starred, session name) AFTER `resolve()`. It
+  lives in `originsStore` and changes without the transcript changing, so a
+  fingerprint would never catch it.
+- Returned infos are the cached objects: spread them, never mutate in place.
+- Bump `SESSION_INFO_CACHE_VERSION` when `AgentSessionInfo` gains a field, or
+  cached entries will come back missing it.
+- Tests: `setSessionInfoCacheForTest(agentId, new SessionInfoCache(agentId, tmpDir))`
+  in `beforeEach`, or fixtures that reuse one path + stats while varying content
+  will (correctly) hit the cache.
+
+Wired up for `ClaudeSessionStorage` (local paths). `CodexSessionStorage` predates
+it and still carries its own equivalent cache; the remaining storages parse
+everything on every list and should adopt this when their volume justifies it.
 
 ### Registry Functions
 

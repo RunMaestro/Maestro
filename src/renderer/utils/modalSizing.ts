@@ -29,7 +29,18 @@ export const DEFAULT_MODAL_SIZE: ModalSize = {
 	height: 420,
 };
 
+/** Top-left corner of a floating modal, in viewport pixels. */
+export interface ModalPosition {
+	x: number;
+	y: number;
+}
+
 export const MODAL_VIEWPORT_PADDING = 32;
+
+/** How much of a floating window must stay on screen so its header - the only
+ *  drag handle and the home of its close button - is always reachable (px). */
+export const MODAL_FLOAT_VISIBLE_MARGIN_X = 140;
+export const MODAL_FLOAT_VISIBLE_MARGIN_Y = 48;
 export const MODAL_MAX_VIEWPORT_RATIO = 0.9;
 
 function isFinitePositiveNumber(value: unknown): value is number {
@@ -59,10 +70,12 @@ export function normalizeModalSize(value: unknown): ModalSize | null {
 	if (!isFinitePositiveNumber(candidate.width) || !isFinitePositiveNumber(candidate.height)) {
 		return null;
 	}
-	return {
-		width: Math.round(candidate.width),
-		height: Math.round(candidate.height),
-	};
+	// Round AFTER the positive check, then re-check: a sub-0.5 width passes
+	// isFinitePositiveNumber but rounds to 0, which would persist a zero-size modal.
+	const width = Math.round(candidate.width);
+	const height = Math.round(candidate.height);
+	if (width <= 0 || height <= 0) return null;
+	return { width, height };
 }
 
 export function sanitizeModalSizes(value: unknown): ModalSizes {
@@ -139,4 +152,50 @@ export function resolveModalSize({
 		viewportPadding,
 		maxViewportRatio,
 	});
+}
+
+export function normalizeModalPosition(value: unknown): ModalPosition | null {
+	if (!value || typeof value !== 'object') return null;
+	const candidate = value as Partial<ModalPosition>;
+	if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) return null;
+	return { x: Math.round(candidate.x as number), y: Math.round(candidate.y as number) };
+}
+
+/**
+ * Keep a floating window's top-left corner somewhere its header stays grabbable.
+ *
+ * Clamped on BOTH ends: never off the top or left edge, and never so far right
+ * or down that the title bar (the only drag handle, and where the close button
+ * lives) is pushed off screen. Without the far-edge clamp, a window dragged to
+ * the corner and then a smaller display or window resize would strand it with
+ * no way back short of resetting the setting.
+ */
+export function clampModalPosition(
+	position: ModalPosition,
+	viewport: ModalViewport = getViewportSize()
+): ModalPosition {
+	const maxX = Math.max(0, viewport.width - MODAL_FLOAT_VISIBLE_MARGIN_X);
+	const maxY = Math.max(0, viewport.height - MODAL_FLOAT_VISIBLE_MARGIN_Y);
+	return {
+		x: Math.round(Math.min(Math.max(0, position.x), maxX)),
+		y: Math.round(Math.min(Math.max(0, position.y), maxY)),
+	};
+}
+
+/**
+ * Where a window should sit the first time it is popped out: offset from the
+ * top-left rather than centered, since the point of floating it is to work
+ * beside it. Clamped, so it lands on screen on a small display too.
+ */
+export function defaultModalFloatPosition(
+	size: ModalSize,
+	viewport: ModalViewport = getViewportSize()
+): ModalPosition {
+	return clampModalPosition(
+		{
+			x: Math.max(MODAL_VIEWPORT_PADDING, viewport.width - size.width - MODAL_VIEWPORT_PADDING),
+			y: MODAL_VIEWPORT_PADDING * 2,
+		},
+		viewport
+	);
 }

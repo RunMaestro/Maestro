@@ -4,11 +4,26 @@ import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { mockTheme } from '../../helpers/mockTheme';
+
+/**
+ * Put an AI command request (and optionally its answer) on a tab, the way
+ * `requestAiCommand` would. Fixed request id so tests can resolve/fail it.
+ */
+function seedAiCommand(sessionId: string, tabId: string, command?: string) {
+	useAiCommandStore.getState().beginAiCommand({
+		requestId: 'req-1',
+		sessionId,
+		tabId,
+		request: 'what is eating disk space',
+	});
+	if (command) useAiCommandStore.getState().resolveAiCommand('req-1', command);
+}
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
@@ -167,10 +182,18 @@ const createMockSession = (overrides: Partial<Session> & { wizardState?: any } =
 // out of props for perf), so an `inputValue` override is seeded into the store
 // here rather than passed as a prop. Call sites stay unchanged.
 const createDefaultProps = (
-	overrides: Partial<Parameters<typeof InputArea>[0]> & { inputValue?: string } = {}
+	overrides: Partial<Parameters<typeof InputArea>[0]> & {
+		inputValue?: string;
+		/** Command mode is composer state, not a `!` in the text - seed it here. */
+		commandMode?: 'off' | 'shell' | 'ai';
+	} = {}
 ) => {
-	const { inputValue = '', ...rest } = overrides;
-	useComposerInputStore.setState({ aiValue: inputValue, terminalValue: inputValue });
+	const { inputValue = '', commandMode = 'off', ...rest } = overrides;
+	useComposerInputStore.setState({
+		aiValue: inputValue,
+		terminalValue: inputValue,
+		aiCommandMode: commandMode,
+	});
 	const inputRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
 	return {
 		session: createMockSession(),
@@ -213,7 +236,7 @@ const createDefaultProps = (
 describe('InputArea', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		useSessionStore.setState({ sessions: [] });
+		useSessionStore.setState({ sessions: [], groups: [] });
 	});
 
 	afterEach(() => {
@@ -229,11 +252,111 @@ describe('InputArea', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
-		it('marks the AI mention overlay for mobile typography synchronization', () => {
-			const props = createDefaultProps();
+		it('uses native textarea text when the AI draft has no recognized mention', () => {
+			const props = createDefaultProps({ inputValue: 'plain text with unknown @todo token' });
 			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
 
-			expect(container.querySelector('.maestro-input-text-overlay')).toBeInTheDocument();
+			expect(container.querySelector('.maestro-input-text-overlay')).not.toBeInTheDocument();
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('renders decoration only for a recognized mention while keeping native text', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'reviewer' });
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+			const props = createDefaultProps({ session, inputValue: 'ask @reviewer to check' });
+			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
+
+			const overlay = container.querySelector('.maestro-input-text-overlay');
+			const mentionDecoration = Array.from(overlay?.querySelectorAll('span') ?? []).find(
+				(element) => element.textContent === '@reviewer'
+			);
+
+			expect(overlay).toBeInTheDocument();
+			expect((overlay as HTMLElement).style.color).toBe('transparent');
+			expect((mentionDecoration as HTMLElement).style.color).toBe('transparent');
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('keeps long wrapped text and an agent mention on the native textarea glyph run', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'maestro-omp' });
+			const longDraft = [
+				'Olhasó',
+				'',
+				'oakoekfapoekfpaokef',
+				'apokfpaoefpokaepofkapokfopkaopkefoakepfokapoekfpoakeopfkaopk',
+				'kAPOKFPAKEOPFKAPOKFOKA',
+				'',
+				'@maestro-omp ',
+				'amoma',
+				'oakkkkkkkefae',
+			].join('\n');
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+
+			const { container } = render(
+				<InputArea {...createDefaultProps({ session, inputValue: longDraft })} />
+			);
+			const textarea = screen.getByRole('textbox');
+			const overlay = container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
+			const mentionDecoration = Array.from(overlay.querySelectorAll('span')).find(
+				(element) => element.textContent === '@maestro-omp'
+			);
+
+			expect(textarea).toHaveValue(longDraft);
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+			expect((textarea as HTMLTextAreaElement).style.wordBreak).toBe('break-word');
+			expect(overlay.textContent).toBe(longDraft);
+			expect(overlay.style.color).toBe('transparent');
+			expect(overlay.style.wordBreak).toBe('break-word');
+			expect((mentionDecoration as HTMLElement).style.color).toBe('transparent');
+		});
+
+		it('preserves a trailing empty caret line in the mention overlay', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'Maestro' });
+			const draft = [
+				'Mas agora, foi corrigido.',
+				'',
+				'Acho que é só s',
+				'',
+				'@Maestro  o que acha?',
+				'',
+			].join('\n');
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+
+			const { container } = render(
+				<InputArea {...createDefaultProps({ session, inputValue: draft })} />
+			);
+			const overlay = container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
+			const trailingLine = screen.getByTestId('maestro-input-overlay-trailing-line');
+
+			expect(overlay.textContent).toBe(`${draft}\u200b`);
+			expect(trailingLine).toHaveTextContent('\u200b');
+		});
+
+		it('shows native text and hides the mention overlay during selection changes', () => {
+			const props = createDefaultProps({ inputValue: 'check @src/index.ts now' });
+			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			const overlay = container.querySelector('.maestro-input-text-overlay');
+
+			expect(overlay).toBeInTheDocument();
+
+			textarea.focus();
+			textarea.setSelectionRange(0, 5);
+			fireEvent(document, new Event('selectionchange'));
+
+			expect(overlay).toHaveStyle({ visibility: 'hidden' });
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+
+			textarea.setSelectionRange(5, 5);
+			fireEvent(document, new Event('selectionchange'));
+
+			expect(overlay).toHaveStyle({ visibility: 'visible' });
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
 
 		it('renders the notification settings button', () => {
@@ -1114,6 +1237,168 @@ describe('InputArea', () => {
 		});
 	});
 
+	describe('Command Mode', () => {
+		// Command mode is composer state; the `!` gesture is consumed on entry, so
+		it('shows the command mode bar when the composer is in command mode', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai', cwd: '/Users/test/project' }),
+				inputValue: 'git status',
+				commandMode: 'shell',
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Command Mode')).toBeInTheDocument();
+		});
+
+		it('shows the bar on an empty command line, before a command is typed', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: '',
+				commandMode: 'shell',
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Command Mode')).toBeInTheDocument();
+		});
+
+		it('tells the user how to get out', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				commandMode: 'shell',
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Esc')).toBeInTheDocument();
+			expect(screen.getByText(/exits/)).toBeInTheDocument();
+		});
+
+		it('hides the bar for an ordinary AI message', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: 'fix the login bug',
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+
+		it('does NOT infer command mode from a leading bang in the text', () => {
+			// A draft can legitimately start with `!` without being a command - that
+			// is what the `\\!` escape produces once unwrapped.
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: '!important note',
+				commandMode: 'off',
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+
+		it('does not show the bar in terminal mode, which is already a shell', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'terminal' }),
+				inputValue: 'ls',
+				commandMode: 'shell',
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('AI Command Mode', () => {
+		beforeEach(() => {
+			useAiCommandStore.setState({ entries: {} });
+		});
+
+		function aiCommandProps(overrides: Record<string, unknown> = {}) {
+			return createDefaultProps({
+				session: createMockSession({ inputMode: 'ai', cwd: '/Users/test/project' }),
+				commandMode: 'ai',
+				...overrides,
+			});
+		}
+
+		it('shows the AI command bar instead of the shell one', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(screen.getByText('AI Command')).toBeInTheDocument();
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+
+		it('says Escape steps back to command mode, not out to the agent', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(screen.getByText(/back to Command Mode/)).toBeInTheDocument();
+		});
+
+		it('asks for a description rather than a command line', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(
+				screen.getByPlaceholderText(/Describe what you want to accomplish/)
+			).toBeInTheDocument();
+		});
+
+		it('shows a spinner while the model is working', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId);
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-thinking')).toBeInTheDocument();
+			expect(screen.getByText('Processing')).toBeInTheDocument();
+		});
+
+		it('shows the proposed command with Run and Cancel', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId, 'du -sh * | sort -rh');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-proposed')).toHaveTextContent('du -sh * | sort -rh');
+			expect(screen.getByTestId('ai-command-run')).toBeInTheDocument();
+			expect(screen.getByTestId('ai-command-cancel')).toBeInTheDocument();
+		});
+
+		it('keeps the request on screen so the command can be judged against it', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId, 'du -sh *');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('what is eating disk space')).toBeInTheDocument();
+		});
+
+		it('surfaces a failure instead of proposing nothing', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId);
+			useAiCommandStore.getState().failAiCommand('req-1', 'the model returned no command');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-error')).toHaveTextContent(
+				'the model returned no command'
+			);
+		});
+
+		it('does not render a proposal parked on a different tab', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, 'some-other-tab', 'du -sh *');
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByTestId('ai-command-proposal')).not.toBeInTheDocument();
+		});
+
+		it('does not offer shell tab completion for a prose request', () => {
+			const props = aiCommandProps({
+				inputValue: 'delete the build output',
+				tabCompletionOpen: true,
+				tabCompletionSuggestions: [{ value: 'build', type: 'file', displayText: 'build' }],
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Tab Completion')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Tab Completion', () => {
 		it('shows tab completion in terminal mode when open', () => {
 			const props = createDefaultProps({
@@ -1132,15 +1417,33 @@ describe('InputArea', () => {
 			expect(screen.getByText('main')).toBeInTheDocument();
 		});
 
-		it('does NOT show tab completion in AI mode', () => {
+		it('does NOT show tab completion for an ordinary AI message', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: 'fix the login bug',
 				tabCompletionOpen: true,
 				tabCompletionSuggestions: [{ value: 'ls', type: 'history', displayText: 'ls' }],
 			});
 			render(<InputArea {...props} />);
 
 			expect(screen.queryByText('Tab Completion')).not.toBeInTheDocument();
+		});
+
+		it('DOES show tab completion when the composer is in command mode', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai', isGitRepo: true }),
+				inputValue: 'git checkout ma',
+				commandMode: 'shell',
+				tabCompletionOpen: true,
+				tabCompletionSuggestions: [
+					{ value: 'git checkout main', type: 'branch', displayText: 'main' },
+				],
+				setTabCompletionFilter: vi.fn(),
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Tab Completion')).toBeInTheDocument();
+			expect(screen.getByText('main')).toBeInTheDocument();
 		});
 
 		it('shows filter buttons for git repos', () => {

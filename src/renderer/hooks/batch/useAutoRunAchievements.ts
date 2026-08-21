@@ -18,8 +18,11 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
+import type { AchievementTimeSource } from '../../types';
 import { cueService } from '../../services/cue';
 import { submitLeaderboardTimeDelta } from '../../services/leaderboard';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
+import type { SleepAwareSpan } from '../../services/systemSleep';
 
 // ============================================================================
 // Dependencies interface
@@ -56,8 +59,12 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	const { setStandingOvationData } = getModalActions();
 
 	// --- Refs ---
-	const autoRunProgressRef = useRef<{ lastUpdateTime: number }>({
-		lastUpdateTime: 0,
+	// `lastUpdateSpan` is sleep-aware: the interval below is frozen while the
+	// machine sleeps but the wall clock is not, so a plain `Date.now()` delta
+	// would credit an overnight sleep as Auto Run time on the first tick after
+	// wake. `null` means no active run.
+	const autoRunProgressRef = useRef<{ lastUpdateSpan: SleepAwareSpan | null }>({
+		lastUpdateSpan: null,
 	});
 
 	// Credit a block of achievement time and raise the standing ovation if it
@@ -65,10 +72,10 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// credit subscription so both paths accrue through the identical
 	// updateAutoRunProgress flow. The local badge and the leaderboard both read
 	// cumulativeTimeMs, so there is a single source of truth and no drift.
-	const creditAchievementTime = (deltaMs: number): void => {
+	const creditAchievementTime = (deltaMs: number, source: AchievementTimeSource): void => {
 		if (deltaMs <= 0) return;
 		const autoRunStats = useSettingsStore.getState().autoRunStats;
-		const { newBadgeLevel } = updateAutoRunProgress(deltaMs);
+		const { newBadgeLevel } = updateAutoRunProgress(deltaMs, source);
 		if (newBadgeLevel !== null) {
 			const badge = CONDUCTOR_BADGES.find((b) => b.level === newBadgeLevel);
 			if (badge) {
@@ -86,27 +93,28 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	useEffect(() => {
 		// Only set up timer if there are active batch runs
 		if (activeBatchSessionIds.length === 0) {
-			autoRunProgressRef.current.lastUpdateTime = 0;
+			autoRunProgressRef.current.lastUpdateSpan = null;
 			return;
 		}
 
 		// Initialize last update time on first active run
-		if (autoRunProgressRef.current.lastUpdateTime === 0) {
-			autoRunProgressRef.current.lastUpdateTime = Date.now();
+		if (autoRunProgressRef.current.lastUpdateSpan === null) {
+			autoRunProgressRef.current.lastUpdateSpan = beginSleepAwareSpan();
 		}
 
 		// Set up interval to update progress every minute
 		const intervalId = setInterval(() => {
-			const now = Date.now();
-			const elapsedMs = now - autoRunProgressRef.current.lastUpdateTime;
-			autoRunProgressRef.current.lastUpdateTime = now;
+			const span = autoRunProgressRef.current.lastUpdateSpan;
+			if (!span) return;
+			const elapsedMs = sleepAwareElapsedMs(span);
+			autoRunProgressRef.current.lastUpdateSpan = beginSleepAwareSpan();
 
 			// Multiply by number of concurrent sessions so each active Auto Run contributes its time
 			// e.g., 2 sessions running for 1 minute = 2 minutes toward cumulative achievement time
 			const deltaMs = elapsedMs * activeBatchSessionIds.length;
 
 			// Update achievement stats with the delta (raises ovation on badge unlock)
-			creditAchievementTime(deltaMs);
+			creditAchievementTime(deltaMs, 'autoRun');
 		}, 60000); // Every 60 seconds
 
 		return () => {
@@ -122,7 +130,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	useEffect(() => {
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
 			if (payload?.type === 'conductorTimeCredit') {
-				creditAchievementTime(payload.creditMs);
+				creditAchievementTime(payload.creditMs, 'cue');
 				// Ship the same delta to the leaderboard. The server accumulates
 				// from deltaMs, so time credited only locally would drift below
 				// the server total forever. deltaRuns is 0 because a Cue run is
@@ -131,7 +139,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 				// This lives here rather than in creditAchievementTime because
 				// the Auto Run timer above shares that helper, and Auto Run
 				// already submits its full elapsed time once on completion
-				// (useBatchHandlers) — submitting per tick too would double-count.
+				// (useBatchHandlers) - submitting per tick too would double-count.
 				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs, source: 'cue' });
 			}
 		});

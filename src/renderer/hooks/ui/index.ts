@@ -29,6 +29,9 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Live CSS-grid column count (for arrow navigation over a responsive grid)
+export { useGridColumnCount } from './useGridColumnCount';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
 
@@ -42,6 +45,15 @@ export type { UseThemeStylesDeps, UseThemeStylesReturn, ThemeColors } from './us
 // Context menu viewport positioning
 export { useContextMenuPosition } from './useContextMenuPosition';
 
+// Portaled dropdown positioning beneath an anchor element
+export { useAnchoredMenuPosition } from './useAnchoredMenuPosition';
+export type {
+	AnchoredMenuPosition,
+	AnchoredMenuOptions,
+	AnchoredMenuPlacement,
+	AnchoredMenuAlign,
+} from './useAnchoredMenuPosition';
+
 // Resizable panel drag behavior
 export { useResizablePanel } from './useResizablePanel';
 export type { UseResizablePanelOptions, UseResizablePanelReturn } from './useResizablePanel';
@@ -53,6 +65,30 @@ export type {
 	UseResizableModalOptions,
 	UseResizableModalReturn,
 } from './useResizableModal';
+// Remembered height for user-resized textareas
+export { useResizableTextarea } from './useResizableTextarea';
+export type {
+	UseResizableTextareaOptions,
+	UseResizableTextareaReturn,
+} from './useResizableTextarea';
+
+// Persisted font zoom for reading surfaces
+export {
+	useFontScale,
+	clampFontScale,
+	FONT_SCALE_MIN,
+	FONT_SCALE_MAX,
+	FONT_SCALE_STEP,
+	FONT_SCALE_DEFAULT,
+} from './useFontScale';
+export type { UseFontScaleReturn } from './useFontScale';
+
+// Client-side pagination for lists already held in memory
+export { usePagination } from './usePagination';
+export type { UsePaginationResult } from './usePagination';
+
+// ResizeObserver-backed element width, for JS-computed layout
+export { useElementWidth } from './useElementWidth';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

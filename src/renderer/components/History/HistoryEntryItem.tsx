@@ -3,7 +3,7 @@ import { ExternalLink, Check, X, Clock, Award, Server } from 'lucide-react';
 import type { Theme, HistoryEntry } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
-import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
+import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './historyConstants';
 import { formatTimestamp } from '../../../shared/formatters';
 import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
@@ -98,8 +98,28 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						</button>
 					)}
 
-					{/* Success/Failure Indicator for AUTO and CUE entries */}
-					{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
+					{/*
+					 * Static label when there is no provider session to jump to. A failed
+					 * consult never captures an agentSessionId, so gating the pill above
+					 * on it silently dropped the subject line the writer had already
+					 * computed - the exact entries where "what was this?" matters most.
+					 */}
+					{!entry.agentSessionId && entry.sessionName && (
+						<span
+							className="px-2 py-0.5 rounded-full text-[10px] font-bold min-w-0 flex-shrink truncate"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title={entry.sessionName}
+						>
+							{entry.sessionName}
+						</span>
+					)}
+
+					{/* Success/Failure Indicator for dispatched work (AUTO / CUE / AGENT) */}
+					{hasRunOutcome(entry.type) && entry.success !== undefined && (
 						<span
 							className="flex items-center justify-center w-5 h-5 rounded-full flex-shrink-0"
 							style={{
@@ -119,7 +139,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							title={
 								entry.success
 									? entry.validated
-										? 'Task completed successfully and human-validated'
+										? 'Task completed successfully, and you marked it as checked'
 										: 'Task completed successfully'
 									: 'Task failed'
 							}

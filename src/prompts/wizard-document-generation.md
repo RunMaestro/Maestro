@@ -103,6 +103,40 @@ In the header component, add a toggle...
 
 **Rule: If the engine should do it, it MUST be a `- [ ]` checkbox. No exceptions.**
 
+## CRITICAL: Human Steps Must NEVER Be Checkboxes
+
+The rule above has an exact mirror image. Every `- [ ]` task is dispatched to an AI agent, so a checkbox that needs a **person** cannot be completed: the run either **stalls forever** waiting on someone who was never asked, or the agent ticks a box for work it never did. A stalled playbook is the single most common way a generated Playbook fails in the field.
+
+Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network access finish this alone?_ If no, it is not a checkbox.
+
+**Never checkbox these:**
+
+- Manual action - "manually test", "by hand", "click through the UI"
+- Visual judgment - "visually verify", "confirm it looks right", "eyeball the spacing"
+- Waiting on a person - "ask the user", "confirm with the team"
+- Approval gates - "get sign-off", "human review before proceeding"
+- Credentials or accounts a person must obtain - "sign up for an API key", "create a Stripe account"
+- Physical or out-of-band work - "plug in the device", "deploy from the admin console"
+
+**Use one of these two instead:**
+
+1. **The run must pause for a person** - emit a HITL gate marker on its own line, above the tasks that depend on the human. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume. This is a deliberate, visible pause instead of a silent stall:
+
+   ```markdown
+   <!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env before the billing tasks run" artifact=".env" -->
+   ```
+
+2. **The work simply isn't the engine's job** - list it as plain `-` bullets under a trailing section the engine never reads:
+
+   ```markdown
+   ## Manual Follow-Up (not executed by Auto Run)
+
+   - Verify the new empty state on a physical iPhone.
+   - Get design sign-off before launch.
+   ```
+
+Note the difference from a legitimate verification task: "Verify dark mode works: toggle switches themes, preference persists after reload, no TypeScript errors (`npm run lint`)" is a **checkbox** - an agent can run the app, the linter, and the tests. "Visually confirm the dark theme looks polished" is **not** - no agent can form that judgment.
+
 ## Task Writing Guidelines
 
 ### Group by Logical Context

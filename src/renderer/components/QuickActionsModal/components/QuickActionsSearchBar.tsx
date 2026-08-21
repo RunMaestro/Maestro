@@ -2,7 +2,7 @@ import type React from 'react';
 import { Search } from 'lucide-react';
 import type { Session, Theme } from '../../../types';
 import type { QuickActionMode } from '../types';
-import { EscCloseHint } from '../../ui/EscCloseHint';
+import { EscCloseButton } from '../../ui/EscCloseButton';
 
 interface QuickActionsSearchBarProps {
 	theme: Theme;
@@ -16,6 +16,7 @@ interface QuickActionsSearchBarProps {
 	setRenameValue: (value: string) => void;
 	inputRef: React.Ref<HTMLInputElement>;
 	onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+	/** Same action as pressing Escape, for pointer-only surfaces. */
 	onClose: () => void;
 }
 
@@ -66,7 +67,7 @@ export function QuickActionsSearchBar({
 					onKeyDown={onKeyDown}
 				/>
 			)}
-			<EscCloseHint theme={theme} onClose={onClose} />
+			<EscCloseButton theme={theme} onClose={onClose} />
 		</div>
 	);
 }

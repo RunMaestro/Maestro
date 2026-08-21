@@ -43,4 +43,6 @@ export interface GiantPreviewProps {
 	containerRef: React.MutableRefObject<HTMLDivElement | null>;
 	/** Optional file path used for stable debugging logs / keys. */
 	filePath?: string;
+	/** Reader font zoom (1 = unzoomed), applied to the CM6 theme. */
+	fontScale?: number;
 }

@@ -29,6 +29,7 @@ import {
 } from './extensionModel';
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
 import { getModalActions } from '../../../stores/modalStore';
+import { launchFromSettings } from '../../../utils/launchFromSettings';
 
 interface ExtensionDetailsProps {
 	theme: Theme;
@@ -549,13 +550,16 @@ export function ExtensionDetails({
 						)
 					) : null}
 
-					{/* Pianola: config lives in its dedicated modal */}
+					{/* Pianola: config lives in its dedicated modal, which renders below
+					    Settings - so the launch closes Settings first. */}
 					{isPianola &&
 						(ext.state === 'enabled' ? (
 							<button
 								type="button"
 								data-testid="extension-open-pianola"
-								onClick={() => getModalActions().setPianolaModalOpen(true)}
+								onClick={() =>
+									launchFromSettings(() => getModalActions().setPianolaModalOpen(true))
+								}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>

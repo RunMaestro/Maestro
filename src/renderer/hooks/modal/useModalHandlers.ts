@@ -27,6 +27,7 @@ import {
 import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
+import { reportAuthFailure } from '../../stores/authOutageStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
@@ -105,6 +106,7 @@ export interface ModalHandlersReturn {
 	// Open handlers
 	handleOpenQueueBrowser: () => void;
 	handleOpenTabSearch: () => void;
+	handleOpenCrossTabSearch: () => void;
 	handleOpenPromptComposer: () => void;
 	handleOpenFuzzySearch: () => void;
 	handleOpenCreatePR: () => void;
@@ -136,6 +138,7 @@ export interface ModalHandlersReturn {
 	handleCloseAutoRunSetup: () => void;
 	handleCloseBatchRunner: () => void;
 	handleCloseTabSwitcher: () => void;
+	handleCloseCrossTabSearch: () => void;
 	handleCloseFileSearch: () => void;
 	handleClosePromptComposer: () => void;
 	handleCloseCreatePRModal: () => void;
@@ -430,14 +433,23 @@ export function useModalHandlers(
 		[inputRef]
 	);
 
-	const handleAuthenticateAfterError = useCallback(
-		(sessionId: string) => {
-			useAgentStore.getState().authenticateAfterError(sessionId);
-			getModalActions().setAgentErrorModalSessionId(null);
-			setTimeout(() => inputRef.current?.focus(), 0);
-		},
-		[inputRef]
-	);
+	// Hand off to the re-authentication terminal rather than the bare terminal
+	// tab: the login flow finishes inside the modal, so the user never has to
+	// remember the provider's login command. Registering the failure first is
+	// what scopes the dialog to the provider and puts this agent on the list to
+	// resume - reached when the user opens a historical error by hand, so the
+	// outage may not exist yet.
+	const handleAuthenticateAfterError = useCallback((sessionId: string) => {
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		const { providerKey } = reportAuthFailure({
+			sessionId,
+			message: session?.agentError?.message ?? 'The provider rejected the stored credentials.',
+			tabId: session?.agentErrorTabId,
+		});
+		useAgentStore.getState().authenticateAfterError(sessionId);
+		getModalActions().setAgentErrorModalSessionId(null);
+		if (providerKey) getModalActions().openReauthModal({ providerKey });
+	}, []);
 
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
 	// otherwise fall back to live session error
@@ -480,6 +492,10 @@ export function useModalHandlers(
 
 	const handleOpenTabSearch = useCallback(() => {
 		getModalActions().setTabSwitcherOpen(true);
+	}, []);
+
+	const handleOpenCrossTabSearch = useCallback(() => {
+		getModalActions().setCrossTabSearchOpen(true);
 	}, []);
 
 	const handleOpenPromptComposer = useCallback(() => {
@@ -534,7 +550,7 @@ export function useModalHandlers(
 	const handleConfigureCue = useCallback(async (_session: Session) => {
 		// Pick the initial tab based on whether *any* Cue config already exists:
 		// returning users land on the Dashboard, first-time users land in the
-		// Pipeline Editor where they can build their first pipeline. Falls back
+		// Pipeline Graph where they can build their first pipeline. Falls back
 		// to 'pipeline' if the status query fails - first-run is the safer
 		// landing for a user who has nothing configured yet.
 		let initialTab: 'dashboard' | 'pipeline' = 'pipeline';
@@ -675,6 +691,10 @@ export function useModalHandlers(
 
 	const handleCloseTabSwitcher = useCallback(() => {
 		getModalActions().setTabSwitcherOpen(false);
+	}, []);
+
+	const handleCloseCrossTabSearch = useCallback(() => {
+		getModalActions().setCrossTabSearchOpen(false);
 	}, []);
 
 	const handleCloseFileSearch = useCallback(() => {
@@ -1062,6 +1082,7 @@ export function useModalHandlers(
 		// Open handlers
 		handleOpenQueueBrowser,
 		handleOpenTabSearch,
+		handleOpenCrossTabSearch,
 		handleOpenPromptComposer,
 		handleOpenFuzzySearch,
 		handleOpenCreatePR,
@@ -1089,6 +1110,7 @@ export function useModalHandlers(
 		handleCloseAutoRunSetup,
 		handleCloseBatchRunner,
 		handleCloseTabSwitcher,
+		handleCloseCrossTabSearch,
 		handleCloseFileSearch,
 		handleClosePromptComposer,
 		handleCloseCreatePRModal,

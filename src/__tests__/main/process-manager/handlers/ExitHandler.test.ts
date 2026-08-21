@@ -52,6 +52,16 @@ vi.mock('../../../../main/stores/getters', () => ({
 
 // For SSH-remote Copilot sessions the events file is read over SSH via
 // remote-fs. Mock the two read paths the shutdown reconciliation uses.
+// The Copilot shutdown wait is the one suspension point inside handleExit, so
+// tests that need a replacement to appear mid-flight drive it from here. Spied
+// rather than stubbed: the existing Copilot reconciliation tests exercise the
+// real implementation, and only the re-spawn tests override it.
+vi.mock('../../../../main/process-manager/CopilotShutdownWaiter', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/process-manager/CopilotShutdownWaiter')>();
+	return { ...actual, waitForCopilotShutdown: vi.fn(actual.waitForCopilotShutdown) };
+});
+
 vi.mock('../../../../main/utils/remote-fs', () => ({
 	readFileRemote: vi.fn(),
 	readFileTailRemote: vi.fn(),
@@ -60,11 +70,20 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import {
+	nextSpawnGeneration,
+	resetSpawnGenerationsForTest,
+} from '../../../../main/process-manager/generation';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import { captureException } from '../../../../main/utils/sentry';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
+import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
+
+const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
+	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
+>('../../../../main/process-manager/CopilotShutdownWaiter');
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
@@ -124,6 +143,9 @@ describe('ExitHandler', () => {
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
 		exitHandler = new ExitHandler({ processes, emitter, bufferManager });
+		// Generations are module state and only ever count up, so they must be
+		// reset between tests or a later test inherits a stale high-water mark.
+		resetSpawnGenerationsForTest();
 		// Default: no SSH remote resolves and no remote reads happen. Individual
 		// SSH tests override these. Reset so per-test mock values don't leak.
 		vi.mocked(getSshRemoteById)
@@ -131,6 +153,9 @@ describe('ExitHandler', () => {
 			.mockReturnValue(null as never);
 		vi.mocked(readFileRemote).mockReset();
 		vi.mocked(readFileTailRemote).mockReset();
+		// Restore the real shutdown wait; only the re-spawn tests replace it.
+		vi.mocked(waitForCopilotShutdown).mockReset();
+		vi.mocked(waitForCopilotShutdown).mockImplementation(actualWaitForCopilotShutdown);
 	});
 
 	describe('stream-json jsonBuffer processing at exit', () => {
@@ -342,6 +367,129 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 0);
 
 			expect(exitEvents).toEqual([{ sessionId: 'test-session', code: 0 }]);
+		});
+	});
+
+	// Regression (issue #1044): handleExit can park mid-flight (Copilot's on-disk
+	// shutdown reconciliation), long enough for the session to be re-spawned under
+	// the same key. Emitting then would settle the successor's turn with the dead
+	// process's exit code, and the trailing delete would orphan a live process.
+	describe('session re-spawned while exit is being handled', () => {
+		// A replacement is simulated the way one really appears: it claims the next
+		// generation for the session id. Doing it through the counter (rather than
+		// swapping the map inside a parser callback) is what the production code
+		// actually keys on, and it stays valid no matter where the guard sits.
+		// The ONLY window in which a replacement can appear is the await inside
+		// handleExit (Copilot's on-disk shutdown reconciliation). These helpers
+		// register a predecessor that will suspend there, and swap the successor in
+		// while it is parked - which is what really happens in the field.
+		let successor: ManagedProcess | null = null;
+
+		const registerPredecessor = (overrides: Partial<ManagedProcess> = {}): ManagedProcess => {
+			const proc = createMockProcess({
+				toolType: 'copilot-cli',
+				agentSessionId: 'copilot-session-1',
+				...overrides,
+			});
+			proc.spawnGeneration = nextSpawnGeneration('test-session');
+			processes.set('test-session', proc);
+			return proc;
+		};
+
+		/** Claim the session id while handleExit is parked in the await. */
+		const supersedeDuringShutdownWait = (): void => {
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				successor = createMockProcess({ pid: 4321 });
+				successor.spawnGeneration = nextSpawnGeneration('test-session');
+				processes.set('test-session', successor);
+				return { shutdown: false } as never;
+			});
+		};
+
+		it('suppresses the exit event and leaves the successor tracked', async () => {
+			registerPredecessor();
+			supersedeDuringShutdownWait();
+
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.get('test-session')).toBe(successor);
+		});
+
+		// Suppressing only the final emit is not enough: everything downstream of
+		// the await writes into shared per-session state, so the predecessor's
+		// buffered bytes would surface inside the SUCCESSOR's reply and its duration
+		// would be recorded against the successor's turn.
+		it('does not flush its buffer or settle a query into the successor', async () => {
+			registerPredecessor({ isBatchMode: true, querySource: 'user' });
+			supersedeDuringShutdownWait();
+
+			const onQueryComplete = vi.fn();
+			emitter.on('query-complete', onQueryComplete);
+			const flushSpy = vi.spyOn(bufferManager, 'flushDataBuffer');
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onQueryComplete).not.toHaveBeenCalled();
+			// The one flush at the top of handleExit runs before the await, so no
+			// replacement can exist yet and it is harmless. The FINAL flush - the one
+			// that would push this process's bytes into the successor's stream - must
+			// not happen.
+			expect(flushSpy).toHaveBeenCalledTimes(1);
+		});
+
+		// The parser is reached only AFTER the guard, so a superseded process must
+		// never produce agent-error / usage / result text for the live session.
+		it('does not run parser side effects for a superseded process', async () => {
+			const parser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'unknown',
+					message: 'boom',
+				})) as unknown as AgentOutputParser['detectErrorFromExit'],
+			});
+			registerPredecessor({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				streamedText: 'predecessor output',
+				outputParser: parser,
+			});
+			supersedeDuringShutdownWait();
+
+			const onAgentError = vi.fn();
+			const dataEvents: string[] = [];
+			emitter.on('agent-error', onAgentError);
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(parser.detectErrorFromExit).not.toHaveBeenCalled();
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(dataEvents).not.toContain('predecessor output');
+		});
+
+		// The identity check can only answer while an entry exists. Once the
+		// successor finishes and deletes its own entry, `get()` returns undefined
+		// and a predecessor still draining would look current again - emitting a
+		// second exit for a session that already settled.
+		it('stays suppressed after the successor has finished and removed itself', async () => {
+			registerPredecessor();
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				// Successor claims the id, runs, and untracks itself - all while this
+				// handler is parked. The map is empty again by the time we resume.
+				nextSpawnGeneration('test-session');
+				processes.delete('test-session');
+				return { shutdown: false } as never;
+			});
+
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onExit).not.toHaveBeenCalled();
 		});
 	});
 

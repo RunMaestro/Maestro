@@ -12,6 +12,8 @@ import {
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useStuckTabSignature } from '../../stores/retryStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useModalStore } from '../../stores/modalStore';
 import { AITab as AITabComponent } from './AITab';
 import { BrowserTabItem } from './BrowserTabItem';
 import { FileTab } from './FileTab';
@@ -55,12 +57,14 @@ function TabBarInner({
 	onSummarizeAndContinue,
 	onCopyContext,
 	onExportHtml,
+	onSnooze,
 	onPublishGist,
 	ghCliAvailable,
 	showUnreadOnly: showUnreadOnlyProp,
 	onToggleUnreadFilter,
 	onOpenTabSearch,
 	onOpenOutputSearch,
+	onOpenCrossTabSearch,
 	onCloseAllTabs,
 	onCloseOtherTabs,
 	onCloseTabsLeft,
@@ -126,8 +130,19 @@ function TabBarInner({
 
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	// Snoozed tabs are a cross-agent concept, so the count and the list opener
+	// come straight from the stores rather than through TabBar's prop surface.
+	const snoozedTabCount = useSessionStore((s) =>
+		s.sessions.reduce((total, session) => total + (session.snoozedTabs?.length ?? 0), 0)
+	);
+	const openSnoozedTabs = useCallback(() => {
+		useModalStore.getState().openModal('snoozedTabs');
+	}, []);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
+	const showTerminalTabsInUnreadFilter = useSettingsStore((s) => s.showTerminalTabsInUnreadFilter);
+	const showBrowserTabsInUnreadFilter = useSettingsStore((s) => s.showBrowserTabsInUnreadFilter);
 	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
 	const tabBarWheelScroll = useSettingsStore((s) => s.tabBarWheelScroll);
 
@@ -256,9 +271,10 @@ function TabBarInner({
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
 		if (!ownsActiveAgent) return [];
 		if (!showUnreadOnly) return unifiedTabs;
-		// In filter mode: AI tabs filtered by unread/busy/active/draft;
-		// file and terminal tabs always shown (they have no unread state,
-		// and hiding them causes navigation/display mismatch).
+		// In filter mode: AI tabs filtered by unread/busy/active/draft. File,
+		// terminal and browser tabs have no unread state, so each kind is hidden
+		// unless its opt-in setting is on - the currently active tab of that kind
+		// always stays visible so the user never loses sight of what's on screen.
 		return unifiedTabs.filter((ut) => {
 			if (ut.type === 'ai') {
 				return (
@@ -283,8 +299,11 @@ function TabBarInner({
 			if (ut.type === 'group') {
 				return unreadGroupIds ? unreadGroupIds.has(ut.id) : true;
 			}
-			// Terminal tabs are always visible
-			return true;
+			if (ut.type === 'browser') {
+				return showBrowserTabsInUnreadFilter || ut.id === activeBrowserTabId;
+			}
+			// Terminal tabs
+			return showTerminalTabsInUnreadFilter || ut.id === activeTerminalTabId;
 		});
 	}, [
 		unifiedTabs,
@@ -297,6 +316,9 @@ function TabBarInner({
 		showFilePreviewsInUnreadFilter,
 		ownsActiveAgent,
 		unreadGroupIds,
+		showTerminalTabsInUnreadFilter,
+		showBrowserTabsInUnreadFilter,
+		activeBrowserTabId,
 		stuckTabIds,
 		queuedTabIds,
 	]);
@@ -572,6 +594,7 @@ function TabBarInner({
 			onSummarizeAndContinue && (tab.logs?.length ?? 0) >= 5 ? onSummarizeAndContinue : undefined,
 		onCopyContext: onCopyContext && (tab.logs?.length ?? 0) >= 1 ? onCopyContext : undefined,
 		onExportHtml: onExportHtml || undefined,
+		onSnooze: onSnooze || undefined,
 		onPublishGist:
 			onPublishGist && ghCliAvailable && (tab.logs?.length ?? 0) >= 1 ? onPublishGist : undefined,
 		onMoveToFirst:
@@ -621,9 +644,13 @@ function TabBarInner({
 						theme={theme}
 						onSearchTabs={onOpenTabSearch}
 						onSearchMessages={onOpenOutputSearch ?? onOpenTabSearch}
+						onSearchAllTabs={onOpenCrossTabSearch}
 						tabSwitcherKeys={tabShortcuts.tabSwitcher?.keys ?? ['Alt', 'Meta', 't']}
 						searchOutputKeys={shortcuts.searchOutput?.keys ?? ['Meta', 'f']}
+						searchAllTabsKeys={shortcuts.searchAllTabs?.keys ?? ['Alt', 'Meta', 'f']}
 						openTabCount={unifiedTabs?.length ?? tabs.length}
+						onShowSnoozedTabs={openSnoozedTabs}
+						snoozedTabCount={snoozedTabCount}
 					/>
 				)}
 				<button

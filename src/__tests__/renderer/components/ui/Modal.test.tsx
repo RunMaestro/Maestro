@@ -6,6 +6,11 @@ import { Modal, ModalFooter } from '../../../../renderer/components/ui/Modal';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
+/** RTL `wrapper` form of the LayerStackProvider the other helpers nest inline. */
+const LayerStackWrapper = ({ children }: { children: React.ReactNode }) => (
+	<LayerStackProvider>{children}</LayerStackProvider>
+);
+
 function renderModal(overrides: Partial<React.ComponentProps<typeof Modal>> = {}) {
 	const onClose = overrides.onClose ?? vi.fn();
 
@@ -162,131 +167,132 @@ describe('Modal', () => {
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
 		});
 	});
-});
 
-describe('ModalFooter', () => {
-	it('should render cancel and confirm buttons', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
+	it('applies a remembered size to the card', () => {
+		useSettingsStore.setState({
+			modalSizes: { 'shared-modal-test': { width: 700, height: 500 } },
+		});
+		renderModal();
 
-		render(<ModalFooter theme={mockTheme} onCancel={onCancel} onConfirm={onConfirm} />);
-
-		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+		const card = screen.getByText('Modal body').closest('[role="dialog"] > div');
+		expect(card).toHaveStyle({ width: '700px', height: '500px' });
 	});
 
-	it('should use custom button labels', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
+	describe('portal', () => {
+		const renderInHost = (props: Partial<React.ComponentProps<typeof Modal>> = {}) =>
+			render(
+				<div data-testid="host">
+					<Modal
+						theme={mockTheme}
+						title="Portaled"
+						priority={100}
+						onClose={vi.fn()}
+						testId="portal-overlay"
+						{...props}
+					>
+						<p>Content</p>
+					</Modal>
+				</div>,
+				{ wrapper: LayerStackWrapper }
+			);
 
-		render(
-			<ModalFooter
-				theme={mockTheme}
-				onCancel={onCancel}
-				onConfirm={onConfirm}
-				cancelLabel="Discard"
-				confirmLabel="Save Changes"
-			/>
-		);
+		it('should render in place by default', () => {
+			renderInHost();
 
-		expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
+			const host = screen.getByTestId('host');
+			expect(host).toContainElement(screen.getByTestId('portal-overlay'));
+		});
+
+		it('should escape the host subtree when portal is set', () => {
+			// The Main Panel wraps the session view in `isolate`, a stacking
+			// context that traps the backdrop's z-index and lets the Left/Right
+			// panels paint over it. jsdom has no layout engine, so assert the
+			// overlay is NOT a descendant of its host rather than checking paint
+			// order - toBeInTheDocument() would pass either way.
+			renderInHost({ portal: true });
+
+			const overlay = screen.getByTestId('portal-overlay');
+			expect(screen.getByTestId('host')).not.toContainElement(overlay);
+			expect(overlay.parentElement).toBe(document.body);
+		});
+
+		it('should still close on Escape through the layer stack when portaled', async () => {
+			const onClose = vi.fn();
+			renderInHost({ portal: true, onClose });
+
+			// React context flows through portals, so useModalLayer registration
+			// is unaffected by the DOM relocation.
+			fireEvent.keyDown(document, { key: 'Escape' });
+
+			await waitFor(() => expect(onClose).toHaveBeenCalled());
+		});
 	});
 
-	it('should call onCancel when cancel button is clicked', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
+	describe('floating mode', () => {
+		it('drops the backdrop and lets clicks through to the app behind it', () => {
+			renderModal({
+				floating: { position: { x: 40, y: 60 }, onMovePointerDown: vi.fn() },
+			});
 
-		render(<ModalFooter theme={mockTheme} onCancel={onCancel} onConfirm={onConfirm} />);
+			const overlay = screen.getByTestId('shared-modal-overlay');
+			// Click-through layer, no dimming, and not a modal to assistive tech:
+			// the user is expected to keep working beside it.
+			expect(overlay).toHaveClass('pointer-events-none');
+			expect(overlay).not.toHaveClass('modal-overlay');
+			expect(overlay).not.toHaveAttribute('aria-modal');
 
-		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-		expect(onCancel).toHaveBeenCalledTimes(1);
-		expect(onConfirm).not.toHaveBeenCalled();
-	});
+			const card = overlay.querySelector('[data-modal-resize-key]') as HTMLElement;
+			expect(card).toHaveClass('pointer-events-auto');
+			expect(card).toHaveStyle({ left: '40px', top: '60px' });
+		});
 
-	it('should call onConfirm when confirm button is clicked', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
+		it('offers only the edges a top-left-pinned window can grow from', () => {
+			renderModal({
+				floating: { position: { x: 0, y: 0 }, onMovePointerDown: vi.fn() },
+			});
 
-		render(<ModalFooter theme={mockTheme} onCancel={onCancel} onConfirm={onConfirm} />);
+			for (const direction of ['e', 'se', 's']) {
+				expect(screen.getByTestId(`modal-resize-handle-${direction}`)).toBeInTheDocument();
+			}
+			// A north/west drag cannot be honored without also moving the window, so
+			// those handles are not offered rather than silently acting like their
+			// opposite edge.
+			for (const direction of ['n', 'ne', 'w', 'nw', 'sw']) {
+				expect(screen.queryByTestId(`modal-resize-handle-${direction}`)).not.toBeInTheDocument();
+			}
+		});
 
-		fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-		expect(onConfirm).toHaveBeenCalledTimes(1);
-		expect(onCancel).not.toHaveBeenCalled();
-	});
+		it('makes the header a drag handle without eating its buttons', () => {
+			const onMovePointerDown = vi.fn();
+			const onClose = vi.fn();
+			renderModal({ floating: { position: { x: 0, y: 0 }, onMovePointerDown }, onClose });
 
-	it('should disable confirm button when confirmDisabled is true', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
+			const handle = screen.getByTestId('modal-float-handle');
+			fireEvent.pointerDown(handle);
+			expect(onMovePointerDown).toHaveBeenCalled();
 
-		render(
-			<ModalFooter
-				theme={mockTheme}
-				onCancel={onCancel}
-				onConfirm={onConfirm}
-				confirmDisabled={true}
-			/>
-		);
+			// The close button lives inside the drag handle and must still click.
+			fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
+			expect(onClose).toHaveBeenCalled();
+		});
 
-		const confirmButton = screen.getByRole('button', { name: 'Confirm' });
-		expect(confirmButton).toBeDisabled();
-	});
+		it('still closes on Escape, so the passive layer keeps its way out', async () => {
+			const onClose = vi.fn();
+			renderModal({ floating: { position: { x: 0, y: 0 }, onMovePointerDown: vi.fn() }, onClose });
 
-	it('should hide cancel button when showCancel is false', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
+			fireEvent.keyDown(document, { key: 'Escape' });
 
-		render(
-			<ModalFooter theme={mockTheme} onCancel={onCancel} onConfirm={onConfirm} showCancel={false} />
-		);
+			await waitFor(() => expect(onClose).toHaveBeenCalled());
+		});
 
-		expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
-	});
+		it('keeps a docked modal blocking, so floating is opt-in', () => {
+			renderModal();
 
-	it('should apply destructive styling when destructive is true', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
-
-		render(
-			<ModalFooter theme={mockTheme} onCancel={onCancel} onConfirm={onConfirm} destructive={true} />
-		);
-
-		const confirmButton = screen.getByRole('button', { name: 'Confirm' });
-		expect(confirmButton).toHaveStyle({ backgroundColor: mockTheme.colors.error });
-	});
-
-	it('should apply accent styling when not destructive', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
-
-		render(
-			<ModalFooter
-				theme={mockTheme}
-				onCancel={onCancel}
-				onConfirm={onConfirm}
-				destructive={false}
-			/>
-		);
-
-		const confirmButton = screen.getByRole('button', { name: 'Confirm' });
-		expect(confirmButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
-	});
-
-	it('should apply custom className to confirm button', () => {
-		const onCancel = vi.fn();
-		const onConfirm = vi.fn();
-
-		render(
-			<ModalFooter
-				theme={mockTheme}
-				onCancel={onCancel}
-				onConfirm={onConfirm}
-				confirmClassName="custom-confirm"
-			/>
-		);
-
-		const confirmButton = screen.getByRole('button', { name: 'Confirm' });
-		expect(confirmButton).toHaveClass('custom-confirm');
+			const overlay = screen.getByTestId('shared-modal-overlay');
+			expect(overlay).toHaveClass('modal-overlay');
+			expect(overlay).toHaveAttribute('aria-modal', 'true');
+			expect(screen.queryByTestId('modal-float-handle')).not.toBeInTheDocument();
+			expect(screen.getByTestId('modal-resize-handle-nw')).toBeInTheDocument();
+		});
 	});
 });

@@ -15,6 +15,7 @@
 
 import { visit } from 'unist-util-visit';
 import type { Root, Text, Link, Image } from 'mdast';
+import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import type { FileNode } from '../types/fileTree';
 import {
 	buildFileTreeIndices,
@@ -240,7 +241,8 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							type: 'link',
 						});
 					} else {
-						// Outside projectRoot - use file:// URL to open in system default app
+						// Outside projectRoot - use a file:// URL, which openFileUrl routes
+						// to the preview tab, the player, or the OS by file type
 						matches.push({
 							start: tildeMatch.index,
 							end: tildeMatch.index + tildePath.length,
@@ -334,7 +336,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					} as Image);
 				} else if (match.absoluteUrl) {
 					// External file link (outside projectRoot) - use file:// URL
-					// MarkdownRenderer's <a> handler calls shell.openPath for file:// URLs
+					// MarkdownRenderer's <a> handler passes file:// URLs to openFileUrl
 					replacements.push({
 						type: 'link',
 						url: match.absoluteUrl,
@@ -502,8 +504,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				return;
 			}
 
-			// Decode URL-encoded characters (e.g., %20 -> space)
-			const decodedHref = decodeURIComponent(href);
+			// Decode URL-encoded characters (e.g., %20 -> space). Must not throw:
+			// this runs inside the unified transform, so a URIError from a stray
+			// '%' in a link target ("[see](100% done.md)") propagates out of
+			// react-markdown's render and blanks the whole message. (MAESTRO-XS)
+			const decodedHref = safeDecodeURIComponent(href);
 
 			let resolvedPath: string | null = null;
 

@@ -2,8 +2,6 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
 	X,
-	Bot,
-	User,
 	Copy,
 	Check,
 	CheckCircle,
@@ -34,10 +32,11 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
-import { DoubleCheck } from './History';
+import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './History';
+import { HoverTooltip } from './ui/HoverTooltip';
 import { safeClipboardWrite } from '../utils/clipboard';
-import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -146,31 +145,11 @@ export function HistoryDetailModal({
 
 	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'datetime');
 
-	// Get pill color based on type
-	const getPillColor = () => {
-		if (entry.type === 'AUTO') {
-			return {
-				bg: theme.colors.warning + '20',
-				text: theme.colors.warning,
-				border: theme.colors.warning + '40',
-			};
-		}
-		if (entry.type === 'CUE') {
-			return {
-				bg: '#06b6d420',
-				text: '#06b6d4',
-				border: '#06b6d440',
-			};
-		}
-		return {
-			bg: theme.colors.accent + '20',
-			text: theme.colors.accent,
-			border: theme.colors.accent + '40',
-		};
-	};
-
-	const colors = getPillColor();
-	const Icon = entry.type === 'AUTO' ? Bot : entry.type === 'CUE' ? Zap : User;
+	// Pill color + icon come from the shared History helpers so this modal can
+	// never drift from the list rows behind it (it used to re-declare both,
+	// hardcoding CUE's hex, which is how AGENT would have been missed here).
+	const colors = getPillColor(entry.type, theme);
+	const Icon = getEntryIcon(entry.type);
 
 	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
 	// claude --print). Absent on non-Claude and older entries. Shares its label and
@@ -231,6 +210,8 @@ export function HistoryDetailModal({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -270,8 +251,8 @@ export function HistoryDetailModal({
 						)}
 
 						<div className="flex items-center gap-3 flex-wrap">
-							{/* Success/Failure Indicator for AUTO and CUE entries */}
-							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
+							{/* Success/Failure Indicator for dispatched work (AUTO / CUE / AGENT) */}
+							{hasRunOutcome(entry.type) && entry.success !== undefined && (
 								<span
 									className="flex items-center justify-center w-6 h-6 rounded-full"
 									style={{
@@ -291,7 +272,7 @@ export function HistoryDetailModal({
 									title={
 										entry.success
 											? entry.validated
-												? 'Task completed successfully and human-validated'
+												? 'Task completed successfully, and you marked it as checked'
 												: 'Task completed successfully'
 											: 'Task failed'
 									}
@@ -433,27 +414,36 @@ export function HistoryDetailModal({
 								</span>
 							)}
 
-							{/* Validated toggle for AUTO and CUE entries */}
-							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success && onUpdate && (
-								<button
-									onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
-									className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
-									style={{
-										backgroundColor: entry.validated
-											? theme.colors.success + '20'
-											: theme.colors.bgActivity,
-										color: entry.validated ? theme.colors.success : theme.colors.textDim,
-										border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
-									}}
-									title={entry.validated ? 'Mark as not validated' : 'Mark as human-validated'}
+							{/* Validated toggle for dispatched work (AUTO / CUE / AGENT) */}
+							{hasRunOutcome(entry.type) && entry.success && onUpdate && (
+								<HoverTooltip
+									theme={theme}
+									maxWidth={260}
+									label={
+										entry.validated
+											? 'Clear the mark that says you checked this entry yourself.'
+											: 'Mark that you checked this entry yourself. Entirely optional, and only a bookmark for your own review pass - it changes nothing about the run.'
+									}
 								>
-									{entry.validated ? (
-										<DoubleCheck className="w-3 h-3" />
-									) : (
-										<Check className="w-3 h-3" />
-									)}
-									Validated
-								</button>
+									<button
+										onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
+										className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
+										style={{
+											backgroundColor: entry.validated
+												? theme.colors.success + '20'
+												: theme.colors.bgActivity,
+											color: entry.validated ? theme.colors.success : theme.colors.textDim,
+											border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
+										}}
+									>
+										{entry.validated ? (
+											<DoubleCheck className="w-3 h-3" />
+										) : (
+											<Check className="w-3 h-3" />
+										)}
+										Validated
+									</button>
+								</HoverTooltip>
 							)}
 
 							{/* Timestamp - right-justified (last element pushes to the right edge) */}
@@ -727,9 +717,8 @@ export function HistoryDetailModal({
 									<AlertTriangle className="w-5 h-5" style={{ color: theme.colors.error }} />
 								</div>
 								<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
-									Are you sure you want to delete this{' '}
-									{entry.type === 'AUTO' ? 'auto' : entry.type === 'CUE' ? 'cue' : 'user'} history
-									entry? This action cannot be undone.
+									Are you sure you want to delete this {entry.type.toLowerCase()} history entry?
+									This action cannot be undone.
 								</p>
 							</div>
 							<div className="mt-6 flex justify-end gap-2">

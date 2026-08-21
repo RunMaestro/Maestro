@@ -8,7 +8,10 @@
  *   - `maestro-file://` / `data-maestro-file`  -> onFileClick
  *   - `maestro://`                              -> openMaestroLink (always)
  *   - `#anchor`                                 -> onAnchorClick / scroll (behavior.anchors)
- *   - `http(s)://` / `file://` / `git@`         -> inline open (behavior.directExternal, chat)
+ *   - `http(s)://` / `file://` / `git@`         -> inline open (behavior.directExternal, chat).
+ *     A `file://` target Maestro can render itself (JSON, text, source, media)
+ *     goes to onFileClick instead of the OS, so it lands in the preview tab or
+ *     the player; only OS-owned types are handed off - see `openFileUrl`.
  *   - `http(s)://` / `mailto:`                  -> onExternalLinkClick (doc)
  *   - relative path                             -> onFileClick (behavior.relativeAsFile, doc)
  *
@@ -19,6 +22,7 @@
 import React from 'react';
 import type { Theme } from '../../../types';
 import { openUrl } from '../../../utils/openUrl';
+import { openFileUrl } from '../../../utils/openFileUrl';
 import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { RenderedMentionChip } from './RenderedMentionChip';
 import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
@@ -181,13 +185,15 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 			}
 
 			if (behavior.directExternal) {
-				// Chat: open http/https via openUrl; file:// via openPath; attempt
+				// Chat: open http/https via openUrl; file:// via openFileUrl (which
+				// keeps anything Maestro can render in the preview tab or its own
+				// player rather than handing it to the OS); attempt
 				// git@host:user/repo -> https conversion for anything else.
 				// `metaKey || ctrlKey`: on macOS Cmd-click sets metaKey, so translate
 				// it to the same ctrlKey inversion openUrl expects (#1060).
-				if (/^file:\/\//.test(href)) {
-					window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
-				} else if (/^https?:\/\//.test(href)) {
+				if (openFileUrl(href, onFileClick)) return;
+
+				if (/^https?:\/\//.test(href)) {
 					openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 				} else {
 					// gitToHttps is a pure string transform (no throw); convert and open

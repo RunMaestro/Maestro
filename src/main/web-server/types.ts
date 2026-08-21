@@ -210,7 +210,7 @@ export interface AutoRunState {
 	errorTaskDescription?: string;
 	/** True when this run pursues a free-text goal instead of documents */
 	goalMode?: boolean;
-	/** Latest self-reported progress toward the goal (0–100) */
+	/** Latest self-reported progress toward the goal (0-100) */
 	goalProgress?: number;
 	/** One-line rationale accompanying the latest goal progress report */
 	goalRationale?: string;
@@ -252,6 +252,18 @@ export interface WebClientMessage {
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
+	/**
+	 * `dispatch --notify-on-complete <agent>`: agent to wake with a real turn
+	 * when THIS dispatch finishes. Accepted on send_command,
+	 * new_ai_tab_with_prompt and enqueue_command.
+	 */
+	notifyOnComplete?: string;
+	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	callbackTab?: string;
+	/** Overrides the default callback prompt body. */
+	callbackPrompt?: string;
+	/** Give-up window for the callback, in seconds. */
+	callbackTimeout?: number;
 	[key: string]: unknown;
 }
 
@@ -348,6 +360,13 @@ export type OpenFileTabCallback = (
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
+ * Open one of the app's modals/dashboards (see `shared/uiSurfaces.ts` for the
+ * registry). `surface` is a `UiSurface.id`; `tab` is an optional tab id within
+ * it, already validated against that surface.
+ */
+export type OpenModalParams = { surface: string; tab?: string };
+export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
+/**
  * Callback type for atomically creating a new AI tab and dispatching a prompt into it.
  * Returns the new tab id alongside success so callers (e.g. `maestro-cli dispatch
  * --new-tab`) can address the same tab on later calls without owning a persistent
@@ -366,6 +385,7 @@ export type NewAITabWithPromptCallback = (
  * dispatched immediately through the same path as a plain `dispatch`. Surfaced
  * so `maestro-cli dispatch --queue` can report the queue position to callers.
  */
+export type EnqueueCommandFailureReason = 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 export type EnqueueCommandResult = {
 	success: boolean;
 	tabId?: string;
@@ -378,6 +398,13 @@ export type EnqueueCommandResult = {
 	/** Id of the queued item, for later tracking or removal. */
 	itemId?: string;
 	error?: string;
+	/**
+	 * Machine-readable cause of a failure, so callers can react to a specific
+	 * one without parsing `error`. Dispatch callbacks use `tab-not-found` to
+	 * fall back to agent-level delivery when a `--callback-tab` has since been
+	 * closed (see `deliverCallback` in `dispatch-callbacks/`).
+	 */
+	reason?: EnqueueCommandFailureReason;
 };
 export type EnqueueCommandCallback = (
 	sessionId: string,
@@ -424,16 +451,88 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
-export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
+/**
+ * Opens a URL as a browser tab in the desktop app.
+ *
+ * `background: true` creates the tab without stealing the user's place: the
+ * active agent is left alone and the new tab does not become the visible one.
+ * Agents doing research should always use it - a foreground tab yanks the
+ * window out from under whatever the user is doing.
+ *
+ * Returns the created tab's id so the caller can close it again when done
+ * (see `CloseBrowserTabCallback`).
+ */
+export interface OpenBrowserTabOptions {
+	background?: boolean;
+}
+export type OpenBrowserTabResult = { success: boolean; tabId?: string };
+export type OpenBrowserTabCallback = (
+	sessionId: string,
+	url: string,
+	options?: OpenBrowserTabOptions
+) => Promise<OpenBrowserTabResult>;
+
+/**
+ * Closes a browser tab by id. The owning agent is resolved in the renderer, so
+ * callers only need the tab id returned by `OpenBrowserTabCallback`.
+ */
+export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
 	shell?: string;
 	name?: string | null;
+	/**
+	 * Command to run in the new terminal. Stored as the tab's startup command, so
+	 * it also re-runs if the tab is restarted or the app is reopened - which is
+	 * the behavior a long-running `npm run dev` wants.
+	 */
+	command?: string;
+}
+export interface OpenTerminalTabResult {
+	success: boolean;
+	tabId?: string;
 }
 export type OpenTerminalTabCallback = (
 	sessionId: string,
 	config: OpenTerminalTabConfig
-) => Promise<boolean>;
+) => Promise<OpenTerminalTabResult>;
+
+/**
+ * Writes raw data into an already-open desktop terminal tab. `tabRef` is a tab
+ * id or display name; omitted means the agent's active terminal tab.
+ */
+export interface WriteTerminalTabPayload {
+	tabRef?: string;
+	data: string;
+}
+export interface WriteTerminalTabResult {
+	success: boolean;
+	error?: string;
+	/** The tab that actually received the write, echoed back for reporting. */
+	tabId?: string;
+	tabName?: string;
+}
+export type WriteTerminalTabCallback = (
+	sessionId: string,
+	payload: WriteTerminalTabPayload
+) => Promise<WriteTerminalTabResult>;
+
+/**
+ * A desktop terminal tab. Terminal tabs live only in renderer state, so this is
+ * assembled there and passed back through the remote bridge.
+ */
+export interface TerminalTabInfo {
+	tabId: string;
+	agentId: string;
+	agentName: string;
+	name: string;
+	cwd: string;
+	pid: number;
+	state: string;
+	active: boolean;
+	startupCommand: string | null;
+}
+export type ListTerminalTabsCallback = (sessionId?: string) => Promise<TerminalTabInfo[]>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
 
 /**
@@ -560,6 +659,13 @@ export type ConfigureAutoRunCallback = (
 		maxLoops?: number;
 		saveAsPlaybook?: string;
 		launch?: boolean;
+		/**
+		 * Per-run model/effort override (CLI `--model` / `--effort`). Wins over the
+		 * session's configured model for this run's spawns only; never written back
+		 * to the session. Absent means "use the agent default".
+		 */
+		model?: string;
+		effort?: string;
 		worktree?: {
 			enabled: boolean;
 			path: string;
@@ -856,6 +962,14 @@ export interface CreateSessionConfig {
 	customModel?: string;
 	customEffort?: string;
 	customContextWindow?: number;
+	/**
+	 * Provenance of {@link customContextWindow} (finding AD1). `'user-edited'`
+	 * only when a human deliberately chose the number - typing
+	 * `--context-window` on the CLI qualifies. The desktop New Agent modal does
+	 * NOT set it: its control is seeded from the agent-level config, so that
+	 * write is a materialization of the default rather than a choice.
+	 */
+	contextWindowSource?: 'user-edited';
 	customProviderPath?: string;
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
