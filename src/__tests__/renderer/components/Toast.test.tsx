@@ -371,6 +371,43 @@ describe('Toast', () => {
 			render(<ToastContainer theme={mockTheme} />);
 			expect(document.body.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
 		});
+
+		// Regression: these guards used to read `toast.duration && toast.duration > 0`.
+		// With a duration of 0 the leading truthiness check evaluates to the NUMBER
+		// 0 rather than a boolean, and React renders a bare `0` text node where the
+		// element should have been. The "never auto-dismiss" setting makes
+		// `duration` 0 without setting `dismissible`, so the combination is
+		// reachable. Asserting on whole-element text would not catch it (the stray
+		// node sits among real content, and the arrival timestamp legitimately
+		// contains digits), so look for a text node that is literally "0".
+		const strayZeroCount = (): number => {
+			const root = document.body.querySelector('.fixed.bottom-0.right-4');
+			if (!root) return 0;
+			const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+			let count = 0;
+			while (walker.nextNode()) {
+				if (walker.currentNode.textContent?.trim() === '0') count++;
+			}
+			return count;
+		};
+
+		it('renders no stray zero when duration is 0 and the toast is not dismissible', () => {
+			setStoreToasts([createMockToast({ duration: 0, dismissible: false })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(document.body.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
+			expect(strayZeroCount()).toBe(0);
+		});
+
+		// Same shape on the duration badge: a task that rounds to 0ms printed a
+		// bare "0" instead of rendering nothing.
+		it('renders no stray zero when taskDuration is 0', () => {
+			setStoreToasts([createMockToast({ taskDuration: 0, duration: 5000 })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.queryByText(/Completed in/)).not.toBeInTheDocument();
+			expect(strayZeroCount()).toBe(0);
+		});
 	});
 
 	describe('action URL link', () => {
