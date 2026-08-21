@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CueModalHeader } from '../../../../renderer/components/CueModal/CueModalHeader';
+import { CUE_MODAL_TABS } from '../../../../shared/uiSurfaces';
 import type { Theme } from '../../../../renderer/types';
 
 const theme = {
@@ -37,11 +38,46 @@ describe('CueModalHeader', () => {
 		expect(props.setActiveTab).toHaveBeenCalledWith('dashboard');
 	});
 
-	it('clicking Pipeline tab calls setActiveTab("pipeline")', () => {
+	// The graph tab kept its 'pipeline' id when its label became "Pipeline
+	// Graph", so existing deep links (`maestro-cli open cue --tab pipeline`,
+	// the YAML editor's nav button) still land on the canvas.
+	it('clicking Pipeline Graph tab calls setActiveTab("pipeline")', () => {
 		const props = makeProps();
 		render(<CueModalHeader {...props} />);
-		fireEvent.click(screen.getByText('Pipeline Editor'));
+		fireEvent.click(screen.getByText('Pipeline Graph'));
 		expect(props.setActiveTab).toHaveBeenCalledWith('pipeline');
+	});
+
+	it('clicking Pipeline List tab calls setActiveTab("pipeline-list")', () => {
+		const props = makeProps();
+		render(<CueModalHeader {...props} />);
+		fireEvent.click(screen.getByText('Pipeline List'));
+		expect(props.setActiveTab).toHaveBeenCalledWith('pipeline-list');
+	});
+
+	it('clicking Scheduled Tasks tab calls setActiveTab("scheduled")', () => {
+		const props = makeProps();
+		render(<CueModalHeader {...props} />);
+		fireEvent.click(screen.getByText('Scheduled Tasks'));
+		expect(props.setActiveTab).toHaveBeenCalledWith('scheduled');
+	});
+
+	// `maestro-cli open cue --tab <id>` validates against the shared registry,
+	// so a tab added here without a registry entry would be un-deep-linkable
+	// (and a stale registry entry would resolve to a tab that no longer exists).
+	it('renders exactly the tabs listed in the shared surface registry, in order', () => {
+		const props = makeProps();
+		render(<CueModalHeader {...props} />);
+		for (const tab of CUE_MODAL_TABS) {
+			expect(screen.getByText(tab.label)).toBeInTheDocument();
+		}
+		const rendered = screen
+			.getAllByRole('button')
+			.map((button) => button.textContent)
+			.filter((text): text is string => text !== null);
+		const tabOrder = CUE_MODAL_TABS.map((tab) => tab.label);
+		const renderedTabOrder = rendered.filter((text) => tabOrder.includes(text));
+		expect(renderedTabOrder).toEqual(tabOrder);
 	});
 
 	it('clicking Backup tab calls setActiveTab("backup")', () => {

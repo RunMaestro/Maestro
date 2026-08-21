@@ -34,6 +34,7 @@ import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboa
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { requestFileDeletion } from '../../services/fileDeletion';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
@@ -46,6 +47,7 @@ import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLin
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
+import { remarkAlert } from '../Markdown/remarkAlert';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -63,7 +65,6 @@ import {
 	isBinaryExtension,
 	formatFileSize,
 	countMarkdownTasks,
-	toggleTaskCheckboxAtLine,
 	extractHeadings,
 	isReadableTextPreview,
 	isCodeFile,
@@ -95,8 +96,9 @@ import {
 	domGetTopLineByAttr,
 	domScrollToLineByAttr,
 } from './lineSync';
-import { rehypeSourceLine } from './rehypeSourceLine';
-import { TaskCheckbox } from './TaskCheckbox';
+import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
+import { useStableCallback } from '../../hooks/utils/useStableCallback';
+import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -641,6 +643,9 @@ export const FilePreview = React.memo(
 		const remarkPlugins = useMemo(
 			() => [
 				...REMARK_GFM_PLUGINS,
+				// GitHub `[!NOTE]`-style callouts. Runs right after GFM, matching the
+				// chat stack, so the marker is still the head of a single text node.
+				remarkAlert,
 				remarkFrontmatter,
 				remarkFrontmatterTable,
 				remarkHighlight,
@@ -666,20 +671,17 @@ export const FilePreview = React.memo(
 		// toast instead. http/mailto links open the same way in both builds.
 		const handleExternalLinkClick = useCallback(
 			(href: string, opts?: { ctrlKey?: boolean }) => {
-				if (/^file:\/\//.test(href)) {
-					if (isWebDesktop()) {
-						notifyToast({
-							color: 'theme',
-							title: 'Open file',
-							message: 'Available in the desktop app',
-						});
-						return;
-					}
-					// Playable media stays in Maestro's own player rather than being
-					// handed to the OS; everything else opens externally as before.
-					openFileUrl(href, (path) => onFileClick?.(path));
+				if (/^file:\/\//.test(href) && isWebDesktop()) {
+					notifyToast({
+						color: 'theme',
+						title: 'Open file',
+						message: 'Available in the desktop app',
+					});
 					return;
 				}
+				// A file:// target Maestro can render stays inside the app (preview
+				// tab or player); only OS-owned types go to the default app.
+				if (openFileUrl(href, (path) => onFileClick?.(path))) return;
 				if (/^https?:\/\/|^mailto:/.test(href)) {
 					openUrl(href, opts);
 				}
@@ -761,6 +763,12 @@ export const FilePreview = React.memo(
 			[file, onSave, hasChanges, sshRemoteId]
 		);
 
+		// Pinned to one identity before it reaches the component map below. The
+		// handler closes over `file`, so it is reborn every time the content
+		// changes - and rebuilding that map remounts the whole rendered document,
+		// which throws away the reader's scroll position mid-click.
+		const stableToggleTask = useStableCallback(handleToggleTask);
+
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
@@ -776,27 +784,12 @@ export const FilePreview = React.memo(
 				enableBionifyReadingMode: effectiveBionifyReadingMode,
 				bionifyIntensity,
 				bionifyAlgorithm,
+				// Clickable task checkboxes, paired with `rehypeSourceLine` above.
+				// A preview with nowhere to save to stays read-only.
+				onTaskToggle: onSave ? stableToggleTask : undefined,
 			});
 			return {
 				...components,
-				// GFM task checkboxes. `rehypeSourceLine` stamps each one with the
-				// line its `- [ ]` marker lives on, which is what lets a click edit
-				// the file. Everything else (raw HTML inputs passed through by
-				// rehype-raw) stays inert - a preview is not a form.
-				input: ({ node: _node, type, checked, ...props }: any) => {
-					const line = Number(props['data-source-line']);
-					if (type === 'checkbox' && onSave && Number.isFinite(line)) {
-						return (
-							<TaskCheckbox
-								line={line}
-								checked={!!checked}
-								theme={theme}
-								onToggle={handleToggleTask}
-							/>
-						);
-					}
-					return <input type={type} checked={checked} disabled readOnly {...props} />;
-				},
 				img: ({ src, alt, ...props }: any) => {
 					// Check if this image came from file tree (set by remarkFileLinks)
 					const isFromTree = props['data-maestro-from-tree'] === 'true';
@@ -834,16 +827,18 @@ export const FilePreview = React.memo(
 				// Fixes MAESTRO-8Q
 				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
+			// `file.path` only: depending on the whole object would rebuild this map
+			// (and remount the rendered document) on every content change.
 		}, [
 			onFileClick,
 			handleExternalLinkClick,
 			theme,
 			cwd,
-			file,
+			file?.path,
 			showRemoteImages,
 			sshRemoteId,
 			onSave,
-			handleToggleTask,
+			stableToggleTask,
 			effectiveBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
@@ -856,6 +851,13 @@ export const FilePreview = React.memo(
 		const headerIconClass = 'w-4 h-4';
 		const headerBtnClass =
 			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
+
+		// Delete the previewed file. Shared with the command palette's
+		// "File: Delete" entry, so both raise the same confirmation.
+		const handleDeleteFile = useCallback(() => {
+			if (!file?.path) return;
+			requestFileDeletion({ path: file.path, sshRemoteId });
+		}, [file?.path, sshRemoteId]);
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1714,6 +1716,7 @@ export const FilePreview = React.memo(
 					wordWrap={fileEditWordWrap}
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
+					onDelete={handleDeleteFile}
 				/>
 
 				{/* File changed on disk banner */}

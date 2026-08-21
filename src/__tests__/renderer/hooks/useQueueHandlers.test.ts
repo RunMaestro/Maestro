@@ -588,6 +588,56 @@ describe('useQueueHandlers', () => {
 	});
 
 	// ========================================================================
+	// handleEditQueueItem
+	// ========================================================================
+	describe('handleEditQueueItem', () => {
+		// The consult for a queued `@mention` fires when the item dispatches, so the
+		// item's pending-consult flag has to track whatever the user last edited the
+		// text to - not what they originally typed.
+		it('sets the pending consult when an edit adds an @mention', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [createQueuedItem({ id: 'item-1', text: 'ship it' })],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'ship it, then ask @Backend to review',
+					images: [],
+				});
+			});
+
+			const item = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(item.text).toBe('ship it, then ask @Backend to review');
+			expect(item.crossAgentMention).toBe(true);
+		});
+
+		it('clears the pending consult when an edit removes the @mention', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'ask @Backend', crossAgentMention: true }),
+				],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'never mind, do it yourself',
+					images: [],
+				});
+			});
+
+			expect(useSessionStore.getState().sessions[0].executionQueue[0].crossAgentMention).toBe(
+				false
+			);
+		});
+	});
+
+	// ========================================================================
 	// handleForceSendQueueItem
 	// ========================================================================
 	describe('handleForceSendQueueItem', () => {

@@ -139,7 +139,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							title={
 								entry.success
 									? entry.validated
-										? 'Task completed successfully and human-validated'
+										? 'Task completed successfully, and you marked it as checked'
 										: 'Task completed successfully'
 									: 'Task failed'
 							}

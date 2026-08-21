@@ -50,8 +50,8 @@ import {
 	sanitizeSnoozeHistory,
 	SNOOZE_HISTORY_SETTINGS_KEY,
 } from './snoozeHistoryStore';
-import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
-import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { ModalPosition, ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { normalizeModalPosition, sanitizeModalSizes } from '../utils/modalSizing';
 import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice';
 import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
 import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
@@ -254,6 +254,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
+	'delete',
 ] as const;
 
 export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
@@ -361,6 +362,10 @@ export interface SettingsStoreState
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
+	/** Concerto stage presentation: true = popped out into a floating window. */
+	concertoStageFloating: boolean;
+	/** Where the popped-out Concerto stage was last dragged to, or null. */
+	concertoStagePosition: ModalPosition | null;
 	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
@@ -477,6 +482,8 @@ export interface SettingsStoreActions
 	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
 	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
+	setConcertoStageFloating: (value: boolean) => void;
+	setConcertoStagePosition: (value: ModalPosition | null) => void;
 	/** Remember the height a user dragged a resizable textarea to. */
 	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
@@ -704,6 +711,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
+		concertoStageFloating: false,
+		concertoStagePosition: null,
 		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
@@ -939,6 +948,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		resetModalSizes: () => {
 			set({ modalSizes: {} });
 			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setConcertoStageFloating: (value) => {
+			set({ concertoStageFloating: value });
+			window.maestro.settings.set('concertoStageFloating', value);
+		},
+
+		setConcertoStagePosition: (value) => {
+			const normalized = value ? normalizeModalPosition(value) : null;
+			set({ concertoStagePosition: normalized });
+			window.maestro.settings.set('concertoStagePosition', normalized);
 		},
 
 		setTextareaHeight: (key, value) => {
@@ -1915,6 +1935,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['modalSizes'] !== undefined)
 			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
 
+		if (allSettings['concertoStageFloating'] !== undefined)
+			patch.concertoStageFloating = allSettings['concertoStageFloating'] === true;
+
+		if (allSettings['concertoStagePosition'] !== undefined)
+			patch.concertoStagePosition = normalizeModalPosition(allSettings['concertoStagePosition']);
+
 		if (allSettings['textareaHeights'] !== undefined)
 			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
 
@@ -2156,10 +2182,13 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		// The play queue outlives a restart so a half-listened playlist is still
-		// there tomorrow. It comes back hidden and paused: restoring what was
-		// queued should not start a podcast at launch, and the Left Bar's
-		// now-playing indicator is what advertises that it is loaded. Recently
-		// played is NOT restored - it is per-session by design.
+		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
+		// what was queued should not start a podcast at launch, and it should not
+		// put media controls in the Left Bar header either, since the user has not
+		// played anything yet. The command palette's "Show Floating Media Player"
+		// is what reaches a dormant queue, and the first thing the user opens or
+		// queues wakes it. Recently played is NOT restored - it is per-session by
+		// design.
 		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
 			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
 			const items = sanitizeMediaItems(stored?.items);
@@ -2173,6 +2202,7 @@ export async function loadAllSettings(): Promise<void> {
 					resumeTimes: sanitizeMediaTimes(stored?.resumeTimes, ids),
 					durations: sanitizeMediaTimes(stored?.durations, ids),
 					dismissed: true,
+					dormant: true,
 					playing: false,
 					pendingAutoplay: false,
 				});
@@ -2530,6 +2560,8 @@ export function getSettingsActions() {
 		setModalSize: state.setModalSize,
 		resetModalSize: state.resetModalSize,
 		resetModalSizes: state.resetModalSizes,
+		setConcertoStageFloating: state.setConcertoStageFloating,
+		setConcertoStagePosition: state.setConcertoStagePosition,
 		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,

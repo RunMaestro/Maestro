@@ -1,11 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { moveActiveUnifiedTabToEdge, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	moveActiveUnifiedTabToEdge,
+	toggleReadOnlyModeFields,
+	setActiveTab,
+} from '../../utils/tabHelpers';
 import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { getTabDisplayName } from '../../utils/tabHelpers';
-import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
+import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useUIStore } from '../../stores/uiStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -307,6 +316,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.activeFocus === 'right' &&
 					ctx.activeRightTab === 'files' &&
 					ctx.fileTreeFilterOpen;
+				// The Concerto keys stay live through the guard. The stage is a
+				// workspace surface, not a dialog, so its own toggle has to be able to
+				// close it - a toggle that only ever opens is a dead keypress. And
+				// cadenzas float ABOVE every modal, so the only way to stash a stack of
+				// them while something else is open is to let this key through.
+				const isConcertoToggleShortcut =
+					(ctx.isShortcut(e, 'toggleConcerto') || ctx.isShortcut(e, 'toggleCadenzas')) &&
+					ctx.encoreFeatures?.concerto === true;
 				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
 				const isFontSizeShortcut =
 					(e.metaKey || e.ctrlKey) &&
@@ -356,6 +373,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
 						!isFontSizeShortcut &&
+						!isConcertoToggleShortcut &&
 						!isPromptComposerCycleShortcut
 					) {
 						return;
@@ -385,6 +403,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isFileFilterRefocusShortcut &&
 						!isOutputSearchGlobalShortcut &&
 						!isOutputSearchRefocusShortcut &&
+						!isConcertoToggleShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
@@ -575,6 +594,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				}
 				trackShortcut('toggleMode');
+			} else if (ctx.isShortcut(e, 'tileTerminalBelow')) {
+				// Cmd+Shift+J: the tiled twin of Cmd+J. Instead of a new terminal tab
+				// that takes over the panel, split the current view and put the terminal
+				// in the bottom half. tileNewTabInSession focuses the new pane; it
+				// flashes and no-ops when the agent has nothing on screen to tile with.
+				e.preventDefault();
+				if (ctx.activeSessionId) {
+					tileNewTabInSession(ctx.activeSessionId, 'terminal');
+					trackShortcut('tileTerminalBelow');
+				}
 			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
 				e.preventDefault();
 				if (useSessionStore.getState().sessions.length > 0) {
@@ -680,6 +709,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (ctx.activeGroupChatId && !composerOpen) ctx.flushGroupChatDraft?.();
 					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
+				}
+			} else if (ctx.isShortcut(e, 'openModelEffort')) {
+				e.preventDefault();
+				// AI-only: a file, terminal, or browser tab has no model to retune.
+				// Resolved through resolveActiveTabRef so a focused pane in a tiled
+				// group is retuned rather than the standalone tab hidden behind it.
+				const modelEffortRef = activeSession ? resolveActiveTabRef(activeSession) : null;
+				if (modelEffortRef?.type === 'ai') {
+					useModalStore.getState().openModal('modelEffort', { tabId: modelEffortRef.id });
+					trackShortcut('openModelEffort');
 				}
 			} else if (ctx.isShortcut(e, 'openWizard')) {
 				e.preventDefault();
@@ -788,6 +827,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
 				trackShortcut('openCue');
+			} else if (ctx.isShortcut(e, 'toggleConcerto') && ctx.encoreFeatures?.concerto) {
+				// Toggle, not open: the stage is a window the user parks and brings
+				// back, and its panels keep running either way.
+				e.preventDefault();
+				getModalActions().toggleConcertoStage();
+				trackShortcut('toggleConcerto');
+			} else if (ctx.isShortcut(e, 'toggleCadenzas') && ctx.encoreFeatures?.concerto) {
+				e.preventDefault();
+				toggleAllCadenzas();
+				trackShortcut('toggleCadenzas');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -841,6 +890,44 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
+			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
+				// Open the edit modal on the newest queued message. Commands are
+				// skipped: they carry no editable prompt text, and an item whose tab
+				// has since been closed is skipped too, since there is no transcript
+				// left to open the modal in.
+				e.preventDefault();
+				const session = ctx.activeSession as Session | undefined;
+				const editable = session
+					? (session.executionQueue ?? []).filter(
+							(item) =>
+								item.type !== 'command' && session.aiTabs.some((tab) => tab.id === item.tabId)
+						)
+					: [];
+				// Prefer the tab on screen, but fall back to this agent's newest queued
+				// message on any tab. The queue is an agent-level thing the UI already
+				// advertises across tabs (the status bar reads "1 item queued - <tab
+				// name> - Click to view"), so scoping the shortcut to the active tab
+				// made it refuse to edit a message Maestro was pointing right at.
+				const target =
+					[...editable].reverse().find((item) => item.tabId === session?.activeTabId) ??
+					editable[editable.length - 1];
+				if (!session || !target) {
+					notifyCenterFlash({ message: 'No queued message to edit', color: 'yellow' });
+				} else {
+					// The modal renders inside its OWN tab's transcript, so land there
+					// first - whether the message belongs to another AI tab, or a
+					// file/terminal/browser view is currently covering this one.
+					// setActiveTab returns the session unchanged when we are already in
+					// the right place, which is the check for whether to write at all;
+					// the patch itself is applied against fresh state so this can't
+					// clobber a concurrent update with the snapshot we captured here.
+					const switched = setActiveTab(session, target.tabId);
+					if (switched && switched.session !== session) {
+						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(target.tabId) }));
+					}
+					useUIStore.getState().setEditingQueuedItemId(target.id);
+					trackShortcut('editLastQueuedMessage');
+				}
 			} else if (ctx.isShortcut(e, 'jumpToTerminal')) {
 				e.preventDefault();
 				if (activeSession && !ctx.activeGroupChatId) {

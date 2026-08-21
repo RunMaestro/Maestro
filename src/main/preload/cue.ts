@@ -6,6 +6,7 @@
  * - Runtime engine controls (enable/disable)
  * - Run management (stop individual or all)
  * - YAML configuration management (read, write, validate)
+ * - Scheduled Tasks (list / create / edit / cancel time-driven subscriptions)
  * - Real-time activity updates via event listener
  */
 
@@ -16,6 +17,11 @@ import type {
 	CueSessionStatus,
 	CueSettings,
 } from '../../shared/cue';
+import type {
+	ScheduledTask,
+	ScheduledTaskCreateInput,
+	ScheduledTaskUpdateInput,
+} from '../../shared/cue/scheduled-tasks';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import type { CueMetrics } from '../cue/cue-metrics';
 import type { FanInHealthEntry } from '../cue/cue-fan-in-tracker';
@@ -116,6 +122,27 @@ export function createCueApi() {
 		// Remove a session from Cue tracking
 		removeSession: (sessionId: string): Promise<void> =>
 			ipcRenderer.invoke('cue:removeSession', { sessionId }),
+
+		// ── Scheduled Tasks (time.once / time.scheduled / time.heartbeat) ──
+		// Same on-disk representation as `maestro-cli cue schedule`.
+		listScheduledTasks: (): Promise<{ tasks: ScheduledTask[]; warnings: string[] }> =>
+			ipcRenderer.invoke('cue:listScheduledTasks'),
+
+		createScheduledTask: (input: ScheduledTaskCreateInput): Promise<{ names: string[] }> =>
+			ipcRenderer.invoke('cue:createScheduledTask', { input }),
+
+		updateScheduledTask: (
+			projectRoot: string,
+			name: string,
+			patch: ScheduledTaskUpdateInput
+		): Promise<{ updated: boolean; reason?: string }> =>
+			ipcRenderer.invoke('cue:updateScheduledTask', { projectRoot, name, patch }),
+
+		cancelScheduledTask: (
+			projectRoot: string,
+			name: string
+		): Promise<{ removed: boolean; reason?: string }> =>
+			ipcRenderer.invoke('cue:cancelScheduledTask', { projectRoot, name }),
 
 		// Read raw YAML content from a session's maestro-cue.yaml
 		readYaml: (projectRoot: string): Promise<string | null> =>

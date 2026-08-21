@@ -1,18 +1,25 @@
 /**
- * useTimeTracking - Visibility-aware time tracking hook for batch processing
+ * useTimeTracking - Visibility- and sleep-aware time tracking for batch processing
  *
- * This hook provides accurate elapsed time tracking that excludes time when
- * the document is hidden (e.g., laptop sleep, tab switch). This ensures that
- * batch processing elapsed times reflect actual active processing time.
+ * This hook provides accurate elapsed time tracking that excludes time when the
+ * document is hidden (window minimized, tab switch) AND time the machine spent
+ * asleep. This ensures that batch processing elapsed times reflect actual active
+ * processing time.
+ *
+ * Visibility alone does not cover sleep: a system suspend never fires
+ * `visibilitychange` (the window stays "visible" while the whole process is
+ * frozen), so the sleep gap comes from the main process via `systemSleep`.
  *
  * Features:
  * - Per-session time tracking
  * - Automatic pause when document becomes hidden
  * - Automatic resume when document becomes visible
+ * - Machine sleep subtracted from any session that was counting through it
  * - Proper cleanup on unmount
  */
 
 import { useRef, useEffect, useCallback } from 'react';
+import { onSystemSleep } from '../../services/systemSleep';
 
 /**
  * Configuration options for the time tracking hook
@@ -146,6 +153,35 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 		document.addEventListener('visibilitychange', handleVisibilityChange);
 		return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
 	}, []); // Empty deps - handler uses refs for latest values
+
+	// Machine sleep: discard the slept span from every session that was counting
+	// through it by walking its active timestamp forward.
+	useEffect(() => {
+		return onSystemSleep((sleptMs) => {
+			const now = Date.now();
+
+			for (const sessionId of trackingSessionsRef.current) {
+				const lastActive = lastActiveTimestampRefs.current[sessionId];
+				// Already paused (document hidden) - the sleep is excluded anyway.
+				if (lastActive === null || lastActive === undefined) continue;
+
+				// Clamp to the live span so we can never subtract sleep twice. On a
+				// platform where the sleep DID fire a hide/show pair, `lastActive` is
+				// already the wake timestamp and this correction rounds to zero.
+				const skipMs = Math.min(sleptMs, Math.max(0, now - lastActive));
+				if (skipMs <= 0) continue;
+				lastActiveTimestampRefs.current[sessionId] = lastActive + skipMs;
+
+				if (onTimeUpdateRef.current) {
+					onTimeUpdateRef.current(
+						sessionId,
+						accumulatedTimeRefs.current[sessionId] || 0,
+						lastActiveTimestampRefs.current[sessionId] ?? null
+					);
+				}
+			}
+		});
+	}, []);
 
 	/**
 	 * Start tracking time for a session

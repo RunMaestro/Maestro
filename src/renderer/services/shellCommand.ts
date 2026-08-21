@@ -23,8 +23,12 @@
 
 import type { Session, LogEntry } from '../types';
 import { generateId } from '../utils/ids';
-import { updateAiTab } from '../stores/sessionStore';
+import { updateAiTab, updateSessionWith } from '../stores/sessionStore';
+import { SHELL_COMMAND_PREFIX } from '../utils/shellCommandInput';
 import { logger } from '../utils/logger';
+
+/** How many entries the composer's recall history keeps. */
+const AI_COMMAND_HISTORY_LIMIT = 50;
 
 /**
  * Hard cap on captured output per command. Transcript logs are persisted to
@@ -256,4 +260,31 @@ export async function runShellCommand(options: RunShellCommandOptions): Promise<
 	// the backstop for the (unexpected) case where the event never shows up.
 	await Promise.race([finished, new Promise<void>((r) => window.setTimeout(r, 1000))]);
 	if (activeRuns.has(outputLogId)) finish(result.exitCode);
+}
+
+/**
+ * Record a command in the tab's recall history and run it.
+ *
+ * Both ways of producing a command land here: typing it in command mode, and
+ * accepting one AI command mode proposed. That is deliberate - an accepted
+ * suggestion must be indistinguishable from a typed command afterwards, in the
+ * transcript and in up-arrow recall alike.
+ *
+ * The history entry is bang-prefixed because `aiCommandHistory` mixes agent
+ * messages and shell commands, and the `!` is what tells them apart on the way
+ * back out (up-arrow recall, and the command-mode completion source).
+ */
+export function dispatchShellCommand(options: RunShellCommandOptions): Promise<void> {
+	const { session, tabId, command } = options;
+	const historyEntry = `${SHELL_COMMAND_PREFIX}${command}`;
+
+	updateSessionWith(session.id, (s) => ({
+		...s,
+		aiCommandHistory: [
+			...(s.aiCommandHistory || []).filter((c) => c !== historyEntry),
+			historyEntry,
+		].slice(-AI_COMMAND_HISTORY_LIMIT),
+	}));
+
+	return runShellCommand({ session, tabId, command });
 }

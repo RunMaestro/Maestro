@@ -19,6 +19,7 @@ import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 
 /**
  * Configuration for document processing
@@ -378,8 +379,9 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				session.newSessionMessage
 			);
 
-			// Capture start time for elapsed time tracking
-			const taskStartTime = Date.now();
+			// Capture start time for elapsed time tracking. Sleep-aware: a task that
+			// spans a lid close must not report the sleep as agent work time.
+			const taskSpan = beginSleepAwareSpan();
 
 			// Spawn agent with the prompt, using effective cwd (may be worktree path)
 			const result = await callbacks.onSpawnAgent(
@@ -389,8 +391,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				runOverrides
 			);
 
-			// Capture elapsed time
-			const elapsedTimeMs = Date.now() - taskStartTime;
+			// Capture elapsed time (machine sleep excluded)
+			const elapsedTimeMs = sleepAwareElapsedMs(taskSpan);
 
 			// Register agent session origin for Auto Run tracking
 			if (result.agentSessionId) {

@@ -3,7 +3,7 @@ import { render } from '@testing-library/react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { rehypeSourceLine } from '../../../../renderer/components/FilePreview/rehypeSourceLine';
+import { rehypeSourceLine } from '../../../../renderer/components/Markdown/rehypeSourceLine';
 
 const MD = `# Title
 

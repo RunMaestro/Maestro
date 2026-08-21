@@ -1198,6 +1198,7 @@ interface QueuedItem {
 - Auto Run tasks queue with regular messages
 - Queue visible via indicator in tab bar
 - Users can cancel pending items via queue browser
+- A queued message that `@mentions` another agent (`crossAgentMention: true`) consults that agent when the item is DISPATCHED, not when it was queued (`src/renderer/services/crossAgentMentions.ts`)
 
 ### Session Fields
 

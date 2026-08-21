@@ -34,14 +34,9 @@ import { AgentDetector } from '../agents';
 import { ProcessManager } from '../process-manager';
 import { WebServer } from '../web-server';
 import Store from 'electron-store';
+import type { DebugPackageOptions } from '../../shared/debugPackage';
 
-export interface DebugPackageOptions {
-	includeLogs?: boolean; // Default: true
-	includeErrors?: boolean; // Default: true
-	includeSessions?: boolean; // Default: true
-	includeGroupChats?: boolean; // Default: true
-	includeBatchState?: boolean; // Default: true
-}
+export type { DebugPackageOptions };
 
 export interface DebugPackageResult {
 	success: boolean;
@@ -242,7 +237,7 @@ export async function generateDebugPackage(
 	// Collect batch state (optional)
 	if (opts.includeBatchState) {
 		try {
-			const batchState = collectBatchState(deps.sessionsStore);
+			const batchState = collectBatchState(opts.autoRunSnapshots);
 			contents['batch-state.json'] = batchState;
 			filesIncluded.push('batch-state.json');
 		} catch (error) {

@@ -336,6 +336,13 @@ export function registerFilesystemHandlers(): void {
 					// the bytes over the maestro-media:// protocol. Remote files fall
 					// through to the text read below and keep the existing binary
 					// download path - there is no SSH-backed range server.
+					//
+					// Stat first so a missing file returns null like every other read
+					// here. Minting the URL is pure string work, so without this a
+					// deleted file handed back a perfectly valid URL, the protocol
+					// 404'd, and the player blamed the codec for a file that was
+					// simply gone.
+					await fs.stat(filePath);
 					return buildLocalMediaStreamUrl(filePath);
 				} else {
 					// Read text files as UTF-8

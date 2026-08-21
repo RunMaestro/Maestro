@@ -33,6 +33,12 @@ export interface QuickAction {
 		thinkingStartTime?: number;
 		busyTabName?: string;
 		queueCount: number;
+		/**
+		 * Replaces the leading elapsed-time segment of the subtext. Group chat
+		 * rooms have no per-run start timestamp, so they describe what is running
+		 * ("Moderator thinking") instead of how long it has been running.
+		 */
+		statusLabel?: string;
 	};
 	// Jump-to-agent actions only: bookmark state and stable sort key.
 	bookmarked?: boolean;

@@ -63,6 +63,8 @@ vi.mock('lucide-react', () => {
 		Cpu: createIcon('cpu', '🖥️'),
 		DollarSign: createIcon('dollar', '💲'),
 		Activity: createIcon('activity', '📈'),
+		// AgentOverviewCards agent filter icon
+		Search: createIcon('search', '🔎'),
 		// New SummaryCards momentum-row icons
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),

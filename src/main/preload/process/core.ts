@@ -432,5 +432,31 @@ export function createProcessCoreApi() {
 			ipcRenderer.on('agent:error', handler);
 			return () => ipcRenderer.removeListener('agent:error', handler);
 		},
+
+		/**
+		 * Subscribe to expired-credentials notices raised outside the agent
+		 * streaming path - today, Cue pipeline runs, which spawn their agents
+		 * directly and therefore never emit `agent:error`.
+		 */
+		onAuthExpired: (
+			callback: (payload: {
+				sessionId: string;
+				agentId: string;
+				message: string;
+				fromPipeline?: boolean;
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				payload: {
+					sessionId: string;
+					agentId: string;
+					message: string;
+					fromPipeline?: boolean;
+				}
+			) => callback(payload);
+			ipcRenderer.on('agent:authExpired', handler);
+			return () => ipcRenderer.removeListener('agent:authExpired', handler);
+		},
 	};
 }

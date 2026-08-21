@@ -77,7 +77,7 @@ Tips and gotchas:
 | Go to Auto Run Tab             | `Cmd+Shift+1` | `Ctrl+Shift+1` |
 | Toggle Edit/Preview (Markdown) | `Cmd+E`       | `Ctrl+E`       |
 | Run Auto Run                   | `Cmd+Shift+2` | `Ctrl+Shift+2` |
-| Auto Run Expanded Preview      | `Cmd+Shift+E` | `Ctrl+Shift+E` |
+| Auto Run Expanded Preview      | `Cmd+Shift+3` | `Ctrl+Shift+3` |
 | Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
 | View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
@@ -114,6 +114,7 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
 | Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
 | Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
@@ -141,12 +142,44 @@ The Tab Switcher provides fuzzy search across all open tabs with quick navigatio
 
 The bulk close operations (Close All, Close Others, Close Left, Close Right) are also available via the [Tab Menu](./context-management#tab-close-operations) hover overlay and Quick Actions (`Cmd+K`).
 
+### Pane Shortcuts (Tiled Tabs)
+
+These act on the tiled set showing in the Main Panel. See [Tiling Tabs](./general-usage#tiling-tabs) for what tiling is and how to create one.
+
+| Action                    | macOS              | Windows/Linux      |
+| ------------------------- | ------------------ | ------------------ |
+| Focus Pane Left           | `Ctrl+Cmd+Left`    | `Ctrl+Win+Left`    |
+| Focus Pane Right          | `Ctrl+Cmd+Right`   | `Ctrl+Win+Right`   |
+| Focus Pane Up             | `Ctrl+Cmd+Up`      | `Ctrl+Win+Up`      |
+| Focus Pane Down           | `Ctrl+Cmd+Down`    | `Ctrl+Win+Down`    |
+| Focus Previous Pane       | `Opt+[`            | `Alt+[`            |
+| Focus Next Pane           | `Opt+]`            | `Alt+]`            |
+| Split Pane (Side by Side) | `Ctrl+Cmd+D`       | `Ctrl+Win+D`       |
+| Split Pane (Stacked)      | `Ctrl+Cmd+Shift+D` | `Ctrl+Win+Shift+D` |
+| Maximize / Restore Pane   | `Ctrl+Cmd+Z`       | `Ctrl+Win+Z`       |
+| Rebalance Panes           | `Ctrl+Cmd+=`       | `Ctrl+Win+=`       |
+| Close Focused Pane        | `Ctrl+Cmd+W`       | `Ctrl+Win+W`       |
+| Tile New Terminal Below   | `Cmd+Shift+J`      | `Ctrl+Shift+J`     |
+
+<Note>
+The pane family deliberately requires **both** Ctrl and Cmd so it can never collide with the plain-Cmd equivalents (`Cmd+W` closes a tab, `Ctrl+Cmd+W` closes a pane). On Windows and Linux the second modifier is the Windows / Super key.
+</Note>
+
+Focus arrows move to the pane nearest in that direction and stop at the edge of the layout. The previous/next pair cycles through every pane in order and wraps around, which is the reliable way through an uneven grid.
+
+Maximize expands the focused pane to fill the panel and hides the rest; press it again to restore the layout. Rebalance resets every split to equal sizes after you have dragged dividers around.
+
+Closing a pane returns its tab to the tab bar rather than closing it. When only one pane is left the group dissolves and that tab goes back to the bar too.
+
+To create a tile without a drag, run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four. The terminal one also has a key of its own, `Cmd+Shift+J`: one modifier away from `Cmd+J` (new terminal tab), because a terminal beside your work is the split people reach for most.
+
 ## Input & Output
 
 | Action                   | Key                                               |
 | ------------------------ | ------------------------------------------------- |
 | Send Message             | `Enter` or `Cmd+Enter` (configurable in Settings) |
 | Multiline Input          | `Shift+Enter`                                     |
+| Edit Last Queued Message | `Cmd+Shift+E` / `Ctrl+Shift+E`                    |
 | Navigate Command History | `Up Arrow` while in input                         |
 | Slash Commands           | Type `/` to open autocomplete                     |
 | Focus Output             | `Esc` while in input                              |
@@ -193,6 +226,27 @@ The Command Terminal - and the AI chat while in [command mode](./general-usage#c
 - **Git Tags** - Available tags (git repos only)
 
 In git repositories, filter buttons appear in the dropdown header allowing you to filter by type (All, History, Branches, Tags, Files). Use `Tab`/`Shift+Tab` to cycle through filters or click directly.
+
+## Command Mode (AI Terminal)
+
+`!` in an empty AI composer climbs one rung of the [command mode](./general-usage#command-mode) ladder; `Esc` climbs back down. The composer never loses focus.
+
+| Action                         | Key                                       |
+| ------------------------------ | ----------------------------------------- |
+| Enter command mode             | `!` (empty composer)                      |
+| Enter AI command mode          | `!` again (empty command line)            |
+| Step back one rung             | `Esc` or `Backspace` (empty command line) |
+| Run the command / ask for one  | `Enter`                                   |
+| Send a message starting with ! | `\!` (the backslash is removed on send)   |
+
+When AI command mode proposes a command, the card owns the keyboard until you answer it:
+
+| Action             | Key                |
+| ------------------ | ------------------ |
+| Run the command    | `Y`                |
+| Decline it         | `N` or `Esc`       |
+| Move Run / Cancel  | `Left/Right Arrow` |
+| Take the selection | `Enter`            |
 
 ## @ File Mentions (AI Terminal)
 
@@ -315,7 +369,7 @@ When a default binding has to move to free a combo for a new action, Maestro mig
 | ------------------------- | ------------- | ------------- | -------------------------------- |
 | Focus Active Tab          | `Opt+Cmd+F`   | `Opt+Cmd+Up`  | Search Messages (All Agent Tabs) |
 | Move Session to Group     | `Cmd+Shift+M` | `Opt+Cmd+M`   | Open Memory Viewer               |
-| Auto Run Expanded Preview | `Cmd+Shift+2` | `Cmd+Shift+E` | Run Auto Run                     |
+| Auto Run Expanded Preview | `Cmd+Shift+E` | `Cmd+Shift+3` | Edit Last Queued Message         |
 
 If `Opt+Cmd+F` still focuses the active tab instead of opening cross-tab search, you had a custom binding on it: open **Settings** → **Shortcuts**, clear it from **Focus Active Tab**, and the new default takes over.
 

@@ -8,6 +8,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	runShellCommand,
+	dispatchShellCommand,
 	cancelShellCommand,
 	buildShellRunSessionId,
 	SHELL_COMMAND_OUTPUT_LIMIT,
@@ -308,5 +309,45 @@ describe('cancelShellCommand', () => {
 
 		await expect(cancelShellCommand(logId)).resolves.toBe(false);
 		expect(cancelCommand).not.toHaveBeenCalled();
+	});
+});
+
+describe('dispatchShellCommand', () => {
+	function history(): string[] {
+		return (
+			useSessionStore.getState().sessions.find((s) => s.id === SESSION_ID)?.aiCommandHistory ?? []
+		);
+	}
+
+	test('records the command bang-prefixed so recall can tell it from a message', async () => {
+		// aiCommandHistory mixes agent messages and shell commands; the `!` is the
+		// only thing that distinguishes them on the way back out.
+		await dispatchShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'npm test',
+		});
+
+		expect(history()).toContain('!npm test');
+	});
+
+	test('runs the command as well as recording it', async () => {
+		await dispatchShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'git status',
+		});
+
+		expect(runCommand).toHaveBeenCalledTimes(1);
+		expect(getCard()?.shellCommand?.command).toBe('git status');
+	});
+
+	test('moves a repeated command to the end instead of duplicating it', async () => {
+		const session = () => useSessionStore.getState().sessions[0];
+		await dispatchShellCommand({ session: session(), tabId: TAB_ID, command: 'ls' });
+		await dispatchShellCommand({ session: session(), tabId: TAB_ID, command: 'pwd' });
+		await dispatchShellCommand({ session: session(), tabId: TAB_ID, command: 'ls' });
+
+		expect(history()).toEqual(['!pwd', '!ls']);
 	});
 });

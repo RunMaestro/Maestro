@@ -46,6 +46,15 @@ export interface UseModalLayerOptions {
 	/** Whether this layer captures keyboard focus. Defaults to true */
 	capturesFocus?: boolean;
 	/**
+	 * Whether this layer suppresses the app's global shortcuts. Defaults to true.
+	 *
+	 * Pass `false` for a PASSIVE panel - a floating inspector or log viewer that
+	 * takes no focus and registers only so Escape closes it at the right
+	 * priority. Otherwise its mere presence makes Cmd+K, Opt+Cmd+T, and the
+	 * file-tree keys go dead until the user closes it.
+	 */
+	blocksAppShortcuts?: boolean;
+	/**
 	 * Whether the layer should be registered. Defaults to true.
 	 * Set to `false` (e.g. when `!isOpen`) to skip registration without
 	 * unmounting the host component.
@@ -86,6 +95,7 @@ export function useModalLayer(
 		focusTrap = 'strict',
 		blocksLowerLayers = true,
 		capturesFocus = true,
+		blocksAppShortcuts = true,
 		enabled = true,
 	} = options;
 
@@ -105,6 +115,7 @@ export function useModalLayer(
 			priority,
 			blocksLowerLayers,
 			capturesFocus,
+			blocksAppShortcuts,
 			focusTrap,
 			ariaLabel,
 			isDirty,
@@ -127,6 +138,7 @@ export function useModalLayer(
 		ariaLabel,
 		blocksLowerLayers,
 		capturesFocus,
+		blocksAppShortcuts,
 		focusTrap,
 		isDirty,
 		onBeforeClose,

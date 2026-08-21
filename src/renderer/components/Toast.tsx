@@ -4,7 +4,7 @@ import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
-import { formatDurationParts as formatDuration } from '../../shared/formatters';
+import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
 import { Z_LAYERS } from '../constants/zLayers';
 import { CopyIconButton } from './ui';
@@ -222,8 +222,11 @@ const ToastItem = memo(function ToastItem({
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if needed) */}
-					{(toast.group || toast.project || toast.tabName) && (
+					{/* Line 1: Group + Agent/Project name + Tab name, with the arrival time
+					    pinned right (wraps to line 2 if needed). The row renders for the
+					    timestamp alone, so every toast is stamped, not just the ones that
+					    carry agent context. */}
+					{(toast.group || toast.project || toast.tabName || toast.timestamp > 0) && (
 						<div
 							className="flex flex-wrap items-center gap-2 text-xs mb-1"
 							style={{ color: theme.colors.textDim }}
@@ -258,6 +261,15 @@ const ToastItem = memo(function ToastItem({
 								>
 									{toast.tabName}
 								</span>
+							)}
+							{toast.timestamp > 0 && (
+								<time
+									className="ml-auto flex-shrink-0 tabular-nums"
+									dateTime={new Date(toast.timestamp).toISOString()}
+									title={formatTimestamp(toast.timestamp, 'full')}
+								>
+									{formatTimestamp(toast.timestamp, 'smart')}
+								</time>
 							)}
 						</div>
 					)}
@@ -296,7 +308,7 @@ const ToastItem = memo(function ToastItem({
 					)}
 
 					{/* Duration badge */}
-					{toast.taskDuration && toast.taskDuration > 0 && (
+					{typeof toast.taskDuration === 'number' && toast.taskDuration > 0 && (
 						<div
 							className="flex items-center gap-1 text-xs mt-2"
 							style={{ color: theme.colors.textDim }}
@@ -354,7 +366,7 @@ const ToastItem = memo(function ToastItem({
 			</div>
 
 			{/* Progress bar - hidden for dismissible (sticky) toasts */}
-			{!toast.dismissible && toast.duration && toast.duration > 0 && (
+			{!toast.dismissible && typeof toast.duration === 'number' && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"
 					style={{

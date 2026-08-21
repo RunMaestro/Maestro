@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { TerminalTabInfo } from '../types';
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
@@ -102,14 +103,17 @@ export function registerBrowserTabCallbacks(
 	});
 
 	server.setOpenTerminalTabCallback(
-		async (sessionId: string, config: { cwd?: string; shell?: string; name?: string | null }) => {
+		async (
+			sessionId: string,
+			config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for openTerminalTab', 'WebServer');
-				return false;
+				return { success: false };
 			}
 
-			return new Promise<boolean>((resolve) => {
+			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
 				const responseChannel = `remote:openTerminalTab:response:${randomUUID()}`;
 				let resolved = false;
 
@@ -117,14 +121,24 @@ export function registerBrowserTabCallbacks(
 					if (resolved) return;
 					resolved = true;
 					clearTimeout(timeoutId);
-					resolve(result === true);
+					// Renderer acks with `{ success, tabId? }`; older renderers that
+					// still send a bare boolean stay supported.
+					if (typeof result === 'object' && result !== null) {
+						const r = result as { success?: unknown; tabId?: unknown };
+						resolve({
+							success: r.success === true,
+							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+						});
+						return;
+					}
+					resolve({ success: result === true });
 				};
 
 				ipcMain.once(responseChannel, handleResponse);
 				if (!isWebContentsAvailable(mainWindow)) {
 					logger.warn('webContents is not available for openTerminalTab', 'WebServer');
 					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(false);
+					resolve({ success: false });
 					return;
 				}
 				mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel);
@@ -134,11 +148,109 @@ export function registerBrowserTabCallbacks(
 					resolved = true;
 					ipcMain.removeListener(responseChannel, handleResponse);
 					logger.warn(`openTerminalTab callback timed out for session ${sessionId}`, 'WebServer');
-					resolve(false);
+					resolve({ success: false });
 				}, 5000);
 			});
 		}
 	);
+
+	server.setWriteTerminalTabCallback(
+		async (sessionId: string, payload: { tabRef?: string; data: string }) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for writeTerminalTab', 'WebServer');
+				return { success: false, error: 'Desktop window not available' };
+			}
+
+			return new Promise<{
+				success: boolean;
+				error?: string;
+				tabId?: string;
+				tabName?: string;
+			}>((resolve) => {
+				const responseChannel = `remote:writeTerminalTab:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					if (typeof result === 'object' && result !== null) {
+						const r = result as {
+							success?: unknown;
+							error?: unknown;
+							tabId?: unknown;
+							tabName?: unknown;
+						};
+						resolve({
+							success: r.success === true,
+							error: typeof r.error === 'string' ? r.error : undefined,
+							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							tabName: typeof r.tabName === 'string' ? r.tabName : undefined,
+						});
+						return;
+					}
+					resolve({ success: result === true });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for writeTerminalTab', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Desktop window not available' });
+					return;
+				}
+				mainWindow.webContents.send('remote:writeTerminalTab', sessionId, payload, responseChannel);
+
+				// Longer than the other remote channels: the renderer may spend up
+				// to 4s waiting for a lazily-spawned PTY before it can write.
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`writeTerminalTab callback timed out for session ${sessionId}`, 'WebServer');
+					resolve({ success: false, error: 'Timed out waiting for the desktop app' });
+				}, 8000);
+			});
+		}
+	);
+
+	server.setListTerminalTabsCallback(async (sessionId?: string) => {
+		const mainWindow = getMainWindow();
+		if (!mainWindow) {
+			logger.warn('mainWindow is null for listTerminalTabs', 'WebServer');
+			return [];
+		}
+
+		return new Promise<TerminalTabInfo[]>((resolve) => {
+			const responseChannel = `remote:listTerminalTabs:response:${randomUUID()}`;
+			let resolved = false;
+
+			const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+				if (resolved) return;
+				resolved = true;
+				clearTimeout(timeoutId);
+				resolve(Array.isArray(result) ? (result as TerminalTabInfo[]) : []);
+			};
+
+			ipcMain.once(responseChannel, handleResponse);
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for listTerminalTabs', 'WebServer');
+				ipcMain.removeListener(responseChannel, handleResponse);
+				resolve([]);
+				return;
+			}
+			mainWindow.webContents.send('remote:listTerminalTabs', sessionId, responseChannel);
+
+			const timeoutId = setTimeout(() => {
+				if (resolved) return;
+				resolved = true;
+				ipcMain.removeListener(responseChannel, handleResponse);
+				logger.warn('listTerminalTabs callback timed out', 'WebServer');
+				resolve([]);
+			}, 5000);
+		});
+	});
 
 	server.setNewAITabWithPromptCallback(
 		async (sessionId: string, prompt: string, background?: boolean) => {

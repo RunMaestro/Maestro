@@ -6,20 +6,28 @@
  * `thoughtStreamStore` and renders nothing until a session's panel is opened
  * via the brain button on the Auto Run card.
  *
- * Three states:
- * - Hidden:    no session focused.
- * - Minimized: a slim status pill (bottom-right). Capture KEEPS running.
- * - Open:      the full panel - searchable, auto-tailing thought log.
+ * Two states: hidden (no session focused) and open (the full panel - a
+ * searchable, auto-tailing thought log).
  *
- * Closing (the X) stops capture and clears the buffer; minimizing does not.
+ * The panel is a VIEWER, not the capture switch: buffering runs ambiently in
+ * the store, so closing does not stop it and reopening shows everything the
+ * agent thought while the panel was away. Discarding is the explicit trash
+ * button. That is also why there is no minimize - it used to mean "hide but
+ * keep capturing", which is what closing does now.
+ *
+ * It registers a PASSIVE layer (`blocksAppShortcuts: false`): Escape closes it
+ * at the right priority, but it takes no focus and must not make the app's
+ * shortcuts go dead while the user reads a wedged run's reasoning.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Search, Minus, X } from 'lucide-react';
+import { Brain, Search, Trash2, X } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useThoughtStreamStore,
 	groupThoughtsIntoBlocks,
+	isThoughtStreamLive,
+	THOUGHT_LIVE_WINDOW_MS,
 	type ThoughtEntry,
 	type ThoughtBlock,
 } from '../stores/thoughtStreamStore';
@@ -46,15 +54,11 @@ function formatThoughtTime(ts: number): string {
 
 export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	const panelSessionId = useThoughtStreamStore((s) => s.panelSessionId);
-	const minimized = useThoughtStreamStore((s) => s.minimized);
 	const buffer = useThoughtStreamStore((s) =>
 		panelSessionId ? s.buffers[panelSessionId] : undefined
 	);
-	const isCapturing = useThoughtStreamStore((s) =>
-		panelSessionId ? !!s.capturing[panelSessionId] : false
-	);
-	const minimizePanel = useThoughtStreamStore((s) => s.minimizePanel);
 	const closePanel = useThoughtStreamStore((s) => s.closePanel);
+	const clearBuffer = useThoughtStreamStore((s) => s.clearBuffer);
 
 	const sessionName = useSessionStore((s) =>
 		panelSessionId ? s.sessions.find((sess) => sess.id === panelSessionId)?.name : undefined
@@ -74,6 +78,21 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 
 	const entries: ThoughtEntry[] = useMemo(() => buffer?.entries ?? [], [buffer]);
 	const trimmed = buffer?.trimmed ?? false;
+	const lastAppendAt = buffer?.lastAppendAt ?? 0;
+
+	// "Live" is a display affordance only (capture never stops): true while
+	// thoughts are still arriving, and it goes stale on its own timer so a run
+	// that quietly wedged stops claiming to be thinking.
+	const [live, setLive] = useState(() => isThoughtStreamLive(lastAppendAt));
+	useEffect(() => {
+		if (!isThoughtStreamLive(lastAppendAt)) {
+			setLive(false);
+			return;
+		}
+		setLive(true);
+		const timer = setTimeout(() => setLive(false), THOUGHT_LIVE_WINDOW_MS);
+		return () => clearTimeout(timer);
+	}, [lastAppendAt]);
 
 	// Group the granular per-flush entries into timestamped blocks, then show
 	// newest-first (the live block sits at the top and grows; older blocks scroll
@@ -96,33 +115,29 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		return [...matched].reverse();
 	}, [blocks, query]);
 
-	// Escape minimizes (keeps capture) rather than closing - the least
-	// destructive default. Only registered while the full panel is open.
-	useModalLayer(MODAL_PRIORITIES.THOUGHT_STREAM, 'Thought Stream', minimizePanel, {
-		enabled: !!panelSessionId && !minimized,
+	// Escape closes the panel. Nothing is lost by that now: the buffer outlives
+	// the panel, so Escape is a "put it away", not a discard.
+	useModalLayer(MODAL_PRIORITIES.THOUGHT_STREAM, 'Thought Stream', closePanel, {
+		enabled: !!panelSessionId,
 		blocksLowerLayers: false,
 		capturesFocus: false,
+		blocksAppShortcuts: false,
 		focusTrap: 'none',
 	});
 
 	// Auto-tail: when pinned to the top and not searching, follow new thoughts
 	// (newest block is at the top).
 	useEffect(() => {
-		if (minimized || searching) return;
+		if (searching) return;
 		if (!stickToTopRef.current) return;
 		const el = scrollRef.current;
 		if (el) el.scrollTop = 0;
-	}, [visibleBlocks, minimized, searching]);
+	}, [visibleBlocks, searching]);
 
 	if (!panelSessionId) return null;
 
 	const totalCount = entries.length;
 	const label = sessionName || `${panelSessionId.slice(0, 8)}`;
-
-	// When minimized, render nothing - capture keeps running in the store/listener
-	// regardless of whether this panel is mounted. The "Capturing" affordance lives
-	// on the Auto Run card's "View Thoughts" button, which re-expands on click.
-	if (minimized) return null;
 
 	// The Thought Stream lives inside the Right Panel, so it folds away with it:
 	// when the Right Panel is collapsed we render nothing and the panel returns
@@ -157,7 +172,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 				style={{ borderColor: theme.colors.border }}
 			>
 				<Brain
-					className={`w-4 h-4 shrink-0 ${isCapturing ? 'animate-pulse' : ''}`}
+					className={`w-4 h-4 shrink-0 ${live ? 'animate-pulse' : ''}`}
 					style={{ color: theme.colors.accent }}
 				/>
 				<div className="flex flex-col min-w-0 flex-1">
@@ -174,19 +189,19 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					>
 						{label} · {totalCount} thought{totalCount === 1 ? '' : 's'}
 						{trimmed ? ' (trimmed)' : ''}
-						{!isCapturing ? ' · stopped' : ''}
+						{live ? ' · live' : ''}
 					</span>
 				</div>
 				<button
-					onClick={minimizePanel}
-					title="Minimize (keeps capturing)"
+					onClick={() => clearBuffer(panelSessionId)}
+					title="Discard buffered thoughts"
 					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
 				>
-					<Minus className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+					<Trash2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 				</button>
 				<button
 					onClick={closePanel}
-					title="Stop capturing and clear"
+					title="Close (thoughts keep buffering)"
 					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
 				>
 					<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
@@ -235,9 +250,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					<p className="text-xs italic mt-2" style={{ color: theme.colors.textDim }}>
 						{searching
 							? 'No thoughts match your search.'
-							: isCapturing
-								? 'Waiting for the agent to start thinking...'
-								: 'No thoughts captured.'}
+							: 'Nothing captured yet. Thoughts are buffered as the agent thinks, so this fills in on its own.'}
 					</p>
 				) : (
 					<div className="flex flex-col gap-3">

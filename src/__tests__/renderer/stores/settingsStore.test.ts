@@ -13,7 +13,10 @@ import {
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import {
+	selectShowNowPlayingIndicator,
+	useMediaPlaybackStore,
+} from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
@@ -1724,6 +1727,11 @@ describe('settingsStore', () => {
 				expect(state.dismissed).toBe(true);
 				expect(state.playing).toBe(false);
 				expect(state.pendingAutoplay).toBe(false);
+				// Dormant as well as hidden: a restored queue must not put media
+				// controls in the Left Bar header at launch, when the user has not
+				// played anything yet.
+				expect(state.dormant).toBe(true);
+				expect(selectShowNowPlayingIndicator(state)).toBe(false);
 				// History is per-boot by design: a fresh session must not open onto a
 				// log of last week's files.
 				expect(state.history).toEqual([]);
@@ -2165,6 +2173,48 @@ describe('settingsStore', () => {
 				'Meta',
 				'Shift',
 				'j',
+			]);
+		});
+
+		it.each([
+			['the original Cmd+Shift+2 default', ['Meta', 'Shift', '2']],
+			['the interim Cmd+Shift+E default', ['Meta', 'Shift', 'e']],
+		])('moves toggleAutoRunExpanded off %s onto Cmd+Shift+3', async (_label, fromKeys) => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					toggleAutoRunExpanded: {
+						id: 'toggleAutoRunExpanded',
+						label: 'Auto Run Expanded Preview',
+						keys: fromKeys,
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.toggleAutoRunExpanded.keys).toEqual(['Meta', 'Shift', '3']);
+			// The freed combo now belongs to the queued-message editor.
+			expect(shortcuts.editLastQueuedMessage.keys).toEqual(['Meta', 'Shift', 'e']);
+		});
+
+		it('leaves a user-customized toggleAutoRunExpanded binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					toggleAutoRunExpanded: {
+						id: 'toggleAutoRunExpanded',
+						label: 'Auto Run Expanded Preview',
+						keys: ['Meta', 'Shift', 'q'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.toggleAutoRunExpanded.keys).toEqual([
+				'Meta',
+				'Shift',
+				'q',
 			]);
 		});
 

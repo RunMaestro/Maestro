@@ -129,6 +129,15 @@ export interface SnoozeTabModalData {
 	tabLabel: string;
 }
 
+/**
+ * Model & effort modal data. Only the tab id travels: the modal resolves the
+ * agent, the option lists, and the tab > session > agent-default ladder from
+ * the stores itself, so an opener can't hand it a stale snapshot.
+ */
+export interface ModelEffortModalData {
+	tabId: string;
+}
+
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
 	sessionId: string;
@@ -164,6 +173,19 @@ export interface AgentErrorModalData {
 	historicalError?: AgentError;
 }
 
+/**
+ * Provider re-authentication modal data.
+ *
+ * Addressed by PROVIDER, not by agent: one expired token blocks every agent
+ * that shares the credential store, and they are all fixed by one login. The
+ * roster of blocked agents (and the error text) lives in `authOutageStore`
+ * keyed by this value, so it stays correct as more agents fail while the prompt
+ * is already open.
+ */
+export interface ReauthModalData {
+	providerKey: string;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -183,7 +205,10 @@ export interface QuitConfirmModalData {
 }
 
 export interface CueModalData {
-	initialTab?: 'dashboard' | 'pipeline';
+	/** Tab the modal opens on. Values match `CueModalTab` in
+	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
+	 *  `shared/uiSurfaces.ts`. */
+	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
 }
 
 /** Cue YAML editor data */
@@ -290,6 +315,7 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
+	| 'reauth'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -300,6 +326,7 @@ export type ModalId =
 	| 'renameTab'
 	| 'terminalStartupCommand'
 	| 'snoozeTab'
+	| 'modelEffort'
 	| 'snoozedTabs'
 	// Group Management
 	| 'renameGroup'
@@ -363,7 +390,9 @@ export type ModalId =
 	| 'cueModal'
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
-	| 'pianolaModal';
+	| 'pianolaModal'
+	// Concerto (agent-composed views)
+	| 'concertoStage';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -378,12 +407,14 @@ export interface ModalDataMap {
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
+	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
+	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
@@ -630,7 +661,7 @@ export const selectModalData =
  * Use this for event handlers and callbacks.
  */
 export function getModalActions() {
-	const { openModal, closeModal, updateModalData } = useModalStore.getState();
+	const { openModal, closeModal, toggleModal, updateModalData } = useModalStore.getState();
 
 	return {
 		// Settings Modal
@@ -923,6 +954,10 @@ export function getModalActions() {
 		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
 			openModal('agentError', { sessionId, historicalError: error }),
 
+		// Provider Re-authentication Modal
+		openReauthModal: (data: ReauthModalData) => openModal('reauth', data),
+		closeReauthModal: () => closeModal('reauth'),
+
 		// Worktree Modals
 		setWorktreeConfigModalOpen: (open: boolean) =>
 			open ? openModal('worktreeConfig') : closeModal('worktreeConfig'),
@@ -1009,7 +1044,7 @@ export function getModalActions() {
 
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
-		openCueModalWithTab: (tab: 'dashboard' | 'pipeline') =>
+		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>) =>
 			openModal('cueModal', { initialTab: tab }),
 
 		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)
@@ -1020,6 +1055,14 @@ export function getModalActions() {
 		// Pianola Modal (autonomous manager: rules + decision log)
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
+
+		// Concerto stage. This one flag is the whole truth about whether the stage
+		// is up: the movement store reads it back rather than keeping its own
+		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
+		// panel cannot disagree about it.
+		setConcertoStageOpen: (open: boolean) =>
+			open ? openModal('concertoStage') : closeModal('concertoStage'),
+		toggleConcertoStage: () => toggleModal('concertoStage'),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
@@ -1092,6 +1135,7 @@ export function useModalActions() {
 	const wizardResumeModalOpen = useModalStore(selectModalOpen('wizardResume'));
 	const wizardResumeData = useModalStore(selectModalData('wizardResume'));
 	const agentErrorData = useModalStore(selectModalData('agentError'));
+	const reauthData = useModalStore(selectModalData('reauth'));
 	const worktreeConfigModalOpen = useModalStore(selectModalOpen('worktreeConfig'));
 	const createWorktreeModalOpen = useModalStore(selectModalOpen('createWorktree'));
 	const createWorktreeData = useModalStore(selectModalData('createWorktree'));
@@ -1261,6 +1305,9 @@ export function useModalActions() {
 
 		// Agent Error Modal
 		agentErrorModalSessionId: agentErrorData?.sessionId ?? null,
+
+		// Provider Re-authentication Modal
+		reauthModalData: reauthData ?? null,
 
 		// Worktree Modals
 		worktreeConfigModalOpen,

@@ -72,6 +72,9 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			groupId: agent.groupId,
 			groupName: group?.name,
 			autoRunFolderPath: agent.autoRunFolderPath,
+			// Left Bar bookmark state (settable with `maestro-cli bookmark` /
+			// `unbookmark`, or `update-agent --bookmark`).
+			bookmarked: !!agent.bookmarked,
 			// Editable per-agent settings (the Edit Agent modal fields) so callers
 			// can read the full config without parsing raw store files.
 			nudgeMessage: agent.nudgeMessage ?? null,

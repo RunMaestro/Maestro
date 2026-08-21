@@ -34,13 +34,14 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectThoughtCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
+import { sleepAwareElapsedSince } from '../services/systemSleep';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -180,14 +181,12 @@ export const RightPanel = memo(
 		);
 
 		// Thought Stream: brain button on the Auto Run card opens a persistent,
-		// searchable view of the agent's live thinking stream for this session.
-		// While capturing, the same button doubles as the (minimized) status
-		// indicator - it animates and reads "Capturing", and clicking re-expands
-		// the panel. There is no separate floating pill.
+		// searchable view of the agent's thinking stream for this session.
+		// Capture is ambient, so the button reports how much reasoning is already
+		// buffered and waiting to be read - clicking opens (or re-expands) the
+		// panel on that history. There is no separate floating pill.
 		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-		const isCapturingThoughts = useThoughtStreamStore(
-			(s) => !!sessionId && !!s.capturing[sessionId]
-		);
+		const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
@@ -332,7 +331,8 @@ export const RightPanel = memo(
 			}
 		}, []);
 
-		// Update elapsed time display using wall clock time from startTime
+		// Update elapsed time display from startTime, minus any machine sleep, so
+		// the live counter matches the duration the run actually records.
 		// Uses an interval to update every second while running
 		useEffect(() => {
 			if (!currentSessionBatchState?.isRunning || !currentSessionBatchState?.startTime) {
@@ -342,7 +342,7 @@ export const RightPanel = memo(
 
 			// Calculate elapsed immediately
 			const updateElapsed = () => {
-				const elapsed = Date.now() - currentSessionBatchState.startTime!;
+				const elapsed = sleepAwareElapsedSince(currentSessionBatchState.startTime!);
 				setElapsedTime(formatElapsed(elapsed));
 			};
 
@@ -906,18 +906,18 @@ export const RightPanel = memo(
 									<button
 										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
-											color: isCapturingThoughts ? theme.colors.accent : theme.colors.textDim,
+											color: bufferedThoughts > 0 ? theme.colors.accent : theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => openThoughtStream(sessionId)}
 										title={
-											isCapturingThoughts
-												? 'Capturing thoughts - click to expand'
+											bufferedThoughts > 0
+												? `${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'} - click to read`
 												: "Peer into the agent's thought stream"
 										}
 									>
-										<Brain className={`w-3 h-3 ${isCapturingThoughts ? 'animate-pulse' : ''}`} />
-										{isCapturingThoughts ? 'Capturing' : 'View Thoughts'}
+										<Brain className="w-3 h-3" />
+										View Thoughts
 									</button>
 								)}
 								{/* View history link - shown on all tabs except history */}

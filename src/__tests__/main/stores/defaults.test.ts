@@ -2,6 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 
 import {
 	getDefaultShell,
+	resolveConfiguredShell,
+	type ShellSettingsReader,
 	SETTINGS_DEFAULTS,
 	SESSIONS_DEFAULTS,
 	GROUPS_DEFAULTS,
@@ -12,6 +14,38 @@ import {
 } from '../../../main/stores/defaults';
 
 describe('stores/defaults', () => {
+	describe('resolveConfiguredShell', () => {
+		/** Minimal stand-in for the settings store: only the two keys it reads. */
+		const reader = (values: Record<string, string>): ShellSettingsReader =>
+			({
+				get: (key: string, fallback: string) => values[key] ?? fallback,
+			}) as ShellSettingsReader;
+
+		it('prefers an explicit custom shell path over the selected shell', () => {
+			expect(
+				resolveConfiguredShell(
+					reader({ defaultShell: 'zsh', customShellPath: '/opt/homebrew/bin/fish' })
+				)
+			).toBe('/opt/homebrew/bin/fish');
+		});
+
+		it('trims the custom path, so a stray space cannot become the shell', () => {
+			expect(resolveConfiguredShell(reader({ customShellPath: '  /bin/dash  ' }))).toBe(
+				'/bin/dash'
+			);
+		});
+
+		it('falls back to the selected shell when the custom path is blank', () => {
+			expect(resolveConfiguredShell(reader({ defaultShell: 'bash', customShellPath: '   ' }))).toBe(
+				'bash'
+			);
+		});
+
+		it('falls back to the platform default when nothing is configured', () => {
+			expect(resolveConfiguredShell(reader({}))).toBe(getDefaultShell());
+		});
+	});
+
 	describe('getDefaultShell', () => {
 		const originalPlatform = process.platform;
 		const originalShell = process.env.SHELL;

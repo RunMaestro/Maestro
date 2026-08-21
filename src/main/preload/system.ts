@@ -5,6 +5,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { IpcRendererEvent } from 'electron';
 import type { ParsedDeepLink, ShellInfo, UpdateStatus } from '../../shared/types';
 export type { ShellInfo, UpdateStatus } from '../../shared/types';
 
@@ -182,10 +183,13 @@ export function createAppApi() {
 		},
 		/**
 		 * Listen for system resume event (after sleep/suspend)
-		 * Used to refresh settings that may have been reset during sleep
+		 * Used to refresh settings that may have been reset during sleep, and to
+		 * subtract the measured sleep gap from Auto Run durations. `sleptMs` is the
+		 * gap the main process measured between suspend and resume.
 		 */
-		onSystemResume: (callback: () => void) => {
-			const handler = () => callback();
+		onSystemResume: (callback: (info: { sleptMs: number }) => void) => {
+			const handler = (_event: IpcRendererEvent, info?: { sleptMs: number }) =>
+				callback({ sleptMs: info?.sleptMs ?? 0 });
 			ipcRenderer.on('app:systemResume', handler);
 			return () => ipcRenderer.removeListener('app:systemResume', handler);
 		},

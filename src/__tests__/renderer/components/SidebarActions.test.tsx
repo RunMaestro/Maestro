@@ -95,7 +95,9 @@ describe('SidebarActions', () => {
 			/>
 		);
 
-		expect(screen.getByLabelText('Feedback draft in progress')).toBeInTheDocument();
+		// The pip carries a `title`, so it names itself AND shows a tooltip on
+		// hover - an aria-label alone was silent to a mouse.
+		expect(screen.getByTitle('Feedback draft in progress')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /feedback/i })).toHaveAttribute(
 			'title',
 			'Resume feedback draft'

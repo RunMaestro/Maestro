@@ -441,6 +441,7 @@ describe('DirectorNotesModal', () => {
 				priority: 848,
 				blocksLowerLayers: true,
 				capturesFocus: true,
+				blocksAppShortcuts: true,
 				focusTrap: 'lenient',
 				onEscape: expect.any(Function),
 			});

@@ -799,6 +799,7 @@ diff --git a/src/test.ts b/src/test.ts
 				priority: expect.any(Number),
 				blocksLowerLayers: true,
 				capturesFocus: true,
+				blocksAppShortcuts: true,
 				focusTrap: 'lenient',
 				ariaLabel: 'Git Log Viewer',
 				onEscape: expect.any(Function),

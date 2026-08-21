@@ -26,6 +26,9 @@ export const MODAL_PRIORITIES = {
 	/** Quit confirmation modal - highest priority, blocks app quit */
 	QUIT_CONFIRM: 1020,
 
+	/** Provider re-authentication terminal - above the agent error modal it replaces */
+	REAUTH: 1015,
+
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
@@ -62,6 +65,12 @@ export const MODAL_PRIORITIES = {
 
 	/** Terminal tab startup command configuration modal */
 	TERMINAL_STARTUP_COMMAND: 873,
+
+	/**
+	 * Keyboard-only model/effort picker for the active AI tab. Sits with the
+	 * other per-tab dialogs: it retunes one tab and nothing else.
+	 */
+	MODEL_EFFORT: 872,
 
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
@@ -250,11 +259,16 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
-	/** AgentRun ledger dashboard modal */
-	AGENT_RUN_DASHBOARD: 542,
+	/** AgentRun ledger dashboard modal - above the Usage Dashboard and its sub-modals */
+	AGENT_RUN_DASHBOARD: 543,
+	/** Agent card fuzzy filter in the Usage Dashboard's Agents tab. Registered
+	 *  only while the box holds text, so Escape clears the filter before it
+	 *  closes the dashboard. Sits below the detail sub-modal: with both open,
+	 *  Escape dismisses the sub-modal first. */
+	USAGE_DASHBOARD_AGENT_FILTER: 541,
 
 	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
-	USAGE_DASHBOARD_AGENT_DETAIL: 541,
+	USAGE_DASHBOARD_AGENT_DETAIL: 542,
 
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
@@ -271,6 +285,12 @@ export const MODAL_PRIORITIES = {
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
 	CUE_YAML_EDITOR: 463,
 
+	/** Fuzzy filter box in the Cue modal's Scheduled Tasks tab. Registered only
+	 *  while the box holds text, so Escape clears the filter before it closes
+	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal.
+	 *  461 is taken by PIANOLA_RULE_EDITOR, so this sits at 462. */
+	CUE_SCHEDULED_TASK_FILTER: 462,
+
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,
 
@@ -282,6 +302,12 @@ export const MODAL_PRIORITIES = {
 
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
+
+	/** Concerto stage - the agent-composed movement panels in one resizable
+	 * window. Sits below the plugin band and every settings-level modal, so a
+	 * modal opened on top of the stage takes Escape first and the stage stays up
+	 * behind it. */
+	CONCERTO_STAGE: 415,
 
 	/** Reserved band for community-plugin panels/modals. Plugin UI is allocated
 	 * sequentially from PLUGIN_PANEL_BASE up to (but not reaching) SSH_REMOTE/

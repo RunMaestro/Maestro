@@ -70,6 +70,7 @@ import {
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
@@ -77,16 +78,22 @@ import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
 
 /**
- * Sidebar width below which the now-playing pill drops its filename, keeping
- * just its play/pause and restore buttons.
+ * Sidebar widths at which the header's two pills can afford their text labels.
  *
- * Every element in this header has to earn its width: at a default sidebar the
- * logo, the badge pill and the LIVE/OFFLINE pill already fill the row, so a
- * filename on top of them is the first thing worth giving up. The buttons are
- * never dropped - they are the whole transport a minimized player has - and the
- * tooltip names the file at any width.
+ * The header row neither wraps nor scrolls, so every element in it earns its
+ * width or drops its text. Both pills shed their label the same way; the
+ * now-playing one needs more room because it sits further right and carries
+ * more chrome (two buttons and a divider, none of which are ever dropped -
+ * they are the whole transport a minimized player has). Its tooltip names the
+ * file at any width.
  */
-const NOW_PLAYING_LABEL_MIN_WIDTH = 440;
+const LIVE_LABEL_MIN_WIDTH = 256;
+const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
+/**
+ * Room the achievements badge takes when the conductor has one, pushing both
+ * label thresholds out by the same amount. Shared so the two cannot drift.
+ */
+const HEADER_BADGE_WIDTH = 39;
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -235,6 +242,10 @@ function SessionListInner(props: SessionListProps) {
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
+	// The badge pill occupies part of the header's left cluster, so both label
+	// thresholds below shift by the same amount when it is showing.
+	const headerBadgeWidth =
+		autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0;
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -360,6 +371,28 @@ function SessionListInner(props: SessionListProps) {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const unreadGroupChatIds = useGroupChatStore((s) => s.unreadGroupChatIds);
+
+	// Shared with the group chat rows' status dots and the agent jumper's LIVE
+	// bucket, so all three agree on what "running" means.
+	const isAnyGroupChatBusy = useMemo(
+		() =>
+			getBusyGroupChatIds(groupChats, {
+				activeGroupChatId,
+				groupChatState,
+				participantStates,
+				groupChatStates,
+				allGroupChatParticipantStates,
+			}).length > 0,
+		[
+			groupChats,
+			activeGroupChatId,
+			groupChatState,
+			participantStates,
+			groupChatStates,
+			allGroupChatParticipantStates,
+		]
+	);
 
 	// Keep the keyboard-selected Left Bar row in view as navigation moves it.
 	// Rows are tagged with `data-nav-key`; we resolve the current key from the
@@ -476,10 +509,15 @@ function SessionListInner(props: SessionListProps) {
 		[scopeSessionsToWindow, sortedSessionsAll]
 	);
 
-	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
+	// Derive whether any session is busy or in auto-run (for wand sparkle
+	// animation). A running group chat counts too: the room burns real agent
+	// time, and the wand is the app-wide "something is working" tell.
 	const isAnyBusy = useMemo(
-		() => sessions.some((s) => s.state === 'busy') || activeBatchSessionIds.length > 0,
-		[sessions, activeBatchSessionIds]
+		() =>
+			sessions.some((s) => s.state === 'busy') ||
+			activeBatchSessionIds.length > 0 ||
+			isAnyGroupChatBusy,
+		[sessions, activeBatchSessionIds, isAnyGroupChatBusy]
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
@@ -512,9 +550,15 @@ function SessionListInner(props: SessionListProps) {
 		}),
 		[activeBatchSessionIds, stuckOutageSignature]
 	);
+	// Drives the Bell button's dot. It must agree with what the unread filter
+	// would actually reveal, and that filter keeps unread group chats too - a
+	// dot-less bell that still un-hides a room reads as a bug. Agents route
+	// through sessionNeedsAttention so this can't drift from the filter itself.
 	const hasUnreadAgents = useMemo(
-		() => sessions.some((s) => sessionNeedsAttention(s, attentionCtx)),
-		[sessions, attentionCtx]
+		() =>
+			sessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
+			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)),
+		[sessions, attentionCtx, groupChats, unreadGroupChatIds]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -1265,7 +1309,7 @@ function SessionListInner(props: SessionListProps) {
 							    sidebar, the same way the LIVE pill below does. */}
 							<NowPlayingIndicator
 								theme={theme}
-								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH}
+								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth}
 							/>
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
@@ -1293,8 +1337,7 @@ function SessionListInner(props: SessionListProps) {
 										}
 									>
 										<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
-										{leftSidebarWidthState >=
-											(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? 295 : 256) &&
+										{leftSidebarWidthState >= LIVE_LABEL_MIN_WIDTH + headerBadgeWidth &&
 											(isLiveMode ? 'LIVE' : 'OFFLINE')}
 									</button>
 
@@ -1360,8 +1403,11 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
+					// No now-playing pill on the collapsed rail: it is a 64px icon
+					// strip, and a media control there competes with the agent pills for
+					// the one thing the rail is for. Expand the sidebar, or run "Show
+					// Floating Media Player" from the Command Palette.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
-						<NowPlayingIndicator theme={theme} compact />
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
 								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}${
@@ -2127,6 +2173,7 @@ function SessionListInner(props: SessionListProps) {
 								groupChatStates={groupChatStates}
 								allGroupChatParticipantStates={allGroupChatParticipantStates}
 								showUnreadAgentsOnly={showUnreadAgentsOnly}
+								unreadGroupChatIds={unreadGroupChatIds}
 							/>
 						)}
 				</div>

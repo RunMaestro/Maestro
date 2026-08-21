@@ -175,12 +175,16 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 		[points]
 	);
 
-	// This is a PASSIVE inspector, so it deliberately does NOT register a layer:
-	// any layer (modal or overlay) trips hasOpenLayers()/hasOpenModal() and
-	// suppresses global shortcuts + file-tree keys while it is open. It is closed
-	// with its own X / minimize buttons instead. It does read the shared stack to
-	// hide itself while a real modal is open, so its high z-index can't float
-	// above lower-z dialogs (Create PR, expanded Auto Run) that own the foreground.
+	// This is a PASSIVE inspector that does NOT register a layer, so it is closed
+	// with its own X / minimize buttons rather than Escape. Historically it had no
+	// choice: any registered layer tripped hasOpenLayers()/hasOpenModal() and
+	// suppressed global shortcuts + file-tree keys while the panel was open.
+	// `blocksAppShortcuts: false` (see ThoughtStreamPanel) now covers exactly this
+	// case, so registering here would buy Escape-to-close without the keyboard
+	// cost - worth doing next time this file is touched. It does read the shared
+	// stack to hide itself while a real modal is open, so its high z-index can't
+	// float above lower-z dialogs (Create PR, expanded Auto Run) that own the
+	// foreground.
 	const { hasOpenModal } = useLayerStack();
 
 	// Auto-tail: when pinned to the top, follow new turns (newest is at the top).

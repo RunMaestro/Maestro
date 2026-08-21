@@ -15,6 +15,7 @@ import {
 	FolderUp,
 	FileText,
 	HardDrive,
+	AlertTriangle,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -132,6 +133,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const changedAncestors = useMemo(() => buildChangedAncestors(changeMap.keys()), [changeMap]);
 
 	// Coordinator refs with ≥3 cross-hook readers
+	// The truncation warning is tall enough to swallow the top of the tree, so
+	// it can be collapsed down to the hazard icon beside the path. Keyed by
+	// session id rather than a bare boolean: collapsing it for one agent must
+	// not hide a fresh warning when the panel re-renders for another.
+	const [truncationCollapsedFor, setTruncationCollapsedFor] = useState<string | null>(null);
+	const truncationCollapsed = truncationCollapsedFor === session.id;
+	const showTruncationWarning = !session.fileTreeLoading && !!session.fileTreeTruncated;
+
 	const refreshFileTreeRef = useRef(refreshFileTree);
 	const sessionIdRef = useRef(session.id);
 	const lastClickedUnderFilterRef = useRef<string | null>(null);
@@ -638,6 +647,18 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							<Server className="w-3.5 h-3.5" />
 						</span>
 					)}
+					{showTruncationWarning && truncationCollapsed && (
+						<button
+							type="button"
+							className="flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+							style={{ color: theme.colors.warning }}
+							onClick={() => setTruncationCollapsedFor(null)}
+							aria-label="Show file scan warning"
+							title="Not all files were loaded into the file panel. Click for options."
+						>
+							<AlertTriangle className="w-3.5 h-3.5" />
+						</button>
+					)}
 					<span
 						className="flex-shrink-0 cursor-pointer opacity-30 hover:opacity-70 transition-opacity"
 						style={{ color: theme.colors.accent }}
@@ -733,7 +754,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								/>
 							);
 						})()}
-					{!session.fileTreeLoading && session.fileTreeTruncated && (
+					{showTruncationWarning && !truncationCollapsed && (
 						<FileTreeTruncatedBanner
 							theme={theme}
 							previousCap={session.fileTreeLoadedCap}
@@ -747,6 +768,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 									maxEntriesOverride: Number.POSITIVE_INFINITY,
 								});
 							}}
+							onCollapse={() => setTruncationCollapsedFor(session.id)}
 						/>
 					)}
 					{!session.fileTreeLoading &&

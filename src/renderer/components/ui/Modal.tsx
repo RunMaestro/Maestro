@@ -40,9 +40,12 @@ import { X } from 'lucide-react';
 import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
 import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
-import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { useResizableModal, type ModalResizeDirection } from '../../hooks/ui/useResizableModal';
 import type { ModalResizeKey, ModalSize } from '../../utils/modalSizing';
 import { ResizeHandles } from './ResizeHandles';
+
+/** Edges a top-left-anchored floating window can resize from without moving. */
+const FLOATING_RESIZE_DIRECTIONS: ModalResizeDirection[] = ['e', 'se', 's'];
 
 function getDefaultResizeKey(priority: number, title: string): ModalResizeKey {
 	const slug = title
@@ -50,6 +53,31 @@ function getDefaultResizeKey(priority: number, title: string): ModalResizeKey {
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/^-|-$/g, '');
 	return `modal-${priority}-${slug || 'dialog'}`;
+}
+
+/**
+ * Turns a Modal into a free-positioned, non-blocking window.
+ *
+ * A floating Modal is the SAME element as the docked one, just styled
+ * differently - deliberately, so a surface can offer a dock/pop-out toggle
+ * without React unmounting the frame's subtree. A dialog that rebuilt itself on
+ * every toggle would restart whatever lives inside it (an iframe, a media
+ * element, a scroll position).
+ *
+ * While floating the modal has no backdrop, registers a PASSIVE layer (Escape
+ * still closes it at its priority, but it takes no focus and does not blank the
+ * app's shortcuts), and resizes from its bottom/right edges only, since its
+ * top-left corner is what pins it.
+ */
+export interface ModalFloatingConfig {
+	/** Top-left corner in viewport pixels. */
+	position: { x: number; y: number };
+	/**
+	 * Pointer-down on the header, which doubles as the drag handle. Use
+	 * `usePointerDrag` with `ignoreButtons` so the header's own buttons still
+	 * click.
+	 */
+	onMovePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
 export interface ModalProps {
@@ -99,6 +127,16 @@ export interface ModalProps {
 	closeOnBackdropClick?: boolean;
 	/** z-index for the modal. Defaults to 9999 */
 	zIndex?: number;
+	/**
+	 * Keep the modal mounted but inert and off screen. For a modal whose content
+	 * owns live state that must survive being closed - an iframe mid-interaction,
+	 * a running media element - where the usual `{isOpen && <Modal/>}` pattern
+	 * would destroy it. While hidden the overlay is `display: none`, no layer is
+	 * registered (so Escape and the focus trap belong to whatever is underneath),
+	 * and the auto-focus does not run. Callers that have nothing to preserve
+	 * should keep conditionally rendering instead - it is cheaper.
+	 */
+	hidden?: boolean;
 	/** Whether to show the default header. Defaults to true */
 	showHeader?: boolean;
 	/** Whether to show the close button in header. Defaults to true */
@@ -142,6 +180,11 @@ export interface ModalProps {
 	minSize?: Partial<ModalSize>;
 	/** Maximum resizable frame size in pixels before viewport clamping. */
 	maxSize?: Partial<ModalSize>;
+	/**
+	 * Render as a floating, non-blocking window instead of a centered dialog.
+	 * See ModalFloatingConfig. Pass `null`/omit for the normal docked dialog.
+	 */
+	floating?: ModalFloatingConfig | null;
 }
 
 /**
@@ -163,6 +206,7 @@ export function Modal({
 	maxHeight = '90vh',
 	closeOnBackdropClick = false,
 	zIndex = 9999,
+	hidden = false,
 	showHeader = true,
 	showCloseButton = true,
 	layerOptions,
@@ -177,7 +221,9 @@ export function Modal({
 	defaultSize,
 	minSize,
 	maxSize,
+	floating = null,
 }: ModalProps) {
+	const isFloating = floating !== null;
 	const containerRef = useRef<HTMLDivElement>(null);
 	const cardElementRef = useRef<HTMLDivElement | null>(null);
 	// Resizing requires a caller-supplied resizeKey. A title-derived fallback key
@@ -196,13 +242,33 @@ export function Modal({
 		maxSize,
 		enabled: resizingEnabled,
 		externalRef: cardElementRef,
+		anchor: isFloating ? 'topLeft' : 'center',
 	});
 
-	// Register with layer stack for Escape handling and focus management
-	useModalLayer(priority, title, onClose, layerOptions);
+	// Register with layer stack for Escape handling and focus management. A hidden
+	// modal registers nothing: it is on screen for nobody, so it must not eat
+	// Escape or trap focus away from the app behind it. A floating one registers
+	// passively: it sits BESIDE the app rather than over it, so blocking the
+	// app's shortcuts or trapping focus would make the rest of Maestro go dead
+	// while the window is merely open.
+	useModalLayer(priority, title, onClose, {
+		...layerOptions,
+		enabled: (layerOptions?.enabled ?? true) && !hidden,
+		...(isFloating
+			? {
+					blocksLowerLayers: false,
+					capturesFocus: false,
+					blocksAppShortcuts: false,
+					focusTrap: 'none' as const,
+				}
+			: null),
+	});
 
-	// Auto-focus on mount
+	// Auto-focus on mount, and again whenever a hidden modal is shown. A floating
+	// window never grabs focus: the point of popping out is to keep working in
+	// the app beside it, and stealing the caret out of the composer would undo that.
 	useEffect(() => {
+		if (hidden || isFloating) return;
 		requestAnimationFrame(() => {
 			if (initialFocusRef?.current) {
 				initialFocusRef.current.focus();
@@ -211,7 +277,7 @@ export function Modal({
 				containerRef.current?.focus();
 			}
 		});
-	}, [initialFocusRef]);
+	}, [hidden, isFloating, initialFocusRef]);
 
 	const handleBackdropClick = (e: React.MouseEvent) => {
 		// Only close if clicking directly on backdrop, not on modal content.
@@ -240,19 +306,29 @@ export function Modal({
 	const overlay = (
 		<div
 			ref={containerRef}
-			className="fixed inset-0 modal-overlay flex items-center justify-center animate-in fade-in duration-200 outline-none"
-			style={{ zIndex }}
+			// Floating: no backdrop, and the layer itself is click-through so only
+			// the card takes the pointer. Docked: the usual dimmed, centered dialog.
+			className={
+				isFloating
+					? 'fixed inset-0 pointer-events-none outline-none'
+					: 'fixed inset-0 modal-overlay flex items-center justify-center animate-in fade-in duration-200 outline-none'
+			}
+			style={{ zIndex, ...(hidden ? { display: 'none' } : null) }}
 			role="dialog"
-			aria-modal="true"
+			aria-modal={isFloating ? undefined : 'true'}
 			aria-label={title}
+			aria-hidden={hidden || undefined}
+			data-floating={isFloating || undefined}
 			tabIndex={-1}
-			onClick={handleBackdropClick}
+			onClick={isFloating ? undefined : handleBackdropClick}
 			onKeyDown={(e) => e.stopPropagation()}
 			data-testid={testId}
 		>
 			<div
 				ref={setCardRef}
-				className={`relative border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
+				className={`relative border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'} ${
+					isFloating ? 'pointer-events-auto absolute' : ''
+				}`}
 				style={{
 					...(resizingEnabled
 						? resizableModal.style
@@ -262,6 +338,7 @@ export function Modal({
 									: `${width}px`,
 								maxHeight,
 							}),
+					...(floating ? { left: floating.position.x, top: floating.position.y } : null),
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
@@ -274,15 +351,23 @@ export function Modal({
 						accentColor={theme.colors.accent}
 						onResetSize={resizableModal.onResetSize}
 						canReset={resizableModal.canReset}
+						// A top-left-pinned window can only grow down and right without
+						// also moving, so it offers exactly those edges.
+						directions={isFloating ? FLOATING_RESIZE_DIRECTIONS : undefined}
 					/>
 				)}
 
-				{/* Header */}
+				{/* Header. While floating it doubles as the drag handle - the whole bar,
+				    which is the affordance users already expect from a window title. */}
 				{showHeader &&
 					(customHeader || (
 						<div
-							className="p-4 border-b flex items-center justify-between shrink-0"
+							className={`p-4 border-b flex items-center justify-between shrink-0 ${
+								isFloating ? 'cursor-grab active:cursor-grabbing select-none' : ''
+							}`}
 							style={{ borderColor: theme.colors.border }}
+							onPointerDown={floating?.onMovePointerDown}
+							data-testid={isFloating ? 'modal-float-handle' : undefined}
 						>
 							<div className="flex items-center gap-2">
 								{headerIcon}

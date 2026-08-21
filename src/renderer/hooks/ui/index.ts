@@ -29,6 +29,9 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Live CSS-grid column count (for arrow navigation over a responsive grid)
+export { useGridColumnCount } from './useGridColumnCount';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
 
@@ -79,6 +82,13 @@ export {
 	FONT_SCALE_DEFAULT,
 } from './useFontScale';
 export type { UseFontScaleReturn } from './useFontScale';
+
+// Client-side pagination for lists already held in memory
+export { usePagination } from './usePagination';
+export type { UsePaginationResult } from './usePagination';
+
+// ResizeObserver-backed element width, for JS-computed layout
+export { useElementWidth } from './useElementWidth';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

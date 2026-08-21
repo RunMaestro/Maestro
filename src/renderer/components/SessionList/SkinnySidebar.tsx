@@ -9,6 +9,7 @@ import {
 	outageIdsFromSignature,
 	type AttentionContext,
 } from '../../utils/sessionAttention';
+import { CornerDot } from '../ui/CornerDot';
 
 interface SkinnySidebarProps {
 	theme: Theme;
@@ -97,11 +98,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 								title={isUnboundClaude ? 'No active Claude session' : undefined}
 							/>
 							{activeSessionId !== session.id && hasUnreadTabs && (
-								<div
-									className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
-									style={{ backgroundColor: theme.colors.error }}
-									title="Unread messages"
-								/>
+								<CornerDot color={theme.colors.error} title="Unread messages" />
 							)}
 						</div>
 
