@@ -1770,6 +1770,7 @@ function setupIpcHandlers() {
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: () => processManager,
+		getMaestroCliManager: () => maestroCliManager,
 		debugPackageDeps: {
 			getAgentDetector: () => agentDetector,
 			getProcessManager: () => processManager,

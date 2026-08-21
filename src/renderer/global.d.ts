@@ -675,7 +675,7 @@ interface MaestroAPI {
 			feedbackText: string,
 			attachments?: Array<{ name: string; dataUrl: string }>
 		) => Promise<{ prompt: string }>;
-		getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+		getConversationPrompt: () => Promise<{ prompt: string; environment: string; cwd: string }>;
 		submitConversation: (payload: {
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
 			summary: string;
