@@ -762,11 +762,16 @@ export class HistoryManager {
 	startWatching(onExternalChange: (sessionId: string) => void): void {
 		if (this.watcher) return; // Already watching
 
-		// Ensure directory exists before watching. mkdirSync with recursive
-		// is idempotent and only runs once per app lifetime.
-		fs.mkdirSync(this.historyDir, { recursive: true });
-
 		try {
+			// Ensure directory exists before watching. mkdirSync with recursive
+			// is idempotent and only runs once per app lifetime. It is INSIDE the
+			// try because it fails with the same OS-ceiling codes fs.watch does
+			// (EMFILE, ENOSPC, EACCES); left outside, one of those would bypass
+			// isExpectedWatchError entirely, propagate to the caller in
+			// main/index.ts, and report as a history initialization failure - the
+			// exact Sentry noise this guard exists to stop.
+			fs.mkdirSync(this.historyDir, { recursive: true });
+
 			this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {
 				if (filename?.endsWith('.json')) {
 					const sessionId = filename.replace('.json', '');
@@ -780,7 +785,17 @@ export class HistoryManager {
 			// the EventEmitter throws as an unhandled exception and crashes the main process.
 			// Expected/recoverable codes get a quiet warn; everything else goes to Sentry
 			// so we keep visibility into novel failure modes in production.
-			this.watcher.on('error', (err) => {
+			const watcher = this.watcher;
+			watcher.on('error', (err) => {
+				// Node documents an FSWatcher as unusable once it emits 'error', and
+				// says not to call methods on it from the handler - so drop the
+				// reference rather than close() it. Without this the dead watcher
+				// keeps failing the `if (this.watcher) return` guard above and live
+				// refresh never comes back for the rest of the session. Compare
+				// identity so a late error from a previous watcher cannot clear a
+				// replacement that has already been installed.
+				if (this.watcher === watcher) this.watcher = null;
+
 				const code = (err as NodeJS.ErrnoException | undefined)?.code;
 				if (isExpectedWatchError(code)) {
 					logger.warn(`History watcher error (${code}): ${String(err)}`, LOG_CONTEXT);

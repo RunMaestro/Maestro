@@ -1529,6 +1529,61 @@ describe('HistoryManager', () => {
 			}
 		);
 
+		// The directory creation sits on the same OS ceilings fs.watch does, so it
+		// has to be under the same guard. Outside the try it propagates to the
+		// caller in main/index.ts and reports as a history init failure instead.
+		it.each(['EMFILE', 'ENOSPC', 'ENFILE', 'ENOENT', 'EPERM', 'UNKNOWN'])(
+			'does not report %s from the directory creation to Sentry (MAESTRO-SC)',
+			(code) => {
+				mockExistsSync.mockReturnValue(false);
+				mockMkdirSync.mockImplementation(() => {
+					throw Object.assign(new Error(`${code}: mkdir failed`), { code });
+				});
+
+				expect(() => manager.startWatching(vi.fn())).not.toThrow();
+
+				expect(vi.mocked(captureException)).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected directory-creation failure to Sentry', () => {
+			mockExistsSync.mockReturnValue(false);
+			mockMkdirSync.mockImplementation(() => {
+				throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' });
+			});
+
+			expect(() => manager.startWatching(vi.fn())).not.toThrow();
+
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(
+				expect.any(Error),
+				expect.objectContaining({ operation: 'history:watch:start' })
+			);
+		});
+
+		// Node documents an FSWatcher as unusable once it emits 'error'. Holding on
+		// to it makes the `if (this.watcher) return` guard reject every later
+		// startWatching, so live refresh stays dead for the rest of the session.
+		it('replaces a watcher that died with an error event', () => {
+			let errorHandler: (err: unknown) => void = () => {};
+			const dead = {
+				close: vi.fn(),
+				on: vi.fn((event: string, cb: (err: unknown) => void) => {
+					if (event === 'error') errorHandler = cb;
+				}),
+			} as unknown as fs.FSWatcher;
+			const replacement = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
+			mockWatch.mockReturnValueOnce(dead).mockReturnValueOnce(replacement);
+			mockExistsSync.mockReturnValue(true);
+
+			manager.startWatching(vi.fn());
+			errorHandler(Object.assign(new Error('EMFILE: watch failed'), { code: 'EMFILE' }));
+			manager.startWatching(vi.fn());
+
+			expect(mockWatch).toHaveBeenCalledTimes(2);
+			// Node says the watcher is not to be used from its own error handler.
+			expect(dead.close).not.toHaveBeenCalled();
+		});
+
 		it('should not start watching again if already watching', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);

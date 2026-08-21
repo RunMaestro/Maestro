@@ -2497,9 +2497,25 @@ export async function loadAllSettings(): Promise<void> {
 				// unchanged. Every consumer keys off `id` (edit, save, reset, delete, React keys),
 				// so an entry without one is unusable and would otherwise be stored under the
 				// Map key `undefined` and rendered anyway. Skip it instead of crashing later.
-				if (!cmd || typeof cmd !== 'object' || typeof cmd.id !== 'string' || !cmd.id) {
-					logger.warn('Skipping malformed customAICommands entry (missing id)');
+				// `id`, `command` and `prompt` are all load-bearing: consumers key off
+				// `id` (edit, save, reset, delete, React keys), and the panel calls
+				// `command.startsWith('/')` and `prompt.substring(...)` directly, so a
+				// missing one is a crash rather than a cosmetic gap. `description` is
+				// only rendered, so default it instead of discarding a command the
+				// user may still want.
+				if (
+					!cmd ||
+					typeof cmd !== 'object' ||
+					typeof cmd.id !== 'string' ||
+					!cmd.id ||
+					typeof cmd.command !== 'string' ||
+					typeof cmd.prompt !== 'string'
+				) {
+					logger.warn('Skipping malformed customAICommands entry (missing id, command or prompt)');
 					return;
+				}
+				if (typeof cmd.description !== 'string') {
+					cmd = { ...cmd, description: '' };
 				}
 				// Migration: Skip old /synopsis command
 				if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {

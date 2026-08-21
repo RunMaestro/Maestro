@@ -2113,6 +2113,37 @@ describe('settingsStore', () => {
 			expect(commands.find((c) => c.id === 'commit')).toBeDefined();
 		});
 
+		// An id alone is not enough. The panel calls command.startsWith('/') and
+		// prompt.substring(...) directly, so an entry carrying an id but missing
+		// either one still crashes the Settings modal (MAESTRO-YP/YQ/YR).
+		it('skips customAICommands entries whose command or prompt is unusable', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				customAICommands: [
+					{ id: 'no-command', description: 'Lost its command', prompt: 'x' },
+					{ id: 'no-prompt', command: '/nope', description: 'Lost its prompt' },
+					{ id: 'wrong-types', command: 42, description: 'Not strings', prompt: [] },
+					{
+						id: 'no-description',
+						command: '/keep',
+						prompt: 'description is only rendered',
+					},
+				],
+			});
+
+			await loadAllSettings();
+
+			const commands = useSettingsStore.getState().customAICommands;
+			expect(commands.find((c) => c.id === 'no-command')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'no-prompt')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'wrong-types')).toBeUndefined();
+			// A missing description is cosmetic, so the command survives with ''.
+			expect(commands.find((c) => c.id === 'no-description')?.description).toBe('');
+			// Nothing that survives can crash the panel's string calls.
+			expect(
+				commands.every((c) => typeof c.command === 'string' && typeof c.prompt === 'string')
+			).toBe(true);
+		});
+
 		it('applies auto-run time migration for concurrent tallying bug', async () => {
 			const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
