@@ -271,7 +271,20 @@ export async function groomContext(
 			? [...configResolution.args, ...agent.noToolsArgs]
 			: configResolution.args;
 	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
-	const resolvedCommand = sessionCustomPath || agent.command;
+	// Prefer the absolute path the detector resolved over the static `command`
+	// field from the agent definition. `agent.command` is a bare name like
+	// `claude`, which is not spawnable on Windows: the npm install leaves a
+	// `claude.cmd` shim in %APPDATA%\npm and there is no bare `claude` on PATH,
+	// so spawn() fails with ENOENT. Every other spawn site already resolves
+	// `agent.path || agent.command`; the fallback keeps working on platforms
+	// where the bare command is already on PATH and `path` is unset.
+	//
+	// `agent.path` is a LOCAL path. Grooming only ever spawns locally today (see
+	// the note on the spawn call below), so that is correct as written - but
+	// whoever routes grooming through SSH must not send this to a remote host,
+	// which has its own filesystem. Remote execution uses the agent's
+	// `binaryName`; `wrapSpawnWithSsh` handles that.
+	const resolvedCommand = sessionCustomPath || agent.path || agent.command;
 
 	// Apply SSH wrapping when the session runs on a remote host. ProcessManager
 	// does NO SSH wrapping of its own - every spawn surface has to do this itself

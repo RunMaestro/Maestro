@@ -36,7 +36,7 @@ import {
 } from '../../group-chat/group-chat-storage';
 
 // Group chat history type
-import type { GroupChatHistoryEntry } from '../../../shared/group-chat-types';
+import { mentionMatches, type GroupChatHistoryEntry } from '../../../shared/group-chat-types';
 
 // Group chat log imports
 import { appendToLog, readLog, saveImage, GroupChatMessage } from '../../group-chat/group-chat-log';
@@ -128,19 +128,30 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * Resolve the SSH remote config for a participant by looking up the agent it was
  * added from. Participant records store only the remote's display name, while
  * spawning needs the full `{ enabled, remoteId }` config, so we read it off the
- * agent whose name matches the participant - the same association the router
- * makes when it dispatches a turn to that participant.
+ * agent whose name matches the participant.
+ *
+ * The match deliberately uses the SAME predicate the router uses when it picks
+ * the session for a participant's turn (`group-chat-router`, cwd / sshRemoteConfig
+ * / tokenMode resolution). Name matching is the only association a participant
+ * record carries, so grooming on a different rule than the turn dispatch would
+ * be strictly worse: the summary would resume on a host the turns never ran on.
+ *
+ * Persisted sessions store this as `sessionSshRemoteConfig`; the flat
+ * `sshRemoteConfig` field only exists on the mapped view the router consumes
+ * (see `setGetSessionsCallback` in `src/main/index.ts`).
  *
  * Returns undefined for local participants (and for participants whose source
  * agent has since been renamed or deleted, which keeps the summary local rather
  * than failing the reset).
  */
-function resolveParticipantSshRemoteConfig(
+export function resolveParticipantSshRemoteConfig(
 	participantName: string
 ): { enabled: boolean; remoteId: string | null; workingDirOverride?: string } | undefined {
 	const sessions = getSessionsStore().get('sessions', []);
-	const match = sessions.find((session) => session.name === participantName);
-	return match?.sshRemoteConfig;
+	const match = sessions.find(
+		(session) => mentionMatches(session.name, participantName) || session.name === participantName
+	);
+	return match?.sessionSshRemoteConfig;
 }
 
 /**

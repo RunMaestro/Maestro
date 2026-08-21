@@ -231,6 +231,24 @@ export function createAppApi() {
 			ipcRenderer.on('globalHotkey:registrationFailed', handler);
 			return () => ipcRenderer.removeListener('globalHotkey:registrationFailed', handler);
 		},
+		/**
+		 * Publish the renderer's merged shortcut bindings (bundled defaults plus
+		 * the user's remaps) so the native application menu can display accurate
+		 * accelerators next to each item.
+		 */
+		setMenuShortcutKeys: (keys: Record<string, string[]>) => {
+			ipcRenderer.send('menu:setShortcutKeys', keys);
+		},
+		/**
+		 * Listen for native application menu clicks. The payload is the shortcut
+		 * id behind the clicked item; the renderer replays it as a keystroke so
+		 * menu and keyboard share one dispatch path (see useAppMenuBridge).
+		 */
+		onMenuCommand: (callback: (shortcutId: string) => void): (() => void) => {
+			const handler = (_: unknown, shortcutId: string) => callback(shortcutId);
+			ipcRenderer.on('menu:command', handler);
+			return () => ipcRenderer.removeListener('menu:command', handler);
+		},
 	};
 }
 

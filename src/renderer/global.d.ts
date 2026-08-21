@@ -1576,6 +1576,10 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
+		/** Publish merged shortcut bindings so the native menu shows real accelerators. */
+		setMenuShortcutKeys: (keys: Record<string, string[]>) => void;
+		/** Native application menu click, carrying the clicked item's shortcut id. */
+		onMenuCommand: (callback: (shortcutId: string) => void) => () => void;
 	};
 	platform: string;
 	logger: {

@@ -63,7 +63,11 @@ function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 		id: 'claude-code',
 		name: 'Claude Code',
 		binaryName: 'claude',
-		command: '/usr/local/bin/claude',
+		// `command` is the static, bare name from definitions.ts; `path` is what
+		// the detector resolves. Keep them distinct so command-resolution tests
+		// can tell which field actually reaches spawn().
+		command: 'claude',
+		path: '/usr/local/bin/claude',
 		args: ['--default'],
 		available: true,
 		capabilities: {} as AgentConfig['capabilities'],
@@ -77,6 +81,7 @@ const SSH_REMOTE: SshRemoteConfig = {
 	host: 'dev.example.com',
 	port: 22,
 	username: 'testuser',
+	privateKeyPath: '/home/testuser/.ssh/id_ed25519',
 	enabled: true,
 };
 
@@ -226,7 +231,7 @@ describe('groomContext', () => {
 		expect(mockPM._lastSpawnConfig!.args).toContain('--resolved');
 	});
 
-	it('uses sessionCustomPath to override agent.command', async () => {
+	it('uses sessionCustomPath to override the detected agent path', async () => {
 		const detector = createMockAgentDetector(agent);
 
 		await groomContext(
@@ -243,7 +248,7 @@ describe('groomContext', () => {
 		expect(mockPM._lastSpawnConfig!.command).toBe('/custom/claude');
 	});
 
-	it('falls back to agent.command when sessionCustomPath is not provided', async () => {
+	it('falls back to agent.path when sessionCustomPath is not provided', async () => {
 		const detector = createMockAgentDetector(agent);
 
 		await groomContext(
@@ -253,6 +258,38 @@ describe('groomContext', () => {
 		);
 
 		expect(mockPM._lastSpawnConfig!.command).toBe('/usr/local/bin/claude');
+	});
+
+	it('spawns the detected .cmd shim rather than the bare command on Windows', async () => {
+		// Regression: grooming used to spawn `agent.command` ('claude'), which is
+		// not on PATH on Windows (npm installs a claude.cmd shim), so every
+		// "Compact and Continue" failed with `spawn claude ENOENT`.
+		const windowsAgent = makeAgent({
+			path: 'C:\\Users\\u\\AppData\\Roaming\\npm\\claude.cmd',
+		});
+		const detector = createMockAgentDetector(windowsAgent);
+
+		await groomContext(
+			{ projectRoot: 'C:\\project', agentType: 'claude-code', prompt: 'summarize' },
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.command).toBe(
+			'C:\\Users\\u\\AppData\\Roaming\\npm\\claude.cmd'
+		);
+	});
+
+	it('falls back to agent.command when the detector resolved no path', async () => {
+		const detector = createMockAgentDetector(makeAgent({ path: undefined }));
+
+		await groomContext(
+			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.command).toBe('claude');
 	});
 
 	it('passes resolved customEnvVars on spawn config', async () => {

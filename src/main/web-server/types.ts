@@ -588,7 +588,7 @@ export interface DesktopSessionEntry {
 	name: string | null;
 	/** Provider session id (e.g. Claude `session_id`) bound to this tab. */
 	agentSessionId: string | null;
-	state: 'idle' | 'busy';
+	state: 'idle' | 'busy' | 'unknown';
 	createdAt: number;
 	starred: boolean;
 }
