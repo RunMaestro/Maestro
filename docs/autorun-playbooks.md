@@ -194,12 +194,15 @@ It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flo
 
 The button highlights once there are buffered thoughts waiting to be read, and its tooltip gives the count.
 
-**Open, minimize, close, clear:**
+**Open, close, clear:**
 
 - **Open** shows the panel, already backfilled with everything the agent has thought so far.
-- **Minimize** collapses the panel and keeps recording.
-- **Close** hides the panel and keeps recording, so reopening it later still has the run's history.
+- **Close** (the X, or Escape) hides the panel and keeps recording, so reopening it later still has the run's history.
 - **Clear** (the trash icon) is the only thing that discards a buffer.
+
+There is no minimize. It used to mean "hide the panel but keep capturing," which is what closing does now. The panel takes no keyboard focus, so your shortcuts keep working while it is open.
+
+Once a run finishes, the Right Panel's run card goes away and takes its **View Thoughts** button with it. The buffer outlives the run, so a **Thoughts** button appears at the bottom of the Auto Run panel for as long as there is something buffered to read.
 
 Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: thoughts per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 

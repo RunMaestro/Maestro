@@ -54,7 +54,7 @@ import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
-import { useThoughtStreamStore } from '../../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectThoughtCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
@@ -137,17 +137,17 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	}, [isAutoRunActive]);
 	const isStopping = batchRunState?.isStopping || false;
 
-	// Thought Stream restore affordance. While a run is active the brain /
+	// Thought Stream reopen affordance. While a run is active the brain /
 	// "View Thoughts" button lives on the Right Panel's active-run card, but that
-	// card is gated on `isRunning` and disappears once the run completes. If the
-	// user had minimized the Thought Stream, it would be left with no way back -
-	// so once the run is done we surface a restore button in the footer for this
-	// session's minimized stream, until they dismiss it with the panel's X.
+	// card is gated on `isRunning` and disappears once the run completes - which
+	// is exactly when someone wants to read back why the run did what it did.
+	// The buffer outlives the run, so once the run is done we surface the entry
+	// point here for as long as there is something buffered to read.
 	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
-	const thoughtStreamMinimized = useThoughtStreamStore((s) => s.minimized);
-	const restoreThoughtStream = useThoughtStreamStore((s) => s.restorePanel);
-	const showRestoreThoughtStream =
-		!isAutoRunActive && thoughtStreamMinimized && thoughtStreamSessionId === sessionId;
+	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
+	const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+	const showOpenThoughtStream =
+		!isAutoRunActive && bufferedThoughts > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
 	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
@@ -938,16 +938,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						)}
 					</button>
 					{/* Thought Stream restore: a temporary home for a minimized stream once the run completes and the Right Panel's active-run card (with its brain button) is gone. Vanishes when dismissed via the panel's X (which clears panelSessionId). */}
-					{showRestoreThoughtStream && (
+					{showOpenThoughtStream && (
 						<button
-							onClick={restoreThoughtStream}
+							onClick={() => openThoughtStream(sessionId)}
 							className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title="Restore the minimized Thought Stream"
+							title={`Read this run's ${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'}`}
 						>
 							<Brain className="w-3 h-3" />
 							Thoughts

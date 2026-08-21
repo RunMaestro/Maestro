@@ -2,9 +2,9 @@
  * thoughtStreamStore tests
  *
  * Covers the in-memory Thought Stream capture lifecycle:
- * - open / minimize / restore / close semantics
+ * - open / close semantics (there is no minimize)
  * - ambient capture (thoughts buffer with no panel ever opened)
- * - close and minimize both keep the buffer; only clearBuffer discards
+ * - closing keeps the buffer; only clearBuffer discards
  * - per-session entry cap, per-session character cap, session LRU eviction
  * - the selectThoughtCount / live selectors
  */
@@ -34,7 +34,6 @@ function entry(id: string, timestamp: number, text: string, tabId = TAB): Though
 function reset() {
 	useThoughtStreamStore.setState({
 		panelSessionId: null,
-		minimized: false,
 		buffers: {},
 	});
 }
@@ -45,7 +44,6 @@ describe('thoughtStreamStore', () => {
 	it('starts hidden with no captures', () => {
 		const s = useThoughtStreamStore.getState();
 		expect(s.panelSessionId).toBeNull();
-		expect(s.minimized).toBe(false);
 		expect(s.buffers).toEqual({});
 	});
 
@@ -53,7 +51,6 @@ describe('thoughtStreamStore', () => {
 		useThoughtStreamStore.getState().openPanel(SID);
 		const s = useThoughtStreamStore.getState();
 		expect(s.panelSessionId).toBe(SID);
-		expect(s.minimized).toBe(false);
 		expect(s.buffers[SID]).toEqual({ entries: [], trimmed: false, chars: 0, lastAppendAt: 0 });
 	});
 
@@ -93,37 +90,14 @@ describe('thoughtStreamStore', () => {
 		expect(useThoughtStreamStore.getState().buffers[SID].entries).toHaveLength(0);
 	});
 
-	it('minimize preserves the buffer and keeps recording', () => {
+	it('reopening a closed session preserves its existing buffer', () => {
 		const store = useThoughtStreamStore.getState();
 		store.openPanel(SID);
-		store.appendThought(SID, TAB, 'thinking...');
-		store.minimizePanel();
+		store.appendThought(SID, TAB, 'kept');
+		store.closePanel();
+		store.openPanel(SID);
 		const s = useThoughtStreamStore.getState();
-		expect(s.minimized).toBe(true);
 		expect(s.panelSessionId).toBe(SID);
-		s.appendThought(SID, TAB, ' more');
-		expect(useThoughtStreamStore.getState().buffers[SID].entries).toHaveLength(2);
-	});
-
-	it('restore un-minimizes without touching the buffer', () => {
-		const store = useThoughtStreamStore.getState();
-		store.openPanel(SID);
-		store.appendThought(SID, TAB, 'kept');
-		store.minimizePanel();
-		store.restorePanel();
-		const s = useThoughtStreamStore.getState();
-		expect(s.minimized).toBe(false);
-		expect(s.buffers[SID].entries).toHaveLength(1);
-	});
-
-	it('reopening a minimized session preserves its existing buffer', () => {
-		const store = useThoughtStreamStore.getState();
-		store.openPanel(SID);
-		store.appendThought(SID, TAB, 'kept');
-		store.minimizePanel();
-		store.openPanel(SID);
-		const s = useThoughtStreamStore.getState();
-		expect(s.minimized).toBe(false);
 		expect(s.buffers[SID].entries).toHaveLength(1);
 		expect(s.buffers[SID].entries[0].text).toBe('kept');
 	});
@@ -135,7 +109,6 @@ describe('thoughtStreamStore', () => {
 		store.closePanel();
 		const s = useThoughtStreamStore.getState();
 		expect(s.panelSessionId).toBeNull();
-		expect(s.minimized).toBe(false);
 		expect(s.buffers[SID].entries).toHaveLength(1);
 
 		s.appendThought(SID, TAB, ' and after');

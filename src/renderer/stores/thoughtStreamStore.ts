@@ -17,10 +17,14 @@
  * agent that never thinks, so an idle app pays nothing.
  *
  * Lifecycle (driven by the panel UI):
- * - Open:     show the panel for a session, already backfilled with history.
- * - Minimize: collapse the panel to the Auto Run card affordance.
- * - Close:    hide the panel. The buffer survives, so reopening still shows
- *             the run's reasoning; `clearBuffer` is the explicit discard.
+ * - Open:  show the panel for a session, already backfilled with history.
+ * - Close: hide the panel. The buffer survives, so reopening still shows the
+ *          run's reasoning; `clearBuffer` is the explicit discard.
+ *
+ * There is deliberately no minimize. Minimize only existed to keep a capture
+ * alive while the panel was out of the way; with capture ambient, closing does
+ * that already, and a second dismiss control that behaves almost identically to
+ * the first is just a choice the user has to think about.
  *
  * Capture is in-memory only - buffers do not survive an app restart. Memory is
  * bounded on three axes so an all-day fleet of agents cannot grow without
@@ -168,17 +172,11 @@ function evictColdSessions(
 interface ThoughtStreamState {
 	/** Session whose panel is currently focused/visible (null = panel hidden). */
 	panelSessionId: string | null;
-	/** Whether the visible panel is minimized to the status bar. */
-	minimized: boolean;
 	/** Per-session capture buffers, written whether or not the panel is open. */
 	buffers: Record<string, ThoughtBuffer>;
 
 	/** Open (or refocus) the panel for a session, backfilled with its buffer. */
 	openPanel: (sessionId: string) => void;
-	/** Collapse the panel to the Auto Run card affordance. */
-	minimizePanel: () => void;
-	/** Restore the panel from the minimized state. */
-	restorePanel: () => void;
 	/** Hide the panel. Buffers keep filling so a later reopen still has history. */
 	closePanel: () => void;
 	/** Append a coalesced thinking flush to a session's buffer. */
@@ -189,13 +187,11 @@ interface ThoughtStreamState {
 
 export const useThoughtStreamStore = create<ThoughtStreamState>((set) => ({
 	panelSessionId: null,
-	minimized: false,
 	buffers: {},
 
 	openPanel: (sessionId) =>
 		set((state) => ({
 			panelSessionId: sessionId,
-			minimized: false,
 			// Ambient capture usually got here first; seed an empty buffer only so
 			// the panel has something to render for a session that has not thought.
 			buffers: state.buffers[sessionId]
@@ -203,11 +199,7 @@ export const useThoughtStreamStore = create<ThoughtStreamState>((set) => ({
 				: { ...state.buffers, [sessionId]: emptyBuffer() },
 		})),
 
-	minimizePanel: () => set({ minimized: true }),
-
-	restorePanel: () => set({ minimized: false }),
-
-	closePanel: () => set({ panelSessionId: null, minimized: false }),
+	closePanel: () => set({ panelSessionId: null }),
 
 	appendThought: (sessionId, tabId, text) =>
 		set((state) => {

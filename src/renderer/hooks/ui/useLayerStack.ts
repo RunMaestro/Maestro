@@ -82,16 +82,27 @@ export interface LayerStackAPI {
 	getLayers: () => Layer[];
 
 	/**
-	 * Check if any layers are currently open
-	 * Use this to block global shortcuts when modals/overlays are active
-	 * @returns true if at least one layer is registered
+	 * Check if any shortcut-blocking layer is currently open
+	 *
+	 * Layers that declared `blocksAppShortcuts: false` are skipped - they are
+	 * passive panels that happen to be stacked, not surfaces that own the
+	 * keyboard. For the structural "is anything stacked?" question use
+	 * `layerCount`.
+	 *
+	 * @returns true if at least one such layer is registered
 	 */
 	hasOpenLayers: () => boolean;
 
 	/**
 	 * Check if any true modal (not overlay) is currently open
 	 * Modals block ALL shortcuts, overlays allow some navigation shortcuts
-	 * @returns true if at least one modal layer is registered
+	 *
+	 * A modal-type layer that declared `blocksLowerLayers: false` (a dropdown, a
+	 * docked search bar, a floating panel) is NOT a true modal: it said it does
+	 * not block what is under it, so it must not silently block the keyboard
+	 * either. Those fall through to the caller's overlay handling.
+	 *
+	 * @returns true if at least one true modal layer is registered
 	 */
 	hasOpenModal: () => boolean;
 
@@ -100,6 +111,17 @@ export interface LayerStackAPI {
 	 * @returns Number of registered layers
 	 */
 	layerCount: number;
+}
+
+/**
+ * Does this layer suppress the app's global shortcuts while it is open?
+ *
+ * The flag is optional, so an undefined value means "yes" - every layer written
+ * before passive panels existed keeps its old behavior, and only a surface that
+ * explicitly opts out becomes transparent to the keyboard.
+ */
+function blocksAppShortcuts(layer: Layer): boolean {
+	return layer.blocksAppShortcuts !== false;
 }
 
 /**
@@ -168,17 +190,20 @@ export function useLayerStack(): LayerStackAPI {
 	}, [layers]);
 
 	/**
-	 * Check if any layers are open
+	 * Check if any shortcut-blocking layer is open
 	 */
 	const hasOpenLayers = useCallback((): boolean => {
-		return layers.length > 0;
+		return layers.some(blocksAppShortcuts);
 	}, [layers]);
 
 	/**
 	 * Check if any true modal (not overlay) is open
 	 */
 	const hasOpenModal = useCallback((): boolean => {
-		return layers.some((layer: Layer) => layer.type === 'modal');
+		return layers.some(
+			(layer: Layer) =>
+				layer.type === 'modal' && layer.blocksLowerLayers && blocksAppShortcuts(layer)
+		);
 	}, [layers]);
 
 	/**
@@ -229,6 +254,7 @@ export function useLayerStack(): LayerStackAPI {
 							type: layer.type,
 							priority: layer.priority,
 							blocksLower: layer.blocksLowerLayers,
+							blocksShortcuts: layer.blocksAppShortcuts !== false,
 							focusTrap: layer.focusTrap,
 							ariaLabel: layer.ariaLabel || 'N/A',
 						}))

@@ -160,6 +160,7 @@ describe('ExecutionQueueBrowser', () => {
 				priority: expect.any(Number),
 				blocksLowerLayers: true,
 				capturesFocus: true,
+				blocksAppShortcuts: true,
 				focusTrap: 'strict',
 				onEscape: expect.any(Function),
 			});
