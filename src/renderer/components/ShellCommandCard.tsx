@@ -15,7 +15,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { Check, Copy, Loader2, Square, Terminal, X } from 'lucide-react';
+import { Check, Copy, Loader2, Square, Terminal, Trash2, X } from 'lucide-react';
 import type Convert from 'ansi-to-html';
 
 import type { LogEntry, Theme } from '../types';
@@ -32,6 +32,15 @@ interface ShellCommandCardProps {
 	theme: Theme;
 	fontFamily: string;
 	ansiConverter: Convert;
+	/**
+	 * Remove this card from the transcript. Omitted where a transcript is not
+	 * the user's to edit (exports, read-only views), which hides the affordance.
+	 */
+	onDelete?: (logId: string) => void;
+	/** Log id currently showing its "Delete?" confirmation, if any. */
+	deleteConfirmLogId?: string | null;
+	/** Arm / disarm that confirmation. */
+	onSetDeleteConfirmLogId?: (logId: string | null) => void;
 }
 
 export function ShellCommandCard({
@@ -39,6 +48,9 @@ export function ShellCommandCard({
 	theme,
 	fontFamily,
 	ansiConverter,
+	onDelete,
+	deleteConfirmLogId,
+	onSetDeleteConfirmLogId,
 }: ShellCommandCardProps): React.ReactElement | null {
 	const [copied, setCopied] = useState(false);
 	const shell = log.shellCommand;
@@ -70,6 +82,12 @@ export function ShellCommandCard({
 	if (!shell) return null;
 
 	const isRunning = shell.status === 'running';
+	// Delete is offered only once the command has settled. While it runs the
+	// header already carries Stop, and deleting a live card would orphan the
+	// process: output would keep streaming into an entry that no longer exists,
+	// with nothing left on screen to stop it. Stop first, then delete.
+	const canDelete = !!onDelete && !isRunning;
+	const confirmingDelete = canDelete && deleteConfirmLogId === log.id;
 	const failed =
 		shell.status === 'cancelled' || (shell.exitCode !== undefined && shell.exitCode !== 0);
 	const statusColor = isRunning
@@ -168,6 +186,58 @@ export function ShellCommandCard({
 							{copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
 						</button>
 					)}
+
+					{/* Delete lives in the card's own header rather than the transcript's
+					    shared hover toolbar: a command card takes an early return in
+					    TerminalOutput and never renders that toolbar. */}
+					{canDelete &&
+						(confirmingDelete ? (
+							<div
+								className="flex items-center gap-1 px-1 py-0.5 rounded border"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									borderColor: theme.colors.error,
+								}}
+								data-testid="shell-command-delete-confirm"
+							>
+								<span className="text-[10px] px-0.5" style={{ color: theme.colors.error }}>
+									Delete?
+								</span>
+								<button
+									type="button"
+									onClick={() => {
+										onSetDeleteConfirmLogId?.(null);
+										onDelete?.(log.id);
+									}}
+									className="px-1.5 py-0.5 rounded text-[10px] font-medium hover:opacity-80"
+									style={{ backgroundColor: theme.colors.error, color: '#fff' }}
+									data-testid="shell-command-delete-yes"
+								>
+									Yes
+								</button>
+								<button
+									type="button"
+									onClick={() => onSetDeleteConfirmLogId?.(null)}
+									className="px-1.5 py-0.5 rounded text-[10px] hover:opacity-80"
+									style={{ color: theme.colors.textDim }}
+									data-testid="shell-command-delete-no"
+								>
+									No
+								</button>
+							</div>
+						) : (
+							<button
+								type="button"
+								onClick={() => onSetDeleteConfirmLogId?.(log.id)}
+								className="p-1 rounded hover:opacity-80 transition-opacity"
+								style={{ color: theme.colors.textDim }}
+								title="Delete this command and its output"
+								aria-label="Delete this command and its output"
+								data-testid="shell-command-delete"
+							>
+								<Trash2 className="w-3 h-3" />
+							</button>
+						))}
 				</div>
 			</div>
 

@@ -22,9 +22,17 @@ export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';
 
 export { RadioGroup } from './RadioGroup';
 export type { RadioGroupProps, RadioOption } from './RadioGroup';
+export { SegmentedControl } from './SegmentedControl';
+export type { SegmentedControlProps, SegmentedOption } from './SegmentedControl';
+
+export { SortableTh } from './SortableTh';
+export type { SortableThProps } from './SortableTh';
 
 export { Spinner } from './Spinner';
 export type { SpinnerProps } from './Spinner';
+
+export { Pager } from './Pager';
+export type { PagerProps } from './Pager';
 
 export { GhostIconButton } from './GhostIconButton';
 export type { GhostIconButtonProps } from './GhostIconButton';
@@ -36,6 +44,9 @@ export { ShortcutFilterButton } from './ShortcutFilterButton';
 export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';
 
 export { WorktreePill } from './WorktreePill';
+
+export { TurnSettingPills } from './TurnSettingPills';
+export type { TurnSettingPillsProps } from './TurnSettingPills';
 
 export { HoverTooltip } from './HoverTooltip';
 export type { HoverTooltipProps } from './HoverTooltip';

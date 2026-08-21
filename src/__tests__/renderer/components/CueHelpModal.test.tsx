@@ -94,8 +94,8 @@ describe('CueHelpContent', () => {
 			expect(screen.getByText(/Default timeout is 30 minutes/)).toBeInTheDocument();
 		});
 
-		it('should render Visual Pipeline Editor section', () => {
-			expect(screen.getByText('Visual Pipeline Editor')).toBeInTheDocument();
+		it('should render Pipeline Graph and Pipeline List section', () => {
+			expect(screen.getByText('Pipeline Graph and Pipeline List')).toBeInTheDocument();
 		});
 
 		it('should document canvas controls including Shift-drag pan', () => {

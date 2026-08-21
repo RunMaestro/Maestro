@@ -263,7 +263,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath, delete.',
 		type: 'object',
 		default: {
 			save: true,
@@ -280,6 +280,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			openInDefault: true,
 			revealInFolder: true,
 			copyPath: true,
+			delete: true,
 		},
 		category: 'appearance',
 	},

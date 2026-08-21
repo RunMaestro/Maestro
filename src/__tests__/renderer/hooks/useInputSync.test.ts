@@ -41,7 +41,7 @@ function applySetSessions(setSessions: ReturnType<typeof vi.fn>, session: Sessio
 }
 
 beforeEach(() => {
-	useComposerInputStore.setState({ aiValue: '', terminalValue: '', aiCommandMode: false });
+	useComposerInputStore.setState({ aiValue: '', terminalValue: '', aiCommandMode: 'off' });
 });
 
 describe('useInputSync - syncAiInputToSession', () => {
@@ -57,7 +57,7 @@ describe('useInputSync - syncAiInputToSession', () => {
 	});
 
 	it('persists command mode alongside the draft', () => {
-		useComposerInputStore.setState({ aiCommandMode: true });
+		useComposerInputStore.setState({ aiCommandMode: 'shell' });
 		const setSessions = vi.fn();
 		const session = makeSession();
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
@@ -66,22 +66,22 @@ describe('useInputSync - syncAiInputToSession', () => {
 
 		const [updated] = applySetSessions(setSessions, session);
 		expect(updated.aiTabs[0].inputValue).toBe('rm -rf build');
-		expect(updated.aiTabs[0].commandMode).toBe(true);
+		expect(updated.aiTabs[0].commandMode).toBe('shell');
 	});
 
 	it('clears command mode on the tab when the composer is not in it', () => {
 		// Explicitly false, not absent: a stale `true` left on the tab would route
 		// the next restored draft into a shell.
-		useComposerInputStore.setState({ aiCommandMode: false });
+		useComposerInputStore.setState({ aiCommandMode: 'off' });
 		const setSessions = vi.fn();
 		const session = makeSession();
-		session.aiTabs[0].commandMode = true;
+		session.aiTabs[0].commandMode = 'shell';
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
 		result.current.syncAiInputToSession('talk to the agent');
 
 		const [updated] = applySetSessions(setSessions, session);
-		expect(updated.aiTabs[0].commandMode).toBe(false);
+		expect(updated.aiTabs[0].commandMode).toBe('off');
 	});
 
 	it('reads the mode at flush time, not from a stale closure', () => {
@@ -90,11 +90,11 @@ describe('useInputSync - syncAiInputToSession', () => {
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
 		// Mode flips after the hook rendered - the flush must still see it.
-		useComposerInputStore.setState({ aiCommandMode: true });
+		useComposerInputStore.setState({ aiCommandMode: 'shell' });
 		result.current.syncAiInputToSession('ls');
 
 		const [updated] = applySetSessions(setSessions, session);
-		expect(updated.aiTabs[0].commandMode).toBe(true);
+		expect(updated.aiTabs[0].commandMode).toBe('shell');
 	});
 
 	it('does nothing without an active session', () => {
@@ -128,7 +128,7 @@ describe('useInputSync - syncAiInputToSession', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
 		session.aiTabs[0].inputValue = 'already stored';
-		session.aiTabs[0].commandMode = false;
+		session.aiTabs[0].commandMode = 'off';
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
 		result.current.syncAiInputToSession('already stored', TAB_ID);
@@ -154,7 +154,7 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		const session = makeSession();
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
-		result.current.queueAiDraftFlush(TAB_ID, 'never blurred', false);
+		result.current.queueAiDraftFlush(TAB_ID, 'never blurred', 'off');
 		expect(setSessions).not.toHaveBeenCalled();
 
 		vi.advanceTimersByTime(500);
@@ -169,7 +169,7 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
 		for (const text of ['n', 'ne', 'nev', 'neve', 'never']) {
-			result.current.queueAiDraftFlush(TAB_ID, text, false);
+			result.current.queueAiDraftFlush(TAB_ID, text, 'off');
 		}
 		vi.advanceTimersByTime(500);
 
@@ -185,8 +185,8 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		const session = makeSession();
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
-		result.current.queueAiDraftFlush(TAB_ID, 'first tab text', false);
-		result.current.queueAiDraftFlush(OTHER_TAB_ID, 'second tab text', false);
+		result.current.queueAiDraftFlush(TAB_ID, 'first tab text', 'off');
+		result.current.queueAiDraftFlush(OTHER_TAB_ID, 'second tab text', 'off');
 		vi.advanceTimersByTime(500);
 
 		const [updated] = applySetSessions(setSessions, session);
@@ -199,7 +199,7 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		const session = makeSession();
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
-		result.current.queueAiDraftFlush(TAB_ID, 'about to be sent', false);
+		result.current.queueAiDraftFlush(TAB_ID, 'about to be sent', 'off');
 		// Sending clears the composer and syncs the empty value.
 		result.current.syncAiInputToSession('', TAB_ID);
 		vi.advanceTimersByTime(500);
@@ -213,7 +213,7 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		const session = makeSession();
 		const { result, unmount } = renderHook(() => useInputSync(session, { setSessions }));
 
-		result.current.queueAiDraftFlush(TAB_ID, 'typed right before teardown', false);
+		result.current.queueAiDraftFlush(TAB_ID, 'typed right before teardown', 'off');
 		unmount();
 
 		const [updated] = applySetSessions(setSessions, session);
@@ -227,7 +227,7 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		const session = makeSession();
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
-		result.current.queueAiDraftFlush(TAB_ID, 'stepping away mid-sentence', false);
+		result.current.queueAiDraftFlush(TAB_ID, 'stepping away mid-sentence', 'off');
 		window.dispatchEvent(new Event('blur'));
 
 		const [updated] = applySetSessions(setSessions, session);
@@ -239,10 +239,10 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		const session = makeSession();
 		const { result } = renderHook(() => useInputSync(session, { setSessions }));
 
-		result.current.queueAiDraftFlush(TAB_ID, 'rm -rf build', true);
+		result.current.queueAiDraftFlush(TAB_ID, 'rm -rf build', 'shell');
 		vi.advanceTimersByTime(500);
 
 		const [updated] = applySetSessions(setSessions, session);
-		expect(updated.aiTabs[0].commandMode).toBe(true);
+		expect(updated.aiTabs[0].commandMode).toBe('shell');
 	});
 });

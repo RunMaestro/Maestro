@@ -841,6 +841,20 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
+		server.setOpenModalCallback(async (params) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for openModal', 'WebServer');
+				return false;
+			}
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for openModal', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:openModal', params);
+			return true;
+		});
+
 		server.setRefreshFileTreeCallback(async (sessionId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {

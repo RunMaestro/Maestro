@@ -104,7 +104,7 @@ function rewriteStandardLinks(
 				resolved = relative;
 			} else {
 				// Outside projectRoot - emit a file:// URL so the click handler can
-				// hand it to shell.openPath.
+				// route it through openFileUrl (preview tab, player, or the OS).
 				token.attrSet('href', `file://${absolute}`);
 				continue;
 			}

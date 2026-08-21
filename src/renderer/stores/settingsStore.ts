@@ -252,6 +252,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
+	'delete',
 ] as const;
 
 export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
@@ -2176,23 +2177,32 @@ const MAC_ALT_CHAR_MAP: Record<string, string> = {
  * they had customized the binding themselves (any other key combo), we leave it
  * alone.
  *
- * Each entry: `shortcut id` → `{ old keys we consider "the old default", new default keys }`.
+ * Each entry: `shortcut id` → `{ every old default we recognize, new default keys }`.
+ * `fromKeys` is a LIST of old defaults because a binding can be remapped more
+ * than once over time, and a user who skipped an update still carries the
+ * oldest one.
  */
-const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[]; toKeys: string[] }> = {
+const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: string[] }> = {
 	// moveToGroup moved off Cmd+Shift+M to free that combo for openMemoryViewer.
 	moveToGroup: {
-		fromKeys: ['Meta', 'Shift', 'm'],
+		fromKeys: [['Meta', 'Shift', 'm']],
 		toKeys: ['Alt', 'Meta', 'm'],
 	},
-	// toggleAutoRunExpanded moved off Cmd+Shift+2 to free that combo for openBatchRunner.
+	// toggleAutoRunExpanded moved off Cmd+Shift+2 to free that combo for
+	// openBatchRunner, then off Cmd+Shift+E to free that combo for
+	// editLastQueuedMessage. It now sits on Cmd+Shift+3, next to the other Auto
+	// Run number bindings (Cmd+Shift+1 tab, Cmd+Shift+2 run).
 	toggleAutoRunExpanded: {
-		fromKeys: ['Meta', 'Shift', '2'],
-		toKeys: ['Meta', 'Shift', 'e'],
+		fromKeys: [
+			['Meta', 'Shift', '2'],
+			['Meta', 'Shift', 'e'],
+		],
+		toKeys: ['Meta', 'Shift', '3'],
 	},
 	// focusActiveTab moved off Opt+Cmd+F to free that combo for searchAllTabs
 	// (cross-tab message search), which reads as an escalation of Cmd+F.
 	focusActiveTab: {
-		fromKeys: ['Alt', 'Meta', 'f'],
+		fromKeys: [['Alt', 'Meta', 'f']],
 		toKeys: ['Alt', 'Meta', 'ArrowUp'],
 	},
 };
@@ -2241,7 +2251,7 @@ function migrateShortcuts(
 	// for a remapped shortcut, bump them to the NEW default. Preserve custom bindings.
 	for (const [id, remap] of Object.entries(SHORTCUT_DEFAULT_REMAPS)) {
 		const current = migrated[id];
-		if (current && keysEqual(current.keys, remap.fromKeys)) {
+		if (current && remap.fromKeys.some((from) => keysEqual(current.keys, from))) {
 			migrated[id] = { ...current, keys: remap.toKeys };
 			needsMigration = true;
 		}
@@ -2631,10 +2641,13 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		// The play queue outlives a restart so a half-listened playlist is still
-		// there tomorrow. It comes back hidden and paused: restoring what was
-		// queued should not start a podcast at launch, and the Left Bar's
-		// now-playing indicator is what advertises that it is loaded. Recently
-		// played is NOT restored - it is per-session by design.
+		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
+		// what was queued should not start a podcast at launch, and it should not
+		// put media controls in the Left Bar header either, since the user has not
+		// played anything yet. The command palette's "Show Floating Media Player"
+		// is what reaches a dormant queue, and the first thing the user opens or
+		// queues wakes it. Recently played is NOT restored - it is per-session by
+		// design.
 		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
 			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
 			const items = sanitizeMediaItems(stored?.items);
@@ -2648,6 +2661,7 @@ export async function loadAllSettings(): Promise<void> {
 					resumeTimes: sanitizeMediaTimes(stored?.resumeTimes, ids),
 					durations: sanitizeMediaTimes(stored?.durations, ids),
 					dismissed: true,
+					dormant: true,
 					playing: false,
 					pendingAutoplay: false,
 				});

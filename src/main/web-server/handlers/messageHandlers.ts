@@ -17,6 +17,7 @@
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
  * - open_file_tab: Open a file in a preview tab
+ * - open_modal: Open a Maestro modal/dashboard, optionally on a specific tab
  * - open_browser_tab: Open a URL in a browser tab (optionally in the background)
  * - close_browser_tab: Close a browser tab by id
  * - refresh_file_tree: Refresh the file tree for a session
@@ -49,6 +50,12 @@ import {
 import { getStatsDB } from '../../stats/singleton';
 import { runReadonlyStatsQuery } from '../../stats/readonly-query';
 import type { StatsTimeRange } from '../../../shared/stats-types';
+import {
+	UI_SURFACES,
+	resolveUiSurface,
+	resolveUiSurfaceTab,
+	surfaceTabIds,
+} from '../../../shared/uiSurfaces';
 import type {
 	AutoRunDocument,
 	AutoRunState,
@@ -201,6 +208,8 @@ export interface MessageHandlerCallbacks {
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (sessionId: string, filePath: string, switchToAgent: boolean) => Promise<boolean>;
+	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	openBrowserTab: (
 		sessionId: string,
@@ -514,6 +523,10 @@ export class WebSocketMessageHandler {
 
 			case 'open_file_tab':
 				this.handleOpenFileTab(client, message);
+				break;
+
+			case 'open_modal':
+				this.handleOpenModal(client, message);
 				break;
 
 			case 'open_browser_tab':
@@ -1872,6 +1885,69 @@ export class WebSocketMessageHandler {
 			.catch((error) => {
 				sendErrorResult(`Failed to open file tab: ${error.message}`);
 			});
+	}
+
+	/**
+	 * Handle open_modal message - bring up one of the app's modals/dashboards,
+	 * optionally on a specific tab. Both the surface name and the tab are
+	 * validated against `shared/uiSurfaces.ts` here so a typo comes back as a
+	 * clear CLI error instead of a silently ignored renderer message.
+	 */
+	private handleOpenModal(client: WebClient, message: WebClientMessage): void {
+		const surfaceName = typeof message.surface === 'string' ? message.surface : '';
+		const tabName =
+			typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
+
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, {
+				type: 'open_modal_result',
+				success,
+				error,
+				requestId: message.requestId,
+			});
+		};
+
+		const surface = resolveUiSurface(surfaceName);
+		if (!surface) {
+			sendResult(
+				false,
+				`Unknown surface "${surfaceName}". Valid surfaces: ${UI_SURFACES.map((s) => s.id).join(', ')}`
+			);
+			return;
+		}
+
+		let tabId: string | undefined;
+		if (tabName !== undefined) {
+			const tab = resolveUiSurfaceTab(surface, tabName);
+			if (!tab) {
+				const valid = surfaceTabIds(surface);
+				sendResult(
+					false,
+					valid.length > 0
+						? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
+						: `${surface.label} has no tabs.`
+				);
+				return;
+			}
+			tabId = tab.id;
+		}
+
+		logger.info(
+			`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}`,
+			LOG_CONTEXT
+		);
+
+		if (!this.callbacks.openModal) {
+			sendResult(false, 'Opening modals is not configured');
+			return;
+		}
+
+		this.callbacks
+			.openModal({ surface: surface.id, tab: tabId })
+			.then((success) =>
+				sendResult(success, success ? undefined : 'Maestro window is not available')
+			)
+			.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 	}
 
 	/**
@@ -3340,11 +3416,14 @@ export class WebSocketMessageHandler {
 	/**
 	 * Handle update_session_config message - update an agent's editable
 	 * per-session config (nudge / new-session message, custom path / args / env
-	 * vars, model, effort, context window, Claude token-source tri-state). Only
-	 * the keys present in `configPatch` are applied; a key with value `null`
-	 * clears that field. These are spawn-time settings (they take effect on the
-	 * next launch), so unlike cwd/SSH the renderer applies them even while the
+	 * vars, model, effort, context window, Claude token-source tri-state) or its
+	 * Left Bar bookmark. Only the keys present in `configPatch` are applied; a key
+	 * with value `null` clears that field. The spawn-time settings take effect on
+	 * the next launch, so unlike cwd/SSH the renderer applies them even while the
 	 * agent process is alive.
+	 *
+	 * A `configPatch.tabId` retargets the patch at one AI tab inside the agent
+	 * (starred / hasUnread / saveToHistory). The renderer owns both allowlists.
 	 */
 	private handleUpdateSessionConfig(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;

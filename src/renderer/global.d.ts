@@ -353,6 +353,9 @@ interface MaestroAPI {
 		onRemoteOpenFileTab: (
 			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
 		) => () => void;
+		onRemoteOpenModal: (
+			callback: (params: { surface: string; tab?: string }) => void
+		) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
 		onRemoteNotifyToast: (
 			callback: (params: {
@@ -645,6 +648,14 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+		onAuthExpired: (
+			callback: (payload: {
+				sessionId: string;
+				agentId: string;
+				message: string;
+				fromPipeline?: boolean;
+			}) => void
+		) => () => void;
 	};
 	feedback: {
 		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
@@ -664,7 +675,7 @@ interface MaestroAPI {
 			feedbackText: string,
 			attachments?: Array<{ name: string; dataUrl: string }>
 		) => Promise<{ prompt: string }>;
-		getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+		getConversationPrompt: () => Promise<{ prompt: string; environment: string; cwd: string }>;
 		submitConversation: (payload: {
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
 			summary: string;
@@ -1180,9 +1191,9 @@ interface MaestroAPI {
 					sampledAt: string;
 					configDirKey: string;
 					authState?: 'authenticated' | 'unauthenticated';
-					session: { percent: number; resetsAt: string };
-					weekAllModels: { percent: number; resetsAt: string };
-					weekSonnetOnly: { percent: number; resetsAt: string };
+					session: { percent: number; resetsAt?: string };
+					weekAllModels: { percent: number; resetsAt?: string };
+					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}
 			>
 		>;
@@ -3404,6 +3415,27 @@ interface MaestroAPI {
 		}) => Promise<string | null>;
 	};
 
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: {
+		suggest: (config: {
+			request: string;
+			agentType: string;
+			cwd: string;
+			isGitRepo?: boolean;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			sshRemoteName?: string;
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {
@@ -3599,6 +3631,22 @@ interface MaestroAPI {
 		getFanInHealth: () => Promise<import('../main/cue/cue-fan-in-tracker').FanInHealthEntry[]>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
+		listScheduledTasks: () => Promise<{
+			tasks: import('../shared/cue/scheduled-tasks').ScheduledTask[];
+			warnings: string[];
+		}>;
+		createScheduledTask: (
+			input: import('../shared/cue/scheduled-tasks').ScheduledTaskCreateInput
+		) => Promise<{ names: string[] }>;
+		updateScheduledTask: (
+			projectRoot: string,
+			name: string,
+			patch: import('../shared/cue/scheduled-tasks').ScheduledTaskUpdateInput
+		) => Promise<{ updated: boolean; reason?: string }>;
+		cancelScheduledTask: (
+			projectRoot: string,
+			name: string
+		) => Promise<{ removed: boolean; reason?: string }>;
 		readYaml: (projectRoot: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,

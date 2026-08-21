@@ -28,6 +28,11 @@ import { extractHexColor } from '../../shared/hexColor';
 import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
 import { normalizeChatDisplayMath } from '../../shared/normalizeChatDisplayMath';
 import { BionifyText, getBionifyReadingModeStyles } from '../../renderer/utils/bionifyReadingMode';
+import {
+	remarkAlert,
+	alertTypeFromClassName,
+} from '../../renderer/components/Markdown/remarkAlert';
+import { AlertCallout } from '../../renderer/components/Markdown/components/AlertCallout';
 import 'katex/dist/katex.min.css';
 
 // Mobile chat surfaces (#622): single `\n` should render as a hard break,
@@ -39,6 +44,9 @@ import 'katex/dist/katex.min.css';
 // single-line `$$x+y$$` gets the centered block treatment users expect.
 const MOBILE_CHAT_REMARK_PLUGINS: any[] = [
 	...REMARK_GFM_PLUGINS,
+	// Alerts run before remark-breaks so the `[!TYPE]` marker and its body are
+	// still one text node, which is the shape remarkAlert's matcher expects.
+	remarkAlert,
 	remarkBreaks,
 	[remarkMath, { singleDollarTextMath: false }],
 	remarkPromoteDisplayMath,
@@ -305,7 +313,7 @@ InlineCodeWithCopy.displayName = 'InlineCodeWithCopy';
 export const MobileMarkdownRenderer = memo(
 	({ content, fontSize = 13, enableBionifyReadingMode = false }: MobileMarkdownRendererProps) => {
 		const colors = useThemeColors();
-		const { isDark } = useTheme();
+		const { isDark, theme } = useTheme();
 		const syntaxStyle = isDark ? vscDarkPlus : vs;
 
 		// Rewrite multi-line `$$...$$` so delimiters sit on their own lines before
@@ -504,20 +512,31 @@ export const MobileMarkdownRenderer = memo(
 							</li>
 						),
 
-						// Blockquotes
-						blockquote: ({ children }) => (
-							<blockquote
-								style={{
-									margin: '8px 0',
-									paddingLeft: '16px',
-									borderLeft: `3px solid ${colors.accent}`,
-									color: colors.textDim,
-									fontStyle: 'italic',
-								}}
-							>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</blockquote>
-						),
+						// Blockquotes, plus GitHub `[!NOTE]`-style callouts (tagged by
+						// remarkAlert) rendered with the same component as the desktop.
+						blockquote: ({ children, className }) => {
+							const alertType = alertTypeFromClassName(className);
+							if (alertType) {
+								return (
+									<AlertCallout type={alertType} theme={theme}>
+										<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+									</AlertCallout>
+								);
+							}
+							return (
+								<blockquote
+									style={{
+										margin: '8px 0',
+										paddingLeft: '16px',
+										borderLeft: `3px solid ${colors.accent}`,
+										color: colors.textDim,
+										fontStyle: 'italic',
+									}}
+								>
+									<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+								</blockquote>
+							);
+						},
 
 						// Horizontal rules
 						hr: () => (

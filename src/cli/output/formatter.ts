@@ -97,6 +97,7 @@ export interface AgentDisplay {
 	cwd: string;
 	groupId?: string;
 	autoRunFolderPath?: string;
+	bookmarked?: boolean;
 }
 
 export function formatAgents(agents: AgentDisplay[], groupName?: string): string {
@@ -117,8 +118,9 @@ export function formatAgents(agents: AgentDisplay[], groupName?: string): string
 		const cwd = dim(truncate(agent.cwd, 60));
 		const id = dim(agent.id);
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
+		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
 
-		lines.push(`  ${name} ${toolType}${autoRun}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 	}
@@ -444,6 +446,7 @@ export interface AgentDetailDisplay {
 	groupId?: string;
 	groupName?: string;
 	autoRunFolderPath?: string;
+	bookmarked?: boolean;
 	// Editable per-agent settings (the Edit Agent modal fields). `null` = unset.
 	nudgeMessage?: string | null;
 	newSessionMessage?: string | null;
@@ -511,6 +514,10 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 
 	if (agent.autoRunFolderPath) {
 		lines.push(`  ${c('white', 'Auto Run:')}   ${dim(agent.autoRunFolderPath)}`);
+	}
+
+	if (agent.bookmarked) {
+		lines.push(`  ${c('white', 'Bookmarked:')} ${c('yellow', '\u2605 yes')}`);
 	}
 
 	// Configuration (the Edit Agent modal settings). Only render the rows that

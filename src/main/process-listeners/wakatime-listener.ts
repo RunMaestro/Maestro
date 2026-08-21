@@ -31,12 +31,11 @@ function heartbeatForSession(
 	if (!managedProcess || managedProcess.isTerminal) return;
 	const projectDir = managedProcess.projectPath || managedProcess.cwd;
 	const projectName = projectDir ? path.basename(projectDir) : sessionId;
-	void wakaTimeManager.sendHeartbeat(
-		sessionId,
-		projectName,
-		projectDir,
-		managedProcess.querySource
-	);
+	void wakaTimeManager.sendHeartbeat(sessionId, projectName, projectDir, {
+		source: managedProcess.querySource,
+		isRemote: Boolean(managedProcess.sshRemoteId || managedProcess.sshRemoteHost),
+		origin: 'desktop',
+	});
 }
 
 /** Debounce delay for flushing file heartbeats after a `usage` event (ms) */
@@ -93,7 +92,12 @@ export function setupWakaTimeListener(
 			}))
 			.filter((f): f is { filePath: string; timestamp: number } => f.filePath !== null);
 
-		void wakaTimeManager.sendFileHeartbeats(filesArray, projectName, projectDir, source);
+		const managedProcess = processManager.get(sessionId);
+		void wakaTimeManager.sendFileHeartbeats(filesArray, projectName, projectDir, {
+			source,
+			isRemote: Boolean(managedProcess?.sshRemoteId || managedProcess?.sshRemoteHost),
+			origin: 'desktop',
+		});
 		pendingFiles.delete(sessionId);
 	}
 
@@ -132,12 +136,12 @@ export function setupWakaTimeListener(
 		const projectName = queryData.projectPath
 			? path.basename(queryData.projectPath)
 			: queryData.sessionId;
-		void wakaTimeManager.sendHeartbeat(
-			queryData.sessionId,
-			projectName,
-			queryData.projectPath,
-			queryData.source
-		);
+		const managedProcess = processManager.get(queryData.sessionId);
+		void wakaTimeManager.sendHeartbeat(queryData.sessionId, projectName, queryData.projectPath, {
+			source: queryData.source,
+			isRemote: Boolean(managedProcess?.sshRemoteId || managedProcess?.sshRemoteHost),
+			origin: 'desktop',
+		});
 
 		// Flush accumulated file heartbeats (or clear if detailed tracking was disabled)
 		if (detailedEnabled) {

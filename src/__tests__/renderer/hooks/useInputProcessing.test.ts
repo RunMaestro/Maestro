@@ -19,11 +19,22 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
 // Command mode routes to the shell-command service; assert the routing, not the run.
 vi.mock('../../../renderer/services/shellCommand', () => ({
 	runShellCommand: vi.fn().mockResolvedValue(undefined),
+	dispatchShellCommand: vi.fn().mockResolvedValue(undefined),
 	cancelShellCommand: vi.fn().mockResolvedValue(false),
+	resolveCommandCwd: vi.fn(() => '/test/project'),
+}));
+
+// AI command mode asks the model instead of running anything; assert the ask.
+vi.mock('../../../renderer/services/aiCommand', () => ({
+	requestAiCommand: vi.fn().mockResolvedValue(undefined),
+	acceptAiCommand: vi.fn(),
+	dismissAiCommand: vi.fn((entry: { request: string }) => entry.request),
 }));
 
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
-import { runShellCommand } from '../../../renderer/services/shellCommand';
+import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
+import { requestAiCommand } from '../../../renderer/services/aiCommand';
+import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type {
 	Session,
@@ -184,7 +195,7 @@ describe('useInputProcessing', () => {
 		// Command mode is composer state now, so routing is driven by the
 		// isCommandMode dep - NOT by a `!` in the text (the gesture consumes it).
 		const commandModeDeps = (overrides: Parameters<typeof createDeps>[0] = {}) =>
-			createDeps({ isCommandMode: () => true, ...overrides });
+			createDeps({ isCommandMode: () => 'shell', ...overrides });
 
 		it('runs the draft as a shell command instead of sending it to the agent', async () => {
 			const deps = commandModeDeps({ inputValue: 'git status' });
@@ -194,8 +205,8 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).toHaveBeenCalledTimes(1);
-			expect(vi.mocked(runShellCommand).mock.calls[0][0]).toMatchObject({
+			expect(dispatchShellCommand).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(dispatchShellCommand).mock.calls[0][0]).toMatchObject({
 				command: 'git status',
 				tabId: deps.activeSession!.activeTabId,
 			});
@@ -212,25 +223,13 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(vi.mocked(runShellCommand).mock.calls[0][0]).toMatchObject({
+			expect(vi.mocked(dispatchShellCommand).mock.calls[0][0]).toMatchObject({
 				command: "find . -name '*!*'",
 			});
 		});
 
-		it('records history bang-prefixed so it can be told from agent messages', async () => {
-			const deps = commandModeDeps({ inputValue: 'npm test' });
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			let sessions = [deps.activeSession!];
-			for (const [updater] of mockSetSessions.mock.calls) {
-				sessions = typeof updater === 'function' ? updater(sessions) : updater;
-			}
-			expect(sessions[0].aiCommandHistory).toContain('!npm test');
-		});
+		// History recording moved into dispatchShellCommand so an accepted AI
+		// suggestion records identically to a typed command; covered there.
 
 		it('runs immediately even while the agent is busy', async () => {
 			const session = createMockSession({ state: 'busy' });
@@ -242,7 +241,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).toHaveBeenCalledTimes(1);
+			expect(dispatchShellCommand).toHaveBeenCalledTimes(1);
 		});
 
 		it('does nothing at all on an empty command line', async () => {
@@ -255,7 +254,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		});
 
@@ -272,7 +271,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
 		});
 
 		it('does not intercept while the wizard is active', async () => {
@@ -283,7 +282,76 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
+		});
+
+		describe('AI command mode', () => {
+			const aiCommandDeps = (overrides: Parameters<typeof createDeps>[0] = {}) =>
+				createDeps({ isCommandMode: () => 'ai', ...overrides });
+
+			beforeEach(() => {
+				useAiCommandStore.setState({ entries: {} });
+			});
+
+			it('asks the model for a command instead of running anything', async () => {
+				const deps = aiCommandDeps({ inputValue: 'what is eating disk space' });
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(dispatchShellCommand).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(requestAiCommand).toHaveBeenCalledTimes(1);
+				expect(vi.mocked(requestAiCommand).mock.calls[0][0]).toMatchObject({
+					request: 'what is eating disk space',
+					tabId: deps.activeSession!.activeTabId,
+				});
+				expect(mockSetInputValue).toHaveBeenCalledWith('');
+			});
+
+			it('ignores a second Enter while a request is already pending', async () => {
+				// Otherwise a double-tap starts a competing request for the same tab
+				// and the second reply would overwrite a proposal the user is reading.
+				const deps = aiCommandDeps({ inputValue: 'list big files' });
+				useAiCommandStore.getState().beginAiCommand({
+					requestId: 'req-1',
+					sessionId: deps.activeSession!.id,
+					tabId: deps.activeSession!.activeTabId,
+					request: 'list big files',
+				});
+
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(requestAiCommand).not.toHaveBeenCalled();
+			});
+
+			it('does nothing at all on an empty request', async () => {
+				const deps = aiCommandDeps({ inputValue: '   ' });
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(requestAiCommand).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			});
+
+			it('does not intercept while the wizard is active', async () => {
+				const deps = aiCommandDeps({ inputValue: 'list big files', isWizardActive: true });
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(requestAiCommand).not.toHaveBeenCalled();
+			});
 		});
 
 		it('leaves ordinary messages alone when not in command mode', async () => {
@@ -294,7 +362,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
 		});
 
 		it('sends a bare bang message to the agent when NOT in command mode', async () => {
@@ -306,7 +374,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
 		});
 
 		it('sends an escaped bang to the agent as a literal message', async () => {
@@ -317,7 +385,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
 
 			// The message is logged (and sent) without the escape backslash.
 			let sessions = [deps.activeSession!];

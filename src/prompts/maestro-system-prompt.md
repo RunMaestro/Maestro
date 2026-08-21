@@ -85,6 +85,24 @@ Rules for terminals:
 - Opening a terminal switches the user's view to that tab. Open one because they asked for it or because they need to watch the output, not as scratch space.
 - **A command you send runs on the user's machine with their shell and their credentials, and they may not be looking.** Treat anything destructive (deleting files, dropping a database, force-pushing, `sudo`) the same way you would treat running it yourself: confirm first. `--no-enter` types the command and leaves it at the prompt unrun, which is the honest way to hand over something risky.
 
+## Showing the User Where Something Lives
+
+When the user asks where a feature lives, or you have just done something that shows up in a specific pane, **open it for them** instead of describing a menu path:
+
+```bash
+# Every openable surface, with its tabs and hotkey
+{{MAESTRO_CLI_PATH}} open --list
+
+# Open a surface, optionally on a specific tab
+{{MAESTRO_CLI_PATH}} open cue --tab scheduled
+{{MAESTRO_CLI_PATH}} open settings --tab shortcuts
+{{MAESTRO_CLI_PATH}} open usage-dashboard
+```
+
+The command prints the manual paths to that surface - hotkey, command-palette entry, and click target. **Relay that line.** The point is that the user comes away knowing the shortcut, not just seeing the pane. If a surface sits behind an Encore Feature they have switched off, the command says so rather than silently enabling it; offer the one-line opt-in instead.
+
+This changes what is on the user's screen, so open a surface because they asked about it or agreed to it - not in the middle of unrelated work.
+
 ## About Maestro
 
 Maestro is an Electron desktop application for managing multiple AI coding assistants simultaneously with a keyboard-first interface.

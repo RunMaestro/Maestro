@@ -21,7 +21,7 @@ function seed(overrides: Partial<ReturnType<typeof useMediaPlaybackStore.getStat
 		history: [],
 		playing: true,
 		dismissed: true,
-		minimized: false,
+		dormant: false,
 		pendingAutoplay: false,
 		toggleRequest: 0,
 		resumeTimes: {},
@@ -48,6 +48,25 @@ describe('NowPlayingIndicator', () => {
 		seed({ dismissed: false });
 		render(<NowPlayingIndicator theme={mockTheme} />);
 		expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+	});
+
+	it('stays hidden for a queue restored from disk until the player is used', () => {
+		// Launching with yesterday's queue still loaded must not put media
+		// controls in the header: nothing is playing and the user opened nothing.
+		seed({ playing: false, dormant: true });
+		render(<NowPlayingIndicator theme={mockTheme} />);
+		expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+	});
+
+	it('appears once the restored queue is woken', () => {
+		seed({ playing: false, dormant: true });
+		const { rerender } = render(<NowPlayingIndicator theme={mockTheme} />);
+		expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+
+		useMediaPlaybackStore.getState().restore();
+		useMediaPlaybackStore.setState({ dismissed: true });
+		rerender(<NowPlayingIndicator theme={mockTheme} />);
+		expect(screen.getByTestId('now-playing-indicator')).toBeTruthy();
 	});
 
 	it('disappears when the player is closed', () => {

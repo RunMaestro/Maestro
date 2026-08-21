@@ -61,6 +61,7 @@ import { extractAgentTaskList } from '../utils/agentTaskList';
 import { RetryStatusCard } from './RetryStatusCard';
 import { SnoozeReturnCard } from './SnoozeReturnCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
+import { TurnSettingPills } from './ui/TurnSettingPills';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 /**
@@ -497,6 +498,9 @@ const LogItemComponent = memo(
 							theme={theme}
 							fontFamily={fontFamily}
 							ansiConverter={ansiConverter}
+							onDelete={onDeleteLog}
+							deleteConfirmLogId={deleteConfirmLogId}
+							onSetDeleteConfirmLogId={onSetDeleteConfirmLogId}
 						/>
 					</div>
 				</div>
@@ -1119,30 +1123,37 @@ const LogItemComponent = memo(
 							onRecover={(opts) => onSessionRecover?.(opts)}
 						/>
 					)}
-					{/* Mode pill - shows which CLI captured this Claude turn (TUI Wrapper =
-					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
-					    session has Dynamic Mode enabled (auto-switching between the two). */}
-					{isClaudeCode &&
-						log.source !== 'user' &&
-						(() => {
-							const { label, title } = getTokenSourcePill({
-								mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
-								adaptive: isAdaptiveMode,
-							});
-							return (
-								<span
-									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										opacity: 0.7,
-									}}
-									title={title}
-								>
-									{label}
-								</span>
-							);
-						})()}
+					{/* Turn attribution pills, centered in the message footer. The mode pill
+					    shows which CLI captured this Claude turn (TUI Wrapper = maestro-p,
+					    claude -p = claude --print; a "Dynamic " prefix means the session
+					    auto-switches between the two). The model and effort pills name the
+					    configuration the turn was SENT with, so a conversation that changed
+					    model or effort partway through still says who answered what. */}
+					{log.source !== 'user' && (isClaudeCode || log.turnModel || log.turnEffort) && (
+						<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
+							{isClaudeCode &&
+								(() => {
+									const { label, title } = getTokenSourcePill({
+										mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+										adaptive: isAdaptiveMode,
+									});
+									return (
+										<span
+											className="text-[10px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+											style={{
+												backgroundColor: `${theme.colors.accent}20`,
+												color: theme.colors.accent,
+												opacity: 0.7,
+											}}
+											title={title}
+										>
+											{label}
+										</span>
+									);
+								})()}
+							<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
+						</div>
+					)}
 					{/* Jump to top of this message - bottom left corner */}
 					<JumpToMessageTopButton
 						scrollContainerRef={scrollContainerRef}
@@ -1330,8 +1341,19 @@ const LogItemComponent = memo(
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
+			prevProps.log.turnModel === nextProps.log.turnModel &&
+			prevProps.log.turnEffort === nextProps.log.turnEffort &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
+			// A command card's whole header is driven by these, and none of them
+			// touch `text`. A command that prints NOTHING (`!true`, `!mkdir foo`)
+			// changes only these fields when it exits, so without them the card is
+			// frozen mid-run: still spinning, still offering Stop, and still hiding
+			// the delete button, which is gated on the command having finished.
+			prevProps.log.shellCommand?.status === nextProps.log.shellCommand?.status &&
+			prevProps.log.shellCommand?.exitCode === nextProps.log.shellCommand?.exitCode &&
+			prevProps.log.shellCommand?.durationMs === nextProps.log.shellCommand?.durationMs &&
+			prevProps.log.shellCommand?.truncated === nextProps.log.shellCommand?.truncated &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
@@ -1758,6 +1780,11 @@ export const TerminalOutput = memo(
 					// that entry's missing renderStyle and mislabel an interactive turn
 					// as "API". Preserve text-stream if ANY grouped entry carries it.
 					const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
+					// Same trap for the model/effort pills: only streamed agent output
+					// carries the turn's codified settings, so a group led by a system
+					// banner would lose them if the combined entry took `[0]` alone.
+					const turnModel = currentResponseGroup.find((l) => l.turnModel)?.turnModel;
+					const turnEffort = currentResponseGroup.find((l) => l.turnEffort)?.turnEffort;
 					const groupId = currentResponseGroup[0].id;
 					for (const grouped of currentResponseGroup) {
 						renderedIds.set(grouped.id, groupId);
@@ -1767,6 +1794,8 @@ export const TerminalOutput = memo(
 						text: combinedText,
 						// Keep the first entry's timestamp and id
 						...(hasTextStream ? { renderStyle: 'text-stream' as const } : {}),
+						...(turnModel ? { turnModel } : {}),
+						...(turnEffort ? { turnEffort } : {}),
 					});
 					currentResponseGroup = [];
 				}

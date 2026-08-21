@@ -43,10 +43,12 @@ vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 const mockHandleKeyDown = vi.fn();
 const mockSetSelectedIndex = vi.fn();
 let mockOnSelect: ((index: number) => void) | undefined;
+let mockOnSelectAlternate: ((index: number) => void) | undefined;
 
 vi.mock('../../../../renderer/hooks/keyboard/useListNavigation', () => ({
 	useListNavigation: (opts: any) => {
 		mockOnSelect = opts.onSelect;
+		mockOnSelectAlternate = opts.onSelectAlternate;
 		return {
 			selectedIndex: -1,
 			setSelectedIndex: mockSetSelectedIndex,
@@ -322,6 +324,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.clearAllMocks();
 	mockOnSelect = undefined;
+	mockOnSelectAlternate = undefined;
 });
 
 describe('UnifiedHistoryTab', () => {
@@ -697,6 +700,61 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
 			});
+		});
+
+		// Cmd+Enter is the list's second verb: jump to where the work happened
+		// instead of reading about it. It goes to the agent AND the tab, so it
+		// must match what clicking the entry's session pill does.
+		it('jumps to the entry session via onSelectAlternate (Cmd+Enter)', async () => {
+			const entries = createMockEntries();
+			entries[0] = { ...entries[0], agentSessionId: 'agent-sess-abc' };
+			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
+
+			const onResumeSession = vi.fn();
+			render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			expect(mockOnSelectAlternate).toBeDefined();
+			await act(async () => {
+				mockOnSelectAlternate!(0);
+			});
+
+			// Both ids travel: the agent to switch to, and the session to open there.
+			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc');
+			// The jump replaces the detail modal rather than stacking on top of it.
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+		});
+
+		// An entry with no recorded session has nowhere to jump. Saying so beats
+		// a shortcut that appears to do nothing.
+		it('says so instead of jumping when the entry has no session', async () => {
+			const onResumeSession = vi.fn();
+			render(<UnifiedHistoryTab theme={mockTheme} onResumeSession={onResumeSession} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			await act(async () => {
+				mockOnSelectAlternate!(0);
+			});
+
+			expect(onResumeSession).not.toHaveBeenCalled();
+		});
+
+		// Without a resume handler there is nowhere to jump, so the hook must not
+		// be handed an alternate action that would silently do nothing.
+		it('offers no alternate action when onResumeSession is absent', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			expect(mockOnSelectAlternate).toBeUndefined();
 		});
 	});
 

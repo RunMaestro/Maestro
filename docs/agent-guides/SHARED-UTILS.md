@@ -17,18 +17,47 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Agent IDs & Metadata
 
-| Function / Constant       | File                           | Signature                                 | Process | Purpose                                                                                                                                                  |
-| ------------------------- | ------------------------------ | ----------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_IDS`               | `src/shared/agentIds.ts`       | `readonly string[]`                       | Both    | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                  |
-| `AgentId`                 | `src/shared/agentIds.ts`       | Type derived from `AGENT_IDS`             | Both    | Union type of all valid agent IDs.                                                                                                                       |
-| `isValidAgentId`          | `src/shared/agentIds.ts`       | `(id: string) => id is AgentId`           | Both    | Type guard for agent ID validation.                                                                                                                      |
-| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                 | Both    | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.   |
-| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => string`  | Both    | Get display name, falls back to raw id.                                                                                                                  |
-| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`  | `ReadonlySet<AgentId>`                    | Both    | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use. |
-| `isBetaAgent`             | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => boolean` | Both    | Check if an agent is in beta.                                                                                                                            |
-| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts` | `Partial<Record<AgentId, number>>`        | Both    | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                      |
-| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts` | `number` (200000)                         | Both    | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                             |
-| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts` | `ReadonlySet<AgentId>`                    | Both    | Agents with combined input+output context windows (currently: codex).                                                                                    |
+| Function / Constant       | File                           | Signature                                             | Process | Purpose                                                                                                                                                                                              |
+| ------------------------- | ------------------------------ | ----------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_IDS`               | `src/shared/agentIds.ts`       | `readonly string[]`                                   | Both    | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                                                              |
+| `AgentId`                 | `src/shared/agentIds.ts`       | Type derived from `AGENT_IDS`                         | Both    | Union type of all valid agent IDs.                                                                                                                                                                   |
+| `isValidAgentId`          | `src/shared/agentIds.ts`       | `(id: string) => id is AgentId`                       | Both    | Type guard for agent ID validation.                                                                                                                                                                  |
+| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                             | Both    | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.                                               |
+| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => string`              | Both    | Get display name, falls back to raw id.                                                                                                                                                              |
+| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`  | `ReadonlySet<AgentId>`                                | Both    | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use.                                             |
+| `isBetaAgent`             | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => boolean`             | Both    | Check if an agent is in beta.                                                                                                                                                                        |
+| `getAgentLoginCommand`    | `src/shared/agentMetadata.ts`  | `(agentId, customPath?) => AgentLoginCommand \| null` | Both    | Re-authentication command for an agent. Returns `null` for `terminal` and for unknown ids: never guess a command to run in a shell. Pass the agent's `customPath` so a non-PATH install still works. |
+| `formatAgentLoginCommand` | `src/shared/agentMetadata.ts`  | `(login: AgentLoginCommand) => string`                | Both    | Render a login command as the single line typed into a shell. Quotes a custom binary path containing spaces.                                                                                         |
+| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts` | `Partial<Record<AgentId, number>>`                    | Both    | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                                                                  |
+| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts` | `number` (200000)                                     | Both    | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                                                                         |
+| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts` | `ReadonlySet<AgentId>`                                | Both    | Agents with combined input+output context windows (currently: codex).                                                                                                                                |
+
+---
+
+## Agent Environment (`src/shared/agentEnvironment.ts` - Both)
+
+An agent's environment is assembled from three layers, each edited in a different
+pane, so "which profile is this agent actually running as?" is a question no
+single settings screen can answer. This module does the same merge the spawner
+does and reports WHERE each surviving value came from.
+
+Precedence (later wins), mirroring `process:spawnTerminalTab`:
+
+1. `global` - Settings -> Environment, applies to every process Maestro spawns
+2. `agent` - Settings -> Agents, applies to every agent of one provider
+3. `session` - this agent's own overrides, from Edit Agent
+
+| Function                  | Signature                                              | Purpose                                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolveAgentEnvironment` | `(layers: AgentEnvironmentLayers) => ResolvedEnvVar[]` | Merge the three layers, key-sorted. Each entry carries the winning `source` plus `shadowedBy`, the layers it overrode. Empty-string values are kept: `FOO=` is a real override, not an absent one. |
+| `isSecretEnvKey`          | `(key: string) => boolean`                             | Whether a value should be masked until revealed. Matched loosely on purpose - a false positive costs one click, a false negative puts a live key on screen during a screen share.                  |
+| `maskEnvValue`            | `(value: string) => string`                            | Mask a secret, keeping the last four characters so one credential is still tellable from another. Values of 8 characters or fewer are masked whole.                                                |
+| `envSourceLabel`          | `(source: EnvVarSource) => string`                     | Human label for a layer: `Global`, `Provider`, `This agent`.                                                                                                                                       |
+
+**Do NOT re-derive this merge inline.** The precedence has to match the spawner's
+or the UI describes a process nobody is running. Render the result with
+[`<EnvVarList>`](UI-PATTERNS.md), which owns the masking and the source badges.
+This is distinct from `Settings/EnvVarsEditor`, which EDITS one layer.
 
 ---
 

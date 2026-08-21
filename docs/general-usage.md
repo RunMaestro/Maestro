@@ -62,6 +62,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 
 - **Syntax highlighting** for code files
 - **Markdown rendering** with toggle between raw/preview (`Cmd+E` / `Ctrl+E`)
+- **Clickable task checkboxes** in rendered markdown - tick a `- [ ]` in the preview and the file is rewritten on disk
 - **Image viewing** for common image formats
 - **Audio and video playback** with a speed control that sticks (see below)
 - **CSV and TSV tables** with sortable columns and a per-row detail view (see below)
@@ -253,12 +254,15 @@ You will know you are in command mode: a `$` appears at the left of the input, a
 
 **Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
+`!` is a rung, not a toggle. Press it again on an empty command line and you climb to [AI Command Mode](#ai-command-mode), where you describe what you want instead of typing the command yourself. `Esc` steps back down one rung at a time, so AI Command Mode returns you to command mode and command mode returns you to the agent.
+
 **How it behaves:**
 
 - **The agent is bypassed entirely.** It is never spawned, never written to, and never sees the command or its output. Nothing you run this way enters the agent's context - if you want the agent to see the result, copy it into a message.
 - **It runs immediately, even while the agent is working.** Command mode does not queue and does not interrupt the turn in progress, so you can check `git log` while the agent is mid-edit.
 - **It runs in the agent's working directory** (on the agent's SSH remote, if it has one). Each command is independent - there is no persistent shell, so `cd src` on its own does nothing. Chain instead: `cd src && ls`.
 - **Every command gets its own card**, never merged into the surrounding conversation. The card shows the command, where it ran, and a live spinner while it works; when it finishes, the exit code and how long it took.
+- **A finished card can be deleted.** Its header has a trash icon with the same inline **Delete?** confirmation your own messages use. Only the card goes; the agent never saw the command, so there is nothing on its side to remove. The icon is hidden while the command is still running - press **Stop** first, otherwise the output would keep streaming into a card that no longer exists.
 - **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
@@ -296,6 +300,37 @@ Very large output is capped so a runaway command cannot bloat your transcript; t
 **Sending a message that starts with `!`:** typing `!` first only enters command mode when the composer is empty, so a bang inside a sentence is safe. To start a message with one, prefix it with a backslash: `\!important` reaches the agent as `!important`.
 
 Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you are already at a shell, so `!` is an ordinary character.
+
+### AI Command Mode
+
+Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, and what you type is no longer a command - it is a plain-English description of what you want done:
+
+```
+delete every node_modules folder under this project
+```
+
+Press `Enter` and Maestro asks **this tab's own model**, at the model and effort the tab is set to, for a single command line. Nothing runs yet. The answer appears as a card above the composer showing the command it proposes, with **Run** and **Cancel**:
+
+| Key       | Does                                                         |
+| --------- | ------------------------------------------------------------ |
+| `Y`       | Runs the command                                             |
+| `N`       | Declines it                                                  |
+| `←` / `→` | Moves between **Run** and **Cancel**                         |
+| `Enter`   | Takes whichever is selected (**Run** is selected by default) |
+| `Esc`     | Declines it                                                  |
+
+Declining hands your original request back to the composer so you can reword it and ask again, which is nearly always what you want - a wrong answer usually means a vague question. The card owns the keyboard until you answer it, so `Enter` can never run something you have not looked at.
+
+A command you accept runs through exactly the same path as one you typed yourself: same working directory, same SSH remote, same card in the transcript, and it joins your `↑` recall history the same way. After it runs there is nothing to distinguish it from a command you typed.
+
+**How the suggestion is made:**
+
+- **The model only names the command; it never runs anything.** The request is answered with tools disabled and in read-only mode, so a task-shaped request ("clean up the build output") comes back as a command to look at rather than as work already done.
+- **It is the tab's own provider**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **The agent's conversation is untouched.** The request and the suggestion never enter the agent's context, the same as any other command-mode activity.
+- **The prompt is yours to change.** It is a core prompt (`ai-command`), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
+
+There is no rung above AI Command Mode, so a `!` typed here is an ordinary character - your request is prose, and prose contains bangs.
 
 ## Prompt Composer
 
@@ -560,6 +595,8 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 - **Custom Arguments** - Additional command-line arguments
 - **Environment Variables** - Custom environment variables for the agent process
 - **Model Selection** - Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar - per-tab overrides only affect that tab and don't change the agent default or any other tab.
+
+  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source-max-plan-vs-api) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
 
 ### Editing Agents
 

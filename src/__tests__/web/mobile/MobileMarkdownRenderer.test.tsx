@@ -8,16 +8,20 @@ import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { MobileMarkdownRenderer } from '../../../web/mobile/MobileMarkdownRenderer';
 
+const mockColors = {
+	accent: '#8b5cf6',
+	border: '#374151',
+	bgActivity: '#1f2937',
+	textMain: '#f3f4f6',
+	textDim: '#9ca3af',
+	success: '#22c55e',
+	warning: '#f59e0b',
+	error: '#ef4444',
+};
+
 vi.mock('../../../web/components/ThemeProvider', () => ({
-	useThemeColors: () => ({
-		accent: '#8b5cf6',
-		border: '#374151',
-		bgActivity: '#1f2937',
-		textMain: '#f3f4f6',
-		textDim: '#9ca3af',
-		success: '#22c55e',
-	}),
-	useTheme: () => ({ isDark: true }),
+	useThemeColors: () => mockColors,
+	useTheme: () => ({ isDark: true, theme: { colors: mockColors } }),
 }));
 
 vi.mock('../../../web/mobile/constants', () => ({
@@ -72,5 +76,24 @@ describe('MobileMarkdownRenderer', () => {
 
 		expect(container.querySelector('.bionify-word-emphasis')).toBeInTheDocument();
 		expect(getByTestId('syntax-highlighter').querySelector('.bionify-word-emphasis')).toBeNull();
+	});
+
+	// Chat on the phone renders the same agent output as the desktop, so a
+	// `[!WARNING]` that becomes a callout there cannot stay a literal marker here.
+	it('renders GitHub alert callouts', () => {
+		const { container, getByText } = render(
+			<MobileMarkdownRenderer content={'> [!WARNING]\n> Mind the gap.'} />
+		);
+
+		expect(getByText('Warning')).toBeInTheDocument();
+		expect(container.querySelector('[data-alert-type="warning"]')).toBeInTheDocument();
+		expect(container.textContent).not.toContain('[!WARNING]');
+	});
+
+	it('leaves an ordinary blockquote alone', () => {
+		const { container } = render(<MobileMarkdownRenderer content={'> Just a quote.'} />);
+
+		expect(container.querySelector('blockquote')).toBeInTheDocument();
+		expect(container.querySelector('.markdown-alert')).toBeNull();
 	});
 });

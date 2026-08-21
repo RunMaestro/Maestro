@@ -1494,8 +1494,66 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 
+		// A patch carrying a `tabId` targets one AI tab inside the agent rather
+		// than the agent itself. It rides this message (instead of a new one)
+		// because everything a scriptable write needs is already here: an
+		// allowlist, a response channel the caller can await, and a setMany flush
+		// so the value is on disk before the ack. Prefer extending this for new
+		// persistent state over adding another fire-and-forget renderer channel.
+		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
+		if (targetTabId !== undefined) {
+			const TAB_EDITABLE_KEYS = new Set(['starred', 'hasUnread', 'saveToHistory']);
+			const tabPatch: Record<string, unknown> = {};
+			for (const key of Object.keys(patchObj)) {
+				if (TAB_EDITABLE_KEYS.has(key)) tabPatch[key] = patchObj[key];
+			}
+
+			if (Object.keys(tabPatch).length === 0) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'No editable tab fields in patch',
+				});
+				return;
+			}
+
+			if (!session.aiTabs?.some((t) => t.id === targetTabId)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Tab not found',
+				});
+				return;
+			}
+
+			const applyTabPatch = (s: Session): Session => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
+			});
+
+			setSessions((prev: Session[]) =>
+				prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
+			);
+
+			try {
+				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
+			}
+
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
+			return;
+		}
+
 		// Allowlist of editable session config keys. Anything else in the patch is
 		// ignored so the CLI can't write arbitrary Session internals.
+		//
+		// Two groups live here. The spawn-time settings (the Edit Agent modal
+		// fields) take effect on the next launch. The UI-state fields below them
+		// are what the user would otherwise toggle by clicking in the Left Bar;
+		// they apply immediately and are flushed to disk by the setMany below, so
+		// a CLI read straight after the write sees the new value rather than
+		// waiting on the renderer's 2s debounce.
 		const EDITABLE_KEYS = new Set([
 			'nudgeMessage',
 			'newSessionMessage',
@@ -1508,6 +1566,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
+			// UI state
+			'bookmarked',
 		]);
 
 		// Build the field patch. A `null` value clears the field (sets undefined);

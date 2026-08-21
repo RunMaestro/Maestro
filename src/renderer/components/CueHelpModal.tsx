@@ -152,7 +152,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
-						Use the <strong style={{ color: theme.colors.textMain }}>Pipeline Editor</strong> tab to
+						Use the <strong style={{ color: theme.colors.textMain }}>Pipeline Graph</strong> tab to
 						visually build your automation pipelines. Drag triggers from the left drawer and agents
 						from the right drawer onto the canvas, then connect them to define your workflow. The
 						editor automatically generates and manages the underlying{' '}
@@ -1018,7 +1018,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					>
 						<Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.accent }} />
 						<span>
-							Use the Pipeline Editor to visually build these patterns by dragging and connecting
+							Use the Pipeline Graph tab to visually build these patterns by dragging and connecting
 							triggers and agents.
 						</span>
 					</div>
@@ -1207,15 +1207,15 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 			</section>
 
-			{/* Section 9: Visual Pipeline Editor */}
+			{/* Section 9: Pipeline Graph and Pipeline List */}
 			<section>
 				<div className="flex items-center gap-2 mb-3">
 					<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Visual Pipeline Editor</h3>
+					<h3 className="font-bold">Pipeline Graph and Pipeline List</h3>
 				</div>
 				<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
-						The Pipeline Editor provides a visual canvas for building automation workflows. Drag
+						The Pipeline Graph tab provides a visual canvas for building automation workflows. Drag
 						triggers and agents onto the canvas, connect them with edges, and organize them into
 						named pipelines with distinct colors.
 					</p>
@@ -1230,6 +1230,14 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						rename, and switch between pipelines. The{' '}
 						<strong style={{ color: theme.colors.textMain }}>All Pipelines</strong> view shows every
 						pipeline side-by-side and is read-only - switch back to a single pipeline to edit.
+					</p>
+					<p>
+						The <strong style={{ color: theme.colors.textMain }}>Pipeline List</strong> tab is the
+						same pipelines read as text instead of drawn as a graph. Each row states what the
+						pipeline does (its trigger and the agents it runs, in order) and how it is doing: a
+						health badge from config validation plus the recent run history, the outcome and age of
+						the last run, and any configuration problems spelled out. Filter by health, sort
+						problems to the top, run a pipeline on demand, or jump to it on the graph.
 					</p>
 
 					<div className="flex items-center gap-2 mt-4 mb-1">
@@ -1370,7 +1378,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							>
 								{formatShortcutKeys(cueShortcutKeys ?? DEFAULT_SHORTCUTS.openCue.keys)}
 							</kbd>{' '}
-							to open the Cue dashboard. The Pipeline Editor is the default tab.
+							to open the Cue dashboard. The Pipeline Graph is the default tab.
 						</span>
 					</div>
 				</div>

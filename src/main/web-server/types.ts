@@ -332,6 +332,13 @@ export type OpenFileTabCallback = (
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
+ * Open one of the app's modals/dashboards (see `shared/uiSurfaces.ts` for the
+ * registry). `surface` is a `UiSurface.id`; `tab` is an optional tab id within
+ * it, already validated against that surface.
+ */
+export type OpenModalParams = { surface: string; tab?: string };
+export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
+/**
  * Callback type for atomically creating a new AI tab and dispatching a prompt into it.
  * Returns the new tab id alongside success so callers (e.g. `maestro-cli dispatch
  * --new-tab`) can address the same tab on later calls without owning a persistent

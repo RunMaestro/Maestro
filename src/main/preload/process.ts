@@ -541,6 +541,20 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to a remote request to open one of the app's modals /
+		 * dashboards (from `maestro-cli open`). `surface` is a `UiSurface.id`
+		 * and `tab` (when present) has already been validated against it in
+		 * the main process.
+		 */
+		onRemoteOpenModal: (
+			callback: (params: { surface: string; tab?: string }) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: { surface: string; tab?: string }) => callback(params);
+			ipcRenderer.on('remote:openModal', handler);
+			return () => ipcRenderer.removeListener('remote:openModal', handler);
+		},
+
+		/**
 		 * Subscribe to remote refresh file tree from web interface
 		 */
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void): (() => void) => {
@@ -1879,6 +1893,32 @@ export function createProcessApi() {
 				callback(sessionId, error);
 			ipcRenderer.on('agent:error', handler);
 			return () => ipcRenderer.removeListener('agent:error', handler);
+		},
+
+		/**
+		 * Subscribe to expired-credentials notices raised outside the agent
+		 * streaming path - today, Cue pipeline runs, which spawn their agents
+		 * directly and therefore never emit `agent:error`.
+		 */
+		onAuthExpired: (
+			callback: (payload: {
+				sessionId: string;
+				agentId: string;
+				message: string;
+				fromPipeline?: boolean;
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				payload: {
+					sessionId: string;
+					agentId: string;
+					message: string;
+					fromPipeline?: boolean;
+				}
+			) => callback(payload);
+			ipcRenderer.on('agent:authExpired', handler);
+			return () => ipcRenderer.removeListener('agent:authExpired', handler);
 		},
 	};
 }

@@ -34,6 +34,10 @@ import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import {
+	normalizeComposerCommandMode,
+	type ComposerCommandMode,
+} from '../../utils/shellCommandInput';
+import {
 	FILE_TREE_SINGLE_MIME,
 	FILE_TREE_MULTI_MIME,
 } from '../../components/FileExplorerPanel/types';
@@ -219,6 +223,18 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 	// --- Derived values ---
 	const activeTab = activeSession ? getActiveTab(activeSession) : null;
+	// The tab the composer is currently drafting FOR, which is not the same
+	// question as "which tab does the app show". `selectActiveSession` falls back
+	// to `sessions[0]` so the UI has something to render while a freshly created
+	// agent's session object catches up with `activeSessionId` - useful for
+	// rendering, actively wrong for attributing text, because it names an agent
+	// the user is not typing into. Resolve `undefined` in that window instead:
+	// the text is then parked unowned and adopted by the real tab when it lands,
+	// rather than flushed onto a stranger's tab.
+	const activeTabIdForInput =
+		activeSession && (!activeSessionId || activeSession.id === activeSessionId)
+			? activeTab?.id
+			: undefined;
 	const isAiMode = activeSession?.inputMode === 'ai';
 	const activeSessionInputMode = activeSession?.inputMode;
 
@@ -233,11 +249,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const setAiValue = useMemo(() => useComposerInputStore.getState().setAiValue, []);
 	const setTerminalValue = useMemo(() => useComposerInputStore.getState().setTerminalValue, []);
 	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
+	const loadAiDraft = useMemo(() => useComposerInputStore.getState().loadAiDraft, []);
+	const adoptAiDraft = useMemo(() => useComposerInputStore.getState().adoptAiDraft, []);
 
-	// Ref-mirror of activeTab.id so the live-draft mirror attributes text to the
-	// correct tab, and the tab-switch effect can flush the OLD tab's text without
-	// re-triggering on tab-switch alone.
-	const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
+	// Ref-mirror of the tab the composer drafts for, so the live-draft mirror can
+	// adopt text typed before any tab existed, and the tab-switch effect can act
+	// on a change without re-triggering on tab-switch alone.
+	const activeTabIdRef = useRef<string | undefined>(activeTabIdForInput);
 
 	// Ref-mirror of the current mode so non-reactive readers (getInputValue) pick
 	// the right slice at call time without subscribing.
@@ -253,10 +271,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return isAiModeRef.current ? s.aiValue : s.terminalValue;
 	}, []);
 
-	// Command mode only exists for the AI composer; the terminal is already a
-	// shell, so it reports false there rather than double-routing.
+	// The bang ladder only exists for the AI composer; the terminal is already a
+	// shell, so it reports 'off' there rather than double-routing.
 	const getCommandMode = useCallback(
-		() => isAiModeRef.current && useComposerInputStore.getState().aiCommandMode,
+		(): ComposerCommandMode =>
+			isAiModeRef.current ? useComposerInputStore.getState().aiCommandMode : 'off',
 		[]
 	);
 
@@ -320,23 +339,39 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	//  - onto the tab itself via a coalesced write-back, so the text survives
 	//    anything that skips the blur / submit / tab-switch flush points (a
 	//    quit while typing, an unmount, focus that never left the textarea).
-	// Both are attributed to the tab that was active when the text was typed,
-	// never to whatever tab is active when the write finally lands.
+	// Both are attributed to the tab that OWNS the text (composerInputStore's
+	// `aiValueTabId`), never to whatever tab is active when the write lands.
+	// A keystroke on unowned text claims it for the tab being drafted for, if
+	// there is one - text typed while the agent has no AI tab at all stays
+	// unowned and is adopted by the next tab to become active, rather than being
+	// filed against the last tab of the agent the user just left.
 	// Subscribing outside React render keeps this off the re-render path.
 	useEffect(() => {
-		activeTabIdRef.current = activeTab?.id;
-		const mirror = (aiValue: string) => {
-			const currentTabId = activeTabIdRef.current;
-			if (currentTabId) setLiveDraft(currentTabId, aiValue);
+		activeTabIdRef.current = activeTabIdForInput;
+		const ownerOf = (stamped: string | null): string | undefined => {
+			if (stamped) return stamped;
+			const adoptable = activeTabIdRef.current;
+			if (adoptable) adoptAiDraft(adoptable);
+			return adoptable;
 		};
-		mirror(useComposerInputStore.getState().aiValue);
-		return useComposerInputStore.subscribe((state, prev) => {
-			if (state.aiValue === prev.aiValue && state.aiCommandMode === prev.aiCommandMode) return;
-			mirror(state.aiValue);
-			const currentTabId = activeTabIdRef.current;
-			if (currentTabId) queueAiDraftFlush(currentTabId, state.aiValue, state.aiCommandMode);
+		const state = useComposerInputStore.getState();
+		if (state.aiValueTabId) setLiveDraft(state.aiValueTabId, state.aiValue);
+		return useComposerInputStore.subscribe((next, prev) => {
+			// Ownership changes matter as much as edits: a tab handed the same text
+			// its neighbour was holding still needs its own live-draft entry, or the
+			// tab strip shows no draft marker on the tab that actually has one.
+			if (
+				next.aiValue === prev.aiValue &&
+				next.aiCommandMode === prev.aiCommandMode &&
+				next.aiValueTabId === prev.aiValueTabId
+			)
+				return;
+			const ownerTabId = ownerOf(next.aiValueTabId);
+			if (!ownerTabId) return;
+			setLiveDraft(ownerTabId, next.aiValue);
+			queueAiDraftFlush(ownerTabId, next.aiValue, next.aiCommandMode);
 		});
-	}, [activeTab?.id, queueAiDraftFlush]);
+	}, [activeTabIdForInput, adoptAiDraft, queueAiDraftFlush]);
 
 	// Tab completion
 	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion(activeSession);
@@ -348,17 +383,20 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Tab/Session switching effects
 	// ====================================================================
 
-	const prevActiveTabIdRef = useRef<string | undefined>(activeTab?.id);
+	const prevActiveTabIdRef = useRef<string | undefined>(activeTabIdForInput);
 	const prevActiveSessionIdRef = useRef<string | undefined>(activeSession?.id);
 	const didHydrateAiInputRef = useRef(false);
 	const didHydrateTerminalInputRef = useRef(false);
 
 	useEffect(() => {
-		if (!activeTab || didHydrateAiInputRef.current) return;
-		setAiValue(activeTab.inputValue ?? '');
-		setAiCommandMode(activeTab.commandMode === true);
+		if (!activeTab || !activeTabIdForInput || didHydrateAiInputRef.current) return;
+		loadAiDraft(
+			activeTabIdForInput,
+			activeTab.inputValue ?? '',
+			normalizeComposerCommandMode(activeTab.commandMode)
+		);
 		didHydrateAiInputRef.current = true;
-	}, [activeTab?.id, setAiValue, setAiCommandMode]);
+	}, [activeTabIdForInput, loadAiDraft]);
 
 	useEffect(() => {
 		if (!activeSession || didHydrateTerminalInputRef.current) return;
@@ -366,47 +404,71 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		didHydrateTerminalInputRef.current = true;
 	}, [activeSession?.id, setTerminalValue]);
 
-	// Sync local AI input with tab's persisted value when switching tabs
+	// Hand the composer over when the tab being drafted for changes - including
+	// to "no tab at all", which is a legal state (every AI tab closed with a file
+	// tab still open, or an agent whose session object has not landed yet) and
+	// leaves the composer on screen and typeable.
 	useEffect(() => {
-		if (activeTab && activeTab.id !== prevActiveTabIdRef.current) {
-			const prevTabId = prevActiveTabIdRef.current;
+		const nextTabId = activeTabIdForInput;
+		if (nextTabId === prevActiveTabIdRef.current) return;
+		prevActiveTabIdRef.current = nextTabId;
 
-			// Save current AI input to the PREVIOUS tab. Command mode rides along
-			// with the text (syncAiInputToSession reads it from the store) - a
-			// command draft that came back as a plain message would be sent to the
-			// agent instead of the shell.
-			if (prevTabId) {
-				syncAiInputToSession(useComposerInputStore.getState().aiValue, prevTabId);
-			}
-
-			// Load new tab's persisted input value + mode. Read it from the store
-			// rather than this render's snapshot: a coalesced draft write-back (or
-			// text injected into the tab by another surface) can land between the
-			// render and this effect, and the snapshot would show it as empty.
-			const storedTab =
-				useSessionStore
-					.getState()
-					.sessions.find((s) => s.id === activeSession?.id)
-					?.aiTabs?.find((t) => t.id === activeTab.id) ?? activeTab;
-			setAiValue(storedTab.inputValue ?? '');
-			setAiCommandMode(storedTab.commandMode === true);
-			prevActiveTabIdRef.current = activeTab.id;
-
-			// Clear hasUnread indicator on newly active tab
-			if (activeTab.hasUnread && activeSession) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== activeSession.id) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === activeTab.id ? { ...t, hasUnread: false } : t)),
-						};
-					})
-				);
-			}
+		// Save the outgoing text to the tab that OWNS it, not to whichever tab was
+		// last active: those differ exactly when the previous window had no tab to
+		// draft for, and that gap is how text typed on one agent used to be filed
+		// against another. Command mode rides along with the text
+		// (syncAiInputToSession reads it from the store) - a command draft that
+		// came back as a plain message would be sent to the agent, not the shell.
+		const composer = useComposerInputStore.getState();
+		const ownerTabId = composer.aiValueTabId;
+		if (ownerTabId) {
+			syncAiInputToSession(composer.aiValue, ownerTabId);
 		}
-		// Intentionally only depend on activeTab?.id, NOT inputValue
-	}, [activeTab?.id]);
+
+		if (!nextTabId || !activeTab) {
+			// Nowhere to draft for. Text that belonged to a tab is safely flushed
+			// above, so clear it; text nobody owns stays parked in the composer for
+			// the next tab to adopt, because the user typed it and it is not ours
+			// to throw away.
+			if (ownerTabId) loadAiDraft(null, '', 'off');
+			return;
+		}
+
+		// Load new tab's persisted input value + mode. Read it from the store
+		// rather than this render's snapshot: a coalesced draft write-back (or
+		// text injected into the tab by another surface) can land between the
+		// render and this effect, and the snapshot would show it as empty.
+		const storedTab =
+			useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === activeSession?.id)
+				?.aiTabs?.find((t) => t.id === nextTabId) ?? activeTab;
+		const storedValue = storedTab.inputValue ?? '';
+		// Unowned text was typed while no tab existed to hold it (the user started
+		// a message as a new agent was still coming up). The tab that materializes
+		// under it adopts it, unless that tab already has a draft of its own -
+		// which would mean overwriting one draft with another.
+		const adoptsOrphanText = !ownerTabId && composer.aiValue.trim() !== '' && storedValue === '';
+		if (adoptsOrphanText) {
+			loadAiDraft(nextTabId, composer.aiValue, composer.aiCommandMode);
+		} else {
+			loadAiDraft(nextTabId, storedValue, normalizeComposerCommandMode(storedTab.commandMode));
+		}
+
+		// Clear hasUnread indicator on newly active tab
+		if (activeTab.hasUnread && activeSession) {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== activeSession.id) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => (t.id === nextTabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+		}
+		// Intentionally only depend on the drafted-for tab id, NOT inputValue
+	}, [activeTabIdForInput]);
 
 	// Sync terminal input when switching sessions
 	useEffect(() => {
@@ -445,9 +507,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return activeSessionInputMode === 'terminal' ? s.terminalValue : s.aiValue;
 	});
 	// Same gating trick for the mode flag: a stable `false` unless the dropdown
-	// is open, so toggling command mode doesn't re-render this hook either.
+	// is open, so toggling command mode doesn't re-render this hook either. Only
+	// the 'shell' rung completes - AI command mode's draft is prose.
 	const tabCompletionCommandMode = useComposerInputStore((s) =>
-		tabCompletionOpen ? s.aiCommandMode : false
+		tabCompletionOpen ? s.aiCommandMode === 'shell' : false
 	);
 	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionInput, 50);
 	const tabCompletionSuggestions = useMemo(() => {
@@ -576,12 +639,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			sessionsRef.current.find((s) => s.id === activeSessionIdRef.current)?.inputMode === 'ai';
 		const composer = useComposerInputStore.getState();
 		if (currentIsAiMode) {
-			// Attribute the text to the tab it was typed into. Blur can fire after
-			// the active tab already moved (focus leaving asynchronously, a tab
+			// Attribute the text to the tab that owns it. Blur can fire after the
+			// active tab already moved (focus leaving asynchronously, a tab
 			// activated from outside the composer), and the unattributed write
 			// would then stamp this text onto the newly active tab - erasing that
-			// tab's own draft.
-			syncAiInputToSession(composer.aiValue, activeTabIdRef.current);
+			// tab's own draft. Unowned text has no tab to be written to yet.
+			const ownerTabId = composer.aiValueTabId ?? activeTabIdRef.current;
+			if (ownerTabId) syncAiInputToSession(composer.aiValue, ownerTabId);
 		} else {
 			syncTerminalInputToSession(composer.terminalValue);
 		}
@@ -592,9 +656,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Preserve draft input so replay doesn't clobber what the user was typing
 			const draftInput = useComposerInputStore.getState().aiValue;
 			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
-			// The restore below runs a tick later - pin it to the tab the draft
-			// came from so it can't be written onto whatever tab is active then.
-			const draftTabId = activeTabIdRef.current;
+			// The restore below runs a tick later - pin it to the tab that owns the
+			// draft so it can't be written onto whatever tab is active then.
+			const draftTabId = useComposerInputStore.getState().aiValueTabId ?? activeTabIdRef.current;
 
 			if (images && images.length > 0) {
 				setStagedImages(images);
@@ -646,16 +710,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
-			// Command mode is a shell prompt: the draft is piped to `sh`, never to
-			// the agent, so a staged image has nothing that could consume it. Say so
-			// rather than silently swallowing the paste - an image that vanishes with
-			// no feedback reads as a broken paste.
-			if (!isGroupChatActive && getCommandMode()) {
+			// Neither command rung has anywhere to put an image: one pipes the draft
+			// to `sh`, the other asks the model for a command line. Say so rather
+			// than silently swallowing the paste - an image that vanishes with no
+			// feedback reads as a broken paste.
+			if (!isGroupChatActive && getCommandMode() !== 'off') {
 				e.preventDefault();
 				notifyCenterFlash({
 					message: 'Images are not supported in command mode',
 					color: 'yellow',
-					detail: 'Press Esc to go back to the agent',
+					detail: 'Press Esc to step back toward the agent',
 				});
 				return;
 			}
@@ -741,13 +805,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const isGroupChatActive = !!activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
-			// Command mode has no agent to hand attachments (or @mentions) to - the
-			// draft goes straight to a shell. Drop is a no-op there.
-			if (!isGroupChatActive && getCommandMode()) {
+			// Neither command rung has an agent to hand attachments (or @mentions)
+			// to - the draft goes to a shell or to a one-shot command request. Drop
+			// is a no-op there.
+			if (!isGroupChatActive && getCommandMode() !== 'off') {
 				notifyCenterFlash({
 					message: 'Attachments are not supported in command mode',
 					color: 'yellow',
-					detail: 'Press Esc to go back to the agent',
+					detail: 'Press Esc to step back toward the agent',
 				});
 				return;
 			}

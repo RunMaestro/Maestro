@@ -1,22 +1,21 @@
 /**
- * Platform-agnostic keyboard shortcut display formatting.
+ * Process-agnostic keyboard-shortcut display formatting.
  *
- * This module owns the key maps. Everything that has to render a keystroke for
- * a human reads them from here and supplies its own answer to "am I on macOS?":
+ * The renderer's `shortcutFormatter.ts` used to own both the key maps and the
+ * platform lookup, which made it unusable outside the renderer (it reads
+ * `window.maestro`). The CLI needs the same strings when it tells a user how
+ * to reach a surface by hand ("Alt+Q", "⌥ Q"), so the maps and the pure
+ * formatting live here and every caller supplies its own `isMac` answer:
  *
- * - `src/renderer/utils/shortcutFormatter.ts` is the renderer binding. It calls
- *   these functions with `isMacOSPlatform()` and is what UI code should import.
- * - `src/main/app-menu.ts` builds the native macOS menu labels, where the main
- *   process knows the platform directly.
+ *   - renderer: `isMacOSPlatform()` (preload bridge)
+ *   - CLI / main: `isMacOS()` from `shared/platformDetection`
  *
- * The split exists because the renderer cannot read `process.platform` (the
- * process shim reports the sentinel `'browser'`), while the main process cannot
- * import a renderer module. Keeping the maps in one place is what stops the two
- * from drifting into showing different symbols for the same binding.
+ * Do NOT hard-code `⌘` / `Cmd+` / `Ctrl+` in UI copy - call through here (or
+ * the renderer wrapper) so the other platform reads correctly.
  */
 
-/** macOS key symbol mappings. */
-const MAC_KEY_MAP: Record<string, string> = {
+/** macOS key symbols. */
+export const MAC_KEY_MAP: Record<string, string> = {
 	Meta: '⌘',
 	Alt: '⌥',
 	Shift: '⇧',
@@ -35,8 +34,8 @@ const MAC_KEY_MAP: Record<string, string> = {
 	Space: '␣',
 };
 
-/** Windows/Linux key mappings (more readable text). */
-const OTHER_KEY_MAP: Record<string, string> = {
+/** Windows / Linux key names (more readable as text). */
+export const OTHER_KEY_MAP: Record<string, string> = {
 	Meta: 'Ctrl',
 	Alt: 'Alt',
 	Shift: 'Shift',
@@ -55,34 +54,18 @@ const OTHER_KEY_MAP: Record<string, string> = {
 	Space: 'Space',
 };
 
-/**
- * Format a single key for display on the given platform.
- *
- * @param key - Internal key name, e.g. `Meta`, `ArrowRight`, `k`
- * @param isMac - Whether to use macOS symbols
- */
+/** Format a single key name for display on the given platform. */
 export function formatKeyFor(key: string, isMac: boolean): string {
 	const keyMap = isMac ? MAC_KEY_MAP : OTHER_KEY_MAP;
-
 	if (keyMap[key]) return keyMap[key];
-
-	// Single characters read better uppercased ('k' -> 'K').
+	// Single characters read better uppercased; F-keys and the like pass through.
 	if (key.length === 1) return key.toUpperCase();
-
-	// Anything else (F1, F12, ...) is already display-ready.
 	return key;
 }
 
 /**
- * Format an array of keys for display on the given platform.
- *
- * @param keys - Key names, e.g. `['Meta', 'Shift', 'k']`
- * @param isMac - Whether to use macOS symbols
- * @param separator - Defaults to `' '` on macOS and `'+'` elsewhere
- *
- * @example
- * formatShortcutKeysFor(['Meta', 'Shift', 'k'], true) // '⌘ ⇧ K'
- * formatShortcutKeysFor(['Meta', 'Shift', 'k'], false) // 'Ctrl+Shift+K'
+ * Format a key array for display. macOS joins with a space (`⌘ ⇧ K`);
+ * every other platform joins with `+` (`Ctrl+Shift+K`).
  */
 export function formatShortcutKeysFor(keys: string[], isMac: boolean, separator?: string): string {
 	const sep = separator ?? (isMac ? ' ' : '+');

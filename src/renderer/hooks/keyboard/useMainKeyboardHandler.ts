@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	getInitialRenameValue,
+	moveActiveUnifiedTabToEdge,
+	setActiveTab,
+} from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
+import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import { useUIStore } from '../../stores/uiStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -774,6 +781,44 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
+			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
+				// Open the edit modal on the newest queued message. Commands are
+				// skipped: they carry no editable prompt text, and an item whose tab
+				// has since been closed is skipped too, since there is no transcript
+				// left to open the modal in.
+				e.preventDefault();
+				const session = ctx.activeSession as Session | undefined;
+				const editable = session
+					? (session.executionQueue ?? []).filter(
+							(item) =>
+								item.type !== 'command' && session.aiTabs.some((tab) => tab.id === item.tabId)
+						)
+					: [];
+				// Prefer the tab on screen, but fall back to this agent's newest queued
+				// message on any tab. The queue is an agent-level thing the UI already
+				// advertises across tabs (the status bar reads "1 item queued - <tab
+				// name> - Click to view"), so scoping the shortcut to the active tab
+				// made it refuse to edit a message Maestro was pointing right at.
+				const target =
+					[...editable].reverse().find((item) => item.tabId === session?.activeTabId) ??
+					editable[editable.length - 1];
+				if (!session || !target) {
+					notifyCenterFlash({ message: 'No queued message to edit', color: 'yellow' });
+				} else {
+					// The modal renders inside its OWN tab's transcript, so land there
+					// first - whether the message belongs to another AI tab, or a
+					// file/terminal/browser view is currently covering this one.
+					// setActiveTab returns the session unchanged when we are already in
+					// the right place, which is the check for whether to write at all;
+					// the patch itself is applied against fresh state so this can't
+					// clobber a concurrent update with the snapshot we captured here.
+					const switched = setActiveTab(session, target.tabId);
+					if (switched && switched.session !== session) {
+						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(target.tabId) }));
+					}
+					useUIStore.getState().setEditingQueuedItemId(target.id);
+					trackShortcut('editLastQueuedMessage');
+				}
 			} else if (ctx.isShortcut(e, 'jumpToTerminal')) {
 				e.preventDefault();
 				if (ctx.activeSession && !ctx.activeGroupChatId) {

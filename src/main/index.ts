@@ -31,6 +31,7 @@ import {
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -82,6 +83,7 @@ import {
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
+	registerAiCommandHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCueHandlers,
@@ -166,6 +168,7 @@ import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
+import { setWakaTimeManager } from './wakatime-instance';
 import { MaestroCliManager } from './maestro-cli-manager';
 import {
 	createInteractiveReplayController,
@@ -299,7 +302,10 @@ if (!installationId) {
 runSettingsMigrations(store);
 
 // Initialize WakaTime heartbeat manager
-const wakatimeManager = new WakaTimeManager(store);
+const wakatimeManager = new WakaTimeManager(store, app.getVersion());
+// Publish it so Cue (which spawns agents outside the ProcessManager) shares
+// this instance's debounce and CLI-install state instead of making its own.
+setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
 
 // Auto-install WakaTime CLI on startup if enabled
@@ -1090,6 +1096,18 @@ app
 					agentConfigValues,
 				});
 
+				// Cue spawns agents outside the ProcessManager, so a failed run is the
+				// only place an expired token can surface for a pipeline. Without this
+				// the whole board goes quietly red until someone types a message.
+				reportCueAuthFailure(
+					mainWindow,
+					result,
+					storedSession.toolType,
+					storedSession.sessionSshRemoteConfig?.enabled
+						? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
+						: undefined
+				);
+
 				const historyEntry = recordCueHistoryEntry(result, {
 					id: storedSession.id,
 					name: storedSession.name,
@@ -1656,6 +1674,14 @@ function setupIpcHandlers() {
 		settingsStore: store,
 	});
 
+	// Register AI command mode handlers (plain-English request -> command line)
+	registerAiCommandHandlers({
+		getProcessManager: () => processManager,
+		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
+		settingsStore: store,
+	});
+
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(wakatimeManager);
 
@@ -1665,6 +1691,7 @@ function setupIpcHandlers() {
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: () => processManager,
+		getMaestroCliManager: () => maestroCliManager,
 		debugPackageDeps: {
 			getAgentDetector: () => agentDetector,
 			getProcessManager: () => processManager,

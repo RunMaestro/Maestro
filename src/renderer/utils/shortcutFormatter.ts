@@ -1,15 +1,9 @@
 /**
- * Utility for formatting keyboard shortcuts for display.
+ * Renderer-side keyboard shortcut formatting.
  *
- * Converts internal key names (Meta, Alt, Shift, etc.) to platform-appropriate
- * symbols or text. On macOS, uses symbols (⌘, ⌥, ⇧, ⌃). On Windows/Linux,
- * uses readable text (Ctrl, Alt, Shift).
- *
- * This file is the RENDERER BINDING over `src/shared/shortcutKeys.ts`, which
- * owns the key maps. It exists because only the renderer can answer "am I on
- * macOS?" via the preload bridge. Code outside the renderer (main process,
- * CLI) calls the shared `formatKeyFor` / `formatShortcutKeysFor` directly and
- * passes the platform in.
+ * Thin platform-binding wrapper: the key maps and the pure formatting live in
+ * `src/shared/shortcutKeys.ts` so the CLI and main process can produce the same
+ * strings. This file only answers "are we on macOS?" for the renderer.
  */
 
 import { isMacOSPlatform } from './platformUtils';

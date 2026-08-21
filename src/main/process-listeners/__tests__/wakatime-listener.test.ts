@@ -79,7 +79,7 @@ describe('WakaTime Listener', () => {
 			'session-abc',
 			'project',
 			'/home/user/project',
-			undefined
+			{ source: undefined, isRemote: false, origin: 'desktop' }
 		);
 	});
 
@@ -103,7 +103,7 @@ describe('WakaTime Listener', () => {
 			'session-thinking',
 			'project',
 			'/home/user/project',
-			undefined
+			{ source: undefined, isRemote: false, origin: 'desktop' }
 		);
 	});
 
@@ -155,7 +155,7 @@ describe('WakaTime Listener', () => {
 			'session-no-path',
 			'fallback',
 			'/home/user/fallback',
-			undefined
+			{ source: undefined, isRemote: false, origin: 'desktop' }
 		);
 	});
 
@@ -179,7 +179,7 @@ describe('WakaTime Listener', () => {
 			'session-abc',
 			'project',
 			'/home/user/project',
-			'user'
+			{ source: 'user', isRemote: false, origin: 'desktop' }
 		);
 	});
 
@@ -201,7 +201,7 @@ describe('WakaTime Listener', () => {
 			'session-fallback',
 			'session-fallback',
 			undefined,
-			'user'
+			{ source: 'user', isRemote: false, origin: 'desktop' }
 		);
 	});
 
@@ -226,7 +226,7 @@ describe('WakaTime Listener', () => {
 			'session-auto',
 			'project',
 			'/home/user/project',
-			'auto'
+			{ source: 'auto', isRemote: false, origin: 'desktop' }
 		);
 	});
 
@@ -249,7 +249,7 @@ describe('WakaTime Listener', () => {
 			'session-auto',
 			'project',
 			'/home/user/project',
-			'auto'
+			{ source: 'auto', isRemote: false, origin: 'desktop' }
 		);
 	});
 
@@ -402,7 +402,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: '/home/user/project/src/index.ts', timestamp: 1000 }],
 				'project',
 				'/home/user/project',
-				'user'
+				{ source: 'user', isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -426,7 +426,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: '/home/user/project/src/index.ts', timestamp: 1000 }],
 				'project',
 				'/home/user/project',
-				'auto'
+				{ source: 'auto', isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -474,7 +474,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: '/home/user/project/src/app.ts', timestamp: 2000 }],
 				'project',
 				'/home/user/project',
-				'user'
+				{ source: 'user', isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -498,7 +498,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: path.resolve('/home/user/project', 'src/utils.ts'), timestamp: 1000 }],
 				'project',
 				'/home/user/project',
-				'user'
+				{ source: 'user', isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -522,7 +522,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: '/absolute/path/file.ts', timestamp: 1000 }],
 				'project',
 				'/home/user/project',
-				'user'
+				{ source: 'user', isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -744,7 +744,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: '/home/user/project/src/app.ts', timestamp: 1000 }],
 				'project',
 				'/home/user/project',
-				undefined
+				{ source: undefined, isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -785,7 +785,7 @@ describe('WakaTime Listener', () => {
 				]),
 				'project',
 				'/home/user/project',
-				undefined
+				{ source: undefined, isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -877,7 +877,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: path.resolve('/home/user/project', 'src/utils.ts'), timestamp: 1000 }],
 				'project',
 				'/home/user/project',
-				undefined
+				{ source: undefined, isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -904,7 +904,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: path.resolve('/home/user/fallback', 'src/utils.ts'), timestamp: 1000 }],
 				'fallback',
 				'/home/user/fallback',
-				undefined
+				{ source: undefined, isRemote: false, origin: 'desktop' }
 			);
 		});
 
@@ -950,7 +950,7 @@ describe('WakaTime Listener', () => {
 				[{ filePath: '/home/user/project/a.ts', timestamp: 1000 }],
 				'project',
 				'/home/user/project',
-				'auto'
+				{ source: 'auto', isRemote: false, origin: 'desktop' }
 			);
 		});
 

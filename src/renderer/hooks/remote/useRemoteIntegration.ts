@@ -8,6 +8,7 @@ import { logger } from '../../utils/logger';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 
@@ -562,6 +563,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 			}
 		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
+	// The main process has already validated the surface and tab, so this is a
+	// straight hand-off to the shared opener.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenModal((params) => {
+			openUiSurface(params.surface, params.tab);
+		});
 		return () => {
 			unsubscribe();
 		};

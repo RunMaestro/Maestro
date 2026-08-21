@@ -24,7 +24,8 @@ Run `<group> --help` for the exact subcommands and flags.
 - **send / dispatch** - hand a prompt to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated.
 - **list / show** - inspect agents, groups, playbooks, sessions, ssh-remotes.
 - **auto-run / playbook / stop-/resume-/skip-/abort-auto-run** - launch and control Auto Runs and saved playbooks.
-- **cue** - list and trigger Cue subscriptions (event model + YAML schema live in `_maestro-cue`).
+- **cue** - list and trigger Cue subscriptions, and manage Scheduled Tasks with `cue schedule` (event model + YAML schema live in `_maestro-cue`).
+- **open** - bring up a Maestro modal or dashboard, optionally on a tab (`open --list`, `open cue --tab scheduled`, `open settings --tab shortcuts`). Judgment note below.
 - **open-file / open-browser / close-browser / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately.
 - **open-terminal / send-terminal / list terminals** - open a native terminal tab (optionally starting a command in it), type into one that already exists, and see what is open. Judgment note below.
 - **notify toast|flash** - surface in-app notifications (see the judgment below).
@@ -64,6 +65,18 @@ Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal
 **A command you send runs on the user's machine, with their shell and credentials, possibly unattended.** Hold it to the same bar as running it yourself: confirm anything destructive first, and prefer `--no-enter` when you want a human to approve before it executes.
 
 **Messages that start with a dash** collide with option parsing. Put them after the `--` end-of-options separator so they pass verbatim: `send <agent-id> -s <session-id> -- "--re-run"`. Any flags must come before `--`.
+
+**Scheduling anything time-driven goes through `cue schedule`.** "In 20 minutes...", "at 4pm...", "every weekday at 9am...", "every 30 minutes..." are all one command; never hand-author a `time.*` subscription in YAML.
+
+- One-shot: `cue schedule --in 20m` or `--at "2026-08-20 16:00"` (local wall clock or ISO-8601 with an offset).
+- Repeating on a clock: `cue schedule --daily-at 09:00,17:30 [--days mon,tue,wed,thu,fri]`.
+- Repeating on an interval: `cue schedule --every 30m`.
+- Always pass `--agent <id-or-name>` (the agent that will run it) and `--prompt`, `--notify`, or both.
+- Inspect and edit: `--list [--kind once|daily|interval]`, `--reschedule <name>` plus the timing flag matching that task's kind, `--pause` / `--resume` (keeps the task, stops it firing), `--cancel <name>` (deletes it).
+
+The user sees and edits the same tasks in the app under **Maestro Cue → Scheduled Tasks** - offer `open cue --tab scheduled` after scheduling something so they know where it lives. A `--pause` is almost always the right answer to "stop doing that for now"; reach for `--cancel` only when they want it gone.
+
+**Opening a surface is a teaching move, not just navigation.** When the user asks where something lives ("where do I see my scheduled tasks / my token usage / the shortcut list?"), offer to open it and then relay the access line the command prints: `open` reports the hotkey, the command-palette entry, and the click target for that surface. Showing them the pane and the hotkey in one breath beats describing a menu path. Use `open --list` when you are unsure of the surface id; use `--tab` whenever the answer lives on a specific tab. Do not use it to yank the user's screen around mid-task - it changes what is in front of them, so open a surface because they asked about it or agreed to it.
 
 **Cue routing.** Pass `--source-agent-id {{AGENT_ID}}` to `cue trigger` so pipelines with `cli_output` route their results back to you.
 
