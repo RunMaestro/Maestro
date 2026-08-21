@@ -273,6 +273,7 @@ In AI mode, use `@` to reference files in your prompts:
 | Multi-select Files               | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
 | Filter Files (in Files tab)      | `Cmd+F`                            | `Ctrl+F`                           |
 | Filter History (in History tab)  | `Cmd+F`                            | `Ctrl+F`                           |
+| Jump to Entry Session (History)  | `Cmd+Enter` on selected entry      | `Ctrl+Enter` on selected entry     |
 | Search Output (in Main Window)   | `Cmd+F`                            | `Ctrl+F`                           |
 | Search Messages (All Agent Tabs) | `Opt+Cmd+F`                        | `Alt+Ctrl+F`                       |
 | Search System Logs               | `Cmd+F`                            | `Ctrl+F`                           |

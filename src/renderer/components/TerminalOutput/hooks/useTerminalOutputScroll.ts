@@ -7,6 +7,12 @@ const PROGRAMMATIC_SCROLL_GUARD_MS = 100;
 const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
 /** Slack (px) within which the transcript counts as scrolled to the bottom. */
 const AT_BOTTOM_SLACK_PX = 50;
+/**
+ * Distance from the top that triggers loading older history (issue #1407).
+ * Generous enough to fire before the user bottoms out against the first entry,
+ * so the next page is on its way while there is still content to scroll through.
+ */
+const TRANSCRIPT_BACKFILL_TOP_THRESHOLD = 200;
 
 /**
  * The two facts every scroll path needs about the container. `handleScroll` and
@@ -49,6 +55,14 @@ interface UseTerminalOutputScrollOptions {
 	filteredLogsLength: number;
 	onScrollPositionChange?: (scrollTop: number) => void;
 	onAtBottomChange?: (isAtBottom: boolean) => void;
+	/**
+	 * Fired when the user scrolls within `TRANSCRIPT_BACKFILL_TOP_THRESHOLD` of
+	 * the top, so the caller can page older history in (issue #1407). Kept here
+	 * rather than in the component because this hook already owns the throttled
+	 * scroll handler; a second listener on the same container would double the
+	 * per-frame measurement work.
+	 */
+	onNearTop?: () => void;
 }
 
 export function useTerminalOutputScroll({
@@ -61,6 +75,7 @@ export function useTerminalOutputScroll({
 	filteredLogsLength,
 	onScrollPositionChange,
 	onAtBottomChange,
+	onNearTop,
 }: UseTerminalOutputScrollOptions) {
 	const [isAtBottom, setIsAtBottom] = useState(true);
 	const [hasNewMessages, setHasNewMessages] = useState(false);
@@ -75,6 +90,11 @@ export function useTerminalOutputScroll({
 	isAtBottomRef.current = isAtBottom;
 
 	const [autoScrollPaused, setAutoScrollPaused] = useState(false);
+
+	// Kept in a ref so the throttled scroll handler does not have to re-create
+	// itself (and reset its throttle window) when the callback identity changes.
+	const onNearTopRef = useRef(onNearTop);
+	onNearTopRef.current = onNearTop;
 
 	// Guard flag: a cross-tab search jump is landing, so the follow-the-tail
 	// auto-scroll must stand down. Switching tabs re-renders every row, and the
@@ -136,6 +156,15 @@ export function useTerminalOutputScroll({
 			} else {
 				setAutoScrollPaused(true);
 			}
+		}
+
+		// Reaching the top pulls the next page of older history in from the
+		// provider transcript (issue #1407). Guarded on the container actually
+		// being scrollable so a short transcript that sits at scrollTop 0 does
+		// not fire a read on every scroll event.
+		const { scrollHeight, clientHeight } = scrollContainerRef.current;
+		if (scrollTop < TRANSCRIPT_BACKFILL_TOP_THRESHOLD && scrollHeight > clientHeight) {
+			onNearTopRef.current?.();
 		}
 
 		if (onScrollPositionChange) {

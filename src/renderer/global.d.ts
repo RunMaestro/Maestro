@@ -900,7 +900,7 @@ interface MaestroAPI {
 			feedbackText: string,
 			attachments?: Array<{ name: string; dataUrl: string }>
 		) => Promise<{ prompt: string }>;
-		getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+		getConversationPrompt: () => Promise<{ prompt: string; environment: string; cwd: string }>;
 		submitConversation: (payload: {
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
 			summary: string;
@@ -1973,6 +1973,10 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
+		/** Publish merged shortcut bindings so the native menu shows real accelerators. */
+		setMenuShortcutKeys: (keys: Record<string, string[]>) => void;
+		/** Native application menu click, carrying the clicked item's shortcut id. */
+		onMenuCommand: (callback: (shortcutId: string) => void) => () => void;
 	};
 	platform: string;
 	/** Resolved on-disk maestro-cli.js path (dev vs packaged), or null. */

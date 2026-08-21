@@ -953,6 +953,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						safeSend('director-notes:synopsisProgress', update);
 					};
 
+					// Intentionally local: the synopsis prompt is a manifest of history
+					// file paths on THIS machine, so no `sessionSshRemoteConfig` is
+					// passed and groomContext spawns locally. See issue #1416 - the
+					// grooming path now honors SSH when a caller does supply a config.
 					const result = await groomContext(
 						{
 							projectRoot: process.cwd(),

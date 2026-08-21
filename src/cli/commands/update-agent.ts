@@ -17,6 +17,7 @@ import { resolveAgentId, resolveGroupId, getSessionById } from '../services/stor
 import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
+import { parseCliBool } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -45,14 +46,6 @@ interface UpdateAgentOptions {
 	maestroPPath?: string;
 	bookmark?: string;
 	json?: boolean;
-}
-
-// Parse a CLI boolean flag value. Accepts true/false/1/0/yes/no (case-insensitive).
-function parseBool(value: string, flag: string): boolean {
-	const v = value.trim().toLowerCase();
-	if (v === 'true' || v === '1' || v === 'yes') return true;
-	if (v === 'false' || v === '0' || v === 'no') return false;
-	throw new Error(`${flag} expects true or false, got "${value}"`);
 }
 
 function emitError(message: string, options: UpdateAgentOptions): never {
@@ -101,7 +94,7 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 	strField(options.maestroPPath, 'maestroPPath');
 
 	if (options.bookmark !== undefined) {
-		patch.bookmarked = parseBool(options.bookmark, '--bookmark');
+		patch.bookmarked = parseCliBool(options.bookmark, '--bookmark');
 	}
 
 	if (options.clearEnv) {
@@ -254,7 +247,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		}
 		if (options.syncHistoryToRemote !== undefined) {
 			try {
-				sshPatch.syncHistory = parseBool(options.syncHistoryToRemote, '--sync-history-to-remote');
+				sshPatch.syncHistory = parseCliBool(
+					options.syncHistoryToRemote,
+					'--sync-history-to-remote'
+				);
 			} catch (error) {
 				emitError(error instanceof Error ? error.message : String(error), options);
 			}

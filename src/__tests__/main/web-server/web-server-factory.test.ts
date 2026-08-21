@@ -184,6 +184,11 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
+vi.mock('../../../shared/cli-activity', () => ({
+	isSessionBusyWithCli: vi.fn().mockReturnValue(false),
+	getSessionIdsBusyWithCli: vi.fn(() => new Set<string>()),
+}));
+
 import {
 	createWebServerFactory,
 	type WebServerFactoryDependencies,
@@ -199,6 +204,7 @@ import {
 	clearConcertoHtmlDocumentsForTests,
 	getConcertoHtmlDocumentRevision,
 } from '../../../main/concerto-html';
+import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 
 describe('web-server/web-server-factory', () => {
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
@@ -206,12 +212,16 @@ describe('web-server/web-server-factory', () => {
 	let mockGroupsStore: WebServerFactoryDependencies['groupsStore'];
 	let mockMainWindow: Partial<BrowserWindow>;
 	let mockWebContents: Partial<WebContents>;
-	let mockProcessManager: { write: ReturnType<typeof vi.fn> };
+	let mockProcessManager: {
+		write: ReturnType<typeof vi.fn>;
+		get: ReturnType<typeof vi.fn>;
+	};
 	let deps: WebServerFactoryDependencies;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		clearConcertoHtmlDocumentsForTests();
+		vi.mocked(getSessionIdsBusyWithCli).mockReturnValue(new Set<string>());
 
 		mockSettingsStore = {
 			get: vi.fn((key: string, defaultValue?: any) => {
@@ -274,6 +284,7 @@ describe('web-server/web-server-factory', () => {
 
 		mockProcessManager = {
 			write: vi.fn().mockReturnValue(true),
+			get: vi.fn().mockReturnValue(undefined),
 		};
 
 		deps = {
@@ -666,6 +677,83 @@ describe('web-server/web-server-factory', () => {
 			expect(sessions[0]).toHaveProperty('id');
 			expect(sessions[0]).toHaveProperty('name');
 			expect(sessions[0]).toHaveProperty('toolType');
+		});
+	});
+
+	describe('listDesktopSessionsCallback behavior', () => {
+		const getCallback = () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const setter = server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>;
+			return setter.mock.calls[0][0];
+		};
+
+		it('reports a persisted busy tab as busy without a managed process', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'agent-a',
+					name: 'Backend',
+					toolType: 'claude-code',
+					activeTabId: 'tab-a',
+					aiTabs: [{ id: 'tab-a', state: 'busy' }],
+				},
+			]);
+
+			expect(getCallback()()[0].state).toBe('busy');
+		});
+
+		it('overrides stale idle when the tab has a live managed process', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'agent-a',
+					name: 'Backend',
+					toolType: 'claude-code',
+					activeTabId: 'tab-a',
+					aiTabs: [{ id: 'tab-a', state: 'idle' }],
+				},
+			]);
+			mockProcessManager.get.mockImplementation((id: string) =>
+				id === 'agent-a-ai-tab-a' ? { pid: 123 } : undefined
+			);
+
+			expect(getCallback()()[0].state).toBe('busy');
+		});
+
+		it('keeps an inactive sibling idle when only the active tab is running', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'agent-a',
+					name: 'Backend',
+					toolType: 'claude-code',
+					activeTabId: 'tab-a',
+					aiTabs: [
+						{ id: 'tab-a', state: 'idle' },
+						{ id: 'tab-b', state: 'idle' },
+					],
+				},
+			]);
+			mockProcessManager.get.mockImplementation((id: string) =>
+				id === 'agent-a-ai-tab-a' ? { pid: 123 } : undefined
+			);
+
+			const entries = getCallback()();
+			expect(entries.map((entry: { state: string }) => entry.state)).toEqual(['busy', 'idle']);
+		});
+
+		it('uses active CLI activity and preserves unknown state when evidence is absent', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'agent-a',
+					name: 'Backend',
+					toolType: 'claude-code',
+					activeTabId: 'tab-a',
+					aiTabs: [{ id: 'tab-a' }, { id: 'tab-b' }],
+				},
+			]);
+			vi.mocked(getSessionIdsBusyWithCli).mockReturnValue(new Set(['agent-a']));
+
+			const entries = getCallback()();
+			expect(entries.map((entry: { state: string }) => entry.state)).toEqual(['busy', 'unknown']);
 		});
 	});
 

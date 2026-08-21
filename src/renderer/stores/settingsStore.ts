@@ -2022,6 +2022,31 @@ export async function loadAllSettings(): Promise<void> {
 			const commandsById = new Map<string, CustomAICommand>();
 			DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
 			(allSettings['customAICommands'] as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
+				// The persisted array is whatever is on disk, not necessarily CustomAICommand[]:
+				// electron-store hands back hand-edited / sync-mangled / legacy-schema entries
+				// unchanged. Every consumer keys off `id` (edit, save, reset, delete, React keys),
+				// so an entry without one is unusable and would otherwise be stored under the
+				// Map key `undefined` and rendered anyway. Skip it instead of crashing later.
+				// `id`, `command` and `prompt` are all load-bearing: consumers key off
+				// `id` (edit, save, reset, delete, React keys), and the panel calls
+				// `command.startsWith('/')` and `prompt.substring(...)` directly, so a
+				// missing one is a crash rather than a cosmetic gap. `description` is
+				// only rendered, so default it instead of discarding a command the
+				// user may still want.
+				if (
+					!cmd ||
+					typeof cmd !== 'object' ||
+					typeof cmd.id !== 'string' ||
+					!cmd.id ||
+					typeof cmd.command !== 'string' ||
+					typeof cmd.prompt !== 'string'
+				) {
+					logger.warn('Skipping malformed customAICommands entry (missing id, command or prompt)');
+					return;
+				}
+				if (typeof cmd.description !== 'string') {
+					cmd = { ...cmd, description: '' };
+				}
 				// Migration: Skip old /synopsis command
 				if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
 					return;

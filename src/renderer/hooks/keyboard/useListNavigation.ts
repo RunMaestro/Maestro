@@ -7,7 +7,7 @@
  * - Vim-style navigation (j/k) when enabled
  * - Page navigation (PageUp/PageDown, Home/End) when enabled
  * - Number hotkey selection (Cmd/Ctrl+1-9, 0) when enabled
- * - Enter key selection
+ * - Enter key selection, plus an optional Cmd/Ctrl+Enter secondary action
  * - Optional wrapping at list boundaries
  * - Auto-reset of selection when list changes
  *
@@ -58,6 +58,15 @@ export interface UseListNavigationOptions {
 	 * Callback when an item is selected (Enter key pressed)
 	 */
 	onSelect: (index: number) => void;
+
+	/**
+	 * Callback for the secondary action on an item (Cmd/Ctrl+Enter).
+	 * Lets a list offer two verbs on the same selection - e.g. the History
+	 * panel opens the detail modal on Enter and jumps to the originating
+	 * agent/tab on Cmd+Enter. When omitted, Cmd/Ctrl+Enter falls through to
+	 * `onSelect` so the plain-Enter behavior is never lost.
+	 */
+	onSelectAlternate?: (index: number) => void;
 
 	/**
 	 * Initial selected index. Defaults to 0.
@@ -173,6 +182,12 @@ export interface UseListNavigationReturn {
 	 * when `columns` is 1).
 	 */
 	navigatePrev: () => void;
+
+	/**
+	 * Run the secondary action on the current item (triggers onSelectAlternate,
+	 * falling back to onSelect when no alternate is configured).
+	 */
+	selectCurrentAlternate: () => void;
 }
 
 /**
@@ -203,6 +218,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 	const {
 		listLength,
 		onSelect,
+		onSelectAlternate,
 		initialIndex = 0,
 		wrap = false,
 		columns = 1,
@@ -290,6 +306,13 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			onSelect(selectedIndex);
 		}
 	}, [selectedIndex, listLength, onSelect]);
+
+	const selectCurrentAlternate = useCallback(() => {
+		if (listLength === 0) return;
+		if (selectedIndex >= 0 && selectedIndex < listLength) {
+			(onSelectAlternate ?? onSelect)(selectedIndex);
+		}
+	}, [selectedIndex, listLength, onSelectAlternate, onSelect]);
 
 	const resetSelection = useCallback(() => {
 		setSelectedIndex(Math.min(initialIndex, Math.max(0, listLength - 1)));
@@ -384,10 +407,14 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 				}
 			}
 
-			// Enter to select
+			// Enter to select, Cmd/Ctrl+Enter for the secondary action
 			if (key === 'Enter') {
 				e.preventDefault();
-				selectCurrent();
+				if (isMetaOrCtrl) {
+					selectCurrentAlternate();
+				} else {
+					selectCurrent();
+				}
 				return;
 			}
 		},
@@ -409,6 +436,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			navigateToStart,
 			navigateToEnd,
 			selectCurrent,
+			selectCurrentAlternate,
 		]
 	);
 
@@ -424,6 +452,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			selectCurrent,
 			navigateNext,
 			navigatePrev,
+			selectCurrentAlternate,
 		}),
 		[
 			selectedIndex,
@@ -435,6 +464,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			selectCurrent,
 			navigateNext,
 			navigatePrev,
+			selectCurrentAlternate,
 		]
 	);
 }

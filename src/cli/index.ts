@@ -3,6 +3,8 @@
 // Command-line interface for Maestro
 
 import { Command } from 'commander';
+import { asThinkingMode, type ThinkingMode } from '../shared/types';
+import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -98,6 +100,12 @@ import {
 	tabMove,
 	tabUnread,
 	tabSaveToHistory,
+	tabThinking,
+	tabReadOnly,
+	tabModel,
+	tabEffort,
+	tabEnterToSend,
+	tabShow,
 } from './commands/tab';
 import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
@@ -987,8 +995,19 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, mode, options) => switchMode(agentId, mode, options));
 
-// Tab commands - manage an agent's AI tabs in the desktop app
+// Tab commands - manage an agent's AI tabs in the desktop app. Every verb that
+// takes <tab-id> also accepts the literal "active" (with -a to say whose).
 const tab = program.command('tab').description("Manage an agent's tabs in the desktop app");
+
+/**
+ * Options every tab-targeted verb shares: --agent disambiguates the "active"
+ * tab id, --json switches to machine output. Registered once so a new verb
+ * can't quietly ship without them.
+ */
+const tabTargetOptions = (cmd: Command): Command =>
+	cmd
+		.option('-a, --agent <id>', 'Whose active tab, when <tab-id> is "active"')
+		.option('--json', 'Output as JSON (for scripting)');
 
 tab
 	.command('new')
@@ -998,59 +1017,89 @@ tab
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabNew(options));
 
-tab
-	.command('close <tab-id>')
+tabTargetOptions(tab.command('close <tab-id>'))
 	.description('Close a tab (owning agent is resolved automatically)')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabClose(tabId, options));
 
-tab
-	.command('rename <tab-id> <new-name>')
+tabTargetOptions(tab.command('rename <tab-id> <new-name>'))
 	.description('Rename a tab')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, newName, options) => tabRename(tabId, newName, options));
 
-tab
-	.command('star <tab-id>')
+tabTargetOptions(tab.command('star <tab-id>'))
 	.description('Star a tab')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabStar(tabId, true, options));
 
-tab
-	.command('unstar <tab-id>')
+tabTargetOptions(tab.command('unstar <tab-id>'))
 	.description('Unstar a tab')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabStar(tabId, false, options));
 
-tab
-	.command('unread <tab-id>')
+tabTargetOptions(tab.command('unread <tab-id>'))
 	.description('Mark a tab unread (flags it for the human in the tab bar)')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabUnread(tabId, true, options));
 
-tab
-	.command('read <tab-id>')
+tabTargetOptions(tab.command('read <tab-id>'))
 	.description("Clear a tab's unread marker")
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabUnread(tabId, false, options));
 
-tab
-	.command('save-to-history <tab-id> <bool>')
+/**
+ * Read a boolean tab argument, or exit with the same message every verb uses.
+ * `parseCliBool` throws; the tab verbs are the only place that wants that
+ * turned into a plain exit before the desktop is ever contacted.
+ */
+function tabBoolArg(value: string, label: string): boolean {
+	try {
+		return parseCliBool(value, label);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return process.exit(1);
+	}
+}
+
+tabTargetOptions(tab.command('save-to-history <tab-id> <bool>'))
 	.description("Enable/disable synopsizing this tab's completions into History (true/false)")
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((tabId, bool, options) => {
-		const v = String(bool).trim().toLowerCase();
-		if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(v)) {
-			console.error(`Invalid value "${bool}". Use true or false.`);
+	.action((tabId, bool, options) =>
+		tabSaveToHistory(tabId, tabBoolArg(bool, 'save-to-history'), options)
+	);
+
+tabTargetOptions(tab.command('show <tab-id>'))
+	.description("Show one tab's settings (model, effort, thinking, access, history)")
+	.action((tabId, options) => tabShow(tabId, options));
+
+tabTargetOptions(tab.command('thinking <tab-id> <mode>'))
+	.description('Set the thinking display: off, on, sticky, or cycle')
+	.action((tabId, mode, options) => {
+		const v = String(mode).trim().toLowerCase();
+		if (v !== 'cycle' && asThinkingMode(v) === undefined) {
+			console.error(`Invalid mode "${mode}". Use off, on, sticky, or cycle.`);
 			process.exit(1);
 		}
-		return tabSaveToHistory(tabId, ['true', '1', 'yes', 'on'].includes(v), options);
+		return tabThinking(tabId, v as ThinkingMode | 'cycle', options);
 	});
 
-tab
-	.command('move <tab-id> <position>')
+tabTargetOptions(tab.command('read-only <tab-id> <bool>'))
+	.description('Put the tab in read-only/plan mode so the agent cannot modify files')
+	.action((tabId, bool, options) => tabReadOnly(tabId, tabBoolArg(bool, 'read-only'), options));
+
+tabTargetOptions(tab.command('model <tab-id> <model>'))
+	.description('Override the model for this tab ("inherit" clears the override)')
+	.action((tabId, model, options) =>
+		tabModel(tabId, isInheritValue(model) ? null : model, options)
+	);
+
+tabTargetOptions(tab.command('effort <tab-id> <level>'))
+	.description('Override the effort/reasoning level for this tab ("inherit" clears it)')
+	.action((tabId, level, options) =>
+		tabEffort(tabId, isInheritValue(level) ? null : level, options)
+	);
+
+tabTargetOptions(tab.command('enter-to-send <tab-id> <bool>'))
+	.description('Per-tab send key: true = Enter, false = Cmd+Enter, "inherit" = global setting')
+	.action((tabId, bool, options) =>
+		tabEnterToSend(tabId, isInheritValue(bool) ? null : tabBoolArg(bool, 'enter-to-send'), options)
+	);
+
+tabTargetOptions(tab.command('move <tab-id> <position>'))
 	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, position, options) => tabMove(tabId, position, options));
 
 // Create SSH remote command - add a new SSH remote configuration

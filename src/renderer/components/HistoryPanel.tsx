@@ -35,6 +35,8 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
+import { trackShortcutUsage } from '../utils/shortcutTracking';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { logger } from '../utils/logger';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 import { visibleHistoryEntryTypes } from '../../shared/history';
@@ -491,6 +493,22 @@ export const HistoryPanel = React.memo(
 			[allFilteredEntries]
 		);
 
+		// Cmd/Ctrl+Enter jumps to the agent session the entry came from and
+		// lands on its tab - the same action as clicking the entry's session
+		// pill, so the two surfaces can never drift.
+		const handleJumpByIndex = useCallback(
+			(index: number) => {
+				const entry = allFilteredEntries[index];
+				if (!entry?.agentSessionId) {
+					notifyCenterFlash({ message: 'No session recorded for this entry', color: 'yellow' });
+					return;
+				}
+				trackShortcutUsage('historyJumpToSession');
+				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath);
+			},
+			[allFilteredEntries, onOpenSessionAsTab]
+		);
+
 		// Use list navigation hook for ArrowUp/ArrowDown/Enter handling
 		// Note: initialIndex is -1 to support "no selection" state
 		const {
@@ -500,6 +518,7 @@ export const HistoryPanel = React.memo(
 		} = useListNavigation({
 			listLength: allFilteredEntries.length,
 			onSelect: handleSelectByIndex,
+			onSelectAlternate: onOpenSessionAsTab ? handleJumpByIndex : undefined,
 			initialIndex: -1,
 		});
 

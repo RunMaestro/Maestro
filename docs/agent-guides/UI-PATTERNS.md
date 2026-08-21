@@ -301,6 +301,22 @@ How it works:
 - Spread `resize.style` LAST in the `style` prop, after the caller's own `minHeight`, or the inline height gets overwritten.
 - Pass `externalRef` when the component already owns a ref on the textarea (autocomplete, focus-on-open). Do NOT add a second ref or a second `ResizeObserver`.
 
+### Auto-Growing Composers
+
+A composer textarea that grows with its content (AI composer, both wizard composers, group chat, feedback chat) uses `useAutosizeTextarea` (`src/renderer/hooks/ui/useAutosizeTextarea.ts`). Do NOT hand-roll the two-line `height = 'auto'` / `height = scrollHeight` pair again.
+
+```tsx
+useAutosizeTextarea({ textareaRef: inputRef, value: inputValue, maxHeight: 112 });
+```
+
+Why the hand-rolled version is wrong: setting `height = 'auto'` momentarily removes the overflow, which collapses the internal scroll to the top. Once the composer is full and scrolling, every keystroke therefore scrolled the line being typed back out of sight - the text was there, but the last line was clipped until the user scrolled by hand, and the next key hid it again. `resizeTextareaToContent` (`src/renderer/utils/textareaSizing.ts`) restores `scrollTop` across the toggle, and the hook re-pins the view to the bottom when the edit happened at the end of the text (`shouldScrollTextareaToEnd`), so typing, dictation, and paste all keep the caret visible.
+
+Run it on the committed `value`, not inside `onChange`. An `onChange`/`onInput` resize never fires for programmatic edits - voice dictation, draft restore, template insertion - so those grow the text without growing the box.
+
+- `resetKey` forces a re-measure when the value did not change but the content did (switching AI tabs restores a different draft).
+- `deferredResizeRef` is for the one caller that owns its own rAF resize on the keystroke path (`useInputAreaTextChange`); while it is true the hook skips both the resize and the scroll so the two cannot race. Everything else omits it.
+- `useInputAreaAutosize` is just the AI composer's binding over this hook. Distinct from `useResizableTextarea` above, which remembers a height the USER dragged; pick by who decides the height.
+
 ### Escape Key Flow
 
 1. `LayerStackProvider` attaches a **capture-phase** `keydown` listener on `window`.
@@ -1347,6 +1363,33 @@ Full reference (all output + input widget props, the input-family contract, the
 presentational-only/Encore-flag-independent rules, and the Widget Gallery dev
 command): [WIDGET-LIBRARY.md](WIDGET-LIBRARY.md). Reuse a widget from there
 before hand-rolling a stat card, chart, sparkline, or input control.
+
+### `<EnvVarList>` (`src/renderer/components/ui/EnvVarList.tsx`)
+
+Read-only view of an agent's **effective** environment: the merged result of all
+three layers, each row badged with the layer whose value won.
+
+```tsx
+<EnvVarList
+	theme={theme}
+	vars={resolveAgentEnvironment({ global, agent, session })}
+	emptyMessage={`No environment variables are set for ${session.name}.`}
+	testId="reauth-env"
+/>
+```
+
+Feed it from `resolveAgentEnvironment()` in `src/shared/agentEnvironment.ts` (see
+[SHARED-UTILS.md](SHARED-UTILS.md)) rather than merging the layers at the call
+site, or the panel drifts from what the spawner actually built.
+
+**Not the same component as `Settings/EnvVarsEditor`**, which edits ONE layer.
+Pick by question: "change a value" is the editor, "which profile am I running
+as?" is this. Do not add an edit mode to this one to cover both.
+
+Credential-shaped keys are masked behind a per-row reveal, decided by
+`isSecretEnvKey()`. This is deliberately loose - the surfaces that show an
+environment are diagnostic ones people open while screen-sharing for help, so a
+false positive costs one click and a false negative leaks a live key.
 
 ---
 

@@ -225,15 +225,32 @@ describe('ConversationScreen components', () => {
 		Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 140 });
 		fireEvent.change(textarea, { target: { value: 'updated' } });
 		fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
-		fireEvent.input(textarea);
 		fireEvent.click(screen.getByRole('button', { name: /Send/i }));
 		fireEvent.click(screen.getByTitle(/show ai thinking/i));
 
 		expect(setInputValue).toHaveBeenCalled();
-		expect(textarea.style.height).toBe('120px');
 		expect(onSendMessage).toHaveBeenCalledTimes(2);
 		expect(setShowThinking).toHaveBeenCalledWith(true);
 		expect(screen.getByText('Your turn - continue the conversation')).toBeInTheDocument();
+
+		// The composer grows on the committed value, not on the keystroke event, so
+		// dictation and draft restore resize it too. Capped at MAX_TEXTAREA_HEIGHT.
+		rerender(
+			<ConversationInputPanel
+				theme={mockTheme}
+				inputRef={inputRef}
+				inputValue="updated"
+				setInputValue={setInputValue}
+				isConversationLoading={false}
+				conversationHistory={[assistantMessage]}
+				confidenceLevel={20}
+				showThinking={false}
+				setShowThinking={setShowThinking}
+				onSendMessage={onSendMessage}
+			/>
+		);
+
+		expect(textarea.style.height).toBe('120px');
 
 		rerender(
 			<ConversationInputPanel

@@ -30,6 +30,7 @@ import {
 	unregisterCliActivity,
 	getCliActivityForSession,
 	isSessionBusyWithCli,
+	getSessionIdsBusyWithCli,
 } from '../../shared/cli-activity';
 
 // Local type alias mirroring the (now-internal) CliActivityStatus shape
@@ -369,7 +370,7 @@ describe('cli-activity', () => {
 			// Mock process.kill to throw (process doesn't exist)
 			const originalKill = process.kill;
 			process.kill = vi.fn().mockImplementation(() => {
-				throw new Error('ESRCH: No such process');
+				throw Object.assign(new Error('No such process'), { code: 'ESRCH' });
 			}) as unknown as typeof process.kill;
 
 			const busy = isSessionBusyWithCli('session-123');
@@ -379,6 +380,38 @@ describe('cli-activity', () => {
 			expect(mockFs.writeFileSync).toHaveBeenCalled();
 
 			process.kill = originalKill;
+		});
+
+		it('should preserve busy activity when the process probe returns EPERM', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				expect(isSessionBusyWithCli('session-123')).toBe(true);
+				expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('should not erase activity after an unknown process-probe error', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('Unexpected probe failure'), { code: 'EIO' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				expect(isSessionBusyWithCli('session-123')).toBe(false);
+				expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+			} finally {
+				process.kill = originalKill;
+			}
 		});
 
 		it('should check correct PID', () => {
@@ -394,6 +427,60 @@ describe('cli-activity', () => {
 			expect(process.kill).toHaveBeenCalledWith(99999, 0);
 
 			process.kill = originalKill;
+		});
+	});
+
+	// Batch form used by the desktop session listing, which asks about every
+	// agent at once. Same liveness rule as isSessionBusyWithCli, but resolved
+	// from a single read of the activity file instead of one read per agent.
+	describe('getSessionIdsBusyWithCli', () => {
+		const activityFor = (sessionId: string, pid: number) => ({
+			...sampleActivity,
+			sessionId,
+			pid,
+		});
+
+		it('reads the activity file once no matter how many sessions it holds', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					activities: [activityFor('a', 1), activityFor('b', 2), activityFor('c', 3)],
+				})
+			);
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockReturnValue(true) as unknown as typeof process.kill;
+
+			try {
+				expect(getSessionIdsBusyWithCli()).toEqual(new Set(['a', 'b', 'c']));
+				expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('applies the same EPERM-is-alive / ESRCH-is-dead rule per entry', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					activities: [activityFor('alive', 1), activityFor('denied', 2), activityFor('gone', 3)],
+				})
+			);
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation((pid: number) => {
+				if (pid === 1) return true;
+				if (pid === 2) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+				throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				// 'denied' counts as busy: EPERM proves the pid exists.
+				expect(getSessionIdsBusyWithCli()).toEqual(new Set(['alive', 'denied']));
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('returns an empty set when nothing is registered', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+			expect(getSessionIdsBusyWithCli()).toEqual(new Set());
 		});
 	});
 

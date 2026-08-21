@@ -282,9 +282,11 @@ const mockMaestro = {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
 		submit: vi.fn().mockResolvedValue({ success: true }),
 		composePrompt: vi.fn().mockResolvedValue({ prompt: 'composed feedback prompt' }),
-		getConversationPrompt: vi
-			.fn()
-			.mockResolvedValue({ prompt: 'system prompt', environment: '- Maestro version: test' }),
+		getConversationPrompt: vi.fn().mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: test',
+			cwd: '/home/test',
+		}),
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),

@@ -33,6 +33,10 @@ import {
 } from '../../utils/shortcutFormatter';
 import { useSessionStore } from '../../stores/sessionStore';
 import { closeTab } from '../../utils/tabHelpers';
+import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
+
+/** Height cap for the wizard composer; past it the textarea scrolls. */
+const WIZARD_TEXTAREA_MAX_HEIGHT = 112;
 
 interface WizardInputPanelProps {
 	/** Current session with wizard state */
@@ -132,13 +136,13 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	// State for exit confirmation dialog
 	const [showExitConfirm, setShowExitConfirm] = useState(false);
 
-	// Auto-resize textarea when inputValue changes
-	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 112)}px`;
-		}
-	}, [inputValue, inputRef]);
+	// Auto-resize the textarea to fit its content, keeping the caret visible once
+	// the composer is tall enough to scroll.
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: inputValue,
+		maxHeight: WIZARD_TEXTAREA_MAX_HEIGHT,
+	});
 
 	// Auto-focus input on mount (this component only renders when wizard is active)
 	useEffect(() => {
@@ -275,21 +279,20 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 							<textarea
 								ref={inputRef}
 								className="flex-1 bg-transparent text-sm outline-none px-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
-								style={{ color: theme.colors.textMain, maxHeight: '7rem' }}
+								style={{
+									color: theme.colors.textMain,
+									maxHeight: `${WIZARD_TEXTAREA_MAX_HEIGHT}px`,
+								}}
 								placeholder="Tell the wizard about your project..."
 								value={inputValue}
 								onFocus={onInputFocus}
 								onBlur={onInputBlur}
 								onChange={(e) => {
-									const value = e.target.value;
-									setInputValue(value);
-
-									// Auto-grow logic deferred to next animation frame
-									const textarea = e.target;
-									requestAnimationFrame(() => {
-										textarea.style.height = 'auto';
-										textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
-									});
+									// Auto-grow is owned by useAutosizeTextarea above: it runs on the
+									// committed value, so dictation and other programmatic edits resize
+									// too, and it keeps the caret in view instead of scrolling back to
+									// the top on every keystroke.
+									setInputValue(e.target.value);
 								}}
 								onKeyDown={handleEscapeKey}
 								onPaste={handlePaste}

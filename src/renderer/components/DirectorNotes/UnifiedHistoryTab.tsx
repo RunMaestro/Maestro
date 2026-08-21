@@ -31,6 +31,7 @@ import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import type { TabFocusHandle } from './OverviewTab';
 import { lookbackHoursToDays, bucketCountForLookback } from './lookback';
 import { logger } from '../../utils/logger';
@@ -428,6 +429,22 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					setDetailModalEntry(filteredEntries[index]);
 				}
 			},
+			// Cmd/Ctrl+Enter jumps to the agent and tab the entry came from,
+			// matching the entry's session pill.
+			onSelectAlternate: onResumeSession
+				? (index) => {
+						const entry = filteredEntries[index];
+						if (!entry?.agentSessionId) {
+							notifyCenterFlash({
+								message: 'No session recorded for this entry',
+								color: 'yellow',
+							});
+							return;
+						}
+						trackShortcutUsage('historyJumpToSession');
+						onResumeSession(entry.sourceSessionId, entry.agentSessionId);
+					}
+				: undefined,
 			initialIndex: -1,
 		});
 

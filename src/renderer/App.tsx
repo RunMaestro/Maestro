@@ -57,6 +57,7 @@ import {
 	useMainKeyboardHandler,
 	useTilingShortcuts,
 	useTextEditorUndo,
+	useAppMenuBridge,
 	// Agent
 	useAgentSessionManagement,
 	useAgentExecution,
@@ -2013,6 +2014,10 @@ function MaestroConsoleInner() {
 	// role so the image annotator can claim Cmd+Z; this restores native
 	// textarea/input undo in Electron on macOS).
 	useTextEditorUndo();
+
+	// Keeps the native File/View menus showing the user's real accelerators, and
+	// replays menu clicks as keystrokes through the handler above.
+	useAppMenuBridge();
 
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload

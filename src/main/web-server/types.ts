@@ -3,6 +3,7 @@
  * All web server components should import types from this file to avoid duplication.
  */
 
+import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
@@ -702,22 +703,11 @@ export type GetCustomCommandsCallback = () => CustomAICommand[];
  * back to `dispatch --session <id>` and `session show <id>`. `sessionId` is
  * an alias kept for symmetry with `dispatch`'s response shape - the duplicate
  * field lets polling consumers use whichever name they prefer.
+ *
+ * The shape itself lives in `shared/desktopTabs.ts` so the CLI reads the same
+ * declaration this end writes; this alias is the main-process name for it.
  */
-export interface DesktopSessionEntry {
-	tabId: string;
-	sessionId: string;
-	/** Maestro agent (LeftBar entity) ID this tab belongs to. */
-	agentId: string;
-	agentName: string;
-	toolType: string;
-	/** User-defined tab name; null when the user hasn't named the tab. */
-	name: string | null;
-	/** Provider session id (e.g. Claude `session_id`) bound to this tab. */
-	agentSessionId: string | null;
-	state: 'idle' | 'busy';
-	createdAt: number;
-	starred: boolean;
-}
+export type DesktopSessionEntry = DesktopTabEntry;
 
 /**
  * One message in a session-history response.

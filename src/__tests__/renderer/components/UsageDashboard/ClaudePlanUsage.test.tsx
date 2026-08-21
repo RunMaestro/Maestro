@@ -477,3 +477,76 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
 	});
 });
+
+describe('ClaudePlanUsage - agent count badge', () => {
+	const snapshotFor = (key: string) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('counts the agents pointed at each account', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work'),
+			'/Users/me/.claude-side': snapshotFor('/Users/me/.claude-side'),
+		});
+		seedSessions([
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-side',
+		]);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('3 agents');
+		// Singular when exactly one agent uses the account.
+		expect(screen.getByTestId('claude-plan-agents-side')).toHaveTextContent('1 agent');
+	});
+
+	it('ignores agents from other providers', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					id: 'b',
+					name: 'b',
+					toolType: 'codex',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('shows zero for a cached account no agent uses any more', () => {
+		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-stale')).toHaveTextContent('0 agents');
+	});
+
+	it('shows the count on an account that has no snapshot yet', () => {
+		seedSessions(['/Users/me/.claude-pending', '/Users/me/.claude-pending']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
+	});
+});

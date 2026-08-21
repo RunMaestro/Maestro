@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
 		isPackaged: false,
 		getAppPath: () => '/mock/app',
 		getVersion: () => '0.15.3',
-		getPath: () => '/mock/userData',
+		getPath: (name: string) => `/mock/${name}`,
 	},
 }));
 
@@ -27,6 +27,8 @@ vi.mock('fs/promises', () => {
 		unlink: vi.fn(),
 		mkdir: vi.fn(),
 		rename: vi.fn(),
+		access: vi.fn(),
+		readdir: vi.fn(),
 	};
 	// Provide both default (feedback.ts) and named (atomic-json-store) shapes,
 	// sharing the same vi.fn instances so assertions see every write.
@@ -39,7 +41,12 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		warn: vi.fn(),
 		debug: vi.fn(),
+		getLogFilePath: vi.fn(() => '/mock/logs/maestro-2026-08-21.log'),
 	},
+}));
+
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn(() => 'FEEDBACK TEMPLATE\n\n## Environment Context\n{{ENVIRONMENT}}\n'),
 }));
 
 vi.mock('../../../../main/utils/cliDetection', () => ({
@@ -62,6 +69,7 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 }));
 
 import fs from 'fs/promises';
+import os from 'os';
 import {
 	getCachedGhStatus,
 	isGhInstalled,
@@ -468,6 +476,107 @@ describe('feedback handlers', () => {
 		});
 		expect(setCachedGhStatus).toHaveBeenCalledWith(true, true);
 		expect(result).toEqual({ authenticated: true });
+	});
+
+	describe('feedback:get-conversation-prompt', () => {
+		const getPrompt = () => registeredHandlers.get('feedback:get-conversation-prompt')!({});
+
+		it('runs diagnostics from the home directory, not the app cwd', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+
+			const result = await getPrompt();
+
+			// A Finder-launched .app has cwd '/', where no diagnostic resolves.
+			expect(result.cwd).toBe(os.homedir());
+		});
+
+		it('points the agent at today log when file logging is on', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+
+			const { environment, prompt } = await getPrompt();
+
+			expect(environment).toContain('/mock/logs/maestro-2026-08-21.log');
+			expect(environment).toContain('today, live');
+			expect(prompt).toContain(environment);
+			expect(prompt).not.toContain('{{ENVIRONMENT}}');
+		});
+
+		it('names the most recent log as stale when today has none', async () => {
+			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readdir).mockResolvedValue([
+				'maestro-2026-08-01.log',
+				'maestro-2026-08-19.log',
+				'notes.txt',
+			] as any);
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('maestro-2026-08-19.log');
+			expect(environment).toContain('stale');
+			expect(environment).not.toContain('maestro-2026-08-01.log');
+		});
+
+		it('tells the agent not to hunt for a log that does not exist', async () => {
+			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readdir).mockRejectedValue(new Error('ENOENT'));
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('Do not try to read one');
+		});
+
+		it('advertises maestro-cli only when it is actually installed', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+			registeredHandlers.clear();
+			registerFeedbackHandlers({
+				getProcessManager: () => mockProcessManager as any,
+				getMaestroCliManager: () =>
+					({
+						checkStatus: vi.fn().mockResolvedValue({
+							installed: true,
+							commandPath: '/usr/local/bin/maestro-cli',
+						}),
+					}) as any,
+			});
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('maestro-cli: available at /usr/local/bin/maestro-cli');
+		});
+
+		it('tells the agent to skip maestro-cli diagnostics when it is missing', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+			registeredHandlers.clear();
+			registerFeedbackHandlers({
+				getProcessManager: () => mockProcessManager as any,
+				getMaestroCliManager: () =>
+					({
+						checkStatus: vi.fn().mockResolvedValue({ installed: false, commandPath: null }),
+					}) as any,
+			});
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('maestro-cli: NOT installed');
+		});
+
+		it('still returns a prompt when the maestro-cli probe throws', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+			registeredHandlers.clear();
+			registerFeedbackHandlers({
+				getProcessManager: () => mockProcessManager as any,
+				getMaestroCliManager: () =>
+					({
+						checkStatus: vi.fn().mockRejectedValue(new Error('probe blew up')),
+					}) as any,
+			});
+
+			// A status probe failure must not take the whole feedback flow down.
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('Maestro version: 0.15.3');
+			expect(environment).not.toContain('maestro-cli:');
+		});
 	});
 });
 

@@ -20,6 +20,7 @@ import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
@@ -128,7 +129,9 @@ export function HistoryDetailModal({
 		}
 	}, [showDeleteConfirm]);
 
-	// Keyboard navigation for prev/next with arrow keys.
+	// Keyboard navigation for prev/next with arrow keys, plus Cmd/Ctrl+Enter to
+	// jump to the entry's session - the same verb the History list offers, so
+	// the shortcut keeps working after Enter opened this modal.
 	useEventListener('keydown', (e) => {
 		// Don't handle if delete confirmation is showing
 		if (showDeleteConfirm) return;
@@ -140,6 +143,12 @@ export function HistoryDetailModal({
 		} else if (ke.key === 'ArrowRight') {
 			ke.preventDefault();
 			goToNext();
+		} else if (ke.key === 'Enter' && (ke.metaKey || ke.ctrlKey)) {
+			if (!onResumeSession || !entry.agentSessionId) return;
+			ke.preventDefault();
+			trackShortcutUsage('historyJumpToSession');
+			onResumeSession(entry.agentSessionId);
+			onClose();
 		}
 	});
 

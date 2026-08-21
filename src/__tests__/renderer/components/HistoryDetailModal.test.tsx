@@ -1137,6 +1137,70 @@ describe('HistoryDetailModal', () => {
 			expect(mockOnNavigate).toHaveBeenCalledWith(mockEntries[2], 2);
 		});
 
+		// Enter opens this modal from the History list, so the list's Cmd+Enter
+		// has to keep working once you are inside it - otherwise the shortcut
+		// silently stops halfway through the flow it belongs to.
+		it('should jump to the entry session with Cmd+Enter and close', () => {
+			const entry = createMockEntry({ agentSessionId: 'abc12345-def6-7890' });
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entry}
+					onClose={mockOnClose}
+					filteredEntries={[entry]}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(mockOnResumeSession).toHaveBeenCalledWith('abc12345-def6-7890');
+			expect(mockOnClose).toHaveBeenCalled();
+		});
+
+		it('should not jump on plain Enter', () => {
+			const entry = createMockEntry({ agentSessionId: 'abc12345-def6-7890' });
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entry}
+					onClose={mockOnClose}
+					filteredEntries={[entry]}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Enter' });
+
+			expect(mockOnResumeSession).not.toHaveBeenCalled();
+		});
+
+		// Nothing to resume: the modal must stay open rather than closing on a
+		// shortcut that did nothing.
+		it('should stay open on Cmd+Enter when the entry has no session', () => {
+			const entry = createMockEntry({ agentSessionId: undefined });
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entry}
+					onClose={mockOnClose}
+					filteredEntries={[entry]}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(mockOnResumeSession).not.toHaveBeenCalled();
+			expect(mockOnClose).not.toHaveBeenCalled();
+		});
+
 		it('should not navigate when delete confirmation is showing', () => {
 			render(
 				<HistoryDetailModal
