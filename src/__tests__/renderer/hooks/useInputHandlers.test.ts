@@ -1970,9 +1970,95 @@ describe('useInputHandlers', () => {
 				expect(window.maestro.attachments.save).toHaveBeenCalledWith(
 					'session-1',
 					'cGRmLWJ5dGVz',
-					'doc.pdf'
+					// Uniquified so a second `doc.pdf` cannot overwrite this one.
+					expect.stringMatching(/^doc-[0-9a-z]+\.pdf$/)
 				);
-				expect(inputVal()).toBe('@/userData/attachments/session-1/doc.pdf ');
+				expect(inputVal()).toMatch(/^@\/userData\/attachments\/session-1\/doc-[0-9a-z]+\.pdf $/);
+			});
+
+			// Regression: the upload awaits the host, and the composer store holds
+			// whichever draft is on screen when it resolves. Without a pin the
+			// mention landed in the tab the user had switched to.
+			it('mentions the tab the file was dropped into, not the one switched to', async () => {
+				useSessionStore.setState({
+					sessions: [
+						createMockSession({
+							id: 'session-1',
+							inputMode: 'ai',
+							aiTabs: [
+								{ id: 'tab-1', name: 'Tab 1', inputValue: '', data: [], stagedImages: [] },
+								{ id: 'tab-2', name: 'Tab 2', inputValue: '', data: [], stagedImages: [] },
+							] as any,
+							activeTabId: 'tab-1',
+						}),
+					],
+					activeSessionId: 'session-1',
+				} as any);
+
+				let landTheUpload: () => void = () => {};
+				vi.mocked(window.maestro.attachments.save).mockImplementationOnce(
+					(sessionId: string, _b64: string, filename: string) =>
+						new Promise((resolve) => {
+							landTheUpload = () =>
+								resolve({
+									success: true,
+									path: `/userData/attachments/${sessionId}/${filename}`,
+								});
+						})
+				);
+
+				const deps = createMockDeps();
+				const { result, rerender } = renderHook(() => useInputHandlers(deps));
+
+				// Awaited so the read finishes and the upload is actually in flight
+				// (pending on the host) before the user moves on.
+				await act(async () => {
+					result.current.handleDrop(dropPathlessPdf());
+				});
+
+				// The user moves on while the bytes are still crossing the bridge.
+				act(() => {
+					useSessionStore.setState({
+						sessions: useSessionStore
+							.getState()
+							.sessions.map((sn: any) => ({ ...sn, activeTabId: 'tab-2' })),
+					} as any);
+				});
+				rerender();
+
+				await act(async () => {
+					landTheUpload();
+				});
+
+				const tabs = (useSessionStore.getState().sessions[0] as any).aiTabs;
+				const droppedInto = tabs.find((t: any) => t.id === 'tab-1');
+				const switchedTo = tabs.find((t: any) => t.id === 'tab-2');
+				expect(droppedInto.inputValue).toMatch(
+					/^@\/userData\/attachments\/session-1\/doc-[0-9a-z]+\.pdf $/
+				);
+				expect(switchedTo.inputValue).toBe('');
+				// The on-screen composer (now tab-2's) was left alone.
+				expect(inputVal()).toBe('');
+			});
+
+			it('normalises a Windows host path into the mention', async () => {
+				// The host is whichever machine runs Maestro, so a browser drop can
+				// land on a Windows path even when the browser is elsewhere.
+				vi.mocked(window.maestro.attachments.save).mockResolvedValueOnce({
+					success: true,
+					path: 'C:\\Users\\dev\\AppData\\maestro\\attachments\\session-1\\doc-abc123.pdf',
+				});
+
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
+
+				await act(async () => {
+					result.current.handleDrop(dropPathlessPdf());
+				});
+
+				expect(inputVal()).toBe(
+					'@C:/Users/dev/AppData/maestro/attachments/session-1/doc-abc123.pdf '
+				);
 			});
 
 			it('raises a toast when the upload fails', async () => {

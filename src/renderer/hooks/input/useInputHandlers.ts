@@ -829,20 +829,68 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[setInputValue, setStagedImages, getCommandMode]
 	);
 
+	/**
+	 * Append `@` mentions to the AI composer.
+	 *
+	 * `pinnedTabId` names the tab the mentions belong to. Pass it whenever the
+	 * append can land after the active tab may have moved (an upload that awaits
+	 * the host, say): the composer store holds whatever draft is on screen right
+	 * now, so an unpinned write would drop the mention into whichever
+	 * conversation the user switched to. When the pinned tab is no longer the one
+	 * on screen the mention goes onto that tab's own persisted draft instead.
+	 *
+	 * The background write deliberately does not go through
+	 * `syncAiInputToSession`: that reads `aiCommandMode` from the live composer
+	 * and would stamp the on-screen tab's bang-ladder rung onto the background
+	 * tab, and it cancels the queued flush that belongs to the tab being typed
+	 * in. Only `inputValue` is touched here.
+	 *
+	 * Returns true when the live composer was the one updated, so the caller
+	 * knows whether focusing the textarea is the right follow-up.
+	 */
 	const appendMentionsToAiInput = useCallback(
-		(paths: string[]) => {
-			if (paths.length === 0) return;
+		(paths: string[], pinnedTabId?: string): boolean => {
+			if (paths.length === 0) return false;
 			const joined = paths.map((p) => formatFileMention(p)).join(' ');
-			setInputValue((prev) => {
+			const append = (prev: string) => {
 				if (!prev) return joined + ' ';
 				const sep = /\s$/.test(prev) ? '' : ' ';
 				return prev + sep + joined + ' ';
-			});
+			};
+			const pinIsOnScreen =
+				!pinnedTabId || (isAiModeRef.current && pinnedTabId === activeTabIdRef.current);
+			if (!pinIsOnScreen) {
+				let found = false;
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (!s.aiTabs?.some((t) => t.id === pinnedTabId)) return s;
+						found = true;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) =>
+								t.id === pinnedTabId ? { ...t, inputValue: append(t.inputValue ?? '') } : t
+							),
+						};
+					})
+				);
+				// `found` stays false when the tab was closed mid-upload; the file is
+				// still on the host, there is just no draft left to mention it in.
+				if (!found) {
+					notifyToast({
+						color: 'yellow',
+						title: 'Attachment has nowhere to go',
+						message: 'The tab it was dropped into was closed before the upload finished',
+					});
+				}
+				return false;
+			}
+			setInputValue(append);
+			return true;
 		},
-		[setInputValue]
+		[setInputValue, setSessions]
 	);
 
-	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
+	const appendMentionsToGroupChatDraft = useCallback((paths: string[], pinnedChatId?: string) => {
 		if (paths.length === 0) return;
 		const joined = paths.map((p) => formatFileMention(p)).join(' ');
 		// Reading the store via getState() (instead of subscribing) is intentional:
@@ -850,7 +898,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		// chatId / setter at fire time and don't want stale-closure invalidation to
 		// re-create the callback (and bust handleDrop's useCallback deps) on every
 		// store update.
-		const { activeGroupChatId: chatId, setGroupChats } = useGroupChatStore.getState();
+		//
+		// `pinnedChatId` is the chat the drop happened in. An upload resolves
+		// asynchronously, so without the pin a mention would land in whichever chat
+		// is open when it finishes - or vanish entirely once the user has left
+		// group chat.
+		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+		const chatId = pinnedChatId ?? activeGroupChatId;
 		if (!chatId) return;
 		setGroupChats((prev) =>
 			prev.map((c) => {
@@ -876,7 +930,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			files: File[],
 			ownerId: string,
 			projectRoot: string | undefined,
-			toGroupChat: boolean
+			toGroupChat: boolean,
+			pinnedTabId: string | undefined
 		) => {
 			const mentions: string[] = [];
 			for (const file of files) {
@@ -893,9 +948,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			}
 			if (mentions.length === 0) return;
 			if (toGroupChat) {
-				appendMentionsToGroupChatDraft(mentions);
-			} else {
-				appendMentionsToAiInput(mentions);
+				// `ownerId` is the group chat the drop happened in.
+				appendMentionsToGroupChatDraft(mentions, ownerId);
+			} else if (appendMentionsToAiInput(mentions, pinnedTabId)) {
+				// Only steal focus when the mention actually went into the composer
+				// that is on screen.
 				inputRef.current?.focus();
 			}
 		},
@@ -1057,7 +1114,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 						pathlessFiles,
 						ownerId,
 						projectRoot,
-						isGroupChatActive
+						isGroupChatActive,
+						// Pin the tab from drop time so switching tabs or agents while
+						// the bytes are in flight cannot retarget the mention.
+						activeSession ? getActiveTab(activeSession)?.id : undefined
 					);
 				} else {
 					notifyToast({

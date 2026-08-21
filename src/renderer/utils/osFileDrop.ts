@@ -14,6 +14,8 @@
  * Maestro instead.
  */
 
+import { generateId } from './ids';
+
 /** True when a drag carries OS files (as opposed to an internal element drag). */
 export function dragHasOsFiles(dataTransfer: DataTransfer | null): boolean {
 	if (!dataTransfer) return false;
@@ -64,6 +66,25 @@ function readFileAsBase64(file: File): Promise<string> {
 }
 
 /**
+ * Give every upload its own filename.
+ *
+ * `attachments:save` writes straight to `<attachments>/<sessionId>/<filename>`
+ * with no collision handling, so two different files dropped under the same
+ * name (a `report.pdf` from two different folders, say) would leave the first
+ * drop's `@mention` silently pointing at the second file's bytes. A short
+ * unique token keeps the original name readable in the mention while making
+ * the write non-destructive.
+ */
+function uniqueAttachmentName(name: string): string {
+	const token = generateId().replace(/-/g, '').slice(0, 8);
+	const dot = name.lastIndexOf('.');
+	// `dot <= 0` covers both "no extension" and a leading-dot dotfile, where
+	// everything before the dot is the name rather than the extension.
+	if (dot <= 0) return `${name}-${token}`;
+	return `${name.slice(0, dot)}-${token}${name.slice(dot)}`;
+}
+
+/**
  * Copy a dropped `File` that has no filesystem path onto the machine running
  * Maestro, and resolve with the absolute path it landed on.
  *
@@ -82,7 +103,11 @@ export async function uploadPathlessFile(file: File, ownerId: string): Promise<s
 		throw new Error(`${file.name} is larger than the ${limitMb} MB upload limit`);
 	}
 	const base64 = await readFileAsBase64(file);
-	const result = await window.maestro.attachments.save(ownerId, base64, file.name);
+	const result = await window.maestro.attachments.save(
+		ownerId,
+		base64,
+		uniqueAttachmentName(file.name)
+	);
 	if (!result.success || !result.path) {
 		throw new Error(result.error || `Could not attach ${file.name}`);
 	}
