@@ -30,6 +30,8 @@ import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { setLiveDraft } from '../../utils/liveDraftStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { notifyToast } from '../../stores/notificationStore';
+import { uploadPathlessFile } from '../../utils/osFileDrop';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
@@ -861,6 +863,45 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		);
 	}, []);
 
+	/**
+	 * Attach dropped files that carry no filesystem path (the web-desktop build
+	 * runs in a browser, so `getPathForFile` comes back empty and the file may
+	 * live on a different machine than the agent). The bytes are uploaded into
+	 * the session's attachments directory and the resulting host path is
+	 * @mentioned. Anything that fails raises a toast - dropping a file into the
+	 * chat and getting nothing back at all is the bug this exists to avoid.
+	 */
+	const uploadAndMentionPathlessFiles = useCallback(
+		async (
+			files: File[],
+			ownerId: string,
+			projectRoot: string | undefined,
+			toGroupChat: boolean
+		) => {
+			const mentions: string[] = [];
+			for (const file of files) {
+				try {
+					const savedPath = await uploadPathlessFile(file, ownerId);
+					mentions.push(toMentionPath(savedPath, projectRoot));
+				} catch (error) {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: error instanceof Error ? error.message : `Could not attach ${file.name}`,
+					});
+				}
+			}
+			if (mentions.length === 0) return;
+			if (toGroupChat) {
+				appendMentionsToGroupChatDraft(mentions);
+			} else {
+				appendMentionsToAiInput(mentions);
+				inputRef.current?.focus();
+			}
+		},
+		[appendMentionsToAiInput, appendMentionsToGroupChatDraft, inputRef]
+	);
+
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
 			e.preventDefault();
@@ -958,6 +999,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			const files = e.dataTransfer.files;
 			const externalPaths: string[] = [];
+			// Files with no resolvable path (browser drops) get uploaded instead.
+			const pathlessFiles: File[] = [];
 			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
 			for (let i = 0; i < files.length; i++) {
@@ -996,7 +1039,32 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					const filePath = window.maestro.fs.getPathForFile(file);
 					if (filePath) {
 						externalPaths.push(toMentionPath(filePath, projectRoot));
+					} else {
+						// No path to mention: the web-desktop build is a browser, where
+						// `File` objects have no path at all. Upload the bytes to the host
+						// so the agent has something real to read.
+						pathlessFiles.push(file);
 					}
+				}
+			}
+
+			if (pathlessFiles.length > 0) {
+				const ownerId = isGroupChatActive
+					? useGroupChatStore.getState().activeGroupChatId
+					: activeSession?.id;
+				if (ownerId) {
+					void uploadAndMentionPathlessFiles(
+						pathlessFiles,
+						ownerId,
+						projectRoot,
+						isGroupChatActive
+					);
+				} else {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: 'There is no active agent to attach it to',
+					});
 				}
 			}
 
@@ -1009,7 +1077,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setStagedImages, appendMentionsToAiInput, appendMentionsToGroupChatDraft, getCommandMode]
+		[
+			setStagedImages,
+			appendMentionsToAiInput,
+			appendMentionsToGroupChatDraft,
+			uploadAndMentionPathlessFiles,
+			getCommandMode,
+		]
 	);
 
 	// ====================================================================

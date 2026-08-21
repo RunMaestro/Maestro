@@ -129,6 +129,7 @@ import { useComposerInputStore } from '../../../renderer/stores/composerInputSto
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
 
 const mockNotifyCenterFlash = vi.mocked(notifyCenterFlash);
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -1888,7 +1889,7 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handleDrop edge cases', () => {
-		it('ignores drop with non-image file types', () => {
+		it('does not stage non-image file drops as images', () => {
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useInputHandlers(deps));
 
@@ -1898,8 +1899,8 @@ describe('useInputHandlers', () => {
 					getData: () => '',
 					files: {
 						length: 2,
-						0: { type: 'application/pdf', name: 'doc.pdf' },
-						1: { type: 'text/plain', name: 'readme.txt' },
+						0: { type: 'application/pdf', name: 'doc.pdf', path: '/tmp/doc.pdf' },
+						1: { type: 'text/plain', name: 'readme.txt', path: '/tmp/readme.txt' },
 					} as any,
 				},
 			} as unknown as React.DragEvent;
@@ -1910,10 +1911,91 @@ describe('useInputHandlers', () => {
 
 			// preventDefault is always called (for drag cleanup)
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
-			// But no images should be staged
+			// They become @mentions, not image attachments.
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual([]);
+			expect(inputVal()).toBe('@/tmp/doc.pdf @/tmp/readme.txt ');
+		});
+
+		// Regression: in the web-desktop (browser) build a dropped `File` has no
+		// filesystem path, so these used to be skipped with no chip, no mention,
+		// and no error - a completely silent failure. See issue #1411.
+		describe('path-less (browser) file drops', () => {
+			// This suite runs on fake timers, so jsdom's real async FileReader would
+			// never fire. Stub it the way the image-drop tests above do.
+			let originalFileReader: typeof FileReader;
+
+			beforeEach(() => {
+				originalFileReader = global.FileReader;
+				class MockFileReaderLocal {
+					result: string | null = null;
+					onload: ((ev: any) => void) | null = null;
+					onerror: ((ev: any) => void) | null = null;
+					readAsDataURL = vi.fn(function (this: MockFileReaderLocal) {
+						this.result = 'data:application/pdf;base64,cGRmLWJ5dGVz';
+						this.onload?.({ target: { result: this.result } });
+					});
+				}
+				global.FileReader = MockFileReaderLocal as unknown as typeof FileReader;
+			});
+
+			afterEach(() => {
+				global.FileReader = originalFileReader;
+			});
+
+			function dropPathlessPdf() {
+				return {
+					preventDefault: vi.fn(),
+					dataTransfer: {
+						getData: () => '',
+						files: {
+							length: 1,
+							// A browser `File` - no `path`, so `getPathForFile` returns ''.
+							0: new File(['pdf-bytes'], 'doc.pdf', { type: 'application/pdf' }),
+						} as any,
+					},
+				} as unknown as React.DragEvent;
+			}
+
+			it('uploads the file and @mentions the host copy', async () => {
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
+				const dropEvent = dropPathlessPdf();
+
+				await act(async () => {
+					result.current.handleDrop(dropEvent);
+				});
+
+				expect(window.maestro.attachments.save).toHaveBeenCalledWith(
+					'session-1',
+					'cGRmLWJ5dGVz',
+					'doc.pdf'
+				);
+				expect(inputVal()).toBe('@/userData/attachments/session-1/doc.pdf ');
+			});
+
+			it('raises a toast when the upload fails', async () => {
+				vi.mocked(window.maestro.attachments.save).mockResolvedValueOnce({
+					success: false,
+					error: 'disk full',
+				});
+				useNotificationStore.setState({ toasts: [] });
+
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
+
+				await act(async () => {
+					result.current.handleDrop(dropPathlessPdf());
+				});
+
+				const toasts = useNotificationStore.getState().toasts;
+				expect(toasts).toHaveLength(1);
+				expect(toasts[0].message).toBe('disk full');
+				expect(toasts[0].color).toBe('red');
+				// Nothing was mentioned, but the failure is visible.
+				expect(inputVal()).toBe('');
+			});
 		});
 
 		it('processes all image files when dropping multiple images', () => {
