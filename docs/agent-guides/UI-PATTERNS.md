@@ -193,6 +193,17 @@ Pass `<Modal subtitle={...}>` for the subject: which agent, which repo, which fi
 
 Most openers already carry what they need: `useGitAgentActions.ts` has been putting `sessionId` in the `gitCommandRunner` payload since it was written, the modal just ignored it. Check the payload before plumbing a new prop.
 
+**Two shapes `subtitle` cannot reach**, both of which own their header instead of letting `<Modal>` draw it:
+
+- A modal passing `customHeader` - that replaces `<Modal>`'s header wholesale, so the prop silently never renders (`BranchSwitcherModal`).
+- A bespoke shell with its own `<h2>` and no `<Modal>` at all (`CreatePRModal`, `CreateWorktreeModal`, `WorktreeConfigModal`, `GitLogViewer`, `GitDiffViewer`).
+
+Both render `<ModalSubtitle theme={theme} subtitle={name} />` directly, exported from `ui/Modal.tsx`. `<Modal>` renders the same component from its own `subtitle` prop, so every surface shares one dim, one separator, and one `data-testid="modal-subtitle"`. Do NOT hand-roll the dimmed span. When you add the name to a bespoke header, give the heading `shrink-0` and the wrapper `min-w-0`, or the name pushes the close button instead of ellipsising.
+
+**Check for a second header.** `GitDiffViewer` draws a separate one in its empty-diff branch, which needs the name more than the populated one does - "No changes to display" is exactly the message a user misreads as belonging to the agent they meant to right-click.
+
+**Do not force-activate the agent to make a modal find it.** `Configure Worktrees` used to call `setActiveSessionId()` before opening so the modal's `activeSession` read would land on the right agent. That silently moved the user's selection and retargeted every other surface bound to the active agent. Put the target in the modal payload instead, and give the modal AND its callbacks one shared resolver (pinned agent, else active) so the dialog and its Save button cannot target different agents - see `resolveWorktreeConfigTarget()` in `useWorktreeHandlers.ts`.
+
 ### Resizable Modals
 
 Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
