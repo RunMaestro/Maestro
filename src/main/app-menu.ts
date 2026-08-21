@@ -8,25 +8,41 @@
  *
  * Two rules follow from that, and both are load-bearing:
  *
- * 1. Every command item sets `registerAccelerator: false`. The accelerator is
- *    still drawn next to the label, but it is NOT registered with NSMenu, so the
- *    keystroke continues to reach the renderer exactly as it does today. This is
+ * 1. No command item sets `accelerator`. The keystroke is drawn as part of the
+ *    LABEL instead, so it is visible without being registered with NSMenu and
+ *    the keydown still reaches the renderer exactly as it does today. This is
  *    the same trap documented below for `role: 'close'` (Cmd+W) and `role: 'undo'`
  *    (Cmd+Z) - a registered accelerator is swallowed at the OS layer before the
  *    web contents ever sees it.
+ *
+ *    `registerAccelerator: false` is NOT a way around this. Electron marks that
+ *    property `@platform linux,win32` (see electron.d.ts) and macOS ignores it
+ *    outright, because NSMenuItem has no notion of an accelerator that displays
+ *    but does not fire. Since this menu only exists on macOS, setting it would
+ *    do nothing at all while reading like protection. There is no supported
+ *    Electron API for a display-only accelerator; a label is the workaround.
+ *
+ *    This is not hypothetical. `Alt+N` (New File Tab) is Option+N on a Mac,
+ *    which composes 'n' - registering it would eat the dead key and stop users
+ *    typing accented characters into the composer. Every other item would lose
+ *    its focus context too: an intercepted keystroke never reaches the focused
+ *    xterm or browser webview, and the replayed synthetic event targets
+ *    `window` rather than whatever the user was actually typing into.
+ *
  * 2. Clicking an item does not call a handler directly. It sends the command's
  *    shortcut id to the focused window, and the renderer replays it as a
  *    synthetic keydown (see `useAppMenuBridge`). Menu clicks therefore run the
  *    exact same, already-tested code path as the keystroke - no parallel
  *    dispatch tree to keep in sync with App.tsx's handlers.
  *
- * The accelerators shown are the user's *current* bindings, not the bundled
+ * The keystrokes shown are the user's *current* bindings, not the bundled
  * defaults: the renderer pushes its merged shortcut map over IPC on mount and
  * whenever the user remaps something, and the menu is rebuilt from it.
  */
 
 import { app, BrowserWindow, Menu } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { formatShortcutKeysFor } from '../shared/shortcutKeys';
 import { logger } from './utils/logger';
 
 /** Map of shortcut id -> key array, e.g. `{ toggleMode: ['Meta', 'j'] }`. */
@@ -103,62 +119,35 @@ const VIEW_MENU_COMMANDS: MenuEntry[] = [
 	{ label: 'Reset Font Size', shortcutId: 'fontSizeReset' },
 ];
 
-/**
- * Renderer key names that Electron's accelerator parser spells differently.
- * Anything not listed passes through (single characters are uppercased, F-keys
- * and named keys like `Tab` / `Escape` already match).
- */
-const ACCELERATOR_KEY_MAP: Record<string, string> = {
-	meta: 'Cmd',
-	command: 'Cmd',
-	ctrl: 'Ctrl',
-	control: 'Ctrl',
-	alt: 'Alt',
-	option: 'Alt',
-	shift: 'Shift',
-	arrowleft: 'Left',
-	arrowright: 'Right',
-	arrowup: 'Up',
-	arrowdown: 'Down',
-	enter: 'Return',
-	' ': 'Space',
-	space: 'Space',
-};
-
 /** Last shortcut map pushed by the renderer, used on every menu rebuild. */
 let shortcutKeys: MenuShortcutKeys = {};
 /** Serialized form of the above, so redundant pushes don't rebuild the menu. */
 let shortcutKeysSignature = '';
 
 /**
- * Convert a renderer key array into an Electron accelerator string.
- * Returns undefined when the shortcut is unknown or contains a key Electron
- * can't parse, in which case the item renders without an accelerator rather
- * than showing a wrong or broken one.
+ * Gap between an item's name and its keystroke in the menu label.
+ *
+ * NSMenu right-aligns a real accelerator in its own column, but this is plain
+ * label text, so the spacing is ours to choose. Wide enough to read as a
+ * separate column at the widths these menus actually render at; U+2002 EN SPACE
+ * rather than a tab because NSMenu does not expand tab stops in item titles.
  */
-function toAccelerator(shortcutId: string): string | undefined {
-	const keys = shortcutKeys[shortcutId];
-	if (!keys || keys.length === 0) return undefined;
+const LABEL_SHORTCUT_GAP = '\u2002\u2002\u2002';
 
-	const parts: string[] = [];
-	for (const key of keys) {
-		const mapped = ACCELERATOR_KEY_MAP[key.toLowerCase()];
-		if (mapped) {
-			parts.push(mapped);
-			continue;
-		}
-		if (key.length === 1) {
-			parts.push(key.toUpperCase());
-			continue;
-		}
-		// Function keys (F1-F24) and other multi-character names Electron knows.
-		if (/^F\d{1,2}$/i.test(key) || /^[A-Za-z]+$/.test(key)) {
-			parts.push(key);
-			continue;
-		}
-		return undefined;
-	}
-	return parts.join('+');
+/**
+ * Build a menu label with the command's current keystroke appended.
+ *
+ * Returns the bare label when the shortcut is unknown or unbound, so an item
+ * with no binding simply shows its name rather than a dangling separator.
+ *
+ * This is deliberately a label and not an `accelerator` - see rule 1 in the
+ * module comment. Passing `true` for `isMac` is safe because nothing builds
+ * this menu off macOS (`installApplicationMenu` bails first).
+ */
+function labelWithShortcut(label: string, shortcutId: string): string {
+	const keys = shortcutKeys[shortcutId];
+	if (!keys || keys.length === 0) return label;
+	return `${label}${LABEL_SHORTCUT_GAP}${formatShortcutKeysFor(keys, true, '')}`;
 }
 
 /**
@@ -178,10 +167,10 @@ function buildSubmenu(entries: MenuEntry[]): Electron.MenuItemConstructorOptions
 		entry === 'separator'
 			? { type: 'separator' as const }
 			: {
-					label: entry.label,
-					accelerator: toAccelerator(entry.shortcutId),
-					// Display only - see rule 1 in the module comment.
-					registerAccelerator: false,
+					// The keystroke goes in the LABEL, never in `accelerator` -
+					// see rule 1 in the module comment. Registering it would let
+					// NSMenu swallow the keydown before the renderer sees it.
+					label: labelWithShortcut(entry.label, entry.shortcutId),
 					click: (_item: Electron.MenuItem, window: Electron.BaseWindow | undefined) =>
 						sendMenuCommand(window, entry.shortcutId),
 				}

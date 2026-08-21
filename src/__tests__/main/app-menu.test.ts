@@ -62,10 +62,25 @@ function menuNamed(label: string): TemplateItem {
 	return found;
 }
 
+/**
+ * Find an item by its command name. Labels carry the keystroke appended after a
+ * run of en-spaces (see `labelWithShortcut`), so match on the name portion.
+ */
 function itemNamed(menu: TemplateItem, label: string): TemplateItem {
-	const found = menu.submenu?.find((item) => item.label === label);
+	const found = menu.submenu?.find((item) => nameOf(item) === label);
 	if (!found) throw new Error(`no "${label}" item in "${menu.label}" menu`);
 	return found;
+}
+
+/** The command name half of a menu label, with any keystroke stripped. */
+function nameOf(item: TemplateItem): string {
+	return (item.label ?? '').split('\u2002')[0];
+}
+
+/** The keystroke half of a menu label, or undefined when none is shown. */
+function shortcutOf(item: TemplateItem): string | undefined {
+	const parts = (item.label ?? '').split(/\u2002+/);
+	return parts.length > 1 ? parts[1] : undefined;
 }
 
 describe('app menu', () => {
@@ -90,17 +105,35 @@ describe('app menu', () => {
 		expect(buildFromTemplate).not.toHaveBeenCalled();
 	});
 
-	it('never registers command accelerators with the OS', () => {
+	// The whole design rests on the renderer keeping ownership of every
+	// keystroke. An `accelerator` on a command item hands it to NSMenu instead,
+	// which swallows the keydown before the web contents ever sees it -
+	// including Option+N, which macOS users press to type an 'n'.
+	//
+	// `registerAccelerator: false` does NOT prevent that here: Electron marks it
+	// `@platform linux,win32` and macOS ignores it, so the only safe answer is
+	// to not set an accelerator at all. Quit is the single exception, and it is
+	// deliberate: Cmd+Q is a real OS-level action and its handler reads the
+	// click event's modifier flags to swallow Opt+Cmd+Q.
+	it('never sets an accelerator on a command item', () => {
 		setMenuShortcutKeys({ toggleMode: ['Meta', 'j'], closeTab: ['Meta', 'w'] });
 
 		const commands = lastTemplate()
 			.flatMap((menu) => menu.submenu ?? [])
-			.filter((item) => item.accelerator && item.label !== 'Quit Maestro');
+			.filter((item) => item.click && item.label !== 'Quit Maestro');
 
 		expect(commands.length).toBeGreaterThan(0);
 		for (const item of commands) {
-			expect(item.registerAccelerator).toBe(false);
+			expect(item.accelerator).toBeUndefined();
 		}
+	});
+
+	it('still shows the keystroke, as label text rather than an accelerator', () => {
+		setMenuShortcutKeys({ toggleMode: ['Meta', 'j'] });
+
+		const item = itemNamed(menuNamed('View'), 'Switch AI / Shell Mode');
+		expect(item.label).toContain('⌘J');
+		expect(item.accelerator).toBeUndefined();
 	});
 
 	it('keeps Cmd+W and Cmd+Z out of the natively-registered roles', () => {
@@ -114,7 +147,7 @@ describe('app menu', () => {
 		expect(editRoles).not.toContain('redo');
 	});
 
-	it('renders the accelerator the renderer reported', () => {
+	it('renders the keystroke the renderer reported, in macOS symbols', () => {
 		setMenuShortcutKeys({
 			toggleMode: ['Meta', 'j'],
 			toggleSidebar: ['Alt', 'Meta', 'ArrowLeft'],
@@ -123,24 +156,26 @@ describe('app menu', () => {
 		});
 
 		const view = menuNamed('View');
-		expect(itemNamed(view, 'Switch AI / Shell Mode').accelerator).toBe('Cmd+J');
-		expect(itemNamed(view, 'Toggle Left Panel').accelerator).toBe('Alt+Cmd+Left');
-		expect(itemNamed(view, 'Auto Run').accelerator).toBe('Cmd+Shift+1');
-		expect(itemNamed(menuNamed('File'), 'Remove Agent').accelerator).toBe('Cmd+Shift+Backspace');
+		expect(shortcutOf(itemNamed(view, 'Switch AI / Shell Mode'))).toBe('⌘J');
+		expect(shortcutOf(itemNamed(view, 'Toggle Left Panel'))).toBe('⌥⌘←');
+		expect(shortcutOf(itemNamed(view, 'Auto Run'))).toBe('⌘⇧1');
+		expect(shortcutOf(itemNamed(menuNamed('File'), 'Remove Agent'))).toBe('⌘⇧⌫');
 	});
 
 	it('follows a user remap instead of showing the bundled default', () => {
 		setMenuShortcutKeys({ toggleMode: ['Meta', 'j'] });
-		expect(itemNamed(menuNamed('View'), 'Switch AI / Shell Mode').accelerator).toBe('Cmd+J');
+		expect(shortcutOf(itemNamed(menuNamed('View'), 'Switch AI / Shell Mode'))).toBe('⌘J');
 
 		setMenuShortcutKeys({ toggleMode: ['Alt', 'Meta', 't'] });
-		expect(itemNamed(menuNamed('View'), 'Switch AI / Shell Mode').accelerator).toBe('Alt+Cmd+T');
+		expect(shortcutOf(itemNamed(menuNamed('View'), 'Switch AI / Shell Mode'))).toBe('⌥⌘T');
 	});
 
-	it('omits the accelerator for shortcuts the renderer has not reported', () => {
+	it('shows a bare name for shortcuts the renderer has not reported', () => {
 		setMenuShortcutKeys({ toggleMode: ['Meta', 'j'] });
 
-		expect(itemNamed(menuNamed('File'), 'New Agent').accelerator).toBeUndefined();
+		const item = itemNamed(menuNamed('File'), 'New Agent');
+		expect(item.label).toBe('New Agent');
+		expect(shortcutOf(item)).toBeUndefined();
 	});
 
 	it('ignores a repeated push of identical bindings', () => {
