@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { GitLogViewer } from '../../../renderer/components/GitLogViewer';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock react-diff-view
@@ -131,6 +133,31 @@ diff --git a/src/test.ts b/src/test.ts
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
+	});
+
+	// The cwd pill alone does not identify the agent: worktrees of one repo share
+	// a path prefix, and two agents can sit on the same directory.
+	describe('agent name in the header', () => {
+		it('names the agent whose log is shown', async () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', name: 'Sonoma-Fix' })],
+			} as never);
+
+			render(<GitLogViewer {...defaultProps} sessionId="session-1" />);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix')
+			);
+		});
+
+		it('renders no name when opened without a target agent', async () => {
+			useSessionStore.setState({ sessions: [] } as never);
+
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+			expect(screen.queryByTestId('modal-subtitle')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Initial render', () => {

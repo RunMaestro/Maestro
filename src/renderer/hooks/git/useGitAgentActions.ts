@@ -131,6 +131,10 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		useModalStore.getState().openModal('gitLog', {
 			cwd: target.cwd,
 			sshRemoteId: target.sshRemoteId,
+			// Names the agent in the viewer header. The path alone does not
+			// identify it: worktrees of one repo share a prefix, and two agents
+			// can sit on the same directory.
+			sessionId: target.sessionId,
 		});
 	}, [target]);
 
@@ -140,7 +144,9 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		if (diff) {
 			// Pass the repo path so the viewer opens clicked files against THIS
 			// agent's tree, not whichever agent happens to be active.
-			useModalStore.getState().openModal('gitDiff', { diff, cwd: target.cwd });
+			useModalStore
+				.getState()
+				.openModal('gitDiff', { diff, cwd: target.cwd, sessionId: target.sessionId });
 			return;
 		}
 		// Same wording as the Cmd+Shift+D path and the command palette.

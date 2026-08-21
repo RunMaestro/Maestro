@@ -243,6 +243,12 @@ export interface GitDiffModalData {
 	 * it so it can diff an agent that isn't active.
 	 */
 	cwd?: string;
+	/**
+	 * Agent the diff was taken for, used to name it in the header. Optional for
+	 * the same reason as `cwd`: the keyboard shortcut and command palette follow
+	 * the active agent, so there is nothing to disambiguate.
+	 */
+	sessionId?: string;
 }
 
 /**
@@ -253,6 +259,8 @@ export interface GitDiffModalData {
 export interface GitLogModalData {
 	cwd: string;
 	sshRemoteId?: string;
+	/** Agent the log belongs to, used to name it in the header. */
+	sessionId?: string;
 }
 
 /** Git command runner data - which streaming operation the console modal runs */

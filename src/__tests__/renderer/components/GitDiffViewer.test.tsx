@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { GitDiffViewer } from '../../../renderer/components/GitDiffViewer';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { ParsedFileDiff } from '../../../renderer/utils/gitDiffParser';
 
 import { mockTheme } from '../../helpers/mockTheme';
@@ -156,6 +158,39 @@ describe('GitDiffViewer', () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+	});
+
+	// Same reasoning as GitLogViewer: the cwd pill does not identify the agent.
+	describe('agent name in the header', () => {
+		it('names the agent whose diff is shown', () => {
+			mockParseGitDiff.mockReturnValue([]);
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', name: 'Sonoma-Fix' })],
+			} as never);
+
+			render(
+				<GitDiffViewer
+					diffText=""
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					sessionId="session-1"
+				/>
+			);
+
+			expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix');
+			// The heading stays the bare action.
+			expect(screen.getByText('Git Diff')).toBeInTheDocument();
+		});
+
+		it('renders no name when opened without a target agent', () => {
+			mockParseGitDiff.mockReturnValue([]);
+			useSessionStore.setState({ sessions: [] } as never);
+
+			render(<GitDiffViewer diffText="" cwd="/test/project" theme={mockTheme} onClose={vi.fn()} />);
+
+			expect(screen.queryByTestId('modal-subtitle')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Initial render', () => {

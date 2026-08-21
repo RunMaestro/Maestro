@@ -18,6 +18,7 @@ import type { FlatFileItem } from '../FileSearchModal';
 
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
+import type { GitLogModalData } from '../../stores/modalStore';
 
 // Utility Modal Components
 import { QuickActionsModal } from '../QuickActionsModal';
@@ -197,13 +198,15 @@ export interface AppUtilityModalsProps {
 	gitDiffPreview: string | null;
 	/** Repo the diff came from, when taken for a non-active agent. */
 	gitDiffCwd?: string | null;
+	/** Agent the diff was taken for, so the viewer can name it. */
+	gitDiffSessionId?: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
 
 	// GitLogViewer
 	gitLogOpen: boolean;
 	/** Explicit repo to show, when opened for a non-active agent. */
-	gitLogTarget?: { cwd: string; sshRemoteId?: string } | null;
+	gitLogTarget?: GitLogModalData | null;
 	onCloseGitLog: () => void;
 
 	// Shared by both git viewers: open a clicked file path as a preview tab.
@@ -451,6 +454,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// GitDiffViewer
 	gitDiffPreview,
 	gitDiffCwd,
+	gitDiffSessionId,
 	gitViewerCwd,
 	onCloseGitDiff,
 	// GitLogViewer
@@ -714,6 +718,9 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					<GitDiffViewer
 						diffText={gitDiffPreview}
 						cwd={gitDiffCwd ?? gitViewerCwd}
+						// Falls back to the active agent, matching the cwd fallback
+						// above: the header names whichever agent's repo is on screen.
+						sessionId={gitDiffSessionId ?? activeSession?.id}
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}
@@ -728,6 +735,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<Suspense fallback={null}>
 					<GitLogViewer
 						cwd={gitLogTarget?.cwd ?? gitViewerCwd}
+						sessionId={gitLogTarget?.sessionId ?? activeSession?.id}
 						theme={theme}
 						onClose={onCloseGitLog}
 						onOpenFile={onOpenGitFile}
