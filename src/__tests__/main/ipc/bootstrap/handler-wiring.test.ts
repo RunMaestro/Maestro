@@ -28,21 +28,37 @@ const SRC = path.resolve(__dirname, '../../../../main/ipc');
 const HANDLERS_INDEX = path.join(SRC, 'handlers/index.ts');
 const BOOTSTRAP_INDEX = path.join(SRC, 'bootstrap/index.ts');
 
+/** Strip line and block comments so prose cannot be mistaken for a call. */
+function stripComments(source: string): string {
+	return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
+}
+
 /**
  * Registrar names that are *invoked* in a file. Requiring the open paren keeps
  * import/export list entries (`registerFooHandlers,` / `export { ... };`) out,
  * and matching anywhere on the line keeps assignment-form calls
  * (`const h = registerPersistenceHandlers({...})`) in.
+ *
+ * Comments are stripped first and declarations are excluded, because both look
+ * exactly like calls to a regex. Without that this test passes for the wrong
+ * reason: `registerAllHandlers(` matches its own `function` declaration in the
+ * handlers file, and a comment in the bootstrap file mentioning
+ * `registerAllHandlers()` matches there, so the two cancel out. Editing that
+ * comment would then fail the test, and a registrar-shaped comment could hide a
+ * genuinely missing live registration.
  */
 function invokedRegistrars(filePath: string): Set<string> {
-	const source = readFileSync(filePath, 'utf-8');
-	const names = source.match(/register[A-Za-z]+Handlers\(/g) ?? [];
+	const source = stripComments(readFileSync(filePath, 'utf-8'));
+	const names = source.match(/(?<!function\s)register[A-Za-z]+Handlers\(/g) ?? [];
 	return new Set(names.map((n) => n.slice(0, -1)));
 }
 
 describe('IPC handler wiring parity', () => {
 	it('registers every handler from the dead registerAllHandlers list in the live setupIpcHandlers', () => {
+		// The wrapper is the dead list itself, not a member of it. Nothing is
+		// expected to call it - that is the whole premise of this test.
 		const dead = invokedRegistrars(HANDLERS_INDEX);
+		dead.delete('registerAllHandlers');
 		const live = invokedRegistrars(BOOTSTRAP_INDEX);
 
 		// Sanity: the extraction found a realistic number of registrars, so a
