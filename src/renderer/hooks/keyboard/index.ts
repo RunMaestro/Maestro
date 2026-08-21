@@ -31,3 +31,6 @@ export { useSaveShortcut } from './useSaveShortcut';
 
 // Cmd/Ctrl+Z / Shift+Z text-input undo fallback
 export { useTextEditorUndo } from './useTextEditorUndo';
+
+// Native application menu <-> renderer bridge (accelerators out, clicks in)
+export { useAppMenuBridge } from './useAppMenuBridge';
