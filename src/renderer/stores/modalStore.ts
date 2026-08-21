@@ -424,6 +424,12 @@ export interface ModalDataMap {
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
+	/**
+	 * Present when opened from the Left Bar's right-click menu, naming the agent
+	 * to configure. Absent when opened from the header or Settings, where the
+	 * modal follows the active agent.
+	 */
+	worktreeConfig: WorktreeModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
 	deleteWorktree: WorktreeModalData;
@@ -967,8 +973,15 @@ export function getModalActions() {
 		closeReauthModal: () => closeModal('reauth'),
 
 		// Worktree Modals
+		// Opened WITHOUT a target (header pill, Settings): follows the active agent.
 		setWorktreeConfigModalOpen: (open: boolean) =>
 			open ? openModal('worktreeConfig') : closeModal('worktreeConfig'),
+		// Opened WITH a target (Left Bar right-click): configures that agent
+		// wherever the selection happens to be. This used to be done by
+		// force-activating the right-clicked agent first, which silently moved
+		// the user's selection as a side effect of opening a dialog.
+		setWorktreeConfigSession: (session: Session | null) =>
+			session ? openModal('worktreeConfig', { session }) : closeModal('worktreeConfig'),
 		setCreateWorktreeModalOpen: (open: boolean) =>
 			open ? openModal('createWorktree') : closeModal('createWorktree'),
 		setCreateWorktreeSession: (session: Session | null) =>
