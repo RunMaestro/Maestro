@@ -30,6 +30,8 @@ import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { setLiveDraft } from '../../utils/liveDraftStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { notifyToast } from '../../stores/notificationStore';
+import { uploadPathlessFile } from '../../utils/osFileDrop';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
@@ -827,20 +829,68 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[setInputValue, setStagedImages, getCommandMode]
 	);
 
+	/**
+	 * Append `@` mentions to the AI composer.
+	 *
+	 * `pinnedTabId` names the tab the mentions belong to. Pass it whenever the
+	 * append can land after the active tab may have moved (an upload that awaits
+	 * the host, say): the composer store holds whatever draft is on screen right
+	 * now, so an unpinned write would drop the mention into whichever
+	 * conversation the user switched to. When the pinned tab is no longer the one
+	 * on screen the mention goes onto that tab's own persisted draft instead.
+	 *
+	 * The background write deliberately does not go through
+	 * `syncAiInputToSession`: that reads `aiCommandMode` from the live composer
+	 * and would stamp the on-screen tab's bang-ladder rung onto the background
+	 * tab, and it cancels the queued flush that belongs to the tab being typed
+	 * in. Only `inputValue` is touched here.
+	 *
+	 * Returns true when the live composer was the one updated, so the caller
+	 * knows whether focusing the textarea is the right follow-up.
+	 */
 	const appendMentionsToAiInput = useCallback(
-		(paths: string[]) => {
-			if (paths.length === 0) return;
+		(paths: string[], pinnedTabId?: string): boolean => {
+			if (paths.length === 0) return false;
 			const joined = paths.map((p) => formatFileMention(p)).join(' ');
-			setInputValue((prev) => {
+			const append = (prev: string) => {
 				if (!prev) return joined + ' ';
 				const sep = /\s$/.test(prev) ? '' : ' ';
 				return prev + sep + joined + ' ';
-			});
+			};
+			const pinIsOnScreen =
+				!pinnedTabId || (isAiModeRef.current && pinnedTabId === activeTabIdRef.current);
+			if (!pinIsOnScreen) {
+				let found = false;
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (!s.aiTabs?.some((t) => t.id === pinnedTabId)) return s;
+						found = true;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) =>
+								t.id === pinnedTabId ? { ...t, inputValue: append(t.inputValue ?? '') } : t
+							),
+						};
+					})
+				);
+				// `found` stays false when the tab was closed mid-upload; the file is
+				// still on the host, there is just no draft left to mention it in.
+				if (!found) {
+					notifyToast({
+						color: 'yellow',
+						title: 'Attachment has nowhere to go',
+						message: 'The tab it was dropped into was closed before the upload finished',
+					});
+				}
+				return false;
+			}
+			setInputValue(append);
+			return true;
 		},
-		[setInputValue]
+		[setInputValue, setSessions]
 	);
 
-	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
+	const appendMentionsToGroupChatDraft = useCallback((paths: string[], pinnedChatId?: string) => {
 		if (paths.length === 0) return;
 		const joined = paths.map((p) => formatFileMention(p)).join(' ');
 		// Reading the store via getState() (instead of subscribing) is intentional:
@@ -848,7 +898,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		// chatId / setter at fire time and don't want stale-closure invalidation to
 		// re-create the callback (and bust handleDrop's useCallback deps) on every
 		// store update.
-		const { activeGroupChatId: chatId, setGroupChats } = useGroupChatStore.getState();
+		//
+		// `pinnedChatId` is the chat the drop happened in. An upload resolves
+		// asynchronously, so without the pin a mention would land in whichever chat
+		// is open when it finishes - or vanish entirely once the user has left
+		// group chat.
+		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+		const chatId = pinnedChatId ?? activeGroupChatId;
 		if (!chatId) return;
 		setGroupChats((prev) =>
 			prev.map((c) => {
@@ -860,6 +916,48 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			})
 		);
 	}, []);
+
+	/**
+	 * Attach dropped files that carry no filesystem path (the web-desktop build
+	 * runs in a browser, so `getPathForFile` comes back empty and the file may
+	 * live on a different machine than the agent). The bytes are uploaded into
+	 * the session's attachments directory and the resulting host path is
+	 * @mentioned. Anything that fails raises a toast - dropping a file into the
+	 * chat and getting nothing back at all is the bug this exists to avoid.
+	 */
+	const uploadAndMentionPathlessFiles = useCallback(
+		async (
+			files: File[],
+			ownerId: string,
+			projectRoot: string | undefined,
+			toGroupChat: boolean,
+			pinnedTabId: string | undefined
+		) => {
+			const mentions: string[] = [];
+			for (const file of files) {
+				try {
+					const savedPath = await uploadPathlessFile(file, ownerId);
+					mentions.push(toMentionPath(savedPath, projectRoot));
+				} catch (error) {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: error instanceof Error ? error.message : `Could not attach ${file.name}`,
+					});
+				}
+			}
+			if (mentions.length === 0) return;
+			if (toGroupChat) {
+				// `ownerId` is the group chat the drop happened in.
+				appendMentionsToGroupChatDraft(mentions, ownerId);
+			} else if (appendMentionsToAiInput(mentions, pinnedTabId)) {
+				// Only steal focus when the mention actually went into the composer
+				// that is on screen.
+				inputRef.current?.focus();
+			}
+		},
+		[appendMentionsToAiInput, appendMentionsToGroupChatDraft, inputRef]
+	);
 
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
@@ -958,6 +1056,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			const files = e.dataTransfer.files;
 			const externalPaths: string[] = [];
+			// Files with no resolvable path (browser drops) get uploaded instead.
+			const pathlessFiles: File[] = [];
 			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
 			for (let i = 0; i < files.length; i++) {
@@ -996,7 +1096,35 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					const filePath = window.maestro.fs.getPathForFile(file);
 					if (filePath) {
 						externalPaths.push(toMentionPath(filePath, projectRoot));
+					} else {
+						// No path to mention: the web-desktop build is a browser, where
+						// `File` objects have no path at all. Upload the bytes to the host
+						// so the agent has something real to read.
+						pathlessFiles.push(file);
 					}
+				}
+			}
+
+			if (pathlessFiles.length > 0) {
+				const ownerId = isGroupChatActive
+					? useGroupChatStore.getState().activeGroupChatId
+					: activeSession?.id;
+				if (ownerId) {
+					void uploadAndMentionPathlessFiles(
+						pathlessFiles,
+						ownerId,
+						projectRoot,
+						isGroupChatActive,
+						// Pin the tab from drop time so switching tabs or agents while
+						// the bytes are in flight cannot retarget the mention.
+						activeSession ? getActiveTab(activeSession)?.id : undefined
+					);
+				} else {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: 'There is no active agent to attach it to',
+					});
 				}
 			}
 
@@ -1009,7 +1137,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setStagedImages, appendMentionsToAiInput, appendMentionsToGroupChatDraft, getCommandMode]
+		[
+			setStagedImages,
+			appendMentionsToAiInput,
+			appendMentionsToGroupChatDraft,
+			uploadAndMentionPathlessFiles,
+			getCommandMode,
+		]
 	);
 
 	// ====================================================================

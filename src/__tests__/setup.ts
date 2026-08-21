@@ -328,6 +328,16 @@ const mockMaestro = {
 			uncommittedChanges: 0,
 		}),
 	},
+	attachments: {
+		// Mirrors userData/attachments/{sessionId}/{filename} on the host.
+		save: vi.fn((sessionId: string, _base64: string, filename: string) =>
+			Promise.resolve({ success: true, path: `/userData/attachments/${sessionId}/${filename}` })
+		),
+		load: vi.fn().mockResolvedValue({ success: true, dataUrl: '' }),
+		delete: vi.fn().mockResolvedValue({ success: true }),
+		list: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/userData/attachments' }),
+	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
 		readFile: vi.fn().mockResolvedValue(''),
