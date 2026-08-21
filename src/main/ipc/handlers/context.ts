@@ -22,6 +22,8 @@ import {
 } from '../../utils/ipcHandler';
 import { getSessionStorage, type SessionMessagesResult } from '../../agents';
 import { groomContext, cancelAllGroomingSessions } from '../../utils/context-groomer';
+import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { getSettingsStore } from '../../stores';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
@@ -165,8 +167,14 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						projectRoot,
 						agentType,
 						prompt,
-						// Pass SSH and custom config for remote execution support
+						// Pass SSH and custom config for remote execution support.
+						// The store lets groomContext resolve `remoteId` and actually
+						// wrap the spawn with ssh - without it grooming would run the
+						// prompt locally (issue #1416).
 						sessionSshRemoteConfig: options?.sshRemoteConfig,
+						sshStore: options?.sshRemoteConfig?.enabled
+							? createSshRemoteStoreAdapter(getSettingsStore())
+							: undefined,
 						sessionCustomPath: options?.customPath,
 						sessionCustomArgs: options?.customArgs,
 						sessionCustomEnvVars: options?.customEnvVars,

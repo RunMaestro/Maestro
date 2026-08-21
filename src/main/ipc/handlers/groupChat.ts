@@ -75,6 +75,8 @@ import {
 // Agent detector import
 import { AgentDetector } from '../../agents';
 import { groomContext } from '../../utils/context-groomer';
+import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { getSessionsStore, getSettingsStore } from '../../stores';
 import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
 
@@ -121,6 +123,25 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	context: LOG_CONTEXT,
 	operation,
 });
+
+/**
+ * Resolve the SSH remote config for a participant by looking up the agent it was
+ * added from. Participant records store only the remote's display name, while
+ * spawning needs the full `{ enabled, remoteId }` config, so we read it off the
+ * agent whose name matches the participant - the same association the router
+ * makes when it dispatches a turn to that participant.
+ *
+ * Returns undefined for local participants (and for participants whose source
+ * agent has since been renamed or deleted, which keeps the summary local rather
+ * than failing the reset).
+ */
+function resolveParticipantSshRemoteConfig(
+	participantName: string
+): { enabled: boolean; remoteId: string | null; workingDirOverride?: string } | undefined {
+	const sessions = getSessionsStore().get('sessions', []);
+	const match = sessions.find((session) => session.name === participantName);
+	return match?.sshRemoteConfig;
+}
 
 /**
  * Group chat state type
@@ -767,6 +788,15 @@ This summary will be used to initialize your fresh session so you can continue s
 
 Respond with ONLY the summary text, no additional commentary.`;
 
+				// A participant record only carries `sshRemoteName`, not the remote's
+				// id, so resolve the SSH config off the agent this participant was
+				// added from. Participants are always named after that agent (see
+				// the auto-add path in group-chat-router), so an exact name match is
+				// the same association the router uses when it dispatches a turn.
+				// Without this the summary would resume a remote agent session on the
+				// local machine, where that session does not exist (issue #1416).
+				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participantName);
+
 				// Use the shared groomContext utility to get the summary
 				// This spawns a batch process, collects the response, and handles cleanup
 				let summaryResponse = '';
@@ -779,6 +809,10 @@ Respond with ONLY the summary text, no additional commentary.`;
 							agentSessionId: participant.agentSessionId, // Resume existing session for context
 							readOnlyMode: true, // Summary is read-only
 							timeoutMs: 60000, // 60 second timeout for summary
+							sessionSshRemoteConfig: participantSshRemoteConfig,
+							sshStore: participantSshRemoteConfig?.enabled
+								? createSshRemoteStoreAdapter(getSettingsStore())
+								: undefined,
 						},
 						processManager,
 						agentDetector

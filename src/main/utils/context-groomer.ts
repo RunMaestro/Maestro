@@ -7,6 +7,7 @@
  * This module provides a consistent way to spawn a batch-mode agent process
  * with a prompt and collect the response. It handles:
  * - Spawning the agent with proper batch mode args
+ * - SSH remote execution when the session is configured for it
  * - Collecting response data with idle timeout detection
  * - Overall timeout for long-running operations
  * - Proper cleanup on completion or error
@@ -15,6 +16,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
+import { wrapSpawnWithSsh } from './ssh-spawn-wrapper';
+import type { SshRemoteSettingsStore } from './ssh-remote-resolver';
+import type { SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
 import type { AgentDetector } from '../agents';
 
@@ -38,12 +42,13 @@ export interface GroomingProcessManager {
 		sendPromptViaStdin?: boolean;
 		// Send prompt as raw text via stdin (used on Windows to avoid command-line length limits)
 		sendPromptViaStdinRaw?: boolean;
-		// SSH remote config for running on a remote host
-		sessionSshRemoteConfig?: {
-			enabled: boolean;
-			remoteId: string | null;
-			workingDirOverride?: string;
-		};
+		// Script piped to the remote shell's stdin for SSH execution (built by wrapSpawnWithSsh)
+		sshStdinScript?: string;
+		// Human-readable remote agent invocation (shown in Process Details)
+		sshRemoteCommand?: string;
+		// Resolved SSH remote identity, for Process Details / logging
+		sshRemoteId?: string;
+		sshRemoteHost?: string;
 		// Custom environment variables (resolved via applyAgentConfigOverrides)
 		customEnvVars?: Record<string, string>;
 	}): { pid: number; success?: boolean } | null;
@@ -138,6 +143,12 @@ export interface GroomContextOptions {
 	timeoutMs?: number;
 	/** SSH remote config for running grooming on a remote host */
 	sessionSshRemoteConfig?: GroomingSshRemoteConfig;
+	/**
+	 * SSH settings store used to resolve `sessionSshRemoteConfig.remoteId`.
+	 * REQUIRED whenever `sessionSshRemoteConfig.enabled` is true - grooming
+	 * throws rather than silently running the prompt on the local machine.
+	 */
+	sshStore?: SshRemoteSettingsStore;
 	/** Custom path to the agent binary */
 	sessionCustomPath?: string;
 	/** Custom arguments for the agent */
@@ -204,6 +215,7 @@ export async function groomContext(
 		readOnlyMode = false,
 		timeoutMs = DEFAULT_GROOMING_TIMEOUT_MS,
 		sessionSshRemoteConfig,
+		sshStore,
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
@@ -260,6 +272,86 @@ export async function groomContext(
 			: configResolution.args;
 	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
 	const resolvedCommand = sessionCustomPath || agent.command;
+
+	// Apply SSH wrapping when the session runs on a remote host. ProcessManager
+	// does NO SSH wrapping of its own - every spawn surface has to do this itself
+	// (see spawnGroupChatAgent / cue-spawn-builder / the CLI agent-spawner), and
+	// grooming used to just hand `sessionSshRemoteConfig` to spawn(), where it was
+	// silently ignored. The prompt (and the transcript context it carries) then ran
+	// on the local machine even though the user explicitly opted into SSH.
+	let spawnCommand = resolvedCommand;
+	let spawnArgs = resolvedArgs;
+	let spawnCwd = projectRoot;
+	let spawnPrompt: string | undefined = prompt;
+	let spawnEnvVars = resolvedEnvVars;
+	let sshStdinScript: string | undefined;
+	let sshRemoteCommand: string | undefined;
+	let sshRemoteUsed: SshRemoteConfig | null = null;
+
+	if (sessionSshRemoteConfig?.enabled) {
+		if (!sshStore) {
+			throw new Error(
+				'SSH remote execution is enabled for this session but no SSH settings store was ' +
+					'provided to groomContext(). Refusing to run the prompt locally.'
+			);
+		}
+
+		// `projectRoot` is the LOCAL path for an SSH agent, and the remote shell
+		// does `cd <cwd> || exit 1`. Prefer the configured remote working dir so
+		// grooming lands in the same directory the agent's own turns run in.
+		const remoteCwd = sessionSshRemoteConfig.workingDirOverride || projectRoot;
+
+		const wrapped = await wrapSpawnWithSsh(
+			{
+				command: resolvedCommand,
+				args: resolvedArgs,
+				cwd: remoteCwd,
+				prompt,
+				customEnvVars: resolvedEnvVars,
+				promptArgs: agent.promptArgs,
+				noPromptSeparator: agent.noPromptSeparator,
+				// Never send a locally-detected absolute path to the remote host -
+				// it does not exist there. A session custom path IS honored (for an
+				// SSH session the user configures it as the remote path), matching
+				// what the `process:spawn` handler does; otherwise resolve the agent
+				// by binary name against the remote PATH.
+				agentBinaryName: sessionCustomPath || agent.binaryName,
+			},
+			sessionSshRemoteConfig,
+			sshStore
+		);
+
+		// wrapSpawnWithSsh falls back to the unmodified local config when the
+		// remote can't be resolved. Fail loudly instead - the user opted into SSH,
+		// so a local run is the wrong answer, not a graceful degradation.
+		if (!wrapped.sshRemoteUsed) {
+			const remoteLabel = sessionSshRemoteConfig.remoteId
+				? ` "${sessionSshRemoteConfig.remoteId}"`
+				: '';
+			throw new Error(
+				`SSH remote execution is enabled for this session but the configured remote${remoteLabel} ` +
+					`could not be resolved. Check that the remote exists, is enabled, and that the ` +
+					`session's remoteId points at a valid SSH remote.`
+			);
+		}
+
+		spawnCommand = wrapped.command;
+		spawnArgs = wrapped.args;
+		spawnCwd = wrapped.cwd;
+		// The prompt now lives inside the SSH command line or the stdin script.
+		spawnPrompt = wrapped.prompt;
+		spawnEnvVars = wrapped.customEnvVars;
+		sshStdinScript = wrapped.sshStdinScript;
+		sshRemoteCommand = wrapped.sshRemoteCommand;
+		sshRemoteUsed = wrapped.sshRemoteUsed;
+
+		logger.info('Grooming will run on SSH remote', LOG_CONTEXT, {
+			groomerSessionId,
+			remoteId: sshRemoteUsed.id,
+			remoteName: sshRemoteUsed.name,
+			viaStdinScript: !!sshStdinScript,
+		});
+	}
 
 	// Create a promise that collects the response
 	return new Promise<GroomContextResult>((resolve, reject) => {
@@ -395,24 +487,30 @@ export async function groomContext(
 
 		// On Windows, grooming prompts often exceed cmd.exe's ~8KB command-line
 		// limit (ENAMETOOLONG on spawn). Route the prompt via stdin instead.
-		// SSH sessions have their own stdin handling (ssh-spawn-wrapper), so skip.
-		const useStdinForPrompt = isWindows() && !sessionSshRemoteConfig?.enabled;
+		// SSH spawns already carry the prompt in the wrapped command (or in
+		// `sshStdinScript`, which owns the child's stdin), so skip it there.
+		const useStdinForPrompt = isWindows() && !sshRemoteUsed;
 
 		// Spawn the process in batch mode
 		const spawnResult = processManager.spawn({
 			sessionId: groomerSessionId,
 			toolType: agentType,
-			cwd: projectRoot,
-			command: resolvedCommand,
-			args: resolvedArgs,
-			prompt: prompt, // Triggers batch mode (no PTY)
-			promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
+			cwd: spawnCwd,
+			command: spawnCommand,
+			args: spawnArgs,
+			prompt: spawnPrompt, // Triggers batch mode (no PTY); undefined for SSH
+			// For agents using flag-based prompt (e.g., OpenCode -p). Harmless for
+			// SSH: the wrapper already applied them and `spawnPrompt` is undefined.
+			promptArgs: agent.promptArgs,
 			noPromptSeparator: agent.noPromptSeparator,
 			sendPromptViaStdinRaw: useStdinForPrompt,
-			// Pass SSH config for remote execution support
-			sessionSshRemoteConfig,
+			// SSH remote execution (undefined for local spawns)
+			sshStdinScript,
+			sshRemoteCommand,
+			sshRemoteId: sshRemoteUsed?.id,
+			sshRemoteHost: sshRemoteUsed?.host,
 			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
-			customEnvVars: resolvedEnvVars,
+			customEnvVars: spawnEnvVars,
 		});
 
 		if (!spawnResult || spawnResult.pid <= 0) {
