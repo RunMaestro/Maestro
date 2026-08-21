@@ -126,6 +126,66 @@ describe('selectOlderEntries', () => {
 		expect(selectOlderEntries(loaded, visible).map((e) => e.id)).toEqual(['1', '2', '3']);
 	});
 
+	// The expected splice point is only an estimate: it is off by however many
+	// renderer-only entries the tab holds (system notices, outage markers). Push
+	// that estimate past one repetition of a repeated message and the NEAREST
+	// source+text hit is the wrong occurrence, which silently drops the genuine
+	// older turns between the two. A match needs corroboration, not just proximity.
+	it('prefers the occurrence whose timestamp matches over a nearer text-only hit', () => {
+		const loaded = [
+			entry('1', 'start', 'user', 0),
+			entry('2', 'continue', 'user', 100),
+			entry('3', 'work', 'user', 200),
+			entry('4', 'continue', 'user', 300),
+			entry('5', 'more', 'user', 400),
+			entry('6', 'done', 'user', 500),
+		];
+		// Tab was hydrated from disk (timestamps survive) but holds two
+		// renderer-only notices, so expected lands on index 1 - the WRONG
+		// "continue". The timestamp pins the real boundary at index 3.
+		const visible = [
+			entry('local-a', 'continue', 'user', 300),
+			entry('sys-1', 'Agent reconnected', 'system', 310),
+			entry('sys-2', 'Retrying', 'system', 320),
+			entry('local-b', 'more', 'user', 400),
+			entry('local-c', 'done', 'user', 500),
+		];
+
+		expect(selectOlderEntries(loaded, visible).map((e) => e.id)).toEqual(['1', '2', '3']);
+	});
+
+	it('prefers the occurrence whose following entry also lines up', () => {
+		const loaded = [
+			entry('1', 'start', 'user', 0),
+			entry('2', 'continue', 'user', 100),
+			entry('3', 'work', 'user', 200),
+			entry('4', 'continue', 'user', 300),
+			entry('5', 'more', 'user', 400),
+			entry('6', 'done', 'user', 500),
+		];
+		// The restart path: local ids AND renderer clock timestamps, so neither id
+		// nor timestamp can pick between the two "continue" entries. The entry that
+		// FOLLOWS the boundary is what breaks the tie.
+		const visible = [
+			entry('local-a', 'continue', 'user', 9001),
+			entry('local-b', 'more', 'user', 9002),
+			entry('local-c', 'done', 'user', 9003),
+			entry('sys-1', 'Agent reconnected', 'system', 9004),
+			entry('sys-2', 'Retrying', 'system', 9005),
+		];
+
+		expect(selectOlderEntries(loaded, visible).map((e) => e.id)).toEqual(['1', '2', '3']);
+	});
+
+	it('still takes the nearest match when nothing corroborates either occurrence', () => {
+		// No timestamps, no usable next entry: fall back to proximity, which is the
+		// best guess available and the behavior every non-repeating case relies on.
+		const loaded = [entry('1', 'continue'), entry('2', 'work'), entry('3', 'continue')];
+		const visible = [entry('local-a', 'continue')];
+
+		expect(selectOlderEntries(loaded, visible).map((e) => e.id)).toEqual(['1', '2']);
+	});
+
 	it('cuts on timestamp when the boundary entry never reached disk', () => {
 		// Maestro-injected system notices live only in the tab, so there is nothing
 		// on disk to match. Anything strictly older than it is still safe to prepend.

@@ -8,6 +8,7 @@ import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { logger } from '../../utils/logger';
 import {
+	TRANSCRIPT_RESUME_READ_LIMIT,
 	isSynopsisRequest,
 	stripSynopsisTurns,
 	transcriptMessagesToLogEntries,
@@ -312,7 +313,7 @@ export function useAgentSessionManagement(
 						agentId,
 						resolvedProjectRoot,
 						agentSessionId,
-						{ offset: 0, limit: 500 },
+						{ offset: 0, limit: TRANSCRIPT_RESUME_READ_LIMIT },
 						targetSession.sshRemoteId
 					);
 
