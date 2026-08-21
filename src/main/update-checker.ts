@@ -5,11 +5,15 @@
 
 import { compareVersions } from '../shared/pathUtils';
 import { logger } from './utils/logger';
+import { fetchWithTimeout } from './utils/fetchWithTimeout';
 
 // GitHub repository information
 const GITHUB_OWNER = 'RunMaestro';
 const GITHUB_REPO = 'Maestro';
 const RELEASES_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+
+/** Request budget for the GitHub releases poll. */
+const RELEASES_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * Build the generic-provider feed URL for a specific release tag.
@@ -103,12 +107,16 @@ async function fetchReleases(includePrerelease: boolean = false): Promise<Releas
 		'UpdateChecker'
 	);
 
-	const response = await fetch(RELEASES_URL, {
-		headers: {
-			Accept: 'application/vnd.github.v3+json',
-			'User-Agent': 'Maestro-Update-Checker',
+	const response = await fetchWithTimeout(
+		RELEASES_URL,
+		{
+			headers: {
+				Accept: 'application/vnd.github.v3+json',
+				'User-Agent': 'Maestro-Update-Checker',
+			},
 		},
-	});
+		RELEASES_FETCH_TIMEOUT_MS
+	);
 
 	if (!response.ok) {
 		const errorMsg = `GitHub API error: ${response.status} ${response.statusText}`;
