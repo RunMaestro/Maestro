@@ -183,6 +183,16 @@ Guidance:
 
 The expanded Prompt Composer (`src/renderer/components/PromptComposerModal.tsx`) is the reference implementation of the compact-vs-`90vw x 90vh` toggle.
 
+### Naming the Subject in a Modal Header (`subtitle`)
+
+A modal opened from a **right-click menu** frequently acts on something other than the highlighted agent. `git push` as a header names the operation but not the target, so a user who right-clicked an arbitrary Left Bar row has no way to tell which agent is about to push.
+
+Pass `<Modal subtitle={...}>` for the subject: which agent, which repo, which file. It renders dimmed after the title (`git push · Sonoma-Fix`) and is skipped entirely when empty, so a modal with nothing to name looks exactly as it did before. `GitCommandRunnerModal.tsx` is the reference use.
+
+**Do not concatenate the subject into `title`.** `title` is the `aria-label` and the modal-layer label, and it seeds the fallback resize key via `getDefaultResizeKey()` - a per-agent title mints a different persisted window size for every agent, so the modal would forget its size each time you targeted a different one. That is also why any test asserting on the bare title keeps passing after a `subtitle` is added.
+
+Most openers already carry what they need: `useGitAgentActions.ts` has been putting `sessionId` in the `gitCommandRunner` payload since it was written, the modal just ignored it. Check the payload before plumbing a new prop.
+
 ### Resizable Modals
 
 Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
