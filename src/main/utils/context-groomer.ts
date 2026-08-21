@@ -259,7 +259,20 @@ export async function groomContext(
 			? [...configResolution.args, ...agent.noToolsArgs]
 			: configResolution.args;
 	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
-	const resolvedCommand = sessionCustomPath || agent.command;
+	// Prefer the absolute path the detector resolved over the static `command`
+	// field from the agent definition. `agent.command` is a bare name like
+	// `claude`, which is not spawnable on Windows: the npm install leaves a
+	// `claude.cmd` shim in %APPDATA%\npm and there is no bare `claude` on PATH,
+	// so spawn() fails with ENOENT. Every other spawn site already resolves
+	// `agent.path || agent.command`; the fallback keeps working on platforms
+	// where the bare command is already on PATH and `path` is unset.
+	//
+	// `agent.path` is a LOCAL path. Grooming only ever spawns locally today (see
+	// the note on the spawn call below), so that is correct as written - but
+	// whoever routes grooming through SSH must not send this to a remote host,
+	// which has its own filesystem. Remote execution uses the agent's
+	// `binaryName`; `wrapSpawnWithSsh` handles that.
+	const resolvedCommand = sessionCustomPath || agent.path || agent.command;
 
 	// Create a promise that collects the response
 	return new Promise<GroomContextResult>((resolve, reject) => {
@@ -409,7 +422,14 @@ export async function groomContext(
 			promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
 			noPromptSeparator: agent.noPromptSeparator,
 			sendPromptViaStdinRaw: useStdinForPrompt,
-			// Pass SSH config for remote execution support
+			// KNOWN GAP (issue #1416): this is accepted but NOT acted on. Unlike
+			// group chat, Cue, and the CLI, grooming never calls
+			// `wrapSpawnWithSsh`, and `ProcessManager.spawn()` does no SSH
+			// wrapping of its own - `ProcessConfig` has no such field, so this
+			// value is dropped on the floor. Grooming therefore always runs on the
+			// local machine even when the agent is configured for an SSH remote.
+			// Kept wired up because the value is correct and the only missing
+			// piece is the wrapper call; do not read its presence as SSH support.
 			sessionSshRemoteConfig,
 			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
 			customEnvVars: resolvedEnvVars,
