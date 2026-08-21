@@ -187,7 +187,7 @@ The expanded Prompt Composer (`src/renderer/components/PromptComposerModal.tsx`)
 
 A modal opened from a **right-click menu** frequently acts on something other than the highlighted agent. `git push` as a header names the operation but not the target, so a user who right-clicked an arbitrary Left Bar row has no way to tell which agent is about to push.
 
-Pass `<Modal subtitle={...}>` for the subject: which agent, which repo, which file. It renders dimmed after the title (`git push - Sonoma-Fix`) and is skipped entirely when empty, so a modal with nothing to name looks exactly as it did before. `GitCommandRunnerModal.tsx` is the reference use.
+Pass `<Modal subtitle={...}>` for the subject: which agent, which repo, which file. It renders dimmed after the title (`git push · Sonoma-Fix`) and is skipped entirely when empty, so a modal with nothing to name looks exactly as it did before. `GitCommandRunnerModal.tsx` is the reference use.
 
 **Do not concatenate the subject into `title`.** `title` is the `aria-label` and the modal-layer label, and it seeds the fallback resize key via `getDefaultResizeKey()` - a per-agent title mints a different persisted window size for every agent, so the modal would forget its size each time you targeted a different one. That is also why any test asserting on the bare title keeps passing after a `subtitle` is added.
 

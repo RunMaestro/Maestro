@@ -109,7 +109,24 @@ describe('GitCommandRunnerModal', () => {
 
 		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
 		expect(screen.getByText('git push')).toBeInTheDocument();
-		expect(screen.queryByText('git push - Sonoma-Fix')).not.toBeInTheDocument();
+		expect(screen.queryByText(/git push . Sonoma-Fix/)).not.toBeInTheDocument();
+		// The concrete consequence of folding the name into the title: the
+		// persisted-size key is title-derived when no explicit key is passed, so
+		// a per-agent title would give every agent its own remembered size.
+		expect(document.querySelector('[data-modal-resize-key]')).toHaveAttribute(
+			'data-modal-resize-key',
+			'modal-git-command-runner'
+		);
+	});
+
+	// `subtitle={agent && agent.name}` yields `false` when the agent is missing,
+	// which must not paint a bare separator with nothing after it.
+	it('renders no separator for a falsy subtitle', async () => {
+		useSessionStore.setState({ sessions: [] } as never);
+		renderModal('pull');
+
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
+		expect(screen.queryByText(/·/)).not.toBeInTheDocument();
 	});
 
 	it('renders no subtitle when the agent is gone', async () => {
