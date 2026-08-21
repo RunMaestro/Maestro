@@ -72,16 +72,46 @@ function toWindowInfo(entry: RegisteredWindow): WindowInfo {
 	};
 }
 
-/** Resolve the registry entry for the window that sent an IPC message. */
+/**
+ * True for the synthetic event a web-desktop bridge invoke arrives on
+ * (`FAKE_EVENT` in `web-server/handlers/bridgeHandlers.ts`), which carries no
+ * `sender` because a web client has no `WebContents` of its own.
+ */
+function isBridgeEvent(event: Electron.IpcMainInvokeEvent | undefined): boolean {
+	return (event as { type?: string } | undefined)?.type === 'bridge';
+}
+
+/**
+ * Resolve the registry entry for the window that sent an IPC message.
+ *
+ * Pass `allowBridge` ONLY from a read. A web-desktop client mirrors the primary
+ * window, so answering a read for it is right - without this every
+ * window-scoped read returned "unknown caller" and a remote page got `null`
+ * window state during boot.
+ *
+ * A write must not opt in. `registerSession` and `setPanelState` both document
+ * that a window only ever mutates itself, and resolving a web client to some
+ * window would break that: with two windows open, a remote agent-create would
+ * claim the agent into a window the remote user never chose, and a remote panel
+ * collapse would silently rewrite a desktop window's persisted state. Reads
+ * answering for the primary are defensible; writes landing on it are not.
+ */
 function resolveCallingWindow(
 	event: Electron.IpcMainInvokeEvent,
-	registry: WindowRegistry
+	registry: WindowRegistry,
+	{ allowBridge = false }: { allowBridge?: boolean } = {}
 ): RegisteredWindow | undefined {
-	// Web-desktop bridge invokes arrive with a synthetic event that has no
-	// sender (FAKE_EVENT in web-server/handlers/bridgeHandlers.ts). A web
-	// client is not a window; resolve to "no window" instead of letting
-	// BrowserWindow.fromWebContents throw on the missing WebContents.
-	if (!event?.sender) return undefined;
+	if (!event?.sender) {
+		// Resolve the PRIMARY window explicitly rather than "whichever window is
+		// first". BrowserWindow.getAllWindows() has no documented ordering, and a
+		// nondeterministic answer here would be read as the caller's identity.
+		if (allowBridge && isBridgeEvent(event)) {
+			return registry.getAll().find((entry) => entry.isMain);
+		}
+		// No sender and not a bridge read: resolve to "no window" rather than
+		// letting BrowserWindow.fromWebContents throw on the missing WebContents.
+		return undefined;
+	}
 	const browserWindow = BrowserWindow.fromWebContents(event.sender);
 	if (!browserWindow) return undefined;
 	return registry.getAll().find((entry) => entry.browserWindow === browserWindow);
@@ -313,7 +343,7 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 	// Current window's full WindowState (bounds + owned agents).
 	ipcMain.handle('windows:getState', (event: Electron.IpcMainInvokeEvent): WindowState | null => {
 		const registry = requireDependency(getWindowRegistry, 'Window registry');
-		const entry = resolveCallingWindow(event, registry);
+		const entry = resolveCallingWindow(event, registry, { allowBridge: true });
 		return entry ? registeredWindowToWindowState(entry) : null;
 	});
 
@@ -375,7 +405,9 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		'windows:getBounds',
 		(event: Electron.IpcMainInvokeEvent, windowId?: string): WindowBounds | null => {
 			const registry = requireDependency(getWindowRegistry, 'Window registry');
-			const entry = windowId ? registry.get(windowId) : resolveCallingWindow(event, registry);
+			const entry = windowId
+				? registry.get(windowId)
+				: resolveCallingWindow(event, registry, { allowBridge: true });
 			if (!entry || entry.browserWindow.isDestroyed()) return null;
 			return entry.browserWindow.getBounds();
 		}
