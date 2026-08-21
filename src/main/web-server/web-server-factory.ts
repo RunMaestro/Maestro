@@ -13,6 +13,7 @@ import { captureException } from '../utils/sentry';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
+import { asThinkingMode } from '../../shared/types';
 import type { Group, SshRemoteConfig } from '../../shared/types';
 import { execGit } from '../utils/remote-git';
 import { getSshRemoteById } from '../stores';
@@ -294,6 +295,17 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						state,
 						createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : 0,
 						starred: tab.starred === true,
+						active: isActiveTab,
+						hasUnread: tab.hasUnread === true,
+						saveToHistory: tab.saveToHistory === true,
+						readOnly: tab.readOnlyMode === true,
+						thinking: asThinkingMode(tab.showThinking) ?? 'off',
+						// `null` (not `false`) is the honest answer for the three
+						// inheriting fields: the tab has no override and follows the
+						// agent's model/effort or the global enter-to-send setting.
+						model: typeof tab.customModel === 'string' ? tab.customModel : null,
+						effort: typeof tab.customEffort === 'string' ? tab.customEffort : null,
+						enterToSend: typeof tab.enterToSend === 'boolean' ? tab.enterToSend : null,
 					});
 				}
 			}

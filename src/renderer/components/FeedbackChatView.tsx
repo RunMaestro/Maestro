@@ -42,6 +42,8 @@ import {
 import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
 // ============================================================================
 // Constants
@@ -217,13 +219,12 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		};
 	}, []);
 
-	// --- Auto-resize textarea as content changes ---
-	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
-		}
-	}, [inputValue]);
+	// --- Auto-resize textarea as content changes, keeping the caret visible ---
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: inputValue,
+		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+	});
 
 	// --- Scroll to bottom on new messages ---
 	useEffect(() => {

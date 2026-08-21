@@ -13,6 +13,7 @@ import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { asThinkingMode } from '../../../shared/types';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -1502,10 +1503,47 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// persistent state over adding another fire-and-forget renderer channel.
 		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
 		if (targetTabId !== undefined) {
-			const TAB_EDITABLE_KEYS = new Set(['starred', 'hasUnread', 'saveToHistory']);
+			// Everything the composer chips toggle, keyed by the value it accepts.
+			// The type is enforced here rather than trusted from the wire: these
+			// land straight in the persisted tab, so a bad value (a string in
+			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
+			// chip rather than a rejected command.
+			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
+				starred: 'boolean',
+				hasUnread: 'boolean',
+				saveToHistory: 'boolean',
+				readOnlyMode: 'boolean',
+				enterToSend: 'boolean',
+				showThinking: 'thinking',
+				customModel: 'string',
+				customEffort: 'string',
+			};
 			const tabPatch: Record<string, unknown> = {};
 			for (const key of Object.keys(patchObj)) {
-				if (TAB_EDITABLE_KEYS.has(key)) tabPatch[key] = patchObj[key];
+				const kind = TAB_EDITABLE_KEYS[key];
+				if (!kind) continue;
+				const value = patchObj[key];
+				// `null` clears the field, which is how a tab drops an override and
+				// goes back to inheriting the agent's model/effort or the global
+				// enter-to-send setting. Distinct from `false`.
+				if (value === null) {
+					tabPatch[key] = undefined;
+					continue;
+				}
+				const valid =
+					kind === 'boolean'
+						? typeof value === 'boolean'
+						: kind === 'string'
+							? typeof value === 'string'
+							: asThinkingMode(value) !== undefined;
+				if (!valid) {
+					window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+						success: false,
+						error: `Invalid value for tab field '${key}'`,
+					});
+					return;
+				}
+				tabPatch[key] = value;
 			}
 
 			if (Object.keys(tabPatch).length === 0) {

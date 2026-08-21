@@ -27,6 +27,7 @@ import { makeAccountKeyHelpers } from './quota/quotaFormatting';
 import {
 	QuotaAccountPill,
 	QuotaAccountTabs,
+	QuotaAgentCountBadge,
 	QuotaBarRow,
 	QuotaPendingRow,
 	QuotaRefreshControls,
@@ -40,6 +41,8 @@ import { useQuotaRefresh } from './quota/useQuotaRefresh';
 const TEST_ID_PREFIX = 'claude-plan';
 /** Provider id used to key this panel's hidden-account set in uiStore. */
 const PROVIDER_ID = 'claude-code';
+/** Human-readable provider name used in the agent-count badge tooltip. */
+const PROVIDER_LABEL = 'Claude';
 const { deriveShortName, deriveDisplayName, normalizeKey } = makeAccountKeyHelpers('.claude');
 
 interface ClaudePlanUsageProps {
@@ -53,10 +56,17 @@ interface ClaudePlanUsageProps {
 interface AccountRowProps {
 	configDirKey: string;
 	snapshot: ClaudeUsageSnapshot;
+	/** Agents pointed at this CLAUDE_CONFIG_DIR. */
+	agentCount: number;
 	theme: Theme;
 }
 
-const AccountRow = memo(function AccountRow({ configDirKey, snapshot, theme }: AccountRowProps) {
+const AccountRow = memo(function AccountRow({
+	configDirKey,
+	snapshot,
+	agentCount,
+	theme,
+}: AccountRowProps) {
 	const shortName = deriveShortName(configDirKey);
 	const isUnauthenticated = snapshot.authState === 'unauthenticated';
 
@@ -68,7 +78,13 @@ const AccountRow = memo(function AccountRow({ configDirKey, snapshot, theme }: A
 					displayName={deriveDisplayName(configDirKey)}
 					theme={theme}
 				/>
-				<div className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+				<QuotaAgentCountBadge
+					count={agentCount}
+					providerLabel={PROVIDER_LABEL}
+					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
+					theme={theme}
+				/>
+				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 					{configDirKey}
 				</div>
 			</div>
@@ -131,20 +147,21 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
 	const refreshing = useClaudeUsageStore((s) => s.refreshing);
 
-	const { configuredAccountKeys, setSelectedKey, effectiveSelectedKey } = useQuotaAccounts({
-		toolType: 'claude-code',
-		envVarName: 'CLAUDE_CONFIG_DIR',
-		defaultSubdir: '.claude',
-		accountKeys,
-		snapshots,
-		normalizeKey,
-		deriveShortName,
-		fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('claude-code'),
-		fetchAccountKeys: () => {
-			const fn = window.maestro.agents.getClaudeUsageAccountKeys;
-			return typeof fn === 'function' ? fn() : undefined;
-		},
-	});
+	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
+		useQuotaAccounts({
+			toolType: 'claude-code',
+			envVarName: 'CLAUDE_CONFIG_DIR',
+			defaultSubdir: '.claude',
+			accountKeys,
+			snapshots,
+			normalizeKey,
+			deriveShortName,
+			fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('claude-code'),
+			fetchAccountKeys: () => {
+				const fn = window.maestro.agents.getClaudeUsageAccountKeys;
+				return typeof fn === 'function' ? fn() : undefined;
+			},
+		});
 
 	const selectedSnapshot: ClaudeUsageSnapshot | null = effectiveSelectedKey
 		? (snapshots[effectiveSelectedKey] ?? null)
@@ -189,14 +206,22 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			const shortName = deriveShortName(configDirKey);
 			const snapshot = snapshots[configDirKey];
 			const isHidden = hiddenSet.has(configDirKey);
+			const agentCount = agentCountsByAccount[configDirKey] ?? 0;
 			const body = snapshot ? (
-				<AccountRow configDirKey={configDirKey} snapshot={snapshot} theme={theme} />
+				<AccountRow
+					configDirKey={configDirKey}
+					snapshot={snapshot}
+					agentCount={agentCount}
+					theme={theme}
+				/>
 			) : (
 				<QuotaPendingRow
 					accountKey={configDirKey}
 					shortName={shortName}
 					displayName={deriveDisplayName(configDirKey)}
 					testIdPrefix={TEST_ID_PREFIX}
+					agentCount={agentCount}
+					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>
 			);
@@ -225,7 +250,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden]
+		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount]
 	);
 
 	return (
@@ -321,6 +346,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					key={effectiveSelectedKey}
 					configDirKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
+					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
 					theme={theme}
 				/>
 			) : effectiveSelectedKey ? (
@@ -331,6 +357,8 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					shortName={deriveShortName(effectiveSelectedKey)}
 					displayName={deriveDisplayName(effectiveSelectedKey)}
 					testIdPrefix={TEST_ID_PREFIX}
+					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>
 			) : null}

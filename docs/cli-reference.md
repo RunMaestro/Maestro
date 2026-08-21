@@ -636,65 +636,127 @@ Open a new tab for an agent (optionally seeded with a prompt)
 
 Close a tab (owning agent is resolved automatically)
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab rename <tab-id> <new-name>`
 
 Rename a tab
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab star <tab-id>`
 
 Star a tab
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab unstar <tab-id>`
 
 Unstar a tab
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab unread <tab-id>`
 
 Mark a tab unread (flags it for the human in the tab bar)
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab read <tab-id>`
 
 Clear a tab's unread marker
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab save-to-history <tab-id> <bool>`
 
 Enable/disable synopsizing this tab's completions into History (true/false)
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab show <tab-id>`
+
+Show one tab's settings (model, effort, thinking, access, history)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab thinking <tab-id> <mode>`
+
+Set the thinking display: off, on, sticky, or cycle
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab read-only <tab-id> <bool>`
+
+Put the tab in read-only/plan mode so the agent cannot modify files
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab model <tab-id> <model>`
+
+Override the model for this tab ("inherit" clears the override)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab effort <tab-id> <level>`
+
+Override the effort/reasoning level for this tab ("inherit" clears it)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab enter-to-send <tab-id> <bool>`
+
+Per-tab send key: true = Enter, false = Cmd+Enter, "inherit" = global setting
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab move <tab-id> <position>`
 
 Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli create-ssh-remote <name>`
 

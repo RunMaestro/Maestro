@@ -34,6 +34,8 @@ import { NotificationPopover } from './NotificationPopover';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { normalizeMentionName } from '../utils/participantColors';
 import { logger } from '../utils/logger';
+import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -441,13 +443,13 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		setStagedImages((prev) => prev.filter((x) => x !== img));
 	}, []);
 
-	// Auto-resize textarea as content changes (matches InputArea behavior)
-	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
-		}
-	}, [message]);
+	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
+	// the caret visible once the composer is tall enough to scroll.
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: message,
+		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+	});
 
 	const isBusy = state !== 'idle';
 	const hasQueuedItems = executionQueue && executionQueue.length > 0;

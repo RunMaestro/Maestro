@@ -537,6 +537,15 @@ maestro-cli tab read <tab-id>
 # Turn the tab's History synopsis on or off
 maestro-cli tab save-to-history <tab-id> false
 
+# Per-tab settings - the same switches as the composer chips. "active" means
+# the tab on screen; add -a <agent-id> to say whose.
+maestro-cli tab show active                     # read them all back
+maestro-cli tab thinking <tab-id> sticky        # off | on | sticky | cycle
+maestro-cli tab read-only <tab-id> true         # plan mode: no file writes
+maestro-cli tab model <tab-id> opus             # "inherit" clears the override
+maestro-cli tab effort <tab-id> high            # "inherit" clears the override
+maestro-cli tab enter-to-send <tab-id> false    # "inherit" = global setting
+
 # Move a tab in the tab bar (0-based index, or "first" / "last")
 maestro-cli tab move <tab-id> first
 maestro-cli tab move <tab-id> 2
@@ -546,9 +555,11 @@ maestro-cli bookmark <agent-id>
 maestro-cli unbookmark <agent-id>
 ```
 
-Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`).
+Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`). Every verb that takes a `<tab-id>` also accepts the literal `active`, which resolves to the tab the agent currently has selected - `-a <agent-id>` says whose, and without it the CLI uses the agent the desktop has focused.
 
-Bookmark, unread, star, and save-to-history are explicit set operations rather than toggles, so re-running a script lands on the same state either way. Read the current values back with `maestro-cli show agent <id> --json` (field `bookmarked`) and `maestro-cli session list --json` (field `starred`). `bookmark` also has a flag form, `maestro-cli update-agent <id> --bookmark true`, for when you are already changing other agent settings in the same call.
+Bookmark, unread, star, and save-to-history are explicit set operations rather than toggles, so re-running a script lands on the same state either way. `tab thinking` is the one exception, and only in its `cycle` form, which advances one step the way clicking the chip does. Read the current values back with `maestro-cli tab show <tab-id>`, `maestro-cli show agent <id> --json` (field `bookmarked`), or `maestro-cli session list --json` (fields `starred`, `thinking`, `readOnly`, `model`, `effort`, `saveToHistory`, `enterToSend`, `active`).
+
+`model`, `effort`, and `enter-to-send` are per-tab overrides: `inherit` clears the override so the tab follows the agent's model/effort or the global `enterToSendAI` setting again. That is not the same as `false` - `tab enter-to-send <tab-id> false` pins the tab to Cmd+Enter even when the global default is Enter. Agent-wide defaults still live on `maestro-cli update-agent <id> --model/--effort`. `bookmark` also has a flag form, `maestro-cli update-agent <id> --bookmark true`, for when you are already changing other agent settings in the same call.
 
 ### Listing Resources
 

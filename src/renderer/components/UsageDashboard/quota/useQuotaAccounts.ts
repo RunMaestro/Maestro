@@ -39,6 +39,13 @@ export interface UseQuotaAccountsOptions {
 
 export interface UseQuotaAccountsResult {
 	configuredAccountKeys: string[];
+	/**
+	 * How many agents of this provider resolve to each account key. Computed in
+	 * the same pass that builds `configuredAccountKeys` so the badge can never
+	 * disagree with the tab/row list about which account an agent belongs to.
+	 * Accounts with no agent (a cached snapshot, a discovered dir) are absent.
+	 */
+	agentCountsByAccount: Record<string, number>;
 	selectedKey: string | null;
 	setSelectedKey: (key: string) => void;
 	effectiveSelectedKey: string | null;
@@ -113,8 +120,9 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 	}, [homeDir]);
 	const defaultAccountKey = homeDir ? normalizeKey(`${homeDir}/${defaultSubdir}`) : null;
 
-	const configuredAccountKeys = useMemo(() => {
+	const { configuredAccountKeys, agentCountsByAccount } = useMemo(() => {
 		const keys = new Set<string>();
+		const counts: Record<string, number> = {};
 		for (const key of accountKeys) keys.add(normalizeKey(key));
 		for (const key of discoveredAccountKeys) keys.add(normalizeKey(key));
 		for (const s of sessions) {
@@ -122,17 +130,25 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
 			const merged = { ...agentLevelEnvVars, ...sessionEnv };
 			const dir = merged[envVarName];
-			if (typeof dir === 'string' && dir.length > 0) {
-				keys.add(normalizeKey(dir));
-			} else if (defaultAccountKey) {
-				keys.add(defaultAccountKey);
-			}
+			// An agent with no env var runs against the implicit `~/<subdir>`
+			// account, so it belongs to that bucket - unless $HOME hasn't
+			// resolved yet, in which case there is no key to attribute it to.
+			const resolved =
+				typeof dir === 'string' && dir.length > 0 ? normalizeKey(dir) : defaultAccountKey;
+			if (!resolved) continue;
+			keys.add(resolved);
+			counts[resolved] = (counts[resolved] ?? 0) + 1;
 		}
 		// Also include any snapshot key not surfaced in session config - e.g. an
 		// account sampled in a previous run whose session was since deleted.
 		// Keeping the tab lets the user still see the cached data.
 		for (const key of Object.keys(snapshots)) keys.add(normalizeKey(key));
-		return Array.from(keys).sort((a, b) => deriveShortName(a).localeCompare(deriveShortName(b)));
+		return {
+			configuredAccountKeys: Array.from(keys).sort((a, b) =>
+				deriveShortName(a).localeCompare(deriveShortName(b))
+			),
+			agentCountsByAccount: counts,
+		};
 	}, [
 		accountKeys,
 		discoveredAccountKeys,
@@ -161,5 +177,11 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 
 	const effectiveSelectedKey = selectedKey ?? configuredAccountKeys[0] ?? null;
 
-	return { configuredAccountKeys, selectedKey, setSelectedKey, effectiveSelectedKey };
+	return {
+		configuredAccountKeys,
+		agentCountsByAccount,
+		selectedKey,
+		setSelectedKey,
+		effectiveSelectedKey,
+	};
 }

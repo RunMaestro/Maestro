@@ -13,6 +13,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { formatRelativeTime } from '../../shared/formatters';
+import type { DesktopTabEntry as DesktopSessionEntry } from '../../shared/desktopTabs';
 
 export interface SessionListOptions {
 	json?: boolean;
@@ -22,19 +23,6 @@ export interface SessionShowOptions {
 	since?: string;
 	tail?: string;
 	json?: boolean;
-}
-
-interface DesktopSessionEntry {
-	tabId: string;
-	sessionId: string;
-	agentId: string;
-	agentName: string;
-	toolType: string;
-	name: string | null;
-	agentSessionId: string | null;
-	state: 'idle' | 'busy' | 'unknown';
-	createdAt: number;
-	starred: boolean;
 }
 
 interface SessionMessage {

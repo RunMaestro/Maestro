@@ -6,7 +6,7 @@
  */
 
 import { memo } from 'react';
-import { ChevronDown, Clock, Eye, EyeOff, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, Clock, Eye, EyeOff, Loader2, RefreshCw, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime } from '../../../../shared/formatters';
 import { QUOTA_REFRESH_OPTIONS, resolveQuotaFillColor } from './quotaFormatting';
@@ -123,6 +123,46 @@ export const QuotaAccountPill = memo(function QuotaAccountPill({
 });
 
 /**
+ * "N agents" chip shown beside an account pill: how many agents of this
+ * provider currently run against that account. Zero is rendered too - it is the
+ * answer to "is this profile still being used?", which is why an unused account
+ * still shows quota burn is a question worth asking.
+ */
+export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
+	count,
+	providerLabel,
+	testId,
+	theme,
+}: {
+	count: number;
+	/** Provider name for the hover title (`Claude` / `Codex`). */
+	providerLabel: string;
+	testId?: string;
+	theme: Theme;
+}) {
+	const label = `${count} ${count === 1 ? 'agent' : 'agents'}`;
+	return (
+		<span
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium flex-shrink-0"
+			style={{
+				color: theme.colors.textDim,
+				backgroundColor: `${theme.colors.border}55`,
+				border: `1px solid ${theme.colors.border}`,
+			}}
+			title={
+				count === 0
+					? `No ${providerLabel} agents are configured to use this account`
+					: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
+			}
+			data-testid={testId}
+		>
+			<Users className="w-3 h-3" aria-hidden="true" />
+			{label}
+		</span>
+	);
+});
+
+/**
  * "No snapshot cached yet - hit Refresh" body for a configured-but-unsampled
  * account. `testIdPrefix` keeps each provider's testids distinct
  * (`claude-plan` / `codex-plan`).
@@ -132,19 +172,32 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	shortName,
 	displayName,
 	testIdPrefix,
+	agentCount,
+	providerLabel,
 	theme,
 }: {
 	accountKey: string;
 	shortName: string;
 	displayName: string;
 	testIdPrefix: string;
+	/** Agents attributed to this account; omit to hide the badge. */
+	agentCount?: number;
+	providerLabel: string;
 	theme: Theme;
 }) {
 	return (
 		<div className="space-y-2" data-testid={`${testIdPrefix}-row-${shortName}-pending`}>
 			<div className="flex items-center gap-2">
 				<QuotaAccountPill accountKey={accountKey} displayName={displayName} theme={theme} />
-				<div className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+				{agentCount !== undefined && (
+					<QuotaAgentCountBadge
+						count={agentCount}
+						providerLabel={providerLabel}
+						testId={`${testIdPrefix}-agents-${shortName}`}
+						theme={theme}
+					/>
+				)}
+				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 					{accountKey}
 				</div>
 			</div>

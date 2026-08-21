@@ -1,6 +1,9 @@
 import { startTransition, useCallback } from 'react';
 import type React from 'react';
-import { KEYSTROKE_TEXTAREA_MAX_HEIGHT, resizeTextareaToContent } from '../utils/textareaSizing';
+import {
+	KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+	resizeTextareaToContent,
+} from '../../../utils/textareaSizing';
 import { getAtMentionTrigger, shouldOpenSlashCommand } from '../utils/inputTriggers';
 import {
 	detectCommandModeEntry,

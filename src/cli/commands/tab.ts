@@ -6,18 +6,27 @@
 //
 // Mutating verbs accept a tab ID (exact or unique prefix) and resolve the
 // owning agent automatically, so "maestro-cli tab close <tab-id>" just works.
-// Find tab IDs with "maestro-cli session list".
+// The literal "active" targets whatever tab is on screen (of --agent's agent,
+// or of the focused agent). Find tab IDs with "maestro-cli session list".
+//
+// The per-tab settings verbs (thinking, read-only, model, effort,
+// enter-to-send, save-to-history) are the CLI half of the composer chips: one
+// tab's state, written through the allowlisted + flushed config path so a
+// script can set a value and read it straight back with "tab show".
 
 import {
 	sendSimpleCommand,
 	reportResult,
 	failCommand,
 	resolveAgentOrFail,
+	resolveTabEntry,
 	resolveTabOwner,
 	listDesktopTabs,
 	type SimpleResult,
 } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
+import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
+import type { DesktopTabEntry } from '../../shared/desktopTabs';
 
 interface TabNewOptions {
 	agent: string;
@@ -26,6 +35,8 @@ interface TabNewOptions {
 }
 
 interface TabMutateOptions {
+	/** Disambiguates the `active` tab id: whose active tab did you mean? */
+	agent?: string;
 	json?: boolean;
 }
 
@@ -71,7 +82,7 @@ async function tabAction(
 ): Promise<void> {
 	let owner: { agentId: string; tabId: string };
 	try {
-		owner = await resolveTabOwner(tabId);
+		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
 		return failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
@@ -145,7 +156,7 @@ export async function tabMove(
 ): Promise<void> {
 	let owner: { agentId: string; tabId: string };
 	try {
-		owner = await resolveTabOwner(tabId);
+		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
 		return failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
@@ -214,19 +225,12 @@ export async function tabMove(
  * returns, so a script can write a flag and immediately read it back with
  * `maestro-cli session list --json`.
  */
-async function tabFlag(
-	tabId: string,
+async function writeTabPatch(
+	owner: { agentId: string; tabId: string },
 	patch: Record<string, unknown>,
-	successMessage: (owner: { agentId: string; tabId: string }) => string,
+	successMessage: string,
 	options: TabMutateOptions
 ): Promise<void> {
-	let owner: { agentId: string; tabId: string };
-	try {
-		owner = await resolveTabOwner(tabId);
-	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
-	}
-
 	try {
 		const result: SimpleResult = await sendSimpleCommand(
 			{
@@ -238,12 +242,27 @@ async function tabFlag(
 		);
 		reportResult(result, {
 			json: options.json,
-			successMessage: successMessage(owner),
+			successMessage,
 			jsonExtra: { tabId: owner.tabId, agentId: owner.agentId, ...patch },
 		});
 	} catch (error) {
 		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
+}
+
+async function tabFlag(
+	tabId: string,
+	patch: Record<string, unknown>,
+	successMessage: (owner: { agentId: string; tabId: string }) => string,
+	options: TabMutateOptions
+): Promise<void> {
+	let owner: { agentId: string; tabId: string };
+	try {
+		owner = await resolveTabOwner(tabId, options.agent);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+	await writeTabPatch(owner, patch, successMessage(owner), options);
 }
 
 /** Mark a tab unread (or read) - the blue dot that flags a tab for the human. */
@@ -272,4 +291,148 @@ export async function tabSaveToHistory(
 		(owner) => `${saveToHistory ? 'Enabled' : 'Disabled'} history saving for tab ${owner.tabId}`,
 		options
 	);
+}
+
+/**
+ * Set (or cycle) the thinking display for one tab: `off`, `on` (temporary),
+ * `sticky` (pinned), or `cycle` to advance one step the way clicking the chip
+ * does. `cycle` reads the tab's current mode from the same list call that
+ * resolved it, so it agrees with what is on screen rather than with a value the
+ * caller guessed.
+ */
+export async function tabThinking(
+	tabId: string,
+	mode: ThinkingMode | 'cycle',
+	options: TabMutateOptions
+): Promise<void> {
+	let entry: DesktopTabEntry;
+	try {
+		entry = await resolveTabEntry(tabId, options.agent);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+	const next = mode === 'cycle' ? nextThinkingMode(entry.thinking) : mode;
+	await writeTabPatch(
+		entry,
+		{ showThinking: next },
+		`Thinking for tab ${entry.tabId} is now ${next}`,
+		options
+	);
+}
+
+/** Put one tab into read-only / plan mode (the agent may not modify files). */
+export async function tabReadOnly(
+	tabId: string,
+	readOnly: boolean,
+	options: TabMutateOptions
+): Promise<void> {
+	await tabFlag(
+		tabId,
+		{ readOnlyMode: readOnly },
+		(owner) => `${readOnly ? 'Enabled' : 'Disabled'} read-only mode for tab ${owner.tabId}`,
+		options
+	);
+}
+
+/**
+ * Override the model for one tab, or pass `null` to drop the override so the
+ * tab inherits the agent's model again. Values are not validated against the
+ * provider's model list - same as `update-agent --model`, which lets you name a
+ * model the local install knows about before Maestro has probed for it.
+ */
+export async function tabModel(
+	tabId: string,
+	model: string | null,
+	options: TabMutateOptions
+): Promise<void> {
+	await tabFlag(
+		tabId,
+		{ customModel: model },
+		(owner) =>
+			model === null
+				? `Tab ${owner.tabId} now inherits the agent's model`
+				: `Set tab ${owner.tabId} model to ${model}`,
+		options
+	);
+}
+
+/** Override the effort/reasoning level for one tab, or `null` to inherit. */
+export async function tabEffort(
+	tabId: string,
+	effort: string | null,
+	options: TabMutateOptions
+): Promise<void> {
+	await tabFlag(
+		tabId,
+		{ customEffort: effort },
+		(owner) =>
+			effort === null
+				? `Tab ${owner.tabId} now inherits the agent's effort`
+				: `Set tab ${owner.tabId} effort to ${effort}`,
+		options
+	);
+}
+
+/**
+ * Override the send key for one tab, or `null` to inherit the global
+ * `enterToSendAI` setting. `false` is not the same as inheriting: it pins the
+ * tab to Cmd+Enter even if the global default is Enter.
+ */
+export async function tabEnterToSend(
+	tabId: string,
+	enterToSend: boolean | null,
+	options: TabMutateOptions
+): Promise<void> {
+	await tabFlag(
+		tabId,
+		{ enterToSend },
+		(owner) =>
+			enterToSend === null
+				? `Tab ${owner.tabId} now inherits the enter-to-send setting`
+				: `Tab ${owner.tabId} now sends on ${enterToSend ? 'Enter' : 'Cmd+Enter'}`,
+		options
+	);
+}
+
+/**
+ * Print one tab's settings - the read half of the verbs above, so a script can
+ * check state without diffing `session list --json`. Everything comes from the
+ * single list call that resolves the tab.
+ */
+export async function tabShow(tabId: string, options: TabMutateOptions): Promise<void> {
+	let entry: DesktopTabEntry;
+	try {
+		entry = await resolveTabEntry(tabId, options.agent);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, tab: entry }, null, 2));
+		return;
+	}
+
+	// `inherited` rather than a bare value: the three nullable fields fall back
+	// to the agent (model / effort) or the global setting (enter-to-send), and
+	// printing an empty column would read as "off". `undefined` is folded in
+	// too: an app older than this CLI does not send these fields at all, and
+	// "undefined" in a settings column reads as a bug rather than as skew.
+	const inherited = (value: string | boolean | null | undefined): string =>
+		value === null || value === undefined ? 'inherited' : String(value);
+	const row = (label: string, value: string): void =>
+		console.log(`  ${`${label}:`.padEnd(17)}${value}`);
+	console.log(`Tab ${entry.tabId}${entry.active ? ' (active)' : ''}`);
+	row('Agent', `${entry.agentName} (${entry.agentId})`);
+	row('Provider', entry.toolType);
+	row('Name', entry.name ?? '(unnamed)');
+	row('State', entry.state);
+	row('Session', entry.agentSessionId ?? '(none yet)');
+	row('Model', inherited(entry.model));
+	row('Effort', inherited(entry.effort));
+	row('Thinking', entry.thinking ?? 'off');
+	row('Read-only', String(entry.readOnly ?? false));
+	row('Save to History', String(entry.saveToHistory ?? false));
+	row('Enter to send', inherited(entry.enterToSend));
+	row('Starred', String(entry.starred));
+	row('Unread', String(entry.hasUnread ?? false));
 }
