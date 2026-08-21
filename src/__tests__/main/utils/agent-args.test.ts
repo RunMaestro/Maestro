@@ -12,7 +12,11 @@ import {
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
+<<<<<<< HEAD
 import { getAgentDefinition } from '../../../main/agents/definitions';
+=======
+import { AGENT_DEFINITIONS } from '../../../main/agents';
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -1460,6 +1464,7 @@ describe('getContextWindowValue', () => {
 });
 
 // ---------------------------------------------------------------------------
+<<<<<<< HEAD
 // Additional Directories -> native provider grant flags
 // ---------------------------------------------------------------------------
 describe('buildAgentArgs: additionalDirectories', () => {
@@ -1513,5 +1518,64 @@ describe('buildAgentArgs: additionalDirectories', () => {
 
 		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
 		expect(args[args.length - 1]).not.toMatch(/^-/);
+=======
+// Antigravity CLI (`agy`) - real definition wiring
+// ---------------------------------------------------------------------------
+describe('buildAgentArgs with the Antigravity definition', () => {
+	const antigravity = () =>
+		({
+			...AGENT_DEFINITIONS.find((d) => d.id === 'antigravity'),
+			available: true,
+			capabilities: {} as AgentConfig['capabilities'],
+		}) as AgentConfig;
+
+	it('composes a headless run that auto-approves tools and streams JSON', () => {
+		const result = buildAgentArgs(antigravity(), { baseArgs: [], prompt: 'hi' });
+
+		expect(result).toEqual(['--dangerously-skip-permissions', '--output-format', 'stream-json']);
+	});
+
+	it('resumes a specific conversation by id', () => {
+		const result = buildAgentArgs(antigravity(), {
+			baseArgs: [],
+			prompt: 'follow up',
+			agentSessionId: '055a398f-db14-4c5f-abbb-1bf03f8120a7',
+		});
+
+		expect(result).toContain('--conversation');
+		expect(result).toContain('055a398f-db14-4c5f-abbb-1bf03f8120a7');
+	});
+
+	it('drops the permission-skip flag in read-only mode and sandboxes the terminal instead', () => {
+		const result = buildAgentArgs(antigravity(), {
+			baseArgs: [],
+			prompt: 'read only please',
+			readOnlyMode: true,
+		});
+
+		expect(result).not.toContain('--dangerously-skip-permissions');
+		expect(result).toContain('--sandbox');
+	});
+
+	it('raises the headless timeout past the 5m CLI default without any user config', () => {
+		const { args } = applyAgentConfigOverrides(antigravity(), [], {});
+
+		expect(args).toEqual(['--print-timeout', '30m']);
+	});
+
+	it('adds model and effort flags only once the user sets them', () => {
+		const { args } = applyAgentConfigOverrides(antigravity(), [], {
+			agentConfigValues: { model: 'gemini-3.6-flash-high', effort: 'high' },
+		});
+
+		expect(args).toEqual([
+			'--model',
+			'gemini-3.6-flash-high',
+			'--effort',
+			'high',
+			'--print-timeout',
+			'30m',
+		]);
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 	});
 });

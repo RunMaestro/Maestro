@@ -222,6 +222,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 
 ### Supported Agents
 
+<<<<<<< HEAD
 | ID              | Name          | Status     |
 | --------------- | ------------- | ---------- |
 | `claude-code`   | Claude Code   | **Active** |
@@ -231,6 +232,17 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `copilot-cli`   | Copilot-CLI   | **Beta**   |
 | `grok`          | Grok CLI      | **Beta**   |
 | `terminal`      | Terminal      | Internal   |
+=======
+| ID              | Name            | Status     |
+| --------------- | --------------- | ---------- |
+| `claude-code`   | Claude Code     | **Active** |
+| `codex`         | OpenAI Codex    | **Active** |
+| `opencode`      | OpenCode        | **Active** |
+| `factory-droid` | Factory Droid   | **Active** |
+| `copilot-cli`   | Copilot-CLI     | **Beta**   |
+| `antigravity`   | Antigravity CLI | **Beta**   |
+| `terminal`      | Terminal        | Internal   |
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
 

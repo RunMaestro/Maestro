@@ -61,6 +61,7 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('copilot-cli')).toBe(true);
 		});
 
+<<<<<<< HEAD
 		it('should register Pi parser', () => {
 			expect(hasOutputParser('pi')).toBe(false);
 
@@ -98,16 +99,31 @@ describe('parsers/index', () => {
 
 			const parsers = getAllOutputParsers();
 			expect(parsers.length).toBe(9);
+=======
+		it('should register exactly 6 parsers', () => {
+			initializeOutputParsers();
+
+			const parsers = getAllOutputParsers();
+			expect(parsers.length).toBe(6); // Claude, OpenCode, Codex, Factory Droid, Copilot, Antigravity
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
+<<<<<<< HEAD
 			expect(getAllOutputParsers().length).toBe(9);
 
 			// Second initialization should still have exactly 9
 			initializeOutputParsers();
 			expect(getAllOutputParsers().length).toBe(9);
+=======
+			expect(getAllOutputParsers().length).toBe(6);
+
+			// Second initialization should still have exactly 6
+			initializeOutputParsers();
+			expect(getAllOutputParsers().length).toBe(6);
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 		});
 	});
 

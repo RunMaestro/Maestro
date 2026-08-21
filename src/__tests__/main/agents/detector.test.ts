@@ -339,13 +339,19 @@ describe('agent-detector', () => {
 
 			const agents = await detector.detectAgents();
 
+<<<<<<< HEAD
 			expect(agents.length).toBe(getAgentIds().length);
+=======
+			// Should have all 9 agents (terminal, claude-code, codex, gemini-cli, antigravity, qwen3-coder, opencode, factory-droid, copilot-cli)
+			expect(agents.length).toBe(9);
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 
 			const agentIds = agents.map((a) => a.id);
 			expect(agentIds).toContain('terminal');
 			expect(agentIds).toContain('claude-code');
 			expect(agentIds).toContain('codex');
 			expect(agentIds).toContain('gemini-cli');
+			expect(agentIds).toContain('antigravity');
 			expect(agentIds).toContain('qwen3-coder');
 			expect(agentIds).toContain('hermes');
 			expect(agentIds).toContain('pi');
@@ -1076,8 +1082,13 @@ describe('agent-detector', () => {
 
 			const result = await detectPromise;
 			expect(result).toBeDefined();
+<<<<<<< HEAD
 			// Should stay aligned with the live agent catalog, even as new agents are added.
 			expect(result.length).toBe(getAgentIds().length);
+=======
+			// Should have all 9 agents (terminal, claude-code, codex, gemini-cli, antigravity, qwen3-coder, opencode, factory-droid, copilot-cli)
+			expect(result.length).toBe(9);
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 		});
 
 		it('should handle very long PATH', async () => {

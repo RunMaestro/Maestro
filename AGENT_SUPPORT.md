@@ -948,16 +948,13 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 
 ---
 
-### Gemini CLI 📋 Planned
+### Gemini CLI 📋 Superseded
 
-**Status:** Not yet implemented
+**Status:** Not shipping. Hidden from the UI, kept only for type/back-compat.
 
-**To Add:**
-
-1. Agent definition in `agents/definitions.ts`
-2. Capabilities in `agents/capabilities.ts`
-3. Output parser for Gemini JSON format
-4. Error patterns for Google API errors
+Google's terminal agent story moved to Antigravity CLI (`agy`). See
+[Antigravity CLI](#antigravity-cli--implemented-unverified-against-a-live-binary) below for
+the shipping integration.
 
 ---
 
@@ -1035,6 +1032,7 @@ codex exec --json resume <thread_id> "continue"
 
 ---
 
+<<<<<<< HEAD
 ### Grok CLI ✅ Fully Implemented
 
 **Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). All facts below verified against grok v0.2.93.
@@ -1092,3 +1090,66 @@ grok --cwd /path/to/project --always-approve --output-format streaming-json --re
 # Read-only plan mode
 grok --cwd /path/to/project --output-format streaming-json --permission-mode plan -p "prompt"
 ```
+=======
+### Antigravity CLI ✅ Implemented (unverified against a live binary)
+
+**Status:** Beta (marked beta via `BETA_AGENTS` in `src/shared/agentMetadata.ts`)
+
+Google's terminal coding agent, and the successor to the Gemini CLI effort above.
+
+- **Agent ID:** `antigravity`
+- **Binary:** `agy` (installs to `~/.local/bin/agy` on macOS/Linux, `%LOCALAPPDATA%\agy\bin` on Windows)
+- **Auth:** Google account. Headless runs reuse cached credentials, so the user must sign in once from an interactive `agy` session on that machine first.
+
+| Aspect             | Value                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| Batch/headless     | `-p` (aliases `--print`, `--prompt`)                         |
+| JSON Output        | `--output-format stream-json` (also supports `json`, `text`) |
+| Resume             | `--conversation <id>` (`--continue` resumes the most recent) |
+| Session ID Field   | `conversation_id`                                            |
+| Model Selection    | `--model <slug>`                                             |
+| Reasoning Effort   | `--effort low\|medium\|high`                                 |
+| Auto-approve tools | `--dangerously-skip-permissions`                             |
+| Terminal sandbox   | `--sandbox`                                                  |
+| Headless timeout   | `--print-timeout` (CLI default 5m; Maestro defaults to 30m)  |
+| Session Storage    | ❌ On-disk conversation format is undocumented               |
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/antigravity-output-parser.ts`
+- ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (`ANTIGRAVITY_ERROR_PATTERNS`)
+- ❌ Session Storage: not implemented; `supportsSessionStorage` is false
+- ⏳ Capabilities: derived from the published headless contract, not from a captured live run
+
+**Stream-JSON Event Types:**
+
+Antigravity discriminates on an `event` key and nests the payload under a property of the
+same name, which is why it needs its own parser rather than a Claude-parser subclass:
+
+- `init` → `{ cwd, tools, permission_mode, model, agent }`. Carries no `conversation_id`.
+- `step_update` → `{ conversation_id, step_index, state (ACTIVE|DONE), step_type
+(user_input|agent_response|tool|checkpoint), text_delta, tool_name, tool_info, usage }`
+- `result` → `{ conversation_id, status, response, error, duration_seconds, num_turns, usage }`.
+  `error` is present only on failure, so its presence (not the free-form `status` string) is
+  what the parser keys off to reclassify a result as an error.
+
+Usage fields are snake_case: `input_tokens`, `output_tokens`, `thinking_tokens`,
+`cache_read_tokens`, `total_tokens`. No context window is reported, so the configured
+window drives the context meter.
+
+**Known Limitations:**
+
+- **No true read-only mode.** Headless mode auto-allows reading _and writing_ files inside the
+  active workspace; `--sandbox` only restricts terminal commands. `supportsReadOnlyMode` is
+  therefore false and `readOnlyCliEnforced` is false.
+- **No image input.** No documented attachment flag, so `supportsImageInput` is false.
+- **No slash commands in headless mode.** They are a TUI-only affordance.
+- **Batch runs pass `--dangerously-skip-permissions`.** Without it, headless mode soft-denies
+  shell commands and a run stalls on its first terminal tool call.
+
+**Documentation Sources:**
+
+- [Antigravity CLI overview](https://antigravity.google/docs/cli/overview)
+- [Headless mode](https://antigravity.google/docs/cli/headless)
+- [Installation & auth](https://antigravity.google/docs/cli/install)
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)

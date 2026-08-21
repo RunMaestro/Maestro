@@ -175,7 +175,48 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+<<<<<<< HEAD
 	 * Qwen3 Coder - Alibaba's Qwen coding agent (Qwen Code CLI)
+=======
+	 * Antigravity CLI (`agy`) - Google's terminal coding agent, the CLI surface of
+	 * Antigravity and the successor to the Gemini CLI effort above.
+	 *
+	 * Capabilities below are derived from the published headless-mode contract
+	 * (https://antigravity.google/docs/cli/headless) rather than from a live run,
+	 * so the agent ships as beta. Anything the docs do not state outright is left
+	 * false rather than guessed at.
+	 */
+	antigravity: {
+		supportsResume: true, // --conversation <id>
+		supportsReadOnlyMode: false, // No flag makes it read-only; workspace writes stay auto-allowed
+		supportsJsonOutput: true, // --output-format stream-json
+		supportsSessionId: true, // conversation_id on init/step_update/result
+		supportsImageInput: false, // No documented attachment flag
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false, // Slash commands are TUI-only, not exposed to headless runs
+		supportsSessionStorage: false, // On-disk conversation format is undocumented
+		supportsCostTracking: false, // usage reports tokens only, no cost
+		supportsUsageStats: true, // usage: input/output/thinking/cache_read/total tokens
+		supportsBatchMode: true, // -p / --print / --prompt
+		requiresPromptToStart: true, // Headless runs require -p; there is no idle non-interactive mode
+		supportsStreaming: true, // stream-json emits step_update deltas
+		supportsResultMessages: true, // Terminal `result` event
+		supportsModelSelection: true, // --model <slug>
+		supportsStreamJsonInput: false, // No stdin stream-json input format
+		supportsThinkingDisplay: false, // thinking_tokens are counted, but no reasoning text step type is documented
+		supportsContextMerge: true, // Context can be delivered through the prompt
+		supportsContextExport: false, // Requires session storage
+		supportsWizard: false, // Structured-output wizard flow unverified against a live CLI
+		supportsGroupChatModeration: false, // Unverified
+		usesJsonLineOutput: true, // stream-json is newline-delimited JSON
+		usesCombinedContextWindow: false, // Gemini reports input and output separately
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+	},
+
+	/**
+	 * Qwen3 Coder - Alibaba's Qwen coding model
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 	 *
 	 * Qwen Code is a Gemini CLI fork that exposes the same stream-json headless
 	 * interface. Capabilities mirror the Gemini/Claude stream-json integration.

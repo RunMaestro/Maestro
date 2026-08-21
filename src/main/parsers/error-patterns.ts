@@ -1091,6 +1091,7 @@ const COPILOT_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 };
 
+<<<<<<< HEAD
 const PI_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
 		{
@@ -1247,12 +1248,45 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			pattern: /grok\s+login/i,
 			message: 'Login required. Please run "grok login" to authenticate.',
+=======
+/**
+ * Antigravity CLI (`agy`) error patterns.
+ *
+ * Antigravity authenticates against a Google account and shares the Gemini
+ * quota/credit system, so the auth and rate-limit wording below mirrors Google's
+ * API surface. The headless-specific entries cover the two failure modes unique
+ * to `-p` runs: the 5m default print timeout, and tool calls that get soft-denied
+ * because the run was started without --dangerously-skip-permissions.
+ */
+const ANTIGRAVITY_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not (?:signed in|authenticated)/i,
+			message: 'Not signed in. Run "agy" once interactively to complete the Google sign-in.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:authentication|auth) (?:failed|required|expired)/i,
+			message: 'Antigravity authentication failed. Run "agy" interactively to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /credentials.*(?:expired|invalid|not found)/i,
+			message:
+				'Cached Antigravity credentials are no longer valid. Sign in again from an interactive "agy" session.',
+			recoverable: true,
+		},
+		{
+			pattern: /\b401\b|unauthenticated/i,
+			message: 'Unauthorized. Check the Google account signed in to Antigravity.',
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 			recoverable: true,
 		},
 	],
 
 	rate_limited: [
 		{
+<<<<<<< HEAD
 			pattern: /rate limit/i,
 			message: 'Rate limit exceeded. Please wait and try again.',
 			recoverable: true,
@@ -1289,12 +1323,27 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			pattern: /prompt.*too\s+long/i,
 			message: 'Prompt is too long. Try a shorter message or start a new session.',
+=======
+			pattern: /resource_exhausted/i,
+			message: 'Antigravity quota exhausted. Wait for the quota to reset and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /rate limit|too many requests|\b429\b/i,
+			message: 'Rate limited by Antigravity. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:quota|credits?).*(?:exceeded|exhausted|depleted)/i,
+			message: 'Out of AI credits. Resume when your Antigravity quota resets.',
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 			recoverable: true,
 		},
 	],
 
 	network_error: [
 		{
+<<<<<<< HEAD
 			pattern: /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET/,
 			message: 'Network error. Please check your connection.',
 			recoverable: true,
@@ -1311,16 +1360,35 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 		{
 			pattern: /connection (failed|refused|reset)/i,
+=======
+			pattern: /print[- ]timeout|deadline exceeded/i,
+			message:
+				'The headless run exceeded its timeout. Raise the "Headless Timeout" option in the agent settings.',
+			recoverable: true,
+		},
+		{
+			pattern: /connection (?:refused|reset|failed)/i,
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 			message: 'Connection failed. Check your internet connection.',
 			recoverable: true,
 		},
 		{
+<<<<<<< HEAD
 			pattern: /timed?\s?out/i,
+=======
+			pattern: /network (?:error|unreachable)/i,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /\btimed? ?out\b/i,
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 			message: 'Request timed out. Please try again.',
 			recoverable: true,
 		},
 	],
 
+<<<<<<< HEAD
 	agent_crashed: [
 		{
 			// Verified: `grok -p "hi" -m nonexistent-model-xyz` emits
@@ -1329,12 +1397,20 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 			pattern: /couldn't set model|unknown model id/i,
 			message:
 				'Invalid model. Run "grok models" to see available models and check the model setting in configuration.',
+=======
+	permission_denied: [
+		{
+			pattern: /soft[- ]denied|permission (?:denied|required)|tool.*not allowed/i,
+			message:
+				'A tool call was denied. Headless runs deny shell commands unless permissions are skipped.',
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 			recoverable: true,
 		},
 	],
 
 	session_not_found: [
 		{
+<<<<<<< HEAD
 			// Verified: `grok -p "hi" --resume <bad-uuid> --output-format
 			// streaming-json` (grok v0.2.93) prints nothing on stdout and exits 1
 			// with stderr:
@@ -1353,6 +1429,41 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 			// standalone in other output modes.
 			pattern: /session get failed/i,
 			message: 'Session not found. Starting fresh conversation.',
+=======
+			pattern: /conversation.*not found|unknown conversation/i,
+			message: 'Conversation not found. Starting a fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context (?:window|length|limit).*(?:exceeded|too long)/i,
+			message: 'Context window exceeded. Start a new conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:input|prompt).*too (?:long|large)/i,
+			message: 'The prompt is too large for the context window. Try a shorter message.',
+			recoverable: true,
+		},
+		{
+			pattern: /token limit|maximum.*tokens/i,
+			message: 'Token limit reached. Start a new conversation to continue.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /internal (?:error|server error)|\b50[0234]\b/i,
+			message: 'Antigravity returned an internal error. Please try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /panic:|unexpected error/i,
+			message: 'The Antigravity CLI crashed unexpectedly.',
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 			recoverable: true,
 		},
 	],
@@ -1368,10 +1479,14 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
 	['copilot-cli', COPILOT_ERROR_PATTERNS],
+<<<<<<< HEAD
 	['pi', PI_ERROR_PATTERNS],
 	['qwen3-coder', QWEN_ERROR_PATTERNS],
 	['omp', OMP_ERROR_PATTERNS],
 	['grok', GROK_ERROR_PATTERNS],
+=======
+	['antigravity', ANTIGRAVITY_ERROR_PATTERNS],
+>>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 ]);
 
 /**
