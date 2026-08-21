@@ -1,4 +1,5 @@
 import { PLAYBOOKS_DIR } from '../../../../../../shared/maestro-paths';
+import { joinPath } from '../../../../../../shared/formatters';
 import { captureException } from '../../../../../utils/sentry';
 
 export interface ExistingDocsResult {
@@ -47,7 +48,12 @@ export async function checkForExistingAutoRunDocs(
 	dirPath: string,
 	sshRemoteId?: string
 ): Promise<ExistingDocsResult> {
-	const autoRunPath = `${dirPath}/${PLAYBOOKS_DIR}`;
+	// joinPath, not `${dirPath}/${PLAYBOOKS_DIR}`: a dirPath of "/" (which the
+	// directory field accepts, because readDir succeeds on it) made that template
+	// produce a leading "//", and Windows resolves "//.maestro/playbooks" as the
+	// UNC path \\.maestro\playbooks - a host that does not exist, so stat failed
+	// with UNKNOWN instead of the ENOENT the recoverable-error list expects.
+	const autoRunPath = joinPath(dirPath, PLAYBOOKS_DIR);
 	let result: Awaited<ReturnType<typeof window.maestro.autorun.listDocs>>;
 
 	try {

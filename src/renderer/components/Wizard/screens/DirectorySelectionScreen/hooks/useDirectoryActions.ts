@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { PLAYBOOKS_DIR } from '../../../../../../shared/maestro-paths';
+import { joinPath } from '../../../../../../shared/formatters';
 import { gitService } from '../../../../../services/git';
 import { logger } from '../../../../../utils/logger';
 import { captureException } from '../../../../../utils/sentry';
@@ -90,7 +91,9 @@ export function useDirectoryActions({
 			return;
 		}
 
-		const autoRunPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
+		// joinPath for the same reason as checkForExistingAutoRunDocs: a trailing
+		// separator (or a bare "/") would otherwise double up and read as a UNC path.
+		const autoRunPath = joinPath(directoryPath, PLAYBOOKS_DIR);
 		const sshRemoteId = getSshRemoteId();
 		let result: Awaited<ReturnType<typeof window.maestro.autorun.listDocs>>;
 

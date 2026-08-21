@@ -71,6 +71,27 @@ describe('DirectorySelectionScreen utils', () => {
 		});
 	});
 
+	// MAESTRO-TN: the directory field accepts "/" (readDir succeeds on it), and
+	// `${dirPath}/${PLAYBOOKS_DIR}` then produced a leading "//". Windows reads
+	// "//.maestro/playbooks" as the UNC path \\.maestro\playbooks, so stat failed
+	// with UNKNOWN rather than the ENOENT the recoverable-error list matches.
+	it.each([
+		['/', '/.maestro/playbooks'],
+		['/project/', '/project/.maestro/playbooks'],
+		['/project', '/project/.maestro/playbooks'],
+		['C:\\Users\\dev\\proj', 'C:\\Users\\dev\\proj\\.maestro\\playbooks'],
+	])('builds a non-UNC Auto Run path for %j', async (dirPath, expected) => {
+		vi.mocked(window.maestro.autorun.listDocs).mockResolvedValueOnce({
+			success: true,
+			files: [],
+		});
+
+		await checkForExistingAutoRunDocs(dirPath);
+
+		expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith(expected, undefined);
+		expect(expected.startsWith('//')).toBe(false);
+	});
+
 	it('reports and rethrows unexpected Auto Run docs lookup failures', async () => {
 		const error = new Error('network timeout');
 		vi.mocked(window.maestro.autorun.listDocs).mockRejectedValueOnce(error);

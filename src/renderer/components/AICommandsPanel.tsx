@@ -362,7 +362,14 @@ export function AICommandsPanel({
 							className="rounded-lg border overflow-hidden"
 							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 						>
-							{editingCommand?.id === cmd.id ? (
+							{/*
+							  Compare only when something is actually being edited. `editingCommand?.id
+							  === cmd.id` looks equivalent but evaluates to `undefined === undefined`
+							  when nothing is being edited AND the persisted command has no `id`, which
+							  entered the editing branch and dereferenced the null `editingCommand`
+							  below, blanking the whole Settings modal via the ErrorBoundary.
+							*/}
+							{editingCommand !== null && editingCommand.id === cmd.id ? (
 								// Editing mode
 								<div className="p-3 space-y-3">
 									<div className="flex items-center justify-between">

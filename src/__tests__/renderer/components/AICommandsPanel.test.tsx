@@ -1459,4 +1459,59 @@ describe('AICommandsPanel', () => {
 			expect(mockHandleKeyDown).toHaveBeenCalled();
 		});
 	});
+
+	describe('Malformed persisted commands (MAESTRO-YP/YQ/YR)', () => {
+		// settings.json is user/sync/legacy editable, so a stored command can be
+		// missing its `id`. That used to make `editingCommand?.id === cmd.id`
+		// evaluate `undefined === undefined` -> true while nothing was being
+		// edited, rendering the edit form against a null `editingCommand` and
+		// taking the whole Settings modal down through the ErrorBoundary.
+		const idLessCommand = {
+			command: '/legacy',
+			description: 'Command persisted before ids existed',
+			prompt: 'Legacy prompt',
+			isBuiltIn: false,
+		} as unknown as CustomAICommand;
+
+		it('renders a command with no id without crashing', () => {
+			expect(() =>
+				render(
+					<AICommandsPanel
+						theme={mockTheme}
+						customAICommands={[idLessCommand]}
+						setCustomAICommands={mockSetCustomAICommands}
+					/>
+				)
+			).not.toThrow();
+
+			expect(screen.getByText('/legacy')).toBeInTheDocument();
+		});
+
+		it('shows the id-less command collapsed, not in edit mode', () => {
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[idLessCommand]}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			// The edit form's Save/Cancel pair only exists in the editing branch.
+			expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Cancel$/i })).not.toBeInTheDocument();
+		});
+
+		it('still renders normally alongside well-formed commands', () => {
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[idLessCommand, createMockCommand({ command: '/ok' })]}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			expect(screen.getByText('/legacy')).toBeInTheDocument();
+			expect(screen.getByText('/ok')).toBeInTheDocument();
+		});
+	});
 });
