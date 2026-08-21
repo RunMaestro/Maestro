@@ -391,6 +391,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// writing files inside the active workspace stays auto-allowed in headless
 		// mode. There is no CLI flag that makes the agent truly read-only, hence
 		// readOnlyCliEnforced: false and supportsReadOnlyMode: false.
+		//
+		// Consequence worth knowing: tab naming spawns with readOnlyMode: true and
+		// relies on `noToolsArgs` to keep a task-like first message from turning into
+		// a real agentic run. The CLI exposes no tool-disabling flag, so there is
+		// nothing to put in `noToolsArgs` and a naming run can still touch workspace
+		// files. Wire `noToolsArgs` here the moment such a flag ships.
 		readOnlyArgs: ['--sandbox'],
 		readOnlyCliEnforced: false,
 		yoloModeArgs: ['--dangerously-skip-permissions'],

@@ -1141,7 +1141,11 @@ window drives the context meter.
 
 - **No true read-only mode.** Headless mode auto-allows reading _and writing_ files inside the
   active workspace; `--sandbox` only restricts terminal commands. `supportsReadOnlyMode` is
-  therefore false and `readOnlyCliEnforced` is false.
+  therefore false and `readOnlyCliEnforced` is false. Knock-on effect: tab naming spawns
+  read-only and leans on `noToolsArgs` to stop a task-like first message from becoming a real
+  agentic run, but the CLI has no tool-disabling flag to put there, so a naming run can still
+  touch workspace files. (`noToolsArgs` is Claude-only today, so this is shared with every
+  other non-Claude agent - Antigravity is just the one that also lacks CLI read-only.)
 - **No image input.** No documented attachment flag, so `supportsImageInput` is false.
 - **No slash commands in headless mode.** They are a TUI-only affordance.
 - **Batch runs pass `--dangerously-skip-permissions`.** Without it, headless mode soft-denies

@@ -78,6 +78,13 @@ interface AntigravityInit {
 
 interface AntigravityStreamMessage {
 	event: 'init' | 'step_update' | 'result';
+	/**
+	 * Not in the documented envelope, but read defensively: the docs only show
+	 * conversation_id nested inside step_update/result, so a run that dies right
+	 * after init would otherwise strand the conversation with no resumable id.
+	 * If the CLI ever puts it at the top level, we pick it up for free.
+	 */
+	conversation_id?: string;
 	init?: AntigravityInit;
 	step_update?: AntigravityStepUpdate;
 	result?: AntigravityResult;
@@ -137,7 +144,7 @@ export class AntigravityOutputParser implements AgentOutputParser {
 
 		switch (parsed.event) {
 			case 'init':
-				return this.parseInitEvent(parsed.init);
+				return this.parseInitEvent(parsed);
 			case 'step_update':
 				return this.parseStepUpdate(parsed.step_update, parsed);
 			case 'result':
@@ -149,12 +156,15 @@ export class AntigravityOutputParser implements AgentOutputParser {
 
 	/**
 	 * Init carries the run's configuration (cwd, model, tools, permission mode).
-	 * It does NOT carry conversation_id - that first appears on step_update.
+	 * The documented payload has no conversation_id - that first appears on
+	 * step_update - but a top-level one is honored if the CLI provides it, so a run
+	 * that dies immediately after init still yields a resumable id.
 	 */
-	private parseInitEvent(init: AntigravityInit | undefined): ParsedEvent {
+	private parseInitEvent(raw: AntigravityStreamMessage): ParsedEvent {
 		return {
 			type: 'init',
-			raw: init ?? {},
+			sessionId: raw.conversation_id,
+			raw: raw.init ?? {},
 		};
 	}
 
@@ -256,12 +266,18 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		return typeof error === 'string' && error.trim() ? error : null;
 	}
 
+	/**
+	 * Only a SUCCESSFUL terminal envelope counts as a result message.
+	 *
+	 * A failed `result` is reclassified to type 'error' by parseResult, and it must
+	 * not answer true here even though its raw payload is still `event: 'result'`.
+	 * StdoutHandler returns early on error events before emitting a result, but
+	 * ExitHandler's end-of-stream flush (for a last line with no trailing newline)
+	 * keys off isResultMessage alone - answering true there would emit the failure
+	 * text to the user as if it were the agent's answer.
+	 */
 	isResultMessage(event: ParsedEvent): boolean {
-		if (event.type === 'result') {
-			return true;
-		}
-		const raw = event.raw as AntigravityStreamMessage | undefined;
-		return raw?.event === 'result';
+		return event.type === 'result';
 	}
 
 	extractSessionId(event: ParsedEvent): string | null {
@@ -269,7 +285,12 @@ export class AntigravityOutputParser implements AgentOutputParser {
 			return event.sessionId;
 		}
 		const raw = event.raw as AntigravityStreamMessage | undefined;
-		return raw?.step_update?.conversation_id || raw?.result?.conversation_id || null;
+		return (
+			raw?.conversation_id ||
+			raw?.step_update?.conversation_id ||
+			raw?.result?.conversation_id ||
+			null
+		);
 	}
 
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {

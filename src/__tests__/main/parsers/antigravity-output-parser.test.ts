@@ -27,8 +27,20 @@ describe('AntigravityOutputParser', () => {
 				raw: expect.objectContaining({ cwd: '/tmp/project' }),
 			})
 		);
-		// init carries no conversation_id; that first appears on step_update.
+		// The documented init payload carries no conversation_id.
 		expect(event && parser.extractSessionId(event)).toBeNull();
+	});
+
+	it('keeps a top-level conversation id on init so an immediate failure stays resumable', () => {
+		const parser = new AntigravityOutputParser();
+
+		const event = parser.parseJsonObject({
+			event: 'init',
+			conversation_id: 'conv-early',
+			init: { cwd: '/tmp/project' },
+		});
+
+		expect(event && parser.extractSessionId(event)).toBe('conv-early');
 	});
 
 	it('emits assistant text deltas as partial text carrying the conversation id', () => {
@@ -160,8 +172,10 @@ describe('AntigravityOutputParser', () => {
 				sessionId: 'conv-2',
 			})
 		);
-		// A failed result must not be reported as a successful completion.
-		expect(event && parser.isResultMessage(event)).toBe(true);
+		// A failed envelope must NOT answer isResultMessage. ExitHandler's
+		// end-of-stream flush emits event.text as the agent's answer for anything
+		// that does, which would surface the failure text as a normal response.
+		expect(event && parser.isResultMessage(event)).toBe(false);
 	});
 
 	it('classifies a failed result against the registered error patterns', () => {
