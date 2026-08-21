@@ -1271,7 +1271,7 @@ function parentSplitDirection(node: PanelLayoutNode, leafId: string): 'row' | 'c
 }
 
 /** Id of the first (top-left) leaf in a layout, or null for an empty tree. */
-function firstLeafId(node: PanelLayoutNode): string | null {
+export function firstLeafId(node: PanelLayoutNode): string | null {
 	if (node.kind === 'leaf') return node.id;
 	for (const child of node.children) {
 		const id = firstLeafId(child);

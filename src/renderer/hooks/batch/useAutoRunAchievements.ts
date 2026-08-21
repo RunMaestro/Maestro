@@ -21,6 +21,8 @@ import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import type { AchievementTimeSource } from '../../types';
 import { cueService } from '../../services/cue';
 import { submitLeaderboardTimeDelta } from '../../services/leaderboard';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
+import type { SleepAwareSpan } from '../../services/systemSleep';
 
 // ============================================================================
 // Dependencies interface
@@ -57,8 +59,12 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	const { setStandingOvationData } = getModalActions();
 
 	// --- Refs ---
-	const autoRunProgressRef = useRef<{ lastUpdateTime: number }>({
-		lastUpdateTime: 0,
+	// `lastUpdateSpan` is sleep-aware: the interval below is frozen while the
+	// machine sleeps but the wall clock is not, so a plain `Date.now()` delta
+	// would credit an overnight sleep as Auto Run time on the first tick after
+	// wake. `null` means no active run.
+	const autoRunProgressRef = useRef<{ lastUpdateSpan: SleepAwareSpan | null }>({
+		lastUpdateSpan: null,
 	});
 
 	// Credit a block of achievement time and raise the standing ovation if it
@@ -87,20 +93,21 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	useEffect(() => {
 		// Only set up timer if there are active batch runs
 		if (activeBatchSessionIds.length === 0) {
-			autoRunProgressRef.current.lastUpdateTime = 0;
+			autoRunProgressRef.current.lastUpdateSpan = null;
 			return;
 		}
 
 		// Initialize last update time on first active run
-		if (autoRunProgressRef.current.lastUpdateTime === 0) {
-			autoRunProgressRef.current.lastUpdateTime = Date.now();
+		if (autoRunProgressRef.current.lastUpdateSpan === null) {
+			autoRunProgressRef.current.lastUpdateSpan = beginSleepAwareSpan();
 		}
 
 		// Set up interval to update progress every minute
 		const intervalId = setInterval(() => {
-			const now = Date.now();
-			const elapsedMs = now - autoRunProgressRef.current.lastUpdateTime;
-			autoRunProgressRef.current.lastUpdateTime = now;
+			const span = autoRunProgressRef.current.lastUpdateSpan;
+			if (!span) return;
+			const elapsedMs = sleepAwareElapsedMs(span);
+			autoRunProgressRef.current.lastUpdateSpan = beginSleepAwareSpan();
 
 			// Multiply by number of concurrent sessions so each active Auto Run contributes its time
 			// e.g., 2 sessions running for 1 minute = 2 minutes toward cumulative achievement time

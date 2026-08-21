@@ -42,6 +42,14 @@ Every consulted reply lands in a tinted bubble topped by an **attribution header
 
 Mention several agents in one message and each runs independently and concurrently, so a fan-out returns as fast as the slowest agent, not the sum of them.
 
+### Mentions in a queued message wait their turn
+
+If your agent is busy, the message you send is added to its [execution queue](./general-usage) instead of running right away - and the mention inside it waits with it. The consultation fires at the moment that queued message becomes your agent's turn, not when you pressed Enter.
+
+That keeps the order you wrote in. A queued "finish the refactor, then have @Reviewer check it" reaches the reviewer after the refactor lands, with the transcript as it stands then, rather than pulling the reviewer into work that has not happened yet. Editing a queued message updates its pending consultation too, so adding or removing an `@name` before it runs does what you would expect. **Force Send** on a queued item runs the consultation immediately, along with the rest of that message.
+
+A message addressed **only** to another agent (one that starts with `@name`) has no turn of your own to wait for, so it is consulted right away even while your agent is working.
+
 ### Who answers: your agent, the mentioned agents, or both
 
 Whether your **current** agent also answers depends on where the mention sits:

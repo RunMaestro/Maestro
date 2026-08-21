@@ -38,9 +38,17 @@ export interface ClaudeUsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
 	authState?: 'authenticated' | 'unauthenticated';
-	session: { percent: number; resetsAt: string };
-	weekAllModels: { percent: number; resetsAt: string };
-	weekSonnetOnly: { percent: number; resetsAt: string };
+	// `resetsAt` is absent when claude's panel painted a percentage but no
+	// "Resets ..." row (it omits the row for an idle 0% window). Render the
+	// percentage anyway and drop the caption.
+	session: { percent: number; resetsAt?: string };
+	weekAllModels: { percent: number; resetsAt?: string };
+	/**
+	 * The separately-metered premium-model weekly limit. The field name is
+	 * historical - claude has renamed this window from "Sonnet only" to "Opus"
+	 * to "Fable" - so `label` carries whatever the panel actually called it.
+	 */
+	weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 }
 
 interface ClaudeUsageState {

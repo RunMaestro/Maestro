@@ -237,7 +237,7 @@ describe('EditAgentModal', () => {
 		});
 	});
 
-	it('should show provider change warning when provider is changed', async () => {
+	it('should show provider change notice when provider is changed', async () => {
 		render(
 			<EditAgentModal
 				isOpen={true}
@@ -255,10 +255,11 @@ describe('EditAgentModal', () => {
 		fireEvent.change(providerSelect, { target: { value: 'codex' } });
 
 		await waitFor(() => {
-			expect(
-				screen.getByText(/Changing the provider will clear your session list/)
-			).toBeInTheDocument();
+			expect(screen.getByText(/Your tabs and their transcripts are kept/)).toBeInTheDocument();
 		});
+		// The old copy promised the opposite. Tabs are preserved now, so the notice
+		// must never tell the user their tabs will be cleared.
+		expect(screen.queryByText(/clear your session list/)).not.toBeInTheDocument();
 	});
 
 	// Effort is per-session (like model), but the panel used to render it straight

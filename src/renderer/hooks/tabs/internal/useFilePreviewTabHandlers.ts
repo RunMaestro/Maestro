@@ -13,7 +13,11 @@ import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
 import { getOpenedMediaKind } from '../../../utils/mediaItems';
-import { buildReplacementNavigationHistory, getFileNameParts } from './filePreviewTabHelpers';
+import {
+	buildReplacementNavigationHistory,
+	createUntitledFileTab,
+	getFileNameParts,
+} from './filePreviewTabHelpers';
 import type { FilePreviewTabHandlersReturn, FileTabOpenParams, MediaOpenMode } from './types';
 
 export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
@@ -428,23 +432,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const newTabId = generateId();
-				const newFileTab: FilePreviewTab = {
-					id: newTabId,
-					path: '',
-					name: 'Untitled',
-					extension: '',
-					content: '',
-					scrollTop: 0,
-					searchQuery: '',
-					editMode: true,
-					editContent: '',
-					createdAt: Date.now(),
-					lastModified: Date.now(),
-					isLoading: false,
-					navigationHistory: [],
-					navigationIndex: -1,
-				};
+				const newFileTab = createUntitledFileTab();
+				const newTabId = newFileTab.id;
 
 				const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
 				const updatedUnifiedTabOrder = insertAfterActiveInUnifiedTabOrder(s, newTabRef);

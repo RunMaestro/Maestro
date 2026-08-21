@@ -17,6 +17,7 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { notifyToast } from '../stores/notificationStore';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { logger } from '../utils/logger';
+import { createDebugPackage } from '../services/debugPackage';
 
 interface DebugPackageModalProps {
 	theme: Theme;
@@ -104,7 +105,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 				includeBatchState: categories.find((c) => c.id === 'batchState')?.included ?? true,
 			};
 
-			const result = await window.maestro.debug.createPackage(options);
+			const result = await createDebugPackage(options);
 
 			if (result.cancelled) {
 				setGenerationState('idle');

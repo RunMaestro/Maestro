@@ -18,6 +18,7 @@ import { generateId } from '../utils/ids';
 import { processCarriageReturns } from '../utils/textProcessing';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { useGitDetail } from '../contexts/GitStatusContext';
+import { useSessionStore } from '../stores/sessionStore';
 import type { GitCommandRunnerData } from '../stores/modalStore';
 import type { GitStreamingOperation, GitRunCommandResult } from '../../shared/gitUtils';
 import type { Theme } from '../types';
@@ -46,8 +47,16 @@ function needsUpstream(output: string): boolean {
 }
 
 export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunnerModalProps) {
-	const { operation, cwd, sshRemoteId, branch } = data;
+	const { sessionId, operation, cwd, sshRemoteId, branch } = data;
 	const { refreshGitStatus } = useGitDetail();
+
+	// Which agent this transfer belongs to. Pull/Push are reachable by
+	// right-clicking any row in the Left Bar, so the target is often NOT the
+	// highlighted agent and the command line alone ("git push") names nothing.
+	// Subscribe to the name only, never the Session: this modal is on screen
+	// while a command streams, and a whole-session subscription would re-render
+	// it on every unrelated token and log update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
 
 	const [output, setOutput] = useState('');
 	const [status, setStatus] = useState<RunStatus>('running');
@@ -143,6 +152,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 		<Modal
 			theme={theme}
 			title={commandLine}
+			subtitle={agentName}
 			priority={MODAL_PRIORITIES.GIT_COMMAND_RUNNER}
 			onClose={onClose}
 			width={700}

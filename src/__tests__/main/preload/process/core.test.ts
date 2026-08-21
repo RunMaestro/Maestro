@@ -320,4 +320,36 @@ describe('Process Core Preload API', () => {
 			expect(callback).toHaveBeenCalledWith('session-123', error);
 		});
 	});
+
+	describe('onAuthExpired', () => {
+		it('should register event listener for agent:authExpired', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, payload: unknown) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'agent:authExpired') {
+					registeredHandler = handler;
+				}
+			});
+
+			api.onAuthExpired(callback);
+
+			const payload = {
+				sessionId: 'session-123',
+				agentId: 'claude-code',
+				message: 'OAuth token has expired.',
+				fromPipeline: true,
+			};
+			registeredHandler!({}, payload);
+
+			expect(callback).toHaveBeenCalledWith(payload);
+		});
+
+		it('should remove the listener on unsubscribe', () => {
+			const unsubscribe = api.onAuthExpired(vi.fn());
+			unsubscribe();
+
+			expect(mockRemoveListener).toHaveBeenCalledWith('agent:authExpired', expect.any(Function));
+		});
+	});
 });

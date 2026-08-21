@@ -332,9 +332,7 @@ describe('ThinkingStatusPill', () => {
 		beforeEach(() => {
 			useThoughtStreamStore.setState({
 				panelSessionId: null,
-				minimized: false,
 				buffers: {},
-				capturing: {},
 			});
 			useUIStore.setState({ rightPanelOpen: false });
 		});
@@ -360,7 +358,7 @@ describe('ThinkingStatusPill', () => {
 			expect(onSessionClick).toHaveBeenCalledWith('session-xyz', undefined);
 			const streamState = useThoughtStreamStore.getState();
 			expect(streamState.panelSessionId).toBeNull();
-			expect(streamState.capturing['session-xyz']).toBeUndefined();
+			expect(streamState.buffers['session-xyz']).toBeUndefined();
 			expect(useUIStore.getState().rightPanelOpen).toBe(false);
 		});
 

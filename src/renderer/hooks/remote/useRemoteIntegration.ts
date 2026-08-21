@@ -15,6 +15,7 @@ import {
 	getMovementSnapshot,
 	useMovementStore,
 } from '../../stores/movementStore';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
@@ -878,6 +879,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
+	// The main process has already validated the surface and tab, so this is a
+	// straight hand-off to the shared opener.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenModal((params) => {
+			openUiSurface(params.surface, params.tab);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle remote refresh file tree from web/CLI interface
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteRefreshFileTree((sessionId: string) => {
@@ -1157,12 +1170,44 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribe = window.maestro.process.onRemoteOpenTerminalTab(
 			(
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null },
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
 				responseChannel: string
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openTerminalTab', {
 						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote writes into an existing terminal tab from CLI/web interface.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteWriteTerminalTab(
+			(sessionId: string, payload: { tabRef?: string; data: string }, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:writeTerminalTab', {
+						detail: { sessionId, ...payload, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote terminal tab listing from CLI/web interface.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteListTerminalTabs(
+			(sessionId: string | undefined, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:listTerminalTabs', {
+						detail: { sessionId, responseChannel },
 					})
 				);
 			}

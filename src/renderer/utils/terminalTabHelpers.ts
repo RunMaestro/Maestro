@@ -71,6 +71,55 @@ export function hasRunningTerminalProcess(session: Session): boolean {
 	return (session.terminalTabs || []).some((tab) => tab.state === 'busy');
 }
 
+/**
+ * Resolve which terminal tab a remote caller (CLI / web) meant.
+ *
+ * `ref` is matched as an id first and searched across ALL sessions, because tab
+ * ids are unique and `open-terminal` hands one back without the caller having to
+ * remember which agent owns it. Only if no id matches do we fall back to a
+ * display-name match, and that one is scoped to `targetSessionId` - names are
+ * user-chosen and routinely collide across agents ("Dev server" in three
+ * projects), so a cross-agent name match would silently type into the wrong
+ * shell.
+ *
+ * With no `ref`, the agent's active terminal tab wins (the terminal they used
+ * last), falling back to the only tab when there is exactly one. Ambiguity
+ * returns null rather than guessing - typing a command into the wrong terminal
+ * is not a recoverable mistake.
+ */
+export function resolveTerminalTab(
+	sessions: Session[],
+	targetSessionId: string,
+	ref?: string
+): { session: Session; tab: TerminalTab } | null {
+	const trimmedRef = ref?.trim();
+
+	if (trimmedRef) {
+		for (const session of sessions) {
+			const tab = (session.terminalTabs || []).find((t) => t.id === trimmedRef);
+			if (tab) return { session, tab };
+		}
+		const target = sessions.find((s) => s.id === targetSessionId);
+		if (!target) return null;
+		const tabs = target.terminalTabs || [];
+		const byName = tabs.filter(
+			(tab, index) =>
+				getTerminalTabDisplayName(tab, index).toLowerCase() === trimmedRef.toLowerCase()
+		);
+		// Two tabs sharing a name is ambiguous - make the caller pass an id.
+		return byName.length === 1 ? { session: target, tab: byName[0] } : null;
+	}
+
+	const target = sessions.find((s) => s.id === targetSessionId);
+	if (!target) return null;
+	const tabs = target.terminalTabs || [];
+	if (target.activeTerminalTabId) {
+		const active = tabs.find((t) => t.id === target.activeTerminalTabId);
+		if (active) return { session: target, tab: active };
+	}
+	return tabs.length === 1 ? { session: target, tab: tabs[0] } : null;
+}
+
 // ─── Session ID Helpers ──────────────────────────────────────────────────────
 
 /**
@@ -135,9 +184,20 @@ export function nextTerminalCoworkingId(session: Session): {
  *
  * @param session - The Maestro session to add the tab to
  * @param tab - The TerminalTab to add (created via createTerminalTab)
- * @returns New session with the tab added and set as active
+ * @param options.activate - When false, the tab is added and ordered but no
+ *   active-tab id changes and `activeGroupId` is left alone. Used by the
+ *   tile-below commands, which mint a terminal that goes straight into a pane:
+ *   activating it would clear the very group the caller is about to build, and
+ *   pointing `activeTerminalTabId` at a tiled tab would leave the single view
+ *   aimed at a tab it does not own.
+ * @returns New session with the tab added (and, by default, set as active)
  */
-export function addTerminalTab(session: Session, tab: TerminalTab): Session {
+export function addTerminalTab(
+	session: Session,
+	tab: TerminalTab,
+	options: { activate?: boolean } = {}
+): Session {
+	const { activate = true } = options;
 	// Mint the base id + bumped counter from the shared source, then let an
 	// explicit tab.coworkingId (e.g. a restored tab) win if it's higher so we
 	// never hand out a duplicate term:N.
@@ -151,14 +211,18 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 	return {
 		...session,
 		terminalTabs: [...(session.terminalTabs || []), tabWithCoworkingId],
-		activeTerminalTabId: tab.id,
-		activeFileTabId: null,
-		activeBrowserTabId: null,
-		// A newly-created standalone terminal takes over the panel, so it must leave
-		// any active tiled group (mirrors selectTerminalTab). Without this the group
-		// stays active, TiledLayout keeps publishing pane rects, and a tiled browser
-		// overlay bleeds over the terminal view (its webview sits above at z-index 2).
-		activeGroupId: null,
+		...(activate
+			? {
+					activeTerminalTabId: tab.id,
+					activeFileTabId: null,
+					activeBrowserTabId: null,
+					// A newly-created standalone terminal takes over the panel, so it must leave
+					// any active tiled group (mirrors selectTerminalTab). Without this the group
+					// stays active, TiledLayout keeps publishing pane rects, and a tiled browser
+					// overlay bleeds over the terminal view (its webview sits above at z-index 2).
+					activeGroupId: null,
+				}
+			: {}),
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 		// Bump strictly past the larger of the bumped counter and the chosen id so
 		// we never hand out the same id twice within a session.

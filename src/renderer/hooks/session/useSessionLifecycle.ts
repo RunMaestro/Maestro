@@ -16,11 +16,11 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { AdditionalDirectory, Session, AITab, FailoverConfig } from '../../types';
+import type { AdditionalDirectory, Session, FailoverConfig } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { generateId } from '../../utils/ids';
+import { switchTabProvider } from '../../utils/providerTabSessions';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -225,28 +225,18 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						failoverConfig,
 					};
 
-					// If provider changed, reset tabs and provider-specific config
+					// If the provider changed, park each tab's provider-specific state and
+					// restore whatever the incoming provider left behind. Tabs, transcripts,
+					// closed-tab history, and file preview tabs are all preserved: none of
+					// them are provider-specific, and switching back has to land the user on
+					// the same conversation they left.
 					if (toolType && toolType !== s.toolType) {
-						const newTabId = generateId();
-						const freshTab: AITab = {
-							id: newTabId,
-							agentSessionId: null,
-							name: null,
-							starred: false,
-							logs: [],
-							inputValue: '',
-							stagedImages: [],
-							createdAt: Date.now(),
-							state: 'idle',
-							saveToHistory: true,
-						};
-
 						Object.assign(updatedFields, {
 							toolType,
-							aiTabs: [freshTab],
-							activeTabId: newTabId,
-							closedTabHistory: [],
-							// Clear provider-specific overrides
+							aiTabs: s.aiTabs.map((tab) => switchTabProvider(tab, s.toolType, toolType)),
+							// Clear provider-specific overrides. These are agent-level config,
+							// not per-tab conversation state, so they are not parked - the edit
+							// modal already resets its own fields on a provider switch.
 							customPath: undefined,
 							customArgs: undefined,
 							customEnvVars: undefined,
@@ -262,21 +252,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							maestroPMode: undefined,
 							// Endpoint env carries provider-specific base URLs and tokens.
 							failoverConfig: undefined,
-							// Reset file preview tabs and unified tab order
-							filePreviewTabs: [],
-							activeFileTabId: null,
-							unifiedTabOrder: [{ type: 'ai' as const, id: newTabId }],
-							unifiedClosedTabHistory: [],
-							// Reset agent runtime state
-							state: 'idle' as const,
-							aiPid: 0,
-							executionQueue: [],
 						});
 
-						// Kill the existing AI process for this session
-						window.maestro.process.kill(`${sessionId}-ai`).catch(() => {
-							// Process may not exist - that's fine
-						});
+						// Any turn already in flight keeps running under the provider it was
+						// sent with: settings are codified at send, and this change applies from
+						// the next message. So the agent process is deliberately left alone, and
+						// the session's busy state with it. `turnProvider` on each tab is what
+						// keeps that turn's late events attributed to the old provider.
 					}
 
 					return { ...s, ...updatedFields };

@@ -199,7 +199,11 @@ export const MediaViewer = memo(function MediaViewer({
 	const setPlaybackRate = useSettingsStore((s) => s.setMediaPlaybackRate);
 
 	const [src, setSrc] = useState<string | null>(null);
-	const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+	// 'missing' and 'error' are deliberately separate: a deleted file and an
+	// undecodable one fail the media element identically, and telling the user
+	// their codec is unsupported when the file simply is not there sends them
+	// hunting for a build problem that does not exist.
+	const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error' | 'missing'>('loading');
 	const [playing, setPlaying] = useState(false);
 	const [currentTime, setCurrentTime] = useState(0);
 	const [duration, setDuration] = useState(0);
@@ -229,6 +233,10 @@ export const MediaViewer = memo(function MediaViewer({
 	const resumeRef = useRef(resumeTime);
 	const resumeRequestedRef = useRef(resumeTime);
 	resumeRequestedRef.current = resumeTime;
+	// The file this render is for, so an async classification that lands after
+	// the tab moved on cannot stamp its verdict on the new file.
+	const pathRef = useRef(path);
+	pathRef.current = path;
 
 	// Resolve a fresh stream URL rather than trusting the tab's stored content.
 	// Stream URLs carry a per-boot capability token, and file preview tabs are
@@ -250,8 +258,14 @@ export const MediaViewer = memo(function MediaViewer({
 			try {
 				const resolved = await window.maestro.fs.readFile(path);
 				if (cancelled) return;
+				if (resolved === null) {
+					// Deleted or moved: the read handler returns null for a path that
+					// is not on disk.
+					setLoadState('missing');
+					return;
+				}
 				if (!isMediaStreamUrl(resolved)) {
-					// Deleted, moved, or no longer servable as media.
+					// On disk, but not servable as a stream (an SSH remote file, say).
 					setLoadState('error');
 					return;
 				}
@@ -351,6 +365,21 @@ export const MediaViewer = memo(function MediaViewer({
 		const el = mediaRef.current;
 		if (el) setCurrentTime(el.currentTime);
 	}, []);
+
+	// The element reports a file deleted mid-playback and a file it cannot decode
+	// with the same failure, so ask the disk which one happened before wording the
+	// card. Assume unplayable until the stat says otherwise: that keeps the "Open
+	// in Default App" escape hatch on screen for the case where it helps.
+	const handleMediaError = useCallback(() => {
+		setLoadState('error');
+		const forPath = path;
+		void window.maestro.fs
+			.stat(forPath)
+			.then((info) => {
+				if (!info && pathRef.current === forPath) setLoadState('missing');
+			})
+			.catch(() => undefined);
+	}, [path]);
 
 	const togglePlay = useCallback(() => {
 		const el = mediaRef.current;
@@ -531,13 +560,29 @@ export const MediaViewer = memo(function MediaViewer({
 				// would churn the element's props mid-playback.
 				endedRef.current?.();
 			},
-			onError: () => setLoadState('error'),
+			onError: handleMediaError,
 		}),
-		[src, handleLoadedMetadata, handleTimeUpdate]
+		[src, handleLoadedMetadata, handleTimeUpdate, handleMediaError]
 	);
 
 	const rateLabel = `${playbackRate}x`;
 	const seekable = duration > 0;
+
+	if (loadState === 'missing') {
+		return (
+			<div className="flex flex-col items-center justify-center h-full gap-4 select-none">
+				<AlertTriangle className="w-12 h-12" style={{ color: theme.colors.textDim }} />
+				<div className="text-center">
+					<p className="text-lg font-medium" style={{ color: theme.colors.textMain }}>
+						File Not Found
+					</p>
+					<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
+						{name} is no longer on disk. It was moved, renamed, or deleted.
+					</p>
+				</div>
+			</div>
+		);
+	}
 
 	if (loadState === 'error') {
 		return (
@@ -548,7 +593,7 @@ export const MediaViewer = memo(function MediaViewer({
 						Cannot Play This File
 					</p>
 					<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
-						The codec inside this container is not supported, or the file is no longer there.
+						The codec inside this container is not supported.
 					</p>
 					<button
 						onClick={openExternally}

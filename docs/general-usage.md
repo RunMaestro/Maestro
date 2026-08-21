@@ -62,6 +62,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 
 - **Syntax highlighting** for code files
 - **Markdown rendering** with toggle between raw/preview (`Cmd+E` / `Ctrl+E`)
+- **Clickable task checkboxes** in rendered markdown - tick a `- [ ]` in the preview and the file is rewritten on disk
 - **Image viewing** for common image formats
 - **Audio and video playback** with a speed control that sticks (see below)
 - **CSV and TSV tables** with sortable columns and a per-row detail view (see below)
@@ -255,12 +256,15 @@ You will know you are in command mode: a `$` appears at the left of the input, a
 
 **Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
+`!` is a rung, not a toggle. Press it again on an empty command line and you climb to [AI Command Mode](#ai-command-mode), where you describe what you want instead of typing the command yourself. `Esc` steps back down one rung at a time, so AI Command Mode returns you to command mode and command mode returns you to the agent.
+
 **How it behaves:**
 
 - **The agent is bypassed entirely.** It is never spawned, never written to, and never sees the command or its output. Nothing you run this way enters the agent's context - if you want the agent to see the result, copy it into a message.
 - **It runs immediately, even while the agent is working.** Command mode does not queue and does not interrupt the turn in progress, so you can check `git log` while the agent is mid-edit.
 - **It runs in the agent's working directory** (on the agent's SSH remote, if it has one). Each command is independent - there is no persistent shell, so `cd src` on its own does nothing. Chain instead: `cd src && ls`.
 - **Every command gets its own card**, never merged into the surrounding conversation. The card shows the command, where it ran, and a live spinner while it works; when it finishes, the exit code and how long it took.
+- **A finished card can be deleted.** Its header has a trash icon with the same inline **Delete?** confirmation your own messages use. Only the card goes; the agent never saw the command, so there is nothing on its side to remove. The icon is hidden while the command is still running - press **Stop** first, otherwise the output would keep streaming into a card that no longer exists.
 - **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
@@ -298,6 +302,37 @@ Very large output is capped so a runaway command cannot bloat your transcript; t
 **Sending a message that starts with `!`:** typing `!` first only enters command mode when the composer is empty, so a bang inside a sentence is safe. To start a message with one, prefix it with a backslash: `\!important` reaches the agent as `!important`.
 
 Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you are already at a shell, so `!` is an ordinary character.
+
+### AI Command Mode
+
+Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, and what you type is no longer a command - it is a plain-English description of what you want done:
+
+```
+delete every node_modules folder under this project
+```
+
+Press `Enter` and Maestro asks **this tab's own model**, at the model and effort the tab is set to, for a single command line. Nothing runs yet. The answer appears as a card above the composer showing the command it proposes, with **Run** and **Cancel**:
+
+| Key       | Does                                                         |
+| --------- | ------------------------------------------------------------ |
+| `Y`       | Runs the command                                             |
+| `N`       | Declines it                                                  |
+| `←` / `→` | Moves between **Run** and **Cancel**                         |
+| `Enter`   | Takes whichever is selected (**Run** is selected by default) |
+| `Esc`     | Declines it                                                  |
+
+Declining hands your original request back to the composer so you can reword it and ask again, which is nearly always what you want - a wrong answer usually means a vague question. The card owns the keyboard until you answer it, so `Enter` can never run something you have not looked at.
+
+A command you accept runs through exactly the same path as one you typed yourself: same working directory, same SSH remote, same card in the transcript, and it joins your `↑` recall history the same way. After it runs there is nothing to distinguish it from a command you typed.
+
+**How the suggestion is made:**
+
+- **The model only names the command; it never runs anything.** The request is answered with tools disabled and in read-only mode, so a task-shaped request ("clean up the build output") comes back as a command to look at rather than as work already done.
+- **It is the tab's own provider**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **The agent's conversation is untouched.** The request and the suggestion never enter the agent's context, the same as any other command-mode activity.
+- **The prompt is yours to change.** It is a core prompt (`ai-command`), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
+
+There is no rung above AI Command Mode, so a `!` typed here is an ordinary character - your request is prose, and prose contains bangs.
 
 ## Prompt Composer
 
@@ -566,6 +601,8 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 - **Model Selection** - Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar - per-tab overrides only affect that tab and don't change the agent default or any other tab.
 - **Additional Directories** - Grant the agent access to directories beyond its working directory. Add a row per directory, then toggle **R** (read) and **W** (write) independently: a directory can be read-only reference material, a write-only drop box the agent should never read back, or both. A row with neither toggle lit is inert and is not sent to the agent. Each row also takes an optional **description** - a short hint about what the directory is for or how the agent should use it, which is passed to the agent alongside the access rule. Providers that support directory flags (for example Claude Code's `--add-dir`) also receive these grants natively; the read/write split and the descriptions are always carried in the agent's system prompt.
 
+  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source-max-plan-vs-api) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+
 ### Editing Agents
 
 Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, additional directories, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
@@ -698,6 +735,78 @@ You can always rename tabs manually:
 - Right-click a tab → **Rename Tab**
 - Or double-click the tab name to edit it directly
 - Manual names take precedence over automatic naming
+
+### Changing a Tab's Model and Effort
+
+Every AI tab can run a different model and a different reasoning effort from the rest of the agent. The pills under the composer set both with the mouse; `Opt+Cmd+.` / `Alt+Ctrl+.` does it without one.
+
+The dialog puts the two knobs on two axes: **Up/Down** walks the model list, **Left/Right** walks the effort scale, **Enter** applies both, and **Escape** leaves the tab exactly as it was. Nothing is written until you press Enter, so browsing the list costs nothing.
+
+- Which models and effort levels appear depends on the agent. A multi-provider CLI (Copilot-CLI, for example) lists its catalog grouped by vendor, so Claude, OpenAI, Gemini and the rest each get their own short section.
+- `(default)` clears the tab's override and falls back to the agent's own setting.
+- Not every model honors effort. Agents that expose the knob pass it through, and a model that has no reasoning budget ignores it.
+
+You can also reach it from Quick Actions (`Cmd+K` / `Ctrl+K`) as **Change Tabs Model and Effort**. It applies to AI tabs only.
+
+### Tiling Tabs
+
+Tiling splits the Main Panel so several tabs are on screen at once: an agent conversation above a terminal, a file next to the browser, two chats side by side. Any tab type can be tiled with any other, and a tiled set behaves like one tab in the tab bar.
+
+**Creating a tile from the keyboard**
+
+The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the whole family:
+
+| Command                     | Result                                                |
+| --------------------------- | ----------------------------------------------------- |
+| **Tile New AI Chat Below**  | New AI chat takes the bottom half of the current view |
+| **Tile New Browser Below**  | New browser tab takes the bottom half                 |
+| **Tile New File Below**     | New blank file tab takes the bottom half              |
+| **Tile New Terminal Below** | New terminal takes the bottom half                    |
+
+**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab. The other three stay in Quick Actions.
+
+Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half, and the new pane takes focus, so you can start typing in it right away.
+
+If a tile is already on screen, the split happens inside the pane you are working in rather than under the whole grid. That is what lets you build a layout one command at a time: tile a terminal under your chat, click into the terminal, then tile a browser under that.
+
+**Creating a tile by dragging**
+
+Drag a tab from the tab bar onto the content area of the tab that is showing. The pane lights up in four regions - drag toward the edge you want the tab to land on, and release. A left or right drop puts the panes side by side, a top or bottom drop stacks them.
+
+**Working inside a tile**
+
+- Drag the divider between two panes to resize them.
+- Click any pane to focus it. The focused pane shows a highlight ring, and it is the pane your typing goes to.
+- Drag one pane onto the middle of another to swap their positions, or onto an edge to re-slice the layout.
+
+**The group chip**
+
+A tiled set appears in the tab bar as a single chip, in the position of the first tab that went into it. It navigates, numbers, reorders, and drags like any other tab, so `Cmd+1`, Next/Previous Tab, and dragging it along the bar all treat the whole layout as one item.
+
+New groups are named after the tab you tiled against, as **Group: Some Tab**. The chip carries a grid glyph until you give it an icon.
+
+Hover the chip to reveal its menu:
+
+| Menu item                        | What it does                                                                                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Rename group**                 | Edit the name inline on the chip. `Enter` commits, `Esc` cancels. Submitting a blank name restores the automatic one rather than leaving the chip unlabeled. |
+| **Change icon**                  | Opens the emoji picker. The chosen emoji replaces the grid glyph on the chip.                                                                                |
+| **Break apart**                  | Returns every pane to the tab bar as an individual tab, in the chip's old position rather than at the end.                                                   |
+| **Move to First / Move to Last** | Jumps the chip to either end of the tab bar, the keyboard counterpart to dragging it.                                                                        |
+
+**Double-click the chip** to rename it without opening the menu.
+
+Renaming and breaking apart are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group** and **Break Apart Tab Group**, which act on the group currently showing. Break apart asks for confirmation first. Nothing is closed either way - the panes become ordinary tabs again and you can tile them whenever you like.
+
+<Note>
+**Change icon** lives on the chip menu only, and the picker has no "no icon" entry - once a group has an emoji, the way back to the plain grid glyph is to break the group apart and tile it again.
+</Note>
+
+The icon and name belong to the group, so they survive reordering, resizing, and moving panes around inside it. They do not outlive the group itself: closing a pane so only one is left dissolves the group automatically, and the survivor returns to the tab bar under its own name. Breaking a group apart discards the name and icon the same way, so re-tiling those tabs gives you a fresh **Group:** name to rename again.
+
+One exception is undo. If you close a pane and reopen it with `Cmd+Shift+T` / `Ctrl+Shift+T`, Maestro puts it back in the tile it came from - on the same side of the same neighbor - and rebuilds the group with its original name and icon if the group had since dissolved.
+
+See [Pane Shortcuts](./keyboard-shortcuts#pane-shortcuts-tiled-tabs) for moving focus between panes, splitting, maximizing, and rebalancing from the keyboard.
 
 ### Snoozing Tabs
 

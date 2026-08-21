@@ -49,7 +49,11 @@ AGENT_DISPLAY_NAMES: Record<AgentId, string>  // Human-readable names
 BETA_AGENTS: ReadonlySet<AgentId>              // Agents showing "(Beta)" badge
 getAgentDisplayName(agentId): string           // Get name with fallback
 isBetaAgent(agentId): boolean                  // Check beta status
+getAgentLoginCommand(agentId, customPath?)     // Re-auth command, or null
+formatAgentLoginCommand(login): string         // Render it as a shell line
 ```
+
+**Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
 
 ### Context Windows (`src/shared/agentConstants.ts`)
 
@@ -450,15 +454,18 @@ the renderer merges and draws.
    a `toolCallId` it attributes a finalizing event to the most recent still
    `running` entry of the same `toolName`, else appends a fresh entry. Tool
    events are recorded regardless of the `showToolCalls` setting. Visibility is a
-   pure render concern that `TerminalOutput` computes as `showToolCalls &&
-thinkingOn`, hiding `source:'tool'` entries when the setting is off OR the
-   active tab's `showThinking` is `'off'` (tool cells are "behind the scenes"
-   activity that follows the Thinking toggle). The Settings UI mirrors this: the
-   "Show tool calls in responses" switch is grouped under Default Thinking Mode
-   and ghosts out (disabled) when the default mode is Off. Storage is still
-   governed by the thinking/tool log contract above, so the `showThinking`
-   lifecycle can drop stored `thinking`/`tool` entries (for example on exit when
-   not `'sticky'`) independently of `showToolCalls`.
+   pure render concern: `TerminalOutput` reads `showToolCalls` alone and hides
+   `source:'tool'` entries when it is off. **`showToolCalls` and the per-tab
+   `showThinking` mode are independent** - the setting was briefly ANDed with
+   `showThinking !== 'off'`, which made it impossible to read a reasoning chain
+   without the tool noise. The two answer different questions: `showToolCalls`
+   decides whether tool cells are DRAWN, `showThinking` decides how long
+   `thinking`/`tool` entries are RETAINED. Do not re-couple them. The Settings UI
+   groups both under Default Thinking Mode, but the switch is never disabled.
+   Storage is governed by the thinking/tool log contract above, so the
+   `showThinking` lifecycle can still drop stored `thinking`/`tool` entries (on
+   exit, and when new assistant text arrives, unless the tab is `'sticky'`)
+   regardless of `showToolCalls`.
 5. **Render** (`src/renderer/components/TerminalOutput/components/LogItem.tsx` +
    `src/renderer/components/TerminalOutput/utils/toolSummaries.ts`). `LogItem`
    draws the tool badge and its status; `toolSummaries.ts` turns `toolState.input`

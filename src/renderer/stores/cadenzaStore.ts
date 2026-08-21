@@ -50,6 +50,10 @@ function resolveAgentName(sessionId: string | undefined): string | undefined {
 
 export interface CadenzaStoreState {
 	cadenzas: CadenzaView[];
+	/** User "stash" toggle: hide every cadenza card without closing any of them.
+	 *  Cards stay mounted while hidden, so a live tracker keeps tracking and an
+	 *  interactive card keeps its state. */
+	hidden: boolean;
 	/** Id of the cadenza currently pulsing to catch the eye (from a chat chip), or null. */
 	flashedId: string | null;
 }
@@ -65,6 +69,20 @@ export interface CadenzaStoreActions {
 	moveCadenza: (id: string, x: number, y: number) => void;
 	/** Remove all cadenzas. */
 	clearCadenzas: () => void;
+	/**
+	 * Show or stash every cadenza at once (hotkey / command palette).
+	 *
+	 * The stash is a USER-owned latch, and the user is the only thing that writes
+	 * it: no agent op (`open`, `update`) and no chat-chip flash clears it on its
+	 * own. That is what keeps the two renderers that can hold cadenzas - this one
+	 * and the always-on-top HUD window - in agreement, since every write starts in
+	 * the main window and is mirrored to the HUD by setAllCadenzasHidden(). A
+	 * store-local un-stash in whichever renderer happened to receive an agent's
+	 * card would desync the two and cost the user a dead keypress.
+	 */
+	setHidden: (hidden: boolean) => void;
+	/** Flip the stash. Prefer toggleAllCadenzas() from UI code: it mirrors to the HUD. */
+	toggleHidden: () => void;
 	/** Pulse the cadenza with this id for a moment (chat-chip "point"). */
 	flashItem: (id: string) => void;
 }
@@ -73,6 +91,7 @@ export type CadenzaStore = CadenzaStoreState & CadenzaStoreActions;
 
 export const useCadenzaStore = create<CadenzaStore>()((set, get) => ({
 	cadenzas: [],
+	hidden: false,
 	flashedId: null,
 
 	upsertCadenza: (view) => set((s) => ({ cadenzas: upsertById(s.cadenzas, view) })),
@@ -89,7 +108,12 @@ export const useCadenzaStore = create<CadenzaStore>()((set, get) => ({
 
 	clearCadenzas: () => set({ cadenzas: [] }),
 
-	// Chat-chip "point": pulse the target cadenza for a moment.
+	setHidden: (hidden) => set({ hidden }),
+
+	toggleHidden: () => set((s) => ({ hidden: !s.hidden })),
+
+	// Chat-chip "point": pulse the target cadenza for a moment. Deliberately does
+	// not touch `hidden` - see the note on setHidden.
 	flashItem: (id) => {
 		set({ flashedId: id });
 		scheduleFlashClear(
@@ -136,7 +160,8 @@ export function applyCadenzaPayload(p: CadenzaPayload): void {
 	}
 
 	// op === 'open'. Preserve position if this id is already open (re-open keeps
-	// where the user put it); otherwise cascade a fresh default.
+	// where the user put it); otherwise cascade a fresh default. Note that opening
+	// does NOT un-stash the layer - see the note on setHidden.
 	const existing = store.cadenzas.find((v) => v.id === p.id);
 	const step = (cascadeIndex++ % 6) * 28;
 	store.upsertCadenza({
@@ -156,4 +181,22 @@ export function applyCadenzaPayload(p: CadenzaPayload): void {
 		x: existing?.x ?? 24 + step,
 		y: existing?.y ?? 96 + step,
 	});
+}
+
+/**
+ * Show or stash every cadenza across BOTH renderers that can hold them: this
+ * window's in-app layer and the always-on-top HUD window (which is where cards
+ * actually render whenever it is up). UI code should call these rather than the
+ * store actions directly, or the hotkey would only reach half the cards.
+ */
+export function setAllCadenzasHidden(hidden: boolean): void {
+	useCadenzaStore.getState().setHidden(hidden);
+	window.maestro?.process?.setCadenzasHidden?.(hidden);
+}
+
+/** Flip the stash everywhere. This is what the hotkey and the palette bind to. */
+export function toggleAllCadenzas(): boolean {
+	const hidden = !useCadenzaStore.getState().hidden;
+	setAllCadenzasHidden(hidden);
+	return hidden;
 }

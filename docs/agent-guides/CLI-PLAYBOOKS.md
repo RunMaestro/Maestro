@@ -4,6 +4,11 @@
 
 Command-line interface, playbook system, batch processing, and agent spawning for headless Maestro automation.
 
+Before adding a command that mirrors something a user does by clicking, read
+[CLI-UI-PARITY.md](CLI-UI-PARITY.md): it records which UI actions are already
+scriptable, which are not, and the one write path (`update_session_config`) that
+new per-agent and per-tab state should go through.
+
 ---
 
 ## Overview

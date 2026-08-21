@@ -40,6 +40,8 @@ vi.mock('lucide-react', () => ({
 	Zap: () => <span data-testid="zap-icon">Zap</span>,
 	Database: () => <span data-testid="database-icon">Database</span>,
 	WrapText: () => <span data-testid="wraptext-icon">WrapText</span>,
+	// Icon for the toolbar's delete-file button.
+	Trash2: () => <span data-testid="trash-icon">Trash2</span>,
 	AppWindow: () => <span data-testid="appwindow-icon">AppWindow</span>,
 	// Icons added by the search-kind toggle (text/regex/literal).
 	Filter: () => <span data-testid="filter-icon">Filter</span>,

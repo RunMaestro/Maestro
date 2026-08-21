@@ -1,1 +1,1 @@
-export { MovementOverlay } from './MovementOverlay';
+export { MovementStage } from './MovementStage';

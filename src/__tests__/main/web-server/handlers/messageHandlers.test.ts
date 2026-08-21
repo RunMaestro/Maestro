@@ -124,7 +124,11 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		refreshFileTree: vi.fn().mockResolvedValue(true),
 		openBrowserTab: vi.fn().mockResolvedValue({ success: true, tabId: 'browser-tab-1' }),
 		closeBrowserTab: vi.fn().mockResolvedValue(true),
-		openTerminalTab: vi.fn().mockResolvedValue(true),
+		openTerminalTab: vi.fn().mockResolvedValue({ success: true, tabId: 'terminal-tab-1' }),
+		writeTerminalTab: vi
+			.fn()
+			.mockResolvedValue({ success: true, tabId: 'terminal-tab-1', tabName: 'Dev server' }),
+		listTerminalTabs: vi.fn().mockResolvedValue([]),
 		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
 		enqueueCommand: vi.fn().mockResolvedValue({
 			success: true,
@@ -1210,6 +1214,7 @@ describe('WebSocketMessageHandler', () => {
 					cwd: undefined,
 					shell: undefined,
 					name: undefined,
+					command: undefined,
 				});
 			});
 
@@ -1217,6 +1222,8 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('open_terminal_tab_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+			// The id is the handle for send-terminal, so it has to survive the hop.
+			expect(response.tabId).toBe('terminal-tab-1');
 		});
 
 		it('should forward optional shell and name', async () => {
@@ -1232,8 +1239,54 @@ describe('WebSocketMessageHandler', () => {
 					cwd: undefined,
 					shell: 'bash',
 					name: 'build logs',
+					command: undefined,
 				});
 			});
+		});
+
+		it('should forward a startup command', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				name: 'Dev server',
+				command: 'npm run dev',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ name: 'Dev server', command: 'npm run dev' })
+				);
+			});
+		});
+
+		it('should treat a whitespace-only command as no command', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				command: '   ',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ command: undefined })
+				);
+			});
+		});
+
+		it('should reject non-string command', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				command: 42 as unknown as string,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid command');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
 		});
 
 		it('should reject cwd outside the agent working directory', async () => {
@@ -1391,6 +1444,146 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('Invalid name');
 			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Write Terminal Tab (Web → Desktop)', () => {
+		it('should forward the data and echo back the tab that received it', async () => {
+			handler.handleMessage(client, {
+				type: 'write_terminal_tab',
+				sessionId: 'session-1',
+				data: 'npm run dev\n',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.writeTerminalTab).toHaveBeenCalledWith('session-1', {
+					tabRef: undefined,
+					data: 'npm run dev\n',
+				});
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.type).toBe('write_terminal_tab_result');
+				expect(response.success).toBe(true);
+				expect(response.tabId).toBe('terminal-tab-1');
+				expect(response.tabName).toBe('Dev server');
+			});
+		});
+
+		it('should forward an explicit tabRef', async () => {
+			handler.handleMessage(client, {
+				type: 'write_terminal_tab',
+				sessionId: 'session-1',
+				tabRef: 'Dev server',
+				data: '',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.writeTerminalTab).toHaveBeenCalledWith('session-1', {
+					tabRef: 'Dev server',
+					data: '',
+				});
+			});
+		});
+
+		it('should surface the resolution error from the desktop app', async () => {
+			(callbacks.writeTerminalTab as any).mockResolvedValue({
+				success: false,
+				error: 'No terminal tab is open for this agent. Use open-terminal first.',
+			});
+			handler.handleMessage(client, {
+				type: 'write_terminal_tab',
+				sessionId: 'session-1',
+				data: 'ls\n',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.type).toBe('write_terminal_tab_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain('No terminal tab is open');
+			});
+		});
+
+		it('should reject empty data rather than writing a bare newline', () => {
+			handler.handleMessage(client, {
+				type: 'write_terminal_tab',
+				sessionId: 'session-1',
+				data: '',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('write_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid data');
+			expect(callbacks.writeTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-string tabRef', () => {
+			handler.handleMessage(client, {
+				type: 'write_terminal_tab',
+				sessionId: 'session-1',
+				tabRef: 7 as unknown as string,
+				data: 'ls\n',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid tabRef');
+			expect(callbacks.writeTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject when the session does not exist', () => {
+			handler.handleMessage(client, {
+				type: 'write_terminal_tab',
+				sessionId: 'ghost-session',
+				data: 'ls\n',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Session not found');
+			expect(callbacks.writeTerminalTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('List Terminal Tabs (Web → Desktop)', () => {
+		it('should return the tabs the desktop app reports', async () => {
+			(callbacks.listTerminalTabs as any).mockResolvedValue([
+				{
+					tabId: 'terminal-tab-1',
+					agentId: 'session-1',
+					agentName: 'Test Session',
+					name: 'Dev server',
+					cwd: '/home/user/project',
+					pid: 4242,
+					state: 'busy',
+					active: true,
+					startupCommand: 'npm run dev',
+				},
+			]);
+			handler.handleMessage(client, { type: 'list_terminal_tabs', sessionId: 'session-1' });
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.type).toBe('list_terminal_tabs_result');
+				expect(response.success).toBe(true);
+				expect(response.tabs).toHaveLength(1);
+				expect(response.tabs[0].tabId).toBe('terminal-tab-1');
+			});
+			expect(callbacks.listTerminalTabs).toHaveBeenCalledWith('session-1');
+		});
+
+		it('should list every agent when no sessionId is given', async () => {
+			handler.handleMessage(client, { type: 'list_terminal_tabs' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.listTerminalTabs).toHaveBeenCalledWith(undefined);
+			});
 		});
 	});
 

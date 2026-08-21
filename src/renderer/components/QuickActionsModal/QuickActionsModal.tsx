@@ -10,7 +10,9 @@ import { notifyToast, useNotificationStore } from '../../stores/notificationStor
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
+import { buildConcertoCommands } from './commands/concertoCommands';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -24,9 +26,12 @@ import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/se
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import type { GroupChatBusySnapshot } from '../../utils/groupChatStatus';
 import { openUrl } from '../../utils/openUrl';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import { logger } from '../../utils/logger';
+import { createDebugPackage } from '../../services/debugPackage';
 import { getActiveTabInfo } from './utils/activeTabInfo';
 import {
 	filterAndSortQuickActions,
@@ -46,7 +51,11 @@ import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
-import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/groupChatCommands';
+import {
+	buildGroupChatCommands,
+	buildGroupChatJumpCommands,
+	buildGroupChatSwitcherCommands,
+} from './commands/groupChatCommands';
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
 import { buildPluginCommandPaletteCommands } from './commands/pluginCommandPaletteCommands';
@@ -61,6 +70,7 @@ import {
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
+import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { buildWindowMoveTargets } from '../../utils/windowTargets';
 
@@ -223,8 +233,35 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const canRestoreFloatingPlayer = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
 	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
+	// Concerto's two surfaces are store-owned toggles, so read their live state
+	// here: the palette entries name what the keypress will actually do.
+	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
+	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
+	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
+	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
+	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const toggleConcertoStageFloating = useCallback(
+		() => setConcertoStageFloating(!concertoStageFloating),
+		[concertoStageFloating, setConcertoStageFloating]
+	);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
+	// Which group chat rooms are running. Only the chat list and the active id
+	// arrive as props; the live moderator/participant states are store-only, so
+	// read them here rather than threading four more props through the chain.
+	const groupChatState = useGroupChatStore((s) => s.groupChatState);
+	const participantStates = useGroupChatStore((s) => s.participantStates);
+	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
+	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	// Consumed synchronously when the action list is built, so no memo needed.
+	const groupChatBusySnapshot: GroupChatBusySnapshot = {
+		activeGroupChatId,
+		groupChatState,
+		participantStates,
+		groupChatStates,
+		allGroupChatParticipantStates,
+	};
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -450,6 +487,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			restoreFloatingPlayer,
 			setQuickActionOpen,
 		}),
+		...buildConcertoCommands({
+			concertoEnabled,
+			stageOpen: concertoStageOpen,
+			cadenzasHidden,
+			stageFloating: concertoStageFloating,
+			toggleConcertoStage,
+			toggleStageFloating: toggleConcertoStageFloating,
+			toggleCadenzas: toggleAllCadenzas,
+			setQuickActionOpen,
+			shortcuts: {
+				toggleConcerto: shortcuts.toggleConcerto,
+				toggleCadenzas: shortcuts.toggleCadenzas,
+			},
+		}),
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
@@ -587,6 +638,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
+				openModelEffort: shortcuts.openModelEffort,
 			},
 			tabShortcuts,
 			toggleInputMode,
@@ -594,6 +646,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTabGroupCommands({
 			activeSession,
 			setQuickActionOpen,
+		}),
+		...buildTileCommands({
+			activeSession,
+			setQuickActionOpen,
+			shortcuts: { tileTerminalBelow: shortcuts.tileTerminalBelow },
 		}),
 		...buildFeatureCommands({
 			activeSession,
@@ -677,7 +734,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setDebugPackageModalOpen,
 			startTour,
 			getFeedbackDraft: () => useFeedbackDraftStore.getState(),
-			createDebugPackage: () => window.maestro.debug.createPackage(),
+			createDebugPackage: () => createDebugPackage(),
 			notifyToast,
 			openUrl,
 			toggleDevtools: () => window.maestro.devtools.toggle(),
@@ -801,13 +858,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		resetSelectionToFirst,
 	});
 
-	const agentActions = buildAgentSwitcherCommands({
-		sessions,
-		activeBatchSessionIds,
-		setActiveSessionId,
-		revealJumpTarget,
-		getSessionWindow,
-	});
+	const agentActions = [
+		...buildAgentSwitcherCommands({
+			sessions,
+			activeBatchSessionIds,
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow,
+		}),
+		...buildGroupChatSwitcherCommands({
+			groupChats,
+			busySnapshot: groupChatBusySnapshot,
+			onOpenGroupChat,
+		}),
+	];
 
 	const actions =
 		mode === 'agents' ? agentActions : mode === 'main' ? mainActionsWithPlugins : groupActions;

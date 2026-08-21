@@ -404,12 +404,12 @@ describe('TerminalOutput', () => {
 			});
 		}
 
-		function renderLogs(logs: LogEntry[]) {
+		function renderLogs(logs: LogEntry[], propOverrides: Record<string, unknown> = {}) {
 			const session = createDefaultSession({
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
-			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+			return render(<TerminalOutput {...createDefaultProps({ session, ...propOverrides })} />);
 		}
 
 		it('gives the command its own row instead of appending it to the agent reply', () => {
@@ -477,6 +477,57 @@ describe('TerminalOutput', () => {
 			const { container } = renderLogs(logs);
 
 			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+		});
+
+		it('offers delete on a finished card when the transcript is editable', () => {
+			// The card takes an early return and never reaches the shared hover
+			// toolbar, so it has to carry the affordance itself - this asserts the
+			// props actually arrive from TerminalOutput.
+			renderLogs([commandCard()], { onDeleteLog: vi.fn() });
+
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
+		});
+
+		it('repaints a finished card that produced no output at all', () => {
+			// Regression: the LogItem memo compared `log.text`, which never changes
+			// for a silent command (`!true`), so the card stayed frozen mid-run -
+			// spinner up, Stop offered, and delete hidden behind its finished gate.
+			// Both `tabs` (what this file's getActiveTab mock reads) and `aiTabs`
+			// (what TerminalOutput's active-tab useMemo keys on). A session carrying
+			// only one of them can never repaint on a rerender, which would make
+			// this test assert the harness rather than the component.
+			const sessionWith = (log: LogEntry) => {
+				const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [log], isUnread: false }];
+				return createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			};
+			const onDeleteLog = vi.fn();
+
+			const running = commandCard({
+				text: '',
+				shellCommand: { command: 'true', cwd: '/repo', status: 'running' },
+			});
+			const { rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(running), onDeleteLog })} />
+			);
+			expect(screen.queryByTestId('shell-command-delete')).not.toBeInTheDocument();
+
+			const finished = commandCard({
+				text: '',
+				shellCommand: {
+					command: 'true',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+					durationMs: 12,
+				},
+			});
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(finished), onDeleteLog })} />
+			);
+
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			expect(screen.queryByText('Stop')).not.toBeInTheDocument();
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
 		});
 	});
 
@@ -2462,7 +2513,7 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('npm run test')).not.toBeInTheDocument();
 		});
 
-		it('hides tool logs when the tab has Thinking off (even with showToolCalls on)', () => {
+		it('shows tool logs when the tab has Thinking off but showToolCalls is on', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
 					text: 'Bash',
@@ -2478,9 +2529,40 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			// showToolCalls is on (beforeEach), but Thinking is off for this tab, so
-			// tool cells are part of the hidden "behind the scenes" activity.
+			// The two settings are independent: showToolCalls alone decides whether
+			// tool cells are drawn, so Thinking off must not suppress them.
 			useSettingsStore.setState({ showToolCalls: true });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Bash')).toBeInTheDocument();
+			expect(screen.getByText('npm run test')).toBeInTheDocument();
+		});
+
+		it('hides tool logs when showToolCalls is off even with Thinking sticky', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { command: 'npm run test' } } },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs,
+						isUnread: false,
+						showThinking: 'sticky',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// The other direction of the same independence: a tab that keeps its
+			// reasoning chain still honours a global "no tool cells" preference.
+			useSettingsStore.setState({ showToolCalls: false });
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
@@ -3590,6 +3672,138 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('model / effort pill rendering', () => {
+		it('labels each response with the model and effort its turn was sent with', () => {
+			// The point of the pills: the user switched configuration mid-conversation,
+			// so each response has to say which one produced it.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by opus',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-2',
+					text: 'answered by sonnet',
+					source: 'stdout',
+					turnModel: 'sonnet',
+					turnEffort: 'low',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.getByText('sonnet')).toBeInTheDocument();
+			expect(screen.getByText('low')).toBeInTheDocument();
+		});
+
+		it('renders on non-Claude agents, which have no token-source pill', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					turnModel: 'gpt-5',
+					turnEffort: 'medium',
+				}),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('gpt-5')).toBeInTheDocument();
+			expect(screen.getByText('medium')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
+		it('omits a pill whose value is unset, meaning the agent default applied', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout', turnModel: 'opus' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pills on user messages', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('keeps the pills when a system banner leads the response group', () => {
+			// Same collapse trap the token-source pill hit: the combined entry is
+			// built from `[0]`, which here is the banner and carries no stamp.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'banner',
+					text: 'Adaptive Mode: switched from API Limits to Time Limits.',
+					source: 'system',
+				}),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'streamed response',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'xhigh',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('xhigh');
 		});
 	});
 

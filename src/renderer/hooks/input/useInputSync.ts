@@ -4,6 +4,10 @@ import { useSessionStore, selectActiveSession, selectSessionById } from '../../s
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useEventListener } from '../utils/useEventListener';
+import {
+	normalizeComposerCommandMode,
+	type ComposerCommandMode,
+} from '../../utils/shellCommandInput';
 
 /**
  * How long the composer may hold text that only exists in
@@ -84,7 +88,7 @@ export interface UseInputSyncReturn {
 	 * Any explicit `syncAiInputToSession` supersedes a queued write, so a
 	 * pending timer can never resurrect text the user already sent.
 	 */
-	queueAiDraftFlush: (tabId: string, value: string, commandMode: boolean) => void;
+	queueAiDraftFlush: (tabId: string, value: string, commandMode: ComposerCommandMode) => void;
 	/**
 	 * Persist terminal input value to a session.
 	 * Called on blur/session switch to sync local input state to session state.
@@ -113,9 +117,11 @@ export function useInputSync(deps: UseInputSyncDeps): UseInputSyncReturn {
 
 	// Latest queued draft write, and the timer that will apply it. Both are
 	// refs so a keystroke never re-renders anything.
-	const pendingDraftRef = useRef<{ tabId: string; value: string; commandMode: boolean } | null>(
-		null
-	);
+	const pendingDraftRef = useRef<{
+		tabId: string;
+		value: string;
+		commandMode: ComposerCommandMode;
+	} | null>(null);
 	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	// Write a draft onto one specific tab, wherever that tab lives. Tab ids are
@@ -125,12 +131,16 @@ export function useInputSync(deps: UseInputSyncDeps): UseInputSyncReturn {
 	// reference so the write costs no re-render and marks nothing dirty for
 	// persistence.
 	const writeDraftToTab = useCallback(
-		(tabId: string, value: string, commandMode: boolean) => {
+		(tabId: string, value: string, commandMode: ComposerCommandMode) => {
 			setSessions((prev) =>
 				prev.map((s) => {
 					const tab = s.aiTabs?.find((t) => t.id === tabId);
 					if (!tab) return s;
-					if (tab.inputValue === value && (tab.commandMode ?? false) === commandMode) return s;
+					if (
+						tab.inputValue === value &&
+						normalizeComposerCommandMode(tab.commandMode) === commandMode
+					)
+						return s;
 					return {
 						...s,
 						aiTabs: s.aiTabs.map((t) =>
@@ -160,7 +170,7 @@ export function useInputSync(deps: UseInputSyncDeps): UseInputSyncReturn {
 	}, [cancelQueuedDraftFlush, writeDraftToTab]);
 
 	const queueAiDraftFlush = useCallback(
-		(tabId: string, value: string, commandMode: boolean) => {
+		(tabId: string, value: string, commandMode: ComposerCommandMode) => {
 			// A queued write for a different tab must not be dropped on the floor
 			// when focus moves - apply it now, then start queuing for the new tab.
 			const pending = pendingDraftRef.current;

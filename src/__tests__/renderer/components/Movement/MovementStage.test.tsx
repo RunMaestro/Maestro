@@ -1,7 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import type { RefObject } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MovementOverlay } from '../../../../renderer/components/Movement/MovementOverlay';
+import { MovementStage } from '../../../../renderer/components/Movement/MovementStage';
 import { applyMovementPayload, useMovementStore } from '../../../../renderer/stores/movementStore';
 import { flashConcertoTarget } from '../../../../renderer/utils/concertoLinks';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -19,14 +18,13 @@ function enablePointerCapture(handle: HTMLElement): void {
 	});
 }
 
-describe('MovementOverlay', () => {
+describe('MovementStage', () => {
 	beforeEach(() => {
 		useMovementStore.setState({
 			items: [],
 			dismissedItems: [],
 			viewportWidth: 0,
 			viewportHeight: 0,
-			hidden: false,
 			flashedId: null,
 		});
 		vi.mocked(window.maestro.process.releaseConcertoHtmlDocument).mockClear();
@@ -43,7 +41,7 @@ describe('MovementOverlay', () => {
 			body: '<button>Buy</button>',
 			revision: 8,
 		});
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 		const originalFrame = screen.getByTestId('concerto-html-iframe');
 
 		fireEvent.click(screen.getByRole('button', { name: 'Close movement panel' }));
@@ -72,7 +70,7 @@ describe('MovementOverlay', () => {
 			sourcePlugin: 'Acme Metrics',
 		});
 
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 
 		expect(screen.getByText('from Acme Metrics')).toHaveAttribute('title', 'from Acme Metrics');
 	});
@@ -86,7 +84,7 @@ describe('MovementOverlay', () => {
 			body: '<button>Buy</button><script>window.clicked=true</script>',
 		});
 
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 
 		const iframe = screen.getByTestId('concerto-html-iframe');
 		expect(iframe).toHaveAttribute('sandbox', 'allow-scripts');
@@ -105,7 +103,7 @@ describe('MovementOverlay', () => {
 
 	it('shows a preset shell immediately and keeps a prior frame visible while revising', () => {
 		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Checkout mockup' });
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 
 		expect(screen.getByTestId('movement-preparing-shell')).toHaveTextContent('Composing');
 		expect(screen.queryByTestId('concerto-html-iframe')).not.toBeInTheDocument();
@@ -125,118 +123,32 @@ describe('MovementOverlay', () => {
 		expect(screen.getByTestId('movement-revising-badge')).toHaveTextContent('Revising');
 	});
 
-	it('uses the reserved chat boundary as the coordinate origin and viewport', () => {
-		const boundary = document.createElement('div');
-		vi.spyOn(boundary, 'getBoundingClientRect').mockReturnValue({
-			left: 0,
-			right: 500,
-			top: 40,
-			bottom: 900,
-			width: 500,
-			height: 860,
-			x: 0,
-			y: 40,
-			toJSON: () => ({}),
-		});
-		const originalWidth = window.innerWidth;
-		const originalHeight = window.innerHeight;
-		try {
-			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
-			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
-			applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Mockup' });
-			render(
-				<MovementOverlay
-					theme={mockTheme}
-					workspaceBoundaryRef={{ current: boundary } as RefObject<HTMLElement>}
-					workspaceLayout="side"
-				/>
-			);
+	it('reports its own container size as the viewport the agent lays out against', async () => {
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Mockup' });
+		render(<MovementStage theme={mockTheme} />);
 
-			expect(screen.getByTestId('movement-stage-root')).toHaveStyle({
-				left: '500px',
-				top: '40px',
-				width: '940px',
-				height: '860px',
-			});
-			expect(screen.getByTestId('movement-stage-backdrop')).toBeInTheDocument();
-			expect(useMovementStore.getState()).toMatchObject({
-				viewportWidth: 940,
-				viewportHeight: 860,
-			});
-		} finally {
-			Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
-			Object.defineProperty(window, 'innerHeight', {
-				configurable: true,
-				value: originalHeight,
-			});
-		}
+		// The stage is sized by the window it sits in, not by the browser viewport,
+		// so it measures its own container (the test ResizeObserver reports 1000x500).
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+
+		expect(useMovementStore.getState()).toMatchObject({
+			viewportWidth: 1000,
+			viewportHeight: 500,
+		});
 	});
 
-	it('keeps the Maestro viewport current for agent layout reads', () => {
-		const originalWidth = window.innerWidth;
-		const originalHeight = window.innerHeight;
-		try {
-			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
-			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
-			applyMovementPayload({ op: 'add', id: 'viewport-probe' });
-			render(<MovementOverlay theme={mockTheme} />);
+	it('shows an empty-stage hint when no Concerto has been composed yet', () => {
+		render(<MovementStage theme={mockTheme} />);
 
-			expect(useMovementStore.getState()).toMatchObject({
-				viewportWidth: 1440,
-				viewportHeight: 900,
-			});
-
-			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
-			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
-			fireEvent(window, new Event('resize'));
-
-			expect(useMovementStore.getState()).toMatchObject({
-				viewportWidth: 1280,
-				viewportHeight: 720,
-			});
-		} finally {
-			Object.defineProperty(window, 'innerWidth', {
-				configurable: true,
-				value: originalWidth,
-			});
-			Object.defineProperty(window, 'innerHeight', {
-				configurable: true,
-				value: originalHeight,
-			});
-		}
-	});
-
-	it('hides and restores all windows from the taskbar without remounting HTML frames', () => {
-		applyMovementPayload({
-			op: 'add',
-			id: 'live-game',
-			viewType: 'html',
-			title: 'Live game',
-			body: '<button>Move</button>',
-		});
-		render(<MovementOverlay theme={mockTheme} />);
-		const frame = screen.getByTestId('concerto-html-iframe');
-
-		fireEvent.mouseEnter(screen.getByTestId('movement-taskbar'));
-		expect(screen.getAllByRole('button', { name: 'Hide all Concerto windows' })).toHaveLength(1);
-		fireEvent.click(screen.getByRole('button', { name: 'Hide all Concerto windows' }));
-
-		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
-		expect(screen.getByTestId('movement-panels')).toHaveStyle({ visibility: 'hidden' });
-		expect(document.querySelector('[data-movement-id="live-game"]')).toHaveStyle({
-			visibility: 'hidden',
-		});
-		expect(screen.getByRole('button', { name: 'Show all Concerto windows' })).toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole('button', { name: 'Show all Concerto windows' }));
-
-		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
-		expect(screen.getByTestId('movement-panels')).toHaveStyle({ visibility: 'visible' });
+		expect(screen.getByTestId('movement-stage-empty')).toHaveTextContent('The stage is empty');
+		expect(screen.queryByTestId('movement-taskbar')).not.toBeInTheDocument();
 	});
 
 	it('pins the taskbar open when its launcher is clicked', () => {
 		applyMovementPayload({ op: 'add', id: 'notes', title: 'Notes' });
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 		const taskbar = screen.getByTestId('movement-taskbar');
 
 		fireEvent.mouseEnter(taskbar);
@@ -253,7 +165,7 @@ describe('MovementOverlay', () => {
 	it('anchors the collapsed taskbar at bottom-right above every Concerto', () => {
 		applyMovementPayload({ op: 'add', id: 'back-window', title: 'Back window' });
 		applyMovementPayload({ op: 'add', id: 'front-window', title: 'Front window' });
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 
 		const anchor = screen.getByTestId('movement-taskbar-anchor');
 		const taskbar = screen.getByTestId('movement-taskbar');
@@ -295,7 +207,7 @@ describe('MovementOverlay', () => {
 		vi.useFakeTimers();
 		try {
 			applyMovementPayload({ op: 'add', id: 'notes', title: 'Notes' });
-			render(<MovementOverlay theme={mockTheme} />);
+			render(<MovementStage theme={mockTheme} />);
 			const taskbar = screen.getByTestId('movement-taskbar');
 
 			fireEvent.mouseEnter(taskbar);
@@ -322,7 +234,7 @@ describe('MovementOverlay', () => {
 			body: '<button>Move</button>',
 		});
 		applyMovementPayload({ op: 'add', id: 'notes', title: 'Notes' });
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 		const frame = screen.getByTestId('concerto-html-iframe');
 
 		fireEvent.click(screen.getByRole('button', { name: 'Minimize Chess' }));
@@ -371,7 +283,7 @@ describe('MovementOverlay', () => {
 			width: 400,
 			height: 300,
 		});
-		render(<MovementOverlay theme={mockTheme} />);
+		render(<MovementStage theme={mockTheme} />);
 
 		for (const direction of ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']) {
 			expect(screen.getByTestId(`movement-resize-handle-${direction}`)).toBeInTheDocument();

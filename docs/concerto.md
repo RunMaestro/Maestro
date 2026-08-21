@@ -16,21 +16,44 @@ Open **Settings -> Extensions**, find **Concerto**, and enable it. (Equivalently
 
 Concerto has two surfaces, named for where a concerto puts its focus:
 
-### Movement - in-app panels
+### Movement - panels on the Concerto stage
 
-A **Movement** is a floating panel that lives _inside_ the Maestro main window, above your workspace. Movements are:
+A **Movement** is a floating panel on the **Concerto stage**: a centered window inside Maestro that holds every panel an agent composes. Movements are:
 
-- **Free-placed** - the agent positions them; you can drag them by the header and resize from the corner.
+- **Free-placed** - the agent positions them on the stage; you can drag them by the header and resize from any edge or corner.
 - **Live** - the agent updates a panel in place by its id (a coverage number ticks, a table row changes) rather than posting a new message.
-- **Stashable** - hide every panel with one click and restore them later; the agent can also close its own stale panels.
+- **Minimizable** - send a panel to the stage taskbar (bottom right) and bring it back later; the agent can also close its own stale panels.
 
 Use Movements for the roomy, multi-panel "dashboard" view of a task you are actively working in.
+
+#### Opening and closing the stage
+
+The stage opens by itself the moment an agent composes a Concerto. You open and close it yourself in the three usual ways:
+
+- **Hotkey** - `Opt+C` / `Alt+C` toggles the stage.
+- **Command palette** - `Cmd+K` / `Ctrl+K`, then "Concerto Stage".
+- **Hamburger menu** - **Concerto** in the Left Bar menu.
+
+Escape (or the ESC pill in the header) closes it, and you can drag the window to whatever size you like - Maestro remembers it.
+
+#### Docked or floating
+
+The stage has two presentations, and the button beside the ESC pill switches between them (or "Pop Concerto Stage Out" in the command palette):
+
+- **Docked** (the default) is a centered window that owns the screen. Right when the Concerto _is_ the task: reading a dashboard, playing a game.
+- **Floating** pops it out into a free-positioned window that does not block anything. Drag it by its title bar, resize from the bottom or right edge, and keep typing to the agent beside it. Right when the Concerto is something to watch while you work.
+
+Maestro remembers which mode you chose and where you dragged the floating window. Switching between the two never reloads the panels, so you can pop a game out mid-move.
+
+Closing the stage **parks** it, it does not tear it down. Panels stay exactly as they were, live ones keep updating, and an interactive HTML panel keeps its state, so reopening the stage lands you back mid-game or mid-form.
 
 ### Cadenza - always-on-top HUD cards
 
 A **Cadenza** is a small card that floats _above every application_, not just Maestro - a heads-up display you can glance at while working in your editor, browser, or terminal. Cadenzas are click-through by default (they never steal your cursor) and light up only where a card actually is. A Cadenza can also carry a **decision prompt**: buttons that send your choice straight back to the agent.
 
 Use Cadenzas for the one number or the one question you want in view while your attention is elsewhere.
+
+To get them out of the way for a moment, `Opt+Shift+C` / `Alt+Shift+C` (or "Hide All Cadenzas" in the command palette) stashes every card at once and the same key brings them all back. Stashing never closes a card: trackers keep tracking while they are hidden. Nothing else clears the stash, so cards an agent opens while it is on wait quietly until you press the key again.
 
 ## Pointing from chat
 
@@ -54,7 +77,7 @@ maestro-cli movement state                                    # read visible lay
 maestro-cli movement progress <id> --title "Mockup" --phase composing
 ```
 
-`add` also accepts `--x`, `--y`, `--width`, and `--height`. `state` returns Maestro's current viewport plus every non-minimized panel's geometry and stacking layer, so an agent can place a new Movement without overlapping the others.
+`add` also accepts `--x`, `--y`, `--width`, and `--height`. `state` returns the current size of the Concerto stage plus every non-minimized panel's geometry and stacking layer, so an agent can place a new Movement without overlapping the others. It also reports whether the stage window is closed - panels survive that, so an agent can keep working and you see the result when you reopen it.
 
 HTML Concerto requests run as independent design tracks in a compact conductor score above every Movement window. The score defaults above the bottom-right taskbar and can be dragged elsewhere. It uses one shared staff with compact measures for `composing`, `refining`, `arranging`, `reviewing`, and `testing`; each active Concerto is a numbered note that moves between measures as its work advances. When several mockups are requested, the parent agent assigns one track to each available subagent, and each subagent advances its own note with `movement progress`. The command updates only the progress pipeline; it does not create, move, or replace a Movement window.
 
@@ -108,5 +131,5 @@ Use a Movement for full-page mockups. HTML Cadenzas use the same isolation but r
 
 ## Notes
 
-- **Cadenza is a separate window.** The always-on-top HUD is its own transparent window layered over your whole screen. On multi-monitor setups with mixed display scaling, positioning can be imperfect; Movements (in-app) are unaffected.
+- **Cadenza is a separate window.** The always-on-top HUD is its own transparent window layered over your whole screen. On multi-monitor setups with mixed display scaling, positioning can be imperfect; Movements (on the in-app stage) are unaffected.
 - **Nothing runs when Concerto is off.** Both surfaces and the CLI bridge are gated by the Concerto flag, so a disabled plugin means `movement` / `cadenza` commands no-op.

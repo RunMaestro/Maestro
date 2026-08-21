@@ -2,11 +2,17 @@
  * movementStore - Zustand store for the agent-driven movement: free-placed items,
  * each rendering a BlockView tree. Fed by the CLI/web bridge
  * (`remote:movement` -> useRemoteIntegration -> applyMovementPayload). Presentational
- * state only; MovementOverlay renders the items. Usable outside React via
+ * state only; MovementStage renders the items. Usable outside React via
  * useMovementStore.getState() (the bridge builds its `state` snapshot from here).
+ *
+ * The stage itself is a modal (see components/Concerto/ConcertoStageModal), and
+ * whether it is up lives in modalStore under `concertoStage`. This store reads
+ * that flag back instead of keeping its own copy, so "the Concerto layer is
+ * hidden" has exactly one home.
  */
 
 import { create } from 'zustand';
+import { getModalActions, selectModalOpen, useModalStore } from './modalStore';
 import type {
 	MovementPayload,
 	MovementStateSnapshot,
@@ -74,13 +80,21 @@ export interface MovementStoreState {
 	items: MovementItem[];
 	/** Recently user-closed items that a chat chip can reopen as a fresh view. */
 	dismissedItems: MovementItem[];
-	/** Movement viewport size (px), reported by the overlay for agent awareness. */
+	/** Stage size (px), reported by the stage itself for agent awareness. */
 	viewportWidth: number;
 	viewportHeight: number;
-	/** User "stash" toggle: hide the whole overlay without removing items. */
-	hidden: boolean;
 	/** Id of the panel currently pulsing to catch the eye (from a chat chip), or null. */
 	flashedId: string | null;
+}
+
+/** True while the Concerto stage modal is up. */
+export function isConcertoStageOpen(): boolean {
+	return selectModalOpen('concertoStage')(useModalStore.getState());
+}
+
+/** Raise the stage so a panel the user (or an agent) just pointed at is visible. */
+export function openConcertoStage(): void {
+	getModalActions().setConcertoStageOpen(true);
 }
 
 export interface MovementStoreActions {
@@ -94,7 +108,6 @@ export interface MovementStoreActions {
 	removeItem: (id: string) => void;
 	clearItems: () => void;
 	setViewport: (width: number, height: number) => void;
-	setHidden: (hidden: boolean) => void;
 	setItemMinimized: (id: string, minimized: boolean) => void;
 	/** Move a recently dismissed item back into the live overlay. */
 	restoreDismissedItem: (id: string, timestamp?: number) => boolean;
@@ -106,11 +119,10 @@ export interface MovementStoreActions {
 
 export type MovementStore = MovementStoreState & MovementStoreActions;
 
-/** True only while at least one Concerto is genuinely present on the stage. */
-export function selectHasVisibleMovement(
-	state: Pick<MovementStoreState, 'items' | 'hidden'>
-): boolean {
-	return !state.hidden && state.items.some((item) => !item.minimized);
+/** True only while at least one Concerto is genuinely present on the stage
+ *  (open, not minimized to the taskbar). */
+export function selectHasVisibleMovement(state: Pick<MovementStoreState, 'items'>): boolean {
+	return state.items.some((item) => !item.minimized);
 }
 
 /** How much of a panel must stay inside the viewport so its header (the only
@@ -140,7 +152,6 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 	dismissedItems: [],
 	viewportWidth: 0,
 	viewportHeight: 0,
-	hidden: false,
 	flashedId: null,
 
 	upsertItem: (item) =>
@@ -211,8 +222,6 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 
 	setViewport: (width, height) => set({ viewportWidth: width, viewportHeight: height }),
 
-	setHidden: (hidden) => set({ hidden }),
-
 	setItemMinimized: (id, minimized) =>
 		set((s) => {
 			let changed = false;
@@ -231,7 +240,6 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 			if (!item) return s;
 			restored = true;
 			return {
-				hidden: false,
 				items: [
 					...s.items.filter((candidate) => candidate.id !== id),
 					{ ...item, minimized: false, timestamp: timestamp ?? item.timestamp },
@@ -239,24 +247,29 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 				dismissedItems: s.dismissedItems.filter((candidate) => candidate.id !== id),
 			};
 		});
+		if (restored) openConcertoStage();
 		return restored;
 	},
 
-	surfaceItem: (id) =>
+	surfaceItem: (id) => {
+		if (!get().items.some((item) => item.id === id)) return;
+		// Raising a panel implies raising the stage it sits on: a taskbar click or
+		// a chat chip should reach the panel even when the stage is closed.
+		openConcertoStage();
 		set((s) => {
 			const index = s.items.findIndex((item) => item.id === id);
 			if (index < 0) return s;
 			const target = s.items[index];
 			const surfaced = target.minimized ? { ...target, minimized: false } : target;
 			if (index === s.items.length - 1) {
-				if (!s.hidden && surfaced === target) return s;
-				return { hidden: false, items: [...s.items.slice(0, index), surfaced] };
+				if (surfaced === target) return s;
+				return { items: [...s.items.slice(0, index), surfaced] };
 			}
 			return {
-				hidden: false,
 				items: [...s.items.slice(0, index), ...s.items.slice(index + 1), surfaced],
 			};
-		}),
+		});
+	},
 
 	// Chat-chip "point": surface the overlay and pulse the target panel for a moment.
 	flashItem: (id) => {
@@ -343,9 +356,10 @@ export function applyMovementPayload(p: MovementPayload): void {
 	const isBegin = p.op === 'begin';
 	const viewType = isBegin ? 'html' : (p.viewType ?? existing?.viewType ?? 'view');
 	const step = (cascadeIndex++ % 6) * 32;
-	// A newly-added panel should surface immediately. Updates intentionally do
-	// not change `hidden`, so a live tracker cannot override the user's stash.
-	store.setHidden(false);
+	// A newly-added panel should surface immediately, raising the stage with it.
+	// Updates intentionally do not raise the stage, so a live tracker cannot
+	// reopen a window the user just closed.
+	openConcertoStage();
 	const taskbarOrder =
 		existing?.taskbarOrder ??
 		Math.max(
@@ -396,7 +410,7 @@ export function applyMovementPayload(p: MovementPayload): void {
 
 /** Build the snapshot returned to `maestro-cli movement state` (agent awareness). */
 export function getMovementSnapshot(): MovementStateSnapshot {
-	const { items, viewportWidth, viewportHeight, hidden } = useMovementStore.getState();
+	const { items, viewportWidth, viewportHeight } = useMovementStore.getState();
 	return {
 		items: items.flatMap((it, index) =>
 			it.minimized
@@ -416,6 +430,6 @@ export function getMovementSnapshot(): MovementStateSnapshot {
 		),
 		width: viewportWidth,
 		height: viewportHeight,
-		hidden,
+		hidden: !isConcertoStageOpen(),
 	};
 }

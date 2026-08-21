@@ -43,6 +43,21 @@ export interface DirectorNotesSynopsisPromptResult {
 }
 
 /**
+ * A merged corpus of runs performed by OTHER Maestro instances against the same
+ * project (see `director-notes-shared-history.ts`). Materialized to a local
+ * file by the caller, because the synopsis agent runs on this machine and
+ * cannot open a path on the host that produced those runs.
+ */
+export interface DirectorNotesSharedHistoryFile {
+	/** Absolute local path to the JSON file holding the entries. */
+	filePath: string;
+	/** Hostnames the entries came from. */
+	hosts: string[];
+	/** Entries inside the lookback window. */
+	entryCount: number;
+}
+
+/**
  * Sanitize a session display name for safe embedding in AI prompts.
  * Strips markdown formatting characters and control sequences that could be
  * interpreted as prompt instructions by the AI agent.
@@ -76,8 +91,14 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 	 * exactly as it was before the setting existed.
 	 */
 	idealEndState?: string;
+	/**
+	 * Optional cross-host corpus. Absent (the all-local case) leaves the prompt
+	 * byte-for-byte what it was before shared history was folded in.
+	 */
+	sharedHistoryFile?: DirectorNotesSharedHistoryFile | null;
 }): Promise<DirectorNotesSynopsisPromptResult> {
 	const { historyManager, sessionNameMap, lookbackDays, basePrompt } = params;
+	const sharedHistoryFile = params.sharedHistoryFile ?? null;
 	const endState = normalizeIdealEndState(params.idealEndState);
 
 	const cutoffTime =
@@ -114,7 +135,7 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 		entryCount += entriesInWindow;
 	}
 
-	if (sessionManifest.length === 0) {
+	if (sessionManifest.length === 0 && !sharedHistoryFile) {
 		return { prompt: '', agentCount: 0, entryCount: 0 };
 	}
 
@@ -159,6 +180,23 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 			]
 		: [];
 
+	// Runs performed by another Maestro instance against the same project (an
+	// agent living on the remote box, rather than one this machine drives over
+	// SSH). They are one file of pre-merged entries, so they are listed apart
+	// from the per-agent manifest and labeled with the hosts they came from.
+	const sharedHistoryBlock = sharedHistoryFile
+		? [
+				'',
+				'## Other Hosts',
+				'',
+				`Work done by Maestro on ${sharedHistoryFile.hosts.join(', ') || 'other hosts'} against`,
+				'the same projects, merged into one file. Same entry shape as the files',
+				'above; treat it as part of the same body of work.',
+				'',
+				`- ${sharedHistoryFile.entryCount} entries: ${sharedHistoryFile.filePath}`,
+			]
+		: [];
+
 	const prompt = [
 		basePrompt,
 		'',
@@ -172,8 +210,13 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 		`${agentCount} agents had ${entryCount} qualifying entries.`,
 		'',
 		manifestLines,
+		...sharedHistoryBlock,
 		...endStateContractReminder,
 	].join('\n');
 
-	return { prompt, agentCount, entryCount };
+	return {
+		prompt,
+		agentCount,
+		entryCount: entryCount + (sharedHistoryFile?.entryCount ?? 0),
+	};
 }

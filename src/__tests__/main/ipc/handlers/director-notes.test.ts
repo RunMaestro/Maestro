@@ -14,11 +14,18 @@ import type { HistoryManager } from '../../../../main/history-manager';
 import type { HistoryEntry } from '../../../../shared/types';
 import { MAX_ENTRIES_PER_SESSION } from '../../../../shared/history';
 
-// Mock electron's ipcMain
+// Mock electron's ipcMain. `app` is needed because the shared-history collector
+// materializes its cross-host corpus into userData for the synopsis agent.
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
+	},
+	app: {
+		getPath: vi.fn(() => '/tmp/maestro-test-userdata'),
+	},
+	BrowserWindow: {
+		getAllWindows: vi.fn(() => []),
 	},
 }));
 
@@ -27,8 +34,33 @@ vi.mock('../../../../main/history-manager', () => ({
 	getHistoryManager: vi.fn(),
 }));
 
-// Mock the shared-history-manager module (no longer imported by director-notes)
-vi.mock('../../../../main/shared-history-manager', () => ({}));
+// Mock the shared-history-manager module. Director's Notes reaches it through
+// `director-notes-shared-history` to fold in runs performed by OTHER Maestro
+// instances against the same project. Defaults to "nothing shared" so the
+// existing local-only assertions are untouched; the cross-host suite overrides
+// these per case.
+const mockHasLocalSharedHistory = vi.fn().mockReturnValue(false);
+const mockReadRemoteEntriesLocal = vi.fn().mockReturnValue([]);
+const mockReadRemoteEntriesSsh = vi.fn().mockResolvedValue([]);
+vi.mock('../../../../main/shared-history-manager', () => ({
+	hasLocalSharedHistory: (...args: any[]) => mockHasLocalSharedHistory(...args),
+	readRemoteEntriesLocal: (...args: any[]) => mockReadRemoteEntriesLocal(...args),
+	readRemoteEntriesSsh: (...args: any[]) => mockReadRemoteEntriesSsh(...args),
+}));
+
+// The cross-host corpus is materialized to disk for the synopsis agent; keep
+// the write in memory so the assertions don't depend on a writable temp path.
+const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+vi.mock('fs/promises', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs/promises')>();
+	return { ...actual, writeFile: (...args: any[]) => mockWriteFile(...args) };
+});
+
+// Resolves SSH remotes for the shared-history collector.
+const mockGetSshRemoteById = vi.fn().mockReturnValue(undefined);
+vi.mock('../../../../main/stores/getters', () => ({
+	getSshRemoteById: (...args: any[]) => mockGetSshRemoteById(...args),
+}));
 
 // Mock the stores module
 const mockGetSessionsStore = vi.fn().mockReturnValue({
@@ -647,6 +679,193 @@ describe('director-notes IPC handlers', () => {
 
 			expect(result.perAgent[0].entryCount).toBe(2);
 			expect(result.perAgent[0].truncated).toBe(false);
+		});
+	});
+
+	// Work performed by ANOTHER Maestro instance against the same project (an
+	// agent living on the remote box, rather than one this machine drives over
+	// SSH) is mirrored into `<project>/.maestro/history/history-<host>.jsonl`.
+	// The per-agent History panel already merged those files; Director's Notes
+	// did not, so the same runs were visible in one surface and absent from the
+	// other. These cover the merge in every Director's Notes surface.
+	describe('cross-host shared history', () => {
+		/** An entry authored by a peer Maestro on another machine. */
+		const foreignEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
+			createMockEntry({
+				id: 'foreign-1',
+				hostname: 'petopswatt',
+				sessionId: 'remote-session',
+				sessionName: 'Remote Agent',
+				summary: 'Work done on the remote box',
+				...overrides,
+			});
+
+		/** One local SSH agent whose project dir is where the mirror lands. */
+		const withSshAgent = () => {
+			mockGetSessionsStore.mockReturnValue({
+				get: vi.fn().mockReturnValue([
+					{
+						id: 'session-1',
+						name: 'Local Agent',
+						cwd: '/remote/project',
+						projectRoot: '/remote/project',
+						sessionSshRemoteConfig: {
+							enabled: true,
+							remoteId: 'petopswatt',
+							syncHistory: true,
+						},
+					},
+				]),
+			});
+			mockGetSshRemoteById.mockReturnValue({ id: 'petopswatt', host: 'petopswatt', port: 22 });
+		};
+
+		it('includes a peer host’s entries in the unified list', async () => {
+			withSshAgent();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'local-1', timestamp: now - 1000 }),
+			]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([
+				foreignEntry({ id: 'foreign-1', timestamp: now - 2000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['local-1', 'foreign-1']);
+			expect(result.stats.totalCount).toBe(2);
+			// Two distinct agents: the local one and the peer's.
+			expect(result.stats.agentCount).toBe(2);
+		});
+
+		// A run this machine drove over SSH is recorded locally AND mirrored to the
+		// project dir. Entry ids are stable across hosts, so the copy must not
+		// double count.
+		it('does not double count an entry that is also in the local store', async () => {
+			withSshAgent();
+			const now = Date.now();
+			const shared = createMockEntry({ id: 'local-1', timestamp: now - 1000 });
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([shared]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([{ ...shared, hostname: 'petopswatt' }]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries).toHaveLength(1);
+			expect(result.stats.agentCount).toBe(1);
+		});
+
+		// A foreign session id lives in the peer's namespace, so it is prefixed
+		// with the host. Without that, a colliding id would fold two different
+		// agents' work into one row.
+		it('namespaces a foreign agent by host and labels it', async () => {
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([foreignEntry()]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries[0].sourceSessionId).toBe('shared:petopswatt:remote-session');
+			expect(result.entries[0].agentName).toBe('Remote Agent (petopswatt)');
+		});
+
+		it('counts peer entries in Rich Mode stats', async () => {
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([foreignEntry({ success: true })]);
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.totalEntries).toBe(1);
+			expect(result.agentCount).toBe(1);
+			expect(result.perAgent[0].agentName).toBe('Remote Agent (petopswatt)');
+			// Retention truncation is a per-FILE property; a merged cross-host read
+			// can never claim it.
+			expect(result.perAgent[0].truncated).toBe(false);
+		});
+
+		// The offset indexes into the unified list, so it has to aggregate the
+		// same corpus - a narrower one scrolls the user to the wrong row.
+		it('counts peer entries when resolving a graph click to an offset', async () => {
+			withSshAgent();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'local-1', timestamp: now - 1000 }),
+			]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([
+				foreignEntry({ id: 'foreign-1', timestamp: now - 2000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getOffsetForTimestamp');
+			const offset = await handler!({} as any, now - 2000, { lookbackDays: 7 });
+
+			// Newest first: local-1 at 0, the peer's entry at 1.
+			expect(offset).toBe(1);
+		});
+
+		it('hands the synopsis agent a file of the peer’s entries', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/history/session-1.json');
+			mockReadRemoteEntriesSsh.mockResolvedValue([foreignEntry()]);
+			vi.mocked(groomContext).mockResolvedValue({
+				response: 'Synopsis text',
+				durationMs: 10,
+				completionReason: 'complete',
+			} as any);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(mockWriteFile).toHaveBeenCalled();
+			const prompt = vi.mocked(groomContext).mock.calls[0][0].prompt;
+			expect(prompt).toContain('## Other Hosts');
+			expect(prompt).toContain('petopswatt');
+		});
+
+		it('leaves the prompt untouched when no peer history exists', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/history/session-1.json');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: 'Synopsis text',
+				durationMs: 10,
+				completionReason: 'complete',
+			} as any);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			const prompt = vi.mocked(groomContext).mock.calls[0][0].prompt;
+			expect(prompt).not.toContain('## Other Hosts');
+			expect(mockWriteFile).not.toHaveBeenCalled();
+		});
+
+		// A remote that is down, or a rotated key, must degrade Director's Notes
+		// to local-only rather than break it.
+		it('falls back to local history when the peer read throws', async () => {
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'local-1' }),
+			]);
+			mockReadRemoteEntriesSsh.mockRejectedValue(new Error('ssh: connect timed out'));
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['local-1']);
 		});
 	});
 

@@ -52,6 +52,7 @@ import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createTabsApi } from './tabs';
+import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
@@ -232,6 +233,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Tab lifecycle API (renderer -> main tab-close notification)
 	tabs: createTabsApi(),
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: createAiCommandApi(),
 
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
@@ -587,6 +590,12 @@ export type {
 	// From tabs
 	TabsApi,
 } from './tabs';
+export type {
+	// From aiCommand
+	AiCommandApi,
+	AiCommandSuggestRequest,
+	AiCommandSuggestResult,
+} from './aiCommand';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

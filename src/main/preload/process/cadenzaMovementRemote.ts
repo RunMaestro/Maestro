@@ -34,6 +34,17 @@ export function createCadenzaMovementRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to the "stash all cadenzas" toggle. Cadenzas normally live in
+		 * the HUD window, but the hotkey and command palette that flip the stash
+		 * are in the main window, so main forwards the new value here.
+		 */
+		onRemoteCadenzaHidden: (callback: (hidden: boolean) => void): (() => void) => {
+			const handler = (_: unknown, hidden: boolean) => callback(hidden);
+			ipcRenderer.on('remote:cadenzaHidden', handler);
+			return () => ipcRenderer.removeListener('remote:cadenzaHidden', handler);
+		},
+
+		/**
 		 * Subscribe to remote movement operations and Concerto progress reports from
 		 * the CLI/web interface. The renderer applies window mutations to the movement
 		 * store and routes progress reports to the creation pipeline.
@@ -146,6 +157,15 @@ export function createCadenzaMovementRemoteApi() {
 		 */
 		flashCadenza: (id: string): void => {
 			ipcRenderer.send('cadenza:flash', id);
+		},
+
+		/**
+		 * Show or stash every cadenza at once. The main renderer flips its own
+		 * store directly; this tells main to mirror the change into the HUD window,
+		 * which is where cadenzas actually render whenever it is up.
+		 */
+		setCadenzasHidden: (hidden: boolean): void => {
+			ipcRenderer.send('cadenza:set-hidden', hidden);
 		},
 
 		/**

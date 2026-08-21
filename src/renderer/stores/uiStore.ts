@@ -131,6 +131,12 @@ export interface UIStoreState {
 	editingGroupId: string | null;
 	editingSessionId: string | null;
 
+	// Queued message currently open in the edit modal (QueuedItemEditModal), or
+	// null when it is closed. Lives here rather than inside QueuedItemsList so
+	// the "Edit Last Queued Message" shortcut can open the modal from anywhere -
+	// the list itself is buried in the transcript scroll area.
+	editingQueuedItemId: string | null;
+
 	// Auto-follow active task during batch runs
 	autoFollowEnabled: boolean;
 
@@ -255,6 +261,7 @@ export interface UIStoreActions {
 	// Editing
 	setEditingGroupId: (id: string | null | ((prev: string | null) => string | null)) => void;
 	setEditingSessionId: (id: string | null | ((prev: string | null) => string | null)) => void;
+	setEditingQueuedItemId: (id: string | null) => void;
 
 	// Auto-follow
 	setAutoFollowEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
@@ -377,6 +384,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	draggingSessionId: null,
 	editingGroupId: null,
 	editingSessionId: null,
+	editingQueuedItemId: null,
 	autoFollowEnabled: false,
 	profilingActive: false,
 	usageDashboardViewMode: 'overview',
@@ -488,6 +496,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setEditingGroupId: (v) => set((s) => ({ editingGroupId: resolve(v, s.editingGroupId) })),
 	setEditingSessionId: (v) => set((s) => ({ editingSessionId: resolve(v, s.editingSessionId) })),
+	setEditingQueuedItemId: (id) => set({ editingQueuedItemId: id }),
 
 	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
 

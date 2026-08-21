@@ -38,6 +38,22 @@ export interface BaseLayer {
 	/** Whether this layer captures keyboard focus */
 	capturesFocus: boolean;
 
+	/**
+	 * Whether this layer suppresses the app's global keyboard shortcuts while it
+	 * is open. Defaults to true (treat an undefined value as true) because that
+	 * is what a real dialog needs.
+	 *
+	 * Set it to `false` for a PASSIVE surface - a floating inspector or log
+	 * viewer that renders alongside the app, takes no focus, and only registers a
+	 * layer so Escape can close it at the right priority. Without this, such a
+	 * panel makes the whole keyboard go dead: `hasOpenLayers()` and
+	 * `hasOpenModal()` both trip on any registered layer, so Cmd+K, Opt+Cmd+T,
+	 * and the file-tree keys stop working until the user closes the panel. The
+	 * fix used to be to skip layer registration entirely, which bought working
+	 * shortcuts at the price of Escape-to-close.
+	 */
+	blocksAppShortcuts?: boolean;
+
 	/** Focus trapping behavior */
 	focusTrap: FocusTrapMode;
 

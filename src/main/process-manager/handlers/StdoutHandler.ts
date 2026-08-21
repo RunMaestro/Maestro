@@ -7,7 +7,7 @@ import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
-import { getAgentLoginCommand } from '../../../shared/agentMetadata';
+import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
@@ -481,9 +481,13 @@ export class StdoutHandler {
 					// are often generic (no CLI name) and first-match-wins ordering
 					// can shadow the ones that do name a command. A small map keeps
 					// every agent correct without depending on pattern text/order.
-					const loginCmd = getAgentLoginCommand(toolType);
-					agentError.message = loginCmd
-						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${loginCmd}" to re-authenticate.`
+					const login = getAgentLoginCommand(toolType);
+					// Some agents have no login subcommand and only expose the flow
+					// as a slash command inside their TUI, so name that follow-up
+					// rather than implying the one-liner finishes the job.
+					const followUp = login?.followUp ? ` then type "${login.followUp}"` : '';
+					agentError.message = login
+						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${formatAgentLoginCommand(login)}"${followUp} to re-authenticate.`
 						: `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate.`;
 				}
 

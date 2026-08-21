@@ -243,6 +243,8 @@ export interface SessionInfo {
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
+	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
+	bookmarked?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */

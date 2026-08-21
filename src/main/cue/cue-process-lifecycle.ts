@@ -69,6 +69,14 @@ export interface ProcessRunOptions {
 	sshStdinScript?: string;
 	stdinPrompt?: string;
 	onLog: (level: string, message: string) => void;
+	/**
+	 * Called on every stdout/stderr chunk while the agent is producing output.
+	 * Used to drive WakaTime heartbeats for the duration of a run: a Cue run
+	 * can last well past WakaTime's idle timeout, so a single beat at start or
+	 * end would record a fraction of the real time. Must stay cheap and never
+	 * throw - it fires on every chunk, and the callee debounces.
+	 */
+	onActivity?: () => void;
 }
 
 // ─── Module State ────────────────────────────────────────────────────────────
@@ -231,7 +239,8 @@ export function runProcess(
 	spec: SpawnSpec,
 	options: ProcessRunOptions
 ): Promise<ProcessRunResult> {
-	const { toolType, timeoutMs, sshRemoteEnabled, sshStdinScript, stdinPrompt, onLog } = options;
+	const { toolType, timeoutMs, sshRemoteEnabled, sshStdinScript, stdinPrompt, onLog, onActivity } =
+		options;
 
 	return new Promise<ProcessRunResult>((resolve) => {
 		let child: ChildProcess;
@@ -302,12 +311,14 @@ export function runProcess(
 		child.stdout?.setEncoding('utf8');
 		child.stdout?.on('data', (data: string) => {
 			stdout += data;
+			onActivity?.();
 		});
 
 		// Capture stderr
 		child.stderr?.setEncoding('utf8');
 		child.stderr?.on('data', (data: string) => {
 			stderr += data;
+			onActivity?.();
 		});
 
 		// Handle process exit

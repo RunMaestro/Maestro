@@ -187,7 +187,7 @@ describe('HistoryDetailModal', () => {
 			);
 
 			const validatedIndicator = screen.getByTitle(
-				'Task completed successfully and human-validated'
+				'Task completed successfully, and you marked it as checked'
 			);
 			expect(validatedIndicator).toBeInTheDocument();
 		});

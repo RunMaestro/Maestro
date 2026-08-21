@@ -1,28 +1,14 @@
-import { useEffect, useMemo, useState, type RefObject } from 'react';
+import { useMemo, type RefObject } from 'react';
+import { useElementWidth } from '../../../../hooks/ui/useElementWidth';
 import type { UsageDashboardLayout } from '../types';
 
 export function useUsageDashboardLayout(
 	isOpen: boolean,
 	contentRef: RefObject<HTMLDivElement | null>
 ): UsageDashboardLayout {
-	const [containerWidth, setContainerWidth] = useState(0);
-
-	useEffect(() => {
-		if (!isOpen || !contentRef.current) return;
-
-		const updateWidth = () => {
-			if (contentRef.current) {
-				setContainerWidth(contentRef.current.offsetWidth);
-			}
-		};
-
-		updateWidth();
-
-		const resizeObserver = new ResizeObserver(updateWidth);
-		resizeObserver.observe(contentRef.current);
-
-		return () => resizeObserver.disconnect();
-	}, [isOpen, contentRef]);
+	// Drives the responsive breakpoints below. Only measured while open, since a
+	// closed modal has no laid-out content to observe.
+	const containerWidth = useElementWidth(contentRef, isOpen);
 
 	return useMemo(() => {
 		const isNarrow = containerWidth > 0 && containerWidth < 600;

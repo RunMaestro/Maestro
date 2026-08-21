@@ -280,6 +280,7 @@ describe('GitDiffViewer', () => {
 				priority: expect.any(Number),
 				blocksLowerLayers: true,
 				capturesFocus: true,
+				blocksAppShortcuts: true,
 				focusTrap: 'lenient',
 				ariaLabel: 'Git Diff Preview',
 				onEscape: expect.any(Function),

@@ -12,6 +12,12 @@ import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import {
+	UI_SURFACES,
+	resolveUiSurface,
+	resolveUiSurfaceTab,
+	surfaceTabIds,
+} from '../../../../shared/uiSurfaces';
 
 /**
  * Handle select_tab message - select a tab within a session
@@ -510,6 +516,7 @@ export async function handleOpenTerminalTab(
 	const rawCwd = message.cwd;
 	const rawShell = message.shell;
 	const rawName = message.name;
+	const rawCommand = message.command;
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
 	logger.info(
@@ -550,9 +557,17 @@ export async function handleOpenTerminalTab(
 		sendErrorResult('Invalid name: must be a string or null');
 		return;
 	}
+	if (rawCommand !== undefined && typeof rawCommand !== 'string') {
+		sendErrorResult('Invalid command: must be a string');
+		return;
+	}
 	const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
 	const shell = typeof rawShell === 'string' ? rawShell : undefined;
 	const name = typeof rawName === 'string' ? rawName : rawName === null ? null : undefined;
+	// An all-whitespace command would spawn a terminal that runs a bare
+	// newline - treat it as "no command" rather than storing it.
+	const command =
+		typeof rawCommand === 'string' && rawCommand.trim() !== '' ? rawCommand.trim() : undefined;
 
 	const session = ctx.callbacks.getSessions?.().find((s) => s.id === sessionId);
 	if (!session) {
@@ -592,11 +607,12 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name })
-		.then((success) => {
+		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command })
+		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',
-				success,
+				success: result.success,
+				tabId: result.tabId,
 				sessionId,
 				requestId: message.requestId,
 			});
@@ -698,4 +714,197 @@ export function handleNewAITabWithPrompt(
 		.catch((error) => {
 			sendErrorResult(`Failed to create AI tab with prompt: ${error.message}`);
 		});
+}
+
+/**
+ * Handle write_terminal_tab message - write raw data into an already-open
+ * desktop terminal tab. Unlike the web client's own PTY `write`, this targets
+ * one of the desktop's per-tab terminals. The tab is resolved in the renderer,
+ * since terminal tabs live only in renderer state.
+ */
+export async function handleWriteTerminalTab(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const rawTabRef = message.tabRef;
+	const rawData = message.data;
+	// Command text can carry secrets (tokens in flags, env assignments) -
+	// log length only, never the payload.
+	logger.info(
+		`[Web] Received write_terminal_tab message: session=${sessionId}, tabRefProvided=${
+			typeof rawTabRef === 'string' && rawTabRef.length > 0
+		}, dataLength=${typeof rawData === 'string' ? rawData.length : 0}`,
+		LOG_CONTEXT
+	);
+
+	const sendErrorResult = (error: string) => {
+		ctx.send(client, {
+			type: 'write_terminal_tab_result',
+			success: false,
+			error,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId) {
+		sendErrorResult('Missing sessionId');
+		return;
+	}
+	if (typeof rawData !== 'string' || rawData === '') {
+		sendErrorResult('Invalid data: must be a non-empty string');
+		return;
+	}
+	if (rawTabRef !== undefined && typeof rawTabRef !== 'string') {
+		sendErrorResult('Invalid tabRef: must be a string');
+		return;
+	}
+
+	const session = ctx.callbacks.getSessions?.().find((s) => s.id === sessionId);
+	if (!session) {
+		sendErrorResult('Session not found');
+		return;
+	}
+
+	if (!ctx.callbacks.writeTerminalTab) {
+		sendErrorResult('Terminal writes not configured');
+		return;
+	}
+
+	try {
+		const result = await ctx.callbacks.writeTerminalTab(sessionId, {
+			tabRef: typeof rawTabRef === 'string' ? rawTabRef : undefined,
+			data: rawData,
+		});
+		ctx.send(client, {
+			type: 'write_terminal_tab_result',
+			success: result.success,
+			error: result.error,
+			tabId: result.tabId,
+			tabName: result.tabName,
+			sessionId,
+			requestId: message.requestId,
+		});
+	} catch (error) {
+		sendErrorResult(
+			`Failed to write to terminal tab: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+}
+
+/**
+ * Handle list_terminal_tabs message - enumerate open desktop terminal tabs,
+ * optionally scoped to one agent.
+ */
+export async function handleListTerminalTabs(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const rawSessionId = message.sessionId;
+	if (rawSessionId !== undefined && typeof rawSessionId !== 'string') {
+		ctx.send(client, {
+			type: 'list_terminal_tabs_result',
+			success: false,
+			error: 'Invalid sessionId: must be a string',
+			requestId: message.requestId,
+		});
+		return;
+	}
+	const sessionId = typeof rawSessionId === 'string' && rawSessionId ? rawSessionId : undefined;
+
+	if (!ctx.callbacks.listTerminalTabs) {
+		ctx.send(client, {
+			type: 'list_terminal_tabs_result',
+			success: false,
+			error: 'Terminal tab listing not configured',
+			requestId: message.requestId,
+		});
+		return;
+	}
+
+	try {
+		const tabs = await ctx.callbacks.listTerminalTabs(sessionId);
+		ctx.send(client, {
+			type: 'list_terminal_tabs_result',
+			success: true,
+			tabs,
+			requestId: message.requestId,
+		});
+	} catch (error) {
+		ctx.send(client, {
+			type: 'list_terminal_tabs_result',
+			success: false,
+			error: `Failed to list terminal tabs: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+			requestId: message.requestId,
+		});
+	}
+}
+
+/**
+ * Handle open_modal message - open one of the app's modals / dashboards by
+ * `UiSurface.id`, optionally on a specific tab. Both the surface and the tab
+ * are validated here so the renderer only ever receives ids it can act on.
+ */
+export function handleOpenModal(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const surfaceName = typeof message.surface === 'string' ? message.surface : '';
+	const tabName =
+		typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
+
+	const sendResult = (success: boolean, error?: string) => {
+		ctx.send(client, {
+			type: 'open_modal_result',
+			success,
+			error,
+			requestId: message.requestId,
+		});
+	};
+
+	const surface = resolveUiSurface(surfaceName);
+	if (!surface) {
+		sendResult(
+			false,
+			`Unknown surface "${surfaceName}". Valid surfaces: ${UI_SURFACES.map((s) => s.id).join(', ')}`
+		);
+		return;
+	}
+
+	let tabId: string | undefined;
+	if (tabName !== undefined) {
+		const tab = resolveUiSurfaceTab(surface, tabName);
+		if (!tab) {
+			const valid = surfaceTabIds(surface);
+			sendResult(
+				false,
+				valid.length > 0
+					? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
+					: `${surface.label} has no tabs.`
+			);
+			return;
+		}
+		tabId = tab.id;
+	}
+
+	logger.info(
+		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}`,
+		LOG_CONTEXT
+	);
+
+	if (!ctx.callbacks.openModal) {
+		sendResult(false, 'Opening modals is not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.openModal({ surface: surface.id, tab: tabId })
+		.then((success) => sendResult(success, success ? undefined : 'Maestro window is not available'))
+		.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 }

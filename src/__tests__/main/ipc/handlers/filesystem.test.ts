@@ -365,6 +365,26 @@ describe('filesystem handlers', () => {
 			);
 		});
 
+		it('should hand back a stream URL for local media', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ size: 4096 } as any);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/test/song.mp3');
+
+			expect(result).toMatch(/^maestro-media:\/\//);
+			// Never inlined: the bytes come over the protocol, not the IPC payload.
+			expect(fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('should return null for a missing media file instead of a dead stream URL', async () => {
+			// Building the URL is pure string work, so without the stat a deleted
+			// file handed back a valid-looking URL and the player blamed the codec.
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:readFile');
+			await expect(handler!({}, '/test/gone.mp3')).resolves.toBeNull();
+		});
+
 		it('should return null when a remote file is missing', async () => {
 			// Remote not-found mirrors the local ENOENT path: return null instead of
 			// throwing so the IPC promise does not reject and reach Sentry. (MAESTRO-MG/MF)

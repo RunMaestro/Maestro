@@ -106,7 +106,11 @@ const AccountRow = memo(function AccountRow({ configDirKey, snapshot, theme }: A
 						theme={theme}
 					/>
 					<QuotaBarRow
-						label="Week (Sonnet only)"
+						// Claude names its second weekly window after the model tier it
+						// meters separately, and that name moves ("Sonnet only" ->
+						// "Opus" -> "Fable"). Print the scraped one; the fallback only
+						// applies to snapshots cached before the label was captured.
+						label={`Week (${snapshot.weekSonnetOnly.label ?? 'Sonnet only'})`}
 						percent={snapshot.weekSonnetOnly.percent}
 						resetsAt={snapshot.weekSonnetOnly.resetsAt}
 						theme={theme}
