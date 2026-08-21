@@ -227,4 +227,72 @@ describe('Modal', () => {
 			await waitFor(() => expect(onClose).toHaveBeenCalled());
 		});
 	});
+
+	describe('floating mode', () => {
+		it('drops the backdrop and lets clicks through to the app behind it', () => {
+			renderModal({
+				floating: { position: { x: 40, y: 60 }, onMovePointerDown: vi.fn() },
+			});
+
+			const overlay = screen.getByTestId('shared-modal-overlay');
+			// Click-through layer, no dimming, and not a modal to assistive tech:
+			// the user is expected to keep working beside it.
+			expect(overlay).toHaveClass('pointer-events-none');
+			expect(overlay).not.toHaveClass('modal-overlay');
+			expect(overlay).not.toHaveAttribute('aria-modal');
+
+			const card = overlay.querySelector('[data-modal-resize-key]') as HTMLElement;
+			expect(card).toHaveClass('pointer-events-auto');
+			expect(card).toHaveStyle({ left: '40px', top: '60px' });
+		});
+
+		it('offers only the edges a top-left-pinned window can grow from', () => {
+			renderModal({
+				floating: { position: { x: 0, y: 0 }, onMovePointerDown: vi.fn() },
+			});
+
+			for (const direction of ['e', 'se', 's']) {
+				expect(screen.getByTestId(`modal-resize-handle-${direction}`)).toBeInTheDocument();
+			}
+			// A north/west drag cannot be honored without also moving the window, so
+			// those handles are not offered rather than silently acting like their
+			// opposite edge.
+			for (const direction of ['n', 'ne', 'w', 'nw', 'sw']) {
+				expect(screen.queryByTestId(`modal-resize-handle-${direction}`)).not.toBeInTheDocument();
+			}
+		});
+
+		it('makes the header a drag handle without eating its buttons', () => {
+			const onMovePointerDown = vi.fn();
+			const onClose = vi.fn();
+			renderModal({ floating: { position: { x: 0, y: 0 }, onMovePointerDown }, onClose });
+
+			const handle = screen.getByTestId('modal-float-handle');
+			fireEvent.pointerDown(handle);
+			expect(onMovePointerDown).toHaveBeenCalled();
+
+			// The close button lives inside the drag handle and must still click.
+			fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('still closes on Escape, so the passive layer keeps its way out', async () => {
+			const onClose = vi.fn();
+			renderModal({ floating: { position: { x: 0, y: 0 }, onMovePointerDown: vi.fn() }, onClose });
+
+			fireEvent.keyDown(document, { key: 'Escape' });
+
+			await waitFor(() => expect(onClose).toHaveBeenCalled());
+		});
+
+		it('keeps a docked modal blocking, so floating is opt-in', () => {
+			renderModal();
+
+			const overlay = screen.getByTestId('shared-modal-overlay');
+			expect(overlay).toHaveClass('modal-overlay');
+			expect(overlay).toHaveAttribute('aria-modal', 'true');
+			expect(screen.queryByTestId('modal-float-handle')).not.toBeInTheDocument();
+			expect(screen.getByTestId('modal-resize-handle-nw')).toBeInTheDocument();
+		});
+	});
 });

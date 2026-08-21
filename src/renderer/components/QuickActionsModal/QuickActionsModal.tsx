@@ -238,7 +238,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
+	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
+	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
 	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const toggleConcertoStageFloating = useCallback(
+		() => setConcertoStageFloating(!concertoStageFloating),
+		[concertoStageFloating, setConcertoStageFloating]
+	);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -485,7 +491,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			concertoEnabled,
 			stageOpen: concertoStageOpen,
 			cadenzasHidden,
+			stageFloating: concertoStageFloating,
 			toggleConcertoStage,
+			toggleStageFloating: toggleConcertoStageFloating,
 			toggleCadenzas: toggleAllCadenzas,
 			setQuickActionOpen,
 			shortcuts: {

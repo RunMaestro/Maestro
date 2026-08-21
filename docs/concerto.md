@@ -36,6 +36,15 @@ The stage opens by itself the moment an agent composes a Concerto. You open and 
 
 Escape (or the ESC pill in the header) closes it, and you can drag the window to whatever size you like - Maestro remembers it.
 
+#### Docked or floating
+
+The stage has two presentations, and the button beside the ESC pill switches between them (or "Pop Concerto Stage Out" in the command palette):
+
+- **Docked** (the default) is a centered window that owns the screen. Right when the Concerto _is_ the task: reading a dashboard, playing a game.
+- **Floating** pops it out into a free-positioned window that does not block anything. Drag it by its title bar, resize from the bottom or right edge, and keep typing to the agent beside it. Right when the Concerto is something to watch while you work.
+
+Maestro remembers which mode you chose and where you dragged the floating window. Switching between the two never reloads the panels, so you can pop a game out mid-move.
+
 Closing the stage **parks** it, it does not tear it down. Panels stay exactly as they were, live ones keep updating, and an interactive HTML panel keeps its state, so reopening the stage lands you back mid-game or mid-form.
 
 ### Cadenza - always-on-top HUD cards

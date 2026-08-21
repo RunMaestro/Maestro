@@ -38,6 +38,25 @@ a media element, a running view), keep it mounted and pass `hidden` to `Modal`
 instead of unmounting it - see `ConcertoStageModal`. Reopening must return the
 user to exactly what they left.
 
+### Docked or floating (`Modal`'s `floating` prop)
+
+A surface the user watches while they keep working - rather than one that owns
+their attention - can offer a pop-out. Pass `floating={{ position, onMovePointerDown }}`
+and the same `Modal` renders as a free-positioned, non-blocking window: no
+backdrop, a click-through layer, a passive layer registration (Escape still
+closes it, but it neither traps focus nor blanks the app's shortcuts), a header
+that doubles as the drag handle, and resize handles on the bottom/right only
+(a top-left-pinned frame cannot honor a north or west drag without also moving).
+
+Drive the drag with `usePointerDrag` and `ignoreButtons: true` so the header's own
+buttons still click, clamp with `clampModalPosition()` from `utils/modalSizing.ts`
+so the title bar can never be dragged off screen, and persist on `onEnd` rather
+than per pointer-move.
+
+**Do NOT branch between a `<Modal>` and a hand-rolled floating `<div>`.** They
+must be the same element with different props, or React unmounts the subtree on
+every toggle - which restarts whatever the pop-out existed to keep running.
+
 ## Modal System (LayerStack)
 
 Maestro uses a centralized **LayerStack** to manage all modals, overlays, and search interfaces. Every dismissable UI surface registers with the stack so that Escape always closes the topmost layer first.

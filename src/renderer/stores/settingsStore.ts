@@ -50,8 +50,8 @@ import {
 	sanitizeSnoozeHistory,
 	SNOOZE_HISTORY_SETTINGS_KEY,
 } from './snoozeHistoryStore';
-import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
-import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { ModalPosition, ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { normalizeModalPosition, sanitizeModalSizes } from '../utils/modalSizing';
 import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice';
 import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
 import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
@@ -362,6 +362,10 @@ export interface SettingsStoreState
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
+	/** Concerto stage presentation: true = popped out into a floating window. */
+	concertoStageFloating: boolean;
+	/** Where the popped-out Concerto stage was last dragged to, or null. */
+	concertoStagePosition: ModalPosition | null;
 	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
@@ -478,6 +482,8 @@ export interface SettingsStoreActions
 	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
 	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
+	setConcertoStageFloating: (value: boolean) => void;
+	setConcertoStagePosition: (value: ModalPosition | null) => void;
 	/** Remember the height a user dragged a resizable textarea to. */
 	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
@@ -705,6 +711,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
+		concertoStageFloating: false,
+		concertoStagePosition: null,
 		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
@@ -940,6 +948,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		resetModalSizes: () => {
 			set({ modalSizes: {} });
 			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setConcertoStageFloating: (value) => {
+			set({ concertoStageFloating: value });
+			window.maestro.settings.set('concertoStageFloating', value);
+		},
+
+		setConcertoStagePosition: (value) => {
+			const normalized = value ? normalizeModalPosition(value) : null;
+			set({ concertoStagePosition: normalized });
+			window.maestro.settings.set('concertoStagePosition', normalized);
 		},
 
 		setTextareaHeight: (key, value) => {
@@ -1916,6 +1935,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['modalSizes'] !== undefined)
 			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
 
+		if (allSettings['concertoStageFloating'] !== undefined)
+			patch.concertoStageFloating = allSettings['concertoStageFloating'] === true;
+
+		if (allSettings['concertoStagePosition'] !== undefined)
+			patch.concertoStagePosition = normalizeModalPosition(allSettings['concertoStagePosition']);
+
 		if (allSettings['textareaHeights'] !== undefined)
 			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
 
@@ -2535,6 +2560,8 @@ export function getSettingsActions() {
 		setModalSize: state.setModalSize,
 		resetModalSize: state.resetModalSize,
 		resetModalSizes: state.resetModalSizes,
+		setConcertoStageFloating: state.setConcertoStageFloating,
+		setConcertoStagePosition: state.setConcertoStagePosition,
 		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,

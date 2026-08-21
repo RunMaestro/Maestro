@@ -103,6 +103,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	totalActiveTimeMs: 0,
 	lastSelectedPromptId: null,
 	modalSizes: {},
+	concertoStageFloating: false,
+	concertoStagePosition: null,
 	spellCheck: false,
 	usageRefreshIntervals: {},
 	annotatorPenColor: '#9146FF',
