@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, GitBranch, Search } from 'lucide-react';
-import { Modal } from './ui/Modal';
+import { Modal, ModalSubtitle } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -152,15 +152,7 @@ export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModa
 						onKeyDown={handleKeyDown}
 						data-testid="branch-switcher-input"
 					/>
-					{agentName ? (
-						<span
-							className="text-sm truncate min-w-0 shrink"
-							style={{ color: theme.colors.textDim }}
-							data-testid="modal-subtitle"
-						>
-							{agentName}
-						</span>
-					) : null}
+					<ModalSubtitle theme={theme} subtitle={agentName} />
 					<EscCloseButton theme={theme} onClose={onClose} />
 				</div>
 			}

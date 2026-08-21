@@ -5,7 +5,7 @@
  * patterns used throughout the application.
  */
 
-export { Modal, ModalFooter } from './Modal';
+export { Modal, ModalFooter, ModalSubtitle } from './Modal';
 export type { ModalProps, ModalFooterProps } from './Modal';
 
 export { FormInput } from './FormInput';

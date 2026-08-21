@@ -148,6 +148,7 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 					theme={theme}
 					worktreePath={prSession.cwd}
 					worktreeBranch={prSourceBranch}
+					agentName={prSession.name}
 					availableBranches={prAvailableBranches}
 					onPRCreated={onPRCreated}
 				/>

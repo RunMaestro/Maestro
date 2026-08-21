@@ -204,6 +204,33 @@ export interface ModalProps {
 }
 
 /**
+ * The dimmed "which thing is this acting on" text in a modal header.
+ *
+ * `<Modal>` renders this for you from its `subtitle` prop. Export exists for
+ * the modal shells that build their own header - a bespoke `<h2>` layout, or a
+ * `customHeader` that replaces `<Modal>`'s header wholesale - so every surface
+ * gets the same dim, the same separator, and the same
+ * `data-testid="modal-subtitle"` rather than three drifting copies.
+ *
+ * Guarded on truthiness rather than `undefined`/`null`/`''`: the idiomatic
+ * `subtitle={agent && agent.name}` yields `false`, which a three-way check
+ * lets through and which would paint the separator with nothing after it.
+ */
+export function ModalSubtitle({ theme, subtitle }: { theme: Theme; subtitle?: ReactNode }) {
+	if (!subtitle) return null;
+	return (
+		<span
+			className="text-sm truncate min-w-0"
+			style={{ color: theme.colors.textDim }}
+			data-testid="modal-subtitle"
+		>
+			<span aria-hidden="true">{'\u00b7'} </span>
+			{subtitle}
+		</span>
+	);
+}
+
+/**
  * Reusable modal wrapper component that encapsulates common modal patterns
  */
 export function Modal({
@@ -391,16 +418,7 @@ export function Modal({
 								<h2 className="text-sm font-bold shrink-0" style={{ color: theme.colors.textMain }}>
 									{title}
 								</h2>
-								{subtitle ? (
-									<span
-										className="text-sm truncate min-w-0"
-										style={{ color: theme.colors.textDim }}
-										data-testid="modal-subtitle"
-									>
-										<span aria-hidden="true">{'\u00b7'} </span>
-										{subtitle}
-									</span>
-								) : null}
+								<ModalSubtitle theme={theme} subtitle={subtitle} />
 							</div>
 							<div className="flex items-center gap-2">
 								{headerActions}
