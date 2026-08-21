@@ -85,6 +85,18 @@ export interface ModalProps {
 	theme: Theme;
 	/** Modal title displayed in the header */
 	title: string;
+	/**
+	 * Optional dimmed text rendered after the title, for the subject the modal
+	 * is acting on: which agent, which repo, which file. A modal opened from a
+	 * right-click menu can target something other than the highlighted agent,
+	 * and without this the header gives the user no way to tell.
+	 *
+	 * Deliberately separate from `title` rather than concatenated into it.
+	 * `title` is the `aria-label` and the modal-layer label, and it seeds the
+	 * fallback resize key (`getDefaultResizeKey`) - folding a per-agent string
+	 * into it would mint a different persisted window size for every agent.
+	 */
+	subtitle?: ReactNode;
 	/** Modal priority from MODAL_PRIORITIES constant */
 	priority: number;
 	/** Callback when modal should close (via X button, Escape, or backdrop click) */
@@ -193,6 +205,7 @@ export interface ModalProps {
 export function Modal({
 	theme,
 	title,
+	subtitle,
 	priority,
 	onClose,
 	children,
@@ -369,11 +382,21 @@ export function Modal({
 							onPointerDown={floating?.onMovePointerDown}
 							data-testid={isFloating ? 'modal-float-handle' : undefined}
 						>
-							<div className="flex items-center gap-2">
+							<div className="flex items-center gap-2 min-w-0">
 								{headerIcon}
-								<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+								<h2 className="text-sm font-bold shrink-0" style={{ color: theme.colors.textMain }}>
 									{title}
 								</h2>
+								{subtitle !== undefined && subtitle !== null && subtitle !== '' && (
+									<span
+										className="text-sm truncate"
+										style={{ color: theme.colors.textDim }}
+										data-testid="modal-subtitle"
+									>
+										<span aria-hidden="true">{'\u00b7'} </span>
+										{subtitle}
+									</span>
+								)}
 							</div>
 							<div className="flex items-center gap-2">
 								{headerActions}

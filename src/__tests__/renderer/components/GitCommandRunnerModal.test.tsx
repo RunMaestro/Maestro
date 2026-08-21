@@ -10,6 +10,8 @@ import { GitCommandRunnerModal } from '../../../renderer/components/GitCommandRu
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { gitService } from '../../../renderer/services/git';
 import { mockTheme } from '../../helpers/mockTheme';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { GitCommandOutputChunk, GitRunCommandResult } from '../../../shared/gitUtils';
 
 vi.mock('../../../renderer/services/git', () => ({
@@ -73,6 +75,12 @@ describe('GitCommandRunnerModal', () => {
 				finishRun = resolve;
 			});
 		});
+
+		// The modal names the agent it is transferring for, so the store has to
+		// hold the agent the payload points at.
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'session-1', name: 'Sonoma-Fix' })],
+		} as never);
 	});
 
 	it('starts the requested operation exactly once', async () => {
@@ -83,6 +91,34 @@ describe('GitCommandRunnerModal', () => {
 			expect.objectContaining({ operation: 'push', cwd: '/test/repo', setUpstream: false })
 		);
 		expect(screen.getByText('git push')).toBeInTheDocument();
+	});
+
+	// Pull/Push are reachable by right-clicking any Left Bar row, so the target
+	// is frequently not the highlighted agent. "git push" alone names nothing.
+	it('names the agent the command targets', async () => {
+		renderModal('push');
+
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
+		expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix');
+	});
+
+	it('keeps the command line as the title rather than folding the name into it', async () => {
+		// The title is the aria-label and seeds the fallback resize key, so a
+		// per-agent title would mint a per-agent persisted window size.
+		renderModal('push');
+
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
+		expect(screen.getByText('git push')).toBeInTheDocument();
+		expect(screen.queryByText('git push - Sonoma-Fix')).not.toBeInTheDocument();
+	});
+
+	it('renders no subtitle when the agent is gone', async () => {
+		useSessionStore.setState({ sessions: [] } as never);
+		renderModal('pull');
+
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
+		expect(screen.queryByTestId('modal-subtitle')).not.toBeInTheDocument();
+		expect(screen.getByText('git pull')).toBeInTheDocument();
 	});
 
 	it('renders streamed output as it arrives', async () => {
