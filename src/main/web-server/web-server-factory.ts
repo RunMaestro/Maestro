@@ -24,7 +24,7 @@ import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
-import { isSessionBusyWithCli } from '../../shared/cli-activity';
+import { getSessionIdsBusyWithCli } from '../../shared/cli-activity';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
@@ -262,10 +262,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		server.setListDesktopSessionsCallback(() => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
 			const processManager = getProcessManager();
+			// Resolved once: this used to be a per-agent call that re-read and
+			// re-parsed the CLI activity file on every iteration.
+			const cliBusySessionIds = getSessionIdsBusyWithCli();
 			const entries = [];
 			for (const s of sessions) {
 				const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
-				const cliBusy = isSessionBusyWithCli(s.id);
+				const cliBusy = cliBusySessionIds.has(s.id);
 				for (const tab of aiTabs) {
 					if (!tab || typeof tab.id !== 'string') continue;
 					const isActiveTab = tab.id === s.activeTabId;

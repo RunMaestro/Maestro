@@ -173,6 +173,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 vi.mock('../../../shared/cli-activity', () => ({
 	isSessionBusyWithCli: vi.fn().mockReturnValue(false),
+	getSessionIdsBusyWithCli: vi.fn(() => new Set<string>()),
 }));
 
 import {
@@ -184,7 +185,7 @@ import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
 import { importMarketplacePlaybook } from '../../../main/services/marketplace-service';
-import { isSessionBusyWithCli } from '../../../shared/cli-activity';
+import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 
 describe('web-server/web-server-factory', () => {
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
@@ -200,7 +201,7 @@ describe('web-server/web-server-factory', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(isSessionBusyWithCli).mockReturnValue(false);
+		vi.mocked(getSessionIdsBusyWithCli).mockReturnValue(new Set<string>());
 
 		mockSettingsStore = {
 			get: vi.fn((key: string, defaultValue?: any) => {
@@ -562,7 +563,7 @@ describe('web-server/web-server-factory', () => {
 					aiTabs: [{ id: 'tab-a' }, { id: 'tab-b' }],
 				},
 			]);
-			vi.mocked(isSessionBusyWithCli).mockReturnValue(true);
+			vi.mocked(getSessionIdsBusyWithCli).mockReturnValue(new Set(['agent-a']));
 
 			const entries = getCallback()();
 			expect(entries.map((entry: { state: string }) => entry.state)).toEqual(['busy', 'unknown']);

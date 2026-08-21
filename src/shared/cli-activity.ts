@@ -116,25 +116,53 @@ export function getCliActivityForSession(sessionId: string): CliActivityStatus |
 }
 
 /**
+ * Is the process behind a recorded activity still alive?
+ *
+ * `process.kill(pid, 0)` sends no signal; it only reports whether the caller
+ * could. The distinction between its failure modes is the whole point:
+ *
+ * - EPERM means the pid EXISTS but belongs to another user or sits outside this
+ *   caller's signal permission. That is evidence of life, not death, and it is
+ *   the normal answer for a sandboxed read-only monitor.
+ * - ESRCH is the only code that proves the process is gone, and therefore the
+ *   only one that may erase the shared activity entry.
+ * - Anything else is an unexplained probe failure. Report not-busy for this
+ *   call, but do not mutate the file on a guess.
+ */
+function isActivityProcessAlive(activity: CliActivityStatus): boolean {
+	try {
+		process.kill(activity.pid, 0);
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === 'EPERM') return true;
+		if (code === 'ESRCH') unregisterCliActivity(activity.sessionId);
+		return false;
+	}
+}
+
+/**
  * Check if a session has active CLI activity
  */
 export function isSessionBusyWithCli(sessionId: string): boolean {
 	const activity = getCliActivityForSession(sessionId);
 	if (!activity) return false;
+	return isActivityProcessAlive(activity);
+}
 
-	// Check if the process is still running
-	try {
-		process.kill(activity.pid, 0); // Doesn't kill, just checks if process exists
-		return true;
-	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		// EPERM proves the process exists but is outside this caller's signal
-		// permission. Keep the activity and report it busy instead of erasing
-		// truthful evidence from a sandboxed read-only monitor.
-		if (code === 'EPERM') return true;
-		// Only ESRCH proves the process is gone. Unknown probe failures are not
-		// enough evidence to mutate the shared activity file.
-		if (code === 'ESRCH') unregisterCliActivity(sessionId);
-		return false;
+/**
+ * Session ids with a live CLI process, resolved in ONE read of the activity
+ * file.
+ *
+ * `isSessionBusyWithCli` re-reads and re-parses that file on every call, which
+ * is fine for a one-off check but not for a caller looping over every agent -
+ * the desktop session listing did exactly that, turning one WebSocket request
+ * into N synchronous reads of the same file.
+ */
+export function getSessionIdsBusyWithCli(): Set<string> {
+	const busy = new Set<string>();
+	for (const activity of readCliActivities()) {
+		if (isActivityProcessAlive(activity)) busy.add(activity.sessionId);
 	}
+	return busy;
 }

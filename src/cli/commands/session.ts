@@ -140,7 +140,10 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 		// `state` is spelled out (busy/idle/unknown) rather than relying on the `*` marker
 		// alone so `grep busy` works without column-counting.
 		for (const s of sessions) {
-			const state = s.state;
+			// Padded so the columns still line up now that 'unknown' is three
+			// characters wider than 'busy'/'idle'. Falls back rather than printing
+			// `undefined` when an older desktop omits the field entirely.
+			const state = (s.state ?? 'unknown').padEnd(7);
 			const star = s.starred ? '★' : ' ';
 			const name = s.name ?? '(unnamed)';
 			const created = Number.isFinite(s.createdAt) ? formatRelativeTime(s.createdAt) : '-';
