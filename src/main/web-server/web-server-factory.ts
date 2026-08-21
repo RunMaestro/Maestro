@@ -24,6 +24,7 @@ import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
+import { isSessionBusyWithCli } from '../../shared/cli-activity';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
@@ -257,14 +258,28 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// entries. The CLI does not need group/cwd metadata; the structurally
 		// smaller payload keeps polling cheap. Reads straight from the persisted
 		// session store (same source the renderer pushes to via `sessions:save`),
-		// so the data is as fresh as the desktop's own state.
+		// then reconcile it with live managed-process and CLI-activity evidence.
 		server.setListDesktopSessionsCallback(() => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const processManager = getProcessManager();
 			const entries = [];
 			for (const s of sessions) {
 				const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+				const cliBusy = isSessionBusyWithCli(s.id);
 				for (const tab of aiTabs) {
 					if (!tab || typeof tab.id !== 'string') continue;
+					const isActiveTab = tab.id === s.activeTabId;
+					const managedProcessActive = Boolean(
+						processManager?.get(`${s.id}-ai-${tab.id}`) ||
+						(isActiveTab && processManager?.get(`${s.id}-ai`))
+					);
+					const processActive = managedProcessActive || (isActiveTab && cliBusy);
+					const state =
+						tab.state === 'busy' || processActive
+							? ('busy' as const)
+							: tab.state === 'idle'
+								? ('idle' as const)
+								: ('unknown' as const);
 					entries.push({
 						tabId: tab.id,
 						sessionId: tab.id,
@@ -273,7 +288,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						toolType: s.toolType,
 						name: typeof tab.name === 'string' ? tab.name : null,
 						agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
-						state: tab.state === 'busy' ? ('busy' as const) : ('idle' as const),
+						state,
 						createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : 0,
 						starred: tab.starred === true,
 					});

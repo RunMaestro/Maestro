@@ -127,6 +127,35 @@ describe('session list command', () => {
 		expect(line.split('  ').filter(Boolean).length).toBeGreaterThanOrEqual(4);
 	});
 
+	it('preserves an unknown desktop state in human-readable output', async () => {
+		const mockSendCommand = vi.fn().mockResolvedValue({
+			type: 'desktop_sessions_list',
+			success: true,
+			sessions: [
+				{
+					tabId: 'tab-unknown',
+					sessionId: 'tab-unknown',
+					agentId: 'agent-a',
+					agentName: 'Backend',
+					toolType: 'claude-code',
+					name: null,
+					agentSessionId: null,
+					state: 'unknown',
+					createdAt: 1714268000000,
+					starred: false,
+				},
+			],
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = { sendCommand: mockSendCommand };
+			return action(mockClient as never);
+		});
+
+		await sessionList({});
+
+		expect(consoleSpy.mock.calls[0][0]).toContain('unknown');
+	});
+
 	it('maps connection errors to MAESTRO_NOT_RUNNING (consistent with dispatch)', async () => {
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('ECONNREFUSED'));
 

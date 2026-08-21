@@ -369,7 +369,7 @@ describe('cli-activity', () => {
 			// Mock process.kill to throw (process doesn't exist)
 			const originalKill = process.kill;
 			process.kill = vi.fn().mockImplementation(() => {
-				throw new Error('ESRCH: No such process');
+				throw Object.assign(new Error('No such process'), { code: 'ESRCH' });
 			}) as unknown as typeof process.kill;
 
 			const busy = isSessionBusyWithCli('session-123');
@@ -379,6 +379,38 @@ describe('cli-activity', () => {
 			expect(mockFs.writeFileSync).toHaveBeenCalled();
 
 			process.kill = originalKill;
+		});
+
+		it('should preserve busy activity when the process probe returns EPERM', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				expect(isSessionBusyWithCli('session-123')).toBe(true);
+				expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('should not erase activity after an unknown process-probe error', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('Unexpected probe failure'), { code: 'EIO' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				expect(isSessionBusyWithCli('session-123')).toBe(false);
+				expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+			} finally {
+				process.kill = originalKill;
+			}
 		});
 
 		it('should check correct PID', () => {
