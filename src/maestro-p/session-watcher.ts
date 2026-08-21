@@ -65,7 +65,10 @@ export const DEFAULT_DISCOVERY_POLL_INTERVAL_MS = 75;
  * `-`. The canonical implementation lives in `src/shared/pathUtils.ts`
  * as `encodeClaudeProjectPath`; we inline the rule here because the
  * maestro-p bundle is intentionally lean and the shared module pulls in
- * Electron-adjacent helpers we don't need.
+ * Electron-adjacent helpers we don't need. The duplication is kept honest by
+ * a parity test in src/__tests__/maestro-p/session-watcher.test.ts that asserts
+ * this function and encodeClaudeProjectPath() agree on every input - if you
+ * change the rule here, change it there too or that test will tell you.
  */
 export function cwdSlug(cwd: string): string {
 	// Strip trailing separators first, matching the canonical helper: a cwd saved
