@@ -68,7 +68,11 @@ export const DEFAULT_DISCOVERY_POLL_INTERVAL_MS = 75;
  * Electron-adjacent helpers we don't need.
  */
 export function cwdSlug(cwd: string): string {
-	return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+	// Strip trailing separators first, matching the canonical helper: a cwd saved
+	// as "/path/to/repo/" would otherwise slug to a directory claude never writes.
+	const trimmed = cwd.replace(/[/\\]+$/, '');
+	const normalized = trimmed === '' || /^[a-zA-Z]:$/.test(trimmed) ? cwd : trimmed;
+	return normalized.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 interface Candidate {

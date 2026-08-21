@@ -90,6 +90,16 @@ describe('session-watcher', () => {
 		it('handles an empty string', () => {
 			expect(cwdSlug('')).toBe('');
 		});
+
+		it('strips trailing separators so a cwd saved with one still resolves', () => {
+			expect(cwdSlug('/Users/test/example-proj/')).toBe('-Users-test-example-proj');
+			expect(cwdSlug('C:\\Users\\test\\repo\\')).toBe('C--Users-test-repo');
+		});
+
+		it('leaves filesystem roots intact', () => {
+			expect(cwdSlug('/')).toBe('-');
+			expect(cwdSlug('C:\\')).toBe('C--');
+		});
 	});
 
 	describe('discoverSessionId()', () => {
