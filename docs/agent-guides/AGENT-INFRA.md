@@ -16,7 +16,12 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 5. Output Parsers    src/main/parsers/                 JSON output normalization per agent
 6. Error Patterns    src/main/parsers/error-patterns.ts  Regex patterns for error detection
 7. Session Storage   src/main/storage/                 Per-agent session file reading
+8. Picker Registry   src/shared/agentMetadata.ts       Whether and how the user can choose it
 ```
+
+Steps 1-7 make an agent work. Step 8 is what makes it reachable: an agent that
+is defined, capable, and detected is still invisible in the UI until it has a
+`AGENT_PICKER_META` entry.
 
 ---
 
@@ -45,13 +50,33 @@ export type AgentId = (typeof AGENT_IDS)[number];
 ### Related Metadata (`src/shared/agentMetadata.ts`)
 
 ```typescript
-AGENT_DISPLAY_NAMES: Record<AgentId, string>  // Human-readable names
-BETA_AGENTS: ReadonlySet<AgentId>              // Agents showing "(Beta)" badge
-getAgentDisplayName(agentId): string           // Get name with fallback
-isBetaAgent(agentId): boolean                  // Check beta status
-getAgentLoginCommand(agentId, customPath?)     // Re-auth command, or null
-formatAgentLoginCommand(login): string         // Render it as a shell line
+AGENT_DISPLAY_NAMES: Record<AgentId, string>       // Human-readable names
+BETA_AGENTS: ReadonlySet<AgentId>                  // Agents showing "(Beta)" badge
+AGENT_PICKER_META: Record<AgentId, Meta | null>    // Picker presentation, null = never offered
+PICKABLE_AGENT_IDS: readonly AgentId[]             // Picker order, derived from the record
+getAgentDisplayName(agentId): string               // Get name with fallback
+isBetaAgent(agentId): boolean                      // Check beta status
+getAgentPickerMeta(agentId): Meta | null           // Description + brand color, or null
+getAgentLoginCommand(agentId, customPath?)         // Re-auth command, or null
+formatAgentLoginCommand(login): string             // Render it as a shell line
 ```
+
+**Provider pickers** all read `AGENT_PICKER_META`. The New Agent modal's
+`SUPPORTED_AGENTS` re-exports `PICKABLE_AGENT_IDS`; the New Agent Wizard's
+`AGENT_TILES` is derived from the record (name from `getAgentDisplayName`, pitch
+and brand color from the entry); the Group Chat moderator dropdown renders those
+same tiles filtered by what detection found installed. `null` withholds an agent
+from all three - correct for `terminal` (internal) and `gemini-cli` (kept for
+type and back-compat only). Because the record is keyed by `AgentId`, a new id
+does not compile until that decision is made. Do NOT add a fourth hand-written
+list of agent ids for a new picker; the three used to be hand-written, and Grok
+and Qwen3 Coder shipped selectable in one of them and missing from the other two.
+
+Registering a provider also means drawing it: a `case` in `AgentLogo`
+(`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)
+and a glyph in `AGENT_ICONS` (`src/renderer/constants/agentIcons.ts`). Without
+the logo case the tile renders a blank fallback ring, and a test in
+`AgentSelectionScreen/components.test.tsx` fails.
 
 **Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
 

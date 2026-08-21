@@ -61,7 +61,6 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('copilot-cli')).toBe(true);
 		});
 
-<<<<<<< HEAD
 		it('should register Pi parser', () => {
 			expect(hasOutputParser('pi')).toBe(false);
 
@@ -94,36 +93,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('grok')).toBe(true);
 		});
 
-		it('should register exactly 9 parsers', () => {
+		it('should register Antigravity parser', () => {
+			expect(hasOutputParser('antigravity')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('antigravity')).toBe(true);
+		});
+
+		it('should register exactly 10 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(9);
-=======
-		it('should register exactly 6 parsers', () => {
-			initializeOutputParsers();
-
-			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(6); // Claude, OpenCode, Codex, Factory Droid, Copilot, Antigravity
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
+			expect(parsers.length).toBe(10);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-<<<<<<< HEAD
-			expect(getAllOutputParsers().length).toBe(9);
+			expect(getAllOutputParsers().length).toBe(10);
 
-			// Second initialization should still have exactly 9
+			// Second initialization should still have exactly 10
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(9);
-=======
-			expect(getAllOutputParsers().length).toBe(6);
-
-			// Second initialization should still have exactly 6
-			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(6);
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
+			expect(getAllOutputParsers().length).toBe(10);
 		});
 	});
 

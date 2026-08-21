@@ -29,6 +29,10 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Horizontal strip scrolling (edge affordances + wheel-to-horizontal)
+export { useHorizontalScroll } from './useHorizontalScroll';
+export type { HorizontalScrollState } from './useHorizontalScroll';
+
 // Live CSS-grid column count (for arrow navigation over a responsive grid)
 export { useGridColumnCount } from './useGridColumnCount';
 

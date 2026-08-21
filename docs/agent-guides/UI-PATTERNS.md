@@ -411,6 +411,19 @@ It returns `0` until the first measurement lands, so gate width-dependent childr
 
 This matters for any resizable modal that draws a chart: a hard-coded SVG width silently stops matching the frame the moment the user drags it.
 
+### Horizontally Scrolling Strips (`useHorizontalScroll`)
+
+`useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
+
+Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
+
+- **Silence at the edge.** Nothing tells the user more content exists past the right edge. Use the flags to render an honest affordance - a gradient fade plus an arrow button. Do not render the arrows unconditionally: an arrow that cannot move is worse than no arrow.
+- **A swallowed wheel gesture.** A strip has no vertical overflow of its own, so a mouse wheel or trackpad flick over it scrolls an ancestor or does nothing. The hook maps vertical deltas onto the horizontal axis.
+
+Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path. Focusing an item scrolls it into view for free, so keyboard navigation needs no extra scrolling code.
+
+It no-ops without `ResizeObserver`, so jsdom component tests render without a polyfill (and both flags read `false`, since jsdom reports zero for every measurement).
+
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
 The Usage Dashboard's card grids (the agent grid in `AgentOverviewCards`, the per-tab grid in `TabBreakdown`) all render the same tile: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.

@@ -12,11 +12,7 @@ import {
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
-<<<<<<< HEAD
 import { getAgentDefinition } from '../../../main/agents/definitions';
-=======
-import { AGENT_DEFINITIONS } from '../../../main/agents';
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -1464,7 +1460,6 @@ describe('getContextWindowValue', () => {
 });
 
 // ---------------------------------------------------------------------------
-<<<<<<< HEAD
 // Additional Directories -> native provider grant flags
 // ---------------------------------------------------------------------------
 describe('buildAgentArgs: additionalDirectories', () => {
@@ -1518,13 +1513,16 @@ describe('buildAgentArgs: additionalDirectories', () => {
 
 		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
 		expect(args[args.length - 1]).not.toMatch(/^-/);
-=======
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Antigravity CLI (`agy`) - real definition wiring
 // ---------------------------------------------------------------------------
 describe('buildAgentArgs with the Antigravity definition', () => {
 	const antigravity = () =>
 		({
-			...AGENT_DEFINITIONS.find((d) => d.id === 'antigravity'),
+			...getAgentDefinition('antigravity'),
 			available: true,
 			capabilities: {} as AgentConfig['capabilities'],
 		}) as AgentConfig;
@@ -1576,6 +1574,5 @@ describe('buildAgentArgs with the Antigravity definition', () => {
 			'--print-timeout',
 			'30m',
 		]);
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 	});
 });

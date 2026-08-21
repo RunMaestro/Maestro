@@ -411,7 +411,6 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm global installation
 			...npmGlobal('gemini'),
 		],
-<<<<<<< HEAD
 		hermes: [
 			// Python/pipx and standalone installations
 			...localBin('hermes'),
@@ -429,13 +428,12 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm global installation
 			...npmGlobal('omp'),
 			...localBin('omp'),
-=======
+		],
 		agy: [
 			// Official install.ps1 / install.cmd target
 			path.join(localAppData, 'agy', 'bin', 'agy.exe'),
 			// Some shells resolve the installer's shim from the user local bin
 			...localBin('agy'),
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 		],
 		gh: [
 			// GitHub CLI official installer (MSI)
@@ -580,7 +578,6 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('gemini'),
 		],
-<<<<<<< HEAD
 		hermes: [
 			// Python/pipx and standalone installations
 			...localBin('hermes'),
@@ -603,7 +600,7 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			path.join(home, 'bin', 'omp'),
 			...nodeVersionManagers('omp'),
-=======
+		],
 		agy: [
 			// Official install.sh target on macOS/Linux
 			...localBin('agy'),
@@ -611,7 +608,6 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			path.join(home, 'bin', 'agy'),
 			// Homebrew, should a formula land later
 			...homebrew('agy'),
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
 		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)

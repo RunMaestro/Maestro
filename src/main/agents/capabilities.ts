@@ -175,9 +175,6 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-<<<<<<< HEAD
-	 * Qwen3 Coder - Alibaba's Qwen coding agent (Qwen Code CLI)
-=======
 	 * Antigravity CLI (`agy`) - Google's terminal coding agent, the CLI surface of
 	 * Antigravity and the successor to the Gemini CLI effort above.
 	 *
@@ -212,11 +209,12 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // Gemini reports input and output separately
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
+		supportsPromptViaStdin: false, // Docs give the prompt as `-p "<text>"`; stdin delivery is unstated
+		supportsAdditionalDirectories: false, // No documented flag for extra workspace roots
 	},
 
 	/**
-	 * Qwen3 Coder - Alibaba's Qwen coding model
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
+	 * Qwen3 Coder - Alibaba's Qwen coding agent (Qwen Code CLI)
 	 *
 	 * Qwen Code is a Gemini CLI fork that exposes the same stream-json headless
 	 * interface. Capabilities mirror the Gemini/Claude stream-json integration.

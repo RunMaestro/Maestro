@@ -14,6 +14,7 @@ import {
 	SshConnectionErrorPanel,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components';
 import { AGENT_TILES } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
+import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
 
 vi.mock('../../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 	AgentConfigPanel: (props: any) => (
@@ -51,6 +52,18 @@ describe('AgentSelectionScreen components', () => {
 		rerender(<AgentLogo agentId="unknown" supported={false} detected={false} theme={mockTheme} />);
 
 		expect(container.querySelector('div')).toHaveClass('rounded-full');
+	});
+
+	it('draws a real mark for every provider a user can pick', () => {
+		// The fallback is an empty circle. A provider that reaches a picker without
+		// a mark of its own renders as that blank ring, which reads as a bug.
+		for (const agentId of PICKABLE_AGENT_IDS) {
+			const { container, unmount } = render(
+				<AgentLogo agentId={agentId} supported detected theme={mockTheme} />
+			);
+			expect(container.querySelector('svg'), `${agentId} has no logo`).toBeInTheDocument();
+			unmount();
+		}
 	});
 
 	it('renders tile states, beta badges, disabled unavailable agents, and customize actions', () => {

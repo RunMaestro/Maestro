@@ -27,6 +27,11 @@ import { initializeOutputParsers, getOutputParser, getErrorPatterns } from '../.
 import { getSessionStorage, clearStorageRegistry } from '../../../main/agents/session-storage';
 import { initializeSessionStorages } from '../../../main/storage';
 import { AGENT_IDS } from '../../../shared/agentIds';
+import {
+	AGENT_PICKER_META,
+	PICKABLE_AGENT_IDS,
+	getAgentLoginCommand,
+} from '../../../shared/agentMetadata';
 import { createAgentRegistry } from '../../../shared/plugins/agent-registry';
 
 beforeAll(() => {
@@ -162,6 +167,36 @@ describe('Agent Completeness', () => {
 				});
 			});
 		}
+	});
+
+	describe('provider picker registration', () => {
+		it('every agent id has a picker decision, shown or explicitly withheld', () => {
+			for (const agentId of AGENT_IDS) {
+				expect(
+					Object.prototype.hasOwnProperty.call(AGENT_PICKER_META, agentId),
+					`Agent "${agentId}" has no entry in AGENT_PICKER_META. Add presentation ` +
+						'metadata to offer it in the pickers, or null to withhold it.'
+				).toBe(true);
+			}
+		});
+
+		it('every pickable agent is a real, non-hidden definition', () => {
+			for (const agentId of PICKABLE_AGENT_IDS) {
+				const def = AGENT_DEFINITIONS.find((d) => d.id === agentId);
+				expect(def, `Pickable agent "${agentId}" has no definition`).toBeDefined();
+				expect(def?.hidden, `Pickable agent "${agentId}" is hidden`).toBeFalsy();
+			}
+		});
+
+		it('every pickable agent can be re-authenticated from the UI', () => {
+			// A provider offered in a picker whose auth expires needs a way back in;
+			// null is only correct for agents that carry no credentials of their own.
+			for (const agentId of PICKABLE_AGENT_IDS) {
+				const login = getAgentLoginCommand(agentId);
+				if (login === null) continue;
+				expect(login.binary, `Agent "${agentId}" has an empty login binary`).toBeTruthy();
+			}
+		});
 	});
 
 	describe('no orphaned capabilities', () => {

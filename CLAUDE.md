@@ -72,6 +72,7 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Long-press gesture:** `useLongPress()` in `src/renderer/hooks/utils/useLongPress.ts` (scroll-aware touch long-press that opens right-click affordances like context menus and tab overlays; do NOT hand-roll `setTimeout` + `touchmove`)
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()`, `contrastRatio()`, `relativeLuminance()`, `blendColors()`, `transparentize()`, `adjustBrightness()`, `hexToRgb()` in `src/shared/colorContrast.ts`. Whenever a foreground and its background are BOTH derived from theme colors (diagram fills, chart labels, badges, generated SVG), run the foreground through `readableTextOn(preferred, backgrounds)` so a theme whose accent sits near its text color can't paint near-identical colors on top of each other. It returns the preferred color untouched when it already clears WCAG AA and nudges the theme's own color otherwise, so nothing snaps to hard-coded black/white.
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
+- **Which providers a user can pick:** `AGENT_PICKER_META` / `PICKABLE_AGENT_IDS` / `getAgentPickerMeta()` in `src/shared/agentMetadata.ts`. ONE registry feeds all three provider pickers: the New Agent modal (`SUPPORTED_AGENTS` re-exports it), the New Agent Wizard's tile strip (`AGENT_TILES` is derived from it), and the Group Chat moderator dropdown (the same tiles, filtered by what detection found). Do NOT hand-write a fourth list of agent ids for a new picker: the three used to be written by hand, and Grok and Qwen3 Coder shipped selectable in the New Agent modal while being absent from the wizard and un-pickable as a moderator. The record is keyed by `AgentId`, so a new id fails to compile until it is either given metadata or explicitly set to `null` (internal or unshipped). Adding a provider also means a `case` in `AgentLogo` and a glyph in `AGENT_ICONS`, or the tile draws a blank fallback ring. Full checklist: [AGENT_SUPPORT.md → Step 2.6](AGENT_SUPPORT.md#step-26-register-the-provider-in-the-pickers).
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })` in `src/renderer/stores/notificationStore.ts`. Use for async results, errors, and persistent/dismissable messages. Same five-color design language as Center Flash: `green | yellow | orange | red | theme` (default `theme`). Set `dismissible: true` (or pass `--dismissible` from `maestro-cli notify toast`) when the user MUST acknowledge - disables auto-dismiss, requires click to close, and emphasizes the X button. Cannot combine `dismissible` with `duration`/`--timeout`. External CLI cap: 60 seconds (use `--dismissible` for sticky). **Click actions** (data-driven, survive the IPC bridge): pass `clickAction: { kind: 'jump-session', sessionId, tabId? } | { kind: 'open-file', sessionId, path } | { kind: 'open-url', url }` for what should happen when the toast body is clicked, or use the legacy `sessionId`/`tabId` fields for plain agent jump. From the CLI: `--agent` (+ optional `--tab`), `--open-file <path>` (requires `--agent`), `--open-url <url>` (mutually exclusive with `--open-file`). `--action-url` / `--action-label` render an inline link button beneath the message and are independent of the body click. **Source-agent label:** pass `sourceAgent` (CLI `--source-agent <label>`) to stamp which agent/pipeline fired the toast in the header strip. It's store-independent, so it shows even when the agent isn't loaded in the Left Bar (the name resolved from `--agent`/`sessionId` only renders when that agent is in the desktop store) - use it for cron/watchdog toasts. The explicit label wins over the resolved name for display; pair it with `--agent` to also get click-to-jump. Do NOT pass renderer-only callbacks across the bridge - use `clickAction` instead.
 - **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })` in `src/renderer/stores/centerFlashStore.ts`; clipboard helper `flashCopiedToClipboard()` in `src/renderer/utils/flashCopiedToClipboard.ts`. Use for momentary "I did the thing" confirmations of user-initiated actions. Five-color design language: `green | yellow | orange | red | theme` - default `theme` matches the active Maestro theme. External integrations can fire flashes via `maestro-cli notify flash <message> --color <color>`. Do NOT roll your own center-screen overlay, useState+setTimeout flash, add a sixth color, or use a Toast for clipboard acks. Single visible flash at a time, themed frosted-glass card mounted once in `App.tsx`. Full decision rules, color palette, and design language: [UI-PATTERNS.md → Center Flash System](docs/agent-guides/UI-PATTERNS.md#center-flash-system-rapid-temporary-notifications).
@@ -222,27 +223,24 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 
 ### Supported Agents
 
-<<<<<<< HEAD
-| ID              | Name          | Status     |
-| --------------- | ------------- | ---------- |
-| `claude-code`   | Claude Code   | **Active** |
-| `codex`         | OpenAI Codex  | **Active** |
-| `opencode`      | OpenCode      | **Active** |
-| `factory-droid` | Factory Droid | **Active** |
-| `copilot-cli`   | Copilot-CLI   | **Beta**   |
-| `grok`          | Grok CLI      | **Beta**   |
-| `terminal`      | Terminal      | Internal   |
-=======
 | ID              | Name            | Status     |
 | --------------- | --------------- | ---------- |
 | `claude-code`   | Claude Code     | **Active** |
 | `codex`         | OpenAI Codex    | **Active** |
-| `opencode`      | OpenCode        | **Active** |
-| `factory-droid` | Factory Droid   | **Active** |
-| `copilot-cli`   | Copilot-CLI     | **Beta**   |
 | `antigravity`   | Antigravity CLI | **Beta**   |
+| `opencode`      | OpenCode        | **Beta**   |
+| `factory-droid` | Factory Droid   | **Beta**   |
+| `copilot-cli`   | Copilot-CLI     | **Beta**   |
+| `grok`          | Grok CLI        | **Beta**   |
+| `qwen3-coder`   | Qwen3 Coder     | **Beta**   |
+| `hermes`        | Hermes          | **Beta**   |
+| `pi`            | Pi              | **Beta**   |
+| `omp`           | Oh My Pi        | **Beta**   |
 | `terminal`      | Terminal        | Internal   |
->>>>>>> c059267b8 (feat(agents): Antigravity CLI (agy) as a supported provider)
+
+Rows are in picker order and mirror `AGENT_PICKER_META` in
+`src/shared/agentMetadata.ts`, which is the one registry all three provider
+pickers read.
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
 
