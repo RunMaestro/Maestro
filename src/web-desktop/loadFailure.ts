@@ -23,6 +23,8 @@
  * error boundary can handle the failure in-place.
  */
 
+import { formatShortcutKeysFor } from '../shared/shortcutKeys';
+
 /**
  * sessionStorage key holding the timestamp of the last automatic reload.
  * sessionStorage (not localStorage) so the guard is per-tab and disappears when
@@ -89,6 +91,23 @@ function messageOf(reason: unknown): string {
 }
 
 /**
+ * The most useful text to show a user about a failure: a stack when there is
+ * one, else a message, else whatever the reason stringifies to. Rejection
+ * reasons are not guaranteed to be Errors, so every branch is checked rather
+ * than cast - `reason && reason.stack || String(reason)` types as `{} | string`
+ * under `unknown` and is not assignable to the string parameter it feeds.
+ */
+function detailOf(reason: unknown): string {
+	if (reason instanceof Error) return reason.stack || reason.message;
+	if (reason && typeof reason === 'object') {
+		const { stack, message } = reason as { stack?: unknown; message?: unknown };
+		if (typeof stack === 'string' && stack) return stack;
+		if (typeof message === 'string' && message) return message;
+	}
+	return String(reason);
+}
+
+/**
  * True when the failure looks like a hashed chunk that no longer exists on the
  * server, rather than a real connectivity problem or an app-level bug.
  */
@@ -132,18 +151,28 @@ export function readLastReloadAt(storage: Storage | undefined = safeSessionStora
 	}
 }
 
-/** Record an auto-reload attempt, tolerating disabled/absent storage. */
+/**
+ * Record an auto-reload attempt. Returns false when the guard could not be
+ * persisted (storage absent, or private-mode Safari / a storage-blocked embed
+ * throwing on write).
+ *
+ * The caller MUST honor a false result by not reloading. The cooldown is not an
+ * independent bound - it is read back out of this exact key, so a guard that
+ * never lands means `readLastReloadAt` returns 0 forever, every stale failure
+ * looks like the first one, and the tab reloads without end. That is worse than
+ * the failure it is trying to recover from: the user never gets to read the
+ * error, and the page never stops flickering.
+ */
 export function markReloadAttempt(
 	now: number,
 	storage: Storage | undefined = safeSessionStorage()
-): void {
-	if (!storage) return;
+): boolean {
+	if (!storage) return false;
 	try {
 		storage.setItem(RELOAD_GUARD_KEY, String(now));
+		return true;
 	} catch {
-		// Private-mode Safari and storage-blocked embeds throw on write. Losing
-		// the guard only costs us loop protection, which the cooldown already
-		// bounds - never block recovery over it.
+		return false;
 	}
 }
 
@@ -157,6 +186,23 @@ function safeSessionStorage(): Storage | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The hard-refresh hint, with the modifier keys of the machine the BROWSER is
+ * running on. That is not necessarily the machine running Maestro - a phone or
+ * a Linux laptop can be pointed at a Mac host - so the platform is read from
+ * the user agent here rather than from anything the server reports, the same
+ * way `bootstrap.ts` derives its `process.platform` shim.
+ */
+function staleAssetHint(): string {
+	const isMac = navigator.userAgent.includes('Mac');
+	const shortcut = formatShortcutKeysFor(['Meta', 'Shift', 'R'], isMac);
+	return (
+		'Maestro was updated or restarted while this page was open, so parts of the app it ' +
+		'tried to load no longer exist on the server. Reloading did not clear it - try a hard ' +
+		`refresh (${shortcut}).`
+	);
 }
 
 /**
@@ -190,7 +236,26 @@ export function markBooted(): void {
  * the bundle itself. This function only replaces their *decision*, and only
  * once the bundle is running.
  */
+/**
+ * Vite's own signal for a chunk that no longer resolves. It covers the case the
+ * two inline listeners cannot: a lazy import the app awaits and handles itself
+ * never becomes an unhandled rejection, and never fires `error` either, so
+ * neither inline listener ever sees it.
+ *
+ * Declared at module scope rather than inline so `addEventListener` receives the
+ * same reference on every call and dedupes it - installing twice must not make
+ * one failure reload twice.
+ */
+function onVitePreloadError(event: Event): void {
+	const payload = (event as Event & { payload?: unknown }).payload;
+	// Tell Vite the failure is handled so it does not also rethrow it.
+	if (isStaleAssetFailure(payload)) event.preventDefault();
+	bootWindow().__maestroHandleLoadFailure?.(payload);
+}
+
 export function installLoadFailureHandler(): void {
+	window.addEventListener('vite:preloadError', onVitePreloadError);
+
 	bootWindow().__maestroHandleLoadFailure = (reason: unknown) => {
 		const now = Date.now();
 		const action = decideLoadFailureAction(reason, {
@@ -201,21 +266,18 @@ export function installLoadFailureHandler(): void {
 
 		if (action === 'ignore') return;
 
-		if (action === 'reload') {
-			markReloadAttempt(now);
+		// Only reload if the loop guard was actually written. Without it the
+		// cooldown can never fire and the tab would reload forever.
+		if (action === 'reload' && markReloadAttempt(now)) {
 			console.warn('[web-desktop] stale asset detected, reloading to refresh the bundle', reason);
 			window.location.reload();
 			return;
 		}
 
-		const detail =
-			(reason && ((reason as Error).stack || (reason as Error).message)) || String(reason);
 		bootWindow().__maestroShowBootError?.(
 			'Maestro web-desktop failed to load',
-			detail,
-			isStaleAssetFailure(reason)
-				? 'Maestro was updated or restarted while this page was open, so parts of the app it tried to load no longer exist on the server. Reloading did not clear it - try a hard refresh (Ctrl/Cmd+Shift+R).'
-				: undefined
+			detailOf(reason),
+			isStaleAssetFailure(reason) ? staleAssetHint() : undefined
 		);
 	};
 }

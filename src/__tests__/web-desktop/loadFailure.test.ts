@@ -122,6 +122,18 @@ describe('decideLoadFailureAction', () => {
 	});
 });
 
+/** sessionStorage that throws on access, as private-mode Safari does. */
+function blockedStorage(): Storage {
+	return {
+		getItem: () => {
+			throw new Error('blocked');
+		},
+		setItem: () => {
+			throw new Error('blocked');
+		},
+	} as unknown as Storage;
+}
+
 describe('reload guard storage', () => {
 	it('round-trips the reload timestamp', () => {
 		const storage = fakeStorage();
@@ -135,18 +147,36 @@ describe('reload guard storage', () => {
 	});
 
 	it('never throws when storage is unavailable or blocked', () => {
-		const blocked = {
-			getItem: () => {
-				throw new Error('blocked');
-			},
-			setItem: () => {
-				throw new Error('blocked');
-			},
-		} as unknown as Storage;
-		expect(readLastReloadAt(blocked)).toBe(0);
-		expect(() => markReloadAttempt(1, blocked)).not.toThrow();
+		expect(readLastReloadAt(blockedStorage())).toBe(0);
+		expect(() => markReloadAttempt(1, blockedStorage())).not.toThrow();
 		expect(readLastReloadAt(undefined)).toBe(0);
 		expect(() => markReloadAttempt(1, undefined)).not.toThrow();
+	});
+
+	// The caller keys its reload decision off this boolean. Reporting success
+	// when nothing was written is what would turn the recovery into a loop.
+	it('reports whether the guard actually landed', () => {
+		expect(markReloadAttempt(1, fakeStorage())).toBe(true);
+		expect(markReloadAttempt(1, blockedStorage())).toBe(false);
+	});
+
+	// Passing `undefined` explicitly selects the default argument, so it exercises
+	// real sessionStorage, not the absent path. The only way storage is genuinely
+	// absent is safeSessionStorage() swallowing a throw on property access.
+	it('reports failure when sessionStorage cannot be reached at all', () => {
+		const real = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+		Object.defineProperty(window, 'sessionStorage', {
+			configurable: true,
+			get() {
+				throw new Error('blocked');
+			},
+		});
+		try {
+			expect(markReloadAttempt(1)).toBe(false);
+			expect(readLastReloadAt()).toBe(0);
+		} finally {
+			if (real) Object.defineProperty(window, 'sessionStorage', real);
+		}
 	});
 });
 
@@ -160,8 +190,16 @@ describe('installLoadFailureHandler', () => {
 	const testWindow = () => window as unknown as TestWindow;
 	let reload: ReturnType<typeof vi.fn>;
 
+	// One test replaces sessionStorage with a throwing getter to simulate a
+	// storage-blocked embed. Put the real one back first, or every later test
+	// throws in this hook instead of running.
+	const realSessionStorage = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+
 	beforeEach(() => {
 		vi.restoreAllMocks();
+		if (realSessionStorage) {
+			Object.defineProperty(window, 'sessionStorage', realSessionStorage);
+		}
 		window.sessionStorage.clear();
 		delete testWindow().__maestroBooted;
 		delete testWindow().__maestroHandleLoadFailure;
@@ -217,5 +255,51 @@ describe('installLoadFailureHandler', () => {
 		expect(testWindow().__maestroShowBootError).toHaveBeenCalledTimes(1);
 		// No stale-asset hint - falls through to the inline default (network).
 		expect(testWindow().__maestroShowBootError!.mock.calls[0][2]).toBeUndefined();
+	});
+
+	// The cooldown is read back out of the same key the guard writes, so a guard
+	// that cannot persist is not a degraded guard - it is no guard at all, and
+	// every reload would look like the first one.
+	it('shows the error instead of reloading when the loop guard cannot persist', () => {
+		Object.defineProperty(window, 'sessionStorage', {
+			configurable: true,
+			get() {
+				throw new Error('blocked');
+			},
+		});
+		markBooted();
+
+		fire(new Error('Failed to fetch dynamically imported module: /assets/x-abc.js'));
+
+		expect(reload).not.toHaveBeenCalled();
+		expect(testWindow().__maestroShowBootError).toHaveBeenCalledTimes(1);
+	});
+
+	// A lazy import the app awaits and handles itself never becomes an unhandled
+	// rejection and never fires `error`, so neither inline listener sees it.
+	// Vite's own event is the only signal for that case.
+	it('recovers from a stale chunk reported only through vite:preloadError', () => {
+		markBooted();
+		const event = new Event('vite:preloadError', { cancelable: true });
+		(event as Event & { payload?: unknown }).payload = new Error(
+			'Failed to fetch dynamically imported module: /assets/x-abc.js'
+		);
+
+		window.dispatchEvent(event);
+
+		expect(reload).toHaveBeenCalledTimes(1);
+		// preventDefault tells Vite the failure is handled, so it does not rethrow.
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it('leaves an unrelated vite:preloadError for Vite to rethrow', () => {
+		markBooted();
+		const event = new Event('vite:preloadError', { cancelable: true });
+		(event as Event & { payload?: unknown }).payload = new Error('some app-level bug');
+
+		window.dispatchEvent(event);
+
+		expect(reload).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(false);
 	});
 });
