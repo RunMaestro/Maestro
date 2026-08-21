@@ -19,6 +19,7 @@ import { useListNavigation } from '../hooks';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { useGitDetail } from '../contexts/GitStatusContext';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { useSessionStore } from '../stores/sessionStore';
 import type { BranchSwitcherModalData } from '../stores/modalStore';
 import type { Theme } from '../types';
 
@@ -34,8 +35,15 @@ function isUnknownBranchError(error: string): boolean {
 }
 
 export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModalProps) {
-	const { cwd, sshRemoteId, currentBranch } = data;
+	const { sessionId, cwd, sshRemoteId, currentBranch } = data;
 	const { refreshGitStatus } = useGitDetail();
+
+	// Whose repo is about to change branches. Reachable by right-clicking any
+	// Left Bar row, so the target is often not the highlighted agent, and this
+	// modal's `customHeader` is a bare search field that names nothing.
+	// Subscribe to the name alone, never the Session - a whole-session
+	// subscription would re-render this list on every unrelated token update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
 
 	const [branches, setBranches] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -115,6 +123,9 @@ export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModa
 		<Modal
 			theme={theme}
 			title="Switch Branch"
+			// No `subtitle` here on purpose: `customHeader` REPLACES the default
+			// header entirely, so the prop would never render. The agent name is
+			// in the custom header below instead.
 			priority={MODAL_PRIORITIES.BRANCH_SWITCHER}
 			onClose={onClose}
 			width={520}
@@ -141,6 +152,15 @@ export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModa
 						onKeyDown={handleKeyDown}
 						data-testid="branch-switcher-input"
 					/>
+					{agentName ? (
+						<span
+							className="text-sm truncate min-w-0 shrink"
+							style={{ color: theme.colors.textDim }}
+							data-testid="modal-subtitle"
+						>
+							{agentName}
+						</span>
+					) : null}
 					<EscCloseButton theme={theme} onClose={onClose} />
 				</div>
 			}
