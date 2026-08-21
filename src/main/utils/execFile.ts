@@ -82,6 +82,61 @@ export function needsWindowsShell(command: string): boolean {
 }
 
 /**
+ * Keyed by `keyof ExecOptions` so adding a field to the interface without
+ * listing it here is a compile error, not a silent misclassification.
+ */
+const EXEC_OPTIONS_FIELD_NAMES: Record<keyof ExecOptions, true> = {
+	input: true,
+	timeout: true,
+	env: true,
+};
+const EXEC_OPTIONS_FIELDS = new Set(Object.keys(EXEC_OPTIONS_FIELD_NAMES));
+
+/**
+ * Distinguish the legacy `options: NodeJS.ProcessEnv` signature from the
+ * structured `ExecOptions` form. Key presence alone is ambiguous - a real
+ * environment variable can be named `input`, `timeout`, or `env` - and value
+ * type alone isn't enough either: a real ExecOptions.input and a same-named
+ * env var are both strings, and `{ timeout: undefined }` is valid
+ * ExecOptions that no type check can distinguish from "key absent".
+ *
+ * What actually is unambiguous: every real caller's legacy env dict carries
+ * other environment variables alongside anything that happens to collide
+ * with a reserved name (PATH, HOME, ... - checked against every call site in
+ * this codebase). So if literally every key present is one of the three
+ * ExecOptions fields, it cannot be a real environment - a lone `{ input:
+ * 'x' }` is ExecOptions, but `{ input: 'x', PATH: '/bin' }` is a legacy env
+ * dict that happens to define a var called `input`. Combined with the
+ * value-shape checks (which still catch the case where an ExecOptions value
+ * is typed but sits alongside a field this function doesn't know about) that
+ * closes the gap for both known collision shapes.
+ */
+function resolveExecOptions(options: ExecOptions | NodeJS.ProcessEnv | undefined): {
+	env: NodeJS.ProcessEnv | undefined;
+	input: string | undefined;
+	timeout: number | undefined;
+} {
+	if (!options) {
+		return { env: undefined, input: undefined, timeout: undefined };
+	}
+
+	const opts = options as ExecOptions;
+	const keys = Object.keys(opts);
+	const allKeysAreExecOptionsFields =
+		keys.length > 0 && keys.every((k) => EXEC_OPTIONS_FIELDS.has(k));
+	const isExecOptions =
+		allKeysAreExecOptionsFields ||
+		('timeout' in opts && typeof opts.timeout === 'number') ||
+		('env' in opts && opts.env !== null && typeof opts.env === 'object');
+
+	if (isExecOptions) {
+		return { env: opts.env, input: opts.input, timeout: opts.timeout };
+	}
+	// Legacy signature: the whole object is the env to use.
+	return { env: options as NodeJS.ProcessEnv, input: undefined, timeout: undefined };
+}
+
+/**
  * Safely execute a command without shell injection vulnerabilities
  * Uses execFile instead of exec to prevent shell interpretation
  *
@@ -99,23 +154,7 @@ export async function execFileNoThrow(
 	cwd?: string,
 	options?: ExecOptions | NodeJS.ProcessEnv
 ): Promise<ExecResult> {
-	// Handle backward compatibility: options can be env (old signature) or ExecOptions (new)
-	let env: NodeJS.ProcessEnv | undefined;
-	let input: string | undefined;
-	let timeout: number | undefined;
-
-	if (options) {
-		if ('input' in options || 'timeout' in options || 'env' in options) {
-			// New signature with ExecOptions
-			const execOpts = options as ExecOptions;
-			input = execOpts.input;
-			timeout = execOpts.timeout;
-			env = execOpts.env;
-		} else {
-			// Old signature with just env
-			env = options as NodeJS.ProcessEnv;
-		}
-	}
+	const { env, input, timeout } = resolveExecOptions(options);
 
 	// If input is provided, use spawn instead of execFile to write to stdin
 	if (input !== undefined) {
