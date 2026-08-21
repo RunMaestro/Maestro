@@ -404,12 +404,12 @@ describe('TerminalOutput', () => {
 			});
 		}
 
-		function renderLogs(logs: LogEntry[]) {
+		function renderLogs(logs: LogEntry[], propOverrides: Record<string, unknown> = {}) {
 			const session = createDefaultSession({
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
-			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+			return render(<TerminalOutput {...createDefaultProps({ session, ...propOverrides })} />);
 		}
 
 		it('gives the command its own row instead of appending it to the agent reply', () => {
@@ -477,6 +477,57 @@ describe('TerminalOutput', () => {
 			const { container } = renderLogs(logs);
 
 			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+		});
+
+		it('offers delete on a finished card when the transcript is editable', () => {
+			// The card takes an early return and never reaches the shared hover
+			// toolbar, so it has to carry the affordance itself - this asserts the
+			// props actually arrive from TerminalOutput.
+			renderLogs([commandCard()], { onDeleteLog: vi.fn() });
+
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
+		});
+
+		it('repaints a finished card that produced no output at all', () => {
+			// Regression: the LogItem memo compared `log.text`, which never changes
+			// for a silent command (`!true`), so the card stayed frozen mid-run -
+			// spinner up, Stop offered, and delete hidden behind its finished gate.
+			// Both `tabs` (what this file's getActiveTab mock reads) and `aiTabs`
+			// (what TerminalOutput's active-tab useMemo keys on). A session carrying
+			// only one of them can never repaint on a rerender, which would make
+			// this test assert the harness rather than the component.
+			const sessionWith = (log: LogEntry) => {
+				const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [log], isUnread: false }];
+				return createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			};
+			const onDeleteLog = vi.fn();
+
+			const running = commandCard({
+				text: '',
+				shellCommand: { command: 'true', cwd: '/repo', status: 'running' },
+			});
+			const { rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(running), onDeleteLog })} />
+			);
+			expect(screen.queryByTestId('shell-command-delete')).not.toBeInTheDocument();
+
+			const finished = commandCard({
+				text: '',
+				shellCommand: {
+					command: 'true',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+					durationMs: 12,
+				},
+			});
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(finished), onDeleteLog })} />
+			);
+
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			expect(screen.queryByText('Stop')).not.toBeInTheDocument();
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
 		});
 	});
 

@@ -38,11 +38,21 @@ describe('CueModalHeader', () => {
 		expect(props.setActiveTab).toHaveBeenCalledWith('dashboard');
 	});
 
-	it('clicking Pipeline tab calls setActiveTab("pipeline")', () => {
+	// The graph tab kept its 'pipeline' id when its label became "Pipeline
+	// Graph", so existing deep links (`maestro-cli open cue --tab pipeline`,
+	// the YAML editor's nav button) still land on the canvas.
+	it('clicking Pipeline Graph tab calls setActiveTab("pipeline")', () => {
 		const props = makeProps();
 		render(<CueModalHeader {...props} />);
-		fireEvent.click(screen.getByText('Pipeline Editor'));
+		fireEvent.click(screen.getByText('Pipeline Graph'));
 		expect(props.setActiveTab).toHaveBeenCalledWith('pipeline');
+	});
+
+	it('clicking Pipeline List tab calls setActiveTab("pipeline-list")', () => {
+		const props = makeProps();
+		render(<CueModalHeader {...props} />);
+		fireEvent.click(screen.getByText('Pipeline List'));
+		expect(props.setActiveTab).toHaveBeenCalledWith('pipeline-list');
 	});
 
 	it('clicking Scheduled Tasks tab calls setActiveTab("scheduled")', () => {

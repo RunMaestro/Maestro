@@ -59,7 +59,7 @@ Open the Cue modal to monitor and manage all automation activity.
 
 - Press `Cmd+K` / `Ctrl+K` and search for "Maestro Cue"
 
-The modal has five tabs - **Dashboard**, **Scheduled Tasks**, **Pipeline Editor**, **Activity Log**, and **Backup** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
+The modal has six tabs - **Dashboard**, **Scheduled Tasks**, **Pipeline Graph**, **Pipeline List**, **Activity Log**, and **Backup** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
 
 **From an agent:** ask any Maestro agent to open it and it will run `maestro-cli open cue`, optionally on a tab (`maestro-cli open cue --tab scheduled`). See [Opening a surface from the CLI](./cli-reference#maestro-cli-open).
 
@@ -83,7 +83,7 @@ Each row has three action buttons:
 
 - **Run Now** - Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
 - **Edit YAML** - Open the inline YAML editor for that agent.
-- **View in Pipeline** - Jump to the Pipeline Editor filtered to that agent.
+- **View in Pipeline** - Jump to the Pipeline Graph filtered to that agent.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
@@ -97,7 +97,11 @@ The Scheduled Tasks tab is the clock-driven slice of Cue in one list: every task
 | **At set times** | `time.scheduled` | At chosen `HH:MM` times, optionally only on chosen days   |
 | **Interval**     | `time.heartbeat` | Every N minutes                                           |
 
-Each row shows the task label and subscription name, the agent that runs it, how it repeats, its schedule, and a countdown to the next fire. A paused task is dimmed and marked `paused`.
+Each row shows the task label, the subscription name and its pipeline, the agent that runs it, how it repeats, its schedule, and a countdown to the next fire. A paused task is dimmed and marked `paused`.
+
+**Sorting.** Click any column header to sort by it; click the active header again to reverse it. Switching columns starts that column in its own natural order rather than inheriting the previous one. The default is **Next**, soonest first. Tasks with no projected next fire (a repeating interval, whose phase lives in engine run state rather than in the YAML) always sort last, in both directions.
+
+**Filtering.** The box in the header narrows the list as you type. The task label, subscription name, and agent are matched fuzzily, so `wspr` finds "Wispr Sync". The pipeline, schedule text, and action are matched as plain substrings, so `18:00` or `command` pull up exactly what you would expect. A live count next to the box shows how many of the total are showing, and `Esc` clears the filter before it closes the modal.
 
 Three buttons per row:
 
@@ -115,9 +119,9 @@ maestro-cli cue schedule --daily-at 09:00 --days mon,tue,wed,thu,fri --agent Ped
 maestro-cli cue schedule --list
 ```
 
-## Pipeline Editor
+## Pipeline Graph
 
-The Pipeline Editor tab visualizes your Cue subscriptions as a node graph - triggers on the left, agents on the right, with edges showing how events flow through your automation.
+The Pipeline Graph tab visualizes your Cue subscriptions as a node graph - triggers on the left, agents on the right, with edges showing how events flow through your automation.
 
 ![All Pipelines](./screenshots/cue-pipelines.png)
 
@@ -141,6 +145,33 @@ Two layout buttons in the top-right corner clean up a messy canvas. Both snap no
 - **Arrange** additionally reorders nodes within each column to untangle crossing edges. Reach for it after importing a pipeline or whenever the wiring looks tangled.
 
 In the **All Pipelines** view there are no edges between pipeline cards to cross, so only **Arrange** appears there and it packs the cards into a balanced grid. Either button previews as a confirmation first, and the result can be undone with **Discard** before you save.
+
+## Pipeline List
+
+The Pipeline List tab is the same pipelines read as text rather than drawn as a graph. Once you have more than a handful, a canvas is good at showing how one pipeline is wired and bad at answering "what do all of these do, and is anything broken?" That is what this tab is for.
+
+Each row states:
+
+- **What it does** - the trigger and its configuration, then the agents and commands it runs, in execution order: `Scheduled (09:00) → rc → Maestro`. The order follows the edges, not the order nodes happen to sit in the file.
+- **How it is doing** - a health badge, the outcome and age of the last run, how many recent runs there were and how many of those failed, and the number of steps.
+- **What is wrong** - any configuration problems, spelled out verbatim (a trigger with no schedule, an agent with no prompt, a node pointing at an agent that no longer exists).
+
+Health is derived, not stored. The badge is one of:
+
+| Badge               | Meaning                                                                          |
+| ------------------- | -------------------------------------------------------------------------------- |
+| **Running**         | A run for this pipeline is in flight right now                                   |
+| **Needs attention** | The configuration is broken, or a node references an agent that no longer exists |
+| **Disabled**        | Every subscription behind this pipeline is switched off in `cue.yaml`            |
+| **Failing**         | The most recent finished run failed, timed out, or was stopped                   |
+| **Healthy**         | The most recent finished run completed                                           |
+| **No recent runs**  | Nothing for this pipeline in the recent activity window                          |
+
+"No recent runs" is deliberately not "never run" - the activity log is a bounded window, so a pipeline that ran successfully a long time ago lands here too.
+
+The toolbar offers a search box, a health filter (**All**, **Attention**, **Running**, **Quiet**), and a sort (**Health**, **Name**, **Last run**). Health is the default sort so anything needing a human sits at the top rather than being buried under a couple dozen working pipelines.
+
+Each row has two actions: **Run now** fires the pipeline's trigger subscriptions on demand (all of them, when a pipeline has more than one trigger), and **Graph** jumps to the Pipeline Graph tab with that pipeline selected. The list itself is read-only - editing stays on the graph.
 
 ## Activity Log
 

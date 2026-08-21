@@ -123,6 +123,8 @@ Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellComman
 - It must **never** call `claude.deleteMessagePair` - the agent was bypassed entirely, so there is no pair in its session to delete.
 - Delete is hidden while the command is still **running**. Removing a live card would orphan the process: output keeps streaming into an entry that no longer exists, with no Stop button left to reach it. Stop first, then delete.
 
+Because that gate reads `shellCommand.status`, `LogItem`'s memo comparator in `TerminalOutput.tsx` must compare the `shellCommand` fields (`status`, `exitCode`, `durationMs`, `truncated`) and not just `log.text`. A command that prints NOTHING (`!true`, `!mkdir foo`) changes only those fields when it exits, so comparing text alone froze the card mid-run: spinner up, Stop still offered, delete still hidden.
+
 The recall-history rule lives in the pure reducer `hooks/tabs/internal/deleteShellCommandLog.ts`: the bang-prefixed `aiCommandHistory` entry is pruned **only when no card anywhere in the agent still shows that command**. The two lists have different scopes - cards are per tab, `aiCommandHistory` is per agent and deduplicated - so pruning unconditionally would strip `!ls` from up-arrow recall while two other `ls` cards sit on screen.
 
 ### Command mode is STATE, not a text prefix
@@ -217,6 +219,16 @@ Resolve and dispatch `@agent` mentions. Deliberately two steps, because WHEN a c
 **A queued message must not consult at submit time.** A message sent while the agent is busy goes to the execution queue; dispatching its mention immediately pulls the other agent into a question that is still several messages deep in the queue. So `useInputProcessing` PLANS at submit (it needs `suppressLocal` to decide whether to send locally at all), stamps `crossAgentMention: true` on the `QueuedItem`, and `agentStore.processQueuedItem` dispatches when the item becomes the agent's turn. `noteDispatch` strips the flag so an Agent Resilience retry cannot re-consult, and `handleEditQueueItem` recomputes it against the edited text.
 
 Module-level functions, not a hook: the queue drain runs outside React. The send itself is `sendCrossAgentRequest` in `hooks/agent/useCrossAgentDispatch.ts`, also module-level, sharing one `pendingRequests` tracker with the hook that subscribes to the response chunks.
+
+### fileDeletion.ts - delete the previewed file
+
+One confirmation, one delete, behind every surface that offers to remove the file you are looking at: the File Preview toolbar's trash button and the command palette's `File: Delete` entry.
+
+**Key export:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })` - opens the shared `confirm` modal (destructive, titled "Delete File") and, only on confirm, runs `window.maestro.fs.delete` - the same IPC the Files panel context menu uses, so SSH remotes are honored. `sessionId` defaults to the active session, which is what both surfaces are scoped to.
+
+After a successful delete it force-closes every file preview tab in that session pointing at the path, then dispatches the `maestro:refreshFileTree` CustomEvent so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
+
+Do NOT add a second delete path. A new surface should call `requestFileDeletion` so the confirmation copy and the tab cleanup cannot drift.
 
 ---
 

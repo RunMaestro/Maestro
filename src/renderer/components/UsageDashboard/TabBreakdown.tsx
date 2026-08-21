@@ -29,10 +29,20 @@ import type { QueryEvent } from '../../../shared/stats-types';
 import { formatAgeShort, formatDurationHuman, formatNumber } from '../../../shared/formatters';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { Pager } from '../ui/Pager';
+import { usePagination } from '../../hooks/ui/usePagination';
 import { EntityTile } from './EntityTile';
 
 /** Days of daily-count history behind each tile's sparkline. */
 const SPARKLINE_DAYS = 14;
+
+/**
+ * Tiles per page. Chosen so the bounded filters never paginate - Last 25 is the
+ * largest of them - and only "All" (which reaches four figures on a long-lived
+ * agent) turns the pager on. That way the control appears exactly when it is
+ * needed and is absent the rest of the time.
+ */
+const TABS_PER_PAGE = 32;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type TabStatus = 'open' | 'snoozed' | 'closed';
@@ -237,6 +247,11 @@ export const TabBreakdown = memo(function TabBreakdown({
 		[allStats, filterMode, sortMode]
 	);
 
+	// Reset to page 1 whenever the user changes what they are looking at:
+	// staying on page 7 after re-sorting would show an arbitrary slice of a
+	// brand-new ordering.
+	const pager = usePagination(visibleStats, TABS_PER_PAGE, `${filterMode}:${sortMode}`);
+
 	if (!events) {
 		return (
 			<div className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -273,8 +288,23 @@ export const TabBreakdown = memo(function TabBreakdown({
 						style={{ color: theme.colors.textDim }}
 						data-testid="tab-breakdown-count"
 					>
-						{visibleStats.length} of {allStats.length}
+						{pager.isPaginated
+							? `${pager.range.from}-${pager.range.to} of ${visibleStats.length}`
+							: `${visibleStats.length} of ${allStats.length}`}
 					</span>
+					{pager.isPaginated && (
+						<Pager
+							theme={theme}
+							page={pager.page}
+							totalPages={pager.totalPages}
+							onPrev={pager.prevPage}
+							onNext={pager.nextPage}
+							canGoPrev={pager.canGoPrev}
+							canGoNext={pager.canGoNext}
+							ariaLabel="Tab pages"
+							testId="tab-breakdown-pager"
+						/>
+					)}
 				</div>
 				<div className="flex items-center gap-2">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -310,7 +340,7 @@ export const TabBreakdown = memo(function TabBreakdown({
 					role="region"
 					aria-label="Tab activity"
 				>
-					{visibleStats.map((stat, index) => (
+					{pager.pageItems.map((stat, index) => (
 						<TabCard
 							key={stat.tabId}
 							stat={stat}

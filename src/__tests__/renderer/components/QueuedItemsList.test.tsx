@@ -227,4 +227,53 @@ describe('QueuedItemsList edit modal', () => {
 		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
 		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
 	});
+
+	// "Edit Last Queued Message" can target a message on another tab and switch to
+	// it. If this list cleared the id just because the item is not in ITS slice,
+	// it would race that switch and cancel the open before the new tab renders.
+	it('keeps the id when the item is queued for a tab other than this one', () => {
+		useUIStore.getState().setEditingQueuedItemId('q-other');
+		render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[editable, item({ id: 'q-other', tabId: 'tab-2' })]}
+					theme={mockTheme}
+					activeTabId="tab-1"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-other');
+		// Not rendered here - the owning tab's list opens it once we land there.
+		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
+	});
+
+	it('opens the modal once the owning tab is the active one', () => {
+		useUIStore.getState().setEditingQueuedItemId('q-other');
+		const queue = [editable, item({ id: 'q-other', tabId: 'tab-2', text: 'from the other tab' })];
+		const { rerender } = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					activeTabId="tab-1"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		rerender(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					activeTabId="tab-2"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('from the other tab');
+	});
 });

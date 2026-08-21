@@ -285,6 +285,12 @@ export const MODAL_PRIORITIES = {
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
 	CUE_YAML_EDITOR: 463,
 
+	/** Fuzzy filter box in the Cue modal's Scheduled Tasks tab. Registered only
+	 *  while the box holds text, so Escape clears the filter before it closes
+	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal.
+	 *  461 is taken by PIANOLA_RULE_EDITOR, so this sits at 462. */
+	CUE_SCHEDULED_TASK_FILTER: 462,
+
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,
 

@@ -135,18 +135,18 @@ Resolves to a `time.once` subscription whose `fire_at` is 20 minutes from now (i
 
 ### Pipelines vs. Chains (READ THIS FIRST)
 
-A **pipeline** is a logical grouping of related subscriptions in `cue.yaml` - it's what shows up as one named card in the Cue dashboard / Pipeline Editor. A **chain** is a single subscription (or topology of subscriptions: linear chain, fan-out, fan-in) **inside** a pipeline.
+A **pipeline** is a logical grouping of related subscriptions in `cue.yaml` - it's what shows up as one named card in the Cue dashboard / Pipeline Graph. A **chain** is a single subscription (or topology of subscriptions: linear chain, fan-out, fan-in) **inside** a pipeline.
 
 **Two non-negotiable defaults - apply BOTH every time:**
 
 1. **Group related chains under one pipeline.** Do not create one pipeline per chain. If the user describes several automations that share a theme (e.g., "morning briefing + EOD wrap-up + weekly review", or "PR triage + PR review + PR merge"), put them in the same pipeline. Separate pipelines are only justified when the work is genuinely unrelated (different domains, different agents, different lifecycles).
-2. **One trigger → one agent node. Never fan-in by default.** Every subscription gets its own unique `target_node_key` (any UUID) so the Pipeline Editor renders each chain as its own visual line - even when several chains share the same `agent_id`. Fan-in (multiple triggers collapsing onto one shared node) is a deliberate, opt-in topology - never the result of omitting `target_node_key`. The user's reasoning: an individual chain trivially extends to `trigger → agent → agent`, while a fan-in node has to be untangled first to add a downstream stage.
+2. **One trigger → one agent node. Never fan-in by default.** Every subscription gets its own unique `target_node_key` (any UUID) so the Pipeline Graph renders each chain as its own visual line - even when several chains share the same `agent_id`. Fan-in (multiple triggers collapsing onto one shared node) is a deliberate, opt-in topology - never the result of omitting `target_node_key`. The user's reasoning: an individual chain trivially extends to `trigger → agent → agent`, while a fan-in node has to be untangled first to add a downstream stage.
 
 How grouping is expressed in YAML:
 
 1. **`pipeline_name` field on each subscription** - authoritative. Every subscription that belongs to the same pipeline gets the same `pipeline_name` value. This survives renaming individual subscriptions.
 2. **`# Pipeline: Name (color: #hex)` comment header** at the top of `cue.yaml` declares the pipeline's display name and dot color in the UI.
-3. **Naming convention** (legacy / human-friendly): the first subscription's `name` matches the pipeline name; additional chains use `Name-chain-1`, `Name-chain-2`, etc. The Pipeline Editor emits this convention automatically.
+3. **Naming convention** (legacy / human-friendly): the first subscription's `name` matches the pipeline name; additional chains use `Name-chain-1`, `Name-chain-2`, etc. The Pipeline Graph emits this convention automatically.
 4. **`target_node_key`** (UUID) on every subscription - even the first one. Mixing keyed and unkeyed subs for the same `agent_id` is fragile: the legacy dedup-by-sessionName fallback can still collapse them depending on YAML ordering. Make every sub explicit.
 
 ```yaml
@@ -189,7 +189,7 @@ Three subscriptions, three different schedules, three distinct `target_node_key`
 
 ### Pipeline Topologies (within a pipeline)
 
-**Default: independent chains, even when they share an agent.** When several subscriptions live in the same pipeline, give each its own unique `target_node_key` (any UUID will do) so the Pipeline Editor renders them as parallel chains rather than collapsing to a fan-in node. Whether they reuse one `agent_id` or use distinct ones is a separate decision - `target_node_key` controls the _visual_ graph; `agent_id` controls _which agent runs the work_.
+**Default: independent chains, even when they share an agent.** When several subscriptions live in the same pipeline, give each its own unique `target_node_key` (any UUID will do) so the Pipeline Graph renders them as parallel chains rather than collapsing to a fan-in node. Whether they reuse one `agent_id` or use distinct ones is a separate decision - `target_node_key` controls the _visual_ graph; `agent_id` controls _which agent runs the work_.
 
 - **Same `agent_id`, distinct `target_node_key`s** → one agent runs every chain (shared session, serialized queue), but each chain shows up as its own agent node labelled `Name (1)`, `Name (2)`, etc. This is the right default for a single-project pipeline whose stages are conceptually independent but happen to share one workspace.
 - **Distinct `agent_id`s** → fully isolated agents per chain (separate context, can run in parallel). Reach for this only when the chains genuinely need different contexts, models, or project roots.
@@ -360,7 +360,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 1. Read the existing config first to understand current subscriptions, pipelines, and naming conventions. Check `.maestro/cue.yaml` (canonical) first, then `maestro-cue.yaml` at the project root (legacy fallback). **If the pipeline involves agents at more than one project root, you must read every participating agent's cue.yaml - there is no single aggregated file.** See **Multi-Root Pipelines** above.
 2. Keep subscription `name` values unique within the file - the engine keys on them.
 3. **Group related chains under one pipeline.** Before adding a new subscription, check whether it belongs in an existing pipeline (matching theme, agent set, or domain) - if so, reuse that `pipeline_name` instead of creating a new pipeline. If the user describes several related automations in one request, emit them as multiple subscriptions sharing a single `pipeline_name`, not as separate pipelines.
-4. **Within a pipeline, give each subscription its own `target_node_key`** (any UUID) so the Pipeline Editor renders the chains as separate visual lines instead of collapsing them onto one fan-in agent node. This applies whether the chains share an `agent_id` or not. Only reuse a `target_node_key` across subscriptions when you actually want a real fan-in node (multiple triggers/upstreams converging onto one shared agent node). If two chains genuinely need isolated context/models/project-roots, also give them distinct `agent_id`s (create with `{{MAESTRO_CLI_PATH}} create-agent <name> --cwd <project>` if needed); otherwise reusing one `agent_id` is fine and often preferred.
+4. **Within a pipeline, give each subscription its own `target_node_key`** (any UUID) so the Pipeline Graph renders the chains as separate visual lines instead of collapsing them onto one fan-in agent node. This applies whether the chains share an `agent_id` or not. Only reuse a `target_node_key` across subscriptions when you actually want a real fan-in node (multiple triggers/upstreams converging onto one shared agent node). If two chains genuinely need isolated context/models/project-roots, also give them distinct `agent_id`s (create with `{{MAESTRO_CLI_PATH}} create-agent <name> --cwd <project>` if needed); otherwise reusing one `agent_id` is fine and often preferred.
 5. **For Command nodes (shell scripts or `maestro-cli` calls inside a pipeline)** - see the **Command Nodes** section above for the full schema. The keyword is `action: command` plus a `command:` block; there is no separate top-level YAML key, no `event: command` type, and no separate node graph.
 6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.
 7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` - the engine reloads automatically when the file changes.
@@ -368,7 +368,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 
 ### Multi-Root Pipelines (agents in different project roots)
 
-A pipeline that spans agents living in **different** project roots is NOT a single-file authoring task. The engine never aggregates yaml files across roots - each agent's runtime only sees `<its-own-projectRoot>/.maestro/cue.yaml`. A pipeline split across N agents at N different roots is physically N separate yaml files; the visual Pipeline Editor manages this for you by writing one file per participating agent's cwd on every save.
+A pipeline that spans agents living in **different** project roots is NOT a single-file authoring task. The engine never aggregates yaml files across roots - each agent's runtime only sees `<its-own-projectRoot>/.maestro/cue.yaml`. A pipeline split across N agents at N different roots is physically N separate yaml files; the visual Pipeline Graph manages this for you by writing one file per participating agent's cwd on every save.
 
 **When authoring multi-root pipelines by hand, the rule is:**
 
@@ -415,7 +415,7 @@ Translate the user's phrasing into one of these starter templates, then adapt na
 **Each recipe below is a single chain.** When a user request maps to more than one chain:
 
 - Assign every chain the same `pipeline_name` (and add a `# Pipeline: Name (color: #hex)` comment header at the top of the file) so they group into one pipeline in the UI. Only split into separate pipelines when the chains are genuinely unrelated.
-- **Add a unique `target_node_key` (any UUID) to every subscription** - the recipes below omit it because they're standalone single-chain examples, but the moment you emit two or more subscriptions in one file you must give each its own key. Otherwise the Pipeline Editor collapses them into one fan-in agent node, which is never the default we want. The `agent.completed (fan-in)` recipe is the one exception - that's a deliberate convergence node.
+- **Add a unique `target_node_key` (any UUID) to every subscription** - the recipes below omit it because they're standalone single-chain examples, but the moment you emit two or more subscriptions in one file you must give each its own key. Otherwise the Pipeline Graph collapses them into one fan-in agent node, which is never the default we want. The `agent.completed (fan-in)` recipe is the one exception - that's a deliberate convergence node.
 
 **"Every morning at 9am, remind me to…" / "Every Friday afternoon…" → `time.scheduled`**
 
