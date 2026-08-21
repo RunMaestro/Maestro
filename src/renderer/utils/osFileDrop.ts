@@ -71,12 +71,18 @@ function readFileAsBase64(file: File): Promise<string> {
  * `attachments:save` writes straight to `<attachments>/<sessionId>/<filename>`
  * with no collision handling, so two different files dropped under the same
  * name (a `report.pdf` from two different folders, say) would leave the first
- * drop's `@mention` silently pointing at the second file's bytes. A short
- * unique token keeps the original name readable in the mention while making
- * the write non-destructive.
+ * drop's `@mention` silently pointing at the second file's bytes. A token from
+ * the shared id generator keeps the original name readable in the mention
+ * while making the write non-destructive.
+ *
+ * The token is truncated because the whole filename lands in the user's draft
+ * as an `@mention` they have to read past. 48 bits is far more than the job
+ * needs: two names only ever collide within one session's attachments
+ * directory and only when the base name already matches, so the space being
+ * drawn from is a handful of same-named drops, not the whole store.
  */
 function uniqueAttachmentName(name: string): string {
-	const token = generateId().replace(/-/g, '').slice(0, 8);
+	const token = generateId().replace(/-/g, '').slice(0, 12);
 	const dot = name.lastIndexOf('.');
 	// `dot <= 0` covers both "no extension" and a leading-dot dotfile, where
 	// everything before the dot is the name rather than the extension.
