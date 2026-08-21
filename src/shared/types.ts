@@ -40,6 +40,24 @@ export type ToolType = import('./agentIds').AgentId;
 export type ThinkingMode = 'off' | 'on' | 'sticky';
 
 /**
+ * Cycle order for the thinking chip, shared by the composer's toggle and
+ * `maestro-cli tab thinking <tab-id> cycle`. One list so a click and a CLI
+ * cycle can never disagree about what comes next.
+ */
+export const THINKING_MODES: readonly ThinkingMode[] = ['off', 'on', 'sticky'];
+
+/** The mode one step along {@link THINKING_MODES}; treats `undefined` as `'off'`. */
+export function nextThinkingMode(mode: ThinkingMode | undefined): ThinkingMode {
+	const index = THINKING_MODES.indexOf(mode ?? 'off');
+	return THINKING_MODES[(index + 1) % THINKING_MODES.length];
+}
+
+/** Narrow an unknown value to a {@link ThinkingMode}, or `undefined` if it isn't one. */
+export function asThinkingMode(value: unknown): ThinkingMode | undefined {
+	return THINKING_MODES.includes(value as ThinkingMode) ? (value as ThinkingMode) : undefined;
+}
+
+/**
  * Capability flags that determine what features are available for each agent.
  *
  * This is the single canonical definition. All other AgentCapabilities types
@@ -199,6 +217,8 @@ export interface SessionInfo {
 	cwd: string;
 	projectRoot: string;
 	autoRunFolderPath?: string;
+	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
+	bookmarked?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */

@@ -23,6 +23,7 @@ import { createLoopSummaryEntry } from './batchLoopSummary';
 import { buildFinalSummary } from './batchFinalSummary';
 import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
+import { beginSleepAwareSpan } from '../../../services/systemSleep';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
@@ -439,8 +440,9 @@ export function useBatchRunner({
 				getDocumentsProcessed: () => documents.length,
 			};
 
-			// Per-loop tracking for loop summary
-			let loopStartTime = Date.now();
+			// Per-loop tracking for loop summary. The span is sleep-aware so a
+			// laptop that slept mid-loop doesn't report the sleep as loop duration.
+			let loopSpan = beginSleepAwareSpan();
 			let loopTasksCompleted = 0;
 			let loopTotalInputTokens = 0;
 			let loopTotalOutputTokens = 0;
@@ -490,7 +492,7 @@ export function useBatchRunner({
 						createLoopSummaryEntry({
 							loopIteration,
 							loopTasksCompleted,
-							loopStartTime,
+							loopSpan,
 							loopTotalInputTokens,
 							loopTotalOutputTokens,
 							loopTotalCost,
@@ -1277,7 +1279,7 @@ export function useBatchRunner({
 					createLoopSummaryEntry({
 						loopIteration,
 						loopTasksCompleted: completedLoopTasks,
-						loopStartTime,
+						loopSpan,
 						loopTotalInputTokens,
 						loopTotalOutputTokens,
 						loopTotalCost,
@@ -1289,7 +1291,7 @@ export function useBatchRunner({
 				);
 
 				// Reset per-loop tracking for next iteration
-				loopStartTime = Date.now();
+				loopSpan = beginSleepAwareSpan();
 				loopTasksCompleted = 0;
 				loopTotalInputTokens = 0;
 				loopTotalOutputTokens = 0;

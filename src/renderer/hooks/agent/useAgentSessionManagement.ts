@@ -7,26 +7,17 @@ import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { logger } from '../../utils/logger';
+import {
+	TRANSCRIPT_RESUME_READ_LIMIT,
+	isSynopsisRequest,
+	stripSynopsisTurns,
+	transcriptMessagesToLogEntries,
+	type TranscriptMessage,
+} from '../../utils/transcriptMessages';
 
-/**
- * Matches the Auto Run synopsis prompt that Maestro injects into the agent
- * session after a task ("Give/Provide a brief synopsis of what you just
- * accomplished ..."). The leading verb and trailing wording have drifted across
- * versions and the prompt is user-customizable, so we anchor on the stable core
- * phrase. A restored tab hides this request and the assistant's `**Summary:**`
- * reply since they are bookkeeping, not part of the user's conversation.
- */
-const SYNOPSIS_REQUEST_PATTERN =
-	/^\s*\S+\s+a\s+brief\s+synopsis\s+of\s+what\s+you\s+just\s+accomplished/i;
-
-export function isSynopsisRequest(msg: {
-	type?: string;
-	role?: string;
-	content?: string;
-}): boolean {
-	const isUser = msg.type === 'user' || msg.role === 'user';
-	return isUser && typeof msg.content === 'string' && SYNOPSIS_REQUEST_PATTERN.test(msg.content);
-}
+// Re-exported from its shared home so existing importers keep working; the
+// scroll-to-top history backfill needs the same filter.
+export { isSynopsisRequest };
 
 /**
  * History entry for the addHistoryEntry function.
@@ -322,52 +313,17 @@ export function useAgentSessionManagement(
 						agentId,
 						resolvedProjectRoot,
 						agentSessionId,
-						{ offset: 0, limit: 500 },
+						{ offset: 0, limit: TRANSCRIPT_RESUME_READ_LIMIT },
 						targetSession.sshRemoteId
 					);
 
-					// Drop the Auto Run synopsis request and the assistant reply that
-					// immediately follows it. These are Maestro bookkeeping turns, not part
-					// of the user's conversation, so they shouldn't reappear on restore.
-					const withoutSynopsis = result.messages.filter(
-						(
-							msg: { type: string; role?: string; content: string },
-							i: number,
-							arr: { type: string; role?: string; content: string }[]
-						) => {
-							if (isSynopsisRequest(msg)) return false;
-							const prev = arr[i - 1];
-							const isAssistant = msg.type === 'assistant' || msg.role === 'assistant';
-							if (prev && isSynopsisRequest(prev) && isAssistant) return false;
-							return true;
-						}
+					// Strip the Auto Run synopsis turns, then convert. Shared with the
+					// scroll-to-top backfill (issue #1407), which matches what it reads
+					// against these entries to find where to splice older history in -
+					// so both paths must build entries the same way.
+					messages = transcriptMessagesToLogEntries(
+						stripSynopsisTurns(result.messages as TranscriptMessage[])
 					);
-
-					// Convert to log entries, keeping messages with actual text content or
-					// reconstructed images. Tool-use-only messages (empty text, no images)
-					// are skipped - restored tabs start with thinking off so there's nothing
-					// useful to render for those entries.
-					messages = withoutSynopsis
-						.filter(
-							(msg: { content: string; images?: string[] }) =>
-								(msg.content && msg.content.trim().length > 0) ||
-								(msg.images != null && msg.images.length > 0)
-						)
-						.map(
-							(msg: {
-								type: string;
-								content: string;
-								timestamp: string;
-								uuid: string;
-								images?: string[];
-							}) => ({
-								id: msg.uuid || generateId(),
-								timestamp: new Date(msg.timestamp).getTime(),
-								source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-								text: msg.content,
-								...(msg.images && msg.images.length > 0 && { images: msg.images }),
-							})
-						);
 				}
 
 				if (messages.length === 0) {

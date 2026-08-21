@@ -29,6 +29,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 
 import { useModalHandlers } from '../../../renderer/hooks/modal/useModalHandlers';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -70,6 +71,9 @@ beforeEach(() => {
 
 	// Reset stores
 	useModalStore.setState({ modals: new Map() });
+	// Auth outages are provider-scoped and deliberately deduplicate, so a
+	// leftover outage would stop the next test's prompt from opening.
+	useAuthOutageStore.setState({ outages: {} });
 	useSessionStore.setState({
 		sessions: [],
 		activeSessionId: '',
@@ -799,11 +803,15 @@ describe('useModalHandlers', () => {
 			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 
-		it('handleAuthenticateAfterError calls agent store, clears modal, and focuses input', () => {
+		it('handleAuthenticateAfterError calls agent store and swaps in the reauth modal', () => {
 			const mockAuth = vi.fn();
 			vi.spyOn(useAgentStore, 'getState').mockReturnValue({
 				...useAgentStore.getState(),
 				authenticateAfterError: mockAuth,
+			});
+			// The provider is resolved from the agent, so it has to exist.
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', toolType: 'claude-code' })],
 			});
 			getModalActions().setAgentErrorModalSessionId('session-1');
 
@@ -815,11 +823,12 @@ describe('useModalHandlers', () => {
 
 			expect(mockAuth).toHaveBeenCalledWith('session-1');
 			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
-
-			act(() => {
-				vi.advanceTimersByTime(10);
+			// The login now happens inside Maestro, so the error modal hands off to the
+			// re-authentication terminal instead of returning focus to the composer.
+			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
+			expect(useModalStore.getState().getData('reauth')).toMatchObject({
+				providerKey: 'claude-code',
 			});
-			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 	});
 

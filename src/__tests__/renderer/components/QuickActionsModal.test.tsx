@@ -9,6 +9,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { Z_LAYERS } from '../../../renderer/constants/zLayers';
 
@@ -206,6 +207,13 @@ describe('QuickActionsModal', () => {
 		// Reset fileExplorerStore state
 		useFileExplorerStore.setState({
 			fileTreeFilterOpen: false,
+		});
+		// Reset group chat run state (drives the jumper's LIVE bucket)
+		useGroupChatStore.setState({
+			groupChatState: 'idle',
+			participantStates: new Map(),
+			groupChatStates: new Map(),
+			allGroupChatParticipantStates: new Map(),
 		});
 	});
 
@@ -2017,7 +2025,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('sorts agents alphabetically and excludes group chats', () => {
+		it('sorts agents alphabetically and excludes idle group chats', () => {
 			const props = createDefaultProps({
 				initialMode: 'agents',
 				sessions: [
@@ -2040,8 +2048,39 @@ describe('QuickActionsModal', () => {
 			expect(alphaIdx).toBeLessThan(mikeIdx);
 			expect(mikeIdx).toBeLessThan(zuluIdx);
 
-			// Group chats are intentionally excluded from the agent jumper.
-			expect(screen.queryByText('Design Review')).not.toBeInTheDocument();
+			// An idle group chat is not "where work is happening", so it stays out
+			// of the jumper (it is still reachable from the main palette).
+			expect(screen.queryByText('Group Chat: Design Review')).not.toBeInTheDocument();
+		});
+
+		it('lists a running group chat in the LIVE bucket', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' })],
+				groupChats: [
+					{ id: 'gc-1', name: 'Design Review', participants: ['a', 'b'] },
+					{ id: 'gc-2', name: 'Quiet Room', participants: ['a'] },
+				],
+				onOpenGroupChat: vi.fn(),
+			});
+			useGroupChatStore.setState({
+				groupChatStates: new Map([['gc-1', 'moderator-thinking' as const]]),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Group Chat: Design Review')).toBeInTheDocument();
+			expect(screen.getByText('Moderator thinking')).toBeInTheDocument();
+			expect(screen.queryByText('Group Chat: Quiet Room')).not.toBeInTheDocument();
+
+			// LIVE bucket, above the idle agent.
+			const dialog = screen.getByRole('dialog');
+			const text = dialog.textContent ?? '';
+			expect(text.indexOf('LIVE')).toBeLessThan(text.indexOf('Group Chat: Design Review'));
+			expect(text.indexOf('Group Chat: Design Review')).toBeLessThan(text.indexOf('IDLE'));
+
+			fireEvent.click(screen.getByText('Group Chat: Design Review'));
+			expect(props.onOpenGroupChat).toHaveBeenCalledWith('gc-1');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
 		it('buckets running agents above idle ones, alphabetical within each bucket', () => {

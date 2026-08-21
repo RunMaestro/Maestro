@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useCueDirtyStore } from '../../../renderer/stores/cueDirtyStore';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { CueModal } from '../../../renderer/components/CueModal';
 
 import { mockTheme } from '../../helpers/mockTheme';
@@ -55,7 +55,7 @@ vi.mock('../../../renderer/components/CuePipelineEditor', () => ({
 	CuePipelineEditor: (props: { initialPipelineId?: { id: string | null; nonce: string } }) => {
 		capturedEditorProps.initialPipelineId = props.initialPipelineId;
 		capturedEditorProps.renderCount += 1;
-		return <div data-testid="cue-pipeline-editor">Pipeline Editor Mock</div>;
+		return <div data-testid="cue-pipeline-editor">Pipeline Graph Mock</div>;
 	},
 }));
 
@@ -395,18 +395,33 @@ describe('CueModal', () => {
 	});
 
 	describe('tabs', () => {
-		it('should render Dashboard and Pipeline Editor tabs', () => {
+		it('should render Dashboard, Pipeline Graph, and Pipeline List tabs', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			expect(screen.getByText('Dashboard')).toBeInTheDocument();
-			expect(screen.getByText('Pipeline Editor')).toBeInTheDocument();
+			expect(screen.getByText('Pipeline Graph')).toBeInTheDocument();
+			expect(screen.getByText('Pipeline List')).toBeInTheDocument();
+		});
+
+		it('should show the pipeline list when the Pipeline List tab is clicked', async () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			fireEvent.click(screen.getByText('Pipeline List'));
+
+			// The graph-data fetch has to settle before the list leaves its
+			// loading state - the pipelines it lists come from that call.
+			await waitFor(() =>
+				expect(screen.getByRole('radiogroup', { name: 'Sort pipelines' })).toBeInTheDocument()
+			);
+			// The list is a separate tab from the graph, not a mode of it.
+			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
 		});
 
 		it('should show Dashboard content by default', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
-			// Pipeline Editor content should not be visible by default
+			// Pipeline Graph content should not be visible by default
 			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
 		});
 
@@ -420,15 +435,15 @@ describe('CueModal', () => {
 			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
 		});
 
-		it('should switch back to Pipeline Editor when Pipeline Editor tab is clicked', () => {
+		it('should switch back to the graph when the Pipeline Graph tab is clicked', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Switch to dashboard
 			fireEvent.click(screen.getByText('Dashboard'));
 			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
 
-			// Switch back to pipeline editor
-			fireEvent.click(screen.getByText('Pipeline Editor'));
+			// Switch back to the pipeline graph
+			fireEvent.click(screen.getByText('Pipeline Graph'));
 			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
 			expect(screen.queryByText('Sessions with Cue')).not.toBeInTheDocument();
 		});
@@ -473,14 +488,14 @@ describe('CueModal', () => {
 			// initialPipelineId must be undefined (no stale token survives).
 			// Before the fix, the same `tokenAfterView` would still be present
 			// here and snap the user back to the prior pipeline.
-			fireEvent.click(screen.getByText('Pipeline Editor'));
+			fireEvent.click(screen.getByText('Pipeline Graph'));
 			expect(capturedEditorProps.initialPipelineId).toBeUndefined();
 		});
 
 		it('preserves the token when navigating within the pipeline tab', () => {
 			// Defensive: handleSetActiveTab is idempotent for `tab === 'pipeline'`.
 			// Calling it with the already-active value must NOT clear the token -
-			// otherwise rapid re-clicks of the Pipeline Editor tab would race
+			// otherwise rapid re-clicks of the Pipeline Graph tab would race
 			// against a still-pending "View in Pipeline" navigation.
 			mockUseCueReturn = {
 				...defaultUseCueReturn,
@@ -494,8 +509,8 @@ describe('CueModal', () => {
 			expect(capturedEditorProps.initialPipelineId).toBeDefined();
 			const tokenAfterView = capturedEditorProps.initialPipelineId!;
 
-			// Clicking the already-active Pipeline Editor tab must not clear it.
-			fireEvent.click(screen.getByText('Pipeline Editor'));
+			// Clicking the already-active Pipeline Graph tab must not clear it.
+			fireEvent.click(screen.getByText('Pipeline Graph'));
 			expect(capturedEditorProps.initialPipelineId?.nonce).toBe(tokenAfterView.nonce);
 		});
 	});

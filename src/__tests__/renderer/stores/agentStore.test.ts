@@ -726,7 +726,7 @@ describe('agentStore', () => {
 	});
 
 	describe('authenticateAfterError', () => {
-		it('clears error, sets active session, and switches to terminal mode', () => {
+		it('clears error and selects the agent without touching its input mode', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -740,7 +740,10 @@ describe('agentStore', () => {
 
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.state).toBe('idle');
-			expect(updated.inputMode).toBe('terminal');
+			// The login now happens in the re-authentication modal, so the agent must
+			// stay in AI mode - a forced terminal switch left the user in a shell they
+			// never asked for once the modal closed.
+			expect(updated.inputMode).toBe('ai');
 			expect(updated.agentError).toBeUndefined();
 			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
 		});
@@ -751,7 +754,7 @@ describe('agentStore', () => {
 			expect(mockClearError).not.toHaveBeenCalled();
 		});
 
-		it('is idempotent when session is already in terminal mode', () => {
+		it('leaves a session that is already in terminal mode alone', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -780,7 +783,7 @@ describe('agentStore', () => {
 			useAgentStore.getState().authenticateAfterError('session-1');
 
 			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
-			expect(useSessionStore.getState().sessions[0].inputMode).toBe('terminal');
+			expect(useSessionStore.getState().sessions[0].inputMode).toBe('ai');
 		});
 
 		it('calls IPC clearError via delegation', () => {
@@ -822,7 +825,7 @@ describe('agentStore', () => {
 			expect(updated.aiTabs[0].inputValue).toBe('pending input');
 		});
 
-		it('clears activeFileTabId to prevent orphaned file preview', () => {
+		it('leaves the open file tab alone', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -834,9 +837,12 @@ describe('agentStore', () => {
 
 			useAgentStore.getState().authenticateAfterError('session-1');
 
+			// The old flow forced the agent into terminal mode, which orphaned the
+			// file preview and made this clear necessary. The re-authentication modal
+			// owns the login now, so the user's view must survive it intact.
 			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.inputMode).toBe('terminal');
-			expect(updated.activeFileTabId).toBeNull();
+			expect(updated.inputMode).toBe('ai');
+			expect(updated.activeFileTabId).toBe('file-tab-1');
 		});
 	});
 
@@ -1085,8 +1091,8 @@ describe('agentStore', () => {
 
 			// Active session switched to session-2
 			expect(useSessionStore.getState().activeSessionId).toBe('session-2');
-			// session-2 is now in terminal mode
-			expect(useSessionStore.getState().sessions[1].inputMode).toBe('terminal');
+			// The login happens in the re-authentication modal, so the agent stays in AI mode
+			expect(useSessionStore.getState().sessions[1].inputMode).toBe('ai');
 		});
 
 		it('double clear is idempotent', () => {
@@ -1130,7 +1136,7 @@ describe('agentStore', () => {
 			expect(updated[0].state).toBe('idle');
 			expect(updated[0].agentError).toBeUndefined();
 			expect(updated[1].state).toBe('idle');
-			expect(updated[1].inputMode).toBe('terminal');
+			expect(updated[1].inputMode).toBe('ai');
 		});
 
 		it('recovery after restart then new session', async () => {

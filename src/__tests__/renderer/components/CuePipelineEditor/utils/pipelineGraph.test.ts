@@ -1,18 +1,20 @@
 /**
- * Tests for pipelineGraph utilities: getTriggerConfigSummary,
- * convertToReactFlowNodes, and convertToReactFlowEdges.
+ * Tests for pipelineGraph utilities: convertToReactFlowNodes,
+ * convertToReactFlowEdges, and the Y-offset helpers - plus
+ * getTriggerConfigSummary, which now lives in shared/ (both the graph nodes
+ * and the pipeline list render it, so it is tested alongside its graph use).
  *
  * These are pure functions - no React, no DOM.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import {
-	getTriggerConfigSummary,
 	convertToReactFlowNodes,
 	convertToReactFlowEdges,
 	computePipelineYOffsets,
 	resolveNonOverlappingPipelineOffset,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
+import { getTriggerConfigSummary } from '../../../../../shared/cue-pipeline-summary';
 import type {
 	CuePipeline,
 	TriggerNodeData,

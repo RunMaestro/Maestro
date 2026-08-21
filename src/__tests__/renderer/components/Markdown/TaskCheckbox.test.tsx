@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { TaskCheckbox } from '../../../../renderer/components/FilePreview/TaskCheckbox';
+import { TaskCheckbox } from '../../../../renderer/components/Markdown/components/TaskCheckbox';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 describe('TaskCheckbox', () => {

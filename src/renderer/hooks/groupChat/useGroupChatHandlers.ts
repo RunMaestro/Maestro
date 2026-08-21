@@ -202,6 +202,17 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			);
 		});
 
+		// Unread tracking. The active room's own message listener is registered
+		// per-chat below and appends to the transcript; this one exists to catch
+		// the rooms nobody is looking at, so it deliberately skips the active one.
+		// Echoes of what the conductor just sent are not news, hence the
+		// 'user' filter - a Cue-driven prompt can land in an inactive room.
+		const unsubUnread = window.maestro.groupChat.onMessage((id, message) => {
+			if (message.from === 'user') return;
+			if (id === useGroupChatStore.getState().activeGroupChatId) return;
+			useGroupChatStore.getState().markGroupChatUnread(id);
+		});
+
 		const unsubParticipantState = window.maestro.groupChat.onParticipantState?.(
 			(id, participantName, state) => {
 				// Track participant state for ALL group chats (for sidebar indicator)
@@ -280,6 +291,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		return () => {
 			unsubState();
 			unsubParticipants();
+			unsubUnread();
 			unsubParticipantState?.();
 			unsubLiveOutput?.();
 			unsubModeratorSessionId?.();
@@ -405,6 +417,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setGroupChatRightTab,
 			setGroupChats,
 			setParticipantStates,
+			clearGroupChatUnread,
 			groupChatStates,
 			allGroupChatParticipantStates,
 		} = useGroupChatStore.getState();
@@ -412,6 +425,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 		const chat = await window.maestro.groupChat.load(id);
 		if (chat) {
+			// Opening the room is reading it. Cleared before the transcript loads
+			// so a slow load can't leave the dot up on a room already on screen.
+			clearGroupChatUnread(id);
 			setActiveGroupChatId(id);
 			const messages = await window.maestro.groupChat.getMessages(id);
 			setGroupChatMessages(messages);

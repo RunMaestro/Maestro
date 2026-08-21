@@ -2,6 +2,7 @@ import { splitFrontmatter } from './frontmatter';
 import { createParser } from './parser';
 import { tokensToBlocks, buildLineOffsets } from './blocks';
 import { applyHeadingSlugs } from './headingSlugger';
+import { applyAlertCallouts } from './alertTagger';
 import { applyFileLinks } from '../../../utils/fileLinks/markdownItAdapter';
 import type { FileTreeIndices } from '../../../utils/fileLinks/matcher';
 import type { MarkdownBlock } from './types';
@@ -28,8 +29,9 @@ export interface BuildBlocksOptions {
  * Pipeline stages:
  *   1. Strip and render YAML frontmatter (frontmatter.ts).
  *   2. Tokenize the body with markdown-it (parser.ts).
- *   3. Group tokens into top-level blocks (blocks.ts).
- *   4. Prepend the frontmatter block (if any) and renumber ids so the array
+ *   3. Tag GitHub `[!NOTE]`-style alert blockquotes (alertTagger.ts).
+ *   4. Group tokens into top-level blocks (blocks.ts).
+ *   5. Prepend the frontmatter block (if any) and renumber ids so the array
  *      is a single contiguous sequence.
  */
 export function buildBlocks(source: string, options: BuildBlocksOptions = {}): MarkdownBlock[] {
@@ -39,6 +41,7 @@ export function buildBlocks(source: string, options: BuildBlocksOptions = {}): M
 	const md = createParser();
 	const tokens = md.parse(body, {});
 	applyHeadingSlugs(md, tokens);
+	applyAlertCallouts(md, tokens);
 	if (options.fileLinks) {
 		applyFileLinks(md, tokens, options.fileLinks);
 	}

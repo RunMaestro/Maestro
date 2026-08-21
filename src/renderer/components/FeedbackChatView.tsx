@@ -25,6 +25,7 @@ import {
 	PlusCircle,
 	Check,
 	Copy,
+	Terminal,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -34,12 +35,15 @@ import type { Theme, Session, ToolType } from '../types';
 import {
 	FeedbackConversationManager,
 	getConfidenceColor,
+	type FeedbackDiagnostic,
 	type FeedbackMessage,
 	type FeedbackParsedResponse,
 } from '../services/feedbackConversation';
 import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
 // ============================================================================
 // Constants
@@ -146,6 +150,9 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	const [subscribingTo, setSubscribingTo] = useState<number | null>(null);
 	const [createdIssueUrl, setCreatedIssueUrl] = useState<string | null>(null);
 	const [copiedUrl, setCopiedUrl] = useState(false);
+	// Diagnostics the agent ran on this machine during the current turn. Cleared
+	// at the start of each send so the list always describes the turn in flight.
+	const [diagnostics, setDiagnostics] = useState<FeedbackDiagnostic[]>([]);
 	const lastSearchQueryRef = useRef<string | null>(null);
 	const searchAbortRef = useRef(0); // Monotonic counter to discard stale searches
 
@@ -212,13 +219,12 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		};
 	}, []);
 
-	// --- Auto-resize textarea as content changes ---
-	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
-		}
-	}, [inputValue]);
+	// --- Auto-resize textarea as content changes, keeping the caret visible ---
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: inputValue,
+		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+	});
 
 	// --- Scroll to bottom on new messages ---
 	useEffect(() => {
@@ -234,15 +240,17 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	}, []);
 
 	// --- Publish draft state so the sidebar Feedback button + close handler
-	//     know whether the user has unsaved work that would be lost. We only
-	//     count it as a draft once the user has actually sent a message -
-	//     unsubmitted typing or staged attachments don't count. Once the
-	//     issue is submitted (step === 'done') there's nothing left to lose.
+	//     know whether the user has work in progress. Closing parks a draft
+	//     rather than discarding it, so this counts anything the user would be
+	//     annoyed to retype: a sent message, text still sitting in the composer,
+	//     or staged screenshots. Once the issue is submitted (step === 'done')
+	//     there's nothing left to keep.
 	useEffect(() => {
 		const hasSentMessage = messages.some((m) => m.role === 'user');
-		const hasDraft = hasSentMessage && step !== 'done';
+		const hasUnsentWork = inputValue.trim().length > 0 || attachments.length > 0;
+		const hasDraft = (hasSentMessage || hasUnsentWork) && step !== 'done';
 		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
-	}, [messages, step]);
+	}, [messages, step, inputValue, attachments]);
 
 	// --- Background issue search - fires after every agent response ---
 	const runIssueSearch = useCallback(async (query: string) => {
@@ -292,10 +300,11 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	// --- Start conversation ---
 	const startConversation = useCallback(async () => {
 		try {
-			const { prompt } = await window.maestro.feedback.getConversationPrompt();
+			const { prompt, cwd } = await window.maestro.feedback.getConversationPrompt();
 			managerRef.current.start({
 				agentType: selectedAgent,
 				systemPrompt: prompt,
+				cwd,
 			});
 			setStep('chat');
 			// Focus input immediately - no auto-greeting, user speaks first
@@ -334,9 +343,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		setMessages(updatedMessages);
 		setInputValue('');
 		setIsLoading(true);
+		setDiagnostics([]);
 
 		try {
 			const response = await managerRef.current.sendMessage(text, updatedMessages, {
+				onDiagnostic: (diagnostic) => {
+					setDiagnostics((prev) => [...prev, diagnostic]);
+				},
 				onComplete: (r) => {
 					setConfidence(r.confidence);
 					setIsReady(r.ready);
@@ -946,13 +959,38 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 				{isLoading && (
 					<div className="flex justify-start">
 						<div
-							className="px-3 py-2 rounded-lg"
+							className="px-3 py-2 rounded-lg max-w-[85%]"
 							style={{
 								backgroundColor: theme.colors.bgMain,
 								border: `1px solid ${theme.colors.border}`,
 							}}
 						>
-							<Spinner size={16} color={theme.colors.accent} />
+							<div className="flex items-center gap-2">
+								<Spinner size={16} color={theme.colors.accent} />
+								{diagnostics.length > 0 && (
+									<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+										Checking your system...
+									</span>
+								)}
+							</div>
+							{/* Diagnostics run on the user's own machine are shown, never hidden.
+							    Read-only, but they still deserve to see what was inspected. */}
+							{diagnostics.length > 0 && (
+								<ul className="mt-1.5 space-y-1">
+									{diagnostics.map((diagnostic, i) => (
+										<li
+											key={`${diagnostic.timestamp}-${i}`}
+											className="flex items-start gap-1.5 text-[11px] font-mono"
+											style={{ color: theme.colors.textDim }}
+										>
+											<Terminal className="w-3 h-3 mt-0.5 shrink-0" />
+											<span className="truncate" title={diagnostic.command || diagnostic.toolName}>
+												{diagnostic.command || diagnostic.toolName}
+											</span>
+										</li>
+									))}
+								</ul>
+							)}
 						</div>
 					</div>
 				)}

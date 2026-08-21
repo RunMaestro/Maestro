@@ -407,13 +407,29 @@ describe('cli-server-discovery', () => {
 
 			const originalKill = process.kill;
 			process.kill = vi.fn().mockImplementation(() => {
-				throw new Error('ESRCH: No such process');
+				throw Object.assign(new Error('No such process'), { code: 'ESRCH' });
 			}) as unknown as typeof process.kill;
 
 			try {
 				const result = isCliServerRunning();
 
 				expect(result).toBe(false);
+			} finally {
+				process.kill = originalKill;
+			}
+		});
+
+		it('should treat EPERM as alive so the authenticated connection can decide reachability', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
+
+			const originalKill = process.kill;
+			process.kill = vi.fn().mockImplementation(() => {
+				throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
+			}) as unknown as typeof process.kill;
+
+			try {
+				expect(isCliServerRunning()).toBe(true);
+				expect(process.kill).toHaveBeenCalledWith(12345, 0);
 			} finally {
 				process.kill = originalKill;
 			}

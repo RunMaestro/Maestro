@@ -477,14 +477,40 @@ describe('claude-usage-sampler', () => {
 			expect(snap).toBeNull();
 		});
 
-		it('returns null when a resets_at field is missing', async () => {
+		// A missing resets_at is a legitimate wire shape, not a malformed one:
+		// claude paints no "Resets ..." row for a window with nothing running in
+		// it, and rejecting the envelope over that used to throw away the
+		// percentages of an exhausted account - the one case the dashboard most
+		// needs to show.
+		it('keeps the snapshot when a resets_at field is missing, dropping only that field', async () => {
+			primeSuccess(wireEnvelope({ week_all_models: { percent: 50 } }));
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			expect(snap?.weekAllModels).toEqual({ percent: 50 });
+			expect(snap?.session.resetsAt).toBeTruthy();
+		});
+
+		it('returns null when a resets_at field is present but not a string', async () => {
 			primeSuccess(
 				wireEnvelope({
-					week_all_models: { percent: 50 } as unknown as { percent: number; resets_at: string },
+					week_all_models: { percent: 50, resets_at: 12345 as unknown as string },
 				})
 			);
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
 			expect(snap).toBeNull();
+		});
+
+		it('carries the second weekly window label through to the snapshot', async () => {
+			primeSuccess(
+				wireEnvelope({
+					week_sonnet_only: {
+						percent: 36,
+						resets_at: '2026-05-15T17:00:00.000Z',
+						label: 'Fable',
+					},
+				})
+			);
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			expect(snap?.weekSonnetOnly.label).toBe('Fable');
 		});
 	});
 

@@ -13,6 +13,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { formatRelativeTime } from '../../shared/formatters';
+import type { DesktopTabEntry as DesktopSessionEntry } from '../../shared/desktopTabs';
 
 export interface SessionListOptions {
 	json?: boolean;
@@ -22,19 +23,6 @@ export interface SessionShowOptions {
 	since?: string;
 	tail?: string;
 	json?: boolean;
-}
-
-interface DesktopSessionEntry {
-	tabId: string;
-	sessionId: string;
-	agentId: string;
-	agentName: string;
-	toolType: string;
-	name: string | null;
-	agentSessionId: string | null;
-	state: 'idle' | 'busy';
-	createdAt: number;
-	starred: boolean;
 }
 
 interface SessionMessage {
@@ -137,10 +125,13 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 		// Compact human-readable view: one tab per line so the output is grep-able
 		// and pipes cleanly into other tools while still being readable for a
 		// quick glance. Columns: state | star | tabId | agent | name | createdAt.
-		// `state` is spelled out (busy/idle) rather than relying on the `*` marker
+		// `state` is spelled out (busy/idle/unknown) rather than relying on the `*` marker
 		// alone so `grep busy` works without column-counting.
 		for (const s of sessions) {
-			const state = s.state === 'busy' ? 'busy' : 'idle';
+			// Padded so the columns still line up now that 'unknown' is three
+			// characters wider than 'busy'/'idle'. Falls back rather than printing
+			// `undefined` when an older desktop omits the field entirely.
+			const state = (s.state ?? 'unknown').padEnd(7);
 			const star = s.starred ? '★' : ' ';
 			const name = s.name ?? '(unnamed)';
 			const created = Number.isFinite(s.createdAt) ? formatRelativeTime(s.createdAt) : '-';

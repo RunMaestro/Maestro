@@ -186,6 +186,27 @@ Result: WORKSPACE_PATH=/Users/john/my-workspace (expanded)
          (Same behavior on Windows with home directory)
 ```
 
+### Inspecting the Effective Environment
+
+Because each layer is edited in a different pane, no single settings screen shows
+what an agent actually ends up running with. The re-authentication dialog has an
+**Environment for &lt;agent&gt;** section that expands to the merged result, one row
+per variable, badged with the layer whose value won:
+
+- **Global** - Settings → Environment
+- **Provider** - Settings → Agents, for that provider
+- **This agent** - the agent's own overrides, from Edit Agent
+
+It is collapsed by default so the login stays the focus. Values whose names look
+like credentials (`*_KEY`, `*_TOKEN`, `*_SECRET`, and similar) are masked until
+you click the eye on that row, since this panel tends to be opened while
+screen-sharing for help. A variable set to an empty string is shown as `(empty)`
+rather than omitted - `FOO=` is a real override of a lower layer.
+
+This is the fastest way to catch the case where a login succeeds but the agent
+still fails: an `ANTHROPIC_BASE_URL` or API-key override from a layer you forgot
+about is pointing the agent somewhere other than where you just authenticated.
+
 ---
 
 ## Implementation Details

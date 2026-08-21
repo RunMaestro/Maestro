@@ -721,13 +721,13 @@ describe('CueYamlEditor', () => {
 	});
 
 	describe('navigation buttons (opened directly)', () => {
-		it('should show Dashboard and Pipeline Editor buttons when CueModal is not open', async () => {
+		it('should show Dashboard and Pipeline Graph buttons when CueModal is not open', async () => {
 			mockCueModalOpen = false;
 			render(<CueYamlEditor {...defaultProps} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('Dashboard')).toBeInTheDocument();
-				expect(screen.getByText('Pipeline Editor')).toBeInTheDocument();
+				expect(screen.getByText('Pipeline Graph')).toBeInTheDocument();
 			});
 		});
 
@@ -740,7 +740,7 @@ describe('CueYamlEditor', () => {
 			});
 
 			expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
-			expect(screen.queryByText('Pipeline Editor')).not.toBeInTheDocument();
+			expect(screen.queryByText('Pipeline Graph')).not.toBeInTheDocument();
 		});
 
 		it('should close YAML editor and open CueModal with dashboard tab', async () => {
@@ -762,10 +762,10 @@ describe('CueYamlEditor', () => {
 			render(<CueYamlEditor {...defaultProps} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('Pipeline Editor')).toBeInTheDocument();
+				expect(screen.getByText('Pipeline Graph')).toBeInTheDocument();
 			});
 
-			fireEvent.click(screen.getByText('Pipeline Editor'));
+			fireEvent.click(screen.getByText('Pipeline Graph'));
 
 			expect(defaultProps.onClose).toHaveBeenCalledOnce();
 			expect(mockOpenCueModalWithTab).toHaveBeenCalledWith('pipeline');

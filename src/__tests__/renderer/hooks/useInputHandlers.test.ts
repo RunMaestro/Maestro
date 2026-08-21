@@ -227,7 +227,7 @@ const inputVal = (): string => {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.useFakeTimers();
-	useComposerInputStore.setState({ aiValue: '', terminalValue: '', aiCommandMode: false });
+	useComposerInputStore.setState({ aiValue: '', terminalValue: '', aiCommandMode: 'off' });
 	clearLiveDraft('tab-1');
 	clearLiveDraft('tab-2');
 
@@ -749,7 +749,7 @@ describe('useInputHandlers', () => {
 				result.current.setInputValue('half a thought');
 			});
 
-			expect(mockQueueAiDraftFlush).toHaveBeenCalledWith('tab-1', 'half a thought', false);
+			expect(mockQueueAiDraftFlush).toHaveBeenCalledWith('tab-1', 'half a thought', 'off');
 		});
 
 		it('queues the write-back with command mode so the two cannot drift', () => {
@@ -1202,7 +1202,7 @@ describe('useInputHandlers', () => {
 		 * The hook hydrates `aiCommandMode` from the active tab on mount, so a value
 		 * set before render is overwritten by that effect.
 		 */
-		function renderInCommandMode(commandMode = true) {
+		function renderInCommandMode(commandMode: 'off' | 'shell' | 'ai' = 'shell') {
 			useSessionStore.setState({
 				sessions: [createMockSession({ inputMode: 'ai' })],
 				activeSessionId: 'session-1',
@@ -1227,7 +1227,7 @@ describe('useInputHandlers', () => {
 
 		it('still stages a pasted image in ordinary AI mode', () => {
 			// Guard against over-blocking: the normal path must keep working.
-			const { result } = renderInCommandMode(false);
+			const { result } = renderInCommandMode('off');
 
 			act(() => {
 				result.current.handlePaste(imagePasteEvent());
@@ -1246,6 +1246,19 @@ describe('useInputHandlers', () => {
 			expect(mockNotifyCenterFlash).toHaveBeenCalledWith(
 				expect.objectContaining({ message: expect.stringMatching(/command mode/i) })
 			);
+		});
+
+		it('does not stage a pasted image while in AI command mode either', () => {
+			// The second rung has nowhere to put an image any more than the first:
+			// the request goes to the model as text and comes back as a command.
+			const { result } = renderInCommandMode('ai');
+
+			act(() => {
+				result.current.handlePaste(imagePasteEvent());
+			});
+
+			expect(result.current.stagedImages).toEqual([]);
+			expect(mockNotifyCenterFlash).toHaveBeenCalled();
 		});
 
 		it('ignores a file drop while in command mode', () => {

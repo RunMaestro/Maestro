@@ -45,6 +45,14 @@ export interface GroupChatStoreState {
 	groupChatStates: Map<string, GroupChatState>;
 	allGroupChatParticipantStates: Map<string, Map<string, 'idle' | 'working'>>;
 
+	/**
+	 * Rooms that produced output the user has not looked at. Populated only for
+	 * NON-active rooms: the active room is on screen, so its messages are read
+	 * by definition. Per-boot, like tab unread state - a restart is a clean
+	 * slate rather than a pile of stale red dots.
+	 */
+	unreadGroupChatIds: Set<string>;
+
 	// Execution
 	groupChatExecutionQueue: QueuedItem[];
 	groupChatReadOnlyMode: boolean;
@@ -98,6 +106,12 @@ export interface GroupChatStoreActions {
 					prev: Map<string, Map<string, 'idle' | 'working'>>
 			  ) => Map<string, Map<string, 'idle' | 'working'>>)
 	) => void;
+
+	// Unread
+	/** Flag a room as having output the user hasn't seen. No-op if already flagged. */
+	markGroupChatUnread: (groupChatId: string) => void;
+	/** Clear a room's unread flag (opening it), or every room when called bare. */
+	clearGroupChatUnread: (groupChatId?: string) => void;
 
 	// Execution
 	setGroupChatExecutionQueue: (v: QueuedItem[] | ((prev: QueuedItem[]) => QueuedItem[])) => void;
@@ -158,6 +172,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	moderatorUsage: null,
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
+	unreadGroupChatIds: new Set(),
 	groupChatExecutionQueue: [],
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as GroupChatRightTab,
@@ -178,6 +193,28 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 		set((s) => ({
 			allGroupChatParticipantStates: resolve(v, s.allGroupChatParticipantStates),
 		})),
+	// Both guard on membership before allocating a new Set: these fire on every
+	// inbound message and on every chat open, and an unconditional copy would
+	// re-render every unread subscriber for a no-op change.
+	markGroupChatUnread: (groupChatId) =>
+		set((s) => {
+			if (s.unreadGroupChatIds.has(groupChatId)) return {};
+			const next = new Set(s.unreadGroupChatIds);
+			next.add(groupChatId);
+			return { unreadGroupChatIds: next };
+		}),
+
+	clearGroupChatUnread: (groupChatId) =>
+		set((s) => {
+			if (groupChatId === undefined) {
+				return s.unreadGroupChatIds.size === 0 ? {} : { unreadGroupChatIds: new Set<string>() };
+			}
+			if (!s.unreadGroupChatIds.has(groupChatId)) return {};
+			const next = new Set(s.unreadGroupChatIds);
+			next.delete(groupChatId);
+			return { unreadGroupChatIds: next };
+		}),
+
 	setGroupChatExecutionQueue: (v) =>
 		set((s) => ({ groupChatExecutionQueue: resolve(v, s.groupChatExecutionQueue) })),
 	setGroupChatReadOnlyMode: (v) =>

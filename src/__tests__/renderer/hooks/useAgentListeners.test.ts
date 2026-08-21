@@ -16,6 +16,7 @@ import {
 } from '../../../renderer/hooks/agent/useAgentListeners';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type { Session, AITab, AgentError } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -109,6 +110,7 @@ const mockProcess = {
 		onAgentErrorHandler = handler;
 		return mockUnsubscribeAgentError;
 	}),
+	onAuthExpired: vi.fn(() => vi.fn()),
 	onThinkingChunk: vi.fn((handler: ListenerCallback) => {
 		onThinkingChunkHandler = handler;
 		return mockUnsubscribeThinkingChunk;
@@ -165,6 +167,9 @@ function createMockDeps(overrides: Partial<UseAgentListenersDeps> = {}): UseAgen
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Auth outages are provider-scoped and deliberately deduplicate, so a
+	// leftover outage would stop the next test's prompt from opening.
+	useAuthOutageStore.setState({ outages: {} });
 
 	// Reset captured handlers
 	onDataHandler = undefined;
@@ -1029,7 +1034,34 @@ describe('useAgentListeners', () => {
 			expect(updated?.agentErrorPaused).toBe(true);
 		});
 
-		it('opens the agent error modal', () => {
+		it('opens the agent error modal for a non-auth error', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onAgentErrorHandler?.('sess-1-ai-tab-1', { ...baseError, type: 'agent_crashed' });
+
+			// Check that the agentError modal was opened
+			const agentErrorOpen = useModalStore.getState().isOpen('agentError');
+			expect(agentErrorOpen).toBe(true);
+			const data = useModalStore.getState().getData('agentError');
+			expect(data?.sessionId).toBe('sess-1');
+		});
+
+		// auth_expired bypasses the generic error modal: the login flow runs in the
+		// re-authentication terminal so the whole fix happens in one place.
+		it('opens the reauth modal for auth_expired', () => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -1047,11 +1079,10 @@ describe('useAgentListeners', () => {
 
 			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
 
-			// Check that the agentError modal was opened
-			const agentErrorOpen = useModalStore.getState().isOpen('agentError');
-			expect(agentErrorOpen).toBe(true);
-			const data = useModalStore.getState().getData('agentError');
-			expect(data?.sessionId).toBe('sess-1');
+			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
+			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
+			// Keyed by provider: one login fixes every agent sharing the credentials.
+			expect(useModalStore.getState().getData('reauth')?.providerKey).toBe('claude-code');
 		});
 
 		it('does not open modal for session_not_found errors', () => {

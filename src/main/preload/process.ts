@@ -541,6 +541,20 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to a remote request to open one of the app's modals /
+		 * dashboards (from `maestro-cli open`). `surface` is a `UiSurface.id`
+		 * and `tab` (when present) has already been validated against it in
+		 * the main process.
+		 */
+		onRemoteOpenModal: (
+			callback: (params: { surface: string; tab?: string }) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: { surface: string; tab?: string }) => callback(params);
+			ipcRenderer.on('remote:openModal', handler);
+			return () => ipcRenderer.removeListener('remote:openModal', handler);
+		},
+
+		/**
 		 * Subscribe to remote refresh file tree from web interface
 		 */
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void): (() => void) => {
@@ -672,14 +686,14 @@ export function createProcessApi() {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null },
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
 				responseChannel: string
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null },
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
 				responseChannel: string
 			) => {
 				try {
@@ -694,10 +708,80 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Send response for remote open terminal tab
+		 * Send response for remote open terminal tab. Carries the new tab's id so
+		 * the caller can address it later (write to it, close it).
 		 */
-		sendRemoteOpenTerminalTabResponse: (responseChannel: string, success: boolean): void => {
-			ipcRenderer.send(responseChannel, success);
+		sendRemoteOpenTerminalTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		): void => {
+			ipcRenderer.send(responseChannel, { success, tabId });
+		},
+
+		/**
+		 * Subscribe to remote writes into an existing terminal tab from CLI/web
+		 * interface. Renderer must ack via sendRemoteWriteTerminalTabResponse.
+		 */
+		onRemoteWriteTerminalTab: (
+			callback: (
+				sessionId: string,
+				payload: { tabRef?: string; data: string },
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				payload: { tabRef?: string; data: string },
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, payload, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, error: 'Renderer error' });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:writeTerminalTab', handler);
+			return () => ipcRenderer.removeListener('remote:writeTerminalTab', handler);
+		},
+
+		/**
+		 * Send response for a remote terminal write. The resolved tab is echoed
+		 * back so the CLI can report which terminal actually received the command.
+		 */
+		sendRemoteWriteTerminalTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			result?: { error?: string; tabId?: string; tabName?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, { success, ...result });
+		},
+
+		/**
+		 * Subscribe to remote terminal tab listing from CLI/web interface.
+		 */
+		onRemoteListTerminalTabs: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string | undefined, responseChannel: string) => {
+				try {
+					callback(sessionId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, []);
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:listTerminalTabs', handler);
+			return () => ipcRenderer.removeListener('remote:listTerminalTabs', handler);
+		},
+
+		/**
+		 * Send response for a remote terminal tab listing.
+		 */
+		sendRemoteListTerminalTabsResponse: (responseChannel: string, tabs: unknown[]): void => {
+			ipcRenderer.send(responseChannel, tabs);
 		},
 
 		/**
@@ -1809,6 +1893,32 @@ export function createProcessApi() {
 				callback(sessionId, error);
 			ipcRenderer.on('agent:error', handler);
 			return () => ipcRenderer.removeListener('agent:error', handler);
+		},
+
+		/**
+		 * Subscribe to expired-credentials notices raised outside the agent
+		 * streaming path - today, Cue pipeline runs, which spawn their agents
+		 * directly and therefore never emit `agent:error`.
+		 */
+		onAuthExpired: (
+			callback: (payload: {
+				sessionId: string;
+				agentId: string;
+				message: string;
+				fromPipeline?: boolean;
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				payload: {
+					sessionId: string;
+					agentId: string;
+					message: string;
+					fromPipeline?: boolean;
+				}
+			) => callback(payload);
+			ipcRenderer.on('agent:authExpired', handler);
+			return () => ipcRenderer.removeListener('agent:authExpired', handler);
 		},
 	};
 }

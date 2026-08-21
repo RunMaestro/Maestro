@@ -17,6 +17,7 @@ import { resolveAgentId, resolveGroupId, getSessionById } from '../services/stor
 import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
+import { parseCliBool } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -30,8 +31,8 @@ interface UpdateAgentOptions {
 	syncHistoryToRemote?: string;
 	provider?: string;
 	force?: boolean;
-	// Editable per-session config (the Edit Agent modal fields). Empty-string
-	// values clear the field; see buildConfigPatch.
+	// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
+	// bookmark). Empty-string values clear the field; see buildConfigPatch.
 	nudge?: string;
 	newSessionMessage?: string;
 	customPath?: string;
@@ -43,15 +44,8 @@ interface UpdateAgentOptions {
 	contextWindow?: string;
 	tokenSource?: string;
 	maestroPPath?: string;
+	bookmark?: string;
 	json?: boolean;
-}
-
-// Parse a CLI boolean flag value. Accepts true/false/1/0/yes/no (case-insensitive).
-function parseBool(value: string, flag: string): boolean {
-	const v = value.trim().toLowerCase();
-	if (v === 'true' || v === '1' || v === 'yes') return true;
-	if (v === 'false' || v === '0' || v === 'no') return false;
-	throw new Error(`${flag} expects true or false, got "${value}"`);
 }
 
 function emitError(message: string, options: UpdateAgentOptions): never {
@@ -81,6 +75,9 @@ function parseEnvVars(entries: string[]): Record<string, string> {
 // Build the per-session config patch from the editable flags. Only keys the
 // caller touched are included. A `null` value clears the field on the renderer
 // side; for string fields an empty value (e.g. `--nudge ""`) maps to null.
+// `--bookmark` rides along here because it goes through the same allowlisted
+// `update_session_config` message, even though it is UI state rather than a
+// spawn-time setting.
 function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> | undefined {
 	const patch: Record<string, unknown> = {};
 	const strField = (value: string | undefined, key: string) => {
@@ -95,6 +92,10 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 	strField(options.model, 'customModel');
 	strField(options.effort, 'customEffort');
 	strField(options.maestroPPath, 'maestroPPath');
+
+	if (options.bookmark !== undefined) {
+		patch.bookmarked = parseCliBool(options.bookmark, '--bookmark');
+	}
 
 	if (options.clearEnv) {
 		patch.customEnvVars = {};
@@ -156,7 +157,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -240,7 +241,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		}
 		if (options.syncHistoryToRemote !== undefined) {
 			try {
-				sshPatch.syncHistory = parseBool(options.syncHistoryToRemote, '--sync-history-to-remote');
+				sshPatch.syncHistory = parseCliBool(
+					options.syncHistoryToRemote,
+					'--sync-history-to-remote'
+				);
 			} catch (error) {
 				emitError(error instanceof Error ? error.message : String(error), options);
 			}

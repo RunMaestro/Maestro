@@ -11,11 +11,14 @@ import type {
 import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
+import { codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
-import { SHELL_COMMAND_PREFIX, stripShellCommandEscape } from '../../utils/shellCommandInput';
-import { runShellCommand } from '../../services/shellCommand';
+import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
+import { dispatchShellCommand } from '../../services/shellCommand';
+import { requestAiCommand } from '../../services/aiCommand';
+import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
@@ -60,12 +63,12 @@ export interface UseInputProcessingDeps {
 	/** Read the current input value at call time (non-reactive; reads the store) */
 	getInputValue: () => string;
 	/**
-	 * Whether the AI composer is in command mode, read at call time for the same
-	 * reason as getInputValue (no stale closure). Defaults to "not in command
-	 * mode" when omitted, so a caller that doesn't know about the mode can never
+	 * Which rung of the bang ladder the AI composer is on, read at call time for
+	 * the same reason as getInputValue (no stale closure). Defaults to `'off'`
+	 * when omitted, so a caller that doesn't know about the mode can never
 	 * accidentally route a message into a shell.
 	 */
-	isCommandMode?: () => boolean;
+	isCommandMode?: () => ComposerCommandMode;
 	/** Input value setter */
 	setInputValue: (value: string) => void;
 	/** Staged images for the current message */
@@ -160,7 +163,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		activeSessionId,
 		setSessions,
 		getInputValue,
-		isCommandMode = () => false,
+		isCommandMode = () => 'off' as ComposerCommandMode,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -239,50 +242,52 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Gated on the composer's mode flag, NOT on a leading `!` in the text:
 			// the bang is consumed on entry, so by here the draft is the bare
 			// command (and may legitimately contain bangs of its own).
-			const inCommandMode = activeSession.inputMode === 'ai' && isCommandMode();
-			if (inCommandMode && !isWizardActive) {
-				const shellCommand = effectiveInputValue.trim();
-				if (shellCommand) {
-					const targetTab = getActiveTab(activeSession);
-					if (!targetTab) {
-						logger.error('[processInput] Command mode: no active tab to render output into');
-						return;
-					}
-
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('');
-					if (inputRef.current) inputRef.current.style.height = 'auto';
-
-					// Record it bang-prefixed. aiCommandHistory mixes agent messages and
-					// shell commands, and the `!` is what tells them apart on the way
-					// back out (up-arrow recall, and the command-mode completion source).
-					const historyEntry = `${SHELL_COMMAND_PREFIX}${shellCommand}`;
-					setSessions((prev) =>
-						prev.map((s) =>
-							s.id === activeSessionId
-								? {
-										...s,
-										aiCommandHistory: [
-											...(s.aiCommandHistory || []).filter((c) => c !== historyEntry),
-											historyEntry,
-										].slice(-50),
-									}
-								: s
-						)
-					);
-
-					runShellCommand({
-						session: activeSession,
-						tabId: targetTab.id,
-						command: shellCommand,
-					}).catch((error) => {
-						logger.error('[processInput] Command mode run failed:', undefined, error);
-					});
+			const composerMode: ComposerCommandMode =
+				activeSession.inputMode === 'ai' ? isCommandMode() : 'off';
+			if (composerMode !== 'off' && !isWizardActive) {
+				const commandText = effectiveInputValue.trim();
+				if (!commandText) {
+					// Empty command line: nothing to run or ask for, and it must not fall
+					// through to the agent - the user is sitting in a shell prompt, not
+					// composing a message.
 					return;
 				}
-				// Empty command line: nothing to run, and it must not fall through to
-				// the agent - the user is sitting in a shell prompt, not composing.
+
+				const targetTab = getActiveTab(activeSession);
+				if (!targetTab) {
+					logger.error('[processInput] Command mode: no active tab to render output into');
+					return;
+				}
+
+				setInputValue('');
+				setSlashCommandOpen(false);
+				syncAiInputToSession('');
+				if (inputRef.current) inputRef.current.style.height = 'auto';
+
+				if (composerMode === 'ai') {
+					// AI command mode: nothing runs yet. Ask for a command line and let
+					// the composer's proposal card take the keyboard until the user
+					// answers. A second Enter while one is already pending would start a
+					// competing request for the same tab, so it is ignored.
+					if (!getAiCommandEntry(activeSession.id, targetTab.id)) {
+						requestAiCommand({
+							session: activeSession,
+							tabId: targetTab.id,
+							request: commandText,
+						}).catch((error) => {
+							logger.error('[processInput] AI command request failed:', undefined, error);
+						});
+					}
+					return;
+				}
+
+				dispatchShellCommand({
+					session: activeSession,
+					tabId: targetTab.id,
+					command: commandText,
+				}).catch((error) => {
+					logger.error('[processInput] Command mode run failed:', undefined, error);
+				});
 				return;
 			}
 
@@ -449,7 +454,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 										// Set the target tab to busy
 										const updatedAiTabs = s.aiTabs.map((tab) =>
 											tab.id === queuedItem.tabId
-												? { ...tab, state: 'busy' as const, thinkingStartTime: Date.now() }
+												? {
+														...tab,
+														state: 'busy' as const,
+														thinkingStartTime: Date.now(),
+														...codifyTurnSettings(tab, s),
+													}
 												: tab
 										);
 
@@ -818,6 +828,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									logs: [...tab.logs, newEntry],
 									state: 'busy' as const,
 									thinkingStartTime: Date.now(),
+									// Codify the provider for this turn. The spawn below reads the
+									// session's provider as it stands right now, and changing the
+									// provider while this turn runs must not retarget it - so record
+									// who owns the turn and let late events resolve back to this
+									// provider instead of whatever the agent is configured with by
+									// the time they land. The model and effort are frozen here for
+									// the same reason - the transcript attributes each response to
+									// the configuration it actually ran under.
+									...codifyTurnSettings(tab, s),
 									// Mark this tab as awaiting session ID so we can assign it correctly
 									// when the session ID comes back (prevents cross-tab assignment)
 									awaitingSessionId: isNewSession ? true : tab.awaitingSessionId,

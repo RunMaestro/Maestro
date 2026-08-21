@@ -25,6 +25,7 @@
  */
 
 import { create } from 'zustand';
+import { nextThinkingMode } from '../../shared/types';
 import type { AITab, FilePreviewTab, Session, LogEntry, SnoozedTabEntry } from '../types';
 import type { GistInfo } from '../components/GistPublishModal';
 import {
@@ -419,9 +420,6 @@ function updateFileTab(tabId: string, updates: Partial<FilePreviewTab>): void {
 	);
 }
 
-// Thinking mode cycle: off → on → sticky → off
-const THINKING_CYCLE: Array<'off' | 'on' | 'sticky'> = ['off', 'on', 'sticky'];
-
 // ============================================================================
 // Store Implementation
 // ============================================================================
@@ -614,10 +612,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!session) return;
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return;
-		const currentMode = tab.showThinking ?? 'off';
-		const currentIndex = THINKING_CYCLE.indexOf(currentMode);
-		const nextMode = THINKING_CYCLE[(currentIndex + 1) % THINKING_CYCLE.length];
-		updateAiTab(tabId, { showThinking: nextMode });
+		updateAiTab(tabId, { showThinking: nextThinkingMode(tab.showThinking) });
 	},
 
 	setTabModel: (tabId, model) => {

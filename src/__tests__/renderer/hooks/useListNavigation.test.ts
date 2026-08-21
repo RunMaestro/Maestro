@@ -162,6 +162,69 @@ describe('useListNavigation', () => {
 			expect(onSelect).toHaveBeenCalledWith(2);
 		});
 
+		it('should call onSelectAlternate with Cmd/Ctrl+Enter', () => {
+			const onSelect = vi.fn();
+			const onSelectAlternate = vi.fn();
+			const { result } = renderHook(() =>
+				useListNavigation({
+					listLength: 5,
+					onSelect,
+					onSelectAlternate,
+					initialIndex: 2,
+				})
+			);
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('Enter', { metaKey: true }));
+			});
+
+			expect(onSelectAlternate).toHaveBeenCalledWith(2);
+			expect(onSelect).not.toHaveBeenCalled();
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('Enter', { ctrlKey: true }));
+			});
+
+			expect(onSelectAlternate).toHaveBeenCalledTimes(2);
+		});
+
+		it('should fall back to onSelect when no alternate is configured', () => {
+			const onSelect = vi.fn();
+			const { result } = renderHook(() =>
+				useListNavigation({
+					listLength: 5,
+					onSelect,
+					initialIndex: 1,
+				})
+			);
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('Enter', { metaKey: true }));
+			});
+
+			expect(onSelect).toHaveBeenCalledWith(1);
+		});
+
+		it('should not fire the alternate action on plain Enter', () => {
+			const onSelect = vi.fn();
+			const onSelectAlternate = vi.fn();
+			const { result } = renderHook(() =>
+				useListNavigation({
+					listLength: 5,
+					onSelect,
+					onSelectAlternate,
+					initialIndex: 3,
+				})
+			);
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('Enter'));
+			});
+
+			expect(onSelect).toHaveBeenCalledWith(3);
+			expect(onSelectAlternate).not.toHaveBeenCalled();
+		});
+
 		it('should preventDefault on navigation keys', () => {
 			const { result } = renderHook(() =>
 				useListNavigation({

@@ -219,6 +219,22 @@ How it works:
 - Spread `resize.style` LAST in the `style` prop, after the caller's own `minHeight`, or the inline height gets overwritten.
 - Pass `externalRef` when the component already owns a ref on the textarea (autocomplete, focus-on-open). Do NOT add a second ref or a second `ResizeObserver`.
 
+### Auto-Growing Composers
+
+A composer textarea that grows with its content (AI composer, both wizard composers, group chat, feedback chat) uses `useAutosizeTextarea` (`src/renderer/hooks/ui/useAutosizeTextarea.ts`). Do NOT hand-roll the two-line `height = 'auto'` / `height = scrollHeight` pair again.
+
+```tsx
+useAutosizeTextarea({ textareaRef: inputRef, value: inputValue, maxHeight: 112 });
+```
+
+Why the hand-rolled version is wrong: setting `height = 'auto'` momentarily removes the overflow, which collapses the internal scroll to the top. Once the composer is full and scrolling, every keystroke therefore scrolled the line being typed back out of sight - the text was there, but the last line was clipped until the user scrolled by hand, and the next key hid it again. `resizeTextareaToContent` (`src/renderer/utils/textareaSizing.ts`) restores `scrollTop` across the toggle, and the hook re-pins the view to the bottom when the edit happened at the end of the text (`shouldScrollTextareaToEnd`), so typing, dictation, and paste all keep the caret visible.
+
+Run it on the committed `value`, not inside `onChange`. An `onChange`/`onInput` resize never fires for programmatic edits - voice dictation, draft restore, template insertion - so those grow the text without growing the box.
+
+- `resetKey` forces a re-measure when the value did not change but the content did (switching AI tabs restores a different draft).
+- `deferredResizeRef` is for the one caller that owns its own rAF resize on the keystroke path (`useInputAreaTextChange`); while it is true the hook skips both the resize and the scroll so the two cannot race. Everything else omits it.
+- `useInputAreaAutosize` is just the AI composer's binding over this hook. Distinct from `useResizableTextarea` above, which remembers a height the USER dragged; pick by who decides the height.
+
 ### Escape Key Flow
 
 1. `LayerStackProvider` attaches a **capture-phase** `keydown` listener on `window`.
@@ -268,6 +284,117 @@ The `ESC` pill is that exit. Use `<EscCloseButton>` (`src/renderer/components/ui
 `onClose` must do **exactly** what pressing Escape does. When the Escape path lives in a `useModalLayer` / `registerLayer` callback, extract it into a named `useCallback` and pass the same function to both, rather than duplicating the body (see `TerminalOutput`'s `closeOutputSearch` and `QuickActionsModal`'s `handleEscape`).
 
 Tests: query the pill by role, not by index. It is a real `<button>` now, so `getAllByRole('button')[n]` in a modal test counts it - scope list assertions to the rows themselves (e.g. `[data-action-label]`).
+
+### Segmented Toolbars (`<SegmentedControl>`)
+
+A horizontal row of mutually exclusive options rendered as one joined pill bar - the "Sort by: [Name][Created][Queries]" control above a grid or chart. Use `<SegmentedControl>` (`src/renderer/components/ui/SegmentedControl.tsx`), not a hand-rolled `.map()` over buttons with `borderLeft` seams.
+
+```tsx
+<SegmentedControl
+	value={sortMode}
+	onChange={setSortMode}
+	options={[
+		{ value: 'name', label: 'Name' },
+		{ value: 'queries', label: 'Queries', title: 'Most queries first' },
+	]}
+	theme={theme}
+	ariaLabel="Sort agents"
+	testId="agent-overview-sort"
+/>
+```
+
+It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `role="radio"` semantics, arrow-key navigation between segments, and a single tab stop (`tabIndex` follows the selection, as a native radio group does). Each segment gets `data-testid="${testId}-${value}"`, so existing per-segment test ids keep working when a hand-rolled bar is migrated.
+
+**This is not `<RadioGroup>`.** That primitive renders the same semantics as stacked, description-carrying list rows for settings panes. `SegmentedControl` is the compact toolbar form for short labels where vertical space is scarce. Pick by layout, and do not add a `variant` prop to either one to cover the other.
+
+### Sortable Table Headers (`<SortableTh>` + `useTableSort`)
+
+A table whose column headers sort it needs two pieces, and both live in shared code: `useTableSort()` (`src/renderer/hooks/ui/useTableSort.ts`) for the state, `<SortableTh>` (`src/renderer/components/ui/SortableTh.tsx`) for the header cell.
+
+```tsx
+const { sortKey, direction, isDescending, toggleSort } = useTableSort<TaskSortKey>('next', {
+	// Text columns read best A-Z, magnitude columns biggest-first.
+	defaultDirectionFor: (key) => (key === 'occurrences' ? 'desc' : 'asc'),
+});
+
+<SortableTh
+	columnKey="next"
+	label="Next"
+	sortKey={sortKey}
+	direction={direction}
+	onSort={toggleSort}
+	theme={theme}
+	align="right"
+	title="Sort by time until the next fire"
+	className="pb-2 font-medium text-right"
+	testId="scheduled-tasks-sort-next"
+/>;
+```
+
+The hook owns the one rule every hand-rolled copy gets subtly different: clicking the **active** column flips its direction, clicking a **different** column jumps to that column's own default direction. Inheriting the previous column's direction is the bug worth avoiding - going from "Next ascending" to "Occurrences ascending" silently shows the least-used rows first, which reads as broken data rather than as a sort.
+
+The component owns three things:
+
+- **A real `<button>` as the click target.** A `<th role="button" onClick>` announces as a button but has no tab stop and no Enter/Space handling, so it is unreachable by keyboard. `role` grants the semantics without granting the behavior.
+- **`aria-sort` on the `<th>`**, never on the inner control, and only the active column carries a direction.
+- **A stable indicator slot.** The caret is always laid out and merely transparent when inactive, so switching columns doesn't reflow the header row.
+
+Callers keep their own comparator and own padding/border classes via `className` / `style`. One nuance worth copying: rows whose sort value is genuinely unknown (a Cue interval task has no projected next fire) should be pinned last in **both** directions rather than flowing through the comparator - "unknown" is not "the largest value", and flipping the sort must not promote rows that have nothing to compare.
+
+### Paginating an In-Memory List (`usePagination` + `<Pager>`)
+
+Two unrelated pagination systems live in this codebase; picking the wrong one is the mistake to avoid.
+
+- `useHistoryPagination` (`hooks/history/`) is an **async, IPC-backed windowing engine**. Use it when the data arrives page by page over IPC and the total lives in a database.
+- `usePagination` (`hooks/ui/usePagination.ts`) is for a list you **already hold in memory** and simply cannot render all at once. Pure page arithmetic lives in `utils/pagination.ts` so it can be tested without a DOM.
+
+```tsx
+const pager = usePagination(sortedRows, 32, `${filterMode}:${sortMode}`);
+...
+{pager.isPaginated && (
+	<Pager
+		theme={theme} page={pager.page} totalPages={pager.totalPages}
+		onPrev={pager.prevPage} onNext={pager.nextPage}
+		canGoPrev={pager.canGoPrev} canGoNext={pager.canGoNext}
+	/>
+)}
+{pager.pageItems.map(renderRow)}
+```
+
+Two rules the hook exists to enforce:
+
+**The current page is clamped on read, not in an effect.** A list can shrink underneath an active page - narrowing the tab breakdown from "All" (1236 rows, page 30) to "Open" (18 rows) is the canonical case. Clamping in an effect renders one frame of the out-of-range page first, which flashes an empty grid; clamping on read means the out-of-range state is never visible. `page`, `pageItems`, and `range` are all derived from the clamped value.
+
+**Pass a `resetKey`.** Build it from everything the user can change that reorders or refilters the list (sort mode, filter mode, search text). Without it, re-sorting leaves the user on page 7 of a brand-new ordering, which is an arbitrary slice of data they did not ask for.
+
+**Put `<Pager>` in the toolbar row, not under the list.** A pager below a long grid inside a scrolling modal forces the user to scroll to the bottom, click, and then scroll back to the top to see the page they asked for. Beside the filter and sort controls, everything that changes what you see sits in one place and stays on screen. Gate it on `pager.isPaginated` so the control is absent entirely when everything fits - and choose a page size that keeps the bounded filters on one page, so the pager appears exactly when it is needed.
+
+### Measuring an Element's Width (`useElementWidth`)
+
+`useElementWidth(ref, enabled?)` (`hooks/ui/useElementWidth.ts`) wraps the ResizeObserver boilerplate that was previously inline in `UsageDashboardModal`. Reach for it **only when the number has to exist in JavaScript**: an inline SVG chart needs real pixels for its viewBox, and a responsive breakpoint that switches column counts needs a value to compare. Anything expressible in CSS stays in CSS.
+
+It returns `0` until the first measurement lands, so gate width-dependent children on `width > 0` (or supply a sensible fallback) rather than painting a zero-width chart on the first frame. It also no-ops when `ResizeObserver` is undefined, so jsdom component tests render without a polyfill.
+
+This matters for any resizable modal that draws a chart: a hard-coded SVG width silently stops matching the frame the moment the user drags it.
+
+### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
+
+The Usage Dashboard's card grids (the agent grid in `AgentOverviewCards`, the per-tab grid in `TabBreakdown`) all render the same tile: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
+
+Adding a new dashboard grid means shaping data into `EntityTileStat[]` and passing it, not re-deriving 150 lines of tile styling. `EntityTile` is presentational: it takes formatted strings and colors and reports clicks, so callers keep their own sort/filter state and their own number formatting.
+
+It deliberately lives under `UsageDashboard/` rather than in `renderer/widgets/`: widgets are barred from importing from `UsageDashboard/`, and this tile is an entity summary (many stats, one subject) rather than the widget library's `StatCard` (one headline metric).
+
+### Turn Attribution Pills (`<TurnSettingPills>`)
+
+Each assistant message in the AI transcript carries a centered footer row naming the configuration that produced it: the Claude token-source pill (`claude -p` / `TUI Wrapper`, from `getTokenSourcePill()`), then the model and effort the turn was SENT with. `src/renderer/components/ui/TurnSettingPills.tsx` renders the model/effort half - static badges that mirror the composer's interactive `ModelEffortPills` (Sparkles + accent for model, Gauge + warning for effort), because a finished turn's configuration is a fact, not a control.
+
+The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedSessionUpdates` from the tab's send-time stamp (`AITab.turnModel` / `turnEffort`, written by `codifyTurnSettings()` in `utils/providerTabSessions.ts`). Read the stamp, never the live tab or agent value: settings are codified at send, so a model change made while a turn streams applies to the next message and must not relabel the response already running. An unset value means the agent's own default applied, and that pill is omitted rather than labeled with a guess.
+
+Two traps when touching this row:
+
+- `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
+- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
 
 ### Text Selection in Modals
 
@@ -769,6 +896,29 @@ Standard cancel/confirm button layout:
 />
 ```
 
+### `<CornerDot>` (`src/renderer/components/ui/CornerDot.tsx`)
+
+The small pip pinned to the corner of something else: the red unread dot over a
+status dot, the accent dot over the Bell filter, the pulsing dot over the Group
+Chats count badge. Render it inside a `relative` parent. Do NOT hand-roll
+another `absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full` - there were
+four copies and they had already drifted on size and offset.
+
+```tsx
+<div className="relative">
+	<StatusDot />
+	{hasUnread && <CornerDot color={theme.colors.error} title="Unread messages" />}
+</div>
+```
+
+- `size` - `'sm'` (6px) over a status dot or small icon, `'md'` (8px) to read against a filled badge.
+- `placement` - `'top-right'` (default) or `'right'` for parents too short to have a usable corner.
+- `pulse` - live activity. Steady means "waiting for you".
+- `ringColor` - pass the surface color (e.g. `theme.colors.bgSidebar`) when the dot sits on a filled parent.
+- `title` - gives both a hover tooltip and an accessible name. Without one the dot is `aria-hidden`,
+  since it usually just repeats what its parent already says. The dot is deliberately NOT
+  `pointer-events-none` (that kills the tooltip); clicks bubble to the parent.
+
 ### `<FontScaleControl>` (`src/renderer/components/ui/FontScaleControl.tsx`)
 
 Decrease / reset / increase font zoom for a reading pane. Pair it with
@@ -917,6 +1067,55 @@ keystroke-memoized preview, FilePreview's tier selection + from-tree image
 resolution, the Wizard DocumentEditor) consume `createMarkdownComponents()`
 directly rather than the shell, but share the same leaf implementation.
 
+#### Clickable task checkboxes
+
+react-markdown renders every GFM checkbox `disabled`, so a rendered preview is
+read-only by default even though the prose styles give the box a pointer cursor.
+Three pieces make one clickable, and they are shared - do NOT rebuild any of
+them per surface:
+
+- `rehypeSourceLine` (`components/Markdown/rehypeSourceLine.ts`) in the caller's
+  rehype plugins. It stamps each box with the 1-based line its `- [ ]` marker
+  lives on. The box itself is synthesized during mdast -> hast and carries no
+  position, so it inherits its list item's line.
+- `onTaskToggle: (line) => Promise<boolean>` passed to
+  `createMarkdownComponents()`. It swaps in `<TaskCheckbox>`
+  (`components/Markdown/components/TaskCheckbox.tsx`), which owns the optimistic
+  flip; resolve `false` and the box reverts. Omit the option and the read-only
+  behavior is unchanged.
+- `toggleTaskCheckboxAtLine()` (`utils/markdownTasks.ts`) to rewrite the source.
+  It preserves indentation, bullet style, and CRLF endings, and returns `null`
+  for a line with no task marker so a stale render cannot corrupt the file.
+
+Do NOT count checkboxes in the DOM and map them onto the Nth task line: that
+drifts the moment a `- [ ]` appears inside a code fence. The file preview and
+the Auto Run panel both ride this path; Auto Run drops the callback while a
+document is locked by a running Auto Run, matching its disabled editor.
+
+**The toggle handler MUST have a stable identity.** `createMarkdownComponents()`
+returns a map of freshly-created component functions, so anything that rebuilds
+that map hands React a NEW component TYPE for every element and it unmounts and
+remounts the whole rendered document - throwing away the reader's scroll
+position, restarting images, and re-running Mermaid. A toggle handler naturally
+closes over the document content, so an ordinary `useCallback` is reborn on
+every edit and does exactly that. Wrap it in `useStableCallback()`
+(`hooks/utils/useStableCallback.ts`) and keep the component memo's dependencies
+off the content (depend on `file.path`, not `file`). `useAutoRunMarkdown` does
+the wrapping internally, so its callers cannot get this wrong.
+
+#### Alert callouts
+
+`[!NOTE]`-style callouts need a plugin AND a blockquote renderer. `remarkAlert`
+(`components/Markdown/remarkAlert.ts`) tags the blockquote with
+`markdown-alert-<type>`; `alertTypeFromClassName()` reads it back and the
+blockquote delegates to `<AlertCallout>`. `<Markdown>` wires both automatically
+(`alerts: true`); surfaces that assemble their own remark stack must push
+`remarkAlert` right after GFM and before `remark-breaks`, or the marker stays
+literal text. Labels, accents, and icon geometry live in
+`components/Markdown/alertMeta.ts` so the React callout and the File Preview
+Fast tier (which emits HTML strings via `markdownFast/alertTagger.ts`) cannot
+drift.
+
 Separate engines, intentionally not part of `<Markdown>`: `MarkdownPreviewFast`
 (markdown-it, virtualized for 64KB+ files) and `MobileMarkdownRenderer` (web
 bundle, no IPC).
@@ -944,6 +1143,33 @@ Portal-rendered toast notification stack. Rendered in `App.tsx`:
 ```tsx
 <ToastContainer theme={theme} onSessionClick={handleSessionClick} />
 ```
+
+### `<EnvVarList>` (`src/renderer/components/ui/EnvVarList.tsx`)
+
+Read-only view of an agent's **effective** environment: the merged result of all
+three layers, each row badged with the layer whose value won.
+
+```tsx
+<EnvVarList
+	theme={theme}
+	vars={resolveAgentEnvironment({ global, agent, session })}
+	emptyMessage={`No environment variables are set for ${session.name}.`}
+	testId="reauth-env"
+/>
+```
+
+Feed it from `resolveAgentEnvironment()` in `src/shared/agentEnvironment.ts` (see
+[SHARED-UTILS.md](SHARED-UTILS.md)) rather than merging the layers at the call
+site, or the panel drifts from what the spawner actually built.
+
+**Not the same component as `Settings/EnvVarsEditor`**, which edits ONE layer.
+Pick by question: "change a value" is the editor, "which profile am I running
+as?" is this. Do not add an edit mode to this one to cover both.
+
+Credential-shaped keys are masked behind a per-row reveal, decided by
+`isSecretEnvKey()`. This is deliberately loose - the surfaces that show an
+environment are diagnostic ones people open while screen-sharing for help, so a
+false positive costs one click and a false negative leaks a live key.
 
 ---
 

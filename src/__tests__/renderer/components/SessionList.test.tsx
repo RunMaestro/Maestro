@@ -23,6 +23,7 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 // Deep-cloned default autoRunStats captured from a fresh store (no longer exported).
 const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(useSettingsStore.getState().autoRunStats));
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { BatchRunState } from '../../../renderer/types';
 
@@ -76,6 +77,10 @@ vi.mock('lucide-react', () => ({
 	Music: () => <span data-testid="icon-music" />,
 	Command: () => <span data-testid="icon-command" />,
 	MessageSquare: () => <span data-testid="icon-message-square" />,
+	// Group chat list chrome - rendered as soon as one chat exists.
+	Archive: () => <span data-testid="icon-archive" />,
+	ArchiveRestore: () => <span data-testid="icon-archive-restore" />,
+	ArrowDownAZ: () => <span data-testid="icon-arrow-down-az" />,
 	MessageSquarePlus: () => <span data-testid="icon-message-square-plus" />,
 	Bell: () => <span data-testid="icon-bell" />,
 	Zap: ({ title, style }: { title?: string; style?: Record<string, string> }) => (
@@ -279,6 +284,14 @@ describe('SessionList', () => {
 			autoRunStats: { ...DEFAULT_AUTO_RUN_STATS },
 		});
 		useBatchStore.setState({ batchRunStates: {} });
+		useGroupChatStore.setState({
+			groupChats: [],
+			activeGroupChatId: null,
+			groupChatState: 'idle',
+			participantStates: new Map(),
+			groupChatStates: new Map(),
+			allGroupChatParticipantStates: new Map(),
+		});
 		// Reset tunnel mock
 		(window.maestro as Record<string, unknown>).tunnel = {
 			isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
@@ -1479,6 +1492,45 @@ describe('SessionList', () => {
 			const wandIcons = screen.getAllByTestId('icon-wand');
 			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
 			expect(hasSparkle).toBe(true);
+		});
+
+		it('activates wand sparkle when a group chat is running', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Idle Session', state: 'idle' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Squad' } as never],
+				activeGroupChatId: null,
+				groupChatStates: new Map([['gc-1', 'agent-working' as const]]),
+			});
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			const wandIcons = screen.getAllByTestId('icon-wand');
+			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
+			expect(hasSparkle).toBe(true);
+		});
+
+		it('does not activate wand sparkle for a busy group chat that no longer exists', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Idle Session', state: 'idle' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			// Stale map entry left behind by a deleted room must not light the wand.
+			useGroupChatStore.setState({
+				groupChats: [],
+				activeGroupChatId: null,
+				groupChatStates: new Map([['gc-gone', 'agent-working' as const]]),
+			});
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			const wandIcons = screen.getAllByTestId('icon-wand');
+			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
+			expect(hasSparkle).toBe(false);
 		});
 
 		it('does not activate wand sparkle when no sessions are busy or in auto-run', () => {

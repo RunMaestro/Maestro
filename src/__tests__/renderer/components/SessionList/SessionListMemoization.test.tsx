@@ -19,6 +19,7 @@ import { SessionList } from '../../../../renderer/components/SessionList';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import { createMockSession } from '../../../helpers/mockSession';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { Group, Session } from '../../../../renderer/types';
@@ -223,5 +224,50 @@ describe('SessionList memoization (#1186)', () => {
 		});
 
 		expect(lastPropsFor('a1').onDrop).toBe(beforeDrop);
+	});
+
+	describe('now-playing pill placement', () => {
+		beforeEach(() => {
+			// A minimized player with a loaded track: the pill's render condition.
+			useMediaPlaybackStore.setState({
+				items: [
+					{
+						id: 's1::/f/a.mp3',
+						path: '/f/a.mp3',
+						name: 'a.mp3',
+						sessionId: 's1',
+						sessionName: 'Agent',
+						kind: 'audio',
+					},
+				],
+				activeItemId: 's1::/f/a.mp3',
+				dismissed: true,
+				playing: true,
+			});
+		});
+
+		it('is absent from the collapsed rail', () => {
+			// The rail is a 64px icon strip; a media control there competes with the
+			// agent pills for the only thing it is for.
+			useUIStore.setState({ leftSidebarOpen: false });
+			const { queryByTestId } = render(<SessionList {...createProps([])} />);
+			expect(queryByTestId('now-playing-indicator')).toBeNull();
+		});
+
+		it('shows on the expanded sidebar, with its filename when there is room', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 600 });
+			const { getByTestId } = render(<SessionList {...createProps([])} />);
+			expect(getByTestId('now-playing-indicator').textContent).toContain('a.mp3');
+		});
+
+		it('drops the filename on a narrow sidebar, keeping the controls', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 300 });
+			const { getByTestId } = render(<SessionList {...createProps([])} />);
+			expect(getByTestId('now-playing-indicator').textContent).toBe('');
+			expect(getByTestId('now-playing-toggle')).toBeTruthy();
+			expect(getByTestId('now-playing-restore')).toBeTruthy();
+		});
 	});
 });

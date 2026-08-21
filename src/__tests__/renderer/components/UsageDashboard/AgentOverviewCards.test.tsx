@@ -9,14 +9,26 @@
  * - Sparklines render with per-session counts (accent color for worktrees)
  * - Empty / terminal-only session arrays render nothing
  * - Staggered card-enter animation delays are applied
+ * - The fuzzy agent filter narrows cards live and clears from the ESC pill
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentOverviewCards } from '../../../../renderer/components/UsageDashboard/AgentOverviewCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+
+// The agent filter registers a layer while it holds text so Escape clears the
+// box instead of closing the dashboard. Stub the stack so the component can
+// render standalone.
+vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({
+		registerLayer: vi.fn(() => 'layer-123'),
+		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
+	}),
+}));
 
 const theme = THEMES['dracula'];
 
@@ -543,6 +555,145 @@ describe('AgentOverviewCards', () => {
 			expect((screen.getByTestId('agent-card-auto-pct') as HTMLElement).dataset.highlighted).toBe(
 				'true'
 			);
+		});
+	});
+
+	describe('fuzzy agent filter', () => {
+		const filterSessions = (): Session[] => [
+			buildSession({ id: 's1', name: '🕵️ Agent OSINT' }),
+			buildSession({ id: 's2', name: 'Bug Bounty' }),
+			buildSession({ id: 's3', name: 'Cyber Stocks' }),
+			buildSession({
+				id: 's4',
+				name: 'acappella',
+				parentSessionId: 's1',
+				worktreeBranch: 'feat/provider-auth-recovery',
+			}),
+		];
+
+		const typeFilter = (value: string) => {
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value },
+			});
+		};
+
+		it('renders every card and no match count before anything is typed', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+			expect(screen.queryByTestId('agent-overview-filter-count')).toBeNull();
+			expect(screen.queryByTestId('agent-overview-filter-clear')).toBeNull();
+		});
+
+		it('narrows the grid live as the user types', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('bounty');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('Bug Bounty');
+			expect(screen.getByTestId('agent-overview-filter-count').textContent).toBe('1 of 4');
+		});
+
+		it('matches non-contiguous characters (fuzzy, not substring)', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('cbst');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('Cyber Stocks');
+		});
+
+		it('matches a name whose leading emoji would otherwise break the prefix', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('agent');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('Agent OSINT');
+		});
+
+		it('matches a worktree on its branch name', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('provider-auth');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('acappella');
+		});
+
+		it('ranks the best match first under the default Name sort', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Backups' }),
+				buildSession({ id: 's2', name: 'Bug Bounty' }),
+			];
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			// Alphabetically Backups leads; "bug" is a prefix match on Bug Bounty.
+			typeFilter('bug');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names[0]).toContain('Bug Bounty');
+		});
+
+		it('keeps an explicit sort order while filtering', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Beta', aiTabs: [{}, {}] } as Partial<Session>),
+				buildSession({ id: 's2', name: 'Bravo', aiTabs: [{}, {}, {}, {}] } as Partial<Session>),
+			];
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-tabs'));
+			typeFilter('b');
+
+			const counts = screen
+				.getAllByTestId('agent-card-tab-count')
+				.map((el) => Number(el.textContent));
+			expect(counts).toEqual([4, 2]);
+		});
+
+		it('shows an empty-state message when nothing matches', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('zzzz');
+
+			expect(screen.queryAllByTestId('agent-card')).toHaveLength(0);
+			expect(screen.queryByTestId('agent-overview-cards')).toBeNull();
+			expect(screen.getByTestId('agent-overview-no-matches').textContent).toContain('zzzz');
+			expect(screen.getByTestId('agent-overview-filter-count').textContent).toBe('0 of 4');
+		});
+
+		it('restores every card when the ESC pill clears the filter', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('bounty');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+
+			fireEvent.click(screen.getByTestId('agent-overview-filter-clear'));
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+			expect((screen.getByTestId('agent-overview-filter-input') as HTMLInputElement).value).toBe(
+				''
+			);
+		});
+
+		it('leaves query counts untouched by the filter', () => {
+			// Two claude-code sessions with no per-session breakdown: the provider
+			// fallback must stay suppressed even when the filter shows just one.
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha' }),
+				buildSession({ id: 's2', name: 'Beta' }),
+			];
+			const data = buildData({ byAgent: { 'claude-code': { count: 99, totalDuration: 0 } } });
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+			typeFilter('alpha');
+
+			expect(screen.getByTestId('agent-card-query-count').textContent).toBe('0');
 		});
 	});
 

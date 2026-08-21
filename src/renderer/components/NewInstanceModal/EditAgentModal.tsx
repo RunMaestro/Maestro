@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { AlertTriangle, Copy, Check, X } from 'lucide-react';
+import { Info, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { AgentFailoverSection } from './AgentFailoverSection';
@@ -549,15 +549,16 @@ export function EditAgentModal({
 						<div
 							className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
 							style={{
-								borderColor: theme.colors.warning + '60',
-								backgroundColor: theme.colors.warning + '10',
-								color: theme.colors.warning,
+								borderColor: theme.colors.accent + '60',
+								backgroundColor: theme.colors.accent + '10',
+								color: theme.colors.accent,
 							}}
 						>
-							<AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+							<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
 							<span>
-								Changing the provider will clear your session list (tabs). Your history panel data
-								will persist.
+								Your tabs and their transcripts are kept. Each provider remembers its own session
+								per tab, so switching back picks up where you left off. Any turn already running
+								finishes on the current provider.
 							</span>
 						</div>
 					)}

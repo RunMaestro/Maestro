@@ -162,6 +162,7 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
@@ -352,6 +353,9 @@ interface MaestroAPI {
 		onRemoteOpenFileTab: (
 			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
 		) => () => void;
+		onRemoteOpenModal: (
+			callback: (params: { surface: string; tab?: string }) => void
+		) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
 		onRemoteNotifyToast: (
 			callback: (params: {
@@ -399,11 +403,31 @@ interface MaestroAPI {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null },
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
 				responseChannel: string
 			) => void
 		) => () => void;
-		sendRemoteOpenTerminalTabResponse: (responseChannel: string, success: boolean) => void;
+		sendRemoteOpenTerminalTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		) => void;
+		onRemoteWriteTerminalTab: (
+			callback: (
+				sessionId: string,
+				payload: { tabRef?: string; data: string },
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteWriteTerminalTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			result?: { error?: string; tabId?: string; tabName?: string }
+		) => void;
+		onRemoteListTerminalTabs: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		) => () => void;
+		sendRemoteListTerminalTabsResponse: (responseChannel: string, tabs: unknown[]) => void;
 		onRemoteNewAITabWithPrompt: (
 			callback: (sessionId: string, prompt: string, responseChannel: string) => void
 		) => () => void;
@@ -624,6 +648,14 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+		onAuthExpired: (
+			callback: (payload: {
+				sessionId: string;
+				agentId: string;
+				message: string;
+				fromPipeline?: boolean;
+			}) => void
+		) => () => void;
 	};
 	feedback: {
 		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
@@ -643,7 +675,7 @@ interface MaestroAPI {
 			feedbackText: string,
 			attachments?: Array<{ name: string; dataUrl: string }>
 		) => Promise<{ prompt: string }>;
-		getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+		getConversationPrompt: () => Promise<{ prompt: string; environment: string; cwd: string }>;
 		submitConversation: (payload: {
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
 			summary: string;
@@ -1159,9 +1191,9 @@ interface MaestroAPI {
 					sampledAt: string;
 					configDirKey: string;
 					authState?: 'authenticated' | 'unauthenticated';
-					session: { percent: number; resetsAt: string };
-					weekAllModels: { percent: number; resetsAt: string };
-					weekSonnetOnly: { percent: number; resetsAt: string };
+					session: { percent: number; resetsAt?: string };
+					weekAllModels: { percent: number; resetsAt?: string };
+					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}
 			>
 		>;
@@ -1522,7 +1554,8 @@ interface MaestroAPI {
 		confirmQuit: () => void;
 		cancelQuit: () => void;
 		quitConfirmationPending: () => void;
-		onSystemResume: (callback: () => void) => () => void;
+		/** `sleptMs` is the machine-sleep gap the main process measured for this wake. */
+		onSystemResume: (callback: (info: { sleptMs: number }) => void) => () => void;
 		onBrowserTabShortcutKey: (
 			callback: (input: {
 				key: string;
@@ -1543,6 +1576,10 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
+		/** Publish merged shortcut bindings so the native menu shows real accelerators. */
+		setMenuShortcutKeys: (keys: Record<string, string[]>) => void;
+		/** Native application menu click, carrying the clicked item's shortcut id. */
+		onMenuCommand: (callback: (shortcutId: string) => void) => () => void;
 	};
 	platform: string;
 	logger: {
@@ -2196,13 +2233,7 @@ interface MaestroAPI {
 	};
 	// Debug Package API
 	debug: {
-		createPackage: (options?: {
-			includeLogs?: boolean;
-			includeErrors?: boolean;
-			includeSessions?: boolean;
-			includeGroupChats?: boolean;
-			includeBatchState?: boolean;
-		}) => Promise<{
+		createPackage: (options?: DebugPackageOptions) => Promise<{
 			success: boolean;
 			path?: string;
 			filesIncluded: string[];
@@ -3384,6 +3415,27 @@ interface MaestroAPI {
 		}) => Promise<string | null>;
 	};
 
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: {
+		suggest: (config: {
+			request: string;
+			agentType: string;
+			cwd: string;
+			isGitRepo?: boolean;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			sshRemoteName?: string;
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {
@@ -3579,6 +3631,22 @@ interface MaestroAPI {
 		getFanInHealth: () => Promise<import('../main/cue/cue-fan-in-tracker').FanInHealthEntry[]>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
+		listScheduledTasks: () => Promise<{
+			tasks: import('../shared/cue/scheduled-tasks').ScheduledTask[];
+			warnings: string[];
+		}>;
+		createScheduledTask: (
+			input: import('../shared/cue/scheduled-tasks').ScheduledTaskCreateInput
+		) => Promise<{ names: string[] }>;
+		updateScheduledTask: (
+			projectRoot: string,
+			name: string,
+			patch: import('../shared/cue/scheduled-tasks').ScheduledTaskUpdateInput
+		) => Promise<{ updated: boolean; reason?: string }>;
+		cancelScheduledTask: (
+			projectRoot: string,
+			name: string
+		) => Promise<{ removed: boolean; reason?: string }>;
 		readYaml: (projectRoot: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,

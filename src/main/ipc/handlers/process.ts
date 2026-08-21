@@ -50,7 +50,7 @@ import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
-import { getDefaultShell } from '../../stores/defaults';
+import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -1612,7 +1612,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							remoteParts.push(envExports.join(' && '));
 						}
 
-						remoteParts.push('exec "$SHELL"');
+						// `-l` makes the remote shell a LOGIN shell, matching what the user gets from
+						// a plain `ssh host`. Because we pass a remote command, sshd runs it under a
+						// non-login shell, so without `-l` the login profiles never run. On macOS that
+						// means /etc/zprofile never calls /usr/libexec/path_helper, and the terminal is
+						// missing every /etc/paths + /etc/paths.d entry (/opt/homebrew/bin, TeX, etc.)
+						// while still having the ~/.zshrc additions. Local terminals already spawn with
+						// `-l -i` (see PtySpawner), so this keeps remote terminals consistent.
+						remoteParts.push('exec "$SHELL" -l');
 						sshArgs.push(remoteParts.join(' && '));
 
 						return processManager.spawn({
@@ -1673,13 +1680,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				);
 				const processManager = requireProcessManager(getProcessManager);
 
-				// Get the shell from settings if not provided
-				// Custom shell path takes precedence over the selected shell ID
-				let shell = config.shell || settingsStore.get('defaultShell', getDefaultShell());
-				const customShellPath = settingsStore.get('customShellPath', '');
-				if (customShellPath && customShellPath.trim()) {
-					shell = customShellPath.trim();
-				}
+				// Get the shell from settings if not provided. Shared with AI command
+				// mode, which has to name this exact shell to the model.
+				const shell = config.shell || resolveConfiguredShell(settingsStore);
 
 				// Get shell env vars for passing to runCommand
 				const shellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;

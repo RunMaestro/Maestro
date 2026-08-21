@@ -25,12 +25,41 @@ describe('openFileUrl', () => {
 		expect(openPath).not.toHaveBeenCalled();
 	});
 
-	it('opens a non-media file in the OS default app', () => {
+	it('opens a previewable file in Maestro instead of the OS', () => {
+		const onFileClick = vi.fn();
+		// A JSON outside the project root used to be handed to the system editor.
+		expect(openFileUrl('file:///Users/me/.config/app/creds.json', onFileClick)).toBe(true);
+
+		expect(onFileClick).toHaveBeenCalledWith('/Users/me/.config/app/creds.json');
+		expect(openPath).not.toHaveBeenCalled();
+	});
+
+	it('previews text, config, and source files too', () => {
+		const onFileClick = vi.fn();
+		for (const path of ['/tmp/notes.txt', '/etc/hosts.yaml', '/tmp/main.py', '/tmp/app.log']) {
+			openFileUrl(`file://${path}`, onFileClick);
+			expect(onFileClick).toHaveBeenCalledWith(path);
+		}
+		expect(openPath).not.toHaveBeenCalled();
+	});
+
+	it('leaves OS-owned file types to the OS default app', () => {
 		const onFileClick = vi.fn();
 		expect(openFileUrl('file:///tmp/report.pdf', onFileClick)).toBe(true);
+		openFileUrl('file:///tmp/archive.zip', onFileClick);
 
 		expect(openPath).toHaveBeenCalledWith('/tmp/report.pdf');
+		expect(openPath).toHaveBeenCalledWith('/tmp/archive.zip');
 		expect(onFileClick).not.toHaveBeenCalled();
+	});
+
+	it('ignores dots in parent directories when reading the extension', () => {
+		const onFileClick = vi.fn();
+		// getBasename first: a `.pdf` folder holding a text file is not a PDF.
+		openFileUrl('file:///tmp/exports.pdf/summary.json', onFileClick);
+
+		expect(onFileClick).toHaveBeenCalledWith('/tmp/exports.pdf/summary.json');
+		expect(openPath).not.toHaveBeenCalled();
 	});
 
 	it('opens a container Chromium cannot decode in the OS', () => {
