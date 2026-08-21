@@ -1128,6 +1128,33 @@ Portal-rendered toast notification stack. Rendered in `App.tsx`:
 <ToastContainer theme={theme} onSessionClick={handleSessionClick} />
 ```
 
+### `<EnvVarList>` (`src/renderer/components/ui/EnvVarList.tsx`)
+
+Read-only view of an agent's **effective** environment: the merged result of all
+three layers, each row badged with the layer whose value won.
+
+```tsx
+<EnvVarList
+	theme={theme}
+	vars={resolveAgentEnvironment({ global, agent, session })}
+	emptyMessage={`No environment variables are set for ${session.name}.`}
+	testId="reauth-env"
+/>
+```
+
+Feed it from `resolveAgentEnvironment()` in `src/shared/agentEnvironment.ts` (see
+[SHARED-UTILS.md](SHARED-UTILS.md)) rather than merging the layers at the call
+site, or the panel drifts from what the spawner actually built.
+
+**Not the same component as `Settings/EnvVarsEditor`**, which edits ONE layer.
+Pick by question: "change a value" is the editor, "which profile am I running
+as?" is this. Do not add an edit mode to this one to cover both.
+
+Credential-shaped keys are masked behind a per-row reveal, decided by
+`isSecretEnvKey()`. This is deliberately loose - the surfaces that show an
+environment are diagnostic ones people open while screen-sharing for help, so a
+false positive costs one click and a false negative leaks a live key.
+
 ---
 
 ## Right-Click Image Menu (`ImageContextMenuHost`)

@@ -172,6 +172,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Filter History (in History tab)',
 		keys: ['Meta', 'f'],
 	},
+	historyJumpToSession: {
+		id: 'historyJumpToSession',
+		label: 'Jump to Entry Session (in History tab)',
+		keys: ['Meta', 'Enter'],
+	},
 	searchLogs: { id: 'searchLogs', label: 'Search System Logs', keys: ['Meta', 'f'] },
 	searchOutput: {
 		id: 'searchOutput',

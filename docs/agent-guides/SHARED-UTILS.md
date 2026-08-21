@@ -34,6 +34,33 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ---
 
+## Agent Environment (`src/shared/agentEnvironment.ts` - Both)
+
+An agent's environment is assembled from three layers, each edited in a different
+pane, so "which profile is this agent actually running as?" is a question no
+single settings screen can answer. This module does the same merge the spawner
+does and reports WHERE each surviving value came from.
+
+Precedence (later wins), mirroring `process:spawnTerminalTab`:
+
+1. `global` - Settings -> Environment, applies to every process Maestro spawns
+2. `agent` - Settings -> Agents, applies to every agent of one provider
+3. `session` - this agent's own overrides, from Edit Agent
+
+| Function                  | Signature                                              | Purpose                                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolveAgentEnvironment` | `(layers: AgentEnvironmentLayers) => ResolvedEnvVar[]` | Merge the three layers, key-sorted. Each entry carries the winning `source` plus `shadowedBy`, the layers it overrode. Empty-string values are kept: `FOO=` is a real override, not an absent one. |
+| `isSecretEnvKey`          | `(key: string) => boolean`                             | Whether a value should be masked until revealed. Matched loosely on purpose - a false positive costs one click, a false negative puts a live key on screen during a screen share.                  |
+| `maskEnvValue`            | `(value: string) => string`                            | Mask a secret, keeping the last four characters so one credential is still tellable from another. Values of 8 characters or fewer are masked whole.                                                |
+| `envSourceLabel`          | `(source: EnvVarSource) => string`                     | Human label for a layer: `Global`, `Provider`, `This agent`.                                                                                                                                       |
+
+**Do NOT re-derive this merge inline.** The precedence has to match the spawner's
+or the UI describes a process nobody is running. Render the result with
+[`<EnvVarList>`](UI-PATTERNS.md), which owns the masking and the source badges.
+This is distinct from `Settings/EnvVarsEditor`, which EDITS one layer.
+
+---
+
 ## Platform Detection
 
 ### Both Processes (`src/shared/platformDetection.ts`)

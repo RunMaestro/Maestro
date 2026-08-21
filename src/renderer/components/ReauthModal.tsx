@@ -22,9 +22,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyRound, Terminal as TerminalIcon, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, KeyRound, Terminal as TerminalIcon, Users } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { XTerminal, type XTerminalHandle } from './XTerminal';
+import { EnvVarList } from './ui/EnvVarList';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore } from '../stores/sessionStore';
@@ -36,6 +37,7 @@ import {
 	getAgentDisplayName,
 	getAgentLoginCommand,
 } from '../../shared/agentMetadata';
+import { resolveAgentEnvironment, type ResolvedEnvVar } from '../../shared/agentEnvironment';
 import type { Session, Theme } from '../types';
 
 export interface ReauthModalProps {
@@ -74,6 +76,10 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 
 	const [status, setStatus] = useState<ReauthStatus>('starting');
 	const [spawnError, setSpawnError] = useState<string | null>(null);
+	const [envExpanded, setEnvExpanded] = useState(false);
+	// Provider-level vars come from the agent config store rather than the
+	// session, so they need a fetch. Null until it resolves.
+	const [providerEnv, setProviderEnv] = useState<Record<string, string> | null>(null);
 
 	const login = useMemo(
 		() => getAgentLoginCommand(session.toolType, session.customPath),
@@ -92,6 +98,37 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			.filter((name): name is string => !!name);
 	}, [sessions, outage.blocked]);
 	const blockedCount = outage.blocked.length;
+
+	// The environment decides WHICH credentials the login writes and the agent
+	// reads - a base URL override, an API-key var, a profile selector - so an
+	// auth failure is exactly when it needs to be visible. Merged the same way
+	// the spawner merges it, so this is what the login shell below actually got.
+	useEffect(() => {
+		let cancelled = false;
+		void window.maestro.agents
+			.getCustomEnvVars(session.toolType)
+			.then((vars) => {
+				if (!cancelled) setProviderEnv(vars ?? {});
+			})
+			.catch((err: unknown) => {
+				// Non-fatal: the login still works, we just cannot show one layer.
+				logger.warn('[ReauthModal] Could not read provider env vars', undefined, err);
+				if (!cancelled) setProviderEnv({});
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [session.toolType]);
+
+	const effectiveEnv: ResolvedEnvVar[] = useMemo(
+		() =>
+			resolveAgentEnvironment({
+				global: shellEnvVars,
+				agent: providerEnv ?? undefined,
+				session: session.customEnvVars,
+			}),
+		[shellEnvVars, providerEnv, session.customEnvVars]
+	);
 
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
@@ -234,11 +271,15 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			title="Please reauthenticate the provider."
 			priority={MODAL_PRIORITIES.REAUTH}
 			onClose={handleDismiss}
-			width={760}
-			maxHeight="80vh"
+			width={1100}
+			maxHeight="92vh"
+			// Resizable and persisted: this is a working surface, not a notice. The
+			// user drives a real TUI login inside it, so the default is deliberately
+			// large - a login flow squeezed into a notification-sized box is
+			// unreadable, and the provider's own menus need the room.
 			resizeKey="modal-reauth"
-			defaultSize={{ width: 760, height: 560 }}
-			minSize={{ width: 480, height: 320 }}
+			defaultSize={{ width: 1100, height: 800 }}
+			minSize={{ width: 560, height: 420 }}
 			zIndex={10002}
 			headerIcon={<KeyRound className="w-5 h-5" style={{ color: theme.colors.warning }} />}
 			contentClassName="flex-1 min-h-0 flex flex-col"
@@ -301,6 +342,54 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 						{outage.message}
 					</p>
 				)}
+
+				{/* Which profile this agent runs as. Collapsed by default so the
+				    login stays the focus, but one click away because a base-URL or
+				    API-key override is a common reason a login "succeeds" and the
+				    agent still fails. */}
+				<div className="shrink-0">
+					<button
+						type="button"
+						onClick={() => setEnvExpanded((v) => !v)}
+						className="flex items-center gap-1.5 text-xs hover:opacity-80 transition-opacity"
+						style={{ color: theme.colors.textDim }}
+						aria-expanded={envExpanded}
+						data-testid="reauth-env-toggle"
+					>
+						{envExpanded ? (
+							<ChevronDown className="w-3.5 h-3.5" />
+						) : (
+							<ChevronRight className="w-3.5 h-3.5" />
+						)}
+						<span>
+							Environment for {session.name}
+							{providerEnv === null ? '' : ` (${effectiveEnv.length})`}
+						</span>
+					</button>
+
+					{envExpanded && (
+						<div
+							className="mt-2 max-h-40 overflow-y-auto scrollbar-thin rounded border p-2"
+							style={{
+								borderColor: theme.colors.border,
+								backgroundColor: theme.colors.bgMain,
+							}}
+						>
+							{providerEnv === null ? (
+								<p className="text-xs" style={{ color: theme.colors.textDim }}>
+									Reading environment...
+								</p>
+							) : (
+								<EnvVarList
+									theme={theme}
+									vars={effectiveEnv}
+									emptyMessage={`No environment variables are set for ${session.name}.`}
+									testId="reauth-env"
+								/>
+							)}
+						</div>
+					)}
+				</div>
 
 				{commandLine ? (
 					<div

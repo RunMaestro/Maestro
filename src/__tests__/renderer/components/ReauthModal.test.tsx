@@ -7,15 +7,20 @@
  * the provider's own login command into it, run it on the agent's SSH remote
  * when the agent has one, and never leave that shell alive behind a closed
  * dialog.
+ *
+ * The second block covers the environment disclosure: that the three env layers
+ * are merged in the spawner's own precedence order, and that failing to read one
+ * layer degrades instead of blocking the login.
  */
 
 import React from 'react';
-import { render as rtlRender, screen, act, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, act, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ReauthModal } from '../../../renderer/components/ReauthModal';
 import type { AuthOutage } from '../../../renderer/stores/authOutageStore';
 import { providerAuthKey } from '../../../shared/providerAuthIdentity';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -59,6 +64,7 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 const mockSpawnTerminalTab = vi.fn();
 const mockWrite = vi.fn();
 const mockKill = vi.fn();
+const mockGetCustomEnvVars = vi.fn();
 let exitHandler: ((sessionId: string) => void) | undefined;
 
 beforeEach(() => {
@@ -67,12 +73,16 @@ beforeEach(() => {
 	mockSpawnTerminalTab.mockResolvedValue({ pid: 4242, success: true });
 	mockWrite.mockResolvedValue(true);
 	mockKill.mockResolvedValue(true);
+	mockGetCustomEnvVars.mockResolvedValue({});
+	// Each test owns its own global layer; the store persists between them.
+	useSettingsStore.setState({ shellEnvVars: {} } as never);
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const maestro = (window as any).maestro;
 	maestro.process.spawnTerminalTab = mockSpawnTerminalTab;
 	maestro.process.write = mockWrite;
 	maestro.process.kill = mockKill;
+	maestro.agents.getCustomEnvVars = mockGetCustomEnvVars;
 	maestro.process.onExit = vi.fn((handler: (sessionId: string) => void) => {
 		exitHandler = handler;
 		return () => {};
@@ -250,5 +260,79 @@ describe('ReauthModal', () => {
 		expect(screen.getByText('Nightly Triage, Doc Sweep')).toBeInTheDocument();
 		expect(screen.getByText(/All 2 agents on this provider are stopped/)).toBeInTheDocument();
 		expect(screen.getByTestId('reauth-resume').textContent).toBe('Resume 2 Agents');
+	});
+});
+
+/**
+ * Which credentials the login writes, and which the agent then reads, is decided
+ * by the environment - so an auth failure is exactly when it has to be visible.
+ * The merge must match the spawner's, or the panel would describe a process
+ * nobody is running.
+ */
+describe('ReauthModal environment disclosure', () => {
+	/** An agent whose own override shadows the provider layer for the same key. */
+	function createEnvSession() {
+		return createMockSession({
+			id: 'sess-1',
+			name: 'Cyber Stocks',
+			toolType: 'claude-code',
+			customEnvVars: { ANTHROPIC_BASE_URL: 'https://session.example' },
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
+	}
+
+	beforeEach(() => {
+		mockGetCustomEnvVars.mockResolvedValue({ ANTHROPIC_BASE_URL: 'https://provider.example' });
+		useSettingsStore.setState({ shellEnvVars: { GLOBAL_ONLY: 'yes' } } as never);
+	});
+
+	function renderEnvModal() {
+		const session = createEnvSession();
+		return render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+	}
+
+	it('names the agent whose environment is shown', async () => {
+		renderEnvModal();
+		await waitFor(() =>
+			expect(screen.getByTestId('reauth-env-toggle')).toHaveTextContent('Cyber Stocks')
+		);
+	});
+
+	it('starts collapsed so the login stays the focus', async () => {
+		renderEnvModal();
+		await waitFor(() => expect(screen.getByTestId('reauth-env-toggle')).toBeInTheDocument());
+		expect(screen.queryByTestId('reauth-env')).not.toBeInTheDocument();
+	});
+
+	it('merges all three layers with the spawner precedence', async () => {
+		renderEnvModal();
+		fireEvent.click(await screen.findByTestId('reauth-env-toggle'));
+
+		await waitFor(() => expect(screen.getByTestId('reauth-env')).toBeInTheDocument());
+		// Global-only var survives...
+		expect(screen.getByText('GLOBAL_ONLY')).toBeInTheDocument();
+		// ...and the session value beats the provider value for the same key.
+		expect(screen.getByText('https://session.example')).toBeInTheDocument();
+		expect(screen.queryByText('https://provider.example')).not.toBeInTheDocument();
+	});
+
+	it('counts the effective variables on the toggle', async () => {
+		renderEnvModal();
+		await waitFor(() => expect(screen.getByTestId('reauth-env-toggle')).toHaveTextContent('(2)'));
+	});
+
+	// The env panel is a diagnostic aid; it must never stop the user logging in.
+	it('still renders the login when the provider layer cannot be read', async () => {
+		mockGetCustomEnvVars.mockRejectedValue(new Error('ipc down'));
+		renderEnvModal();
+
+		fireEvent.click(await screen.findByTestId('reauth-env-toggle'));
+
+		await waitFor(() => expect(screen.getByTestId('reauth-env')).toBeInTheDocument());
+		// Falls back to the layers it does have.
+		expect(screen.getByText('GLOBAL_ONLY')).toBeInTheDocument();
+		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
 	});
 });
