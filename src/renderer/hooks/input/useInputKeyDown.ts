@@ -20,6 +20,12 @@ import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
+import {
+	previousComposerCommandMode,
+	type ComposerCommandMode,
+} from '../../utils/shellCommandInput';
+import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
+import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 
 // ============================================================================
 // Dependencies interface
@@ -51,10 +57,10 @@ export interface InputKeyDownDeps {
 		filter?: TabCompletionFilter,
 		commandMode?: boolean
 	) => TabCompletionSuggestion[];
-	/** Whether the AI composer is in command mode, read at call time. */
-	getCommandMode: () => boolean;
-	/** Enter/leave command mode (Escape / Backspace on an empty command line). */
-	setCommandMode: (commandMode: boolean) => void;
+	/** Which rung of the bang ladder the AI composer is on, read at call time. */
+	getCommandMode: () => ComposerCommandMode;
+	/** Move to another rung (Escape / Backspace on an empty command line). */
+	setCommandMode: (commandMode: ComposerCommandMode) => void;
 	/** Ref to the input textarea */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	/** Ref to the terminal output container */
@@ -141,11 +147,87 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				return; // Let the modal handle keys
 			}
 
-			// Tab completion serves both shell surfaces: the terminal composer, and
-			// the AI composer while it is in command mode, which is a shell line
-			// even though the tab is in AI mode.
-			const isCommandMode = activeSession?.inputMode === 'ai' && getCommandMode();
+			// Which rung the AI composer is on. Only the 'shell' rung is a command
+			// line: AI command mode holds prose, so it gets none of the shell
+			// affordances below (completion, history recall, the `$` prefix).
+			const commandMode: ComposerCommandMode =
+				activeSession?.inputMode === 'ai' ? getCommandMode() : 'off';
+			const isCommandMode = commandMode === 'shell';
 			const isShellInput = activeSession?.inputMode === 'terminal' || isCommandMode;
+
+			// A proposed command owns the keyboard until it is answered. Handled
+			// before every other branch because the caret deliberately stays in the
+			// textarea (see InputTextarea's readOnly), so Enter / arrows / Escape
+			// would otherwise be read as composing rather than as an answer.
+			const aiCommandEntry =
+				commandMode === 'ai' && activeSession
+					? getAiCommandEntry(activeSession.id, activeSession.activeTabId)
+					: undefined;
+			if (aiCommandEntry && activeSession) {
+				const entryKey = aiCommandKey(aiCommandEntry.sessionId, aiCommandEntry.tabId);
+				const decline = () => {
+					// The request text comes back so the user can refine it. Declining is
+					// nearly always "not what I meant", not "never mind".
+					setInputValue(dismissAiCommand(aiCommandEntry));
+					inputRef.current?.focus();
+				};
+
+				if (e.key === 'Escape') {
+					e.preventDefault();
+					// Same reason as the ladder branch below: a window-level Escape
+					// listener blurs the composer, and the caret has to stay here.
+					e.stopPropagation();
+					decline();
+					return;
+				}
+
+				if (aiCommandEntry.status === 'proposed') {
+					if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+						e.preventDefault();
+						// Left is Run, right is Cancel - the order they are drawn in.
+						useAiCommandStore
+							.getState()
+							.setAiCommandChoice(entryKey, e.key === 'ArrowLeft' ? 'run' : 'cancel');
+						return;
+					}
+					if (e.key === 'y' || e.key === 'Y') {
+						e.preventDefault();
+						acceptAiCommand(activeSession, aiCommandEntry);
+						return;
+					}
+					if (e.key === 'n' || e.key === 'N') {
+						e.preventDefault();
+						decline();
+						return;
+					}
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						if (aiCommandEntry.choice === 'run') {
+							acceptAiCommand(activeSession, aiCommandEntry);
+						} else {
+							decline();
+						}
+						return;
+					}
+				}
+
+				if (e.key === 'Enter') {
+					// Thinking: nothing to answer yet. Error: Enter hands the request
+					// back, which is one more Enter away from a retry.
+					e.preventDefault();
+					if (aiCommandEntry.status === 'error') decline();
+					return;
+				}
+
+				if (e.key === 'Backspace') {
+					// Swallowed, not passed to the ladder below: Backspace on an empty
+					// line would step down a rung and leave this card parked on a tab
+					// that no longer shows it, to reappear the next time the user
+					// climbs back. Answering the card is the only way past it.
+					e.preventDefault();
+					return;
+				}
+			}
 
 			// Leaving command mode. The composer holds no `!` to delete (the gesture
 			// consumed it), so the mode needs its own way out: Escape on an empty
@@ -160,7 +242,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Backspace stays on a strictly empty line: it is an editing key, and on
 			// "   " the user is deleting a space, not asking to leave.
 			if (
-				isCommandMode &&
+				commandMode !== 'off' &&
 				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
 			) {
 				e.preventDefault();
@@ -173,7 +255,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// below. Verified: with propagation the composer ends up blurred, with
 				// it stopped the caret stays put.
 				e.stopPropagation();
-				setCommandMode(false);
+				// One rung down: AI command -> command mode -> the agent.
+				setCommandMode(previousComposerCommandMode(commandMode));
 				// Belt and braces alongside the line above: exiting hands the input back
 				// to the agent, so the user is still typing. Explicit rather than relying
 				// on React not remounting the textarea when the mode bar and `$` prefix

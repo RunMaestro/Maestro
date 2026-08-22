@@ -18,6 +18,7 @@ import { substituteTemplateVariables, TemplateContext } from '../../utils/templa
 import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 
 /**
  * Configuration for document processing
@@ -362,8 +363,9 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// Substitute template variables in the prompt
 			const finalPrompt = substituteTemplateVariables(promptWithSelectionBlock, templateContext);
 
-			// Capture start time for elapsed time tracking
-			const taskStartTime = Date.now();
+			// Capture start time for elapsed time tracking. Sleep-aware: a task that
+			// spans a lid close must not report the sleep as agent work time.
+			const taskSpan = beginSleepAwareSpan();
 
 			// Spawn agent with the prompt, using effective cwd (may be worktree path)
 			const result = await callbacks.onSpawnAgent(
@@ -372,8 +374,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				effectiveCwd !== session.cwd ? effectiveCwd : undefined
 			);
 
-			// Capture elapsed time
-			const elapsedTimeMs = Date.now() - taskStartTime;
+			// Capture elapsed time (machine sleep excluded)
+			const elapsedTimeMs = sleepAwareElapsedMs(taskSpan);
 
 			// Register agent session origin for Auto Run tracking
 			if (result.agentSessionId) {

@@ -36,6 +36,7 @@ export function listAgents(options: ListAgentsOptions): void {
 				cwd: s.cwd,
 				groupId: s.groupId,
 				autoRunFolderPath: s.autoRunFolderPath,
+				bookmarked: !!s.bookmarked,
 				sessionSshRemoteConfig: s.sessionSshRemoteConfig ?? null,
 			}));
 			console.log(JSON.stringify(output, null, 2));
@@ -48,6 +49,7 @@ export function listAgents(options: ListAgentsOptions): void {
 				cwd: s.cwd,
 				groupId: s.groupId,
 				autoRunFolderPath: s.autoRunFolderPath,
+				bookmarked: !!s.bookmarked,
 			}));
 			console.log(formatAgents(displayAgents, groupName));
 		}

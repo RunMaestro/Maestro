@@ -11,6 +11,7 @@ import {
 	cancelRetry,
 	registerBatchResumer,
 } from '../../../../../renderer/stores/retryStore';
+import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
 
 // The reactive auth marking is a fire-and-forget call into the provider auth
 // store; the store's own resolution is covered in its test, so here we only care
@@ -21,12 +22,18 @@ vi.mock('../../../../../renderer/stores/providerAuthStore', () => ({
 }));
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
+let authExpiredHandler: ((payload: any) => void) | undefined;
 const mockUnsubscribe = vi.fn();
+const mockAuthUnsubscribe = vi.fn();
 
 const mockProcess = {
 	onAgentError: vi.fn((h: any) => {
 		handler = h;
 		return mockUnsubscribe;
+	}),
+	onAuthExpired: vi.fn((h: any) => {
+		authExpiredHandler = h;
+		return mockAuthUnsubscribe;
 	}),
 };
 
@@ -47,6 +54,7 @@ const baseError = {
 beforeEach(() => {
 	vi.clearAllMocks();
 	handler = undefined;
+	authExpiredHandler = undefined;
 	useSessionStore.setState({
 		sessions: [],
 		groups: [],
@@ -91,12 +99,12 @@ describe('useAgentErrorListener', () => {
 		useSessionStore.setState({ sessions: [session] } as any);
 
 		renderHook(() => useAgentErrorListener(makeDeps()));
-		handler!('sess-1-ai-tab-1', baseError);
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'agent_crashed' });
 
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.state).toBe('error');
-		expect(updated.agentError?.type).toBe('auth_expired');
-		expect(updated.aiTabs[0].agentError?.type).toBe('auth_expired');
+		expect(updated.agentError?.type).toBe('agent_crashed');
+		expect(updated.aiTabs[0].agentError?.type).toBe('agent_crashed');
 
 		const modal = useModalStore.getState();
 		const agentErrorEntry = modal.modals.get('agentError');

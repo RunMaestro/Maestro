@@ -9,7 +9,10 @@ import {
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import {
+	selectShowNowPlayingIndicator,
+	useMediaPlaybackStore,
+} from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
@@ -1607,6 +1610,11 @@ describe('settingsStore', () => {
 				expect(state.dismissed).toBe(true);
 				expect(state.playing).toBe(false);
 				expect(state.pendingAutoplay).toBe(false);
+				// Dormant as well as hidden: a restored queue must not put media
+				// controls in the Left Bar header at launch, when the user has not
+				// played anything yet.
+				expect(state.dormant).toBe(true);
+				expect(selectShowNowPlayingIndicator(state)).toBe(false);
 				// History is per-boot by design: a fresh session must not open onto a
 				// log of last week's files.
 				expect(state.history).toEqual([]);
@@ -1963,6 +1971,48 @@ describe('settingsStore', () => {
 			]);
 		});
 
+		it.each([
+			['the original Cmd+Shift+2 default', ['Meta', 'Shift', '2']],
+			['the interim Cmd+Shift+E default', ['Meta', 'Shift', 'e']],
+		])('moves toggleAutoRunExpanded off %s onto Cmd+Shift+3', async (_label, fromKeys) => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					toggleAutoRunExpanded: {
+						id: 'toggleAutoRunExpanded',
+						label: 'Auto Run Expanded Preview',
+						keys: fromKeys,
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.toggleAutoRunExpanded.keys).toEqual(['Meta', 'Shift', '3']);
+			// The freed combo now belongs to the queued-message editor.
+			expect(shortcuts.editLastQueuedMessage.keys).toEqual(['Meta', 'Shift', 'e']);
+		});
+
+		it('leaves a user-customized toggleAutoRunExpanded binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					toggleAutoRunExpanded: {
+						id: 'toggleAutoRunExpanded',
+						label: 'Auto Run Expanded Preview',
+						keys: ['Meta', 'Shift', 'q'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.toggleAutoRunExpanded.keys).toEqual([
+				'Meta',
+				'Shift',
+				'q',
+			]);
+		});
+
 		it('merges shortcuts: preserves user keys but updates labels from defaults', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {
@@ -2023,6 +2073,75 @@ describe('settingsStore', () => {
 			const commitCmd = commands.find((c) => c.id === 'commit');
 			expect(commitCmd).toBeDefined();
 			expect(commitCmd!.isBuiltIn).toBe(true);
+		});
+
+		// MAESTRO-YP/YQ/YR: settings.json is user/sync/legacy editable, so the
+		// persisted array is not guaranteed to be CustomAICommand[]. An entry with
+		// no id cannot be edited, saved, reset or deleted (all keyed by id) and was
+		// stored under the Map key `undefined`, then rendered anyway - which crashed
+		// the Settings modal. Drop it during hydration instead.
+		it('skips malformed customAICommands entries that have no id', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				customAICommands: [
+					{
+						command: '/legacy',
+						description: 'Persisted before ids existed',
+						prompt: 'legacy',
+					},
+					{ id: '', command: '/blank', description: 'Blank id', prompt: 'blank' },
+					null,
+					'not-an-object',
+					{
+						id: 'custom-cmd',
+						command: '/custom',
+						description: 'My custom command',
+						prompt: 'do something',
+						isBuiltIn: false,
+					},
+				],
+			});
+
+			await loadAllSettings();
+
+			const commands = useSettingsStore.getState().customAICommands;
+			// Every surviving entry is usable.
+			expect(commands.every((c) => c && typeof c.id === 'string' && c.id)).toBe(true);
+			expect(commands.find((c) => c?.command === '/legacy')).toBeUndefined();
+			expect(commands.find((c) => c?.command === '/blank')).toBeUndefined();
+			// Well-formed entries still come through, alongside the defaults.
+			expect(commands.find((c) => c.id === 'custom-cmd')).toBeDefined();
+			expect(commands.find((c) => c.id === 'commit')).toBeDefined();
+		});
+
+		// An id alone is not enough. The panel calls command.startsWith('/') and
+		// prompt.substring(...) directly, so an entry carrying an id but missing
+		// either one still crashes the Settings modal (MAESTRO-YP/YQ/YR).
+		it('skips customAICommands entries whose command or prompt is unusable', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				customAICommands: [
+					{ id: 'no-command', description: 'Lost its command', prompt: 'x' },
+					{ id: 'no-prompt', command: '/nope', description: 'Lost its prompt' },
+					{ id: 'wrong-types', command: 42, description: 'Not strings', prompt: [] },
+					{
+						id: 'no-description',
+						command: '/keep',
+						prompt: 'description is only rendered',
+					},
+				],
+			});
+
+			await loadAllSettings();
+
+			const commands = useSettingsStore.getState().customAICommands;
+			expect(commands.find((c) => c.id === 'no-command')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'no-prompt')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'wrong-types')).toBeUndefined();
+			// A missing description is cosmetic, so the command survives with ''.
+			expect(commands.find((c) => c.id === 'no-description')?.description).toBe('');
+			// Nothing that survives can crash the panel's string calls.
+			expect(
+				commands.every((c) => typeof c.command === 'string' && typeof c.prompt === 'string')
+			).toBe(true);
 		});
 
 		it('applies auto-run time migration for concurrent tallying bug', async () => {

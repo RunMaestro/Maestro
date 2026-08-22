@@ -9,8 +9,9 @@
  *   - `maestro://`                              -> openMaestroLink (always)
  *   - `#anchor`                                 -> onAnchorClick / scroll (behavior.anchors)
  *   - `http(s)://` / `file://` / `git@`         -> inline open (behavior.directExternal, chat).
- *     A `file://` target that is playable media goes to onFileClick instead of
- *     the OS, so it lands in Maestro's player - see `openFileUrl`.
+ *     A `file://` target Maestro can render itself (JSON, text, source, media)
+ *     goes to onFileClick instead of the OS, so it lands in the preview tab or
+ *     the player; only OS-owned types are handed off - see `openFileUrl`.
  *   - `http(s)://` / `mailto:`                  -> onExternalLinkClick (doc)
  *   - relative path                             -> onFileClick (behavior.relativeAsFile, doc)
  *
@@ -129,9 +130,9 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 
 			if (behavior.directExternal) {
 				// Chat: open http/https via openUrl; file:// via openFileUrl (which
-				// keeps playable media in Maestro's own player rather than handing it
-				// to the OS); attempt git@host:user/repo -> https conversion for
-				// anything else.
+				// keeps anything Maestro can render in the preview tab or its own
+				// player rather than handing it to the OS); attempt
+				// git@host:user/repo -> https conversion for anything else.
 				// `metaKey || ctrlKey`: on macOS Cmd-click sets metaKey, so translate
 				// it to the same ctrlKey inversion openUrl expects (#1060).
 				if (openFileUrl(href, onFileClick)) return;

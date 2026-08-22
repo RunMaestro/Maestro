@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Theme } from '../../types';
+import type { Theme } from '../../../types';
 
 interface TaskCheckboxProps {
 	/** 1-based source line of the `- [ ]` marker this box renders. */
@@ -17,6 +17,10 @@ interface TaskCheckboxProps {
 
 /**
  * An interactive GFM task checkbox in the rendered markdown preview.
+ *
+ * Shared by every preview that renders a task list: the file preview and the
+ * Auto Run panel both mount it through `createMarkdownComponents`, which pairs
+ * it with `rehypeSourceLine` to resolve the `- [ ]` marker's line.
  *
  * The box owns a short-lived optimistic state because the source of truth is a
  * file on disk: a click writes the document and the new `checked` prop only

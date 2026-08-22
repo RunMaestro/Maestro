@@ -238,8 +238,13 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customPath).toBeUndefined();
 		});
 
-		it('resets tabs and provider-specific config when toolType changes', () => {
-			const tab = createMockAITab({ id: 'old-tab', agentSessionId: 'old-session' });
+		it('preserves tabs and parks the old provider session when toolType changes', () => {
+			const tab = createMockAITab({
+				id: 'old-tab',
+				agentSessionId: 'claude-session',
+				logs: [{ id: 'log-1', timestamp: 1, source: 'user', text: 'hello' }] as any,
+				usageStats: { inputTokens: 10 } as any,
+			});
 			const session = createMockSession({
 				id: 'session-1',
 				name: 'My Agent',
@@ -265,31 +270,90 @@ describe('useSessionLifecycle', () => {
 			});
 
 			const updated = useSessionStore.getState().sessions[0];
-			// Provider changed
 			expect(updated.toolType).toBe('opencode');
-			// Tabs reset to a single fresh tab
+
+			// The tab and its transcript survive - same tab, same logs, still active.
 			expect(updated.aiTabs).toHaveLength(1);
+			expect(updated.aiTabs[0].id).toBe('old-tab');
+			expect(updated.aiTabs[0].logs).toHaveLength(1);
+			expect(updated.activeTabId).toBe('old-tab');
+
+			// The incoming provider starts fresh in the live slot...
 			expect(updated.aiTabs[0].agentSessionId).toBeNull();
-			expect(updated.aiTabs[0].logs).toEqual([]);
-			expect(updated.activeTabId).toBe(updated.aiTabs[0].id);
-			expect(updated.activeTabId).not.toBe('old-tab');
-			// Provider-specific config cleared
+			expect(updated.aiTabs[0].usageStats).toBeUndefined();
+			// ...while the outgoing provider's session is parked for the trip back.
+			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toEqual({
+				agentSessionId: 'claude-session',
+				usageStats: { inputTokens: 10 },
+				customModel: undefined,
+				customEffort: undefined,
+			});
+			// The live provider must never hold a parked entry of its own.
+			expect(updated.aiTabs[0].providerSessions?.['opencode']).toBeUndefined();
+
+			// Agent-level provider-specific config is still cleared.
 			expect(updated.customPath).toBeUndefined();
 			expect(updated.customArgs).toBeUndefined();
 			expect(updated.customEnvVars).toBeUndefined();
 			expect(updated.customModel).toBeUndefined();
 			expect(updated.customContextWindow).toBeUndefined();
-			// File preview tabs reset
-			expect(updated.filePreviewTabs).toEqual([]);
-			expect(updated.activeFileTabId).toBeNull();
-			// Unified tab order reset to single entry
-			expect(updated.unifiedTabOrder).toHaveLength(1);
-			expect(updated.unifiedTabOrder[0]).toEqual({ type: 'ai', id: updated.aiTabs[0].id });
-			// Runtime state reset
-			expect(updated.state).toBe('idle');
-			expect(updated.aiPid).toBe(0);
-			// Existing AI process killed
-			expect((window as any).maestro.process.kill).toHaveBeenCalledWith('session-1-ai');
+
+			// A running turn is codified at send, so nothing is killed.
+			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
+		});
+
+		it('restores a provider session when switching back to it', () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				agentSessionId: 'codex-session',
+				providerSessions: { 'claude-code': { agentSessionId: 'claude-session' } },
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex' as any,
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'My Agent', 'claude-code' as any);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Back on Claude: its original session is live again, Codex is parked.
+			expect(updated.aiTabs[0].agentSessionId).toBe('claude-session');
+			expect(updated.aiTabs[0].providerSessions?.['codex']?.agentSessionId).toBe('codex-session');
+			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toBeUndefined();
+		});
+
+		it('preserves closed-tab history and file preview tabs across a provider change', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				closedTabHistory: [{ tab: createMockAITab({ id: 'gone' }), index: 0, closedAt: 1 }] as any,
+				unifiedClosedTabHistory: [{ kind: 'ai', index: 0, closedAt: 1 }] as any,
+				filePreviewTabs: [{ id: 'file-1' }] as any,
+				activeFileTabId: 'file-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Undo (Cmd+Shift+T) must still work after a provider change.
+			expect(updated.closedTabHistory).toHaveLength(1);
+			expect(updated.unifiedClosedTabHistory).toHaveLength(1);
+			expect(updated.filePreviewTabs).toHaveLength(1);
+			expect(updated.activeFileTabId).toBe('file-1');
 		});
 
 		it('does not reset tabs when toolType is same as current', () => {

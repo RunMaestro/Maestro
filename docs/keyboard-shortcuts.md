@@ -77,7 +77,7 @@ Tips and gotchas:
 | Go to Auto Run Tab             | `Cmd+Shift+1` | `Ctrl+Shift+1` |
 | Toggle Edit/Preview (Markdown) | `Cmd+E`       | `Ctrl+E`       |
 | Run Auto Run                   | `Cmd+Shift+2` | `Ctrl+Shift+2` |
-| Auto Run Expanded Preview      | `Cmd+Shift+E` | `Ctrl+Shift+E` |
+| Auto Run Expanded Preview      | `Cmd+Shift+3` | `Ctrl+Shift+3` |
 | Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
 | View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
@@ -147,6 +147,7 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 | ------------------------ | ------------------------------------------------- |
 | Send Message             | `Enter` or `Cmd+Enter` (configurable in Settings) |
 | Multiline Input          | `Shift+Enter`                                     |
+| Edit Last Queued Message | `Cmd+Shift+E` / `Ctrl+Shift+E`                    |
 | Navigate Command History | `Up Arrow` while in input                         |
 | Slash Commands           | Type `/` to open autocomplete                     |
 | Focus Output             | `Esc` while in input                              |
@@ -194,6 +195,27 @@ The Command Terminal - and the AI chat while in [command mode](./general-usage#c
 
 In git repositories, filter buttons appear in the dropdown header allowing you to filter by type (All, History, Branches, Tags, Files). Use `Tab`/`Shift+Tab` to cycle through filters or click directly.
 
+## Command Mode (AI Terminal)
+
+`!` in an empty AI composer climbs one rung of the [command mode](./general-usage#command-mode) ladder; `Esc` climbs back down. The composer never loses focus.
+
+| Action                         | Key                                       |
+| ------------------------------ | ----------------------------------------- |
+| Enter command mode             | `!` (empty composer)                      |
+| Enter AI command mode          | `!` again (empty command line)            |
+| Step back one rung             | `Esc` or `Backspace` (empty command line) |
+| Run the command / ask for one  | `Enter`                                   |
+| Send a message starting with ! | `\!` (the backslash is removed on send)   |
+
+When AI command mode proposes a command, the card owns the keyboard until you answer it:
+
+| Action             | Key                |
+| ------------------ | ------------------ |
+| Run the command    | `Y`                |
+| Decline it         | `N` or `Esc`       |
+| Move Run / Cancel  | `Left/Right Arrow` |
+| Take the selection | `Enter`            |
+
 ## @ File Mentions (AI Terminal)
 
 In AI mode, use `@` to reference files in your prompts:
@@ -219,6 +241,7 @@ In AI mode, use `@` to reference files in your prompts:
 | Multi-select Files               | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
 | Filter Files (in Files tab)      | `Cmd+F`                            | `Ctrl+F`                           |
 | Filter History (in History tab)  | `Cmd+F`                            | `Ctrl+F`                           |
+| Jump to Entry Session (History)  | `Cmd+Enter` on selected entry      | `Ctrl+Enter` on selected entry     |
 | Search Output (in Main Window)   | `Cmd+F`                            | `Ctrl+F`                           |
 | Search Messages (All Agent Tabs) | `Opt+Cmd+F`                        | `Alt+Ctrl+F`                       |
 | Search System Logs               | `Cmd+F`                            | `Ctrl+F`                           |
@@ -315,7 +338,7 @@ When a default binding has to move to free a combo for a new action, Maestro mig
 | ------------------------- | ------------- | ------------- | -------------------------------- |
 | Focus Active Tab          | `Opt+Cmd+F`   | `Opt+Cmd+Up`  | Search Messages (All Agent Tabs) |
 | Move Session to Group     | `Cmd+Shift+M` | `Opt+Cmd+M`   | Open Memory Viewer               |
-| Auto Run Expanded Preview | `Cmd+Shift+2` | `Cmd+Shift+E` | Run Auto Run                     |
+| Auto Run Expanded Preview | `Cmd+Shift+E` | `Cmd+Shift+3` | Edit Last Queued Message         |
 
 If `Opt+Cmd+F` still focuses the active tab instead of opening cross-tab search, you had a custom binding on it: open **Settings** → **Shortcuts**, clear it from **Focus Active Tab**, and the new default takes over.
 

@@ -36,6 +36,7 @@ import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import type { FileNode } from '../types/fileTree';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import { sleepAwareElapsedSince } from '../services/systemSleep';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -311,7 +312,8 @@ export const RightPanel = memo(
 			}
 		}, []);
 
-		// Update elapsed time display using wall clock time from startTime
+		// Update elapsed time display from startTime, minus any machine sleep, so
+		// the live counter matches the duration the run actually records.
 		// Uses an interval to update every second while running
 		useEffect(() => {
 			if (!currentSessionBatchState?.isRunning || !currentSessionBatchState?.startTime) {
@@ -321,7 +323,7 @@ export const RightPanel = memo(
 
 			// Calculate elapsed immediately
 			const updateElapsed = () => {
-				const elapsed = Date.now() - currentSessionBatchState.startTime!;
+				const elapsed = sleepAwareElapsedSince(currentSessionBatchState.startTime!);
 				setElapsedTime(formatElapsed(elapsed));
 			};
 

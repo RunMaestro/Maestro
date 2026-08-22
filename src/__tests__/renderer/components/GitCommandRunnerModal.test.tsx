@@ -9,6 +9,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { GitCommandRunnerModal } from '../../../renderer/components/GitCommandRunnerModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { gitService } from '../../../renderer/services/git';
+import { useGitCommandRunStore } from '../../../renderer/stores/gitCommandRunStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { GitCommandOutputChunk, GitRunCommandResult } from '../../../shared/gitUtils';
 
@@ -18,11 +19,6 @@ vi.mock('../../../renderer/services/git', () => ({
 		cancelCommand: vi.fn(),
 		onCommandOutput: vi.fn(),
 	},
-}));
-
-const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
-vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
-	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
 }));
 
 const TestWrapper = ({ children }: { children: React.ReactNode }) => (
@@ -37,8 +33,8 @@ let finishRun: (result: GitRunCommandResult) => void = () => {};
 function renderModal(
 	operation: 'pull' | 'push' = 'pull',
 	onClose = vi.fn()
-): { onClose: () => void } {
-	render(
+): { onClose: ReturnType<typeof vi.fn>; unmount: () => void } {
+	const { unmount } = render(
 		<GitCommandRunnerModal
 			theme={mockTheme}
 			data={{ sessionId: 'session-1', operation, cwd: '/test/repo', branch: 'main' }}
@@ -46,7 +42,7 @@ function renderModal(
 		/>,
 		{ wrapper: TestWrapper }
 	);
-	return { onClose };
+	return { onClose, unmount };
 }
 
 /** Push a chunk through the subscriber the modal registered. */
@@ -62,6 +58,8 @@ describe('GitCommandRunnerModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		currentRunId = '';
+		// The run outlives the modal, so it also outlives a test.
+		useGitCommandRunStore.setState({ runs: {} });
 
 		vi.mocked(gitService.onCommandOutput).mockImplementation((callback) => {
 			emitChunk = callback;
@@ -107,7 +105,7 @@ describe('GitCommandRunnerModal', () => {
 		expect(console.textContent).toBe('Receiving objects: 100%');
 	});
 
-	it('reports success and refreshes git status when the command finishes', async () => {
+	it('reports success when the command finishes', async () => {
 		renderModal();
 		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
 
@@ -116,7 +114,6 @@ describe('GitCommandRunnerModal', () => {
 		});
 
 		expect(await screen.findByText('Done')).toBeInTheDocument();
-		expect(mockRefreshGitStatus).toHaveBeenCalled();
 	});
 
 	it('shows the error text when the command fails', async () => {
@@ -165,6 +162,50 @@ describe('GitCommandRunnerModal', () => {
 		expect(gitService.runCommand).toHaveBeenLastCalledWith(
 			expect.objectContaining({ operation: 'push', setUpstream: true })
 		);
+	});
+
+	it('leaves the command running when the console is closed', async () => {
+		const { onClose, unmount } = renderModal('push');
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
+
+		// Close is not Cancel: a push mid-transfer should finish.
+		fireEvent.click(screen.getByTestId('git-command-close'));
+		expect(onClose).toHaveBeenCalled();
+		expect(gitService.cancelCommand).not.toHaveBeenCalled();
+
+		unmount();
+		expect(useGitCommandRunStore.getState().runs['push:local:/test/repo']?.status).toBe('running');
+	});
+
+	it('re-attaches to a running command instead of starting a second one', async () => {
+		const first = renderModal('push');
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalledTimes(1));
+		stream('Enumerating objects: 42\n', 'stderr');
+		first.unmount();
+
+		// Output kept arriving while nothing was on screen.
+		stream('Writing objects: 100%\n', 'stderr');
+
+		renderModal('push');
+		const console = screen.getByTestId('git-command-output');
+		expect(console).toHaveTextContent('Enumerating objects: 42');
+		expect(console).toHaveTextContent('Writing objects: 100%');
+		expect(gitService.runCommand).toHaveBeenCalledTimes(1);
+	});
+
+	it('starts a fresh run after a finished one is closed', async () => {
+		const first = renderModal('push');
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalledTimes(1));
+		await act(async () => {
+			finishRun({ success: true, exitCode: 0, cancelled: false });
+		});
+
+		fireEvent.click(screen.getByTestId('git-command-close'));
+		first.unmount();
+		expect(useGitCommandRunStore.getState().runs['push:local:/test/repo']).toBeUndefined();
+
+		renderModal('push');
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalledTimes(2));
 	});
 
 	it('does not offer the upstream retry for an unrelated push failure', async () => {

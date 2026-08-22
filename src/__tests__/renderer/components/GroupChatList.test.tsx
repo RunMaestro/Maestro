@@ -224,4 +224,77 @@ describe('GroupChatList', () => {
 			expect(onSortAlphabeticalChange).toHaveBeenCalledWith(false);
 		});
 	});
+
+	describe('collapsed header indicator', () => {
+		const BUSY_TITLE = 'A group chat is working';
+		const UNREAD_TITLE = 'Unread group chat messages';
+		const other: GroupChat = { ...baseChat, id: 'gc-2', name: 'Other Chat' };
+
+		it('shows a steady red dot when a chat is unread', () => {
+			const { getByTitle, queryByTitle } = renderList({
+				isExpanded: false,
+				groupChats: [baseChat, other],
+				unreadGroupChatIds: new Set(['gc-2']),
+			});
+			const dot = getByTitle(UNREAD_TITLE);
+			expect(dot.className).not.toContain('animate-pulse');
+			expect(dot).toHaveStyle({ backgroundColor: mockTheme.colors.error });
+			expect(queryByTitle(BUSY_TITLE)).toBeNull();
+		});
+
+		it('shows a pulsing dot when a chat is working', () => {
+			const { getByTitle } = renderList({
+				isExpanded: false,
+				groupChatStates: new Map([['gc-1', 'agent-working']]),
+			});
+			expect(getByTitle(BUSY_TITLE).className).toContain('animate-pulse');
+		});
+
+		// One corner, and busy resolves itself: when the run ends its output is
+		// unread, so the pulse hands off to the red dot rather than hiding it.
+		it('prefers the working dot when a chat is both working and unread', () => {
+			const { getByTitle, queryByTitle } = renderList({
+				isExpanded: false,
+				groupChats: [baseChat, other],
+				groupChatStates: new Map([['gc-1', 'moderator-thinking']]),
+				unreadGroupChatIds: new Set(['gc-2']),
+			});
+			expect(getByTitle(BUSY_TITLE)).toBeInTheDocument();
+			expect(queryByTitle(UNREAD_TITLE)).toBeNull();
+		});
+
+		it('shows nothing when every chat is idle and read', () => {
+			const { queryByTitle } = renderList({ isExpanded: false });
+			expect(queryByTitle(BUSY_TITLE)).toBeNull();
+			expect(queryByTitle(UNREAD_TITLE)).toBeNull();
+		});
+
+		it('drops the header dot once expanded - the rows say which chat it is', () => {
+			const { queryByTitle, getAllByTitle } = renderList({
+				isExpanded: true,
+				unreadGroupChatIds: new Set(['gc-1']),
+			});
+			expect(queryByTitle(UNREAD_TITLE)).toBeNull();
+			// The row keeps its own pip so the section is still answerable.
+			expect(getAllByTitle('Unread messages')).toHaveLength(1);
+		});
+
+		it('ignores unread ids for chats that no longer exist', () => {
+			const { queryByTitle } = renderList({
+				isExpanded: false,
+				unreadGroupChatIds: new Set(['gc-deleted']),
+			});
+			expect(queryByTitle(UNREAD_TITLE)).toBeNull();
+		});
+
+		// The badge counts active chats, so a dot over it must describe those.
+		it('ignores unread archived chats', () => {
+			const { queryByTitle } = renderList({
+				isExpanded: false,
+				groupChats: [baseChat, { ...other, archived: true }],
+				unreadGroupChatIds: new Set(['gc-2']),
+			});
+			expect(queryByTitle(UNREAD_TITLE)).toBeNull();
+		});
+	});
 });

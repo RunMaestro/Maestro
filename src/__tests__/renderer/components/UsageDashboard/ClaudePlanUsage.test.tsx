@@ -208,6 +208,58 @@ describe('ClaudePlanUsage — multi-account tabs', () => {
 	});
 });
 
+describe('ClaudePlanUsage — exhausted account', () => {
+	// The panel an account renders once its weekly limit is gone: no reset row
+	// under the idle session, and a second weekly window named after the
+	// current premium tier rather than Sonnet.
+	function seedExhausted(): void {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 0 },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+	}
+
+	it('renders all three bars when the session window carries no reset time', () => {
+		seedExhausted();
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
+		expect(values).toEqual(['0', '100', '36']);
+		expect(screen.getByText('reset unknown')).toBeInTheDocument();
+	});
+
+	it('labels the second weekly window with the name the panel reported', () => {
+		seedExhausted();
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByText('Week (Fable)')).toBeInTheDocument();
+		expect(screen.queryByText('Week (Sonnet only)')).toBeNull();
+	});
+
+	it('falls back to the legacy label for snapshots cached before labels existed', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 0, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByText('Week (Sonnet only)')).toBeInTheDocument();
+	});
+});
+
 describe('ClaudePlanUsage — unauthenticated row', () => {
 	it('renders the "run /login" CTA in place of bars when authState is unauthenticated', () => {
 		seedSnapshots({
@@ -394,5 +446,78 @@ describe('ClaudePlanUsage — hide/show accounts (list view)', () => {
 
 		expect(screen.queryByTestId('claude-plan-visibility-default')).toBeNull();
 		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
+	});
+});
+
+describe('ClaudePlanUsage - agent count badge', () => {
+	const snapshotFor = (key: string) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('counts the agents pointed at each account', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work'),
+			'/Users/me/.claude-side': snapshotFor('/Users/me/.claude-side'),
+		});
+		seedSessions([
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-side',
+		]);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('3 agents');
+		// Singular when exactly one agent uses the account.
+		expect(screen.getByTestId('claude-plan-agents-side')).toHaveTextContent('1 agent');
+	});
+
+	it('ignores agents from other providers', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					id: 'b',
+					name: 'b',
+					toolType: 'codex',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('shows zero for a cached account no agent uses any more', () => {
+		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-stale')).toHaveTextContent('0 agents');
+	});
+
+	it('shows the count on an account that has no snapshot yet', () => {
+		seedSessions(['/Users/me/.claude-pending', '/Users/me/.claude-pending']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
 	});
 });

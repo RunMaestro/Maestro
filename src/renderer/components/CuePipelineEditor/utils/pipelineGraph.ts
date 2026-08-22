@@ -20,50 +20,12 @@ import type { CommandNodeDataProps } from '../nodes/CommandNode';
 import type { ErrorNodeDataProps } from '../nodes/ErrorNode';
 import type { PipelineGroupNodeDataProps } from '../nodes/PipelineGroupNode';
 import type { PipelineEdgeData } from '../edges/PipelineEdge';
-
-/** Build the one-line summary shown under the command node's name. */
-function summarizeCommandNode(data: CommandNodeData): string {
-	if (data.mode === 'shell') {
-		const text = data.shell?.trim() ?? '';
-		if (!text) return '(no command)';
-		const firstLine = text.split('\n')[0];
-		return '$ ' + (firstLine.length > 36 ? firstLine.slice(0, 33) + '…' : firstLine);
-	}
-	const target = data.cliTarget?.trim() || '(no target)';
-	return `cli send → ${target}`;
-}
-
-// ─── Trigger config summary ──────────────────────────────────────────────────
-
-/** Returns a short human-readable summary of a trigger's configuration. */
-export function getTriggerConfigSummary(data: TriggerNodeData): string {
-	const { eventType, config } = data;
-	switch (eventType) {
-		case 'time.heartbeat':
-			return config.interval_minutes ? `every ${config.interval_minutes}min` : 'heartbeat';
-		case 'time.scheduled': {
-			const times = config.schedule_times ?? [];
-			const days = config.schedule_days ?? [];
-			if (times.length === 0) return 'scheduled';
-			const timeStr = times.length <= 2 ? times.join(', ') : `${times.length} times`;
-			const dayStr = days.length > 0 && days.length < 7 ? ` (${days.join(', ')})` : '';
-			return `${timeStr}${dayStr}`;
-		}
-		case 'file.changed':
-			return config.watch ?? '**/*';
-		case 'github.pull_request':
-		case 'github.issue':
-			return config.repo ?? 'repo';
-		case 'task.pending':
-			return config.watch ?? 'tasks';
-		case 'agent.completed':
-			return 'agent done';
-		case 'cli.trigger':
-			return 'cli';
-		default:
-			return '';
-	}
-}
+// Node summaries live in shared/ so the pipeline LIST view describes a trigger
+// or command exactly the way the graph node labels it.
+import {
+	getTriggerConfigSummary,
+	summarizeCommandNode,
+} from '../../../../shared/cue-pipeline-summary';
 
 // ─── Pipeline Y-offset (for "All Pipelines" view) ──────────────────────────
 

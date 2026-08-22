@@ -67,6 +67,8 @@ vi.mock('lucide-react', () => {
 		// KeyboardStats icons
 		Keyboard: createIcon('keyboard', '⌨️'),
 		Sparkles: createIcon('sparkles', '✨'),
+		// AgentOverviewCards agent filter icon
+		Search: createIcon('search', '🔎'),
 	};
 });
 

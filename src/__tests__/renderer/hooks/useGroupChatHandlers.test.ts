@@ -15,6 +15,9 @@ vi.mock('../../../renderer/stores/notificationStore', async () => {
 	return { ...actual, notifyToast: vi.fn() };
 });
 import { notifyToast } from '../../../renderer/stores/notificationStore';
+import type { GroupChatMessage } from '../../../shared/group-chat-types';
+
+type ChatMessageHandler = (chatId: string, message: GroupChatMessage) => void;
 
 // ---------------------------------------------------------------------------
 // Mock window.maestro.groupChat (not in global setup)
@@ -49,6 +52,7 @@ const initialGroupChatState = {
 	moderatorUsage: null,
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
+	unreadGroupChatIds: new Set<string>(),
 	groupChatExecutionQueue: [],
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as const,
@@ -138,6 +142,47 @@ describe('useGroupChatHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// Unread tracking
+	// -----------------------------------------------------------------------
+	describe('unread tracking listener', () => {
+		/** Drive the global onMessage subscriber the hook registers on mount. */
+		function emitMessage(chatId: string, from: string) {
+			const handlers = mockGroupChat.onMessage.mock.calls.map(([fn]) => fn as ChatMessageHandler);
+			act(() => {
+				for (const handler of handlers) {
+					handler(chatId, { timestamp: new Date().toISOString(), from, content: 'hi' });
+				}
+			});
+		}
+
+		it('flags a room nobody is looking at', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			renderHook(() => useGroupChatHandlers());
+
+			emitMessage('gc-2', 'moderator');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set(['gc-2']));
+		});
+
+		it('does not flag the room on screen', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			renderHook(() => useGroupChatHandlers());
+
+			emitMessage('gc-1', 'moderator');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set());
+		});
+
+		// A Cue-driven prompt lands in an inactive room; the conductor's own
+		// words coming back are not news.
+		it("ignores the user's own messages", () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			renderHook(() => useGroupChatHandlers());
+
+			emitMessage('gc-2', 'user');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set());
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// handleOpenGroupChat
 	// -----------------------------------------------------------------------
 	describe('handleOpenGroupChat', () => {
@@ -157,6 +202,20 @@ describe('useGroupChatHandlers', () => {
 			expect(state.activeGroupChatId).toBe('gc-1');
 			expect(state.groupChatMessages).toEqual(messages);
 			expect(mockGroupChat.startModerator).toHaveBeenCalledWith('gc-1');
+		});
+
+		it('clears the unread flag - opening the room is reading it', async () => {
+			mockGroupChat.load.mockResolvedValueOnce({ id: 'gc-1', name: 'Chat', participants: [] });
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			useGroupChatStore.setState({ unreadGroupChatIds: new Set(['gc-1', 'gc-2']) });
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleOpenGroupChat('gc-1');
+			});
+
+			// Only the opened room. The others were not read.
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set(['gc-2']));
 		});
 
 		it('does nothing if chat load returns null', async () => {
@@ -1051,8 +1110,11 @@ describe('useGroupChatHandlers', () => {
 			expect(mockGroupChat.onParticipantState).toHaveBeenCalled();
 			expect(mockGroupChat.onModeratorSessionIdChanged).toHaveBeenCalled();
 
+			// onMessage has a global subscriber too - the unread tracker, which
+			// watches the rooms nobody is looking at.
+			expect(mockGroupChat.onMessage).toHaveBeenCalledTimes(1);
+
 			// Active-chat listeners NOT registered when no activeGroupChatId
-			expect(mockGroupChat.onMessage).not.toHaveBeenCalled();
 			expect(mockGroupChat.onModeratorUsage).not.toHaveBeenCalled();
 		});
 
@@ -1060,7 +1122,8 @@ describe('useGroupChatHandlers', () => {
 			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
 			renderHook(() => useGroupChatHandlers());
 
-			expect(mockGroupChat.onMessage).toHaveBeenCalled();
+			// Global unread tracker + the active chat's transcript listener.
+			expect(mockGroupChat.onMessage).toHaveBeenCalledTimes(2);
 			expect(mockGroupChat.onModeratorUsage).toHaveBeenCalled();
 		});
 

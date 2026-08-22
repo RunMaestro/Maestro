@@ -16,6 +16,7 @@ import { useSessionStore } from '../../../stores/sessionStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { parseSessionId, isBatchSession } from '../../../utils/sessionIdParser';
 import { getActiveTab } from '../../../utils/tabHelpers';
+import { resolveTurnProvider, updateProviderSlot } from '../../../utils/providerTabSessions';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import type { LogEntry } from '../../../types';
@@ -88,6 +89,34 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 								'[onSessionId] No target tab found - session has no aiTabs, storing at session level only'
 							);
 							return isClaudeCode ? s : { ...s, agentSessionId };
+						}
+
+						// Settings are codified at send, so this ID belongs to the provider
+						// that STARTED the turn. If the user changed the agent's provider while
+						// it ran, the live slot now belongs to the incoming provider and this
+						// token would be a resume target the new provider has never heard of -
+						// park it under its real owner instead.
+						const owningProvider = resolveTurnProvider(targetTab, s);
+						const isStaleProvider = owningProvider !== s.toolType;
+						if (isStaleProvider) {
+							logger.info(
+								'[onSessionId] Session ID arrived for a provider the agent has since switched away from - parking it',
+								undefined,
+								{
+									owningProvider,
+									currentProvider: s.toolType,
+									tabId: targetTab.id,
+									agentSessionId: agentSessionId.substring(0, 8),
+								}
+							);
+							const updatedAiTabs = s.aiTabs.map((tab) =>
+								tab.id === targetTab.id
+									? updateProviderSlot(tab, s, owningProvider, { agentSessionId })
+									: tab
+							);
+							// The session-level field tracks the CURRENT provider, so it is left
+							// alone here for the same reason.
+							return { ...s, aiTabs: updatedAiTabs };
 						}
 
 						if (targetTab.agentSessionId && targetTab.agentSessionId !== agentSessionId) {

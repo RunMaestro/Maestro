@@ -131,10 +131,22 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteOpenBrowserTabResponse: vi.fn(),
+		onRemoteCloseBrowserTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCloseBrowserTabResponse: vi.fn(),
 		onRemoteOpenTerminalTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		sendRemoteOpenTerminalTabResponse: vi.fn(),
+		onRemoteWriteTerminalTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteWriteTerminalTabResponse: vi.fn(),
+		onRemoteListTerminalTabs: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteListTerminalTabsResponse: vi.fn(),
 		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -163,6 +175,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		onRemoteSetSetting: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		// Added with `maestro-cli open`: the hook subscribes to this on mount, so
+		// leaving it out makes every test in this file throw before it asserts.
+		onRemoteOpenModal: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		sendRemoteSetSettingResponse: vi.fn(),

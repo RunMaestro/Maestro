@@ -1554,7 +1554,9 @@ describe('process IPC handlers', () => {
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
 			// Path must be shell-escaped (single-quoted) to prevent injection
 			expect(lastArg).toContain("cd '/remote/project'");
-			expect(lastArg).toContain('exec "$SHELL"');
+			// Must be a LOGIN shell, otherwise /etc/zprofile (path_helper on macOS) never runs
+			// and the remote terminal gets a shorter PATH than a plain `ssh host` session.
+			expect(lastArg).toContain('exec "$SHELL" -l');
 			// SSH options must be present
 			expect(spawnCall.args).toContain('StrictHostKeyChecking=accept-new');
 			expect(spawnCall.args).toContain('ConnectTimeout=10');
@@ -1763,7 +1765,9 @@ describe('process IPC handlers', () => {
 			expect(lastArg).toContain("export AGENT_VAR='from-agent'");
 			expect(lastArg).toContain("export SESSION_VAR='from-session'");
 			expect(lastArg).toContain("cd '/remote/project'");
-			expect(lastArg).toContain('exec "$SHELL"');
+			// Must be a LOGIN shell, otherwise /etc/zprofile (path_helper on macOS) never runs
+			// and the remote terminal gets a shorter PATH than a plain `ssh host` session.
+			expect(lastArg).toContain('exec "$SHELL" -l');
 		});
 
 		it('should export env vars even without workingDirOverride for SSH terminals', async () => {

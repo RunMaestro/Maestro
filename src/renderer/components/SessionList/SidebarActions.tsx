@@ -3,6 +3,7 @@ import { PanelLeftClose, PanelLeftOpen, Bell, Bot, MessageSquarePlus } from 'luc
 import type { Theme, Shortcut } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { CornerDot } from '../ui/CornerDot';
 
 interface SidebarActionsProps {
 	theme: Theme;
@@ -93,13 +94,11 @@ export const SidebarActions = memo(function SidebarActions({
 							{!compact && <MessageSquarePlus className="w-3 h-3 shrink-0" />} Feedback
 						</button>
 						{feedbackMinimized && (
-							<span
-								className="pointer-events-none absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
-								style={{
-									backgroundColor: '#ef4444',
-									boxShadow: `0 0 0 1.5px ${theme.colors.bgSidebar}`,
-								}}
-								aria-label="Feedback draft in progress"
+							<CornerDot
+								color="#ef4444"
+								size="md"
+								ringColor={theme.colors.bgSidebar}
+								title="Feedback draft in progress"
 							/>
 						)}
 					</div>
@@ -123,12 +122,7 @@ export const SidebarActions = memo(function SidebarActions({
 					}
 				>
 					<Bell className="w-4 h-4" />
-					{hasUnreadAgents && (
-						<div
-							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
-							style={{ backgroundColor: theme.colors.accent }}
-						/>
-					)}
+					{hasUnreadAgents && <CornerDot color={theme.colors.accent} size="md" />}
 				</button>
 			)}
 		</div>

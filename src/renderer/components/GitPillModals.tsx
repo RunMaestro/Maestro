@@ -11,6 +11,8 @@ import { memo } from 'react';
 import { GitCommandRunnerModal } from './GitCommandRunnerModal';
 import { BranchSwitcherModal } from './BranchSwitcherModal';
 import { useModalStore, selectModalData, selectModalOpen } from '../stores/modalStore';
+import { useGitCommandRunNotifier } from '../hooks/git/useGitCommandRunNotifier';
+import { gitRunKey } from '../stores/gitCommandRunStore';
 import type { Theme } from '../types';
 
 export interface GitPillModalsProps {
@@ -24,13 +26,20 @@ export const GitPillModals = memo(function GitPillModals({ theme }: GitPillModal
 	const switcherData = useModalStore(selectModalData('branchSwitcher'));
 	const closeModal = useModalStore((s) => s.closeModal);
 
+	// Runs finish whether or not their console is open, so something outside the
+	// modal has to report them. Passing the visible run's key keeps it from
+	// toasting a result the user is already looking at.
+	useGitCommandRunNotifier(runnerOpen && runnerData ? gitRunKey(runnerData) : null);
+
 	return (
 		<>
 			{runnerOpen && runnerData && (
 				<GitCommandRunnerModal
 					theme={theme}
-					// Remount per operation so a second Pull starts a fresh console.
-					key={`${runnerData.operation}:${runnerData.cwd}`}
+					// Remount per operation+repo. Within one key the console attaches
+					// to whatever run gitCommandRunStore already has, so a reopened
+					// push shows its transcript rather than starting a second push.
+					key={gitRunKey(runnerData)}
 					data={runnerData}
 					onClose={() => closeModal('gitCommandRunner')}
 				/>

@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, powerMonitor, protocol } from 'electron';
+import { app, BrowserWindow, powerMonitor, protocol } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { installApplicationMenu } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -30,6 +31,7 @@ import {
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -81,6 +83,7 @@ import {
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
+	registerAiCommandHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCueHandlers,
@@ -161,10 +164,12 @@ import {
 	type QuitHandler,
 } from './app-lifecycle';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
+import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
+import { setWakaTimeManager } from './wakatime-instance';
 import { MaestroCliManager } from './maestro-cli-manager';
 import {
 	createInteractiveReplayController,
@@ -299,7 +304,10 @@ if (!installationId) {
 runSettingsMigrations(store);
 
 // Initialize WakaTime heartbeat manager
-const wakatimeManager = new WakaTimeManager(store);
+const wakatimeManager = new WakaTimeManager(store, app.getVersion());
+// Publish it so Cue (which spawns agents outside the ProcessManager) shares
+// this instance's debounce and CLI-install state instead of making its own.
+setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
 
 // Auto-install WakaTime CLI on startup if enabled
@@ -1111,6 +1119,18 @@ app
 					agentConfigValues,
 				});
 
+				// Cue spawns agents outside the ProcessManager, so a failed run is the
+				// only place an expired token can surface for a pipeline. Without this
+				// the whole board goes quietly red until someone types a message.
+				reportCueAuthFailure(
+					mainWindow,
+					result,
+					storedSession.toolType,
+					storedSession.sessionSshRemoteConfig?.enabled
+						? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
+						: undefined
+				);
+
 				const historyEntry = recordCueHistoryEntry(result, {
 					id: storedSession.id,
 					name: storedSession.name,
@@ -1217,90 +1237,10 @@ app
 			}
 		}
 
-		// Set custom application menu to prevent macOS from injecting native
-		// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
-		// menu items into the default Window menu. Without this, those keyboard
-		// events are intercepted at the NSMenu level and never reach the renderer.
-		//
-		// IMPORTANT: Do NOT include { role: 'close' } in the Window submenu.
-		// The 'close' role registers Cmd+W as a native accelerator, which intercepts
-		// the keystroke at the NSMenu level before it reaches the renderer. This
-		// breaks Cmd+W tab-close shortcuts in both AI and terminal modes. Window
-		// closing is handled by the app lifecycle (Cmd+Q quits, red traffic light
-		// hides) so the native Close menu item is unnecessary.
-		if (isMacOS()) {
-			const template: Electron.MenuItemConstructorOptions[] = [
-				{
-					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
-					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
-					// quit role (as "Quit and Keep Windows"), and that keystroke sits
-					// one modifier away from Opt+Q (Maestro Cue), causing accidental
-					// quits. Click events from accelerators carry modifier flags, so
-					// we can detect Option held and ignore the keystroke entirely.
-					role: 'appMenu',
-					submenu: [
-						{ role: 'about' },
-						{ type: 'separator' },
-						{ role: 'services' },
-						{ type: 'separator' },
-						{ role: 'hide' },
-						{ role: 'hideOthers' },
-						{ role: 'unhide' },
-						{ type: 'separator' },
-						{
-							label: 'Quit Maestro',
-							accelerator: 'Cmd+Q',
-							click: (_item, _window, event) => {
-								if (event?.altKey) {
-									logger.info(
-										'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
-										'Menu'
-									);
-									return;
-								}
-								app.quit();
-							},
-						},
-					],
-				},
-				{
-					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
-					// `undo` / `redo`. Those built-in roles register Cmd+Z /
-					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
-					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W - see the note
-					// above the appMenu block). Removing them frees Cmd+Z for the
-					// image annotator's stroke-undo handler.
-					//
-					// Side effect: Chromium in Electron relies on the Edit > Undo
-					// menu role to deliver Cmd+Z to focused textareas/inputs on
-					// macOS, so without it native text-field undo silently does
-					// nothing. The renderer-side `useTextEditorUndo` hook
-					// (src/renderer/hooks/keyboard/useTextEditorUndo.ts) restores
-					// that behavior by calling `document.execCommand('undo')` on
-					// text targets. The annotator's own Cmd+Z listener bails out
-					// for text targets, so the two paths don't conflict.
-					label: 'Edit',
-					submenu: [
-						{ role: 'cut' },
-						{ role: 'copy' },
-						{ role: 'paste' },
-						{ role: 'pasteAndMatchStyle' },
-						{ role: 'delete' },
-						{ type: 'separator' },
-						{ role: 'selectAll' },
-					],
-				},
-				{
-					label: 'Window',
-					submenu: [{ role: 'minimize' }, { role: 'zoom' }],
-				},
-			];
-			Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-		} else {
-			// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
-			Menu.setApplicationMenu(null);
-		}
+		// Install the application menu (File / Edit / View / Window on macOS,
+		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
+		// menu is display-only and how clicks are routed back to the renderer.
+		installApplicationMenu();
 
 		// Create main window
 		logger.info('Creating main window', 'Startup');
@@ -1356,12 +1296,30 @@ app
 			}
 		});
 
+		// The main process is the only place that can measure a sleep gap: the
+		// renderer is frozen through the whole suspend and its Page Visibility
+		// state never changes, so a renderer-side `Date.now()` span silently
+		// counts an overnight sleep as work time.
+		powerMonitor.on('suspend', () => {
+			logger.info('System suspending', 'PowerMonitor');
+			noteSystemSuspend();
+		});
+
 		// Listen for system resume (after sleep/suspend) and notify renderer
 		// This allows the renderer to refresh settings that may have been reset
+		// and to subtract the sleep gap from Auto Run / achievement durations.
 		powerMonitor.on('resume', () => {
-			logger.info('System resumed from sleep/suspend', 'PowerMonitor');
-			if (isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('app:systemResume');
+			const sleptMs = noteSystemResume();
+			logger.info(
+				`System resumed from sleep/suspend (slept ${Math.round(sleptMs / 1000)}s)`,
+				'PowerMonitor'
+			);
+			// Broadcast: every window runs its own Auto Run timers, so a secondary
+			// window must hear about the sleep too.
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (isWebContentsAvailable(win)) {
+					win.webContents.send('app:systemResume', { sleptMs });
+				}
 			}
 			// Apply any timezone change BEFORE reconciling: a laptop that flew
 			// across zones while asleep must measure the sleep gap and its missed
@@ -1749,6 +1707,14 @@ function setupIpcHandlers() {
 		settingsStore: store,
 	});
 
+	// Register AI command mode handlers (plain-English request -> command line)
+	registerAiCommandHandlers({
+		getProcessManager: () => processManager,
+		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
+		settingsStore: store,
+	});
+
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(wakatimeManager);
 
@@ -1758,6 +1724,7 @@ function setupIpcHandlers() {
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: () => processManager,
+		getMaestroCliManager: () => maestroCliManager,
 		debugPackageDeps: {
 			getAgentDetector: () => agentDetector,
 			getProcessManager: () => processManager,

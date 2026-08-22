@@ -1,7 +1,7 @@
 /**
  * GraphMiniMap - Overview minimap for the canvas-based Document Graph.
  *
- * Mirrors the minimap on the Cue Pipeline Editor: a small overview in the
+ * Mirrors the minimap on the Cue Pipeline Graph: a small overview in the
  * bottom-left corner showing every node scaled down, with a viewport rectangle
  * marking the currently-visible region. Click or drag anywhere on the minimap
  * to recenter the main view on that point.

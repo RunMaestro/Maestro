@@ -23,9 +23,12 @@ import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchSt
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useLoggedOutIdentities, useProviderAuthStore } from '../../stores/providerAuthStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import type { GroupChatBusySnapshot } from '../../utils/groupChatStatus';
 import { openUrl } from '../../utils/openUrl';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import { logger } from '../../utils/logger';
+import { createDebugPackage } from '../../services/debugPackage';
 import { getActiveTabInfo } from './utils/activeTabInfo';
 import {
 	filterAndSortQuickActions,
@@ -45,7 +48,11 @@ import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
-import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/groupChatCommands';
+import {
+	buildGroupChatCommands,
+	buildGroupChatJumpCommands,
+	buildGroupChatSwitcherCommands,
+} from './commands/groupChatCommands';
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
 import { buildNotificationCommands } from './commands/notificationCommands';
@@ -210,6 +217,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// recovery entry even if the Left Bar never mounted an indicator this run.
 	const blockedIdentities = useLoggedOutIdentities();
 	const refreshAllIdentities = useProviderAuthStore((s) => s.refreshAllIdentities);
+	// Which group chat rooms are running. Only the chat list and the active id
+	// arrive as props; the live moderator/participant states are store-only, so
+	// read them here rather than threading four more props through the chain.
+	const groupChatState = useGroupChatStore((s) => s.groupChatState);
+	const participantStates = useGroupChatStore((s) => s.participantStates);
+	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
+	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	// Consumed synchronously when the action list is built, so no memo needed.
+	const groupChatBusySnapshot: GroupChatBusySnapshot = {
+		activeGroupChatId,
+		groupChatState,
+		participantStates,
+		groupChatStates,
+		allGroupChatParticipantStates,
+	};
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -626,7 +648,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setDebugPackageModalOpen,
 			startTour,
 			getFeedbackDraft: () => useFeedbackDraftStore.getState(),
-			createDebugPackage: () => window.maestro.debug.createPackage(),
+			createDebugPackage: () => createDebugPackage(),
 			notifyToast,
 			openUrl,
 			toggleDevtools: () => window.maestro.devtools.toggle(),
@@ -724,12 +746,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		resetSelectionToFirst,
 	});
 
-	const agentActions = buildAgentSwitcherCommands({
-		sessions,
-		activeBatchSessionIds,
-		setActiveSessionId,
-		revealJumpTarget,
-	});
+	const agentActions = [
+		...buildAgentSwitcherCommands({
+			sessions,
+			activeBatchSessionIds,
+			setActiveSessionId,
+			revealJumpTarget,
+		}),
+		...buildGroupChatSwitcherCommands({
+			groupChats,
+			busySnapshot: groupChatBusySnapshot,
+			onOpenGroupChat,
+		}),
+	];
 
 	const actions = mode === 'agents' ? agentActions : mode === 'main' ? mainActions : groupActions;
 

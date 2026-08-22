@@ -50,6 +50,7 @@ import { createFsApi } from './fs';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
+import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
@@ -201,6 +202,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Tab Naming API (automatic tab name generation)
 	tabNaming: createTabNamingApi(),
+
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: createAiCommandApi(),
 
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
@@ -526,6 +530,12 @@ export type {
 	TabNamingApi,
 	TabNamingConfig,
 } from './tabNaming';
+export type {
+	// From aiCommand
+	AiCommandApi,
+	AiCommandSuggestRequest,
+	AiCommandSuggestResult,
+} from './aiCommand';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

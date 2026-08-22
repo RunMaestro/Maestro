@@ -7,6 +7,24 @@
  * sent to the agent. This is the "check something without leaving the chat"
  * escape hatch - `git pull`, `ls`, `npm test`.
  *
+ * ## The bang ladder
+ *
+ * `!` is a rung, not a toggle. Each press on an EMPTY composer climbs one
+ * rung, and Escape on an empty composer climbs back down. Focus never leaves
+ * the textarea at any point.
+ *
+ *   agent chat  --!->  'shell'  --!->  'ai'
+ *   agent chat  <-Esc-  'shell'  <-Esc-  'ai'
+ *
+ *  - `'shell'` is classic command mode: the draft IS the command line.
+ *  - `'ai'` is AI command mode: the draft is a plain-English description of
+ *    what you want to accomplish. Enter asks the tab's own model (at its
+ *    current model and effort) for one command line, which Maestro shows for
+ *    confirmation before running it exactly like a `'shell'` command.
+ *
+ * There is no rung above `'ai'`, so a `!` typed there is ordinary text - the
+ * request is prose, and prose contains bangs.
+ *
  * ## Command mode is state, not a text prefix
  *
  * The bang is a *gesture* that enters the mode, not a marker the text carries.
@@ -17,7 +35,8 @@
  *  - Do NOT infer the mode by testing the draft for a leading `!` - a command
  *    like `find . -name '*!*'` has bangs in it, and the composer's text no
  *    longer starts with one anyway.
- *  - `!` typed *inside* command mode is ordinary shell text, not a re-entry.
+ *  - `!` typed *inside* a mode is only a rung when the composer is empty;
+ *    anywhere else it is ordinary text.
  *  - The mode is exited explicitly (Escape / Backspace on an empty line), not
  *    by deleting a character.
  *
@@ -33,15 +52,68 @@ export const SHELL_COMMAND_PREFIX = '!';
 export const SHELL_COMMAND_ESCAPE = '\\!';
 
 /**
- * Decides whether a composer edit should switch into command mode, and returns
- * the text to keep if so (the bang is consumed). Returns null to leave the
- * composer alone.
+ * Which rung of the bang ladder the AI composer is on.
+ *
+ *  - `'off'`   - ordinary chat; the draft is a message for the agent.
+ *  - `'shell'` - command mode; the draft is a shell command line.
+ *  - `'ai'`    - AI command mode; the draft describes what the user wants and
+ *                the model turns it into a command line for confirmation.
+ */
+export type ComposerCommandMode = 'off' | 'shell' | 'ai';
+
+/**
+ * Read a persisted `AITab.commandMode` back into a mode.
+ *
+ * Tabs written before AI command mode existed stored a boolean, so `true` has
+ * to keep meaning `'shell'`. Anything unrecognised falls back to `'off'`: a
+ * corrupt value must land the user in ordinary chat, never in a shell.
+ */
+export function normalizeComposerCommandMode(raw: unknown): ComposerCommandMode {
+	if (raw === true) return 'shell';
+	if (raw === 'shell' || raw === 'ai') return raw;
+	return 'off';
+}
+
+/** True while the draft is a literal shell command line. */
+export function isShellCommandMode(mode: ComposerCommandMode): boolean {
+	return mode === 'shell';
+}
+
+/** True while the draft is a natural-language request for a command. */
+export function isAiCommandMode(mode: ComposerCommandMode): boolean {
+	return mode === 'ai';
+}
+
+/**
+ * The rung a `!` gesture climbs to, or null when there is none above `mode`.
+ *
+ * Returning null is what keeps a bang typed in AI command mode as plain text:
+ * the request is prose, so the character has to survive.
+ */
+export function nextComposerCommandMode(mode: ComposerCommandMode): ComposerCommandMode | null {
+	if (mode === 'off') return 'shell';
+	if (mode === 'shell') return 'ai';
+	return null;
+}
+
+/** The rung Escape climbs back down to. `'off'` is the floor. */
+export function previousComposerCommandMode(mode: ComposerCommandMode): ComposerCommandMode {
+	if (mode === 'ai') return 'shell';
+	return 'off';
+}
+
+/**
+ * Decides whether a composer edit should climb a rung of the bang ladder, and
+ * returns the text to keep if so (the bang is consumed). Returns null to leave
+ * the composer alone.
  *
  * Entry requires the composer to have been **empty** before the edit, so the
  * gesture is unambiguously "I am starting a command". That deliberately rules
  * out retrofitting a bang onto a message already in progress: moving the caret
  * to the start of `deploy the site` and typing `!` leaves it a message for the
- * agent rather than silently turning a sentence into a shell command.
+ * agent rather than silently turning a sentence into a shell command. It is
+ * also what makes the second rung safe - `echo !` never climbs, because the
+ * composer was not empty.
  *
  * Pasting `!git status` into an empty composer does enter command mode, with
  * `git status` kept - the paste carries the same intent as typing it.

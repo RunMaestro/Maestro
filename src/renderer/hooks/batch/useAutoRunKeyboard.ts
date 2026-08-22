@@ -99,7 +99,7 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 		}
 
 		// Command-E to toggle between edit and preview (without Shift)
-		// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
+		// Cmd+Shift+E is left to the global handler ("Edit Last Queued Message")
 		// Skip if edit mode is locked (during Auto Run) - matches button disabled state
 		if ((e.metaKey || e.ctrlKey) && key === 'e' && !e.shiftKey) {
 			e.preventDefault();

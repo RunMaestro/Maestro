@@ -3,6 +3,7 @@
  * All web server components should import types from this file to avoid duplication.
  */
 
+import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
@@ -332,6 +333,13 @@ export type OpenFileTabCallback = (
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
+ * Open one of the app's modals/dashboards (see `shared/uiSurfaces.ts` for the
+ * registry). `surface` is a `UiSurface.id`; `tab` is an optional tab id within
+ * it, already validated against that surface.
+ */
+export type OpenModalParams = { surface: string; tab?: string };
+export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
+/**
  * Callback type for atomically creating a new AI tab and dispatching a prompt into it.
  * Returns the new tab id alongside success so callers (e.g. `maestro-cli dispatch
  * --new-tab`) can address the same tab on later calls without owning a persistent
@@ -342,16 +350,88 @@ export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string
 ) => Promise<NewAITabWithPromptResult>;
-export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
+/**
+ * Opens a URL as a browser tab in the desktop app.
+ *
+ * `background: true` creates the tab without stealing the user's place: the
+ * active agent is left alone and the new tab does not become the visible one.
+ * Agents doing research should always use it - a foreground tab yanks the
+ * window out from under whatever the user is doing.
+ *
+ * Returns the created tab's id so the caller can close it again when done
+ * (see `CloseBrowserTabCallback`).
+ */
+export interface OpenBrowserTabOptions {
+	background?: boolean;
+}
+export type OpenBrowserTabResult = { success: boolean; tabId?: string };
+export type OpenBrowserTabCallback = (
+	sessionId: string,
+	url: string,
+	options?: OpenBrowserTabOptions
+) => Promise<OpenBrowserTabResult>;
+
+/**
+ * Closes a browser tab by id. The owning agent is resolved in the renderer, so
+ * callers only need the tab id returned by `OpenBrowserTabCallback`.
+ */
+export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
 	shell?: string;
 	name?: string | null;
+	/**
+	 * Command to run in the new terminal. Stored as the tab's startup command, so
+	 * it also re-runs if the tab is restarted or the app is reopened - which is
+	 * the behavior a long-running `npm run dev` wants.
+	 */
+	command?: string;
+}
+export interface OpenTerminalTabResult {
+	success: boolean;
+	tabId?: string;
 }
 export type OpenTerminalTabCallback = (
 	sessionId: string,
 	config: OpenTerminalTabConfig
-) => Promise<boolean>;
+) => Promise<OpenTerminalTabResult>;
+
+/**
+ * Writes raw data into an already-open desktop terminal tab. `tabRef` is a tab
+ * id or display name; omitted means the agent's active terminal tab.
+ */
+export interface WriteTerminalTabPayload {
+	tabRef?: string;
+	data: string;
+}
+export interface WriteTerminalTabResult {
+	success: boolean;
+	error?: string;
+	/** The tab that actually received the write, echoed back for reporting. */
+	tabId?: string;
+	tabName?: string;
+}
+export type WriteTerminalTabCallback = (
+	sessionId: string,
+	payload: WriteTerminalTabPayload
+) => Promise<WriteTerminalTabResult>;
+
+/**
+ * A desktop terminal tab. Terminal tabs live only in renderer state, so this is
+ * assembled there and passed back through the remote bridge.
+ */
+export interface TerminalTabInfo {
+	tabId: string;
+	agentId: string;
+	agentName: string;
+	name: string;
+	cwd: string;
+	pid: number;
+	state: string;
+	active: boolean;
+	startupCommand: string | null;
+}
+export type ListTerminalTabsCallback = (sessionId?: string) => Promise<TerminalTabInfo[]>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
 
 /**
@@ -497,22 +577,11 @@ export type GetCustomCommandsCallback = () => CustomAICommand[];
  * back to `dispatch --session <id>` and `session show <id>`. `sessionId` is
  * an alias kept for symmetry with `dispatch`'s response shape - the duplicate
  * field lets polling consumers use whichever name they prefer.
+ *
+ * The shape itself lives in `shared/desktopTabs.ts` so the CLI reads the same
+ * declaration this end writes; this alias is the main-process name for it.
  */
-export interface DesktopSessionEntry {
-	tabId: string;
-	sessionId: string;
-	/** Maestro agent (LeftBar entity) ID this tab belongs to. */
-	agentId: string;
-	agentName: string;
-	toolType: string;
-	/** User-defined tab name; null when the user hasn't named the tab. */
-	name: string | null;
-	/** Provider session id (e.g. Claude `session_id`) bound to this tab. */
-	agentSessionId: string | null;
-	state: 'idle' | 'busy';
-	createdAt: number;
-	starred: boolean;
-}
+export type DesktopSessionEntry = DesktopTabEntry;
 
 /**
  * One message in a session-history response.

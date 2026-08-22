@@ -19,6 +19,7 @@ import {
 	Globe,
 	StopCircle,
 	Layers,
+	PauseCircle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -590,6 +591,47 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							work is left incomplete.
 						</p>
 						<p>Completed tasks remain checked. Resume anytime by clicking Run again.</p>
+					</div>
+				</section>
+
+				{/* HITL Gate */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<PauseCircle className="w-5 h-5" style={{ color: theme.colors.warning }} />
+						<h3 className="font-bold">Human Steps and HITL Gates</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							Every <code>- [ ]</code> task is handed to an AI agent, so a checkbox that needs a{' '}
+							<strong>person</strong> can never be completed - the run stalls, or the agent ticks a
+							box for work it never did. Auto Run flags tasks that look human-only with a warning in
+							the panel.
+						</p>
+						<p>
+							When the run genuinely must wait on a person, use a HITL (human-in-the-loop) gate
+							marker on its own line, above the tasks that depend on the human:
+						</p>
+						<div
+							className="font-mono text-xs p-2 rounded border"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+							}}
+						>
+							{'<!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env" artifact=".env" -->'}
+						</div>
+						<p>
+							The engine pauses at the marker, shows the <code>reason</code> (and optional{' '}
+							<code>artifact</code> to review) in the panel and a toast, and waits. Check the task
+							above the marker, or click Resume, to continue. This is a deliberate, visible pause
+							rather than a silent stall.
+						</p>
+						<p>
+							For work Auto Run should never attempt at all, use plain <code>-</code> bullets under
+							a trailing section such as{' '}
+							<strong>&quot;Manual Follow-Up (not executed by Auto Run)&quot;</strong>. The engine
+							only reads checkboxes, so those lines can never block a run.
+						</p>
 					</div>
 				</section>
 

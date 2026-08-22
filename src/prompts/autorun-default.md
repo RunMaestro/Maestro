@@ -75,6 +75,7 @@ docs/
    - Fully understand the task and inspect the relevant code.
    - Identify all subtasks within the current checkbox item.
    - There will be future runs to take care of other checkbox items.
+   - **If the task requires a human** - manual testing, visual judgment, approval or sign-off, credentials only a person can obtain, or physical/out-of-band action - you cannot complete it. Do NOT check it off, and do NOT pretend you did. Leave it unchecked and halt the run (step 7) with a reason naming what the human has to do, e.g. `<!-- maestro:halt: task 3 needs a human to add SENDGRID_API_KEY to .env -->`. This is one of the few cases where halting is correct on a single task: every later run would hit the same wall, so the playbook would otherwise sit forever.
 
 4. Task Implementation
    - **Before creating new code**, search for existing implementations, utilities, helpers, or patterns in the codebase that can be reused or extended. Avoid duplicating functionality that already exists.
@@ -101,7 +102,7 @@ docs/
 
    To halt, write the marker `<!-- maestro:halt: brief reason here -->` anywhere in the current document (typically just below the task you couldn't complete). The bare form `<!-- maestro:halt -->` works without a reason, but always include one. Leave the unfinishable task UNCHECKED so a human can see exactly where execution stopped. The reason text is shown in the History panel and emitted to the JSONL stream as a `halt` event.
 
-   Halt only when continuing would waste work or cause harm. Do NOT halt for ordinary task failures - the playbook is designed to run independent tasks, and one failed task does not invalidate the rest. Reserve the halt marker for true playbook-wide blockers.
+   Halt only when continuing would waste work or cause harm. Do NOT halt for ordinary task failures - the playbook is designed to run independent tasks, and one failed task does not invalidate the rest. Reserve the halt marker for true playbook-wide blockers and for tasks that need a human (step 3), which no future run can clear either.
 
 8. Exit Immediately
    After completing (or skipping) your task, EXIT. Do not proceed to additional tasks - another agent instance will handle them. If there are no remaining open tasks, exit immediately and state that there is nothing left to do.

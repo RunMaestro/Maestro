@@ -1,4 +1,7 @@
-import type { Shortcut } from '../types';
+// Import from the shared type module rather than `../types`: the CLI reads
+// these defaults (to print a surface's hotkey in `maestro-cli open`), and
+// `../types` drags renderer-only, DOM-dependent modules into that build.
+import type { Shortcut } from '../../shared/shortcut-types';
 
 export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	toggleSidebar: {
@@ -47,7 +50,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	toggleAutoRunExpanded: {
 		id: 'toggleAutoRunExpanded',
 		label: 'Auto Run Expanded Preview',
-		keys: ['Meta', 'Shift', 'e'],
+		keys: ['Meta', 'Shift', '3'],
 	},
 	openBatchRunner: {
 		id: 'openBatchRunner',
@@ -74,6 +77,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'executionQueue',
 		label: 'View Execution Queue',
 		keys: ['Meta', 'Shift', 'x'],
+	},
+	editLastQueuedMessage: {
+		id: 'editLastQueuedMessage',
+		label: 'Edit Last Queued Message',
+		keys: ['Meta', 'Shift', 'e'],
 	},
 	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
@@ -163,6 +171,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'filterHistory',
 		label: 'Filter History (in History tab)',
 		keys: ['Meta', 'f'],
+	},
+	historyJumpToSession: {
+		id: 'historyJumpToSession',
+		label: 'Jump to Entry Session (in History tab)',
+		keys: ['Meta', 'Enter'],
 	},
 	searchLogs: { id: 'searchLogs', label: 'Search System Logs', keys: ['Meta', 'f'] },
 	searchOutput: {

@@ -565,7 +565,7 @@ export function useModalHandlers(
 	const handleConfigureCue = useCallback(async (_session: Session) => {
 		// Pick the initial tab based on whether *any* Cue config already exists:
 		// returning users land on the Dashboard, first-time users land in the
-		// Pipeline Editor where they can build their first pipeline. Falls back
+		// Pipeline Graph where they can build their first pipeline. Falls back
 		// to 'pipeline' if the status query fails - first-run is the safer
 		// landing for a user who has nothing configured yet.
 		let initialTab: 'dashboard' | 'pipeline' = 'pipeline';

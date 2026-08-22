@@ -30,6 +30,7 @@ import { useModalStore } from '../../../stores/modalStore';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { markSessionAuthFailure } from '../../../stores/providerAuthStore';
+import { openAuthRecoveryForSession } from '../../../services/authRecovery';
 import {
 	parseSessionId,
 	parseGroupChatSessionId,
@@ -379,7 +380,23 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			}
 
 			if (!isSessionNotFound && !willAutoRetry) {
-				openModal('agentError', { sessionId: actualSessionId });
+				// An expired token is not a per-turn error: it fails every agent on
+				// that credential at once. So raise the recovery modal on the
+				// CREDENTIAL rather than an error frame on this one agent - the login
+				// it asks for repairs all of them. The credential was already marked
+				// above, which is what raises the other agents' badges; this is the
+				// dialog for the user sitting here watching this one fail.
+				//
+				// Async because identity resolution needs the hydrated snapshot map.
+				// A credential we cannot identify falls back to the ordinary error
+				// frame rather than leaving the failure unexplained.
+				if (agentError.type === 'auth_expired') {
+					void openAuthRecoveryForSession(actualSessionId).then((opened) => {
+						if (!opened) openModal('agentError', { sessionId: actualSessionId });
+					});
+				} else {
+					openModal('agentError', { sessionId: actualSessionId });
+				}
 			}
 		});
 
@@ -392,4 +409,20 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		deps.getBatchStateRef,
 		deps.pauseBatchOnErrorRef,
 	]);
+
+	// Auth expiry raised outside the streaming path (Cue pipeline runs). Those
+	// agents are spawned by Cue itself, so they never reach `agent:error` - and
+	// an unattended pipeline is exactly the case where a silent auth failure
+	// costs the most. Marked against the same CREDENTIAL as an interactive
+	// failure, so a board where both chat agents and pipelines share one expired
+	// login still produces exactly one badge and one recovery dialog.
+	useEffect(() => {
+		return window.maestro.process.onAuthExpired((payload) => {
+			// No prompt is parked here: a pipeline run owns no AI tab, so there is
+			// no turn to offer back once the login lands.
+			void markSessionAuthFailure(payload.sessionId, payload.message).then(() =>
+				openAuthRecoveryForSession(payload.sessionId)
+			);
+		});
+	}, []);
 }

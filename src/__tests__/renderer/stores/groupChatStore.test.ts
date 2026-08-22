@@ -69,6 +69,7 @@ function resetStore() {
 		moderatorUsage: null,
 		groupChatStates: new Map(),
 		allGroupChatParticipantStates: new Map(),
+		unreadGroupChatIds: new Set(),
 		groupChatExecutionQueue: [],
 		groupChatReadOnlyMode: false,
 		groupChatRightTab: 'participants',
@@ -102,12 +103,62 @@ describe('groupChatStore', () => {
 			expect(state.moderatorUsage).toBeNull();
 			expect(state.groupChatStates).toEqual(new Map());
 			expect(state.allGroupChatParticipantStates).toEqual(new Map());
+			expect(state.unreadGroupChatIds).toEqual(new Set());
 			expect(state.groupChatExecutionQueue).toEqual([]);
 			expect(state.groupChatReadOnlyMode).toBe(false);
 			expect(state.groupChatRightTab).toBe('participants');
 			expect(state.groupChatParticipantColors).toEqual({});
 			expect(state.groupChatStagedImages).toEqual([]);
 			expect(state.groupChatError).toBeNull();
+		});
+	});
+
+	// ==========================================================================
+	// Unread tracking
+	// ==========================================================================
+
+	describe('unread tracking', () => {
+		it('marks and clears a single chat', () => {
+			const { markGroupChatUnread, clearGroupChatUnread } = useGroupChatStore.getState();
+			markGroupChatUnread('gc-1');
+			markGroupChatUnread('gc-2');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set(['gc-1', 'gc-2']));
+
+			clearGroupChatUnread('gc-1');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set(['gc-2']));
+		});
+
+		it('clears every chat when called with no id', () => {
+			const { markGroupChatUnread, clearGroupChatUnread } = useGroupChatStore.getState();
+			markGroupChatUnread('gc-1');
+			markGroupChatUnread('gc-2');
+			clearGroupChatUnread();
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set());
+		});
+
+		// These fire on every inbound message, so a no-op must not hand
+		// subscribers a fresh Set and re-render the sidebar.
+		it('keeps the same Set identity when nothing changes', () => {
+			const { markGroupChatUnread, clearGroupChatUnread } = useGroupChatStore.getState();
+			markGroupChatUnread('gc-1');
+			const marked = useGroupChatStore.getState().unreadGroupChatIds;
+
+			markGroupChatUnread('gc-1');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toBe(marked);
+
+			clearGroupChatUnread('gc-unknown');
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toBe(marked);
+
+			clearGroupChatUnread();
+			const cleared = useGroupChatStore.getState().unreadGroupChatIds;
+			clearGroupChatUnread();
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toBe(cleared);
+		});
+
+		it('survives resetGroupChatState - closing a chat is not reading the others', () => {
+			useGroupChatStore.getState().markGroupChatUnread('gc-2');
+			useGroupChatStore.getState().resetGroupChatState();
+			expect(useGroupChatStore.getState().unreadGroupChatIds).toEqual(new Set(['gc-2']));
 		});
 	});
 
@@ -543,6 +594,7 @@ describe('groupChatStore', () => {
 			expect(state.moderatorUsage).toBeNull();
 			expect(state.groupChatStates).toEqual(new Map());
 			expect(state.allGroupChatParticipantStates).toEqual(new Map());
+			expect(state.unreadGroupChatIds).toEqual(new Set());
 			expect(state.groupChatExecutionQueue).toEqual([]);
 			expect(state.groupChatReadOnlyMode).toBe(false);
 			expect(state.groupChatRightTab).toBe('participants');

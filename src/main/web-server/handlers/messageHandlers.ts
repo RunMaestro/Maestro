@@ -17,6 +17,9 @@
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
  * - open_file_tab: Open a file in a preview tab
+ * - open_modal: Open a Maestro modal/dashboard, optionally on a specific tab
+ * - open_browser_tab: Open a URL in a browser tab (optionally in the background)
+ * - close_browser_tab: Close a browser tab by id
  * - refresh_file_tree: Refresh the file tree for a session
  * - get_file_tree: Read directory tree from filesystem for web file explorer
  * - refresh_auto_run_docs: Refresh auto-run documents for a session
@@ -47,6 +50,12 @@ import {
 import { getStatsDB } from '../../stats/singleton';
 import { runReadonlyStatsQuery } from '../../stats/readonly-query';
 import type { StatsTimeRange } from '../../../shared/stats-types';
+import {
+	UI_SURFACES,
+	resolveUiSurface,
+	resolveUiSurfaceTab,
+	surfaceTabIds,
+} from '../../../shared/uiSurfaces';
 import type {
 	AutoRunDocument,
 	AutoRunState,
@@ -78,6 +87,7 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
+	TerminalTabInfo,
 } from '../types';
 
 /** Canonical Toast / Center Flash color set (shared design language). */
@@ -198,12 +208,24 @@ export interface MessageHandlerCallbacks {
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (sessionId: string, filePath: string, switchToAgent: boolean) => Promise<boolean>;
+	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
-	openBrowserTab: (sessionId: string, url: string) => Promise<boolean>;
+	openBrowserTab: (
+		sessionId: string,
+		url: string,
+		options?: { background?: boolean }
+	) => Promise<{ success: boolean; tabId?: string }>;
+	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null }
-	) => Promise<boolean>;
+		config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+	) => Promise<{ success: boolean; tabId?: string }>;
+	writeTerminalTab: (
+		sessionId: string,
+		payload: { tabRef?: string; data: string }
+	) => Promise<{ success: boolean; error?: string; tabId?: string; tabName?: string }>;
+	listTerminalTabs: (sessionId?: string) => Promise<TerminalTabInfo[]>;
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string
@@ -503,8 +525,24 @@ export class WebSocketMessageHandler {
 				this.handleOpenFileTab(client, message);
 				break;
 
+			case 'open_modal':
+				this.handleOpenModal(client, message);
+				break;
+
 			case 'open_browser_tab':
 				this.handleOpenBrowserTab(client, message);
+				break;
+
+			case 'close_browser_tab':
+				this.handleCloseBrowserTab(client, message);
+				break;
+
+			case 'write_terminal_tab':
+				this.handleWriteTerminalTab(client, message);
+				break;
+
+			case 'list_terminal_tabs':
+				this.handleListTerminalTabs(client, message);
 				break;
 
 			case 'open_terminal_tab':
@@ -1850,6 +1888,69 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Handle open_modal message - bring up one of the app's modals/dashboards,
+	 * optionally on a specific tab. Both the surface name and the tab are
+	 * validated against `shared/uiSurfaces.ts` here so a typo comes back as a
+	 * clear CLI error instead of a silently ignored renderer message.
+	 */
+	private handleOpenModal(client: WebClient, message: WebClientMessage): void {
+		const surfaceName = typeof message.surface === 'string' ? message.surface : '';
+		const tabName =
+			typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
+
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, {
+				type: 'open_modal_result',
+				success,
+				error,
+				requestId: message.requestId,
+			});
+		};
+
+		const surface = resolveUiSurface(surfaceName);
+		if (!surface) {
+			sendResult(
+				false,
+				`Unknown surface "${surfaceName}". Valid surfaces: ${UI_SURFACES.map((s) => s.id).join(', ')}`
+			);
+			return;
+		}
+
+		let tabId: string | undefined;
+		if (tabName !== undefined) {
+			const tab = resolveUiSurfaceTab(surface, tabName);
+			if (!tab) {
+				const valid = surfaceTabIds(surface);
+				sendResult(
+					false,
+					valid.length > 0
+						? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
+						: `${surface.label} has no tabs.`
+				);
+				return;
+			}
+			tabId = tab.id;
+		}
+
+		logger.info(
+			`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}`,
+			LOG_CONTEXT
+		);
+
+		if (!this.callbacks.openModal) {
+			sendResult(false, 'Opening modals is not configured');
+			return;
+		}
+
+		this.callbacks
+			.openModal({ surface: surface.id, tab: tabId })
+			.then((success) =>
+				sendResult(success, success ? undefined : 'Maestro window is not available')
+			)
+			.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
+	}
+
+	/**
 	 * Handle open_browser_tab message - open a URL in a browser tab
 	 */
 	private handleOpenBrowserTab(client: WebClient, message: WebClientMessage): void {
@@ -1912,19 +2013,70 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
+		// Background tabs are created without moving the user: the active agent
+		// is left alone and the new tab does not become the visible one.
+		const background = message.background === true;
+
 		this.callbacks
-			.openBrowserTab(sessionId, parsed.toString())
-			.then((success) => {
+			.openBrowserTab(sessionId, parsed.toString(), { background })
+			.then((result) => {
 				this.send(client, {
 					type: 'open_browser_tab_result',
-					success,
+					success: result.success,
 					sessionId,
 					url: parsed.toString(),
+					tabId: result.tabId,
+					background,
 					requestId: message.requestId,
 				});
 			})
 			.catch((error) => {
 				sendErrorResult(`Failed to open browser tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle close_browser_tab message - close a browser tab by id. The owning
+	 * agent is resolved in the renderer, so callers only need the tab id handed
+	 * back by open_browser_tab.
+	 */
+	private handleCloseBrowserTab(client: WebClient, message: WebClientMessage): void {
+		const tabId = typeof message.tabId === 'string' ? message.tabId : '';
+		logger.info(`[Web] Received close_browser_tab message: tab=${tabId}`, LOG_CONTEXT);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'close_browser_tab_result',
+				success: false,
+				error,
+				tabId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!tabId) {
+			sendErrorResult('Missing tabId');
+			return;
+		}
+
+		if (!this.callbacks.closeBrowserTab) {
+			sendErrorResult('Browser tab closing not configured');
+			return;
+		}
+
+		this.callbacks
+			.closeBrowserTab(tabId)
+			.then((success) => {
+				this.send(client, {
+					type: 'close_browser_tab_result',
+					success,
+					error: success ? undefined : `Browser tab not found: ${tabId}`,
+					tabId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to close browser tab: ${error.message}`);
 			});
 	}
 
@@ -1936,14 +2088,17 @@ export class WebSocketMessageHandler {
 		const rawCwd = message.cwd;
 		const rawShell = message.shell;
 		const rawName = message.name;
-		// cwd/shell/name can leak local usernames or project names - log
-		// presence flags only.
+		const rawCommand = message.command;
+		// cwd/shell/name/command can leak local usernames, project names, or
+		// secrets in flags - log presence flags only.
 		logger.info(
 			`[Web] Received open_terminal_tab message: session=${sessionId}, cwdProvided=${
 				typeof rawCwd === 'string' && rawCwd.length > 0
 			}, shellProvided=${
 				typeof rawShell === 'string' && rawShell.length > 0
-			}, nameProvided=${rawName !== undefined}`,
+			}, nameProvided=${rawName !== undefined}, commandProvided=${
+				typeof rawCommand === 'string' && rawCommand.length > 0
+			}`,
 			LOG_CONTEXT
 		);
 
@@ -1976,9 +2131,17 @@ export class WebSocketMessageHandler {
 			sendErrorResult('Invalid name: must be a string or null');
 			return;
 		}
+		if (rawCommand !== undefined && typeof rawCommand !== 'string') {
+			sendErrorResult('Invalid command: must be a string');
+			return;
+		}
 		const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
 		const shell = typeof rawShell === 'string' ? rawShell : undefined;
 		const name = typeof rawName === 'string' ? rawName : rawName === null ? null : undefined;
+		// An all-whitespace command would spawn a terminal that runs a bare
+		// newline - treat it as "no command" rather than storing it.
+		const command =
+			typeof rawCommand === 'string' && rawCommand.trim() !== '' ? rawCommand.trim() : undefined;
 
 		const session = this.callbacks.getSessions?.().find((s) => s.id === sessionId);
 		if (!session) {
@@ -2018,11 +2181,12 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name })
-			.then((success) => {
+			.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command })
+			.then((result) => {
 				this.send(client, {
 					type: 'open_terminal_tab_result',
-					success,
+					success: result.success,
+					tabId: result.tabId,
 					sessionId,
 					requestId: message.requestId,
 				});
@@ -2030,6 +2194,134 @@ export class WebSocketMessageHandler {
 			.catch((error) => {
 				sendErrorResult(`Failed to open terminal tab: ${error.message}`);
 			});
+	}
+
+	/**
+	 * Handle write_terminal_tab message - type into an already-open terminal tab.
+	 *
+	 * Unlike `terminal_write`, which drives the web client's own PTY, this
+	 * targets one of the desktop's per-tab terminals. The tab is resolved in the
+	 * renderer, since terminal tabs live only in renderer state.
+	 */
+	private async handleWriteTerminalTab(
+		client: WebClient,
+		message: WebClientMessage
+	): Promise<void> {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const rawTabRef = message.tabRef;
+		const rawData = message.data;
+		// Command text can carry secrets (tokens in flags, env assignments) -
+		// log length only, never the payload.
+		logger.info(
+			`[Web] Received write_terminal_tab message: session=${sessionId}, tabRefProvided=${
+				typeof rawTabRef === 'string' && rawTabRef.length > 0
+			}, dataLength=${typeof rawData === 'string' ? rawData.length : 0}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'write_terminal_tab_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId) {
+			sendErrorResult('Missing sessionId');
+			return;
+		}
+		if (typeof rawData !== 'string' || rawData === '') {
+			sendErrorResult('Invalid data: must be a non-empty string');
+			return;
+		}
+		if (rawTabRef !== undefined && typeof rawTabRef !== 'string') {
+			sendErrorResult('Invalid tabRef: must be a string');
+			return;
+		}
+
+		const session = this.callbacks.getSessions?.().find((s) => s.id === sessionId);
+		if (!session) {
+			sendErrorResult('Session not found');
+			return;
+		}
+
+		if (!this.callbacks.writeTerminalTab) {
+			sendErrorResult('Terminal writes not configured');
+			return;
+		}
+
+		try {
+			const result = await this.callbacks.writeTerminalTab(sessionId, {
+				tabRef: typeof rawTabRef === 'string' ? rawTabRef : undefined,
+				data: rawData,
+			});
+			this.send(client, {
+				type: 'write_terminal_tab_result',
+				success: result.success,
+				error: result.error,
+				tabId: result.tabId,
+				tabName: result.tabName,
+				sessionId,
+				requestId: message.requestId,
+			});
+		} catch (error) {
+			sendErrorResult(
+				`Failed to write to terminal tab: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	}
+
+	/**
+	 * Handle list_terminal_tabs message - enumerate open desktop terminal tabs,
+	 * optionally scoped to one agent.
+	 */
+	private async handleListTerminalTabs(
+		client: WebClient,
+		message: WebClientMessage
+	): Promise<void> {
+		const rawSessionId = message.sessionId;
+		if (rawSessionId !== undefined && typeof rawSessionId !== 'string') {
+			this.send(client, {
+				type: 'list_terminal_tabs_result',
+				success: false,
+				error: 'Invalid sessionId: must be a string',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		const sessionId = typeof rawSessionId === 'string' && rawSessionId ? rawSessionId : undefined;
+
+		if (!this.callbacks.listTerminalTabs) {
+			this.send(client, {
+				type: 'list_terminal_tabs_result',
+				success: false,
+				error: 'Terminal tab listing not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		try {
+			const tabs = await this.callbacks.listTerminalTabs(sessionId);
+			this.send(client, {
+				type: 'list_terminal_tabs_result',
+				success: true,
+				tabs,
+				requestId: message.requestId,
+			});
+		} catch (error) {
+			this.send(client, {
+				type: 'list_terminal_tabs_result',
+				success: false,
+				error: `Failed to list terminal tabs: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+				requestId: message.requestId,
+			});
+		}
 	}
 
 	/**
@@ -3124,11 +3416,16 @@ export class WebSocketMessageHandler {
 	/**
 	 * Handle update_session_config message - update an agent's editable
 	 * per-session config (nudge / new-session message, custom path / args / env
-	 * vars, model, effort, context window, Claude token-source tri-state). Only
-	 * the keys present in `configPatch` are applied; a key with value `null`
-	 * clears that field. These are spawn-time settings (they take effect on the
-	 * next launch), so unlike cwd/SSH the renderer applies them even while the
+	 * vars, model, effort, context window, Claude token-source tri-state) or its
+	 * Left Bar bookmark. Only the keys present in `configPatch` are applied; a key
+	 * with value `null` clears that field. The spawn-time settings take effect on
+	 * the next launch, so unlike cwd/SSH the renderer applies them even while the
 	 * agent process is alive.
+	 *
+	 * A `configPatch.tabId` retargets the patch at one AI tab inside the agent
+	 * (starred / hasUnread / saveToHistory / readOnlyMode / showThinking /
+	 * customModel / customEffort / enterToSend - the composer chips). The
+	 * renderer owns both allowlists and type-checks the tab values.
 	 */
 	private handleUpdateSessionConfig(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;

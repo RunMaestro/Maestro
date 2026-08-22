@@ -52,7 +52,7 @@ Use the format `PREFIX-XX.md` where `XX` is a zero-padded two-digit phase number
 Each checkbox task runs in a **fresh agent context** with no memory of previous tasks. Tasks must be:
 
 - **Self-contained**: Include all context needed (file paths, what to change, why)
-- **Machine-executable**: An AI agent must be able to complete it without human help
+- **Machine-executable**: An AI agent must be able to complete it without human help. If it needs a person, it is NOT a checkbox - see "Human Steps Must NEVER Be Checkboxes" below
 - **Verifiable**: Clear success criteria (tests pass, lint clean, feature works)
 - **Appropriately scoped**: 1-3 files, < 500 lines changed
 
@@ -71,7 +71,67 @@ Sub-bullets are allowed under a single `- [ ]` checkbox to describe compound wor
 
 **Split into separate tasks** when: unrelated concerns, different risk levels, independent verification needed, or the work mixes code/tests/test-runs (always separate these three).
 
-**Human-only steps** (manual testing, visual verification, approval) should NOT use checkbox syntax. Use plain bullet points at the end of the document instead.
+### Human Steps Must NEVER Be Checkboxes (MANDATORY)
+
+The Auto Run engine dispatches every `- [ ]` task to an AI agent. If the task needs a person, the agent cannot finish it, and one of two bad things happens: the run **stalls forever** waiting on someone who was never asked, or the agent **ticks a box for work it never did**. Both are worse than not writing the task at all.
+
+Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and network access finish this alone?_ If the answer is no, it is not a checkbox.
+
+**Signals that a step is human-only.** If a task contains any of these, it must not be a checkbox:
+
+- Manual action: "manually test", "by hand", "walk through the UI"
+- Visual judgment: "visually verify", "confirm it looks right", "eyeball the layout", "check the animation feels smooth"
+- Waiting on a person: "ask the user", "wait for the conductor", "confirm with the team"
+- Approval gates: "get sign-off", "human review", "await approval before continuing"
+- Credentials or accounts only a person can obtain: "sign up for an API key", "create a Stripe account", "request production access"
+- Physical or out-of-band work: "plug in the device", "call the vendor", "deploy from the admin console"
+
+**Two correct encodings** - pick by whether the run must stop:
+
+1. **The run must pause here** - emit a HITL gate marker on its own line, immediately above the tasks that depend on the human:
+
+   ```markdown
+   - [ ] Build the checkout flow and deploy it to the staging environment.
+
+   <!-- MAESTRO:HITL reason="Click through checkout on staging and confirm the payment step renders" artifact="https://staging.example.com/checkout" -->
+
+   - [ ] Apply the fixes from the staging review, then run the checkout test suite.
+   ```
+
+   The engine pauses the run at that marker, surfaces the `reason` (and optional `artifact` to look at) in the Auto Run panel and a toast, and waits. The user resumes by checking the box above the marker or clicking Resume. This is a **deliberate, visible pause** - the opposite of a stall.
+
+2. **The work just isn't the engine's job** - put it as plain `-` bullets under a trailing section. The engine never reads these, so they cannot stall anything:
+
+   ```markdown
+   ## Manual Follow-Up (not executed by Auto Run)
+
+   - Verify the dark mode toggle looks correct on a physical iPhone.
+   - Get design sign-off on the new empty state.
+   ```
+
+**Wrong:**
+
+```markdown
+- [ ] Manually test the login flow in the browser and confirm it looks right
+- [ ] Get approval from the team before proceeding
+- [ ] Sign up for a SendGrid account and add the API key to .env
+```
+
+**Right:**
+
+```markdown
+- [ ] Add Playwright coverage for the login flow in `e2e/login.spec.ts` (happy path, wrong password, locked account) and run `npm run e2e` until green.
+
+<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" -->
+
+- [ ] Wire the SendGrid transport in `src/mail/transport.ts` using `process.env.SENDGRID_API_KEY` and add a unit test that mocks the client.
+
+## Manual Follow-Up (not executed by Auto Run)
+
+- Get design sign-off on the new login screen.
+```
+
+A stale HITL marker left above an unchecked task will pause every re-run until the box above it is checked, so use gates only where a person genuinely must act.
 
 ### Token Efficiency
 

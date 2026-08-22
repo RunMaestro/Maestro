@@ -48,6 +48,15 @@ export interface HoverTooltipProps {
 	triggerClassName?: string;
 	/** Inline style for the trigger wrapper span (e.g. dynamic text color). */
 	triggerStyle?: CSSProperties;
+	/**
+	 * Cap the tooltip's width in pixels and let the label wrap onto several
+	 * lines. Without this a tooltip is a single `nowrap` line, which is right for
+	 * a short button label but turns a sentence into a ribbon the width of the
+	 * window. The existing viewport clamping keeps the wrapped box on-screen, so
+	 * this only decides where the text breaks. The cap is also bounded by the
+	 * viewport, so it stays honest on a narrow window.
+	 */
+	maxWidth?: number;
 }
 
 const VIEWPORT_MARGIN = 8;
@@ -63,6 +72,7 @@ export function HoverTooltip({
 	onlyWhenTruncated = false,
 	triggerClassName = 'inline-flex',
 	triggerStyle,
+	maxWidth,
 }: HoverTooltipProps) {
 	const triggerRef = useRef<HTMLSpanElement>(null);
 	const tooltipRef = useRef<HTMLDivElement>(null);
@@ -121,7 +131,7 @@ export function HoverTooltip({
 		if (left < VIEWPORT_MARGIN) left = VIEWPORT_MARGIN;
 
 		setPos({ left, top });
-	}, [open, label, shortcut, placement]);
+	}, [open, label, shortcut, placement, maxWidth]);
 
 	if (disabled || !label) {
 		return <>{children}</>;
@@ -146,10 +156,17 @@ export function HoverTooltip({
 					<div
 						ref={tooltipRef}
 						role="tooltip"
-						className="fixed px-2 py-1 rounded text-[11px] whitespace-nowrap pointer-events-none shadow-lg flex items-center gap-2"
+						className={`fixed px-2 py-1 rounded text-[11px] pointer-events-none shadow-lg flex gap-2 ${
+							maxWidth ? 'items-start leading-snug' : 'items-center whitespace-nowrap'
+						}`}
 						style={{
 							left: pos?.left ?? -9999,
 							top: pos?.top ?? -9999,
+							// Never wider than the window minus both margins, or the clamp
+							// above would just push the overflow to the other edge.
+							maxWidth: maxWidth
+								? Math.min(maxWidth, window.innerWidth - VIEWPORT_MARGIN * 2)
+								: undefined,
 							zIndex: 10000,
 							backgroundColor: theme.colors.bgActivity,
 							color: theme.colors.textMain,

@@ -13,11 +13,15 @@ import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { asThinkingMode } from '../../../shared/types';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
 	createTerminalTab as createTerminalTabHelper,
 	addTerminalTab as addTerminalTabHelper,
+	resolveTerminalTab,
+	getTerminalTabDisplayName,
+	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
@@ -148,14 +152,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Acks success to responseChannel so the CLI only reports success after
 	// the tab is actually created.
 	useEventListener('maestro:openBrowserTab', (e: Event) => {
-		const { sessionId, url, responseChannel } = (e as CustomEvent).detail as {
+		const { sessionId, url, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
 			url: string;
 			responseChannel?: string;
+			background?: boolean;
 		};
-		const ack = (success: boolean) => {
+		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
-				window.maestro.process.sendRemoteOpenBrowserTabResponse(responseChannel, success);
+				window.maestro.process.sendRemoteOpenBrowserTabResponse(responseChannel, success, tabId);
 			}
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -164,7 +169,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			ack(false);
 			return;
 		}
-		setActiveSessionId(sessionId);
+		// A background tab must not move the user: leave the active agent alone
+		// and leave whatever tab they were on visible. Agents doing research
+		// open tabs this way so the window doesn't jump mid-keystroke.
+		if (!background) {
+			setActiveSessionId(sessionId);
+		}
 		const newBrowserTab: BrowserTab = {
 			id: generateId(),
 			url,
@@ -179,17 +189,60 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
-				return {
+				const withTab = {
 					...s,
 					browserTabs: [...(s.browserTabs || []), newBrowserTab],
-					activeFileTabId: null,
-					activeBrowserTabId: newBrowserTab.id,
-					activeTerminalTabId: null,
-					inputMode: 'ai' as const,
 					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 						type: 'browser',
 						id: newBrowserTab.id,
 					}),
+				};
+				if (background) return withTab;
+				return {
+					...withTab,
+					activeFileTabId: null,
+					activeBrowserTabId: newBrowserTab.id,
+					activeTerminalTabId: null,
+					inputMode: 'ai' as const,
+				};
+			})
+		);
+		ack(true, newBrowserTab.id);
+	});
+
+	// Handle remote close browser tab events from CLI/web interface. Resolves
+	// the owning agent from the tab id so callers only need what open-browser
+	// handed back. Acks false when no such tab exists, so an agent cleaning up
+	// after itself can tell a no-op from a real close.
+	useEventListener('maestro:closeBrowserTab', (e: Event) => {
+		const { tabId, responseChannel } = (e as CustomEvent).detail as {
+			tabId: string;
+			responseChannel?: string;
+		};
+		const ack = (success: boolean) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteCloseBrowserTabResponse(responseChannel, success);
+			}
+		};
+		const owner = sessionsRef.current.find((s) =>
+			(s.browserTabs || []).some((t) => t.id === tabId)
+		);
+		if (!owner) {
+			ack(false);
+			return;
+		}
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== owner.id) return s;
+				return {
+					...s,
+					browserTabs: (s.browserTabs || []).filter((t) => t.id !== tabId),
+					// Only clear the active pointer when the closed tab was the
+					// visible one; a background tab closing must not change the view.
+					activeBrowserTabId: s.activeBrowserTabId === tabId ? null : s.activeBrowserTabId,
+					unifiedTabOrder: (s.unifiedTabOrder || []).filter(
+						(ref) => !(ref.type === 'browser' && ref.id === tabId)
+					),
 				};
 			})
 		);
@@ -202,12 +255,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
 		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
 			sessionId: string;
-			config: { cwd?: string; shell?: string; name?: string | null };
+			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
 			responseChannel?: string;
 		};
-		const ack = (success: boolean) => {
+		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
-				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success);
+				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success, tabId);
 			}
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -217,11 +270,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 		setActiveSessionId(sessionId);
-		const tab = createTerminalTabHelper(
+		const baseTab = createTerminalTabHelper(
 			config?.shell,
 			config?.cwd ?? session.cwd,
 			config?.name ?? null
 		);
+		// A requested command becomes the tab's startup command rather than a
+		// one-shot write: TerminalView already runs that once the PTY is up, and
+		// storing it means a `npm run dev` terminal comes back after a restart or
+		// a manual restart of the tab instead of reopening to an empty shell.
+		const command = config?.command?.trim();
+		const tab = command ? { ...baseTab, startupCommand: command } : baseTab;
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
@@ -229,7 +288,122 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return { ...updated, inputMode: 'terminal' as const };
 			})
 		);
-		ack(true);
+		ack(true, tab.id);
+	});
+
+	// Handle remote writes into an existing terminal tab from CLI/web interface.
+	// This is the "type into the terminal the user is looking at" path, as
+	// opposed to openTerminalTab which makes a new one.
+	useEventListener('maestro:writeTerminalTab', async (e: Event) => {
+		const { sessionId, tabRef, data, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			tabRef?: string;
+			data: string;
+			responseChannel?: string;
+		};
+		const ack = (
+			success: boolean,
+			result?: { error?: string; tabId?: string; tabName?: string }
+		) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteWriteTerminalTabResponse(responseChannel, success, result);
+			}
+		};
+
+		const resolved = resolveTerminalTab(sessionsRef.current, sessionId, tabRef);
+		if (!resolved) {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) {
+				ack(false, { error: 'Agent not found' });
+			} else if (tabRef) {
+				ack(false, { error: `No terminal tab matching "${tabRef}"` });
+			} else if ((session.terminalTabs || []).length === 0) {
+				ack(false, {
+					error: 'No terminal tab is open for this agent. Use open-terminal first.',
+				});
+			} else {
+				ack(false, {
+					error: 'Several terminal tabs are open and none is active. Pass --tab to pick one.',
+				});
+			}
+			return;
+		}
+
+		const { session: owner, tab } = resolved;
+		const index = (owner.terminalTabs || []).findIndex((t) => t.id === tab.id);
+		const tabName = getTerminalTabDisplayName(tab, index);
+
+		// The PTY lives in the main process and outlives its React view, so a
+		// write lands even when the owning agent is not on screen. A tab that was
+		// never rendered has no PTY at all though (pid 0), and only the ACTIVE
+		// session has a live TerminalView that would spawn one. Waiting for a
+		// background agent would stall until the timeout for a shell that is
+		// never coming, so wait only when it can actually arrive - and never
+		// switch agents to force it, since that would yank the screen away to
+		// service a background command.
+		let pid = tab.pid;
+		if (pid === 0 && tab.state !== 'exited') {
+			const isActiveSession = useSessionStore.getState().activeSessionId === owner.id;
+			if (isActiveSession) {
+				const deadline = Date.now() + 4000;
+				while (pid === 0 && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+					pid =
+						(sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []).find(
+							(t) => t.id === tab.id
+						)?.pid ?? 0;
+				}
+			}
+		}
+		if (pid === 0) {
+			ack(false, {
+				error:
+					tab.state === 'exited'
+						? `Terminal "${tabName}" has exited. Restart it from the tab menu, or open a new one.`
+						: `Terminal "${tabName}" has no running shell yet. Select the tab in Maestro, or use open-terminal --command.`,
+				tabId: tab.id,
+				tabName,
+			});
+			return;
+		}
+
+		const success = await window.maestro.process.write(
+			getTerminalSessionId(owner.id, tab.id),
+			data
+		);
+		ack(success, {
+			error: success ? undefined : `Failed to write to terminal "${tabName}"`,
+			tabId: tab.id,
+			tabName,
+		});
+	});
+
+	// Handle remote terminal tab listing from CLI/web interface. Terminal tabs
+	// live only in renderer state, so this is the only way a caller can discover
+	// what is open before writing to it.
+	useEventListener('maestro:listTerminalTabs', (e: Event) => {
+		const { sessionId, responseChannel } = (e as CustomEvent).detail as {
+			sessionId?: string;
+			responseChannel?: string;
+		};
+		if (!responseChannel) return;
+		const sessions = sessionId
+			? sessionsRef.current.filter((s) => s.id === sessionId)
+			: sessionsRef.current;
+		const tabs = sessions.flatMap((session) =>
+			(session.terminalTabs || []).map((tab, index) => ({
+				tabId: tab.id,
+				agentId: session.id,
+				agentName: session.name,
+				name: getTerminalTabDisplayName(tab, index),
+				cwd: tab.cwd || session.cwd || '',
+				pid: tab.pid,
+				state: tab.state,
+				active: session.activeTerminalTabId === tab.id,
+				startupCommand: tab.startupCommand ?? null,
+			}))
+		);
+		window.maestro.process.sendRemoteListTerminalTabsResponse(responseChannel, tabs);
 	});
 
 	// --- Auto Run Operations ---
@@ -1321,8 +1495,103 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 
+		// A patch carrying a `tabId` targets one AI tab inside the agent rather
+		// than the agent itself. It rides this message (instead of a new one)
+		// because everything a scriptable write needs is already here: an
+		// allowlist, a response channel the caller can await, and a setMany flush
+		// so the value is on disk before the ack. Prefer extending this for new
+		// persistent state over adding another fire-and-forget renderer channel.
+		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
+		if (targetTabId !== undefined) {
+			// Everything the composer chips toggle, keyed by the value it accepts.
+			// The type is enforced here rather than trusted from the wire: these
+			// land straight in the persisted tab, so a bad value (a string in
+			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
+			// chip rather than a rejected command.
+			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
+				starred: 'boolean',
+				hasUnread: 'boolean',
+				saveToHistory: 'boolean',
+				readOnlyMode: 'boolean',
+				enterToSend: 'boolean',
+				showThinking: 'thinking',
+				customModel: 'string',
+				customEffort: 'string',
+			};
+			const tabPatch: Record<string, unknown> = {};
+			for (const key of Object.keys(patchObj)) {
+				const kind = TAB_EDITABLE_KEYS[key];
+				if (!kind) continue;
+				const value = patchObj[key];
+				// `null` clears the field, which is how a tab drops an override and
+				// goes back to inheriting the agent's model/effort or the global
+				// enter-to-send setting. Distinct from `false`.
+				if (value === null) {
+					tabPatch[key] = undefined;
+					continue;
+				}
+				const valid =
+					kind === 'boolean'
+						? typeof value === 'boolean'
+						: kind === 'string'
+							? typeof value === 'string'
+							: asThinkingMode(value) !== undefined;
+				if (!valid) {
+					window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+						success: false,
+						error: `Invalid value for tab field '${key}'`,
+					});
+					return;
+				}
+				tabPatch[key] = value;
+			}
+
+			if (Object.keys(tabPatch).length === 0) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'No editable tab fields in patch',
+				});
+				return;
+			}
+
+			if (!session.aiTabs?.some((t) => t.id === targetTabId)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Tab not found',
+				});
+				return;
+			}
+
+			const applyTabPatch = (s: Session): Session => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
+			});
+
+			setSessions((prev: Session[]) =>
+				prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
+			);
+
+			try {
+				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
+			}
+
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
+			return;
+		}
+
 		// Allowlist of editable session config keys. Anything else in the patch is
 		// ignored so the CLI can't write arbitrary Session internals.
+		//
+		// Two groups live here. The spawn-time settings (the Edit Agent modal
+		// fields) take effect on the next launch. The UI-state fields below them
+		// are what the user would otherwise toggle by clicking in the Left Bar;
+		// they apply immediately and are flushed to disk by the setMany below, so
+		// a CLI read straight after the write sees the new value rather than
+		// waiting on the renderer's 2s debounce.
 		const EDITABLE_KEYS = new Set([
 			'nudgeMessage',
 			'newSessionMessage',
@@ -1335,6 +1604,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
+			// UI state
+			'bookmarked',
 		]);
 
 		// Build the field patch. A `null` value clears the field (sets undefined);

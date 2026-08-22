@@ -22,10 +22,21 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenModalCallback,
+	OpenModalParams,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
+	OpenBrowserTabOptions,
+	OpenBrowserTabResult,
+	CloseBrowserTabCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
+	OpenTerminalTabResult,
+	WriteTerminalTabCallback,
+	WriteTerminalTabPayload,
+	WriteTerminalTabResult,
+	ListTerminalTabsCallback,
+	TerminalTabInfo,
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
@@ -137,9 +148,13 @@ export interface WebServerCallbacks {
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
+	openModal: OpenModalCallback | null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
+	closeBrowserTab: CloseBrowserTabCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
+	writeTerminalTab: WriteTerminalTabCallback | null;
+	listTerminalTabs: ListTerminalTabsCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
@@ -221,9 +236,13 @@ export class CallbackRegistry {
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
+		openModal: null,
 		refreshFileTree: null,
 		openBrowserTab: null,
+		closeBrowserTab: null,
 		openTerminalTab: null,
+		writeTerminalTab: null,
+		listTerminalTabs: null,
 		newAITabWithPrompt: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
@@ -377,19 +396,51 @@ export class CallbackRegistry {
 		return this.callbacks.openFileTab(sessionId, filePath, switchToAgent);
 	}
 
+	async openModal(params: OpenModalParams): Promise<boolean> {
+		if (!this.callbacks.openModal) return false;
+		return this.callbacks.openModal(params);
+	}
+
 	async refreshFileTree(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.refreshFileTree) return false;
 		return this.callbacks.refreshFileTree(sessionId);
 	}
 
-	async openBrowserTab(sessionId: string, url: string): Promise<boolean> {
-		if (!this.callbacks.openBrowserTab) return false;
-		return this.callbacks.openBrowserTab(sessionId, url);
+	async openBrowserTab(
+		sessionId: string,
+		url: string,
+		options?: OpenBrowserTabOptions
+	): Promise<OpenBrowserTabResult> {
+		if (!this.callbacks.openBrowserTab) return { success: false };
+		return this.callbacks.openBrowserTab(sessionId, url, options);
 	}
 
-	async openTerminalTab(sessionId: string, config: OpenTerminalTabConfig): Promise<boolean> {
-		if (!this.callbacks.openTerminalTab) return false;
+	async closeBrowserTab(tabId: string): Promise<boolean> {
+		if (!this.callbacks.closeBrowserTab) return false;
+		return this.callbacks.closeBrowserTab(tabId);
+	}
+
+	async openTerminalTab(
+		sessionId: string,
+		config: OpenTerminalTabConfig
+	): Promise<OpenTerminalTabResult> {
+		if (!this.callbacks.openTerminalTab) return { success: false };
 		return this.callbacks.openTerminalTab(sessionId, config);
+	}
+
+	async writeTerminalTab(
+		sessionId: string,
+		payload: WriteTerminalTabPayload
+	): Promise<WriteTerminalTabResult> {
+		if (!this.callbacks.writeTerminalTab) {
+			return { success: false, error: 'Terminal writes not configured' };
+		}
+		return this.callbacks.writeTerminalTab(sessionId, payload);
+	}
+
+	async listTerminalTabs(sessionId?: string): Promise<TerminalTabInfo[]> {
+		if (!this.callbacks.listTerminalTabs) return [];
+		return this.callbacks.listTerminalTabs(sessionId);
 	}
 
 	async newAITabWithPrompt(
@@ -889,12 +940,28 @@ export class CallbackRegistry {
 		this.callbacks.openFileTab = callback;
 	}
 
+	setOpenModalCallback(callback: OpenModalCallback): void {
+		this.callbacks.openModal = callback;
+	}
+
 	setRefreshFileTreeCallback(callback: RefreshFileTreeCallback): void {
 		this.callbacks.refreshFileTree = callback;
 	}
 
 	setOpenBrowserTabCallback(callback: OpenBrowserTabCallback): void {
 		this.callbacks.openBrowserTab = callback;
+	}
+
+	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
+		this.callbacks.closeBrowserTab = callback;
+	}
+
+	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
+		this.callbacks.writeTerminalTab = callback;
+	}
+
+	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
+		this.callbacks.listTerminalTabs = callback;
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {

@@ -9,6 +9,7 @@ import { memo, useState, useEffect, useRef } from 'react';
 import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
+import { sleepAwareElapsedSince } from '../services/systemSleep';
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -29,16 +30,18 @@ interface ThinkingStatusPillProps {
 	onInterrupt?: () => void;
 }
 
-// ElapsedTimeDisplay - shows time since thinking started
+// ElapsedTimeDisplay - shows time since thinking (or the Auto Run) started.
+// Machine sleep is subtracted: the agent was suspended along with the app, so
+// counting the sleep would report an overnight wake as hours of work.
 const ElapsedTimeDisplay = memo(
 	({ startTime, textColor }: { startTime: number; textColor: string }) => {
 		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-			Math.floor((Date.now() - startTime) / 1000)
+			Math.floor(sleepAwareElapsedSince(startTime) / 1000)
 		);
 
 		useEffect(() => {
 			const interval = setInterval(() => {
-				setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+				setElapsedSeconds(Math.floor(sleepAwareElapsedSince(startTime) / 1000));
 			}, 1000);
 			return () => clearInterval(interval);
 		}, [startTime]);

@@ -115,7 +115,12 @@ export function isCliServerRunning(): boolean {
 	try {
 		process.kill(info.pid, 0); // Doesn't kill, just checks if process exists
 		return true;
-	} catch {
+	} catch (error) {
+		// EPERM means the process exists but this caller cannot signal it. This is
+		// common for sandboxed read-only monitors and must not turn a reachable
+		// desktop into a stale discovery result. The authenticated WebSocket
+		// connection remains the authoritative reachability check.
+		if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
 		return false;
 	}
 }

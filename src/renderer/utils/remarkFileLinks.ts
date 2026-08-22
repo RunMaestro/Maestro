@@ -240,7 +240,8 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							type: 'link',
 						});
 					} else {
-						// Outside projectRoot - use file:// URL to open in system default app
+						// Outside projectRoot - use a file:// URL, which openFileUrl routes
+						// to the preview tab, the player, or the OS by file type
 						matches.push({
 							start: tildeMatch.index,
 							end: tildeMatch.index + tildePath.length,
@@ -334,7 +335,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					} as Image);
 				} else if (match.absoluteUrl) {
 					// External file link (outside projectRoot) - use file:// URL
-					// MarkdownRenderer's <a> handler calls shell.openPath for file:// URLs
+					// MarkdownRenderer's <a> handler passes file:// URLs to openFileUrl
 					replacements.push({
 						type: 'link',
 						url: match.absoluteUrl,

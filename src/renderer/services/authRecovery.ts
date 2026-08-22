@@ -29,7 +29,11 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { useAgentStore } from '../stores/agentStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { getModalActions, selectModalData, useModalStore } from '../stores/modalStore';
-import { getSessionsForIdentity, useProviderAuthStore } from '../stores/providerAuthStore';
+import {
+	getIdentityForSession,
+	getSessionsForIdentity,
+	useProviderAuthStore,
+} from '../stores/providerAuthStore';
 import { getBlockedPrompts } from '../stores/retryStore';
 import { logger } from '../utils/logger';
 
@@ -42,6 +46,38 @@ const LOG_CONTEXT = '[AuthRecovery]';
  * says there is no login, the other means Maestro could not get an answer. Both
  * keep the modal open, but only the first has anything to explain.
  */
+/**
+ * Open the recovery modal for the credential a failing agent presents.
+ *
+ * The agent that failed is not the subject - its credential is. Resolving the
+ * identity needs the hydrated snapshot map (identity depends on the home dir and
+ * the agent-level env), so this is async and callers on the error path fire it
+ * without awaiting; an error frame must not wait on an IPC round trip.
+ *
+ * Opening is idempotent per credential. The tenth agent to die on one expired
+ * login re-opens the same modal rather than stacking a tenth copy, which is what
+ * lets one dialog describe the whole blast radius.
+ *
+ * Never throws: a credential we cannot identify costs the automatic dialog, and
+ * the user can still reach it from the Left Bar badge. It must not disturb the
+ * error handling it runs alongside.
+ */
+export async function openAuthRecoveryForSession(sessionId: string): Promise<boolean> {
+	try {
+		await useProviderAuthStore.getState().hydrate();
+		const identity = getIdentityForSession(sessionId);
+		if (!identity) return false;
+		getModalActions().openAuthRecovery(identity.key);
+		return true;
+	} catch (error) {
+		logger.warn('Could not open auth recovery for session', LOG_CONTEXT, {
+			sessionId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return false;
+	}
+}
+
 export type AuthVerifyStatus = 'authenticated' | 'logged-out' | 'unknown';
 
 export interface AuthVerifyOutcome {

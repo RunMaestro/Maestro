@@ -45,13 +45,14 @@ function makeLog(overrides: Partial<LogEntry> = {}): LogEntry {
 	};
 }
 
-function renderCard(log: LogEntry) {
+function renderCard(log: LogEntry, props: Record<string, unknown> = {}) {
 	return render(
 		<ShellCommandCard
 			log={log}
 			theme={mockTheme}
 			fontFamily="monospace"
 			ansiConverter={converter}
+			{...props}
 		/>
 	);
 }
@@ -243,5 +244,83 @@ describe('ShellCommandCard', () => {
 		);
 
 		expect(screen.getByText('No output')).toBeTruthy();
+	});
+
+	describe('deleting the card', () => {
+		const finished = () =>
+			makeLog({ text: 'out', shellCommand: { status: 'finished', exitCode: 0 } as never });
+
+		it('offers a delete button once the command has finished', () => {
+			renderCard(finished(), { onDelete: vi.fn(), onSetDeleteConfirmLogId: vi.fn() });
+
+			expect(screen.getByTestId('shell-command-delete')).toBeTruthy();
+		});
+
+		it('hides delete while the command is still running', () => {
+			// Deleting a live card would orphan the process: output would keep
+			// streaming into an entry that no longer exists, with no Stop left.
+			renderCard(makeLog(), { onDelete: vi.fn(), onSetDeleteConfirmLogId: vi.fn() });
+
+			expect(screen.queryByTestId('shell-command-delete')).toBeNull();
+			expect(screen.getByText('Stop')).toBeTruthy();
+		});
+
+		it('hides delete entirely when the transcript is not editable', () => {
+			renderCard(finished());
+
+			expect(screen.queryByTestId('shell-command-delete')).toBeNull();
+		});
+
+		it('arms a confirmation rather than deleting on the first click', () => {
+			const onDelete = vi.fn();
+			const onSetDeleteConfirmLogId = vi.fn();
+			renderCard(finished(), { onDelete, onSetDeleteConfirmLogId });
+
+			fireEvent.click(screen.getByTestId('shell-command-delete'));
+
+			expect(onDelete).not.toHaveBeenCalled();
+			expect(onSetDeleteConfirmLogId).toHaveBeenCalledWith('log-1');
+		});
+
+		it('deletes on Yes and disarms the confirmation', () => {
+			const onDelete = vi.fn();
+			const onSetDeleteConfirmLogId = vi.fn();
+			renderCard(finished(), {
+				onDelete,
+				onSetDeleteConfirmLogId,
+				deleteConfirmLogId: 'log-1',
+			});
+
+			fireEvent.click(screen.getByTestId('shell-command-delete-yes'));
+
+			expect(onDelete).toHaveBeenCalledWith('log-1');
+			expect(onSetDeleteConfirmLogId).toHaveBeenCalledWith(null);
+		});
+
+		it('backs out on No without deleting', () => {
+			const onDelete = vi.fn();
+			const onSetDeleteConfirmLogId = vi.fn();
+			renderCard(finished(), {
+				onDelete,
+				onSetDeleteConfirmLogId,
+				deleteConfirmLogId: 'log-1',
+			});
+
+			fireEvent.click(screen.getByTestId('shell-command-delete-no'));
+
+			expect(onDelete).not.toHaveBeenCalled();
+			expect(onSetDeleteConfirmLogId).toHaveBeenCalledWith(null);
+		});
+
+		it('only shows the confirmation on the card it was armed for', () => {
+			renderCard(finished(), {
+				onDelete: vi.fn(),
+				onSetDeleteConfirmLogId: vi.fn(),
+				deleteConfirmLogId: 'a-different-card',
+			});
+
+			expect(screen.queryByTestId('shell-command-delete-confirm')).toBeNull();
+			expect(screen.getByTestId('shell-command-delete')).toBeTruthy();
+		});
 	});
 });

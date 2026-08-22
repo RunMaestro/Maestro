@@ -25,6 +25,7 @@ import { openUrl } from './openUrl';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 import { AlertCallout } from '../components/Markdown/components/AlertCallout';
 import { alertTypeFromClassName } from '../components/Markdown/remarkAlert';
+import { TaskCheckbox } from '../components/Markdown/components/TaskCheckbox';
 import {
 	INLINE_CODE_CLICK_PROPS,
 	INLINE_CODE_CLICK_STYLE,
@@ -88,6 +89,14 @@ export interface MarkdownComponentsOptions {
 	bionifyIntensity?: number;
 	/** Algorithm string controlling Bionify highlight lengths */
 	bionifyAlgorithm?: string;
+	/**
+	 * Makes rendered GFM task checkboxes clickable. Called with the 1-based
+	 * source line of the task's `- [ ]` marker; resolve false when the write did
+	 * not happen so the box reverts. Requires `rehypeSourceLine` in the caller's
+	 * rehype plugins - that is what stamps each box with its line. Omit the
+	 * option to keep the read-only checkboxes react-markdown emits by default.
+	 */
+	onTaskToggle?: (sourceLine: number) => Promise<boolean>;
 }
 
 /**
@@ -388,6 +397,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		enableBionifyReadingMode = false,
 		bionifyIntensity,
 		bionifyAlgorithm,
+		onTaskToggle,
 	} = options;
 
 	// Reset match counter at start of each render
@@ -478,6 +488,32 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 			containerRef,
 			behavior: { anchors: true, relativeAsFile: true, fileClickOptions: true },
 		});
+	}
+
+	// Clickable GFM task checkboxes. Without this react-markdown renders them
+	// `disabled`, so a document can only be ticked off in edit mode. The line
+	// comes from `rehypeSourceLine`, which stamps each box with the line its
+	// `- [ ]` marker lives on. Everything else (raw HTML inputs passed through by
+	// rehype-raw) stays inert - a preview is not a form.
+	if (onTaskToggle) {
+		components.input = ({ node: _node, type, checked, ...props }: any) => {
+			const line = Number(props['data-source-line']);
+			if (type === 'checkbox' && Number.isFinite(line)) {
+				return React.createElement(TaskCheckbox, {
+					line,
+					checked: !!checked,
+					theme,
+					onToggle: onTaskToggle,
+				});
+			}
+			return React.createElement('input', {
+				type,
+				checked,
+				disabled: true,
+				readOnly: true,
+				...props,
+			});
+		};
 	}
 
 	// Strip event handler attributes (e.g. onToggle) that rehype-raw may

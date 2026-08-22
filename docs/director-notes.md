@@ -62,6 +62,14 @@ Click the session pill on any entry to jump directly to that agent's tab - Direc
 **Infinite Scroll:**
 Entries load progressively (100 at a time). Scroll to load more as needed.
 
+**Work from other machines:**
+Every tab reads two sources, and so does the AI synopsis:
+
+- **This machine's agents**, including any whose process runs over SSH. A remote agent you drive from here is recorded here, so its runs are always covered.
+- **Peer Maestro instances** that worked on the same project from a different machine, via [Cross-Host Shared History](/history#cross-host-shared-history). Their entries carry the originating hostname, and their agents appear in the list named `Agent (hostname)`.
+
+The second source needs the sharing toggles turned on: **Sync history to remote** on the SSH agent here, and **This agent is remote-controlled** on the agent over there. Without them, Director's Notes sees only what this machine did.
+
 ### AI Overview
 
 An AI-generated synopsis of recent activity across all agents. This tab uses a configurable AI provider to read history files and produce a structured report.

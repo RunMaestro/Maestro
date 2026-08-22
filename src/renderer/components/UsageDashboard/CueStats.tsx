@@ -17,6 +17,8 @@ import { format } from 'date-fns';
 import { AlertTriangle, CheckCircle2, Clock, Coins, TimerReset, XCircle, Zap } from 'lucide-react';
 // AlertTriangle still used by `DisabledNote`; CoverageWarningsBanner was removed.
 import type { Theme } from '../../types';
+import { SortableTh } from '../ui/SortableTh';
+import { useTableSort } from '../../hooks/ui/useTableSort';
 import type { StatsTimeRange } from '../../../shared/stats-types';
 import type {
 	CueChain,
@@ -460,8 +462,14 @@ const GroupTable = memo(function GroupTable({
 	formatLabel,
 	hideTokenColumns = false,
 }: GroupTableProps) {
-	const [sortKey, setSortKey] = useState<GroupSortKey>('occurrences');
-	const [sortDesc, setSortDesc] = useState(true);
+	// Every column here is a magnitude, so switching columns starts descending
+	// (biggest first); clicking the active column flips it.
+	const {
+		sortKey,
+		direction,
+		isDescending: sortDesc,
+		toggleSort: setSort,
+	} = useTableSort<GroupSortKey>('occurrences', { defaultDirectionFor: () => 'desc' });
 
 	const sorted = useMemo(() => {
 		const copy = [...rows];
@@ -496,20 +504,10 @@ const GroupTable = memo(function GroupTable({
 		return copy;
 	}, [rows, sortKey, sortDesc]);
 
-	const setSort = (key: GroupSortKey) => {
-		if (key === sortKey) setSortDesc((prev) => !prev);
-		else {
-			setSortKey(key);
-			setSortDesc(true);
-		}
-	};
-
 	const headerStyle = {
 		color: theme.colors.textDim,
 		borderColor: theme.colors.border,
 	};
-
-	const sortIndicator = (key: GroupSortKey) => (sortKey === key ? (sortDesc ? ' ▼' : ' ▲') : '');
 
 	return (
 		<div
@@ -555,17 +553,18 @@ const GroupTable = memo(function GroupTable({
 								)
 									.filter(([key]) => (hideTokenColumns ? key !== 'tokens' && key !== 'cost' : true))
 									.map(([key, label]) => (
-										<th
+										<SortableTh
 											key={key}
-											className="text-left text-xs font-medium uppercase tracking-wider px-3 py-2 border-b cursor-pointer select-none"
+											columnKey={key}
+											label={label}
+											sortKey={sortKey}
+											direction={direction}
+											onSort={setSort}
+											theme={theme}
+											className="text-left text-xs font-medium uppercase tracking-wider px-3 py-2 border-b select-none"
 											style={headerStyle}
-											onClick={() => setSort(key)}
-											role="button"
-											aria-sort={sortKey === key ? (sortDesc ? 'descending' : 'ascending') : 'none'}
-										>
-											{label}
-											{sortIndicator(key)}
-										</th>
+											title={`Sort by ${label}`}
+										/>
 									))}
 							</tr>
 						</thead>

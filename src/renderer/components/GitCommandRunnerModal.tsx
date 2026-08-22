@@ -3,23 +3,26 @@
  *
  * Opened from the header git pill menu (Pull / Push). The command runs in the
  * main process and streams its stdout/stderr back chunk-by-chunk, so the user
- * watches the transfer happen instead of staring at a spinner. Dismissible at
- * any time: closing leaves the command running (a push mid-transfer should
- * finish), while the Cancel button explicitly kills it.
+ * watches the transfer happen instead of staring at a spinner.
+ *
+ * The modal is a VIEW: the run itself lives in `gitCommandRunStore` and
+ * outlives this component. Closing (X / Escape / backdrop) hides the console
+ * and leaves the command running - a push mid-transfer should finish, and a
+ * toast reports how it went. Reopening the same operation on the same repo
+ * re-attaches to that run with its transcript intact. Cancel is the only thing
+ * that kills the command.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, Check, RefreshCw, X } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { gitService } from '../services/git';
-import { generateId } from '../utils/ids';
 import { processCarriageReturns } from '../utils/textProcessing';
 import { stripAnsiCodes } from '../../shared/stringUtils';
-import { useGitDetail } from '../contexts/GitStatusContext';
+import { useGitCommandRunStore, gitRunKey, selectGitRun } from '../stores/gitCommandRunStore';
 import type { GitCommandRunnerData } from '../stores/modalStore';
-import type { GitStreamingOperation, GitRunCommandResult } from '../../shared/gitUtils';
+import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { Theme } from '../types';
 
 export interface GitCommandRunnerModalProps {
@@ -27,8 +30,6 @@ export interface GitCommandRunnerModalProps {
 	data: GitCommandRunnerData;
 	onClose: () => void;
 }
-
-type RunStatus = 'running' | 'success' | 'failed' | 'cancelled';
 
 const OPERATION_ICONS: Record<GitStreamingOperation, typeof ArrowDownToLine> = {
 	pull: ArrowDownToLine,
@@ -46,55 +47,25 @@ function needsUpstream(output: string): boolean {
 }
 
 export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunnerModalProps) {
-	const { operation, cwd, sshRemoteId, branch } = data;
-	const { refreshGitStatus } = useGitDetail();
+	const { operation, branch } = data;
+	const runKey = gitRunKey(data);
+	const run = useGitCommandRunStore(selectGitRun(runKey));
 
-	const [output, setOutput] = useState('');
-	const [status, setStatus] = useState<RunStatus>('running');
-	const [error, setError] = useState<string | undefined>();
-	const [setUpstream, setSetUpstream] = useState(false);
-	// Bumping this re-runs the command (the "set upstream and retry" path).
-	const [attempt, setAttempt] = useState(0);
-
-	const runIdRef = useRef<string | null>(null);
-	const startedAttemptRef = useRef(-1);
 	const scrollRef = useRef<HTMLPreElement>(null);
 	const pinnedToBottomRef = useRef(true);
 
-	// Subscription lives in its own effect so a StrictMode remount re-attaches
-	// the listener even though the run-effect below skips its second pass. The
-	// filter reads runIdRef at delivery time, so ordering with the run is safe.
+	// Start the command, or attach to the one already running for this repo.
+	// `startRun` is a no-op in the attach case, which is also what makes the
+	// StrictMode double-invoke harmless.
 	useEffect(() => {
-		return gitService.onCommandOutput((chunk) => {
-			if (chunk.runId !== runIdRef.current) return;
-			setOutput((prev) => prev + chunk.chunk);
-		});
-	}, [attempt]);
+		useGitCommandRunStore.getState().startRun(data);
+		// Identity of `data` changes per open; the key is what identifies the run.
+	}, [runKey]);
 
-	// Fire the command exactly once per attempt. React StrictMode invokes
-	// effects twice in development - without this guard every push would run
-	// twice. Dismissing the modal deliberately does NOT cancel: a push already
-	// talking to the remote should finish. Cancel is an explicit button.
-	useEffect(() => {
-		if (startedAttemptRef.current === attempt) return;
-		startedAttemptRef.current = attempt;
-
-		const runId = generateId();
-		runIdRef.current = runId;
-		setOutput('');
-		setStatus('running');
-		setError(undefined);
-
-		void gitService
-			.runCommand({ runId, operation, cwd, sshRemoteId, setUpstream })
-			.then((result: GitRunCommandResult) => {
-				setStatus(result.cancelled ? 'cancelled' : result.success ? 'success' : 'failed');
-				setError(result.error);
-				// Branch, ahead/behind and file counts all move after a sync.
-				void refreshGitStatus();
-			});
-		// `attempt` is the retry trigger; the rest are stable for a given modal open.
-	}, [attempt, operation, cwd, sshRemoteId, setUpstream, refreshGitStatus]);
+	const status = run?.status ?? 'running';
+	const output = run?.output ?? '';
+	const error = run?.error;
+	const setUpstream = run?.setUpstream ?? false;
 
 	// Follow the tail unless the user has scrolled up to read something.
 	useEffect(() => {
@@ -110,14 +81,24 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 	}, []);
 
 	const handleCancel = useCallback(() => {
-		const runId = runIdRef.current;
-		if (runId) void gitService.cancelCommand(runId);
-	}, []);
+		useGitCommandRunStore.getState().cancelRun(runKey);
+	}, [runKey]);
+
+	const handleClose = useCallback(() => {
+		// A settled console has served its purpose: drop it so the next Pull or
+		// Push on this repo opens a fresh transcript instead of the old result.
+		// A RUNNING one is deliberately left alone - that is the whole point of
+		// close-vs-cancel, and the notifier will toast it when it lands.
+		const current = useGitCommandRunStore.getState().runs[runKey];
+		if (current && current.status !== 'running') {
+			useGitCommandRunStore.getState().clearRun(runKey);
+		}
+		onClose();
+	}, [runKey, onClose]);
 
 	const handleRetryWithUpstream = useCallback(() => {
-		setSetUpstream(true);
-		setAttempt((n) => n + 1);
-	}, []);
+		useGitCommandRunStore.getState().retryWithUpstream(runKey);
+	}, [runKey]);
 
 	const rendered = useMemo(
 		() => processCarriageReturns(stripAnsiCodes(output)).trimEnd(),
@@ -144,7 +125,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 			theme={theme}
 			title={commandLine}
 			priority={MODAL_PRIORITIES.GIT_COMMAND_RUNNER}
-			onClose={onClose}
+			onClose={handleClose}
 			width={700}
 			maxHeight="70vh"
 			resizeKey="modal-git-command-runner"
@@ -194,25 +175,33 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 						</button>
 					)}
 
-					{status === 'running' ? (
+					{status === 'running' && (
 						<button
 							type="button"
 							onClick={handleCancel}
 							className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							title={`Stop git ${operation}`}
+							data-testid="git-command-cancel"
 						>
 							Cancel
 						</button>
-					) : (
-						<button
-							type="button"
-							onClick={onClose}
-							className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-						>
-							Close
-						</button>
 					)}
+
+					<button
+						type="button"
+						onClick={handleClose}
+						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						title={
+							status === 'running'
+								? `Hide this console - git ${operation} keeps running`
+								: undefined
+						}
+						data-testid="git-command-close"
+					>
+						{status === 'running' ? 'Run in Background' : 'Close'}
+					</button>
 				</div>
 			}
 		>

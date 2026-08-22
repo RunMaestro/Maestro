@@ -104,3 +104,36 @@ export function resolveTextareaHeight({
 		maxViewportRatio,
 	});
 }
+
+/**
+ * Auto-grow sizing for composer textareas (the ones that grow with their content
+ * up to a cap, rather than the ones the user drags). Shared by the AI composer,
+ * both wizard composers, group chat, and feedback chat so they cannot drift on
+ * the scroll-preservation rule below.
+ */
+
+/** Cap used when the value changed from outside the keystroke path. */
+export const EXTERNAL_TEXTAREA_MAX_HEIGHT = 112;
+/** Cap used while the user is actively typing. */
+export const KEYSTROKE_TEXTAREA_MAX_HEIGHT = 176;
+
+export function resizeTextareaToContent(textarea: HTMLTextAreaElement, maxHeight: number): void {
+	// Setting height to 'auto' momentarily removes the overflow and collapses the
+	// internal scroll to the top. Capture and restore scrollTop so resizing a
+	// scrolled textarea never yanks the view (and the caret) out of sight. Callers
+	// that want the caret pinned to the bottom re-scroll after this returns.
+	const previousScrollTop = textarea.scrollTop;
+	textarea.style.height = 'auto';
+	textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+	textarea.scrollTop = previousScrollTop;
+}
+
+export function shouldScrollTextareaToEnd(
+	selectionEnd: number,
+	previousValueLength: number,
+	nextValueLength: number
+): boolean {
+	const caretWasAtEnd = selectionEnd >= previousValueLength;
+	const bulkInsert = nextValueLength - previousValueLength > 1;
+	return caretWasAtEnd || bulkInsert;
+}

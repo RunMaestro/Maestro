@@ -3,6 +3,7 @@ import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stor
 import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
+import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
 export function useScrollLogHandlers(): ScrollLogHandlersReturn {
@@ -19,6 +20,27 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		if (logIndex === -1) return null;
 
 		const log = logs[logIndex];
+
+		// A command-mode card is self-contained: it owns its command AND its
+		// output, and the agent never saw either. So it deletes as a single entry
+		// rather than as the span-to-the-next-user-message the branch below walks,
+		// and it must NOT reach the provider-transcript deletion down there - there
+		// is no message pair in the agent's session to delete.
+		if (log.shellCommand) {
+			if (!isAIMode || !currentActiveTab) return null;
+			setSessions((prev: Session[]) =>
+				deleteShellCommandLog(prev, {
+					sessionId: currentSession.id,
+					tabId: currentActiveTab.id,
+					logId,
+					command: log.shellCommand!.command,
+				})
+			);
+			// No scroll target: removing one card should leave the reader where
+			// they are, not jump them to some other message.
+			return null;
+		}
+
 		if (log.source !== 'user') return null;
 
 		let endIndex = logs.length;

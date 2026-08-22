@@ -13,17 +13,19 @@ import { captureException } from '../utils/sentry';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
+import { asThinkingMode } from '../../shared/types';
 import type { Group, SshRemoteConfig } from '../../shared/types';
 import { execGit } from '../utils/remote-git';
 import { getSshRemoteById } from '../stores';
 import { isImageRef, resolveToDataUrlSync } from '../storage/session-image-store';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
+import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry, TerminalTabInfo } from './types';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
+import { getSessionIdsBusyWithCli } from '../../shared/cli-activity';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
@@ -257,14 +259,31 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// entries. The CLI does not need group/cwd metadata; the structurally
 		// smaller payload keeps polling cheap. Reads straight from the persisted
 		// session store (same source the renderer pushes to via `sessions:save`),
-		// so the data is as fresh as the desktop's own state.
+		// then reconcile it with live managed-process and CLI-activity evidence.
 		server.setListDesktopSessionsCallback(() => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const processManager = getProcessManager();
+			// Resolved once: this used to be a per-agent call that re-read and
+			// re-parsed the CLI activity file on every iteration.
+			const cliBusySessionIds = getSessionIdsBusyWithCli();
 			const entries = [];
 			for (const s of sessions) {
 				const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+				const cliBusy = cliBusySessionIds.has(s.id);
 				for (const tab of aiTabs) {
 					if (!tab || typeof tab.id !== 'string') continue;
+					const isActiveTab = tab.id === s.activeTabId;
+					const managedProcessActive = Boolean(
+						processManager?.get(`${s.id}-ai-${tab.id}`) ||
+						(isActiveTab && processManager?.get(`${s.id}-ai`))
+					);
+					const processActive = managedProcessActive || (isActiveTab && cliBusy);
+					const state =
+						tab.state === 'busy' || processActive
+							? ('busy' as const)
+							: tab.state === 'idle'
+								? ('idle' as const)
+								: ('unknown' as const);
 					entries.push({
 						tabId: tab.id,
 						sessionId: tab.id,
@@ -273,9 +292,20 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						toolType: s.toolType,
 						name: typeof tab.name === 'string' ? tab.name : null,
 						agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
-						state: tab.state === 'busy' ? ('busy' as const) : ('idle' as const),
+						state,
 						createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : 0,
 						starred: tab.starred === true,
+						active: isActiveTab,
+						hasUnread: tab.hasUnread === true,
+						saveToHistory: tab.saveToHistory === true,
+						readOnly: tab.readOnlyMode === true,
+						thinking: asThinkingMode(tab.showThinking) ?? 'off',
+						// `null` (not `false`) is the honest answer for the three
+						// inheriting fields: the tab has no override and follows the
+						// agent's model/effort or the global enter-to-send setting.
+						model: typeof tab.customModel === 'string' ? tab.customModel : null,
+						effort: typeof tab.customEffort === 'string' ? tab.customEffort : null,
+						enterToSend: typeof tab.enterToSend === 'boolean' ? tab.enterToSend : null,
 					});
 				}
 			}
@@ -841,6 +871,20 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
+		server.setOpenModalCallback(async (params) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for openModal', 'WebServer');
+				return false;
+			}
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for openModal', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:openModal', params);
+			return true;
+		});
+
 		server.setRefreshFileTreeCallback(async (sessionId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -884,17 +928,70 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return true;
 		});
 
-		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
+		server.setOpenBrowserTabCallback(
+			async (sessionId: string, url: string, options?: { background?: boolean }) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for openBrowserTab', 'WebServer');
+					return { success: false };
+				}
+
+				// Request-response: wait for the renderer to confirm the tab was
+				// actually created before telling the CLI the call succeeded.
+				return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
+					const responseChannel = `remote:openBrowserTab:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						// Renderer acks with `{ success, tabId? }`; older renderers that
+						// still send a bare boolean stay supported.
+						if (typeof result === 'object' && result !== null) {
+							const r = result as { success?: unknown; tabId?: unknown };
+							resolve({
+								success: r.success === true,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							});
+							return;
+						}
+						resolve({ success: result === true });
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for openBrowserTab', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false });
+						return;
+					}
+					mainWindow.webContents.send('remote:openBrowserTab', sessionId, url, responseChannel, {
+						background: options?.background === true,
+					});
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(`openBrowserTab callback timed out for session ${sessionId}`, 'WebServer');
+						resolve({ success: false });
+					}, 5000);
+				});
+			}
+		);
+
+		server.setCloseBrowserTabCallback(async (tabId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
-				logger.warn('mainWindow is null for openBrowserTab', 'WebServer');
+				logger.warn('mainWindow is null for closeBrowserTab', 'WebServer');
 				return false;
 			}
 
-			// Request-response: wait for the renderer to confirm the tab was
-			// actually created before telling the CLI the call succeeded.
+			// Request-response so the CLI can report "not found" rather than a
+			// false success when the tab was already gone.
 			return new Promise<boolean>((resolve) => {
-				const responseChannel = `remote:openBrowserTab:response:${randomUUID()}`;
+				const responseChannel = `remote:closeBrowserTab:response:${randomUUID()}`;
 				let resolved = false;
 
 				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
@@ -906,32 +1003,35 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 				ipcMain.once(responseChannel, handleResponse);
 				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for openBrowserTab', 'WebServer');
+					logger.warn('webContents is not available for closeBrowserTab', 'WebServer');
 					ipcMain.removeListener(responseChannel, handleResponse);
 					resolve(false);
 					return;
 				}
-				mainWindow.webContents.send('remote:openBrowserTab', sessionId, url, responseChannel);
+				mainWindow.webContents.send('remote:closeBrowserTab', tabId, responseChannel);
 
 				const timeoutId = setTimeout(() => {
 					if (resolved) return;
 					resolved = true;
 					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(`openBrowserTab callback timed out for session ${sessionId}`, 'WebServer');
+					logger.warn(`closeBrowserTab callback timed out for tab ${tabId}`, 'WebServer');
 					resolve(false);
 				}, 5000);
 			});
 		});
 
 		server.setOpenTerminalTabCallback(
-			async (sessionId: string, config: { cwd?: string; shell?: string; name?: string | null }) => {
+			async (
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
 					logger.warn('mainWindow is null for openTerminalTab', 'WebServer');
-					return false;
+					return { success: false };
 				}
 
-				return new Promise<boolean>((resolve) => {
+				return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
 					const responseChannel = `remote:openTerminalTab:response:${randomUUID()}`;
 					let resolved = false;
 
@@ -939,14 +1039,24 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						if (resolved) return;
 						resolved = true;
 						clearTimeout(timeoutId);
-						resolve(result === true);
+						// Renderer acks with `{ success, tabId? }`; older renderers that
+						// still send a bare boolean stay supported.
+						if (typeof result === 'object' && result !== null) {
+							const r = result as { success?: unknown; tabId?: unknown };
+							resolve({
+								success: r.success === true,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							});
+							return;
+						}
+						resolve({ success: result === true });
 					};
 
 					ipcMain.once(responseChannel, handleResponse);
 					if (!isWebContentsAvailable(mainWindow)) {
 						logger.warn('webContents is not available for openTerminalTab', 'WebServer');
 						ipcMain.removeListener(responseChannel, handleResponse);
-						resolve(false);
+						resolve({ success: false });
 						return;
 					}
 					mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel);
@@ -956,11 +1066,117 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						resolved = true;
 						ipcMain.removeListener(responseChannel, handleResponse);
 						logger.warn(`openTerminalTab callback timed out for session ${sessionId}`, 'WebServer');
-						resolve(false);
+						resolve({ success: false });
 					}, 5000);
 				});
 			}
 		);
+
+		server.setWriteTerminalTabCallback(
+			async (sessionId: string, payload: { tabRef?: string; data: string }) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for writeTerminalTab', 'WebServer');
+					return { success: false, error: 'Desktop window not available' };
+				}
+
+				return new Promise<{
+					success: boolean;
+					error?: string;
+					tabId?: string;
+					tabName?: string;
+				}>((resolve) => {
+					const responseChannel = `remote:writeTerminalTab:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'object' && result !== null) {
+							const r = result as {
+								success?: unknown;
+								error?: unknown;
+								tabId?: unknown;
+								tabName?: unknown;
+							};
+							resolve({
+								success: r.success === true,
+								error: typeof r.error === 'string' ? r.error : undefined,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+								tabName: typeof r.tabName === 'string' ? r.tabName : undefined,
+							});
+							return;
+						}
+						resolve({ success: result === true });
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for writeTerminalTab', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, error: 'Desktop window not available' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:writeTerminalTab',
+						sessionId,
+						payload,
+						responseChannel
+					);
+
+					// Longer than the other remote channels: the renderer may spend up
+					// to 4s waiting for a lazily-spawned PTY before it can write.
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`writeTerminalTab callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false, error: 'Timed out waiting for the desktop app' });
+					}, 8000);
+				});
+			}
+		);
+
+		server.setListTerminalTabsCallback(async (sessionId?: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for listTerminalTabs', 'WebServer');
+				return [];
+			}
+
+			return new Promise<TerminalTabInfo[]>((resolve) => {
+				const responseChannel = `remote:listTerminalTabs:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(Array.isArray(result) ? (result as TerminalTabInfo[]) : []);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for listTerminalTabs', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve([]);
+					return;
+				}
+				mainWindow.webContents.send('remote:listTerminalTabs', sessionId, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn('listTerminalTabs callback timed out', 'WebServer');
+					resolve([]);
+				}, 5000);
+			});
+		});
 
 		server.setNewAITabWithPromptCallback(async (sessionId: string, prompt: string) => {
 			const mainWindow = getMainWindow();
@@ -2823,6 +3039,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					if (s.id && s.name) sessionNameMap.set(s.id, s.name);
 				}
 
+				// Same cross-host corpus the desktop path folds in, so a CLI-driven
+				// synopsis covers work done by peer Maestro instances too.
+				const { prepareSharedHistoryForSynopsis } =
+					await import('../utils/director-notes-shared-history');
+				const cutoffTime = lookbackDays > 0 ? Date.now() - lookbackDays * 24 * 60 * 60 * 1000 : 0;
+
 				// Scope the manifest to the lookback window so the batch agent only
 				// reads files it needs (see director-notes-prompt for the rationale).
 				const { prompt, agentCount, entryCount } = await buildDirectorNotesSynopsisPrompt({
@@ -2839,6 +3061,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						>;
 						return typeof dn.idealEndState === 'string' ? dn.idealEndState : '';
 					})(),
+					sharedHistoryFile: await prepareSharedHistoryForSynopsis(cutoffTime),
 				});
 
 				if (!prompt) {
@@ -2854,6 +3077,9 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					const allConfigs = agentConfigsStore.get('configs', {});
 					const dnAgentConfigValues = allConfigs[provider] || {};
 
+					// Intentionally local, same as the desktop Director's Notes handler:
+					// the prompt manifests history files on THIS machine, so grooming
+					// gets no `sessionSshRemoteConfig` and spawns locally (issue #1416).
 					const result = await groomContext(
 						{
 							projectRoot: process.cwd(),

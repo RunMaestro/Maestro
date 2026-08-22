@@ -23,11 +23,14 @@ Run `<group> --help` for the exact subcommands and flags.
 - **settings** - read/write any global or per-agent setting (`settings list -v`, `settings get/set/reset`, `settings agent ...`). Applies live, no restart.
 - **send / dispatch** - hand a prompt to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated.
 - **list / show** - inspect agents, groups, playbooks, sessions, ssh-remotes.
+- **session list / session show** - enumerate every open AI tab across the fleet (ids, agent, state, and each tab's settings), and print one tab's transcript. This is the read side of `tab`.
 - **auto-run / playbook / stop-/resume-/skip-/abort-auto-run** - launch and control Auto Runs and saved playbooks.
-- **cue** - list and trigger Cue subscriptions (event model + YAML schema live in `_maestro-cue`).
-- **open-file / open-browser / open-terminal / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately.
+- **cue** - list and trigger Cue subscriptions, and manage Scheduled Tasks with `cue schedule` (event model + YAML schema live in `_maestro-cue`).
+- **open** - bring up a Maestro modal or dashboard, optionally on a tab (`open --list`, `open cue --tab scheduled`, `open settings --tab shortcuts`). Judgment note below.
+- **open-file / open-browser / close-browser / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately.
+- **open-terminal / send-terminal / list terminals** - open a native terminal tab (optionally starting a command in it), type into one that already exists, and see what is open. Judgment note below.
 - **notify toast|flash** - surface in-app notifications (see the judgment below).
-- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes.
+- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. `tab` also owns the per-tab settings the composer chips toggle (see below).
 - **stats / stats-query** - read the Usage Dashboard's SQLite store directly (discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"`).
 - **director-notes / gist / prompts / status / doctor** - cross-agent history synopses, transcript export, prompt self-reference, diagnostics.
 
@@ -50,7 +53,46 @@ If declined, offer a manual fallback (e.g. a one-shot `send` later instead of a 
 
 **Notifications - toast vs flash are not interchangeable.** Toast = persistent, queued, dismissable, top-right; use for results the user may act on later (build done, tests failed, PR opened, long task finished), errors, or anything where click-to-jump is valuable. Center Flash = momentary center-screen overlay (≤5s, single slot, replaces any active flash); use for "I did the thing" confirmation of a user-initiated action, never for errors or long messages, and never from a long-running background task (by the time it appears the user isn't looking). Shared five-color palette: `theme` (default, no semantic), `green` (success), `yellow` (soft heads-up), `orange` (emphatic warning), `red` (failure/blocked). Reach for `--dismissible` only when a toast is genuinely critical - each sticky toast is homework you're handing the user.
 
+**Browser tabs are the user's screen, not your scratch space.** Research goes through web search first; open a browser only when search genuinely can't do the job (JS-rendered page, login wall, you must interact with the page). When you do, always pass `--background` so the app doesn't switch agents and swap the visible tab out from under whoever is working, then `close-browser <tab-id>` as soon as you have what you need. `open-browser` prints the tab ID for exactly that. Leave a tab open only when the page itself is the deliverable, and say so. If the Conductor Profile names a different browser tool, that wins - use theirs and skip `open-browser` entirely.
+
+**Terminals: yours vs the user's.** Your own shell tool is for output only you need (git status, a test run, a build log) - it is invisible to the user, it blocks your turn, and it dies with the turn. The app's terminal tabs are where every long-running or watchable process belongs: dev servers, `tail -f`, REPLs, watchers. Never answer "open a terminal" by shelling out yourself or by telling the user to open their own terminal app.
+
+- `open-terminal --agent {{AGENT_ID}} --name "Dev server" --command "npm run dev"` makes a new tab and runs the command once the shell is ready. Always pass `--name` (otherwise it reads "Terminal 3", and the name is how you address the tab later). `--command` is the tab's **startup** command, so it re-runs when the tab restarts or the app reopens - right for a server, wrong for a one-shot. `--cwd` is confined to the agent's working directory. The tab ID is printed; keep it.
+- `send-terminal --agent {{AGENT_ID}} [--tab <id-or-name>] "<cmd>"` types into a terminal that already exists, which is the right move when a suitable tab is open - don't stack up a new tab per command. `--control C` sends Ctrl-C (stop the dev server). `--no-enter` types without running, for handing a risky command to a human. It gives you no output back: read the result in the app, or use your own shell tool when you need to see it.
+- `list terminals [--agent <id>]` shows what is open, with IDs, names, and which one is active.
+
+Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal. A `--tab` ID matches across agents (IDs are unique); a `--tab` name matches only inside the target agent, since "Dev server" exists in every project. A tab that has never been displayed has no shell yet and cannot receive a write - use `open-terminal --command` for that case.
+
+**A command you send runs on the user's machine, with their shell and credentials, possibly unattended.** Hold it to the same bar as running it yourself: confirm anything destructive first, and prefer `--no-enter` when you want a human to approve before it executes.
+
 **Messages that start with a dash** collide with option parsing. Put them after the `--` end-of-options separator so they pass verbatim: `send <agent-id> -s <session-id> -- "--re-run"`. Any flags must come before `--`.
+
+**Scheduling anything time-driven goes through `cue schedule`.** "In 20 minutes...", "at 4pm...", "every weekday at 9am...", "every 30 minutes..." are all one command; never hand-author a `time.*` subscription in YAML.
+
+- One-shot: `cue schedule --in 20m` or `--at "2026-08-20 16:00"` (local wall clock or ISO-8601 with an offset).
+- Repeating on a clock: `cue schedule --daily-at 09:00,17:30 [--days mon,tue,wed,thu,fri]`.
+- Repeating on an interval: `cue schedule --every 30m`.
+- Always pass `--agent <id-or-name>` (the agent that will run it) and `--prompt`, `--notify`, or both.
+- Inspect and edit: `--list [--kind once|daily|interval]`, `--reschedule <name>` plus the timing flag matching that task's kind, `--pause` / `--resume` (keeps the task, stops it firing), `--cancel <name>` (deletes it).
+
+The user sees and edits the same tasks in the app under **Maestro Cue → Scheduled Tasks** - offer `open cue --tab scheduled` after scheduling something so they know where it lives. A `--pause` is almost always the right answer to "stop doing that for now"; reach for `--cancel` only when they want it gone.
+
+**Opening a surface is a teaching move, not just navigation.** When the user asks where something lives ("where do I see my scheduled tasks / my token usage / the shortcut list?"), offer to open it and then relay the access line the command prints: `open` reports the hotkey, the command-palette entry, and the click target for that surface. Showing them the pane and the hotkey in one breath beats describing a menu path. Use `open --list` when you are unsure of the surface id; use `--tab` whenever the answer lives on a specific tab. Do not use it to yank the user's screen around mid-task - it changes what is in front of them, so open a surface because they asked about it or agreed to it.
+
+**Per-tab settings are scriptable - the composer chips have CLI equivalents.** An AI tab carries its own model, effort, thinking display, access mode, History behavior, and send key, each overriding the agent's default for that tab alone. `tab <verb> <tab-id> <value>` writes one; `tab show <tab-id>` reads them all back; `session list --json` reads them across the fleet.
+
+- `tab thinking <tab-id> off|on|sticky|cycle` - the thinking display. `on` shows reasoning and tool cells while the agent is busy and clears them when the reply lands; `sticky` pins them so they stay readable afterwards; `cycle` advances one step exactly as clicking the chip does. **Turn this on before you need to watch a stream, not after** - `off` means the entries are never created, so it cannot recover reasoning that already happened.
+- `tab read-only <tab-id> true|false` - read-only / plan mode, the access switch. The agent in that tab cannot modify files.
+- `tab model <tab-id> <model>` and `tab effort <tab-id> <level>` - per-tab overrides. Agent-wide defaults still live on `update-agent --model` / `--effort`; reach for the tab form when only this conversation should differ.
+- `tab enter-to-send <tab-id> true|false` - the send key for that tab.
+- `tab save-to-history <tab-id> true|false`, `tab star`/`unstar`, `tab read`/`unread`, `tab rename`, `tab move`, `tab close`.
+
+Two conventions that are easy to get wrong:
+
+- **`inherit` is not `false`.** `tab model <id> inherit` (also `default`, `none`, `clear`) drops the override so the tab follows the agent again. `tab enter-to-send <id> false` **pins** the tab to Cmd+Enter even when the global default is Enter; `inherit` is what returns it to the setting.
+- **`active` is a valid tab id on every `tab` verb.** It means the tab that agent currently has selected: `tab thinking active sticky -a {{AGENT_ID}}`. Without `-a` it resolves to the agent the desktop has focused, which is rarely what you want from a background task - name the agent.
+
+Everything here is an explicit set, not a toggle (the one exception is `thinking ... cycle`), so re-running a script lands on the same state. Get tab ids from `session list`, and remember these are per-tab: setting a model on one tab says nothing about the agent's other tabs.
 
 **Cue routing.** Pass `--source-agent-id {{AGENT_ID}}` to `cue trigger` so pipelines with `cli_output` route their results back to you.
 
