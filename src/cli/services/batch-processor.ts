@@ -29,6 +29,9 @@ import { getCliPrompt } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
 import { detectHaltMarker } from '../../shared/autorun/haltMarker';
+import { findActiveModelHint } from '../../shared/autorunModelHints';
+import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
+import { cheapTurnSettings } from '../../shared/modelTiers';
 
 // `detectHaltMarker` is re-exported so existing CLI consumers and tests that
 // reference it via this module keep resolving. The canonical implementation now
@@ -67,6 +70,9 @@ export async function* runPlaybook(
 		effort: runEffort,
 	} = options;
 	const batchStartTime = Date.now();
+	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
+	// it depends only on the provider, which cannot change mid-run.
+	const cheapSynopsis = cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -524,6 +530,36 @@ export async function* runPlaybook(
 					// Run task. Synopsis spawn below intentionally omits this
 					// - it's a resume into the same agent that already has the
 					// prompt and re-sending would waste tokens.
+					// Resolve the document's model hint for THIS task. Recomputed per
+					// dispatch rather than carried as run state, so editing the document
+					// mid-run takes effect on the next task. The run-scoped --model /
+					// --effort goes in as the baseline the hint overrides, matching the
+					// desktop engine's precedence: document hint, then run override, then
+					// the agent's own value.
+					const turnSettings = resolveTurnSettings(
+						session.toolType,
+						findActiveModelHint(expandedDocContent),
+						runModel ?? session.customModel,
+						runEffort ?? session.customEffort
+					);
+					// Its own event type rather than `verbose`: a hint that could not be
+					// honored has to reach the operator whether or not they passed
+					// --verbose, and a distinct type lets consumers filter for it.
+					const turnSettingsNote = describeTurnSettings(turnSettings);
+					if (turnSettingsNote) {
+						yield {
+							type: 'model_resolution',
+							timestamp: Date.now(),
+							document: docEntry.filename,
+							taskIndex,
+							model: turnSettings.model ?? null,
+							effort: turnSettings.effort ?? null,
+							notes: turnSettings.notes,
+							warnings: turnSettings.warnings,
+							message: turnSettingsNote,
+						};
+					}
+
 					const result = await captureCliRun(
 						{
 							sessionId: session.id,
@@ -534,8 +570,8 @@ export async function* runPlaybook(
 						},
 						() =>
 							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-								customModel: runModel ?? session.customModel,
-								customEffort: runEffort ?? session.customEffort,
+								customModel: turnSettings.model,
+								customEffort: turnSettings.effort,
 								customArgs: session.customArgs,
 								additionalDirectories: session.additionalDirectories,
 								customEnvVars: session.customEnvVars,
@@ -595,8 +631,18 @@ export async function* runPlaybook(
 									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
 									result.agentSessionId,
 									{
-										customModel: runModel ?? session.customModel,
-										customEffort: runEffort ?? session.customEffort,
+										// A synopsis is a throwaway summarization of work that already
+										// happened, so it runs at the bottom of both ladders regardless of
+										// what the task ran at. On a long playbook this is one premium turn
+										// per task saved. Safe because the synopsis is a leaf: its returned
+										// agentSessionId is discarded, so the downgrade cannot follow the
+										// conversation into the next real turn.
+										// The `??` fallbacks matter on providers with no tier mapping
+										// (codex, opencode): there is nothing to downgrade TO, so the
+										// synopsis inherits, and it must inherit the same value the task
+										// ran under - the run override, not just the session's.
+										customModel: cheapSynopsis.model ?? runModel ?? session.customModel,
+										customEffort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
 										customArgs: session.customArgs,
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,

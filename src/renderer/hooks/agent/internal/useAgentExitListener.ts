@@ -21,7 +21,7 @@
 import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { useSessionStore } from '../../../stores/sessionStore';
-import { clearRetryIfSettled } from '../../../stores/retryStore';
+import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
@@ -220,10 +220,24 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			let synopsisData: SynopsisData | null = null;
 			let synopsisDidWork = false;
 
+			// Agent Resilience: is a retry counting down for the tab that just exited?
+			// Read AFTER clearRetryIfSettled above, so a resend that completed cleanly
+			// has already been cleared and only a genuinely pending retry reads true.
+			// A pending retry freezes the execution queue (see chooseNextQueuedItem).
+			const retryPending = !!(
+				isFromAi &&
+				tabIdFromSession &&
+				hasPendingRetry(actualSessionId, tabIdFromSession)
+			);
+
 			if (isFromAi) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
 				if (currentSession) {
-					const queueDecision = chooseNextQueuedItem(currentSession, tabIdFromSession);
+					const queueDecision = chooseNextQueuedItem(
+						currentSession,
+						tabIdFromSession,
+						retryPending
+					);
 					if (queueDecision.action === 'dequeue' && queueDecision.item) {
 						queuedItemToProcess = {
 							sessionId: actualSessionId,
@@ -575,7 +589,16 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							const otherTabsBusy = s.aiTabs?.some(
 								(tab) => tab.id !== tabIdFromSession && tab.state === 'busy'
 							);
-							if (!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy) {
+							// `retryPending` holds the whole queue: the provider just refused
+							// this turn, so dispatching the next item only fails it too - and
+							// the dispatch would cancel the pending retry, losing that prompt.
+							// Mirrors the same condition in chooseNextQueuedItem, which already
+							// kept `queuedItemToProcess` null; this keeps the reducer in step so
+							// no tab is marked busy for a spawn that never happens.
+							if (
+								retryPending ||
+								(!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy)
+							) {
 								// Don't dequeue - mark the exiting tab idle and keep session busy
 								const updatedAiTabs = s.aiTabs.map((tab) =>
 									tabIdFromSession && tab.id === tabIdFromSession

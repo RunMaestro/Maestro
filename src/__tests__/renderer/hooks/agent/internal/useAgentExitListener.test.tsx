@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentExitListener } from '../../../../../renderer/hooks/agent/internal/useAgentExitListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { useRetryStore } from '../../../../../renderer/stores/retryStore';
 import { DEFAULT_BATCH_STATE } from '../../../../../renderer/hooks/batch/batchReducer';
 import type { BatchRunState } from '../../../../../renderer/types';
 import { createMockSession } from '../../../../helpers/mockSession';
@@ -48,6 +49,7 @@ function makeDeps() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	handler = undefined;
+	useRetryStore.setState({ retries: {}, outages: {} } as any);
 	useSessionStore.setState({
 		sessions: [],
 		groups: [],
@@ -280,6 +282,99 @@ describe('useAgentExitListener', () => {
 		expect(spawn).toHaveBeenCalledTimes(1);
 		const sessionConfig = spawn.mock.calls[0][5];
 		expect(sessionConfig.customModel).toBe('session-sonnet');
+	});
+
+	// Agent Resilience: the exiting turn failed and a resend is counting down.
+	// The reducer must leave the queue alone. Draining it would fail every item
+	// against the same provider, and the dispatch would supersede the pending
+	// retry (noteDispatch), silently discarding the prompt that is waiting.
+	it('holds the execution queue while a retry is counting down', async () => {
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+		const queued = {
+			id: 'item-1',
+			timestamp: 1,
+			tabId: 'tab-1',
+			type: 'message' as const,
+			text: 'QUEUED',
+			readOnlyMode: true,
+		};
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [queued] as any,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		useRetryStore.setState({
+			retries: {
+				'sess-1:tab-1': {
+					sessionId: 'sess-1',
+					tabId: 'tab-1',
+					key: 'sess-1:tab-1',
+					outageId: 'outage-1',
+					strategy: { kind: 'fixed', delayMs: 60_000, maxAttempts: 5 },
+					mode: 'auto',
+					status: 'scheduled',
+					attempt: 0,
+					startedAt: 0,
+					nextRetryAt: 60_000,
+					lastMessage: 'overloaded',
+				},
+			},
+		} as any);
+
+		const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = processQueuedItem as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-1']);
+		expect(updated.aiTabs[0].state).toBe('idle');
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('drains the queue normally once the retry has settled', async () => {
+		// Same shape as above with no retry entry: proves the hold is the retry's
+		// doing, not the exit code or the read-only flag.
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+		const queued = {
+			id: 'item-1',
+			timestamp: 1,
+			tabId: 'tab-1',
+			type: 'message' as const,
+			text: 'QUEUED',
+			readOnlyMode: true,
+		};
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [queued] as any,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = processQueuedItem as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
 	});
 
 	it('deletes activeHiddenToolRef entry on AI exit', async () => {

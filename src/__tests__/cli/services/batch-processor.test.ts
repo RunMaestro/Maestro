@@ -529,7 +529,7 @@ describe('batch-processor', () => {
 				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
 			});
 
-			it('applies the run override to the synopsis spawn too', async () => {
+			it('does NOT spend the run override on the synopsis spawn', async () => {
 				singleTask();
 				vi.mocked(spawnAgent).mockResolvedValue({
 					success: true,
@@ -545,8 +545,15 @@ describe('batch-processor', () => {
 
 				// Index 0 = task spawn, index 1 = synopsis resume.
 				expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+				// The run override says which model does the WORK. A synopsis is a few
+				// sentences of prose about work that already happened, so it is pinned to
+				// the bottom of the ladder instead - otherwise every task costs a second
+				// premium turn. Safe because the synopsis is a leaf: its agentSessionId is
+				// discarded, so the cheap model cannot follow the conversation onward.
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet' });
 				const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
-				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'sonnet' });
+				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'haiku' });
 			});
 		});
 
@@ -1575,6 +1582,94 @@ describe('batch-processor', () => {
 			const completeEvent = events.find((e) => e.type === 'complete');
 			expect(completeEvent?.halted).toBe(true);
 			expect(completeEvent?.totalTasksCompleted).toBe(0);
+		});
+	});
+
+	describe('runPlaybook - model hints', () => {
+		// One task, then the document reads as done. Mirrors the halt tests above:
+		// the engine re-reads the document several times per task.
+		const singleTaskDocument = (content: string) => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content, taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+		};
+
+		it('spawns the task with the tier model and reports the resolution', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			// Claude's ceiling, not the literal word "high" - the levels are ladder
+			// positions, so effort="high" has to reach the process as `max`.
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.customModel).toBe('opus');
+			expect(taskSpawnOpts?.customEffort).toBe('max');
+
+			const resolution = events.find((e) => e.type === 'model_resolution');
+			expect(resolution?.model).toBe('opus');
+			expect(resolution?.effort).toBe('max');
+			expect(resolution?.warnings).toEqual([]);
+		});
+
+		it('falls back to the agent model AND warns when the provider has no tier mapping', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+
+			// OpenCode's catalogue is whatever the user configured, so a tier hint
+			// has nothing to resolve to. Running anyway is right; running silently
+			// is the failure this feature exists to prevent.
+			const session = mockSession({ toolType: 'opencode', customModel: 'local-model' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('local-model');
+
+			const resolution = events.find((e) => e.type === 'model_resolution');
+			expect(resolution?.model).toBe('local-model');
+			const warnings = resolution?.warnings as string[];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain('opencode');
+		});
+
+		it('emits no model_resolution event for a document without a marker', async () => {
+			singleTaskDocument('- [ ] Task one');
+
+			const session = mockSession({ customModel: 'sonnet', customEffort: 'medium' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'model_resolution')).toBeUndefined();
+			// The agent's own configuration stands, untouched.
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.customModel).toBe('sonnet');
+			expect(taskSpawnOpts?.customEffort).toBe('medium');
+		});
+
+		it('runs the synopsis at the bottom of both ladders even when the task ran at the top', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] Task one');
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: '**Summary:** ok\n**Details:** ok',
+				agentSessionId: 'claude-session-123',
+			});
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			// Spawn 0 = task, spawn 1 = synopsis resume. A synopsis summarizes work
+			// that already happened, so it must never inherit the task's tier.
+			expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('opus');
+			const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+			expect(synopsisSpawnOpts?.customModel).toBe('haiku');
+			expect(synopsisSpawnOpts?.customEffort).toBe('low');
 		});
 	});
 });

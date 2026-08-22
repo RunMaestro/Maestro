@@ -2663,4 +2663,102 @@ describe('useInputProcessing', () => {
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});
 	});
+
+	describe('automatic tab naming', () => {
+		// Naming spawns an ephemeral agent through this bridge; the tests assert
+		// that it is asked at all, not what it answers.
+		const mockGenerateTabName = vi.fn().mockResolvedValue('Generated Name');
+
+		beforeEach(() => {
+			mockGenerateTabName.mockClear();
+			window.maestro = {
+				...window.maestro,
+				tabNaming: { generateTabName: mockGenerateTabName },
+				logger: { ...window.maestro?.logger, log: vi.fn().mockResolvedValue(undefined) },
+			} as typeof window.maestro;
+		});
+
+		it('names the tab even when the message is queued behind another busy tab', async () => {
+			// The regression: naming used to sit AFTER the execution-queue early
+			// return, and the dequeue path never names. A first message sent while
+			// any other tab was busy therefore left the tab permanently unnamed -
+			// the per-send retry never fires because there is no second send.
+			const busyOtherTab = createMockTab({ id: 'tab-busy', name: 'Other Work', state: 'busy' });
+			const unnamedTab = createMockTab({ id: 'tab-new', name: null, state: 'idle' });
+			const session = createMockSession({
+				state: 'busy',
+				aiTabs: [busyOtherTab, unnamedTab],
+				activeTabId: unnamedTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'alphabetize the groups in this menu',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// The send really did queue - otherwise this test proves nothing.
+			const queued = mockSetSessions.mock.calls
+				.map((call) => call[0]([session])[0].executionQueue)
+				.find((queue) => queue.length > 0);
+			expect(queued?.[0]?.text).toBe('alphabetize the groups in this menu');
+
+			// ...and naming still ran against the unnamed target tab.
+			expect(mockGenerateTabName).toHaveBeenCalledTimes(1);
+			expect(mockGenerateTabName.mock.calls[0][0].userMessage).toBe(
+				'alphabetize the groups in this menu'
+			);
+		});
+
+		it('names the tab on a direct (unqueued) send', async () => {
+			const unnamedTab = createMockTab({ id: 'tab-new', name: null, state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiPid: null,
+				aiTabs: [unnamedTab],
+				activeTabId: unnamedTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'add compress to folder right click',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockGenerateTabName).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not name a tab that already has one', async () => {
+			const namedTab = createMockTab({ id: 'tab-named', name: 'Already Named', state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiPid: null,
+				aiTabs: [namedTab],
+				activeTabId: namedTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'another message',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockGenerateTabName).not.toHaveBeenCalled();
+		});
+	});
 });

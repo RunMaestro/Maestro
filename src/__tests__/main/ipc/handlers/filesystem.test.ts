@@ -26,8 +26,26 @@ vi.mock('../../../../main/utils/drag-out-icon', () => ({
 // Mock synchronous fs (existsSync) used by the drag-out handler's path filter.
 vi.mock('fs', () => {
 	const existsSync = vi.fn(() => true);
-	return { existsSync, default: { existsSync } };
+	// The compress handler streams an archive to disk; a stub stream that fires
+	// 'close' on the next tick stands in for the real write.
+	const createWriteStream = vi.fn(() => ({
+		on: (event: string, cb: () => void) => {
+			if (event === 'close') setTimeout(cb, 0);
+		},
+	}));
+	return { existsSync, createWriteStream, default: { existsSync, createWriteStream } };
 });
+
+// Mock archiver - the compress handler only needs pipe/directory/finalize.
+const archiveMock = {
+	on: vi.fn(),
+	pipe: vi.fn(),
+	directory: vi.fn(),
+	finalize: vi.fn().mockResolvedValue(undefined),
+};
+vi.mock('archiver', () => ({
+	default: vi.fn(() => archiveMock),
+}));
 
 // Mock os module
 vi.mock('os', () => ({
@@ -71,6 +89,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	mkdirRemote: vi.fn(),
 	deleteRemote: vi.fn(),
 	countItemsRemote: vi.fn(),
+	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
 	existsRemote: vi.fn(),
 }));
@@ -94,6 +113,7 @@ import {
 	deleteRemote,
 	writeFileRemote,
 	existsRemote,
+	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
 
@@ -616,6 +636,74 @@ describe('filesystem handlers', () => {
 
 			expect(renameRemote).toHaveBeenCalledWith('/old/path.txt', '/new/path.txt', mockSshConfig);
 			expect(result).toEqual({ success: true });
+		});
+	});
+
+	describe('fs:compressFolder', () => {
+		it('zips a folder into <name>.zip beside it, nesting under the folder name', async () => {
+			vi.mocked(existsSync).mockReturnValue(false);
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			const result = await handler!({}, '/project/Competition');
+
+			expect(archiveMock.directory).toHaveBeenCalledWith('/project/Competition', 'Competition');
+			expect(result).toEqual({
+				success: true,
+				path: '/project/Competition.zip',
+				name: 'Competition.zip',
+			});
+		});
+
+		it('increments a numeric suffix until the archive name is free', async () => {
+			// Competition.zip and Competition-1.zip are taken; -2 is free.
+			vi.mocked(existsSync).mockImplementation(
+				(candidate) =>
+					candidate === '/project/Competition.zip' || candidate === '/project/Competition-1.zip'
+			);
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			const result = await handler!({}, '/project/Competition');
+
+			expect(result).toEqual({
+				success: true,
+				path: '/project/Competition-2.zip',
+				name: 'Competition-2.zip',
+			});
+		});
+
+		it('compresses over SSH when sshRemoteId is set', async () => {
+			const sshConfig = { id: 'remote-1', host: 'example.com' };
+			vi.mocked(getSshRemoteById).mockReturnValue(sshConfig as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: false });
+			vi.mocked(compressFolderRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			const result = await handler!({}, '/remote/project/docs', { sshRemoteId: 'remote-1' });
+
+			expect(compressFolderRemote).toHaveBeenCalledWith(
+				'/remote/project/docs',
+				'/remote/project/docs.zip',
+				sshConfig
+			);
+			expect(result).toEqual({
+				success: true,
+				path: '/remote/project/docs.zip',
+				name: 'docs.zip',
+			});
+		});
+
+		it('throws when the remote compress fails', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'remote-1' } as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: false });
+			vi.mocked(compressFolderRemote).mockResolvedValue({
+				success: false,
+				error: 'zip not installed',
+			});
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			await expect(handler!({}, '/remote/docs', { sshRemoteId: 'remote-1' })).rejects.toThrow(
+				'zip not installed'
+			);
 		});
 	});
 

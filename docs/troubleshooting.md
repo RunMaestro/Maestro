@@ -78,6 +78,8 @@ This is useful when an agent becomes unresponsive or you need to diagnose proces
 
 ## Agent Errors
 
+Two of the errors below rarely reach you at all. **Rate Limit Exceeded** and a spent plan quota are handled by [Agent Resilience](/agent-resilience), which resends your prompt on its own and shows a live countdown card in the transcript instead of a modal. The table applies when resilience is turned off for that agent, or when the failure is one it deliberately does not retry.
+
 When an AI agent encounters an error, Maestro displays a modal with clear recovery options. Common error types include:
 
 | Error Type                  | Description                        | Recovery Options                               |

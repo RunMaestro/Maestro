@@ -175,6 +175,11 @@ vi.mock('lucide-react', () => ({
 			💾
 		</span>
 	),
+	FileArchive: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="file-archive-icon" className={className} style={style}>
+			🗜️
+		</span>
+	),
 }));
 
 // Mock @tanstack/react-virtual for virtualization

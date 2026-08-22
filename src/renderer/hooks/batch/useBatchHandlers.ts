@@ -227,10 +227,15 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				.getState()
 				.setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...updates } : s)));
 		},
-		// `options` carries the run-scoped model/effort override from BatchRunConfig
-		// (undefined for runs that use the agent default).
-		onSpawnAgent: (sessionId, prompt, cwdOverride, options) =>
-			spawnAgentForSession(sessionId, prompt, cwdOverride, { ...options, isAutoRun: true }),
+		onSpawnAgent: (sessionId, prompt, cwdOverride, turnSettings) =>
+			spawnAgentForSession(sessionId, prompt, cwdOverride, {
+				isAutoRun: true,
+				// Whatever the document processor resolved for this task: the document's
+				// MAESTRO:MODEL hint, else the run-scoped override, else the agent's own
+				// value. Must be forwarded, not dropped - this is the last hop before
+				// the spawn.
+				...turnSettings,
+			}),
 		spawnBackgroundSynopsis,
 		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({

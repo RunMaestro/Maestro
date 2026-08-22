@@ -175,6 +175,91 @@ describe('useAgentExecution', () => {
 		expect(updatedSession.aiTabs[0].state).toBe('idle');
 	});
 
+	it('forwards the Auto Run turn overrides to the spawn, and the agent config otherwise', async () => {
+		// The document's MAESTRO:MODEL hint arrives here as modelOverride /
+		// effortOverride. This is the last hop before the process, so a dropped
+		// value means the same playbook runs at a different setting in the app
+		// than it does under maestro-cli.
+		const session = createMockSession({
+			state: 'busy',
+			customModel: 'sonnet',
+			customEffort: 'medium',
+			aiTabs: [createMockTab({ state: 'busy' })],
+		});
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		result.current.spawnAgentForSession(session.id, 'Overridden task', undefined, {
+			isAutoRun: true,
+			modelOverride: 'opus',
+			effortOverride: 'max',
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomModel).toBe('opus');
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('max');
+
+		// Without overrides the agent's own configuration stands - including
+		// effort, which used to be dropped on this path only.
+		result.current.spawnAgentForSession(session.id, 'Plain task', undefined, {
+			isAutoRun: true,
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		expect(mockProcess.spawn.mock.calls[1][0].sessionCustomModel).toBe('sonnet');
+		expect(mockProcess.spawn.mock.calls[1][0].sessionCustomEffort).toBe('medium');
+	});
+
+	it('pins a background synopsis to the cheapest model rather than the tab model', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'claude-code',
+			{ customModel: 'opus' }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		// A synopsis summarizes work that already happened, so it never inherits
+		// the expensive model the turn itself ran on.
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomModel).toBe('haiku');
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('low');
+	});
+
 	it('includes appendSystemPrompt in batch spawns', async () => {
 		const session = createMockSession({
 			state: 'busy',

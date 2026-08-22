@@ -155,6 +155,21 @@ preserved, so a 2x podcast still sounds like a person.
 You can also set the speed outside the app with
 `maestro-cli settings set mediaPlaybackRate 1.5`.
 
+### Compressing a Folder
+
+Right-click any folder in the Files tab and choose **Compress**. Maestro zips the
+folder into a `.zip` that lands beside it in the parent directory, named after
+the folder itself. Unzipping gives you back the folder, not its loose contents
+sprayed into the current directory.
+
+If `name.zip` already exists, the next free name is used - `name-1.zip`, then
+`name-2.zip`, and so on. Compressing the same folder twice never overwrites the
+archive you made the first time. A toast tells you the name of the file that was
+actually written, and the file tree refreshes so you can see it right away.
+
+This works on remote agents too. The remote host needs the `zip` command
+installed; without it, Maestro says so rather than failing quietly.
+
 ### File Explorer Keyboard Shortcuts
 
 With the Files tab focused, navigate the file list without touching the mouse:

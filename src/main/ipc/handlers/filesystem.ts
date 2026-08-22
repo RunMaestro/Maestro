@@ -12,6 +12,7 @@
  * - copyPath: Copy a file/directory into a destination (local only; drag-import)
  * - delete: Delete file/directory (local & SSH remote)
  * - countItems: Count files and folders recursively (local & SSH remote)
+ * - compressFolder: Zip a folder into its parent dir (local & SSH remote)
  * - fetchImageAsBase64: Fetch image from URL and return as base64
  *
  * Extracted from main/index.ts to improve code organization.
@@ -21,7 +22,8 @@ import { ipcMain } from 'electron';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, createWriteStream } from 'fs';
+import archiver from 'archiver';
 
 import { logger } from '../../utils/logger';
 import {
@@ -44,6 +46,7 @@ import {
 	deleteRemote,
 	existsRemote,
 	countItemsRemote,
+	compressFolderRemote,
 	listTreeRemote,
 	type ListTreeOptions,
 } from '../../utils/remote-fs';
@@ -179,6 +182,31 @@ function isPrivateHostname(hostname: string): boolean {
 /**
  * Register all filesystem-related IPC handlers.
  */
+/**
+ * Pick a free `.zip` path for `basePath` (an extension-less path).
+ *
+ * Tries `<base>.zip` first, then `<base>-1.zip`, `<base>-2.zip`, ... until the
+ * probe reports a free name. `exists` is injected so the same walk serves both
+ * the local disk and an SSH remote.
+ */
+async function resolveUniqueZipPath(
+	basePath: string,
+	exists: (candidate: string) => Promise<boolean>
+): Promise<string> {
+	let candidate = `${basePath}.zip`;
+	let suffix = 0;
+	// Bounded so a filesystem that reports every name as taken (a permission
+	// error surfacing as "exists", say) cannot spin forever.
+	while (await exists(candidate)) {
+		suffix++;
+		if (suffix > 9999) {
+			throw new Error(`Could not find an unused archive name for ${basePath}.zip`);
+		}
+		candidate = `${basePath}-${suffix}.zip`;
+	}
+	return candidate;
+}
+
 export function registerFilesystemHandlers(): void {
 	// Get user home directory
 	ipcMain.handle('fs:homeDir', () => {
@@ -770,6 +798,63 @@ export function registerFilesystemHandlers(): void {
 			} catch (error) {
 				throw new Error(`Failed to delete: ${error}`);
 			}
+		}
+	);
+
+	// Compress a folder into a .zip sitting beside it in the parent directory.
+	// The archive is named after the folder; when that name is taken the next
+	// free `-N` suffix is used, so repeated compressions never clobber an
+	// existing archive.
+	ipcMain.handle(
+		'fs:compressFolder',
+		async (_, folderPath: string, options?: { sshRemoteId?: string }) => {
+			const sshRemoteId = options?.sshRemoteId;
+			const folderName = path.basename(folderPath.replace(/[\\/]+$/, ''));
+			const parentDir = path.dirname(folderPath.replace(/[\\/]+$/, ''));
+
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(sshRemoteId);
+				if (!sshConfig) {
+					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				}
+				// Remote paths are POSIX regardless of what the desktop runs on, so
+				// join with '/' rather than path.join (which uses '\\' on Windows).
+				const destPath = await resolveUniqueZipPath(
+					`${parentDir.replace(/\\/g, '/')}/${folderName}`,
+					async (candidate) => {
+						const result = await existsRemote(candidate, sshConfig);
+						if (!result.success) {
+							throw new Error(result.error || 'Failed to check remote path');
+						}
+						return result.data === true;
+					}
+				);
+				const result = await compressFolderRemote(folderPath, destPath, sshConfig);
+				if (!result.success) {
+					throw new Error(result.error || 'Failed to compress remote folder');
+				}
+				return { success: true, path: destPath, name: path.posix.basename(destPath) };
+			}
+
+			const destPath = await resolveUniqueZipPath(
+				path.join(parentDir, folderName),
+				async (candidate) => existsSync(candidate)
+			);
+
+			await new Promise<void>((resolve, reject) => {
+				const output = createWriteStream(destPath);
+				const archive = archiver('zip', { zlib: { level: 9 } });
+				output.on('close', () => resolve());
+				output.on('error', reject);
+				archive.on('error', reject);
+				archive.pipe(output);
+				// Nest everything under the folder's own name so unzipping produces a
+				// single folder rather than spraying its contents into the cwd.
+				archive.directory(folderPath, folderName);
+				void archive.finalize();
+			});
+
+			return { success: true, path: destPath, name: path.basename(destPath) };
 		}
 	);
 

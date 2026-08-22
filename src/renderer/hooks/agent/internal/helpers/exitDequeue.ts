@@ -4,6 +4,7 @@
  * Rule (extracted verbatim from the original onExit logic):
  * - Empty queue → 'none'
  * - Session is in error state with an agentError → 'none'
+ * - Agent Resilience has a retry counting down for the exiting tab → 'wait'
  * - The next item is `forceParallel` OR `readOnlyMode` OR all *other* tabs are
  *   already idle → 'dequeue' (the caller proceeds to execute it).
  * - Otherwise (a write-mode item with another tab still busy) → 'wait' (the
@@ -25,7 +26,13 @@ export interface QueueDecision {
 
 export function chooseNextQueuedItem(
 	session: Pick<Session, 'executionQueue' | 'state' | 'agentError' | 'aiTabs'>,
-	exitingTabId: string | undefined
+	exitingTabId: string | undefined,
+	/**
+	 * Agent Resilience has a retry counting down for the exiting tab (see
+	 * `retryStore.hasPendingRetry`). Passed in rather than read off the session
+	 * so this helper stays pure.
+	 */
+	retryPending = false
 ): QueueDecision {
 	// Paused items are held by the user - skip them and run the first runnable
 	// item. If everything is held (or the queue is empty), there's nothing to do.
@@ -36,6 +43,16 @@ export function chooseNextQueuedItem(
 
 	if (session.state === 'error' && session.agentError) {
 		return { action: 'none', item: null };
+	}
+
+	// A pending retry means the provider just refused this turn and we are
+	// waiting it out. Draining the queue into it would fail every queued item
+	// against the same wall - and worse, each dispatch supersedes the previous
+	// item's scheduled retry (see `retryStore.noteDispatch`), so a queue of N
+	// messages would silently discard the first N-1 prompts. Hold the queue; it
+	// drains in order once the retry lands.
+	if (retryPending) {
+		return { action: 'wait', item: nextItem };
 	}
 	const otherTabsBusy = !!session.aiTabs?.some(
 		(tab) => tab.id !== exitingTabId && tab.state === 'busy'
