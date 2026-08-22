@@ -196,4 +196,44 @@ describe('keyboard shortcut registry wiring', () => {
 			expect(keys, `${id} must pair Alt with Meta so it cannot type a character`).toContain('meta');
 		}
 	});
+
+	/**
+	 * Two global shortcuts on the same combination is a SILENT failure: the
+	 * keyboard handler is an if/else-if chain, so whichever branch is written
+	 * first wins and the other simply never fires. Nothing warns, and the losing
+	 * feature just looks broken.
+	 *
+	 * This nearly shipped when Concerto took Opt+Cmd+C while New Group Chat still
+	 * held it. Scoped to DEFAULT_SHORTCUTS on purpose: FIXED_SHORTCUTS
+	 * deliberately reuses Cmd+F across panels (each scoped to whichever panel has
+	 * focus), so the same rule there would be wrong.
+	 */
+	it('binds no two global shortcuts to the same combination', () => {
+		const MODIFIERS = ['meta', 'alt', 'shift', 'ctrl', 'command'];
+		const canonical = (keys: string[]): string => {
+			const lower = keys.map((k) => k.toLowerCase());
+			const mods = lower.filter((k) => MODIFIERS.includes(k)).sort();
+			const rest = lower.filter((k) => !MODIFIERS.includes(k));
+			return [...mods, ...rest].join('+');
+		};
+
+		const byCombo = new Map<string, string[]>();
+		for (const [id, shortcut] of Object.entries(DEFAULT_SHORTCUTS as Record<string, Shortcut>)) {
+			// An empty binding is the "unbound by default" convention (the tile
+			// family), not a collision - every one of them would otherwise collide.
+			if (shortcut.keys.length === 0) continue;
+			const combo = canonical(shortcut.keys);
+			if (!byCombo.has(combo)) byCombo.set(combo, []);
+			byCombo.get(combo)!.push(id);
+		}
+
+		const collisions = [...byCombo.entries()]
+			.filter(([, ids]) => ids.length > 1)
+			.map(([combo, ids]) => `${combo} -> ${ids.join(', ')}`);
+
+		expect(
+			collisions,
+			`Two shortcuts on one combination: the earlier branch in useMainKeyboardHandler wins and the other silently never fires. ${collisions.join('; ')}`
+		).toEqual([]);
+	});
 });

@@ -2156,6 +2156,75 @@ describe('settingsStore', () => {
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
 		});
 
+		it('moves New Group Chat off Opt+Cmd+C and hands the combo to Concerto', async () => {
+			// Without this remap the two COLLIDE: anyone who has ever opened the
+			// Shortcuts tab has the whole map persisted, so New Group Chat would keep
+			// Opt+Cmd+C while Concerto's new default also claimed it, and whichever
+			// branch runs first in the keyboard handler would swallow the other.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					newGroupChat: {
+						id: 'newGroupChat',
+						label: 'New Group Chat',
+						keys: ['Alt', 'Meta', 'c'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.newGroupChat.keys).toEqual(['Alt', 'Meta', 'g']);
+			expect(shortcuts.toggleConcerto.keys).toEqual(['Alt', 'Meta', 'c']);
+		});
+
+		it('carries both retired Concerto bindings forward, including a skipped build', async () => {
+			// The stage went bare Opt+C -> Opt+Cmd+V -> Opt+Cmd+C. A user who skipped
+			// the middle build still carries the oldest default, so both are listed.
+			for (const oldKeys of [
+				['Alt', 'c'],
+				['Alt', 'Meta', 'v'],
+			]) {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						toggleConcerto: {
+							id: 'toggleConcerto',
+							label: 'Show/Hide Concerto Stage',
+							keys: oldKeys,
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.toggleConcerto.keys).toEqual([
+					'Alt',
+					'Meta',
+					'c',
+				]);
+			}
+		});
+
+		it('leaves a user-customized New Group Chat binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					newGroupChat: {
+						id: 'newGroupChat',
+						label: 'New Group Chat',
+						keys: ['Meta', 'Shift', 'q'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.newGroupChat.keys).toEqual([
+				'Meta',
+				'Shift',
+				'q',
+			]);
+		});
+
 		it('leaves a user-customized focusActiveTab binding alone', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {

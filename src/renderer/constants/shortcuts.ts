@@ -19,7 +19,9 @@ export const DEFAULT_SHORTCUTS = {
 	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
 	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
-	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'c'] },
+	// G for Group chat. Moved off Opt+Cmd+C so Concerto - a far more frequently
+	// toggled surface - can have the mnemonic C. Migrated in settingsShortcutsSlice.
+	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'g'] },
 	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
 	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
 	openMemoryViewer: {
@@ -127,16 +129,18 @@ export const DEFAULT_SHORTCUTS = {
 	// character whenever the composer has focus - which is Maestro's usual state.
 	// Adding Cmd suppresses the character, and it matches the Opt+Cmd family the
 	// other feature surfaces already use (Usage Dashboard, System Logs).
-	// V for "views", which is what Concerto composes.
+	// C for Concerto; newGroupChat gave up this combo for it and moved to Opt+Cmd+G.
 	toggleConcerto: {
 		id: 'toggleConcerto',
 		label: 'Show/Hide Concerto Stage',
-		keys: ['Alt', 'Meta', 'v'],
+		keys: ['Alt', 'Meta', 'c'],
 	},
+	// Shift+ the stage key: the same surface family, the broader "put it all
+	// away" action.
 	toggleCadenzas: {
 		id: 'toggleCadenzas',
 		label: 'Show/Hide All Cadenzas',
-		keys: ['Alt', 'Meta', 'Shift', 'v'],
+		keys: ['Alt', 'Meta', 'Shift', 'c'],
 	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',

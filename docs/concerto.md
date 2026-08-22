@@ -30,7 +30,7 @@ Use Movements for the roomy, multi-panel "dashboard" view of a task you are acti
 
 The stage opens by itself the moment an agent composes a Concerto. You open and close it yourself in the three usual ways:
 
-- **Hotkey** - `Opt+Cmd+V` / `Alt+Ctrl+V` toggles the stage (V for the _views_ Concerto composes).
+- **Hotkey** - `Opt+Cmd+C` / `Alt+Ctrl+C` toggles the stage.
 - **Command palette** - `Cmd+K` / `Ctrl+K`, then "Concerto Stage".
 - **Hamburger menu** - **Concerto** in the Left Bar menu.
 
@@ -53,7 +53,7 @@ A **Cadenza** is a small card that floats _above every application_, not just Ma
 
 Use Cadenzas for the one number or the one question you want in view while your attention is elsewhere.
 
-To get them out of the way for a moment, `Opt+Cmd+Shift+V` / `Alt+Ctrl+Shift+V` (or "Hide All Cadenzas" in the command palette) stashes every card at once and the same key brings them all back. Stashing never closes a card: trackers keep tracking while they are hidden. Nothing else clears the stash, so cards an agent opens while it is on wait quietly until you press the key again.
+To get them out of the way for a moment, `Opt+Cmd+Shift+C` / `Alt+Ctrl+Shift+C` (or "Hide All Cadenzas" in the command palette) stashes every card at once and the same key brings them all back. Stashing never closes a card: trackers keep tracking while they are hidden. Nothing else clears the stash, so cards an agent opens while it is on wait quietly until you press the key again.
 
 ## Pointing from chat
 

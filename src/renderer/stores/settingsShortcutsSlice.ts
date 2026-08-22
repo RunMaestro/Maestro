@@ -98,6 +98,34 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 		fromKeys: [['Alt', 'Meta', 'f']],
 		toKeys: ['Alt', 'Meta', 'ArrowUp'],
 	},
+	// newGroupChat gave up Opt+Cmd+C so Concerto - toggled far more often - could
+	// take the mnemonic C. This remap is what stops the two from COLLIDING: a user
+	// who has ever opened the Shortcuts tab has the whole map persisted, so
+	// without it they would keep Opt+Cmd+C on New Group Chat while Concerto also
+	// claimed it, and whichever branch runs first in the keyboard handler would
+	// silently swallow the other.
+	newGroupChat: {
+		fromKeys: [['Alt', 'Meta', 'c']],
+		toKeys: ['Alt', 'Meta', 'g'],
+	},
+	// Concerto's stage started on a bare Opt+C, which types "ç" on macOS and so
+	// never fired from the composer, then briefly sat on Opt+Cmd+V before landing
+	// on the C freed above. Both old defaults are listed: a user who skipped a
+	// build still carries the older one.
+	toggleConcerto: {
+		fromKeys: [
+			['Alt', 'c'],
+			['Alt', 'Meta', 'v'],
+		],
+		toKeys: ['Alt', 'Meta', 'c'],
+	},
+	toggleCadenzas: {
+		fromKeys: [
+			['Alt', 'Shift', 'c'],
+			['Alt', 'Meta', 'Shift', 'v'],
+		],
+		toKeys: ['Alt', 'Meta', 'Shift', 'c'],
+	},
 };
 
 function keysEqual(a: string[], b: string[]): boolean {

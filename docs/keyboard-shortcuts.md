@@ -38,7 +38,7 @@ Tips and gotchas:
 | Toggle Right Panel          | `Opt+Cmd+Right`       | `Alt+Ctrl+Right`       |
 | New Agent                   | `Cmd+N`               | `Ctrl+N`               |
 | New Agent Wizard            | `Cmd+Shift+N`         | `Ctrl+Shift+N`         |
-| New Group Chat              | `Opt+Cmd+C`           | `Alt+Ctrl+C`           |
+| New Group Chat              | `Opt+Cmd+G`           | `Alt+Ctrl+G`           |
 | Remove Agent                | `Cmd+Shift+Backspace` | `Ctrl+Shift+Backspace` |
 | Move Agent to Group         | `Opt+Cmd+M`           | `Alt+Ctrl+M`           |
 | Open Memory Viewer          | `Cmd+Shift+M`         | `Ctrl+Shift+M`         |
@@ -63,8 +63,8 @@ Tips and gotchas:
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
 | Maestro Cue                 | `Opt+Q`               | `Alt+Q`                |
-| Show/Hide Concerto Stage    | `Opt+Cmd+V`           | `Alt+Ctrl+V`           |
-| Show/Hide All Cadenzas      | `Opt+Cmd+Shift+V`     | `Alt+Ctrl+Shift+V`     |
+| Show/Hide Concerto Stage    | `Opt+Cmd+C`           | `Alt+Ctrl+C`           |
+| Show/Hide All Cadenzas      | `Opt+Cmd+Shift+C`     | `Alt+Ctrl+Shift+C`     |
 | Edit Image from Clipboard   | `Opt+Cmd+E`           | `Alt+Ctrl+E`           |
 | Forced Parallel Send        | `Cmd+Shift+Enter`     | `Ctrl+Shift+Enter`     |
 | Cycle Focus Areas           | `Tab`                 | `Tab`                  |
