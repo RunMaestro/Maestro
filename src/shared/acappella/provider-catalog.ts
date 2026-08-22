@@ -282,19 +282,18 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		egressService: 'anthropic',
 		description: 'Routes with a fast Claude model. Your transcripts are sent to Anthropic.',
 	}),
-	defineProvider({
-		id: CONDUCTOR_AGENT_BRAIN_PROVIDER_ID,
-		role: 'brain',
-		label: 'Conductor agent',
-		tier: 'local',
-		// Nothing to download and no key to add: it runs an agent the user already
-		// has. What it costs is latency, which is the trade this option exists for.
-		requires: { kind: 'none' },
-		egress: 'none',
-		egressService: null,
-		description:
-			'Routes by asking a real Maestro agent. Slower, and it can reason about your projects.',
-	}),
+	// The Conductor agent brain is NOT listed here on purpose. `ConductorAgentBrain`
+	// exists (`main/acappella/router/conductor-agent.ts`) but nothing constructs it:
+	// `provider-registry.ts` registers no factory for the id, and it could not, because
+	// the class needs a process manager, an agent detector, and a cwd that
+	// `VoiceProviderCreateOptions` does not carry. This table is what the slot selector
+	// renders, so listing it put a permanently dead choice in the dropdown - picking it
+	// made `resolveRole` refuse EVERY session with `unknown-provider`, which reads as
+	// "voice is broken" rather than "that option is not wired yet".
+	//
+	// It comes back in the same commit that registers the factory and threads those
+	// dependencies through the IPC layer. Until then the id stays exported for the
+	// class and its tests.
 
 	// -- Realtime ------------------------------------------------------------
 	defineProvider({
