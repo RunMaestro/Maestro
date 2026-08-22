@@ -208,6 +208,16 @@ Turns a plain-English request into one shell command line, shows it, and runs it
 
 ---
 
+### `probeSessionAiProcesses()` (in process.ts)
+
+`probeSessionAiProcesses(sessionId, targetTabId)` asks the MAIN process what is actually running for one agent's AI tabs, returning `{anyActive, targetTabActive, earliestStartTime, probeFailed}`.
+
+Reach for it anywhere the question is "is this agent mid-turn right now". The renderer store is NOT a safe answer: it can still read `idle` for a moment after a turn starts or before an exit reconciles, and both the queue decision and the cross-agent mention-only branch have been bitten by that window. Terminal tabs and Cue runs are filtered out (neither holds the agent's sequential AI turn), and a forced-parallel run (`-fp-<n>` suffix) counts as busy on its own tab.
+
+**It fails SAFE.** An IPC failure returns every flag `true` plus `probeFailed`, because unknown ownership must read as busy - treating it as idle re-spawns a live process id and loses its response. Do not "simplify" that to a `false` default.
+
+---
+
 ### crossAgentMentions.ts (~115 lines)
 
 Resolve and dispatch `@agent` mentions. Deliberately two steps, because WHEN a consult fires is part of the contract:
@@ -218,7 +228,7 @@ Resolve and dispatch `@agent` mentions. Deliberately two steps, because WHEN a c
 
 **A queued message must not consult at submit time - including one addressed only at the other agent.** A message sent while the agent is busy goes to the execution queue; dispatching its mention immediately pulls the other agent into a question that is still several messages deep in the queue. So `useInputProcessing` PLANS at submit (it needs `suppressLocal` to decide whether to send locally at all), stamps `crossAgentMention: true` on the `QueuedItem`, and `agentStore.processQueuedItem` dispatches when the item becomes the agent's turn. `noteDispatch` strips the flag so an Agent Resilience retry cannot re-consult, and `handleEditQueueItem` recomputes it against the edited text.
 
-A LEADING mention (`suppressLocal`) is the same story. The source agent does not answer it, but it still queues - as a `crossAgentOnly` item - whenever `hasWorkAheadOfNewMessage()` says the user lined work up first. Dispatching it fires the consult and returns before the spawn and before `noteDispatch`, then calls `applyQueuedItemRelease()` to hand back the busy state the dequeue took, since no process will arrive to close it out. It consults at submit time only when nothing is ahead of it.
+A LEADING mention (`suppressLocal`) is the same story. The source agent does not answer it, but it still queues - as a `crossAgentOnly` item - whenever `hasWorkAheadOfNewMessage()` says the user lined work up first. Dispatching it fires the consult and returns before the spawn and before `noteDispatch`, then calls `applyQueuedItemRelease()` to hand back the busy state the dequeue took, since no process will arrive to close it out. It consults at submit time only when nothing is ahead of it - and that check goes through `probeSessionAiProcesses()`, not the store, so a turn main has already started still counts.
 
 Module-level functions, not a hook: the queue drain runs outside React. The send itself is `sendCrossAgentRequest` in `hooks/agent/useCrossAgentDispatch.ts`, also module-level, sharing one `pendingRequests` tracker with the hook that subscribes to the response chunks.
 

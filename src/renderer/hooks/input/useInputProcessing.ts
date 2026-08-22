@@ -24,6 +24,7 @@ import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
 import { hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
+import { probeSessionAiProcesses } from '../../services/process';
 import { resolveForceParallel } from '../../stores/settingsStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
@@ -644,7 +645,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// the message is the instruction ("finish the commit, THEN have them
 					// sync"). Queue it as a mention-only item and let the drain fire the
 					// consult when its turn comes, exactly like any other queued message.
+					//
+					// Main-process ownership is authoritative for "is a turn live": the
+					// store can still read idle for a moment after a turn starts, and a
+					// consult fired in that window is exactly the premature ping this
+					// whole path exists to prevent.
+					const mentionProbe = await probeSessionAiProcesses(activeSession.id, mentionSourceTabId);
 					if (
+						mentionProbe.anyActive ||
 						hasWorkAheadOfNewMessage(activeSession, {
 							autoRunActive: getBatchState(activeSession.id).isRunning,
 						})
@@ -764,52 +772,20 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (currentMode === 'ai') {
 				const activeTab = resolveTargetTab(activeSession);
 				const isReadOnlyMode = activeTab?.readOnlyMode === true;
-				const targetProcessSessionId = `${activeSession.id}-ai-${activeTab?.id || 'default'}`;
-				const sessionProcessPrefix = `${activeSession.id}-ai-`;
-				let sameTabProcessActive = false;
-				let anySessionAiProcessActive = false;
-				let activeProcessStartTime: number | undefined;
 
-				// The renderer can briefly say "idle" before the process exit event has
-				// reconciled into session state. Main-process ownership is authoritative:
-				// spawning another turn with the same id would otherwise replace the live
-				// process and discard its eventual response.
-				try {
-					const activeProcesses = await window.maestro.process.getActiveProcesses({
-						includeChildProcesses: false,
-					});
-					const sessionAiProcesses = activeProcesses.filter(
-						(process) =>
-							!process.isTerminal &&
-							!process.isCueRun &&
-							process.sessionId.startsWith(sessionProcessPrefix)
-					);
-					anySessionAiProcessActive = sessionAiProcesses.length > 0;
-					sameTabProcessActive = sessionAiProcesses.some(
-						(process) =>
-							process.sessionId === targetProcessSessionId ||
-							process.sessionId.startsWith(`${targetProcessSessionId}-fp-`)
-					);
-					activeProcessStartTime = sessionAiProcesses.reduce<number | undefined>(
-						(earliest, process) => {
-							if (process.startTime === undefined) return earliest;
-							return earliest === undefined
-								? process.startTime
-								: Math.min(earliest, process.startTime);
-						},
-						undefined
-					);
-				} catch (error) {
+				// Main-process ownership is authoritative: the renderer can briefly say
+				// "idle" before the process-exit event has reconciled into session state,
+				// and spawning another turn with the same id would replace the live
+				// process and discard its eventual response. A failed probe reports busy.
+				const processState = await probeSessionAiProcesses(activeSession.id, activeTab?.id);
+				if (processState.probeFailed) {
 					logger.warn(
-						'[processInput] Failed to reconcile active processes before queue decision:',
-						undefined,
-						error
+						'[processInput] Failed to reconcile active processes before queue decision; treating the agent as busy'
 					);
-					// Preserve the input when process ownership is unknown. Treating an IPC
-					// failure as idle can retry the same process id and lose the live response.
-					sameTabProcessActive = true;
-					anySessionAiProcessActive = true;
 				}
+				const sameTabProcessActive = processState.targetTabActive;
+				const anySessionAiProcessActive = processState.anyActive;
+				const activeProcessStartTime = processState.earliestStartTime;
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {

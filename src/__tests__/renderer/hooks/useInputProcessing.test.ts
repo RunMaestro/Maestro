@@ -2596,6 +2596,46 @@ describe('useInputProcessing', () => {
 			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
 		});
 
+		it('queues a mention-only message when only MAIN knows a turn is live', async () => {
+			// The store can read idle for a moment after a turn starts. Trusting it
+			// here fires the consult into a gap the user never saw - the same
+			// premature ping this path exists to prevent - so the mention branch asks
+			// main, exactly like the ordinary queue decision does.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([
+				{
+					sessionId: `${session.id}-ai-${session.activeTabId}`,
+					toolType: session.toolType,
+					pid: 4242,
+					cwd: session.cwd,
+					isTerminal: false,
+					isBatchMode: true,
+					startTime: 1700000000000,
+				},
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
 		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {
 			// Cross-agent resolution is gated on a real input-box submit
 			// (`overrideInputValue === undefined`) so a queued replay never re-consults.
