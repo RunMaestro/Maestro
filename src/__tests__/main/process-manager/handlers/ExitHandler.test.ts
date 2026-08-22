@@ -239,6 +239,66 @@ describe('ExitHandler', () => {
 			expect(proc.errorEmitted).toBe(true);
 		});
 
+		it('does not leak the raw envelope as data when classification throws', async () => {
+			// The catch around this flush exists for ONE expected condition - a
+			// malformed last line - and its fallback is to emit that line raw. If it
+			// also wrapped classification, a defect in detectErrorFromParsed would be
+			// swallowed and the failed envelope's JSON would be printed to the user as
+			// though it were the agent's answer.
+			const errorJson = '{"event":"result","result":{"error":"quota exhausted"}}';
+			const boom = new Error('classifier blew up');
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(() => {
+					throw boom;
+				}) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await expect(exitHandler.handleExit('test-session', 0)).rejects.toThrow('classifier blew up');
+
+			expect(dataEvents).not.toContain(errorJson);
+		});
+
+		it('still emits a malformed trailing line as raw data', async () => {
+			const malformed = '{"event":"result","result":{ truncated';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => {
+					throw new SyntaxError('Unexpected end of JSON input');
+				}) as unknown as AgentOutputParser['parseJsonLine'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: malformed,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(dataEvents).toContain(malformed);
+		});
+
 		it('does not double-report a trailing error already emitted from stdout', async () => {
 			const errorJson = '{"event":"result","result":{"error":"quota exhausted"}}';
 			const mockParser = createMockOutputParser({
