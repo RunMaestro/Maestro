@@ -3594,3 +3594,131 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 });
+
+/**
+ * Cmd+Shift+E - "Edit Last Queued Message".
+ *
+ * The defect these cover: the handler used to read the session snapshot that
+ * `ctx` captured during the last App render. The pencil on a queued row reads
+ * live props, so whenever that snapshot lagged the store the shortcut reported
+ * "no queued message" while a queued card was on screen and clickable. The
+ * handler now reads the session store at keypress time.
+ */
+describe('useMainKeyboardHandler - editLastQueuedMessage', () => {
+	const TAB_A = 'tab-a';
+	const TAB_B = 'tab-b';
+
+	function session(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'agent-1',
+			name: 'Maestro',
+			activeTabId: TAB_A,
+			activeFileTabId: null,
+			activeTerminalTabId: null,
+			activeBrowserTabId: null,
+			inputMode: 'ai',
+			aiTabs: [{ id: TAB_A }, { id: TAB_B }],
+			executionQueue: [],
+			...overrides,
+		} as any;
+	}
+
+	function queued(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'q1',
+			timestamp: 1,
+			tabId: TAB_A,
+			type: 'message',
+			text: 'still not fixed',
+			...overrides,
+		} as any;
+	}
+
+	function press(ctxOverrides: Record<string, unknown>) {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'editLastQueuedMessage',
+			...ctxOverrides,
+		});
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'E', metaKey: true, shiftKey: true, bubbles: true })
+			);
+		});
+	}
+
+	beforeEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	afterEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as any);
+	});
+
+	it('opens the queued message even when the ctx snapshot is stale', () => {
+		const item = queued();
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		// The snapshot ctx captured still shows an EMPTY queue - exactly the state
+		// that used to make this report "No queued message to edit".
+		press({ activeSession: session({ executionQueue: [] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+	});
+
+	it('falls back to a message queued on another tab and switches to it', () => {
+		const item = queued({ id: 'q-other', tabId: TAB_B });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session({ executionQueue: [item] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-other');
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.activeTabId).toBe(TAB_B);
+	});
+
+	it('prefers the message on the tab already on screen', () => {
+		const onOther = queued({ id: 'q-other', tabId: TAB_B, timestamp: 2 });
+		const onActive = queued({ id: 'q-active', tabId: TAB_A, timestamp: 1 });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [onActive, onOther] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session() });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-active');
+	});
+
+	it('does not open anything when only commands are queued', () => {
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [queued({ id: 'c1', type: 'command', text: '' })] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session() });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+	});
+
+	it('still finds the message when its tab is no longer open', () => {
+		// A missing tab must not collapse the result set to nothing - that is how
+		// a filter turns into a false "nothing is queued".
+		const item = queued({ id: 'q-orphan', tabId: 'tab-gone' });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session({ executionQueue: [item] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-orphan');
+	});
+});
