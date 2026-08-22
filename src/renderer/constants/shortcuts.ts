@@ -122,15 +122,21 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Maestro Cue',
 		keys: ['Alt', 'q'],
 	},
+	// Opt+Cmd, not a bare Opt: on macOS a plain Opt+letter is a TEXT-ENTRY combo
+	// (Opt+C types "ç", Opt+U starts a dead-key umlaut), so it lands as a
+	// character whenever the composer has focus - which is Maestro's usual state.
+	// Adding Cmd suppresses the character, and it matches the Opt+Cmd family the
+	// other feature surfaces already use (Usage Dashboard, System Logs).
+	// V for "views", which is what Concerto composes.
 	toggleConcerto: {
 		id: 'toggleConcerto',
 		label: 'Show/Hide Concerto Stage',
-		keys: ['Alt', 'c'],
+		keys: ['Alt', 'Meta', 'v'],
 	},
 	toggleCadenzas: {
 		id: 'toggleCadenzas',
 		label: 'Show/Hide All Cadenzas',
-		keys: ['Alt', 'Shift', 'c'],
+		keys: ['Alt', 'Meta', 'Shift', 'v'],
 	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',

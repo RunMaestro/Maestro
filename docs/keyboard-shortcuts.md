@@ -63,6 +63,8 @@ Tips and gotchas:
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
 | Maestro Cue                 | `Opt+Q`               | `Alt+Q`                |
+| Show/Hide Concerto Stage    | `Opt+Cmd+V`           | `Alt+Ctrl+V`           |
+| Show/Hide All Cadenzas      | `Opt+Cmd+Shift+V`     | `Alt+Ctrl+Shift+V`     |
 | Edit Image from Clipboard   | `Opt+Cmd+E`           | `Alt+Ctrl+E`           |
 | Forced Parallel Send        | `Cmd+Shift+Enter`     | `Ctrl+Shift+Enter`     |
 | Cycle Focus Areas           | `Tab`                 | `Tab`                  |

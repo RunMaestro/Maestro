@@ -14,6 +14,7 @@ import { ChevronLeft, Power, Settings as SettingsIcon, Trash2, KeyRound } from '
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { PermissionList, RISK_COLOR } from './PermissionList';
+import { UsageGuide } from './UsageGuide';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import type {
@@ -242,6 +243,10 @@ export function ExtensionDetails({
 			<p className="text-sm mt-3" style={{ color: theme.colors.textMain }}>
 				{ext.description || 'No description provided.'}
 			</p>
+
+			{/* A one-liner says what the feature is; this says how to summon it and
+			    drive it. Only first-party features carry a usage guide today. */}
+			{ext.usage && <UsageGuide theme={theme} usage={ext.usage} />}
 
 			{isPlugin && ext.loadStatus && ext.loadStatus !== 'ok' && (
 				<p className="text-xs mt-2" style={{ color: theme.colors.error }}>

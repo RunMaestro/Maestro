@@ -49,6 +49,51 @@ export interface FirstPartyBackgroundService {
 }
 
 /** One Encore feature's first-party plugin metadata. */
+/**
+ * One way a user can reach a feature.
+ *
+ * `shortcutId` is a key into DEFAULT_SHORTCUTS rather than literal key text:
+ * the details pane resolves the user's LIVE binding through it, so a rebound
+ * key never leaves the panel advertising a combination that does nothing.
+ */
+export interface FirstPartyAccessPath {
+	/** What this opens or toggles, e.g. "Open the Concerto stage". */
+	label: string;
+	/** Key into DEFAULT_SHORTCUTS, resolved to the user's current binding. */
+	shortcutId?: string;
+	/** Exact text to search for in the command palette. */
+	commandPalette?: string;
+	/** Where to click, when the feature also has a menu or button. */
+	menu?: string;
+}
+
+/** One command an agent runs to drive the feature, shown verbatim. */
+export interface FirstPartyAgentCommand {
+	label: string;
+	command: string;
+}
+
+/**
+ * How a first-party feature is actually used, rendered under its description in
+ * the Extensions details pane.
+ *
+ * A one-line description tells the user what a feature IS; it does not tell them
+ * that it has a hotkey, that the command palette can reach it, or what an agent
+ * types to drive it. Turning a feature on and then not knowing how to summon it
+ * is the failure this closes. Optional: a feature with no usage guide simply
+ * renders its description as before.
+ */
+export interface FirstPartyUsageGuide {
+	/** Paragraphs on what the feature does in practice. */
+	overview: readonly string[];
+	/** Every way in. Order them the way a new user would try them. */
+	access?: readonly FirstPartyAccessPath[];
+	/** How an agent drives it, for features an agent operates rather than the user. */
+	agentCommands?: readonly FirstPartyAgentCommand[];
+	/** Docs page slug on docs.runmaestro.ai (e.g. "concerto"). */
+	docsSlug?: string;
+}
+
 export interface FirstPartyPluginDefinition {
 	/** Stable, reverse-DNS plugin identity (`com.maestro.*`). */
 	id: string;
@@ -65,6 +110,8 @@ export interface FirstPartyPluginDefinition {
 	encoreFlag: FirstPartyEncoreFlag;
 	/** Supervised background services the feature runs (empty when none). */
 	backgroundServices: readonly FirstPartyBackgroundService[];
+	/** How to actually use the feature once it is on. */
+	usage?: FirstPartyUsageGuide;
 }
 
 /** Stable first-party plugin identity for Pianola's plugin-backed Encore surface. */
@@ -523,7 +570,7 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	id: 'com.maestro.concerto',
 	name: 'Concerto',
 	description:
-		'Let agents compose rich data views from native building blocks: a floating movement of panels plus always-on-top cadenza HUD cards.',
+		'Let agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top cadenza HUD cards.',
 	firstParty: true,
 	category: 'ui',
 	permissions: [
@@ -554,6 +601,45 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	// flag is off), and the bridge that carries them is app-scoped. Disable =
 	// flag off + overlays unmount + payloads dropped; nothing keeps running.
 	backgroundServices: [],
+	usage: {
+		overview: [
+			'Concerto lets an agent answer with something you can look at and click, instead of a wall of text. Ask for a chessboard, a dashboard, a mockup, a simulator, or a comparison, and the agent composes it as a real, interactive view.',
+			'Views land on the CONCERTO STAGE: one window holding every panel the agent has composed. Drag panels around it, resize them from any edge, or minimize one to the stage taskbar in the bottom right. The stage itself is centered by default; the pop-out button in its header floats it as a free-positioned window so you can keep typing to the agent beside it. Its size, position, and which mode you chose are all remembered.',
+			'CADENZAS are the second surface: small cards that float above every application, not just Maestro. Use them for the one number or the one question you want in view while you work somewhere else. A cadenza can also ask you to decide, and your answer goes straight back to the agent.',
+			'Closing the stage parks it, it never tears it down. A game keeps its position and a live tracker keeps tracking, so reopening puts you back exactly where you were.',
+		],
+		access: [
+			{
+				label: 'Show or hide the Concerto stage',
+				shortcutId: 'toggleConcerto',
+				commandPalette: 'Concerto Stage',
+				menu: 'Concerto in the Left Bar hamburger menu',
+			},
+			{
+				label: 'Pop the stage out into a floating window (or dock it again)',
+				commandPalette: 'Pop Concerto Stage Out',
+				menu: 'the pop-out button beside ESC in the stage header',
+			},
+			{
+				label: 'Stash every cadenza card at once, without closing any of them',
+				shortcutId: 'toggleCadenzas',
+				commandPalette: 'Hide All Cadenzas',
+			},
+		],
+		agentCommands: [
+			{ label: 'Ask for one in plain language', command: 'Show me a playable chessboard' },
+			{
+				label: 'Compose an interactive view',
+				command: 'maestro-cli movement add <id> --title "<title>" --html-file <file.html>',
+			},
+			{
+				label: 'Keep a live status card on top of everything',
+				command: 'maestro-cli cadenza open <id> --type tracker --title "Tests" --body "0/10"',
+			},
+			{ label: 'See what is already on the stage', command: 'maestro-cli movement state --json' },
+		],
+		docsSlug: 'concerto',
+	},
 };
 
 /** Groups+ uses the host-owned group model and renderer; it only needs to

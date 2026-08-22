@@ -25,6 +25,7 @@ import {
 	FIXED_SHORTCUTS,
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
+import type { Shortcut } from '../../../shared/shortcut-types';
 
 const RENDERER_ROOT = join(__dirname, '../../../renderer');
 
@@ -141,5 +142,55 @@ describe('keyboard shortcut registry wiring', () => {
 		expect(DEFAULT_SHORTCUTS.newInstance.windowScoped).toBeUndefined();
 		expect(DEFAULT_SHORTCUTS.settings.windowScoped).toBeUndefined();
 		expect(DEFAULT_SHORTCUTS.help.windowScoped).toBeUndefined();
+	});
+
+	/**
+	 * On macOS a bare Opt+letter is a TEXT-ENTRY combination: Opt+C types "ç",
+	 * Opt+U starts a dead-key umlaut, Opt+E an acute accent. Whenever the
+	 * composer has focus - Maestro's usual state - the keypress lands as a
+	 * character and the shortcut never fires, so the binding reads as broken.
+	 * Adding Cmd (Opt+Cmd+X) suppresses the character.
+	 *
+	 * Concerto shipped on Opt+C and had to be rebound for exactly this. The
+	 * allowlist below is the set that predates the rule; it is deliberately NOT
+	 * a blessing of the pattern, just an honest record of what is already out
+	 * there. Do not extend it - pick an Opt+Cmd binding instead.
+	 */
+	const LEGACY_PLAIN_ALT_BINDINGS = new Set([
+		'jumpToBottom', // Opt+J
+		'openCue', // Opt+Q
+		'filterUnreadAgents', // Opt+U
+		'newFileTab', // Opt+N
+	]);
+
+	it('binds no NEW shortcut to a bare Opt+letter, which types a character on macOS', () => {
+		const offenders: string[] = [];
+		for (const registry of [DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS]) {
+			for (const [id, shortcut] of Object.entries(registry as Record<string, Shortcut>)) {
+				const keys = shortcut.keys.map((k) => k.toLowerCase());
+				const isPlainAlt =
+					keys.includes('alt') &&
+					!keys.includes('meta') &&
+					!keys.includes('ctrl') &&
+					!keys.includes('command');
+				const mainKey = keys[keys.length - 1];
+				if (isPlainAlt && /^[a-z]$/.test(mainKey) && !LEGACY_PLAIN_ALT_BINDINGS.has(id)) {
+					offenders.push(`${id} (${shortcut.keys.join('+')})`);
+				}
+			}
+		}
+
+		expect(
+			offenders,
+			`Bare Opt+letter types a character on macOS and will not fire from the composer. Use Opt+Cmd instead: ${offenders.join(', ')}`
+		).toEqual([]);
+	});
+
+	it('keeps the Concerto surfaces on a modifier pair that produces no text', () => {
+		for (const id of ['toggleConcerto', 'toggleCadenzas'] as const) {
+			const keys = DEFAULT_SHORTCUTS[id].keys.map((k) => k.toLowerCase());
+			expect(keys, `${id} must hold Alt`).toContain('alt');
+			expect(keys, `${id} must pair Alt with Meta so it cannot type a character`).toContain('meta');
+		}
 	});
 });
