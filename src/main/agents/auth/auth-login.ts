@@ -283,6 +283,17 @@ export async function startAuthLogin(
 		// friends survive while the credential-selecting vars are exactly the ones
 		// the blocked agents spawn with.
 		...(customEnvVars ? { customEnvVars } : {}),
+		// A failover endpoint that does not supply a credential must not inherit the
+		// primary's. Dropping it from `customEnvVars` is not enough - the spawner
+		// builds the child env over the parent process env, so a key in Maestro's
+		// own environment would survive. `buildChildProcessEnv` applies this last,
+		// after every layer is merged.
+		//
+		// Defensive today rather than reachable: the removal list is only non-empty
+		// for an endpoint that redirects the base URL, and such a credential
+		// resolves to `gateway`, which `resolveLoginCommand` refuses above. Kept so
+		// this path cannot become the one that leaks if that classification changes.
+		...(target.unsetEnvKeys ? { unsetEnvKeys: target.unsetEnvKeys } : {}),
 		cols: request.cols ?? DEFAULT_LOGIN_COLS,
 		rows: request.rows ?? DEFAULT_LOGIN_ROWS,
 		//

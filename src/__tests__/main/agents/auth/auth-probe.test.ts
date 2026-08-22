@@ -411,6 +411,34 @@ describe('probeCredential', () => {
 		expect(options.env.PATH).toBe(process.env.PATH);
 	});
 
+	// A failover endpoint that redirects the base URL is a DIFFERENT operator, so
+	// a credential it never supplied must not reach it - and the dangerous copy is
+	// the INHERITED one, which absence from `opts.env` cannot remove.
+	it('removes an inherited credential the failover endpoint does not supply', async () => {
+		mockRun({ stdout: JSON.stringify({ loggedIn: true }), exitCode: 0 });
+		const previous = process.env.ANTHROPIC_API_KEY;
+		process.env.ANTHROPIC_API_KEY = 'primary-key-from-maestro-env';
+
+		try {
+			await probeCredential(
+				identityFor('claude-code'),
+				probeOpts({
+					env: { ANTHROPIC_BASE_URL: 'https://backup.example' },
+					unsetEnvKeys: ['ANTHROPIC_API_KEY'],
+				})
+			);
+
+			const options = execFileNoThrowMock.mock.calls[0][3] as { env: Record<string, string> };
+			expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
+			// Everything else still comes through.
+			expect(options.env.ANTHROPIC_BASE_URL).toBe('https://backup.example');
+			expect(options.env.PATH).toBe(process.env.PATH);
+		} finally {
+			if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+			else process.env.ANTHROPIC_API_KEY = previous;
+		}
+	});
+
 	it('runs in the supplied cwd when one is given', async () => {
 		mockRun({ stdout: JSON.stringify({ loggedIn: true }), exitCode: 0 });
 

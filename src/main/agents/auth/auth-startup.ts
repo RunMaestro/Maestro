@@ -154,6 +154,19 @@ export interface AuthTarget {
 	 * env and cwd below.
 	 */
 	binaryPath?: string;
+	/**
+	 * Credential keys that must be REMOVED from the child's environment, not just
+	 * absent from {@link AuthTarget.env}.
+	 *
+	 * A failover endpoint that redirects the base URL points the agent at a
+	 * different operator, so any credential it does not supply itself must not be
+	 * inherited. Deleting it from `env` above is not enough: the probe and the
+	 * login both build their child env over `process.env`, so a primary key in
+	 * Maestro's own environment would survive the merge and be presented to that
+	 * operator. `process:spawn` carries the same list down to the spawner for
+	 * exactly this reason - a merge cannot express "remove this".
+	 */
+	unsetEnvKeys?: string[];
 }
 
 /**
@@ -259,7 +272,8 @@ function buildTarget(
 	// global and agent layers above, so the removal is applied to the MERGED env -
 	// the same order `process:spawn` uses. Without it a URL-only backup row still
 	// resolves to the primary api-key identity.
-	for (const key of failoverUnsetEnvKeys(failoverEnv)) {
+	const unsetEnvKeys = failoverUnsetEnvKeys(failoverEnv);
+	for (const key of unsetEnvKeys) {
 		delete env[key];
 	}
 
@@ -293,6 +307,7 @@ function buildTarget(
 		identity,
 		env,
 		...(customPath ? { binaryPath: customPath } : {}),
+		...(unsetEnvKeys.length > 0 ? { unsetEnvKeys } : {}),
 		// A remote cwd is a path on the remote host and a local one is local;
 		// either way the status commands do not care where they run, so this only
 		// has to be a directory that exists on the machine running the probe.
@@ -514,6 +529,7 @@ export async function runStartupAuthProbe(
 					binaryPath,
 					env: target.env,
 					cwd: target.cwd,
+					...(target.unsetEnvKeys ? { unsetEnvKeys: target.unsetEnvKeys } : {}),
 					now: deps.now ?? Date.now,
 					...(target.sshRemoteConfig ? { sshRemoteConfig: target.sshRemoteConfig, sshStore } : {}),
 				});

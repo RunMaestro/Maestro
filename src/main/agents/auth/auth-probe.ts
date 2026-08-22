@@ -110,6 +110,16 @@ export interface ProbeCredentialOptions {
 	 */
 	binaryPath: string;
 	/**
+	 * Credential keys to REMOVE from the child's environment after every layer is
+	 * merged, for a target on a failover endpoint that does not supply them.
+	 *
+	 * Absence from {@link ProbeCredentialOptions.env} does not remove them: the
+	 * local probe builds its env over `process.env`, so a primary credential in
+	 * Maestro's own environment would be inherited and presented to the backup
+	 * operator. Applied last, like `process:spawn` does.
+	 */
+	unsetEnvKeys?: string[];
+	/**
 	 * The EFFECTIVE env for the identity (agent-level merged under session-level,
 	 * via `mergeEffectiveEnv`). Layered over `process.env` for a local probe;
 	 * passed to the remote shell for an SSH probe. NEVER logged.
@@ -268,6 +278,12 @@ async function runStatusCommand(
 		...opts.env,
 		BROWSER: NO_BROWSER_COMMAND,
 	};
+	// After the merge, never inside it: the key being removed can come from the
+	// inherited `process.env` rather than from the identity's own vars, and a
+	// merge has no way to express "remove this".
+	for (const key of opts.unsetEnvKeys ?? []) {
+		delete execEnv[key];
+	}
 
 	// The identity's host is the machine that OWNS this credential, and it is what
 	// the stored snapshot gets filed under. If it disagrees with the SSH config
@@ -352,7 +368,10 @@ async function runStatusCommand(
 			execCwd = wrapped.cwd;
 			// The remote env is baked into the SSH command line by the wrapper, so
 			// only the local process env (which carries the ssh binary's own PATH and
-			// SSH_AUTH_SOCK) is passed here.
+			// SSH_AUTH_SOCK) is passed here. This deliberately discards the unset
+			// pass above: these vars run the local `ssh` client and are not forwarded
+			// to the far side, while the remote's own env came from `opts.env`, which
+			// the caller already stripped.
 			execEnv = { ...process.env };
 		} catch (error) {
 			return {

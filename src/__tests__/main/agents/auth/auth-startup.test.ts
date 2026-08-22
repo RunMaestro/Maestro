@@ -182,9 +182,26 @@ describe('provider failover', () => {
 		// The env the probe RUNS WITH is what proves the strip: the identity is
 		// scoped to the backup host either way, but the primary key must not travel
 		// to a third-party operator that never supplied one.
-		const probeEnv = (probeCredentialMock.mock.calls[0][1] as { env: Record<string, string> }).env;
-		expect(probeEnv.ANTHROPIC_API_KEY).toBeUndefined();
-		expect(probeEnv.ANTHROPIC_BASE_URL).toBe('https://backup.example');
+		const probeOpts = probeCredentialMock.mock.calls[0][1] as {
+			env: Record<string, string>;
+			unsetEnvKeys?: string[];
+		};
+		expect(probeOpts.env.ANTHROPIC_API_KEY).toBeUndefined();
+		expect(probeOpts.env.ANTHROPIC_BASE_URL).toBe('https://backup.example');
+		// Absence from the merged env is not removal: the probe builds its child env
+		// over `process.env`, so a primary key in Maestro's OWN environment would be
+		// inherited and handed to the backup operator. The removal has to travel
+		// with the target.
+		expect(probeOpts.unsetEnvKeys).toContain('ANTHROPIC_API_KEY');
+	});
+
+	it('asks for no removal when the agent is on its primary', async () => {
+		await runStartupAuthProbe(
+			makeDeps([makeSession({ id: 'plain' })], { mode: 'manual' } as never)
+		);
+
+		const probeOpts = probeCredentialMock.mock.calls[0][1] as { unsetEnvKeys?: string[] };
+		expect(probeOpts.unsetEnvKeys).toBeUndefined();
 	});
 
 	it('leaves an unpinned agent on its primary credential', async () => {

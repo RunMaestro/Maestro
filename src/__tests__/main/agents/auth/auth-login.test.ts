@@ -61,6 +61,7 @@ import {
 	type AuthLoginDeps,
 } from '../../../../main/agents/auth/auth-login';
 import { collectAuthTargets } from '../../../../main/agents/auth/auth-startup';
+import { setFailoverOverlay } from '../../../../main/process-manager/failover-overlay';
 import {
 	setSnapshot,
 	__resetForTests as resetAuthStore,
@@ -400,6 +401,25 @@ describe('startAuthLogin', () => {
 		expect(result.remote).toBe(true);
 		expect(wrapSpawnWithSshMock.mock.calls[0][0].command).toBe('codex');
 		expect(spawn.mock.calls[0][0].command).toBe('ssh');
+	});
+
+	// An agent failed over to a backup endpoint is presenting THAT operator's
+	// credential, which no sign-in repairs - the remedy is the endpoint config.
+	// Offering a login here would run one against the wrong operator.
+	it('refuses to sign in for an agent pinned to a failover endpoint', async () => {
+		const { deps, spawn } = makeHarness([makeSession({ id: 'pinned' })]);
+		setFailoverOverlay('pinned', { ANTHROPIC_BASE_URL: 'https://backup.example' });
+
+		try {
+			const key = 'claude-code::gateway::backup.example::local';
+			const result = await startAuthLogin(deps, { identityKey: key, runSessionId: runIdFor(key) });
+
+			expect(result.started).toBe(false);
+			expect(result.error).toMatch(/signing in cannot repair this credential/i);
+			expect(spawn).not.toHaveBeenCalled();
+		} finally {
+			setFailoverOverlay('pinned', null);
+		}
 	});
 
 	// An agent pointed at another install must be REPAIRED against that install.
