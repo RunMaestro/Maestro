@@ -61,6 +61,7 @@ import {
 	AUTH_STARTUP_SESSION_WINDOW_MS,
 	type StartupAuthProbeDeps,
 } from '../../../../main/agents/auth/auth-startup';
+import { setFailoverOverlay } from '../../../../main/process-manager/failover-overlay';
 import {
 	getSnapshot,
 	setSnapshot,
@@ -129,6 +130,71 @@ function makeSnapshot(
 		...overrides,
 	};
 }
+
+describe('provider failover', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		resetAuthStore();
+		// Overlays are module state; clear the ids these tests pin so one cannot
+		// leak into the next.
+		for (const id of ['pinned', 'plain']) setFailoverOverlay(id, null);
+		probeCredentialMock.mockImplementation(async (identity: CredentialIdentity) =>
+			makeSnapshot(identity)
+		);
+	});
+
+	// The pinned endpoint's env is what the agent SPAWNS with, so it is also the
+	// credential to report on. Probing the primary would show a healthy account
+	// for an agent that is failing on the backup.
+	it('probes the failover credential for a pinned agent', async () => {
+		const session = makeSession({ id: 'pinned' });
+		setFailoverOverlay('pinned', {
+			ANTHROPIC_BASE_URL: 'https://backup.example',
+			ANTHROPIC_AUTH_TOKEN: 'backup-token',
+		});
+
+		await runStartupAuthProbe(makeDeps([session], { mode: 'manual' } as never));
+
+		// A backup that redirects the base URL is a DIFFERENT operator, so the
+		// credential is that operator's - scoped to the backup host, not the
+		// primary's default login.
+		const [key] = probedKeys();
+		expect(key).toBe('claude-code::gateway::backup.example::local');
+	});
+
+	// Auth is all-or-nothing per endpoint: a URL-only backup must not present the
+	// primary's key to a third party, and the key can arrive from the global or
+	// agent layer rather than the agent's own vars.
+	it('strips an inherited primary credential a URL-only backup does not supply', async () => {
+		const session = makeSession({ id: 'pinned' });
+		setFailoverOverlay('pinned', { ANTHROPIC_BASE_URL: 'https://backup.example' });
+
+		await runStartupAuthProbe(
+			makeDeps([session], {
+				mode: 'manual',
+				settingsStore: makeStore({
+					sshRemotes: [],
+					shellEnvVars: { ANTHROPIC_API_KEY: 'primary-key' },
+				}),
+			} as never)
+		);
+
+		// The env the probe RUNS WITH is what proves the strip: the identity is
+		// scoped to the backup host either way, but the primary key must not travel
+		// to a third-party operator that never supplied one.
+		const probeEnv = (probeCredentialMock.mock.calls[0][1] as { env: Record<string, string> }).env;
+		expect(probeEnv.ANTHROPIC_API_KEY).toBeUndefined();
+		expect(probeEnv.ANTHROPIC_BASE_URL).toBe('https://backup.example');
+	});
+
+	it('leaves an unpinned agent on its primary credential', async () => {
+		await runStartupAuthProbe(
+			makeDeps([makeSession({ id: 'plain' })], { mode: 'manual' } as never)
+		);
+
+		expect(probedKeys()[0]).toContain('::oauth::');
+	});
+});
 
 /** Identity keys the probe mock was called with, in call order. */
 function probedKeys(): string[] {

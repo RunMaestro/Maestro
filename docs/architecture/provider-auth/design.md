@@ -33,7 +33,7 @@ the credential.** Everything below follows from moving it.
 
 `src/shared/providerAuth.ts` maps a session onto the credential it will present.
 
-```
+```text
 key = `${provider}::${kind}::${scope}::${host}`
 ```
 

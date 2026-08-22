@@ -118,6 +118,20 @@ describe('providerAuthStore smoke', () => {
 		expect(useProviderAuthStore.getState().snapshots[DEFAULT_KEY]).toEqual(fresh);
 	});
 
+	// Two writers race, and the clock cannot always tell them apart. On a tie the
+	// live event wins: it arrived while the read was in flight, so it is the later
+	// of the two even when both stamp the same millisecond.
+	it('keeps the live event when both records stamp the same millisecond', async () => {
+		const stale = snapshotFor(DEFAULT_KEY, '.claude', 'logged-out', 500);
+		installBridge({ getAll: vi.fn().mockResolvedValue({ [DEFAULT_KEY]: stale }) });
+
+		const live = snapshotFor(DEFAULT_KEY, '.claude', 'authenticated', 500);
+		useProviderAuthStore.getState().applyChange(DEFAULT_KEY, live);
+		await useProviderAuthStore.getState().hydrate();
+
+		expect(useProviderAuthStore.getState().snapshots[DEFAULT_KEY]).toEqual(live);
+	});
+
 	it('takes the stored record when the read is the newer of the two', async () => {
 		const stored = snapshotFor(DEFAULT_KEY, '.claude', 'logged-out', 300);
 		installBridge({ getAll: vi.fn().mockResolvedValue({ [DEFAULT_KEY]: stored }) });

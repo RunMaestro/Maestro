@@ -285,7 +285,7 @@ installed here; `droid` is not.
 
 `claude auth` has `login`, `logout`, `status`.
 
-```
+```text
 $ claude auth status --json
 {
   "loggedIn": true,
@@ -315,7 +315,7 @@ auth probe may not.
 
 `codex login` with subcommand `status`.
 
-```
+```text
 $ codex login status
 Logged in using ChatGPT
 ```
@@ -333,7 +333,7 @@ the browser flow.
 
 `opencode auth` with `list` (alias `ls`), `login [url]`, `logout`.
 
-```
+```text
 $ opencode auth list
 ┌  Credentials ~/.local/share/opencode/auth.json
 │

@@ -26,7 +26,12 @@ import { startAuthLogin, stopAuthLogin } from '../../agents/auth/auth-login';
 import type { StartAuthLoginRequest, StartAuthLoginResult } from '../../agents/auth/auth-login';
 import type { AgentDetector } from '../../agents';
 import type { ProcessManager } from '../../process-manager/ProcessManager';
-import type { CredentialIdentity } from '../../../shared/providerAuth';
+import {
+	CREDENTIAL_KINDS,
+	credentialIdentityKey,
+	type CredentialIdentity,
+	type CredentialKind,
+} from '../../../shared/providerAuth';
 import type {
 	AuthFailureStatus,
 	ProviderAuthChange,
@@ -89,10 +94,37 @@ function validateIdentity(key: string, identity: unknown): CredentialIdentity | 
 	if (strings.some((field) => typeof candidate[field] !== 'string' || candidate[field] === '')) {
 		return undefined;
 	}
+	// `kind` decides the REMEDY the UI offers, so an unrecognized one would be
+	// rendered as "no login flow" for a credential that may well have one.
+	if (!CREDENTIAL_KINDS.includes(candidate.kind as CredentialKind)) {
+		logger.warn('Ignoring provider auth identity with an unknown credential kind', LOG_CONTEXT, {
+			key,
+			kind: String(candidate.kind),
+		});
+		return undefined;
+	}
 	if (candidate.key !== key) {
 		logger.warn('Ignoring provider auth identity filed under a different key', LOG_CONTEXT, {
 			key,
 			identityKey: String(candidate.key),
+		});
+		return undefined;
+	}
+	// The key is DERIVED from the parts, so checking `key === key` only proves the
+	// caller is self-consistent about the string - not that the string describes
+	// the fields beside it. An identity whose kind is `oauth` under an
+	// `::api-key::` key would put a Sign In button on a credential no login can
+	// repair, which is the one thing the kind exists to prevent.
+	const derived = credentialIdentityKey({
+		provider: candidate.provider as string,
+		kind: candidate.kind as CredentialKind,
+		scope: candidate.scope as string,
+		host: candidate.host as string,
+	});
+	if (derived !== key) {
+		logger.warn('Ignoring provider auth identity whose key disagrees with its parts', LOG_CONTEXT, {
+			key,
+			derived,
 		});
 		return undefined;
 	}

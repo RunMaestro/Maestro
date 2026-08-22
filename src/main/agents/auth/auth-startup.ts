@@ -42,6 +42,8 @@ import Store from 'electron-store';
 
 import type { CredentialIdentity, ProviderAuthSource } from '../../../shared/providerAuth';
 import { mergeEffectiveEnv, resolveCredentialIdentity } from '../../../shared/providerAuth';
+import { failoverUnsetEnvKeys, resolveFailoverEnv } from '../../../shared/providerFailover';
+import { getFailoverOverlay } from '../../process-manager/failover-overlay';
 import type { AgentSshRemoteConfig } from '../../../shared/types';
 import type { AgentConfigsData, MaestroSettings, SessionsData } from '../../stores/types';
 import { getSnapshot, isSnapshotFresh, setSnapshot } from '../../stores/providerAuthStore';
@@ -228,11 +230,38 @@ function buildTarget(
 		session.customEnvVars && typeof session.customEnvVars === 'object'
 			? (session.customEnvVars as Record<string, string>)
 			: undefined;
+	// Provider Failover: when the renderer has pinned this agent to a backup
+	// endpoint, that endpoint's env is what the agent SPAWNS with, so it is also
+	// the credential to report on. Probing the primary here would show a healthy
+	// account for an agent that is failing on the backup, and offer a recovery
+	// that repairs a login the agent is not using.
+	//
+	// Overlays live in memory and are not persisted, so this is always empty at
+	// launch - it changes manual re-probes and recovery logins, which is exactly
+	// when an agent can be mid-failover.
+	//
+	// Keyed by the BARE agent id, which is what a stored session's id already is.
+	const failoverEnv = typeof session.id === 'string' ? getFailoverOverlay(session.id) : undefined;
+
 	// All three layers, in the order the spawner applies them. Settings ->
 	// Environment is where a user puts a key they want every agent to inherit, so
 	// omitting it would resolve such an agent to its default OAuth identity and
 	// probe an account it never uses.
-	const env = mergeEffectiveEnv(globalEnvVars, agentLevelEnvVars, sessionEnvVars);
+	const env = mergeEffectiveEnv(
+		globalEnvVars,
+		agentLevelEnvVars,
+		resolveFailoverEnv(sessionEnvVars, failoverEnv)
+	);
+
+	// Auth is all-or-nothing per endpoint: a backup that redirects the base URL
+	// must not inherit the primary's credential. `resolveFailoverEnv` drops it
+	// from the agent's own vars, but the same key also reaches the child from the
+	// global and agent layers above, so the removal is applied to the MERGED env -
+	// the same order `process:spawn` uses. Without it a URL-only backup row still
+	// resolves to the primary api-key identity.
+	for (const key of failoverUnsetEnvKeys(failoverEnv)) {
+		delete env[key];
+	}
 
 	// The remote host's home directory is not something Maestro knows, so a
 	// remote identity that falls back to a DEFAULT config dir is scoped by the

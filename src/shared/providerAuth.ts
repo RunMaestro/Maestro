@@ -491,10 +491,35 @@ export function fingerprintSecret(value: string): string {
 // Resolver
 // ============================================================================
 
+/**
+ * Compose the dedup key for a credential's identifying parts.
+ *
+ * Exported so a consumer that has to CHECK a key derives it the same way the
+ * builder does, rather than parsing the format by hand. The main-process IPC
+ * validator uses it to reject a record whose key disagrees with its own fields -
+ * that record decides which remedy the UI offers, so a `kind` of `oauth` filed
+ * under an `::api-key::` key would put a login button on a credential no login
+ * can repair.
+ */
+export function credentialIdentityKey(
+	parts: Pick<CredentialIdentity, 'provider' | 'kind' | 'scope' | 'host'>
+): string {
+	return `${parts.provider}::${parts.kind}::${parts.scope}::${parts.host}`;
+}
+
+/** Every value {@link CredentialKind} allows, for validating untrusted input. */
+export const CREDENTIAL_KINDS: readonly CredentialKind[] = [
+	'oauth',
+	'api-key',
+	'gateway',
+	'cloud-provider',
+	'unknown',
+];
+
 /** Assemble an identity and derive its dedup key. */
 function buildIdentity(parts: Omit<CredentialIdentity, 'key'>): CredentialIdentity {
 	return {
-		key: `${parts.provider}::${parts.kind}::${parts.scope}::${parts.host}`,
+		key: credentialIdentityKey(parts),
 		...parts,
 	};
 }

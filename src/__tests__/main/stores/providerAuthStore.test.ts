@@ -164,9 +164,10 @@ describe('providerAuthStore', () => {
 			// These three are SHORTER than the 40-character catch-all, so each needs
 			// a pattern of its own or it reaches disk intact.
 			['AKIAIOSFODNN7EXAMPLE', 'AKIA'],
-			['AIzaSyD-1234567890abcdefghijklmnopqrstu', 'AIza'],
-			// Assembled rather than written out: a complete one, fake or not, trips
-			// GitHub's push protection and blocks the push.
+			// Assembled rather than written out, like the Slack token below: a
+			// complete one, fake or not, trips secret scanners and GitHub's push
+			// protection. Still 39 characters, which is what the pattern matches on.
+			[`AIza${'A'.repeat(35)}`, 'AIza'],
 			[`xox${'b'}-123456789012-abcdefghijklmno`, 'xoxb-'],
 		])('replaces %s before it reaches the store', (secret, marker) => {
 			setSnapshot('k', makeSnapshot({ detail: `auth failed: ${secret}` }));

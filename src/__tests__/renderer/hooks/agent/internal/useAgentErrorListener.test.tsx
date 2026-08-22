@@ -11,7 +11,6 @@ import {
 	cancelRetry,
 	registerBatchResumer,
 } from '../../../../../renderer/stores/retryStore';
-import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
 
 // The reactive auth marking is a fire-and-forget call into the provider auth
 // store; the store's own resolution is covered in its test, so here we only care
@@ -19,6 +18,14 @@ import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageSto
 const mockMarkSessionAuthFailure = vi.fn().mockResolvedValue(null);
 vi.mock('../../../../../renderer/stores/providerAuthStore', () => ({
 	markSessionAuthFailure: (...args: unknown[]) => mockMarkSessionAuthFailure(...args),
+}));
+
+// Raising the recovery dialog needs a resolved credential, which needs the
+// hydrated snapshot map over IPC. That is the service's own contract, tested
+// there; here we assert the listener routes to it and honors its answer.
+const mockOpenAuthRecoveryForSession = vi.fn().mockResolvedValue(true);
+vi.mock('../../../../../renderer/services/authRecovery', () => ({
+	openAuthRecoveryForSession: (...args: unknown[]) => mockOpenAuthRecoveryForSession(...args),
 }));
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
@@ -112,7 +119,7 @@ describe('useAgentErrorListener', () => {
 		expect(agentErrorEntry?.data).toEqual({ sessionId: 'sess-1' });
 	});
 
-	it('marks the credential behind the agent on auth_expired', () => {
+	it('marks the credential and raises recovery on auth_expired', async () => {
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
 		useSessionStore.setState({ sessions: [session] } as any);
@@ -120,10 +127,30 @@ describe('useAgentErrorListener', () => {
 		renderHook(() => useAgentErrorListener(makeDeps()));
 		handler!('sess-1-ai-tab-1', baseError);
 
+		// Every other agent on this login shows the problem without burning a prompt.
 		expect(mockMarkSessionAuthFailure).toHaveBeenCalledWith('sess-1', 'expired');
-		// Additive only: the existing error state and modal are untouched.
 		expect(useSessionStore.getState().sessions[0].state).toBe('error');
-		expect(useModalStore.getState().modals.get('agentError')).toBeDefined();
+
+		await vi.waitFor(() => expect(mockOpenAuthRecoveryForSession).toHaveBeenCalledWith('sess-1'));
+		// The credential is the subject, so the per-agent error frame stays away.
+		// `isOpen`, not `modals.get`: the store keeps an entry after a close, so
+		// the entry existing proves nothing about what is on screen.
+		expect(useModalStore.getState().isOpen('agentError')).toBe(false);
+	});
+
+	// A credential we cannot identify has no recovery to offer, so the failure
+	// must still be explained rather than silently swallowed.
+	it('falls back to the error frame when the credential cannot be identified', async () => {
+		mockOpenAuthRecoveryForSession.mockResolvedValueOnce(false);
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', baseError);
+
+		await vi.waitFor(() => expect(useModalStore.getState().isOpen('agentError')).toBe(true));
+		expect(useModalStore.getState().getData('agentError')).toEqual({ sessionId: 'sess-1' });
 	});
 
 	it('parks the prompt the auth failure killed, without sending anything', () => {

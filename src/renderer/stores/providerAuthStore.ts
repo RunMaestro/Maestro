@@ -546,7 +546,11 @@ function mergeSnapshotsByRecency(
 	const merged: Record<string, ProviderAuthSnapshot> = { ...current };
 	for (const [key, snapshot] of Object.entries(incoming)) {
 		const held = merged[key];
-		if (!held || snapshot.checkedAt >= held.checkedAt) {
+		// STRICTLY newer. On a millisecond tie the held record wins, because it got
+		// here via a live `providerAuth:changed` while this read was in flight - it
+		// is the later of the two events even when the clock cannot tell them
+		// apart, and `>=` would roll it back to the value this read predates.
+		if (!held || snapshot.checkedAt > held.checkedAt) {
 			merged[key] = snapshot;
 		}
 	}
