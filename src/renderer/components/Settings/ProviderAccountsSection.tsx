@@ -281,8 +281,9 @@ export function ProviderAccountsSection({
 							Check provider logins at startup
 						</div>
 						<p className="text-xs opacity-70 mt-0.5">
-							Runs one status command per account when Maestro launches, so an expired login shows
-							up before a prompt burns on it. Turn this off to skip it and check accounts by hand.
+							Runs a status command at launch for each account it can check quickly, so an expired
+							login shows up before a prompt burns on it. Skips accounts checked recently, agents
+							untouched for a week, and SSH remotes; the button above covers those.
 						</p>
 					</div>
 					<ToggleSwitch

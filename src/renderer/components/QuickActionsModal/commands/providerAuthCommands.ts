@@ -1,4 +1,5 @@
 import { getAgentDisplayName } from '../../../../shared/agentMetadata';
+import { describeCredentialFix } from '../../../hooks/agent/useAgentErrorRecovery';
 import type { BlockedIdentity } from '../../../stores/providerAuthStore';
 import type { QuickAction } from '../types';
 
@@ -37,10 +38,21 @@ export function buildProviderAuthCommands({
 		const { identity, sessionIds } = entry;
 		const blocked =
 			sessionIds.length === 1 ? '1 agent blocked' : `${sessionIds.length} agents blocked`;
+		const providerName = getAgentDisplayName(identity.provider);
+		// Only an oauth credential is repaired by signing in. A rejected API key, a
+		// gateway token, or a cloud-SDK credential is blocked too and belongs in
+		// this list, but promising "Sign In" for one sends the user to a login that
+		// cannot possibly help. Same rule, and the same words, as `buildAuthAction`
+		// behind the agent-error modal.
+		const repairableByLogin = identity.kind === 'oauth';
 		return {
 			id: `provider-auth-recovery-${identity.key}`,
-			label: `Sign In to ${getAgentDisplayName(identity.provider)} (${identity.label})`,
-			subtext: `${blocked} until this account is signed in`,
+			label: repairableByLogin
+				? `Sign In to ${providerName} (${identity.label})`
+				: `Fix Credentials for ${providerName} (${identity.label})`,
+			subtext: repairableByLogin
+				? `${blocked} until this account is signed in`
+				: `${blocked} - ${describeCredentialFix(identity, providerName)}`,
 			action: () => {
 				openAuthRecovery(identity.key);
 				setQuickActionOpen(false);

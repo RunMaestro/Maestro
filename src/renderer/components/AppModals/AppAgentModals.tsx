@@ -165,7 +165,16 @@ const AuthRecoveryModalSlot = memo(function AuthRecoveryModalSlot({
 	if (!identityKey || !identity) return null;
 
 	return (
+		// Keyed so a credential switch MOUNTS A FRESH MODAL rather than feeding a
+		// new identity to the old one. This slot stays mounted across the switch
+		// (the `maestro:openProviderAuthRecovery` listener above can open a
+		// different key), and the modal's login effect resets the spawn fields but
+		// not its verdict - so without this the previous credential's outcome
+		// renders under the new credential's name, e.g. "B still reports no active
+		// login" when only A was ever probed. The remote host note drifts the same
+		// way, and the login PTY's run id would be reused across two accounts.
 		<AuthRecoveryModal
+			key={identity.key}
 			identity={identity}
 			blockedSessions={blockedSessions}
 			theme={theme}

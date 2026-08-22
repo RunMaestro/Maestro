@@ -124,7 +124,7 @@ Each row shows the account, whether it is signed in, the name the provider repor
 
 An account that presents an API key, a gateway token, or cloud credentials gets no Sign In button. There is nothing a login could fix, so the row names the environment variable to change instead, which you edit in the same tab (see below) or in that agent's own configuration.
 
-**Check provider logins at startup** is on by default: Maestro runs one status command per account at launch, so an expired login is visible before you send a prompt into it. Turn it off if you would rather check accounts by hand; the buttons above keep working either way.
+**Check provider logins at startup** is on by default: at launch Maestro runs one status command for each account it can check quickly, so an expired login is visible before you send a prompt into it. It deliberately skips accounts it checked recently, agents you have not opened in the last week, and anything running on an SSH remote - those are checked when you open the tab or press **Re-Check All Accounts**, so a launch never waits on a remote host. Turn it off if you would rather check accounts by hand; the buttons above keep working either way.
 
 ## Global Environment Variables
 

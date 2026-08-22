@@ -55,6 +55,58 @@ beforeEach(() => {
 });
 
 describe('useWizardAuthRecovery', () => {
+	// `null` is the LOCAL host throughout the identity model, so an enabled remote
+	// that names nothing must not collapse into it - that would mark the local
+	// credential as failed and offer a local sign-in for a remote run.
+	it('does not treat an enabled but unresolved SSH remote as local', async () => {
+		mockMarkAgentTypeAuthFailure.mockResolvedValue(oauthIdentity);
+
+		const { result } = renderHook(() =>
+			useWizardAuthRecovery(makeError(), 'claude-code', { enabled: true, remoteId: null })
+		);
+
+		await waitFor(() => expect(result.current).not.toBeNull());
+		expect(mockMarkAgentTypeAuthFailure).not.toHaveBeenCalled();
+		// Nothing honest to offer, so the panel keeps its generic hint.
+		expect(result.current?.action).toBeNull();
+	});
+
+	it('still resolves normally once that remote names an id', async () => {
+		mockMarkAgentTypeAuthFailure.mockResolvedValue(oauthIdentity);
+
+		const { result } = renderHook(() =>
+			useWizardAuthRecovery(makeError(), 'claude-code', { enabled: true, remoteId: 'box-1' })
+		);
+
+		await waitFor(() => expect(result.current?.action).not.toBeNull());
+		expect(mockMarkAgentTypeAuthFailure).toHaveBeenCalledWith(
+			'claude-code',
+			'box-1',
+			expect.any(String)
+		);
+	});
+
+	// The resolved identity belongs to the request that asked for it. While a new
+	// one is in flight the old credential must not still be on offer: cancelling a
+	// late write says nothing about the value already in state.
+	it('drops the previous credential while a new request resolves', async () => {
+		mockMarkAgentTypeAuthFailure.mockResolvedValue(oauthIdentity);
+
+		const { result, rerender } = renderHook(
+			({ agentType }: { agentType: 'claude-code' | 'codex' }) =>
+				useWizardAuthRecovery(makeError(), agentType),
+			{ initialProps: { agentType: 'claude-code' as const } }
+		);
+
+		await waitFor(() => expect(result.current?.action).not.toBeNull());
+
+		// Never resolves, so the hook stays in the in-flight window.
+		mockMarkAgentTypeAuthFailure.mockReturnValue(new Promise(() => {}));
+		rerender({ agentType: 'codex' as const });
+
+		expect(result.current?.action).toBeNull();
+	});
+
 	it('returns null for a non-auth error and records nothing', () => {
 		const { result } = renderHook(() =>
 			useWizardAuthRecovery(makeError({ type: 'rate_limited' }), 'claude-code')

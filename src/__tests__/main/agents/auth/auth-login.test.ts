@@ -60,6 +60,7 @@ import {
 	stopAuthLogin,
 	type AuthLoginDeps,
 } from '../../../../main/agents/auth/auth-login';
+import { collectAuthTargets } from '../../../../main/agents/auth/auth-startup';
 import {
 	setSnapshot,
 	__resetForTests as resetAuthStore,
@@ -319,14 +320,31 @@ describe('startAuthLogin', () => {
 		const { deps, spawn } = makeHarness([
 			makeSession({ customEnvVars: { ANTHROPIC_API_KEY: 'sk-test' } }),
 		]);
-		// The api-key identity's scope is a fingerprint, so read the key back off
-		// the only target this store can produce rather than hardcoding the hash.
+		// An api-key identity's scope is a fingerprint of the secret, so the key
+		// has to be read back off the only target this store can produce. Asking
+		// for DEFAULT_KEY instead would exit on the earlier "no agent uses this
+		// account" branch and never reach the rule under test.
+		const [identityKey] = [
+			...collectAuthTargets({
+				sessionsStore: deps.sessionsStore,
+				agentConfigsStore: deps.agentConfigsStore,
+				settingsStore: deps.settingsStore,
+				mode: 'manual',
+				now: Date.now(),
+				homeDir: HOME,
+			}).keys(),
+		];
+		expect(identityKey).toContain('::api-key::');
+
 		const result = await startAuthLogin(deps, {
-			identityKey: DEFAULT_KEY,
-			runSessionId: runIdFor(DEFAULT_KEY),
+			identityKey,
+			runSessionId: runIdFor(identityKey),
 		});
 
 		expect(result.started).toBe(false);
+		// Pinned so the assertion fails if the guard moves back up to the
+		// target-lookup branch, which would pass for the wrong reason.
+		expect(result.error).toMatch(/signing in cannot repair this credential/i);
 		expect(spawn).not.toHaveBeenCalled();
 	});
 
@@ -382,6 +400,29 @@ describe('startAuthLogin', () => {
 		expect(result.remote).toBe(true);
 		expect(wrapSpawnWithSshMock.mock.calls[0][0].command).toBe('codex');
 		expect(spawn.mock.calls[0][0].command).toBe('ssh');
+	});
+
+	// An agent pointed at another install must be REPAIRED against that install.
+	it("runs the agent's own customPath on the remote", async () => {
+		wrapSpawnWithSshMock.mockResolvedValue({
+			command: 'ssh',
+			args: ['host', '/opt/codex/bin/codex login'],
+			cwd: HOME,
+			sshRemoteUsed: { id: 'remote-1' },
+		});
+		const { deps } = makeHarness([
+			makeSession({
+				toolType: 'codex',
+				customPath: '/opt/codex/bin/codex',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			}),
+		]);
+
+		const key = `codex::oauth::${HOME}/.codex::ssh:remote-1`;
+		const result = await startAuthLogin(deps, { identityKey: key, runSessionId: runIdFor(key) });
+
+		expect(result.started).toBe(true);
+		expect(wrapSpawnWithSshMock.mock.calls[0][0].command).toBe('/opt/codex/bin/codex');
 	});
 
 	it('names the remote so the modal can say which machine it is signing in on', async () => {

@@ -190,16 +190,26 @@ export async function startAuthLogin(
 		);
 	}
 
-	// A remote login runs the provider on the far host by bare binary name, so
-	// only a LOCAL identity is gated on local detection - same split as the probe.
+	// Resolve the binary the same way the probe does, so the login repairs the
+	// installation the agent actually runs: the agent's own `customPath` first,
+	// then the far host's bare binary name for a remote identity, else local
+	// detection. Only a LOCAL identity is gated on local detection - a remote one
+	// is resolved on the far side.
 	const isRemote = !!target.sshRemoteConfig;
-	const binaryPath = isRemote
-		? (getAgentDefinition(identity.provider)?.binaryName ?? null)
-		: await resolveProviderBinaryPath(agentDetector, identity.provider);
+	const binaryPath =
+		target.binaryPath ??
+		(isRemote
+			? (getAgentDefinition(identity.provider)?.binaryName ?? null)
+			: await resolveProviderBinaryPath(agentDetector, identity.provider));
 	if (!binaryPath) {
 		return failure(
 			runSessionId,
-			`The ${identity.provider} CLI was not found on this machine, so Maestro cannot run its login command.`
+			isRemote
+				? // Nothing about this is local: the login would run on the remote host,
+					// so telling the user to install a CLI here sends them to the wrong
+					// machine.
+					`Maestro does not know what to run for ${identity.provider} on this remote, so it cannot start the login there.`
+				: `The ${identity.provider} CLI was not found on this machine, so Maestro cannot run its login command.`
 		);
 	}
 

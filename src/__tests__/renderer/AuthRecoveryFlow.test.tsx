@@ -226,8 +226,15 @@ describe('auth recovery flow - the error modal offers the remedy the credential 
 		expect(useModalStore.getState().isOpen('editAgent')).toBe(true);
 		expect(useModalStore.getState().getData('editAgent')?.session.id).toBe('keyed');
 		expect(useModalStore.getState().isOpen('authRecovery')).toBe(false);
-		// The key is still rejected until the user changes it, so the error stands.
+		// The error MODAL gives way to the editor - unlike the login above, which
+		// layers over it, this remedy is the user typing in the agent's own config,
+		// so leaving the error frame on top would cover what they came to edit.
 		expect(useModalStore.getState().isOpen('agentError')).toBe(false);
+		// The recorded error itself stands: the key is rejected until it changes,
+		// and clearing it here would drop the badge while the cause is still true.
+		expect(
+			useSessionStore.getState().sessions.find((s) => s.id === 'keyed')?.agentError
+		).toBeDefined();
 	});
 });
 

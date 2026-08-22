@@ -50,23 +50,52 @@ export function useWizardAuthRecovery(
 ): WizardAuthRecovery | null {
 	const isAuthError = error?.type === 'auth_expired';
 	const message = error?.message ?? '';
-	const sshRemoteId = sshRemoteConfig?.enabled ? (sshRemoteConfig.remoteId ?? null) : null;
+	const sshEnabled = sshRemoteConfig?.enabled === true;
+	const sshRemoteId = sshEnabled ? (sshRemoteConfig?.remoteId ?? null) : null;
+	// SSH on but naming no remote is UNRESOLVABLE, not local. `null` is the local
+	// host everywhere in the identity model, so passing it here would mark the
+	// local credential as failed and offer a local sign-in for a run the user
+	// pointed at another machine. Fails closed, the same way `buildTarget()` in
+	// auth-startup and `resolveSessionIdentity()` in the store do.
+	const sshUnresolved = sshEnabled && sshRemoteId === null;
 
-	const [identity, setIdentity] = useState<CredentialIdentity | null>(null);
+	/**
+	 * What the currently displayed identity was resolved FOR.
+	 *
+	 * Stored with the identity rather than beside it because resolution is async:
+	 * while a new agent type, remote, or message resolves, the previous
+	 * credential's identity is still in state, and offering "Sign in to X" for the
+	 * account the user just navigated away from is worse than offering nothing.
+	 * Cancelling a late write cannot fix that - it says nothing about the value
+	 * already held.
+	 */
+	const requestKey =
+		isAuthError && agentType && !sshUnresolved
+			? `${agentType}\u0001${sshRemoteId ?? ''}\u0001${message}`
+			: null;
+
+	const [resolved, setResolved] = useState<{
+		key: string;
+		identity: CredentialIdentity | null;
+	} | null>(null);
 
 	useEffect(() => {
-		if (!isAuthError || !agentType) {
-			setIdentity(null);
+		if (requestKey === null || !agentType) {
+			setResolved(null);
 			return;
 		}
 		let cancelled = false;
-		void markAgentTypeAuthFailure(agentType, sshRemoteId, message).then((resolved) => {
-			if (!cancelled) setIdentity(resolved);
+		void markAgentTypeAuthFailure(agentType, sshRemoteId, message).then((next) => {
+			if (!cancelled) setResolved({ key: requestKey, identity: next });
 		});
 		return () => {
 			cancelled = true;
 		};
-	}, [isAuthError, agentType, sshRemoteId, message]);
+	}, [requestKey, agentType, sshRemoteId, message]);
+
+	// Only honored for the request it belongs to; a resolution in flight leaves
+	// this null and the panel on its generic hint.
+	const identity = resolved && resolved.key === requestKey ? resolved.identity : null;
 
 	const openRecovery = useCallback(() => {
 		if (identity) getModalActions().openAuthRecovery(identity.key);

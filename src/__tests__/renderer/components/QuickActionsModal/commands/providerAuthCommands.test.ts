@@ -24,6 +24,16 @@ const blocked = (key: string, label: string, sessionIds: string[]): BlockedIdent
 	return { identity: id, snapshot: snapshot(id), sessionIds };
 };
 
+/** A credential no login can repair - it is blocked, but not by a dead session. */
+const blockedApiKey = (key: string, label: string, sessionIds: string[]): BlockedIdentity => {
+	const id: CredentialIdentity = {
+		...identity(key, label),
+		kind: 'api-key',
+		envVarName: 'ANTHROPIC_API_KEY',
+	};
+	return { identity: id, snapshot: snapshot(id), sessionIds };
+};
+
 function harness(blockedIdentities: BlockedIdentity[]) {
 	const openAuthRecovery = vi.fn();
 	const refreshAllIdentities = vi.fn().mockResolvedValue(undefined);
@@ -60,6 +70,25 @@ describe('buildProviderAuthCommands', () => {
 		const labels = actions.map((a) => a.label);
 		expect(labels).toContain('Sign In to Claude Code (.claude-gmail)');
 		expect(labels).toContain('Sign In to Claude Code (.claude-smash)');
+	});
+
+	// A rejected API key belongs in this list - it blocks agents - but no login
+	// repairs it, so promising "Sign In" sends the user somewhere useless.
+	it('does not promise a sign-in for a credential no login can repair', () => {
+		const { actions } = harness([blockedApiKey('k1', 'Claude Code key abcd', ['s1'])]);
+		const recovery = actions.find((a) => a.id.startsWith('provider-auth-recovery-'))!;
+
+		expect(recovery.label).not.toMatch(/sign in/i);
+		expect(recovery.label).toContain('Fix Credentials');
+		// And it names the env var the user has to go change.
+		expect(recovery.subtext).toContain('ANTHROPIC_API_KEY');
+	});
+
+	it('still offers the sign-in wording for an oauth credential', () => {
+		const { actions } = harness([blocked('k1', '.claude-gmail', ['s1'])]);
+		const recovery = actions.find((a) => a.id.startsWith('provider-auth-recovery-'))!;
+
+		expect(recovery.label).toContain('Sign In to');
 	});
 
 	it('opens the recovery flow for the identity the entry names', () => {
