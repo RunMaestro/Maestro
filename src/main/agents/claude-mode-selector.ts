@@ -31,6 +31,22 @@ export interface UsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
 	authState?: 'authenticated' | 'unauthenticated';
+	/**
+	 * Which Anthropic account `configDirKey` was logged into at sample time,
+	 * read from `<configDir>/.claude.json`. All three are optional: a dir that
+	 * has never been logged into carries no `oauthAccount`, and older blobs can
+	 * hold the email without the uuid.
+	 *
+	 * The quota is bucketed per ACCOUNT, not per directory, so two config dirs
+	 * pointing at one account legitimately show identical bars. Without these
+	 * fields the dashboard can only label rows by directory name, and identical
+	 * numbers under two different names read as a sampling bug. `accountUuid`
+	 * is what makes that case detectable - see `groupAccountKeysByIdentity()`
+	 * in `src/shared/claudeAccountIdentity.ts`.
+	 */
+	accountEmail?: string;
+	accountUuid?: string;
+	organizationName?: string;
 	// `resetsAt` is absent when claude painted a percentage but no "Resets ..."
 	// row for that window (it omits the row for an idle 0% session). Consumers
 	// render the percentage anyway and drop the reset caption.

@@ -38,6 +38,16 @@ export interface ClaudeUsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
 	authState?: 'authenticated' | 'unauthenticated';
+	/**
+	 * The Anthropic account this config dir was logged into at sample time.
+	 * Absent for dirs that have never been logged into, and for snapshots
+	 * cached before these fields existed - the panel falls back to the config
+	 * dir name in both cases. `accountUuid` is what lets the panel spot two
+	 * dirs sharing one account (and therefore one quota bucket).
+	 */
+	accountEmail?: string;
+	accountUuid?: string;
+	organizationName?: string;
 	// `resetsAt` is absent when claude's panel painted a percentage but no
 	// "Resets ..." row (it omits the row for an idle 0% window). Render the
 	// percentage anyway and drop the caption.

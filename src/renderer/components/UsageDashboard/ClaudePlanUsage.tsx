@@ -25,16 +25,19 @@ import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/clau
 import { useUIStore } from '../../stores/uiStore';
 import { makeAccountKeyHelpers } from './quota/quotaFormatting';
 import {
+	QuotaAccountEmail,
 	QuotaAccountPill,
 	QuotaAccountTabs,
 	QuotaAgentCountBadge,
 	QuotaBarRow,
 	QuotaPendingRow,
 	QuotaRefreshControls,
+	QuotaSharedAccountBadge,
 	QuotaShowAllToggle,
 	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
+import { groupAccountKeysByIdentity } from '../../../shared/claudeAccountIdentity';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
 
@@ -44,6 +47,8 @@ const PROVIDER_ID = 'claude-code';
 /** Human-readable provider name used in the agent-count badge tooltip. */
 const PROVIDER_LABEL = 'Claude';
 const { deriveShortName, deriveDisplayName, normalizeKey } = makeAccountKeyHelpers('.claude');
+/** Stable identity for "no shared siblings" so `AccountRow`'s memo still holds. */
+const EMPTY_SIBLINGS: string[] = [];
 
 interface ClaudePlanUsageProps {
 	theme: Theme;
@@ -58,6 +63,11 @@ interface AccountRowProps {
 	snapshot: ClaudeUsageSnapshot;
 	/** Agents pointed at this CLAUDE_CONFIG_DIR. */
 	agentCount: number;
+	/**
+	 * Display names of the other config dirs logged into this same Anthropic
+	 * account. Empty when this row owns its quota bucket alone.
+	 */
+	sharedWith: string[];
 	theme: Theme;
 }
 
@@ -65,6 +75,7 @@ const AccountRow = memo(function AccountRow({
 	configDirKey,
 	snapshot,
 	agentCount,
+	sharedWith,
 	theme,
 }: AccountRowProps) {
 	const shortName = deriveShortName(configDirKey);
@@ -82,6 +93,21 @@ const AccountRow = memo(function AccountRow({
 					count={agentCount}
 					providerLabel={PROVIDER_LABEL}
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
+					theme={theme}
+				/>
+				{/* The pill above is the config dir the user named; this is who
+				    that dir is actually logged in as. They drift apart whenever
+				    `/login` is re-run inside an existing dir. */}
+				{snapshot.accountEmail && (
+					<QuotaAccountEmail
+						email={snapshot.accountEmail}
+						testId={`${TEST_ID_PREFIX}-email-${shortName}`}
+						theme={theme}
+					/>
+				)}
+				<QuotaSharedAccountBadge
+					siblingNames={sharedWith}
+					testId={`${TEST_ID_PREFIX}-shared-${shortName}`}
 					theme={theme}
 				/>
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
@@ -168,6 +194,24 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
 
+	// Config dirs that resolve to one Anthropic account share a single quota
+	// bucket, so their bars are identical by construction. Resolve the sibling
+	// sets here (over every snapshot, not just the rendered ones) and label the
+	// rows, so identical percentages read as "same account" rather than as the
+	// sampler double-reporting one account under two names.
+	const sharedAccountNames = useMemo(() => {
+		const identities: Record<string, { accountUuid?: string; email?: string }> = {};
+		for (const [key, snapshot] of Object.entries(snapshots)) {
+			identities[key] = { accountUuid: snapshot.accountUuid, email: snapshot.accountEmail };
+		}
+		const grouped = groupAccountKeysByIdentity(identities);
+		const named: Record<string, string[]> = {};
+		for (const [key, siblings] of Object.entries(grouped)) {
+			named[key] = siblings.map(deriveDisplayName);
+		}
+		return named;
+	}, [snapshots]);
+
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
 	const toggleHidden = useUIStore((s) => s.toggleHiddenQuotaAccount);
@@ -212,6 +256,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					configDirKey={configDirKey}
 					snapshot={snapshot}
 					agentCount={agentCount}
+					sharedWith={sharedAccountNames[configDirKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 				/>
 			) : (
@@ -250,7 +295,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount]
+		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount, sharedAccountNames]
 	);
 
 	return (
@@ -328,6 +373,18 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 						if (!snap) return 'pending';
 						return 'none';
 					}}
+					// The tab is labeled with the config dir, which says nothing
+					// about which login it holds. Put the account on the hover so
+					// two tabs that turn out to be one account are explicable
+					// without switching between them and comparing bars.
+					getTabTitle={(configDirKey) => {
+						const email = snapshots[configDirKey]?.accountEmail;
+						const shared = sharedAccountNames[configDirKey];
+						const lines = [configDirKey];
+						if (email) lines.push(`Logged in as ${email}`);
+						if (shared?.length) lines.push(`Shares one quota with ${shared.join(', ')}`);
+						return lines.join('\n');
+					}}
 				/>
 			)}
 
@@ -347,6 +404,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					configDirKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					sharedWith={sharedAccountNames[effectiveSelectedKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 				/>
 			) : effectiveSelectedKey ? (
