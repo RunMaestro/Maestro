@@ -239,6 +239,123 @@ describe('ExitHandler', () => {
 			expect(proc.errorEmitted).toBe(true);
 		});
 
+		it('captures the provider session id from a failed trailing envelope', async () => {
+			// When the flushed line is the only event of the run, this is the sole
+			// chance to record the id. Losing it means a retry of a RECOVERABLE error
+			// starts a fresh conversation instead of resuming the failed one.
+			const errorJson =
+				'{"event":"result","result":{"conversation_id":"conv-42","error":"quota exhausted"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn(
+					() => 'conv-42'
+				) as unknown as AgentOutputParser['extractSessionId'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'quota exhausted',
+					recoverable: true,
+					agentId: 'antigravity',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const sessionIdEvents: string[] = [];
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIdEvents.push(agentSessionId)
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(sessionIdEvents).toEqual(['conv-42']);
+			expect(proc.agentSessionId).toBe('conv-42');
+		});
+
+		it('captures the provider session id from a successful trailing envelope', async () => {
+			const resultJson = '{"event":"result","result":{"conversation_id":"conv-7","response":"hi"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'result',
+					text: 'hi',
+					raw: JSON.parse(resultJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn(() => 'conv-7') as unknown as AgentOutputParser['extractSessionId'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: resultJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const sessionIdEvents: string[] = [];
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIdEvents.push(agentSessionId)
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(sessionIdEvents).toEqual(['conv-7']);
+		});
+
+		it('does not re-emit a session id already reported mid-stream', async () => {
+			const errorJson =
+				'{"event":"result","result":{"conversation_id":"conv-42","error":"quota exhausted"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn(
+					() => 'conv-42'
+				) as unknown as AgentOutputParser['extractSessionId'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'quota exhausted',
+					recoverable: true,
+					agentId: 'antigravity',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			proc.sessionIdEmitted = true;
+			processes.set('test-session', proc);
+
+			const sessionIdEvents: string[] = [];
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIdEvents.push(agentSessionId)
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(sessionIdEvents).toEqual([]);
+			// Still recorded on the process, matching emitSessionIdIfNeeded.
+			expect(proc.agentSessionId).toBe('conv-42');
+		});
+
 		it('does not leak the raw envelope as data when classification throws', async () => {
 			// The catch around this flush exists for ONE expected condition - a
 			// malformed last line - and its fallback is to emit that line raw. If it

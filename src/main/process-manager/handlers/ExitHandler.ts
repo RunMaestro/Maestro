@@ -148,6 +148,25 @@ export class ExitHandler {
 				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
 			}
 
+			// Capture the provider's session id BEFORE dispatching, and for a failed
+			// envelope as much as a successful one. When the flushed line is the first
+			// event to carry one - a short-lived run whose whole output is this single
+			// trailing envelope - this is the only chance to record it. Without it the
+			// tab has no id to resume from, so recovery from a *recoverable* error
+			// silently opens a fresh conversation and drops the context the retry was
+			// supposed to continue. StdoutHandler does this for mid-stream lines; the
+			// flush is the same event arriving without a trailing newline.
+			if (event) {
+				const eventSessionId = outputParser.extractSessionId(event);
+				if (eventSessionId) {
+					managedProcess.agentSessionId = eventSessionId;
+					if (!managedProcess.sessionIdEmitted) {
+						managedProcess.sessionIdEmitted = true;
+						this.emitter.emit('session-id', sessionId, eventSessionId);
+					}
+				}
+			}
+
 			// A terminal envelope that reports a FAILURE has to leave through the
 			// error path, not the result path. Emitting its text as data would render
 			// a provider failure as the agent's answer, and dropping it silently is
