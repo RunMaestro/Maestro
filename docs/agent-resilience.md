@@ -58,6 +58,14 @@ When a retry succeeds, the card turns green and freezes: _Connection recovered. 
 Pending retries do not survive quitting Maestro. This is deliberate: a closed app should not sit in the background burning quota on your behalf. Reopening the app leaves the outage card in place as a dim summary, and you send the prompt again yourself.
 </Note>
 
+## Queued messages
+
+If you queued several messages behind a turn that then failed, the queue **holds**. It does not drain into a provider that just refused you, because every queued message would hit the same wall and fail in turn.
+
+The retry goes out for the prompt that actually failed. Your queue then drains in order behind it, exactly as it would have if the outage had never happened. Nothing is dropped and nothing is reordered, so a batch of work you lined up before bed is still there in the morning.
+
+Sending a **new** message while a retry is counting down is different: that is you moving on, so it takes over. The countdown stops, the outage card freezes into a stopped summary, and your new prompt goes out instead.
+
 ## Turning it on and off
 
 Both toggles live in the **New Agent** dialog when you create an agent, and in **Edit Agent** afterwards. To reach Edit Agent, right-click the agent in the Left Bar and choose **Edit Agent...**, or press `Cmd+K` / `Ctrl+K` and pick **Edit Agent**.

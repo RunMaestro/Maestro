@@ -142,4 +142,52 @@ describe('chooseNextQueuedItem', () => {
 		};
 		expect(chooseNextQueuedItem(session, 'tab-1')).toEqual({ action: 'none', item: null });
 	});
+
+	// Agent Resilience: the provider just refused this turn and a retry is
+	// counting down. Draining the queue into it fails every queued item against
+	// the same wall, and each dispatch cancels the previous item's scheduled
+	// retry - so a queue of N messages silently loses the first N-1 prompts.
+	describe('with an Agent Resilience retry pending', () => {
+		function idleSessionWithQueue(): MinSession {
+			return {
+				executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })],
+				state: 'idle',
+				agentError: undefined,
+				aiTabs: [tab()],
+			};
+		}
+
+		it('holds the queue instead of dequeuing', () => {
+			const decision = chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1', true);
+			expect(decision.action).toBe('wait');
+			// The item is reported but NOT consumed - it stays queued, in order.
+			expect(decision.item?.id).toBe('q1');
+		});
+
+		it('dequeues normally once no retry is pending', () => {
+			expect(chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1', false).action).toBe('dequeue');
+			// Defaulting the parameter must not change existing callers.
+			expect(chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1').action).toBe('dequeue');
+		});
+
+		it('holds a forceParallel item too - the wall applies to every item', () => {
+			const session: MinSession = {
+				executionQueue: [item({ id: 'q1', forceParallel: true })],
+				state: 'idle',
+				agentError: undefined,
+				aiTabs: [tab()],
+			};
+			expect(chooseNextQueuedItem(session, 'tab-1', true).action).toBe('wait');
+		});
+
+		it('still reports "none" for an empty queue', () => {
+			const session: MinSession = {
+				executionQueue: [],
+				state: 'idle',
+				agentError: undefined,
+				aiTabs: [tab()],
+			};
+			expect(chooseNextQueuedItem(session, 'tab-1', true)).toEqual({ action: 'none', item: null });
+		});
+	});
 });

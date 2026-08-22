@@ -19,6 +19,7 @@ import {
 	cancelRetry,
 	clearRetryIfSettled,
 	getRetryEntry,
+	hasPendingRetry,
 	getOutage,
 	sessionHasActiveOutage,
 	registerBatchResumer,
@@ -262,6 +263,48 @@ describe('noteDispatch supersession', () => {
 			deps
 		);
 		expect(getRetryEntry('s14', 't1')?.status).toBe('in-flight');
+	});
+
+	// Superseding drops the entry, which also kills the timer. If the outage
+	// record stayed 'active' the transcript card would tick "Failing for" upward
+	// forever on a retry that is never coming, show "Next attempt: now…", and its
+	// Stop button would be inert (cancelRetry early-returns without an entry).
+	it('freezes the outage card when a fresh dispatch supersedes the retry', () => {
+		setupSession('s15', 't1');
+		seedSnapshot('s15', 't1');
+		scheduleRetryForError('s15', 't1', quota());
+		const outageId = getRetryEntry('s15', 't1')!.outageId;
+		expect(getOutage(outageId)?.status).toBe('active');
+
+		noteDispatch(
+			's15',
+			{ id: 'item-2', timestamp: 2, tabId: 't1', type: 'message', text: 'different' },
+			deps
+		);
+
+		expect(getOutage(outageId)?.status).toBe('stopped');
+		expect(getOutage(outageId)?.resolvedAt).toBe(NOW);
+	});
+});
+
+describe('hasPendingRetry', () => {
+	it('is true only while a retry is counting down', () => {
+		setupSession('s16', 't1');
+		seedSnapshot('s16', 't1');
+		expect(hasPendingRetry('s16', 't1')).toBe(false);
+
+		scheduleRetryForError('s16', 't1', quota());
+		expect(hasPendingRetry('s16', 't1')).toBe(true);
+
+		// An in-flight resend is already dispatched - it must NOT hold the queue,
+		// or the queue would never drain after a successful retry.
+		retryNow('s16', 't1');
+		expect(getRetryEntry('s16', 't1')?.status).toBe('in-flight');
+		expect(hasPendingRetry('s16', 't1')).toBe(false);
+	});
+
+	it('is false for a tab with no retry at all', () => {
+		expect(hasPendingRetry('nope', 'nope')).toBe(false);
 	});
 });
 
