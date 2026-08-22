@@ -3902,6 +3902,11 @@ interface MaestroAPI {
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
 			customEffort?: string;
+			recentCommands?: {
+				command: string;
+				exitCode?: number;
+				status?: 'running' | 'finished' | 'cancelled';
+			}[];
 		}) => Promise<{ success: boolean; command?: string; error?: string }>;
 	};
 

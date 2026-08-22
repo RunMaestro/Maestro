@@ -17,11 +17,22 @@
  * - Thinking toggle
  *
  * Keyboard shortcuts:
- * - Escape: Opens exit confirmation dialog
+ * - Escape (mid-turn): Stops the running turn, staying in the wizard
+ * - Escape (idle): Opens exit confirmation dialog
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Terminal, Wand2, ImageIcon, ArrowUp, PenLine, X, Keyboard, Brain } from 'lucide-react';
+import {
+	Terminal,
+	Wand2,
+	ImageIcon,
+	ArrowUp,
+	PenLine,
+	X,
+	Keyboard,
+	Brain,
+	Square,
+} from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import { WizardPill } from './WizardPill';
 import { WizardConfidenceGauge } from './WizardConfidenceGauge';
@@ -73,6 +84,8 @@ interface WizardInputPanelProps {
 	isInitializing?: boolean;
 	/** Handler for exiting wizard mode */
 	onExitWizard: () => void;
+	/** Stop the turn currently running on this tab, without leaving the wizard */
+	onStopTurn?: (tabId?: string) => void;
 	/** Enter to send setting */
 	enterToSend: boolean;
 	/** Set enter to send setting */
@@ -124,6 +137,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	isBusy,
 	isInitializing = false,
 	onExitWizard,
+	onStopTurn,
 	enterToSend,
 	setEnterToSend,
 	onInputFocus,
@@ -153,12 +167,29 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 		return () => cancelAnimationFrame(rafId);
 	}, [inputRef]);
 
+	const handleStopTurn = useCallback(() => {
+		onStopTurn?.(session.activeTabId);
+		inputRef.current?.focus();
+	}, [onStopTurn, session.activeTabId, inputRef]);
+
 	// Handle Escape key to show exit confirmation (only if user has interacted)
 	const handleEscapeKey = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				e.stopPropagation();
+				// Mid-turn, Escape means "stop this turn" - same as a regular AI tab. It must
+				// never fall through to the close-the-tab branch below: during the first turn
+				// the conversation still looks untouched, which is how a single Escape used to
+				// destroy the whole wizard tab while the agent was running.
+				if (isBusy || isInitializing) {
+					if (onStopTurn) {
+						handleStopTurn();
+					} else {
+						setShowExitConfirm(true);
+					}
+					return;
+				}
 				const hasUserMessages = session.wizardState?.conversationHistory?.some(
 					(m) => m.role === 'user'
 				);
@@ -167,10 +198,18 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 				if (hasUserMessages || hasInput || hasImages) {
 					setShowExitConfirm(true);
 				} else {
-					// No interaction - close the tab if safe, otherwise just exit wizard
+					// No interaction - close the tab if safe, otherwise just exit wizard.
+					// "Safe" also means the tab is the wizard's own: `/wizard` runs in place,
+					// so closing an untouched wizard that took over a tab with a real
+					// conversation would throw that conversation away. System logs don't
+					// count - the wizard writes its own "Starting wizard..." line.
 					const { setSessions } = useSessionStore.getState();
 					const activeTabId = session.activeTabId;
-					if (activeTabId && session.aiTabs.length > 1) {
+					const hostTab = session.aiTabs.find((t) => t.id === activeTabId);
+					const hostTabHasConversation = (hostTab?.logs ?? []).some(
+						(log) => log.source !== 'system'
+					);
+					if (activeTabId && session.aiTabs.length > 1 && !hostTabHasConversation) {
 						setSessions((prev) =>
 							prev.map((s) => {
 								if (s.id !== session.id) return s;
@@ -194,7 +233,17 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			// Forward other key events to the parent handler
 			handleInputKeyDown(e);
 		},
-		[handleInputKeyDown, session, inputValue, stagedImages, onExitWizard, isBusy]
+		[
+			handleInputKeyDown,
+			session,
+			inputValue,
+			stagedImages,
+			onExitWizard,
+			isBusy,
+			isInitializing,
+			onStopTurn,
+			handleStopTurn,
+		]
 	);
 
 	// Handle exit confirmation
@@ -406,20 +455,35 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 							<Wand2 className="w-4 h-4" style={{ color: theme.colors.accent }} />
 						)}
 					</button>
-					{/* Send button */}
-					<button
-						type="button"
-						onClick={() => processInput()}
-						disabled={isBusy}
-						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
-						title={isBusy ? 'Wizard is thinking…' : 'Send message'}
-					>
-						<ArrowUp className="w-4 h-4" />
-					</button>
+					{/* Send button, or Stop while a turn is running - Escape does the same thing,
+					    but a keyboard-only exit strands anyone on a tablet or remote desktop. */}
+					{isBusy && onStopTurn ? (
+						<button
+							type="button"
+							onClick={handleStopTurn}
+							className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
+							style={{ backgroundColor: theme.colors.error, color: 'white' }}
+							title="Stop this turn (Esc)"
+							aria-label="Stop this turn"
+							data-testid="wizard-stop-turn-button"
+						>
+							<Square className="w-4 h-4" fill="currentColor" />
+						</button>
+					) : (
+						<button
+							type="button"
+							onClick={() => processInput()}
+							disabled={isBusy}
+							className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.accentForeground,
+							}}
+							title={isBusy ? 'Wizard is thinking…' : 'Send message'}
+						>
+							<ArrowUp className="w-4 h-4" />
+						</button>
+					)}
 				</div>
 			</div>
 

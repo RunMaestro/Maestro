@@ -48,6 +48,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
@@ -257,7 +258,16 @@ function SessionListInner(props: SessionListProps) {
 	// Inline wizard activity per agent (Session.id). Used by the Left Bar to
 	// render the wand glyph on agent rows AND on the group header / Bookmarks
 	// header for the group(s) those agents live in.
-	const { wizardActiveSessions } = useInlineWizardContext();
+	const { wizardActiveTabs } = useInlineWizardContext();
+
+	// Roll live wizard tabs up to their owning agent, dropping any whose tab is no
+	// longer open. Without that liveness check a single missed eviction (a close
+	// path that forgot to end the wizard, a cancel that ended the wrong tab) leaves
+	// a wand burning on an agent that has no wizard tab to switch to.
+	const wizardActiveSessions = useMemo(
+		() => rollUpWizardActivityToSessions(wizardActiveTabs, sessions),
+		[wizardActiveTabs, sessions]
+	);
 
 	// Multi-window awareness. `windowCtx` is declared above (next to the scoped
 	// session list it drives). It is optional so the Left Bar still renders

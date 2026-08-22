@@ -916,36 +916,52 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
 			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
-				// Open the edit modal on the newest queued message. Commands are
-				// skipped: they carry no editable prompt text, and an item whose tab
-				// has since been closed is skipped too, since there is no transcript
-				// left to open the modal in.
+				// Open the edit modal on the newest queued message.
 				e.preventDefault();
-				const session = ctx.activeSession as Session | undefined;
-				const editable = session
-					? (session.executionQueue ?? []).filter(
-							(item) =>
-								item.type !== 'command' && session.aiTabs.some((tab) => tab.id === item.tabId)
-						)
-					: [];
-				// Prefer the tab on screen, but fall back to this agent's newest queued
-				// message on any tab. The queue is an agent-level thing the UI already
-				// advertises across tabs (the status bar reads "1 item queued - <tab
-				// name> - Click to view"), so scoping the shortcut to the active tab
-				// made it refuse to edit a message Maestro was pointing right at.
+				// Read the session at KEYPRESS time instead of trusting the snapshot
+				// `ctx` captured during the last render. The pencil on a queued row
+				// reads live props, so a stale snapshot here is the one way this
+				// shortcut can disagree with the queue the user is looking at and
+				// claim nothing is queued while a card sits on screen. Reuse the
+				// store's own selector so the fallback matches the rest of the app.
+				const session = selectActiveSession(useSessionStore.getState()) ?? undefined;
+				const queue = session?.executionQueue ?? [];
+				// Commands are the only thing skipped - they carry no editable prompt
+				// text. Nothing else is filtered OUT: the queue the user sees is not
+				// filtered by tab membership, so a filter here could only reject an
+				// item Maestro is actively displaying.
+				const editable = queue.filter((item) => item.type !== 'command');
+				// An item whose tab is gone has no transcript to open the modal in, so
+				// prefer items we can actually show. This RANKS rather than filters:
+				// falling back to the full list keeps a missing tab from turning into
+				// "nothing is queued".
+				const renderable = editable.filter((item) =>
+					session?.aiTabs?.some((tab) => tab.id === item.tabId)
+				);
+				const pool = renderable.length > 0 ? renderable : editable;
+				// Prefer the tab on screen, else this agent's newest queued message on
+				// any tab - the queue is agent-level and the status bar already
+				// advertises it across tabs ("1 item queued - <tab name> - Click to view").
 				const target =
-					[...editable].reverse().find((item) => item.tabId === session?.activeTabId) ??
-					editable[editable.length - 1];
-				if (!session || !target) {
-					notifyCenterFlash({ message: 'No queued message to edit', color: 'yellow' });
+					[...pool].reverse().find((item) => item.tabId === session?.activeTabId) ??
+					pool[pool.length - 1];
+				if (!session) {
+					notifyCenterFlash({ message: 'No agent selected', color: 'yellow' });
+				} else if (!target) {
+					// Say WHICH empty this is. "No queued message" on a screen showing a
+					// queued message is the least useful thing this can report.
+					notifyCenterFlash({
+						message: queue.length > 0 ? 'Only commands are queued' : 'Nothing queued to edit',
+						color: 'yellow',
+					});
 				} else {
 					// The modal renders inside its OWN tab's transcript, so land there
 					// first - whether the message belongs to another AI tab, or a
 					// file/terminal/browser view is currently covering this one.
 					// setActiveTab returns the session unchanged when we are already in
 					// the right place, which is the check for whether to write at all;
-					// the patch itself is applied against fresh state so this can't
-					// clobber a concurrent update with the snapshot we captured here.
+					// the patch itself is applied against fresh state so this cannot
+					// clobber a concurrent update with the snapshot read above.
 					const switched = setActiveTab(session, target.tabId);
 					if (switched && switched.session !== session) {
 						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(target.tabId) }));

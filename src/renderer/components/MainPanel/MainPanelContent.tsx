@@ -224,6 +224,7 @@ export interface MainPanelContentProps {
 
 	// Inline wizard exit handler
 	onExitWizard?: () => void;
+	onStopWizardTurn?: (tabId?: string) => void;
 
 	// Per-kind action handlers for a tiled pane's chevron dropdown (bundled in
 	// MainPanel where the same handlers already feed the TabBar). Forwarded to
@@ -410,6 +411,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onExitWizard,
 		paneTabActions,
 		paneFileActions,
+		onStopWizardTurn,
 		onDeleteLog,
 		onScrollPositionChange,
 		onAtBottomChange,
@@ -1122,6 +1124,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onCancelMerge={onCancelMerge}
 						// Inline wizard mode
 						onExitWizard={onExitWizard}
+						onStopWizardTurn={onStopWizardTurn}
 						wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
 						onToggleWizardShowThinking={onToggleWizardShowThinking}
 						// Model/Effort quick-change pills

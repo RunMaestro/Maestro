@@ -1424,9 +1424,32 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 
 			resolveRun({ stdout: '', stderr: '', exitCode: 'SIGTERM' });
 			await runPromise;
+		});
 
-			// Once finished the run is forgotten, so a late cancel is a no-op.
-			expect(await cancelHandler!({} as any, 'run-cancel')).toEqual({ success: false });
+		it('honours a cancel that arrives before the process is spawned', async () => {
+			const cancel = vi.fn();
+			let resolveRun: (value: any) => void = () => {};
+			vi.mocked(execFile.execFileStreaming).mockImplementation(() => ({
+				result: new Promise((resolve) => {
+					resolveRun = resolve;
+				}),
+				cancel,
+			}));
+
+			// Cancel is clickable while the run is still resolving the shell PATH
+			// and building its command; that click has to survive to the spawn.
+			expect(await handlers.get('git:cancelCommand')!({} as any, 'run-early')).toEqual({
+				success: true,
+			});
+
+			const runPromise = handlers.get('git:runCommand')!(
+				{ sender: { isDestroyed: () => false, send: vi.fn() } } as any,
+				{ runId: 'run-early', operation: 'push', cwd: '/test/repo' }
+			);
+			await vi.waitFor(() => expect(cancel).toHaveBeenCalled());
+
+			resolveRun({ stdout: '', stderr: '', exitCode: 'SIGTERM' });
+			expect(await runPromise).toEqual(expect.objectContaining({ cancelled: true }));
 		});
 	});
 

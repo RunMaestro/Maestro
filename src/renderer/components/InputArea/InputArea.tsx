@@ -127,6 +127,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onCancelMerge,
 		// Inline wizard mode props
 		onExitWizard,
+		onStopWizardTurn,
 		// Wizard thinking toggle
 		wizardShowThinking = false,
 		onToggleWizardShowThinking,
@@ -408,6 +409,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				isInitializing={wizardState.isInitializing ?? false}
 				isBusy={wizardState.isWaiting || activeTab?.state === 'busy'}
 				onExitWizard={onExitWizard}
+				onStopTurn={onStopWizardTurn}
 				enterToSend={enterToSend}
 				setEnterToSend={setEnterToSend}
 				onInputFocus={onInputFocus}

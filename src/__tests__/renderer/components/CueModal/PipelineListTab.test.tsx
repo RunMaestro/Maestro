@@ -85,6 +85,23 @@ function makeRun(overrides: Partial<CueRunResult> = {}): CueRunResult {
 	} as CueRunResult;
 }
 
+function makeMultiTrigger(): CuePipeline {
+	return {
+		id: 'multi',
+		name: 'Multi',
+		color: '#06b6d4',
+		nodes: [
+			trigger('t1', 'Multi'),
+			trigger('t2', 'Multi-chain-2', { eventType: 'app.startup', config: {} }),
+			agent('a1', 'rc'),
+		],
+		edges: [
+			{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+			{ id: 'e2', source: 't2', target: 'a1', mode: 'pass' },
+		],
+	};
+}
+
 const onViewInGraph = vi.fn();
 const onTriggerSubscription = vi.fn();
 const onRetry = vi.fn();
@@ -116,6 +133,20 @@ describe('PipelineListTab', () => {
 		renderList();
 		expect(screen.getByText('Daily Digest')).toBeInTheDocument();
 		expect(screen.getByText('Scheduled (09:00) → rc')).toBeInTheDocument();
+	});
+
+	// A pipeline that groups dozens of independent chains must not print all of
+	// their names inline - that is what drowned the other rows on screen.
+	it('summarizes a wide pipeline with counts instead of every node name', () => {
+		const nodes = [trigger('t1', 'Wide')];
+		const edges = [];
+		for (let i = 0; i < 8; i++) {
+			nodes.push(agent(`a${i}`, `Agent${i}`));
+			edges.push({ id: `e${i}`, source: 't1', target: `a${i}`, mode: 'pass' as const });
+		}
+		renderList({ pipelines: [{ id: 'wide', name: 'Wide', color: '#06b6d4', nodes, edges }] });
+		expect(screen.getByText('Scheduled (09:00) → 8 agents')).toBeInTheDocument();
+		expect(screen.queryByText(/Agent7/)).not.toBeInTheDocument();
 	});
 
 	it('shows a health badge derived from the run history', () => {
@@ -212,25 +243,27 @@ describe('PipelineListTab', () => {
 		expect(rows[0]).toHaveAttribute('data-testid', 'pipeline-list-row-broken');
 	});
 
-	it('Run now fires every trigger subscription in the pipeline', () => {
-		const multi: CuePipeline = {
-			id: 'multi',
-			name: 'Multi',
-			color: '#06b6d4',
-			nodes: [
-				trigger('t1', 'Multi'),
-				trigger('t2', 'Multi-chain-2', { eventType: 'app.startup', config: {} }),
-				agent('a1', 'rc'),
-			],
-			edges: [
-				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
-				{ id: 'e2', source: 't2', target: 'a1', mode: 'pass' },
-			],
-		};
-		renderList({ pipelines: [multi] });
+	it('Run now fires the pipeline when it has exactly one trigger', () => {
+		renderList();
 		fireEvent.click(screen.getByText('Run now'));
-		expect(onTriggerSubscription).toHaveBeenCalledTimes(2);
-		expect(onTriggerSubscription).toHaveBeenCalledWith('Multi');
+		expect(onTriggerSubscription).toHaveBeenCalledOnce();
+		expect(onTriggerSubscription).toHaveBeenCalledWith('Daily Digest');
+	});
+
+	// A row-level Run on a multi-trigger pipeline is both ambiguous (which
+	// event is being simulated? the triggers carry different prompts) and
+	// dangerous - the real 39-trigger pipeline would fire 39 agent runs.
+	it('replaces row-level Run now with a per-trigger Run when there are several triggers', () => {
+		renderList({ pipelines: [makeMultiTrigger()] });
+		expect(screen.queryByText('Run now')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Multi details' }));
+		const detail = screen.getByTestId('pipeline-list-detail-multi');
+		const runButtons = within(detail).getAllByText('Run');
+		expect(runButtons).toHaveLength(2);
+
+		fireEvent.click(runButtons[1]);
+		expect(onTriggerSubscription).toHaveBeenCalledOnce();
 		expect(onTriggerSubscription).toHaveBeenCalledWith('Multi-chain-2');
 	});
 
@@ -260,6 +293,70 @@ describe('PipelineListTab', () => {
 		renderList();
 		fireEvent.click(screen.getByText('Graph'));
 		expect(onViewInGraph).toHaveBeenCalledWith('Daily Digest');
+	});
+
+	// Row actions live inside the expand target, so their clicks must not also
+	// toggle the row open underneath the user.
+	it('row action clicks do not toggle the row open', () => {
+		renderList();
+		fireEvent.click(screen.getByText('Graph'));
+		expect(screen.queryByTestId('pipeline-list-detail-Daily Digest')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByText('Run now'));
+		expect(screen.queryByTestId('pipeline-list-detail-Daily Digest')).not.toBeInTheDocument();
+	});
+
+	describe('expansion', () => {
+		it('hides the trigger and step detail until the row is expanded', () => {
+			renderList();
+			expect(screen.queryByTestId('pipeline-list-detail-Daily Digest')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Daily Digest details' }));
+			const detail = screen.getByTestId('pipeline-list-detail-Daily Digest');
+			expect(within(detail).getByText('Triggers (1)')).toBeInTheDocument();
+			expect(within(detail).getByText('Steps (1)')).toBeInTheDocument();
+			// The subscription name is the thing you actually need when debugging.
+			expect(within(detail).getByText('Daily Digest')).toBeInTheDocument();
+		});
+
+		it('collapses again on a second click', () => {
+			renderList();
+			const toggle = screen.getByRole('button', { name: 'Daily Digest details' });
+			fireEvent.click(toggle);
+			expect(screen.getByTestId('pipeline-list-detail-Daily Digest')).toBeInTheDocument();
+			fireEvent.click(toggle);
+			expect(screen.queryByTestId('pipeline-list-detail-Daily Digest')).not.toBeInTheDocument();
+		});
+
+		it('expands from the keyboard', () => {
+			renderList();
+			const toggle = screen.getByRole('button', { name: 'Daily Digest details' });
+			expect(toggle).toHaveAttribute('aria-expanded', 'false');
+			fireEvent.keyDown(toggle, { key: 'Enter' });
+			expect(toggle).toHaveAttribute('aria-expanded', 'true');
+		});
+
+		// Expanding one row to compare it against another is the whole point.
+		it('keeps several rows open at once', () => {
+			renderList({ pipelines: [makePipeline('Daily Digest'), makePipeline('Cyber Stocks')] });
+			fireEvent.click(screen.getByRole('button', { name: 'Daily Digest details' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Cyber Stocks details' }));
+			expect(screen.getByTestId('pipeline-list-detail-Daily Digest')).toBeInTheDocument();
+			expect(screen.getByTestId('pipeline-list-detail-Cyber Stocks')).toBeInTheDocument();
+		});
+
+		it('lists every node of a wide pipeline once expanded', () => {
+			const nodes = [trigger('t1', 'Wide')];
+			const edges = [];
+			for (let i = 0; i < 8; i++) {
+				nodes.push(agent(`a${i}`, `Agent${i}`));
+				edges.push({ id: `e${i}`, source: 't1', target: `a${i}`, mode: 'pass' as const });
+			}
+			renderList({ pipelines: [{ id: 'wide', name: 'Wide', color: '#06b6d4', nodes, edges }] });
+			fireEvent.click(screen.getByRole('button', { name: 'Wide details' }));
+			const detail = screen.getByTestId('pipeline-list-detail-wide');
+			expect(within(detail).getByText('Steps (8)')).toBeInTheDocument();
+			expect(within(detail).getByText('Agent7')).toBeInTheDocument();
+		});
 	});
 
 	it('renders an empty state that points at the graph tab', () => {

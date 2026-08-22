@@ -27,6 +27,17 @@ vi.mock('lucide-react', () => ({
 	FileText: () => <svg data-testid="file-text-icon" />,
 	Terminal: () => <svg data-testid="terminal-icon" />,
 	Globe: () => <svg data-testid="globe-icon" />,
+	Wand2: () => <svg data-testid="wand-icon" />,
+}));
+
+// Live wizard activity comes from InlineWizardProvider, which wraps this modal in the app
+// but not in a standalone render. Mock the accessor so a test can declare which tabs are
+// mid-wizard; the real one degrades to an empty map without a provider.
+const { wizardActiveTabs } = vi.hoisted(() => ({
+	wizardActiveTabs: new Map<string, { sessionId: string | null; isGeneratingDocs: boolean }>(),
+}));
+vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
+	useWizardActiveTabs: () => wizardActiveTabs,
 }));
 
 // Create a test theme
@@ -1424,6 +1435,62 @@ describe('TabSwitcherModal', () => {
 			expect(screen.getByText('Authentication Service')).toBeInTheDocument();
 			expect(screen.getByText('User Auth Module')).toBeInTheDocument();
 			expect(screen.queryByText('API Gateway')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('wizard tabs', () => {
+		afterEach(() => wizardActiveTabs.clear());
+
+		const renderTabs = (tabs: AITab[]) =>
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={tabs}
+					activeTabId={tabs[0].id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+		it('matches a wizard tab on "wizard" even though its name never says so', () => {
+			// A wizard tab is named for whatever it produced, so name matching alone finds
+			// every tab that merely mentions a wizard and misses the one actually running one.
+			const wizardTab = createTestTab({ name: 'api-project' });
+			const decoyTab = createTestTab({ name: 'Wizard Escape Confirmation' });
+			wizardActiveTabs.set(wizardTab.id, { sessionId: 'agent-1', isGeneratingDocs: false });
+
+			renderTabs([decoyTab, wizardTab]);
+
+			fireEvent.change(screen.getByPlaceholderText('Search open tabs...'), {
+				target: { value: 'wizard' },
+			});
+
+			expect(screen.getByText('api-project')).toBeInTheDocument();
+			expect(screen.getByText('Wizard Escape Confirmation')).toBeInTheDocument();
+		});
+
+		it('does not match an ordinary tab on "wizard"', () => {
+			const plainTab = createTestTab({ name: 'api-project' });
+
+			renderTabs([plainTab]);
+
+			fireEvent.change(screen.getByPlaceholderText('Search open tabs...'), {
+				target: { value: 'wizard' },
+			});
+
+			expect(screen.queryByText('api-project')).not.toBeInTheDocument();
+		});
+
+		it('badges the wizard tab and only the wizard tab', () => {
+			const wizardTab = createTestTab({ name: 'api-project' });
+			const plainTab = createTestTab({ name: 'Something Else' });
+			wizardActiveTabs.set(wizardTab.id, { sessionId: 'agent-1', isGeneratingDocs: true });
+
+			renderTabs([wizardTab, plainTab]);
+
+			expect(screen.getAllByTestId('wand-icon')).toHaveLength(1);
 		});
 	});
 

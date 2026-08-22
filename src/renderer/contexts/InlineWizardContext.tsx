@@ -33,6 +33,7 @@ import {
 	type InlineGeneratedDocument,
 	type PreviousUIState,
 } from '../hooks/batch/useInlineWizard';
+import { NO_WIZARD_TABS, type WizardTabActivity } from '../utils/wizardActivity';
 
 /**
  * Context value type - exposes the full useInlineWizard return value
@@ -99,6 +100,7 @@ export function InlineWizardProvider({ children }: InlineWizardProviderProps) {
 			wizardState.startWizard,
 			wizardState.endWizard,
 			wizardState.sendMessage,
+			wizardState.cancelTurn,
 			wizardState.setConfidence,
 			wizardState.setMode,
 			wizardState.setGoal,
@@ -117,7 +119,7 @@ export function InlineWizardProvider({ children }: InlineWizardProviderProps) {
 			wizardState.wizardTabId,
 			wizardState.selectWizardTab,
 			wizardState.isWizardActiveForTab,
-			wizardState.wizardActiveSessions,
+			wizardState.wizardActiveTabs,
 		]
 	);
 
@@ -168,6 +170,20 @@ export function useInlineWizardContext(): InlineWizardContextValue {
 	}
 
 	return context;
+}
+
+/**
+ * useWizardActiveTabs - read live per-tab wizard activity without requiring the provider.
+ *
+ * Same data as `useInlineWizardContext().wizardActiveTabs`, but returns an empty map
+ * instead of throwing when there's no provider above. That's for leaf surfaces that
+ * only want to BADGE a wizard tab (the tab switcher, tab strip) and are routinely
+ * rendered standalone in tests: a missing badge is the right degradation there, while
+ * a throw would make the provider a hard dependency of every test that opens a modal.
+ * Anything that DRIVES the wizard still uses `useInlineWizardContext()` and still throws.
+ */
+export function useWizardActiveTabs(): ReadonlyMap<string, WizardTabActivity> {
+	return useContext(InlineWizardContext)?.wizardActiveTabs ?? NO_WIZARD_TABS;
 }
 
 // Re-export types for convenience

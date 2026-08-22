@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AiCommandHistoryEntry } from '../../shared/aiCommand';
 
 export interface AiCommandSuggestRequest {
 	/** The user's plain-English description of what they want to do. */
@@ -29,6 +30,8 @@ export interface AiCommandSuggestRequest {
 	/** The tab's current model and effort. */
 	customModel?: string;
 	customEffort?: string;
+	/** Commands already run in this tab, oldest first, so follow-ups can refine. */
+	recentCommands?: AiCommandHistoryEntry[];
 }
 
 export interface AiCommandSuggestResult {

@@ -1806,7 +1806,7 @@ export const FilePreview = React.memo(
 					    find bar when that is open so the two never overlap. */}
 					{canScaleFont && (
 						<div
-							className={`sticky z-20 h-0 flex justify-end pointer-events-none ${
+							className={`sticky z-20 h-0 flex items-start justify-end pointer-events-none ${
 								searchOpen ? 'top-14' : 'top-0'
 							}`}
 						>

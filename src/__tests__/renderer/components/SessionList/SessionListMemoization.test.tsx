@@ -44,7 +44,7 @@ vi.mock('../../../../renderer/components/SessionItem', async (importOriginal) =>
 
 // Context providers SessionList reads from; mocked to avoid wrapping in Providers.
 vi.mock('../../../../renderer/contexts/InlineWizardContext', () => ({
-	useInlineWizardContext: () => ({ wizardActiveSessions: new Map() }),
+	useInlineWizardContext: () => ({ wizardActiveTabs: new Map() }),
 }));
 
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({

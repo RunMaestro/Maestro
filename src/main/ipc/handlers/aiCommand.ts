@@ -27,9 +27,11 @@ import { getPrompt } from '../../prompt-manager';
 import { groomContext } from '../../utils/context-groomer';
 import { resolveConfiguredShell } from '../../stores/defaults';
 import {
+	AI_COMMAND_HISTORY_LIMIT,
 	AI_COMMAND_TIMEOUT_MS,
 	buildAiCommandPrompt,
 	extractCommandLine,
+	type AiCommandHistoryEntry,
 } from '../../../shared/aiCommand';
 import type { AgentConfigsData } from '../../stores/types';
 import type { ProcessManager } from '../../process-manager';
@@ -77,6 +79,12 @@ export interface AiCommandSuggestRequest {
 	/** The tab's current model and effort, resolved by the caller. */
 	customModel?: string;
 	customEffort?: string;
+	/**
+	 * Commands already run in this tab, oldest first, so a follow-up like
+	 * "actually just the count" can refine the last one instead of guessing at a
+	 * fresh command. Collected by the renderer from the tab's own transcript.
+	 */
+	recentCommands?: AiCommandHistoryEntry[];
 }
 
 export interface AiCommandSuggestResult {
@@ -116,6 +124,10 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 				// the prompt names the remote and the model is told to stay portable
 				// rather than being handed a local shell that is not the one running.
 				const isRemote = !!config.sessionSshRemoteConfig?.enabled;
+				// Re-clamp here rather than trusting the renderer's slice: this is an
+				// IPC boundary, and an oversized history would silently blow up the
+				// prompt (and the bill) for every suggestion.
+				const recentCommands = (config.recentCommands ?? []).slice(-AI_COMMAND_HISTORY_LIMIT);
 				const prompt = buildAiCommandPrompt(
 					getPrompt('ai-command'),
 					{
@@ -126,7 +138,8 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 						isGitRepo: config.isGitRepo,
 						remoteName: isRemote ? config.sshRemoteName : undefined,
 					},
-					request
+					request,
+					recentCommands
 				);
 
 				const allConfigs = agentConfigsStore.get('configs', {});
@@ -138,6 +151,7 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 					model: config.customModel,
 					effort: config.customEffort,
 					remote: isRemote,
+					historyCount: recentCommands.length,
 				});
 
 				let response: string;

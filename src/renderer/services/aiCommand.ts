@@ -18,6 +18,7 @@ import { logger } from '../utils/logger';
 import { dispatchShellCommand, resolveCommandCwd } from './shellCommand';
 import { aiCommandKey, useAiCommandStore, type AiCommandEntry } from '../stores/aiCommandStore';
 import { codifyTurnSettings } from '../utils/providerTabSessions';
+import { collectRecentCommands } from '../../shared/aiCommand';
 
 /**
  * Ask the model for a command line for `request`, in the context of `session`.
@@ -41,6 +42,12 @@ export async function requestAiCommand(options: {
 	// the model while the suggestion is in flight applies to the NEXT request.
 	const { turnModel, turnEffort } = codifyTurnSettings(tab, session);
 
+	// Mined from THIS tab's transcript, so "actually just the count" refines the
+	// command the user is looking at. Read here rather than in the main process:
+	// the transcript is renderer state, and it is the only record that keeps a
+	// tab's commands in true chronological order.
+	const recentCommands = collectRecentCommands(tab?.logs ?? []);
+
 	useAiCommandStore.getState().beginAiCommand({
 		requestId,
 		sessionId: session.id,
@@ -63,6 +70,7 @@ export async function requestAiCommand(options: {
 			customEnvVars: session.customEnvVars,
 			customModel: turnModel,
 			customEffort: turnEffort,
+			recentCommands,
 		});
 
 		if (result.success && result.command) {

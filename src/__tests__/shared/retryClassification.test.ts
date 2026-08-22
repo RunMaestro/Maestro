@@ -150,4 +150,59 @@ describe('tokenExhaustionResetAt', () => {
 			now + 2 * 60 * 60 * 1000 + RESET_TIME_BUFFER_MS
 		);
 	});
+
+	it('parses the legacy "usage limit reached|<epoch>" marker', () => {
+		const resetSeconds = Math.floor(now / 1000) + 1800;
+		const e = err({ message: `Claude AI usage limit reached|${resetSeconds}` });
+		expect(tokenExhaustionResetAt(e, now)).toBe(resetSeconds * 1000 + RESET_TIME_BUFFER_MS);
+	});
+
+	describe('zoned wall-clock reset times', () => {
+		// 2026-08-22T17:22:00Z = 12:22pm America/Chicago (CDT, UTC-5).
+		const noon = Date.UTC(2026, 7, 22, 17, 22);
+
+		it('resolves a same-day reset that is still ahead', () => {
+			const e = err({
+				message: "You've hit your session limit · resets 2:40pm (America/Chicago)",
+			});
+			expect(tokenExhaustionResetAt(e, noon)).toBe(
+				Date.UTC(2026, 7, 22, 19, 40) + RESET_TIME_BUFFER_MS
+			);
+		});
+
+		it('rolls a reset time that has already passed to the next day', () => {
+			const e = err({
+				message: "You've hit your session limit · resets 11:40am (America/Chicago)",
+			});
+			expect(tokenExhaustionResetAt(e, noon)).toBe(
+				Date.UTC(2026, 7, 23, 16, 40) + RESET_TIME_BUFFER_MS
+			);
+		});
+
+		it('handles a zone other than the local one', () => {
+			// 9pm Europe/London (BST, UTC+1) on the same day.
+			const e = err({ message: "You've hit your 5-hour limit · resets 9pm (Europe/London)" });
+			expect(tokenExhaustionResetAt(e, noon)).toBe(
+				Date.UTC(2026, 7, 22, 20, 0) + RESET_TIME_BUFFER_MS
+			);
+		});
+
+		it('falls back to the hourly poll for a wall clock with no zone', () => {
+			const e = err({ message: 'usage limit reached, resets at 3pm' });
+			expect(tokenExhaustionResetAt(e, noon)).toBe(noon + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS);
+		});
+
+		it('falls back to the hourly poll for an unknown zone', () => {
+			const e = err({ message: "You've hit your session limit · resets 3pm (Not/AZone)" });
+			expect(tokenExhaustionResetAt(e, noon)).toBe(noon + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS);
+		});
+	});
+
+	it('classifies the Claude CLI limit notice as token-exhaustion', () => {
+		expect(
+			classifyRetryableError(
+				err({ message: "You've hit your session limit · resets 11:40am (America/Chicago)" })
+			)
+		).toBe('token-exhaustion');
+	});
 });

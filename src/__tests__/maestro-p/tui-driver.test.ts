@@ -488,6 +488,12 @@ describe('TuiDriver', () => {
 			'Claude Opus weekly limit reached',
 			'Claude AI usage limit reached|1781551200',
 			'Claude usage limit reached',
+			// Current banner wording, painted as its own line (optionally inside the
+			// TUI's box chrome).
+			"You've hit your session limit · resets 11:40am (America/Chicago)",
+			'You’ve hit your session limit · resets 11:40am (America/Chicago)',
+			"│  You've hit your weekly limit · resets Monday at 9am (America/Chicago)",
+			"You've hit your 5-hour limit",
 		])('fires on a real plan-quota banner: %s', async (msg) => {
 			const driver = await makeDriver();
 			const limitHandler = vi.fn();
@@ -521,6 +527,12 @@ describe('TuiDriver', () => {
 			// Capacity warnings (no reached/exceeded word in the banner form).
 			'Approaching your weekly limit',
 			'Upgrade to raise your usage limit',
+			// The current banner's wording quoted MID-SENTENCE by the agent. Only a
+			// line-anchored occurrence is the real banner.
+			'The CLI prints "You\'ve hit your session limit" and then sits there',
+			"When you've hit your session limit, Maestro schedules a retry.",
+			// Limit kinds Claude never paints a plan banner for.
+			"You've hit your disk limit",
 		])('does not fire on benign line: %s', async (msg) => {
 			const driver = await makeDriver();
 			const limitHandler = vi.fn();

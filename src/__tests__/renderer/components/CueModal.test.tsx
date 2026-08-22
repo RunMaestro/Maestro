@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useCueDirtyStore } from '../../../renderer/stores/cueDirtyStore';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
-import { CueModal } from '../../../renderer/components/CueModal';
+import { CueModal, __resetLastOpenCueTabForTests } from '../../../renderer/components/CueModal';
 
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock LayerStackContext
@@ -71,7 +71,12 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 	},
 }));
 
-// Mock modalStore getModalActions
+// Mock modalStore getModalActions.
+// `mockCueModalData` is the modal's `data` payload (i.e. `initialTab`). Hoisted
+// so the vi.mock factory can close over it, and mutable so a test can deep-link.
+const mockCueModalData = vi.hoisted(() => ({
+	value: undefined as { initialTab?: string } | undefined,
+}));
 const mockOpenCueYamlEditor = vi.fn();
 const mockShowConfirmation = vi.fn();
 vi.mock('../../../renderer/stores/modalStore', () => ({
@@ -79,11 +84,10 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 		openCueYamlEditor: mockOpenCueYamlEditor,
 		showConfirmation: mockShowConfirmation,
 	}),
-	useModalStore: vi.fn((selector: (s: any) => any) =>
+	useModalStore: (selector: (s: any) => any) =>
 		selector({
-			modals: new Map([['cueModal', { open: true, data: undefined }]]),
-		})
-	),
+			modals: new Map([['cueModal', { open: true, data: mockCueModalData.value }]]),
+		}),
 	selectModalData: (id: string) => (state: any) => state.modals.get(id)?.data,
 }));
 
@@ -194,6 +198,10 @@ describe('CueModal', () => {
 		mockUseCueReturn = { ...defaultUseCueReturn };
 		capturedEditorProps.initialPipelineId = undefined;
 		capturedEditorProps.renderCount = 0;
+		// The remembered tab is module state, so it leaks between tests unless
+		// cleared - every test below assumes a fresh open lands on Dashboard.
+		__resetLastOpenCueTabForTests();
+		mockCueModalData.value = undefined;
 	});
 
 	describe('rendering', () => {
@@ -422,6 +430,32 @@ describe('CueModal', () => {
 
 			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
 			// Pipeline Graph content should not be visible by default
+			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
+		});
+
+		// Matches the Settings modal: reopening lands where you left off rather
+		// than resetting to Dashboard every time.
+		it('reopens on the tab the user last had open', () => {
+			const first = render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Pipeline Graph'));
+			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
+			first.unmount();
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
+			expect(screen.queryByText('Sessions with Cue')).not.toBeInTheDocument();
+		});
+
+		// A deep link (`maestro-cli open cue --tab activity`) states where to
+		// land, so it must beat whatever tab happened to be open last.
+		it('lets an explicit initialTab override the remembered tab', () => {
+			const first = render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Pipeline Graph'));
+			first.unmount();
+
+			mockCueModalData.value = { initialTab: 'activity' };
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			expect(screen.getByPlaceholderText('Search activity...')).toBeInTheDocument();
 			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
 		});
 

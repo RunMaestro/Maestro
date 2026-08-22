@@ -110,6 +110,103 @@ describe('requestAiCommand', () => {
 		);
 	});
 
+	it('sends the commands already run in THIS tab, oldest last-run last', async () => {
+		// The follow-up case: "actually just the count" is meaningless without the
+		// find command sitting above it.
+		const session = makeSession({
+			aiTabs: [
+				createMockAITab({
+					id: TAB_ID,
+					logs: [
+						{
+							id: 'c1',
+							timestamp: 1,
+							source: 'stdout',
+							text: '',
+							shellCommand: { command: 'ls', cwd: '/repo', status: 'finished', exitCode: 0 },
+						},
+						{ id: 'm1', timestamp: 2, source: 'user', text: 'unrelated chatter' },
+						{
+							id: 'c2',
+							timestamp: 3,
+							source: 'stdout',
+							text: '',
+							shellCommand: {
+								command: "find . -newermt '2 days ago' -type f",
+								cwd: '/repo',
+								status: 'finished',
+								exitCode: 0,
+							},
+						},
+					],
+				}),
+			],
+		});
+
+		await requestAiCommand({ session, tabId: TAB_ID, request: 'actually just the count' });
+
+		expect(suggest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				recentCommands: [
+					{ command: 'ls', exitCode: 0, status: 'finished' },
+					{
+						command: "find . -newermt '2 days ago' -type f",
+						exitCode: 0,
+						status: 'finished',
+					},
+				],
+			})
+		);
+	});
+
+	it('reads the history from the target tab, not whichever tab is active', async () => {
+		// Requests are addressed by tabId, and a tab switch mid-flight must not
+		// hand one tab's commands to another tab's suggestion.
+		const session = makeSession({
+			activeTabId: 'tab-2',
+			aiTabs: [
+				createMockAITab({
+					id: TAB_ID,
+					logs: [
+						{
+							id: 'c1',
+							timestamp: 1,
+							source: 'stdout',
+							text: '',
+							shellCommand: { command: 'git status', cwd: '/repo', status: 'finished' },
+						},
+					],
+				}),
+				createMockAITab({
+					id: 'tab-2',
+					logs: [
+						{
+							id: 'c2',
+							timestamp: 1,
+							source: 'stdout',
+							text: '',
+							shellCommand: { command: 'rm -rf build', cwd: '/repo', status: 'finished' },
+						},
+					],
+				}),
+			],
+		});
+
+		await requestAiCommand({ session, tabId: TAB_ID, request: 'stage everything' });
+
+		expect(suggest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				recentCommands: [{ command: 'git status', status: 'finished' }],
+			})
+		);
+	});
+
+	it('sends an empty history on a tab that has never run a command', async () => {
+		await requestAiCommand({ session: makeSession(), tabId: TAB_ID, request: 'list files' });
+
+		expect(suggest).toHaveBeenCalledWith(expect.objectContaining({ recentCommands: [] }));
+	});
+
 	it('records a failed suggestion as an error the card can show', async () => {
 		suggest.mockResolvedValue({ success: false, error: 'agent timed out' });
 

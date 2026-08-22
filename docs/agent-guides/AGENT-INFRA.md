@@ -606,6 +606,30 @@ Some patterns use capture groups for rich error messages:
 }
 ```
 
+### Plan-limit notices arrive as a successful `result`, not an error
+
+Claude Code reports a hit plan limit in the `result` field of a `stream-json`
+result event ("You've hit your session limit - resets 11:40am (America/Chicago)",
+legacy "Claude AI usage limit reached|1755500000"). A result event is the CLI's
+own end-of-turn envelope, so it carries no `error` field: without special
+handling the notice renders as an ordinary assistant reply, the turn looks
+successful, and Agent Resilience never sees a failure to retry.
+
+`isClaudeLimitNotice(text)` is the gate for that branch in
+`ClaudeOutputParser.detectError()`. It is anchored at the start of the string and
+length-capped on purpose - a result body is normal assistant prose, and agents
+working on Maestro discuss rate limits constantly, so running the whole result
+through the pattern bank would turn a normal answer into a phantom failure. Keep
+the CLI's own wording as the error message rather than the generic pattern text:
+it names which limit was hit and when it resets, which is exactly what
+`tokenExhaustionResetAt()` in `src/shared/retryClassification.ts` parses to
+schedule the retry. That parser accepts a wall-clock reset only when the notice
+names its own IANA zone; a bare "resets at 3pm" stays unparseable and falls back
+to the hourly poll.
+
+`src/maestro-p/tui-driver.ts` matches the same banner from the TUI's painted
+output with `LIMIT_REGEX`, which is line-anchored for the same reason.
+
 ### Usage Functions
 
 ```typescript

@@ -8,7 +8,15 @@
  */
 
 import { describe, expect, test } from 'vitest';
-import { buildAiCommandPrompt, describePlatform, extractCommandLine } from '../../shared/aiCommand';
+import {
+	AI_COMMAND_HISTORY_LIMIT,
+	buildAiCommandPrompt,
+	collectRecentCommands,
+	describePlatform,
+	extractCommandLine,
+	formatRecentCommands,
+	type CommandCardLike,
+} from '../../shared/aiCommand';
 
 describe('describePlatform', () => {
 	test('names the common platforms in human terms', () => {
@@ -61,6 +69,56 @@ describe('buildAiCommandPrompt', () => {
 		expect(prompt).toContain('Git: no');
 	});
 
+	test('substitutes the recent-command history', () => {
+		const prompt = buildAiCommandPrompt(
+			'{{RECENT_COMMANDS}}\nRequest: {{USER_REQUEST}}',
+			{ platform: 'darwin', shell: '/bin/zsh', cwd: '/repo' },
+			'actually just the count',
+			[{ command: "find . -newermt '2 days ago' -type f" }]
+		);
+
+		expect(prompt).toContain("find . -newermt '2 days ago' -type f");
+		expect(prompt).toContain('Request: actually just the count');
+	});
+
+	test('leaves no empty history heading when nothing has run yet', () => {
+		// A heading with no entries under it tells the model there IS history and
+		// it is empty, which is a different (and wrong) claim.
+		const prompt = buildAiCommandPrompt(
+			'{{RECENT_COMMANDS}}|end',
+			{ platform: 'darwin', shell: '/bin/zsh', cwd: '/repo' },
+			'list files'
+		);
+
+		expect(prompt).toBe('|end');
+	});
+
+	test('a previously-run command cannot move where the request lands', () => {
+		// History is substituted BEFORE the request, so a command line echoing a
+		// template token is data, not a slot.
+		const prompt = buildAiCommandPrompt(
+			'{{RECENT_COMMANDS}}\nRequest: {{USER_REQUEST}}',
+			{ platform: 'darwin', shell: '/bin/zsh', cwd: '/repo' },
+			'the real request',
+			[{ command: 'echo {{USER_REQUEST}}' }]
+		);
+
+		expect(prompt).toContain('- echo {{USER_REQUEST}}');
+		expect(prompt).toContain('Request: the real request');
+		expect(prompt).not.toContain('echo the real request');
+	});
+
+	test('leaves an unrecognised token verbatim instead of blanking it', () => {
+		// A typo in an edited prompt should be visible, not silently swallowed.
+		const prompt = buildAiCommandPrompt(
+			'{{CWD}} {{NOT_A_TOKEN}}',
+			{ platform: 'darwin', shell: '/bin/zsh', cwd: '/repo' },
+			'list files'
+		);
+
+		expect(prompt).toBe('/repo {{NOT_A_TOKEN}}');
+	});
+
 	test('the request cannot rewrite the environment block above it', () => {
 		// The request is substituted last, so a request that happens to contain a
 		// template token is data, not a slot.
@@ -111,5 +169,115 @@ describe('extractCommandLine', () => {
 		expect(extractCommandLine('')).toBeNull();
 		expect(extractCommandLine('   \n\n  ')).toBeNull();
 		expect(extractCommandLine('```\n\n```')).toBeNull();
+	});
+});
+
+describe('collectRecentCommands', () => {
+	function card(command: string, extra: Partial<CommandCardLike['shellCommand']> = {}) {
+		return {
+			shellCommand: { command, status: 'finished' as const, exitCode: 0, ...extra },
+		} satisfies CommandCardLike;
+	}
+
+	test('returns commands oldest first, so the last one is the most recent', () => {
+		const logs = [card('ls'), card('pwd'), card('git status')];
+
+		expect(collectRecentCommands(logs).map((e) => e.command)).toEqual(['ls', 'pwd', 'git status']);
+	});
+
+	test('ignores transcript entries that are not command cards', () => {
+		const logs = [{}, card('ls'), { shellCommand: undefined }, card('pwd')];
+
+		expect(collectRecentCommands(logs).map((e) => e.command)).toEqual(['ls', 'pwd']);
+	});
+
+	test('keeps the NEWEST commands when over the limit', () => {
+		// The cap has to drop from the front. Dropping from the back would discard
+		// exactly the command a follow-up is refining.
+		const logs = Array.from({ length: 12 }, (_, i) => card(`cmd-${i}`));
+
+		const collected = collectRecentCommands(logs, 3);
+
+		expect(collected.map((e) => e.command)).toEqual(['cmd-9', 'cmd-10', 'cmd-11']);
+	});
+
+	test('collapses consecutive repeats but keeps a later re-run', () => {
+		const logs = [card('npm test'), card('npm test'), card('ls'), card('npm test')];
+
+		expect(collectRecentCommands(logs).map((e) => e.command)).toEqual([
+			'npm test',
+			'ls',
+			'npm test',
+		]);
+	});
+
+	test('carries the exit code and status through', () => {
+		const logs = [
+			card('false', { exitCode: 1 }),
+			{ shellCommand: { command: 'sleep 99', status: 'running' as const } },
+		];
+
+		expect(collectRecentCommands(logs)).toEqual([
+			{ command: 'false', exitCode: 1, status: 'finished' },
+			// A running command has no exit code yet, and none is invented.
+			{ command: 'sleep 99', status: 'running' },
+		]);
+	});
+
+	test('defaults to the shared limit and tolerates an empty transcript', () => {
+		const logs = Array.from({ length: 40 }, (_, i) => card(`cmd-${i}`));
+
+		expect(collectRecentCommands(logs)).toHaveLength(AI_COMMAND_HISTORY_LIMIT);
+		expect(collectRecentCommands([])).toEqual([]);
+		expect(collectRecentCommands(logs, 0)).toEqual([]);
+	});
+});
+
+describe('formatRecentCommands', () => {
+	test('renders nothing at all when there is no history', () => {
+		// An empty heading would tell the model there IS history and it is empty.
+		expect(formatRecentCommands([])).toBe('');
+	});
+
+	test('lists the commands and says which end is most recent', () => {
+		const block = formatRecentCommands([{ command: 'ls' }, { command: 'pwd' }]);
+
+		expect(block).toContain('## Recent commands');
+		expect(block).toContain('- ls');
+		expect(block).toContain('- pwd');
+		expect(block).toMatch(/LAST one is the most recent/i);
+		expect(block.indexOf('- ls')).toBeLessThan(block.indexOf('- pwd'));
+	});
+
+	test('labels a failure rather than hiding it', () => {
+		// "that didn't work, try something else" needs the failure to be visible,
+		// or the model proposes the same broken command again.
+		const block = formatRecentCommands([{ command: 'grep -P x .', exitCode: 2 }]);
+
+		expect(block).toContain('failed, exit 2');
+	});
+
+	test('does not label a successful command', () => {
+		// Noise. Every command that worked would carry the same suffix.
+		const block = formatRecentCommands([{ command: 'ls', exitCode: 0, status: 'finished' }]);
+
+		expect(block).toContain('- ls');
+		expect(block).not.toContain('exit 0');
+	});
+
+	test('marks running and cancelled commands', () => {
+		expect(formatRecentCommands([{ command: 'tail -f log', status: 'running' }])).toContain(
+			'still running'
+		);
+		expect(formatRecentCommands([{ command: 'npm ci', status: 'cancelled' }])).toContain(
+			'stopped by the user'
+		);
+	});
+
+	test('truncates an enormous command line', () => {
+		const block = formatRecentCommands([{ command: 'echo ' + 'x'.repeat(2000) }]);
+
+		expect(block).toContain('...');
+		expect(block.length).toBeLessThan(700);
 	});
 });

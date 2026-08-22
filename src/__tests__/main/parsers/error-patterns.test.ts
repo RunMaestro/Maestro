@@ -15,6 +15,7 @@ import {
 	clearPatternRegistry,
 	ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH,
 	SSH_ERROR_PATTERNS,
+	isClaudeLimitNotice,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
 
@@ -1196,4 +1197,55 @@ describe('Codex upstream HTTP status classification', () => {
 			expect(m?.type).toBe('auth_expired');
 		}
 	);
+});
+
+/**
+ * `isClaudeLimitNotice` gates the one place a SUCCESSFUL result event is treated
+ * as a failure, so its false-positive behavior matters more than its recall: a
+ * wrong `true` turns a normal answer into a phantom outage and hands the turn to
+ * the retry scheduler.
+ */
+describe('isClaudeLimitNotice', () => {
+	it.each([
+		"You've hit your session limit · resets 11:40am (America/Chicago)",
+		'You\u2019ve hit your session limit - resets 11:40am (America/Chicago)',
+		"You've hit your weekly limit · resets Monday at 9am (America/Chicago)",
+		"You've hit your 5-hour limit",
+		'Claude AI usage limit reached|1755500000',
+		'  Claude AI usage limit reached  ',
+	])('recognizes the standalone notice: %s', (text) => {
+		expect(isClaudeLimitNotice(text)).toBe(true);
+	});
+
+	it('requires the notice to START the string, not appear inside prose', () => {
+		expect(
+			isClaudeLimitNotice("Once you've hit your session limit, Maestro schedules a retry.")
+		).toBe(false);
+		expect(isClaudeLimitNotice('The CLI prints "Claude AI usage limit reached" and stops.')).toBe(
+			false
+		);
+	});
+
+	it('rejects a long body that merely opens with the wording', () => {
+		// A real notice is one short line. An answer that begins with the phrase and
+		// then explains it for a paragraph is prose, and this is the length cap that
+		// tells them apart.
+		const essay = `You've hit your session limit is the message Claude Code prints. ${'Here is why that happens and what Maestro does about it. '.repeat(
+			8
+		)}`;
+		expect(essay.length).toBeGreaterThan(300);
+		expect(isClaudeLimitNotice(essay)).toBe(false);
+	});
+
+	it('rejects empty, blank, and non-string input', () => {
+		expect(isClaudeLimitNotice('')).toBe(false);
+		expect(isClaudeLimitNotice('   \n  ')).toBe(false);
+		expect(isClaudeLimitNotice(undefined as unknown as string)).toBe(false);
+		expect(isClaudeLimitNotice(null as unknown as string)).toBe(false);
+	});
+
+	it('does not fire on limit kinds Claude never paints a plan banner for', () => {
+		expect(isClaudeLimitNotice("You've hit your disk limit")).toBe(false);
+		expect(isClaudeLimitNotice('Rate limit exceeded')).toBe(false);
+	});
 });

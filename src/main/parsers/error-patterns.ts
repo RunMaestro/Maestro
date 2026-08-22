@@ -43,6 +43,41 @@ export type AgentErrorPatterns = {
 	[K in AgentErrorType]?: ErrorPattern[];
 };
 
+/**
+ * Claude Code's own plan-limit notice, as it appears in the `result` field of a
+ * `stream-json` result event when a turn is refused for quota:
+ *
+ *   "You've hit your session limit - resets 11:40am (America/Chicago)"
+ *   "You've hit your weekly limit - resets Monday at 9am (America/Chicago)"
+ *   "Claude AI usage limit reached|1755500000"   (legacy epoch form)
+ *
+ * ANCHORED at the start and length-capped on purpose. A result body is ordinary
+ * assistant prose, and Maestro's own agents discuss usage limits constantly, so
+ * anything looser turns a normal answer into a phantom failure.
+ *
+ * The limit KINDS are enumerated rather than wildcarded, and the list is the same
+ * one `LIMIT_REGEX` in `src/maestro-p/tui-driver.ts` uses. A wildcard matched
+ * "You've hit your disk limit" and would hand an ordinary answer to the retry
+ * scheduler as a quota outage; the two matchers reading the same banner must not
+ * disagree about what counts as one.
+ */
+const CLAUDE_LIMIT_NOTICE_RE =
+	/^\s*(?:you\s*(?:'|’)?\s*ve\s+hit\s+your\s+(?:session|weekly|5[\s-]?hour|opus|usage)\s+limit\b|claude\s+ai\s+usage\s+limit\s+reached\b)/i;
+
+/** Longest a standalone limit notice can plausibly be. */
+const CLAUDE_LIMIT_NOTICE_MAX_LENGTH = 300;
+
+/**
+ * True when `text` is Claude Code's standalone plan-limit notice rather than an
+ * assistant reply that merely mentions limits. See {@link CLAUDE_LIMIT_NOTICE_RE}.
+ */
+export function isClaudeLimitNotice(text: string): boolean {
+	if (typeof text !== 'string') return false;
+	const trimmed = text.trim();
+	if (!trimmed || trimmed.length > CLAUDE_LIMIT_NOTICE_MAX_LENGTH) return false;
+	return CLAUDE_LIMIT_NOTICE_RE.test(trimmed);
+}
+
 // ============================================================================
 // Claude Code Error Patterns
 // ============================================================================

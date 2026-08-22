@@ -103,7 +103,7 @@ describe('describePipeline', () => {
 		expect(desc.steps.map((s) => s.label)).toEqual(['rc', 'Stray']);
 	});
 
-	it('collapses multiple triggers into a count', () => {
+	it('collapses multiple triggers into a count, naming the kinds', () => {
 		const desc = describePipeline(
 			pipeline({
 				nodes: [
@@ -117,8 +117,79 @@ describe('describePipeline', () => {
 				],
 			})
 		);
-		expect(desc.flow).toBe('2 triggers → rc');
+		expect(desc.triggerHeadline).toBe('2 triggers (Scheduled, App Startup)');
 		expect(desc.triggers).toHaveLength(2);
+	});
+
+	it('names at most three trigger kinds, then elides', () => {
+		const desc = describePipeline(
+			pipeline({
+				nodes: [
+					trigger('t1'),
+					trigger('t2', { eventType: 'app.startup', config: {} }),
+					trigger('t3', { eventType: 'file.changed', config: { watch: 'src/**' } }),
+					trigger('t4', { eventType: 'github.issue', config: {} }),
+					agent('a1', 'rc'),
+				],
+				edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+			})
+		);
+		expect(desc.triggerHeadline).toBe('4 triggers (Scheduled, App Startup, File Change, …)');
+	});
+
+	// The headline is what the collapsed row renders. A small pipeline gets its
+	// literal flow; a wide one must NOT, because chaining 39 independent
+	// sibling agents with arrows describes a sequence that does not exist.
+	it('headline keeps the flow for a small pipeline', () => {
+		expect(describePipeline(pipeline()).headline).toBe('Scheduled (09:00) → rc → Maestro');
+	});
+
+	it('headline switches to counts once the pipeline is wide', () => {
+		const nodes = [trigger('t1')];
+		const edges = [];
+		for (let i = 0; i < 6; i++) {
+			nodes.push(agent(`a${i}`, `Agent${i}`));
+			edges.push({ id: `e${i}`, source: 't1', target: `a${i}`, mode: 'pass' as const });
+		}
+		const desc = describePipeline(pipeline({ nodes, edges }));
+		expect(desc.headline).toBe('Scheduled (09:00) → 6 agents');
+		expect(desc.headline).not.toContain('Agent5');
+		// The full chain stays available for search and for the detail view.
+		expect(desc.flow).toContain('Agent5');
+	});
+
+	it('stepHeadline counts each kind separately', () => {
+		const desc = describePipeline(
+			pipeline({
+				nodes: [
+					trigger('t1'),
+					agent('a1', 'rc'),
+					{
+						id: 'c1',
+						type: 'command',
+						position: { x: 0, y: 0 },
+						data: {
+							name: 'Deploy',
+							mode: 'shell',
+							shell: 'make deploy',
+							owningSessionId: 's1',
+							owningSessionName: 'rc',
+						},
+					} as PipelineNode,
+				],
+				edges: [
+					{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+					{ id: 'e2', source: 'a1', target: 'c1', mode: 'pass' },
+				],
+			})
+		);
+		expect(desc.stepHeadline).toBe('1 agent, 1 command');
+	});
+
+	it('stepHeadline says so when a pipeline has no steps at all', () => {
+		expect(describePipeline(pipeline({ nodes: [trigger('t1')], edges: [] })).stepHeadline).toBe(
+			'no steps'
+		);
 	});
 
 	it('prefers a custom trigger label over the event-type label', () => {
