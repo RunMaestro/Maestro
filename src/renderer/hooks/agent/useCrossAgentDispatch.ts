@@ -558,6 +558,9 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 				sourceSessionId: opts.sourceSessionId,
 				sourceTabId: opts.sourceTabId,
 				targetSessionId: opts.targetSessionId,
+				// Carries the consult tab so the indicator chip is a deep link into the
+				// exact conversation processing this request.
+				targetTabId: consult?.targetTabId,
 				targetAgentName: target?.name ?? 'agent',
 				targetToolType: target?.toolType,
 				startedAt: Date.now(),

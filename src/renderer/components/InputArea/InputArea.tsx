@@ -435,6 +435,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					theme={theme}
 					sourceSessionId={session.id}
 					sourceTabId={getActiveTab(session)?.id}
+					onSessionClick={onSessionClick}
 				/>
 			)}
 

@@ -26,6 +26,13 @@ export interface InFlightCrossAgentRequest {
 	sourceTabId: string;
 	/** The consulted agent (session) producing the response. */
 	targetSessionId: string;
+	/**
+	 * The consult tab inside the target agent that is running the request, so the
+	 * indicator's agent chip can jump straight to the conversation doing the work
+	 * instead of dropping the user on whatever tab that agent last had active.
+	 * Absent when the consult tab could not be resolved (target removed mid-flight).
+	 */
+	targetTabId?: string;
 	/** The consulted agent's display name (for the indicator dropdown). */
 	targetAgentName: string;
 	/** The consulted agent's tool type (for the provider icon), if known. */
