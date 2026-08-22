@@ -89,6 +89,8 @@ An explicit count always wins over a softer hint, and the hint is read from your
 
 Mention a [group](./general-usage) by name (`@Backend-Team`) to consult every agent in it at once. Group mentions expand to each non-terminal member and run as independent consultations. If you mention both a group and an agent that belongs to it, that agent is still consulted only once.
 
+Picking a group from the picker inserts its members' names rather than the group's, so you can see exactly who you are about to ask and drop anyone you did not mean to include before sending. The row shows the member count for the same reason. Typing `@Backend-Team` by hand still works and still expands.
+
 Groups sort above individual agents in the picker, so a name that matches both surfaces the group first.
 
 ## Cross-Agent Mentions vs Group Chat

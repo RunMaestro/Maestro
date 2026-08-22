@@ -34,7 +34,11 @@ import {
 import { QueuedItemsList } from './QueuedItemsList';
 import { NotificationPopover } from './NotificationPopover';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
-import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
+import {
+	normalizeMentionName,
+	getMentionNameForContext,
+	formatGroupMentionExpansion,
+} from '../utils/participantColors';
 import { logger } from '../utils/logger';
 import { useDebouncedCallback } from '../hooks/utils/useThrottle';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
@@ -54,7 +58,8 @@ type MentionItem =
 			group: Group;
 			mentionName: string;
 			memberCount: number;
-			memberMentions: string[];
+			/** Insert-ready expansion: every member's `@name` token (see `formatGroupMentionExpansion`). */
+			memberMentions: string;
 	  };
 
 interface GroupChatInputProps {
@@ -192,8 +197,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						group,
 						mentionName: normalizeMentionName(group.name),
 						memberCount: members.length,
-						memberMentions: members.map(
-							(m) => `@${getMentionNameForContext(m.name, sessionNamesForMentions)}`
+						memberMentions: formatGroupMentionExpansion(
+							members.map((m) => m.name),
+							sessionNamesForMentions
 						),
 					});
 				}
@@ -397,7 +403,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			let insertion: string;
 			if (item.type === 'group') {
 				// Expand group into all member @mentions
-				insertion = item.memberMentions.join(' ') + ' ';
+				insertion = item.memberMentions;
 			} else {
 				insertion = `@${item.mentionName} `;
 			}
