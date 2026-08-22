@@ -1079,7 +1079,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				})
 			);
 
-			endInlineWizard();
+			// Pass the tab explicitly. The hook's internal currentTabId only tracks the
+			// last-touched wizard, and completion clears `tab.wizardState` here regardless -
+			// so ending the wrong tab strands a registered wizard on a tab that no longer
+			// shows one, which the Left Bar then renders a wand for forever.
+			endInlineWizard(activeTabId);
 			handleAutoRunRefreshRef.current?.();
 			setInputValueRef.current?.('');
 

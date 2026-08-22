@@ -21,6 +21,9 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { useWizardActiveTabs } from '../contexts/InlineWizardContext';
+import { isWizardTab } from '../utils/wizardActivity';
+import { WizardIndicator } from './SessionList/WizardIndicator';
 import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -225,6 +228,11 @@ export function TabSwitcherModal({
 	onClose,
 	colorBlindMode,
 }: TabSwitcherModalProps) {
+	// A tab running `/wizard` looks like any other row here, and its wizard is the one
+	// thing about it the user can't see from the tab strip once the strip overflows.
+	// Read the live map rather than `tab.wizardState`, which is only mirrored onto the
+	// active tab and so is missing on exactly the background tabs this modal exists to find.
+	const wizardActiveTabs = useWizardActiveTabs();
 	const [search, setSearch] = useState('');
 	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
 	const [viewMode, setViewMode] = useState<ViewMode>('open');
@@ -472,7 +480,15 @@ export function TabSwitcherModal({
 
 			if (item.type === 'open') {
 				displayName = getTabDisplayName(item.tab);
-				searchableId = item.tab.agentSessionId || '';
+				// "wizard" is a keyword, not part of the name: a wizard tab is named for
+				// whatever it produced (or not named at all), so searching for the wizard
+				// you left running otherwise returns every tab that merely mentions one.
+				searchableId = [
+					item.tab.agentSessionId,
+					isWizardTab(wizardActiveTabs, item.tab.id) && 'wizard',
+				]
+					.filter(Boolean)
+					.join(' ');
 			} else if (item.type === 'file') {
 				// For file tabs, search by name and extension
 				displayName = item.tab.name;
@@ -501,7 +517,7 @@ export function TabSwitcherModal({
 			.filter((r) => r.matches)
 			.sort((a, b) => b.score - a.score)
 			.map((r) => r.item);
-	}, [listItems, search]);
+	}, [listItems, search, wizardActiveTabs]);
 
 	// Helper to select an item by index
 	const handleSelectByIndex = useCallback(
@@ -750,6 +766,7 @@ export function TabSwitcherModal({
 							const uuidPill = getUuidPill(tab.agentSessionId);
 							const contextPct = getContextPercentage(tab, agentId as ToolType);
 							const cost = tab.usageStats?.totalCostUsd || 0;
+							const wizardActivity = wizardActiveTabs.get(tab.id);
 
 							return (
 								<button
@@ -793,6 +810,10 @@ export function TabSwitcherModal({
 									<div className="flex flex-col flex-1 min-w-0">
 										<div className="flex items-center gap-2">
 											<span className="font-medium truncate">{displayName}</span>
+											<WizardIndicator
+												active={wizardActivity !== undefined}
+												generatingDocs={!!wizardActivity?.isGeneratingDocs}
+											/>
 											{tab.name && uuidPill && (
 												<span
 													className="text-[10px] px-1.5 py-0.5 rounded font-mono flex-shrink-0"

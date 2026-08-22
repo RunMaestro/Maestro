@@ -28,6 +28,7 @@ import {
 	type DocumentGenerationCallbacks,
 } from '../../services/inlineWizardDocumentGeneration';
 import type { ToolType } from '../../types';
+import type { WizardTabActivity } from '../../utils/wizardActivity';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 
 /**
@@ -217,12 +218,15 @@ export interface UseInlineWizardReturn {
 	/** Check if a specific tab has an active wizard */
 	isWizardActiveForTab: (tabId: string) => boolean;
 	/**
-	 * Map of session IDs (Session.id, not provider session) that have at least one
-	 * tab with the inline wizard active. Value carries an `isGeneratingDocs` flag
-	 * that's true when any such tab is in the Auto Run doc generation phase, so
-	 * the Left Bar indicator can pulse during generation.
+	 * Every tab currently running the inline wizard, keyed by tab id, carrying the
+	 * agent that owns it and whether it's in the Auto Run doc generation phase.
+	 *
+	 * This is the authoritative record of wizard activity - `AITab.wizardState` is a
+	 * render mirror kept only for the active tab. Consumers that show an indicator
+	 * against an AGENT must roll this up through `rollUpWizardActivityToSessions()`
+	 * so the indicator can only light for a tab that's actually open.
 	 */
-	wizardActiveSessions: Map<string, { isGeneratingDocs: boolean }>;
+	wizardActiveTabs: ReadonlyMap<string, WizardTabActivity>;
 	/**
 	 * Start the wizard with intent parsing flow.
 	 * @param naturalLanguageInput - Optional input from `/wizard <text>` command
@@ -765,7 +769,13 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		async (explicitTabId?: string): Promise<PreviousUIState | null> => {
 			// Prefer an explicit tab id from the caller - currentTabId tracks the last-touched wizard
 			// and can point at the wrong tab when a non-active wizard is being closed (tab strip X).
-			const tabId = explicitTabId || currentTabId || 'default';
+			//
+			// The typeof guard is load-bearing, not paranoia: this ends up behind `() => void`
+			// props, and `onClick={onCancel}` hands React's click event in as the first argument.
+			// A non-string tabId matches no entry, so every cleanup below silently no-ops and the
+			// wizard is left registered forever - a wand on an agent whose wizard tab is gone.
+			const requestedTabId = typeof explicitTabId === 'string' ? explicitTabId : undefined;
+			const tabId = requestedTabId || currentTabId || 'default';
 
 			// Get previous UI state for this tab
 			const previousState = previousUIStateRefsMap.current.get(tabId) || null;
@@ -1559,17 +1569,17 @@ export function useInlineWizard(): UseInlineWizardReturn {
 	// Compute readyToGenerate based on ready flag and confidence threshold
 	const readyToGenerate = state.ready && state.confidence >= READY_CONFIDENCE_THRESHOLD;
 
-	// Derived: sessions with at least one active-wizard tab, plus an OR-aggregate
-	// of `isGeneratingDocs` across that session's wizard tabs. Consumed by the
-	// Left Bar to render a wand glyph on agent rows and group headers without
-	// having to crack open per-tab state.
-	const wizardActiveSessions = useMemo(() => {
-		const map = new Map<string, { isGeneratingDocs: boolean }>();
-		for (const tabState of tabStates.values()) {
-			if (!tabState.isActive || !tabState.sessionId) continue;
-			const existing = map.get(tabState.sessionId);
-			map.set(tabState.sessionId, {
-				isGeneratingDocs: (existing?.isGeneratingDocs ?? false) || tabState.isGeneratingDocs,
+	// Derived: the tabs running a wizard right now, narrowed to what an indicator
+	// needs. Kept keyed by TAB id rather than pre-rolled up to agents so consumers
+	// can check the tab still exists before drawing anything against its agent -
+	// see rollUpWizardActivityToSessions().
+	const wizardActiveTabs = useMemo(() => {
+		const map = new Map<string, WizardTabActivity>();
+		for (const [tabId, tabState] of tabStates) {
+			if (!tabState.isActive && !tabState.isGeneratingDocs) continue;
+			map.set(tabId, {
+				sessionId: tabState.sessionId,
+				isGeneratingDocs: tabState.isGeneratingDocs,
 			});
 		}
 		return map;
@@ -1607,7 +1617,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		// Per-tab state accessors
 		getStateForTab,
 		isWizardActiveForTab,
-		wizardActiveSessions,
+		wizardActiveTabs,
 
 		// Actions
 		startWizard,

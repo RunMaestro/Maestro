@@ -297,7 +297,7 @@ export interface UseMainPanelPropsDeps {
 	) => Promise<void>;
 	retryInlineWizardMessage: () => void;
 	clearInlineWizardError: () => void;
-	endInlineWizard: () => void;
+	endInlineWizard: (tabId?: string) => void;
 	/** Stop the wizard turn running on a tab, keeping the wizard open */
 	cancelInlineWizardTurn: (tabId?: string) => void;
 	handleAutoRunRefresh: () => void;
@@ -551,10 +551,14 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 				const url = `file://${encodedPath}`;
 				deps.handleOpenBrowserTabAt(url, { title: deps.activeFileTab.name });
 			},
-			// Inline wizard callbacks handled inline to maintain closure access
-			onExitWizard: deps.endInlineWizard,
-			onStopWizardTurn: deps.cancelInlineWizardTurn,
-			onWizardCancelGeneration: deps.endInlineWizard,
+			// Inline wizard callbacks handled inline to maintain closure access.
+			// Both name the tab: the hook's fallback is the last-touched wizard, which is
+			// the wrong one whenever a second wizard has been opened since, and ending the
+			// wrong tab leaves the visible one registered with no way to clear it.
+			onExitWizard: () => deps.endInlineWizard(deps.activeTab?.id),
+			onStopWizardTurn: (tabId?: string) =>
+				deps.cancelInlineWizardTurn(tabId ?? deps.activeTab?.id),
+			onWizardCancelGeneration: () => deps.endInlineWizard(deps.activeTab?.id),
 			// Complex wizard handlers (passed through from App.tsx)
 			onWizardComplete: deps.onWizardComplete,
 			onWizardCompleteAndStartAutoRun: deps.onWizardCompleteAndStartAutoRun,
@@ -748,6 +752,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleOpenBrowserTabAt,
 			deps.endInlineWizard,
 			deps.cancelInlineWizardTurn,
+			deps.activeTab?.id,
 			// Complex wizard handlers
 			deps.onWizardComplete,
 			deps.onWizardCompleteAndStartAutoRun,

@@ -549,6 +549,98 @@ describe('useInlineWizard', () => {
 			expect(result.current.wizardGoal).toBe(null);
 			expect(result.current.existingDocuments).toEqual([]);
 		});
+
+		it('ends the current tab when handed something that is not a tab id', async () => {
+			// `endWizard` sits behind `() => void` props, and `onClick={onCancel}` hands
+			// React's click event in as the first argument. Treating that as a tab id
+			// matched nothing, so the wizard stayed registered on a tab that had already
+			// dropped it - a wand in the Left Bar with no wizard tab to reach.
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add feature',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-1',
+					'agent-1'
+				);
+			});
+			expect(result.current.wizardActiveTabs.has('tab-1')).toBe(true);
+
+			await act(async () => {
+				await result.current.endWizard({ type: 'click' } as unknown as string);
+			});
+
+			expect(result.current.wizardActiveTabs.has('tab-1')).toBe(false);
+			expect(result.current.isWizardActive).toBe(false);
+		});
+	});
+
+	describe('wizardActiveTabs', () => {
+		it('is empty until a wizard starts', () => {
+			const { result } = renderHook(() => useInlineWizard());
+			expect(result.current.wizardActiveTabs.size).toBe(0);
+		});
+
+		it('records the tab and the agent that owns it', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add feature',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-1',
+					'agent-1'
+				);
+			});
+
+			expect(result.current.wizardActiveTabs.get('tab-1')).toEqual({
+				sessionId: 'agent-1',
+				isGeneratingDocs: false,
+			});
+		});
+
+		it('tracks concurrent wizards on separate tabs independently', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'first',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-1',
+					'agent-1'
+				);
+			});
+			await act(async () => {
+				await result.current.startWizard(
+					'second',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-2',
+					'agent-2'
+				);
+			});
+
+			expect([...result.current.wizardActiveTabs.keys()].sort()).toEqual(['tab-1', 'tab-2']);
+
+			// Ending the tab that is NOT the last-touched one must evict that tab only.
+			await act(async () => {
+				await result.current.endWizard('tab-1');
+			});
+
+			expect([...result.current.wizardActiveTabs.keys()]).toEqual(['tab-2']);
+		});
 	});
 
 	describe('setExistingDocuments', () => {

@@ -51,7 +51,12 @@ export interface DocumentGenerationViewProps {
 	currentGeneratingIndex?: number;
 	/** Total number of documents to generate (for progress indicator) */
 	totalDocuments?: number;
-	/** Called when user wants to cancel generation */
+	/**
+	 * Called when user wants to cancel generation. Call it with NO arguments -
+	 * `onClick={onCancel}` type-checks but hands React's click event to a handler
+	 * whose first parameter is an optional tab id, which then matches no tab and
+	 * cancels nothing while looking like it worked.
+	 */
 	onCancel?: () => void;
 	/** Subfolder name where documents are saved (for completion message) */
 	subfolderName?: string;
@@ -444,7 +449,7 @@ export function DocumentGenerationView({
 				<p style={{ color: theme.colors.textDim }}>No documents generated yet.</p>
 				{onCancel && (
 					<button
-						onClick={onCancel}
+						onClick={() => onCancel()}
 						className="mt-4 px-4 py-2 text-sm rounded"
 						style={{
 							backgroundColor: theme.colors.bgActivity,
@@ -584,7 +589,7 @@ export function DocumentGenerationView({
 						{/* Cancel button */}
 						{onCancel && (
 							<button
-								onClick={onCancel}
+								onClick={() => onCancel()}
 								className="mt-4 px-4 py-2 text-sm rounded transition-colors hover:opacity-80"
 								style={{
 									backgroundColor: theme.colors.bgActivity,
