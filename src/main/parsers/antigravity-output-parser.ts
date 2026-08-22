@@ -336,6 +336,12 @@ export class AntigravityOutputParser implements AgentOutputParser {
 			recoverable: match?.recoverable ?? true,
 			agentId: this.agentId,
 			timestamp: Date.now(),
+			// Keep the conversation association on the failure. A recoverable error
+			// that loses its id cannot be retried with `--conversation`, so the retry
+			// would silently start a fresh conversation instead of resuming this one.
+			// The ExitHandler flush overwrites this with the Maestro session id, but
+			// mid-stream callers see the provider's id.
+			sessionId: parsed.result?.conversation_id,
 			parsedJson: parsed,
 		};
 	}

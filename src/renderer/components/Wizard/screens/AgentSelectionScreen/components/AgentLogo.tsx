@@ -4,6 +4,9 @@ import type { Theme } from '../../../../../types';
 /** One place to resize every provider mark; they are drawn at one size only. */
 const LOGO_SIZE_CLASS = 'w-14 h-14';
 
+/** Identifies the "no mark for this provider" placeholder. See the default case. */
+export const AGENT_LOGO_FALLBACK_TESTID = 'agent-logo-fallback';
+
 export function AgentLogo({
 	agentId,
 	supported,
@@ -311,8 +314,13 @@ export function AgentLogo({
 			);
 
 		default:
+			// Marked so a test can prove a pickable provider draws a real mark rather
+			// than landing here. Asserting "an svg rendered" would not: this fallback
+			// is a div today, but nothing stops it becoming an svg later and quietly
+			// satisfying that assertion for every unregistered provider.
 			return (
 				<div
+					data-testid={AGENT_LOGO_FALLBACK_TESTID}
 					className={`${LOGO_SIZE_CLASS} rounded-full border-2`}
 					style={{ borderColor: color, opacity }}
 				/>

@@ -16,7 +16,7 @@ describe('AntigravityOutputParser', () => {
 			init: {
 				cwd: '/tmp/project',
 				tools: ['read_file', 'run_command'],
-				permission_mode: 'skip',
+				permission_mode: 'always-proceed',
 				model: 'gemini-3.6-flash-high',
 			},
 		});
@@ -111,7 +111,7 @@ describe('AntigravityOutputParser', () => {
 			event: 'result',
 			result: {
 				conversation_id: 'conv-9',
-				status: 'success',
+				status: 'SUCCESS',
 				response: 'All done.',
 				duration_seconds: 12.5,
 				num_turns: 1,
@@ -159,7 +159,7 @@ describe('AntigravityOutputParser', () => {
 			event: 'result',
 			result: {
 				conversation_id: 'conv-2',
-				status: 'failed',
+				status: 'ERROR',
 				response: '',
 				error: 'RESOURCE_EXHAUSTED: quota exceeded for this project',
 			},
@@ -183,7 +183,7 @@ describe('AntigravityOutputParser', () => {
 
 		const error = parser.detectErrorFromParsed({
 			event: 'result',
-			result: { status: 'failed', error: 'RESOURCE_EXHAUSTED: quota exceeded' },
+			result: { status: 'ERROR', error: 'RESOURCE_EXHAUSTED: quota exceeded' },
 		});
 
 		expect(error).toEqual(
@@ -197,9 +197,45 @@ describe('AntigravityOutputParser', () => {
 		expect(
 			parser.detectErrorFromParsed({
 				event: 'result',
-				result: { status: 'success', response: 'fine' },
+				result: { status: 'SUCCESS', response: 'fine' },
 			})
 		).toBeNull();
+	});
+
+	it('keys off `error`, not `status`, when deciding a result failed', () => {
+		const parser = new AntigravityOutputParser();
+
+		// `status` is a free-form string the docs never enumerate exhaustively, so
+		// the parser must not read it. Both envelopes below contradict their own
+		// status; the presence or absence of `error` is what has to win.
+		expect(
+			parser.detectErrorFromParsed({
+				event: 'result',
+				result: { status: 'SUCCESS', error: 'RESOURCE_EXHAUSTED: quota exceeded' },
+			})
+		).toEqual(expect.objectContaining({ type: 'rate_limited' }));
+
+		expect(
+			parser.detectErrorFromParsed({
+				event: 'result',
+				result: { status: 'ERROR', response: 'fine' },
+			})
+		).toBeNull();
+	});
+
+	it('keeps the conversation id on a structured error so a retry can resume it', () => {
+		const parser = new AntigravityOutputParser();
+
+		const error = parser.detectErrorFromParsed({
+			event: 'result',
+			result: {
+				status: 'ERROR',
+				conversation_id: '055a398f-db14-4c5f-abbb-1bf03f8120a7',
+				error: 'RESOURCE_EXHAUSTED: quota exceeded',
+			},
+		});
+
+		expect(error?.sessionId).toBe('055a398f-db14-4c5f-abbb-1bf03f8120a7');
 	});
 
 	it('ignores foreign JSON objects in parseJsonObject', () => {
