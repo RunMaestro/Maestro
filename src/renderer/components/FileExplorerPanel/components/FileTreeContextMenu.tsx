@@ -15,6 +15,7 @@ import {
 	Download,
 	ListPlus,
 	Play,
+	FileArchive,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
 import { isMediaFile } from '../../../../shared/mediaTypes';
@@ -44,6 +45,7 @@ interface FileTreeContextMenuProps {
 	onOpenNewFolder: () => void;
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
+	onCompressFolder: () => void;
 	onPreviewMulti: () => void;
 	onQueueMedia: () => void;
 	onOpenInDefaultAppMulti: () => void;
@@ -74,6 +76,7 @@ export function FileTreeContextMenu({
 	onOpenNewFolder,
 	onPreviewFile,
 	onPreviewAllInFolder,
+	onCompressFolder,
 	onPreviewMulti,
 	onQueueMedia,
 	onOpenInDefaultAppMulti,
@@ -215,6 +218,14 @@ export function FileTreeContextMenu({
 										</span>
 									</button>
 								)}
+								<button
+									onClick={onCompressFolder}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<FileArchive className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<span>Compress</span>
+								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 							</>
 						)}

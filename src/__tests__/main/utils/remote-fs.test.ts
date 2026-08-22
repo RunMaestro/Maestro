@@ -9,6 +9,7 @@ import {
 	writeFileRemote,
 	existsRemote,
 	mkdirRemote,
+	compressFolderRemote,
 	listDirWithStatsRemote,
 	bulkStatFileInSubdirsRemote,
 	listTreeRemote,
@@ -1192,6 +1193,57 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('already exists');
+		});
+	});
+
+	describe('compressFolderRemote', () => {
+		it('zips from the parent dir so the folder is the archive root', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await compressFolderRemote(
+				'/home/user/project/docs',
+				'/home/user/project/docs.zip',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toContain("cd '/home/user/project'");
+			expect(remoteCommand).toContain("zip -r -q -y '/home/user/project/docs.zip' 'docs'");
+		});
+
+		it('reports a missing zip binary in plain language', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'bash: zip: command not found',
+				exitCode: 127,
+			});
+
+			const result = await compressFolderRemote(
+				'/home/user/docs',
+				'/home/user/docs.zip',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('zip');
+			expect(result.error).toContain('installed');
+		});
+
+		it('handles permission denied on the destination', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'zip I/O error: Permission denied',
+				exitCode: 1,
+			});
+
+			const result = await compressFolderRemote('/srv/docs', '/srv/docs.zip', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Permission denied');
 		});
 	});
 

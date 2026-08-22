@@ -174,6 +174,7 @@ The File Explorer works seamlessly with remote agents:
 - Browse files and directories on the remote host
 - Open and edit files directly
 - Use `@` file mentions to reference remote files in prompts
+- Compress a folder into a `.zip` on the remote host (requires `zip` there)
 
 ### Remote Auto Run
 

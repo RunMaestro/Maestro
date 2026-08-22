@@ -1088,6 +1088,11 @@ interface MaestroAPI {
 			dirPath: string,
 			sshRemoteId?: string
 		) => Promise<{ fileCount: number; folderCount: number }>;
+		/** Zip a folder into a `.zip` beside it, auto-suffixing on name collision. */
+		compressFolder: (
+			folderPath: string,
+			options?: { sshRemoteId?: string }
+		) => Promise<{ success: boolean; path: string; name: string }>;
 		copyPath: (
 			sourcePath: string,
 			destPath: string,

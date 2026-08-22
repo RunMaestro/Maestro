@@ -347,6 +347,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleFocusInGraph,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
+		handleCompressFolder,
 		handlePreviewMulti,
 		handleQueueMedia,
 		handleOpenInDefaultAppMulti,
@@ -926,6 +927,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenNewFolder={handleOpenNewFolder}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
+					onCompressFolder={handleCompressFolder}
 					onPreviewMulti={handlePreviewMulti}
 					onQueueMedia={handleQueueMedia}
 					onOpenInDefaultAppMulti={handleOpenInDefaultAppMulti}

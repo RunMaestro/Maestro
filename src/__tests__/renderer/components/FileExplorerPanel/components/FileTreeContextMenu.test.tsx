@@ -65,6 +65,7 @@ const defaultProps = {
 	onOpenNewFolder: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
+	onCompressFolder: vi.fn(),
 	onPreviewMulti: vi.fn(),
 	onQueueMedia: vi.fn(),
 	onOpenInDefaultAppMulti: vi.fn(),
@@ -125,6 +126,26 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Preview All 2 Files in Folder')).toBeTruthy();
 		expect(screen.getByText('Copy Path')).toBeTruthy();
 		expect(screen.queryByText('Preview')).toBeNull();
+	});
+
+	it('offers Compress on a folder, including one with nothing to preview', () => {
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />
+		);
+		fireEvent.click(screen.getByText('Compress'));
+		expect(defaultProps.onCompressFolder).toHaveBeenCalled();
+		unmount();
+
+		// An empty folder still zips - there is just nothing inside the archive.
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(emptyFolderNode)} />
+		);
+		expect(screen.getByText('Compress')).toBeTruthy();
+	});
+
+	it('does not offer Compress on a file', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		expect(screen.queryByText('Compress')).toBeNull();
 	});
 
 	it('pluralizes the preview-all label to singular for one previewable file', () => {
