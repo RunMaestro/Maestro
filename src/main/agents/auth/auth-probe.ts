@@ -37,7 +37,6 @@ import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import type { SshRemoteSettingsStore } from '../../utils/ssh-remote-resolver';
 import { wrapSpawnWithSsh } from '../../utils/ssh-spawn-wrapper';
-import { getAgentDefinition } from '../definitions';
 
 const LOG_CONTEXT = '[AuthProbe]';
 
@@ -95,7 +94,20 @@ const SSH_TRANSPORT_FAILURE_RE =
 	/\bssh:\s|could not resolve hostname|connection (?:refused|closed|timed out|reset)|no route to host|permission denied \(|host key verification failed|kex_exchange_identification|operation timed out|network is unreachable/i;
 
 export interface ProbeCredentialOptions {
-	/** Absolute path to the provider binary on the host that runs the probe. */
+	/**
+	 * What to invoke for this credential, ON THE HOST THAT RUNS THE PROBE.
+	 *
+	 * The caller owns this choice because only it can tell the two absolute paths
+	 * apart: an agent's `customPath` over SSH is a path on the REMOTE host, while
+	 * a detected path is a file on THIS one, and both are just strings here.
+	 * `collectAuthTargets` resolves it the same way `process:spawn` does -
+	 * `customPath || agent.binaryName` for a remote target, `customPath ||`
+	 * the detected path for a local one - so the probe reports on the installation
+	 * the agent actually runs.
+	 *
+	 * For a remote target this must therefore NOT be a locally-detected path; it
+	 * is forwarded to the far side verbatim.
+	 */
 	binaryPath: string;
 	/**
 	 * The EFFECTIVE env for the identity (agent-level merged under session-level,
@@ -308,10 +320,13 @@ async function runStatusCommand(
 					// the remote command line, so the remote CLI reads the same
 					// CLAUDE_CONFIG_DIR / CODEX_HOME the agent itself would spawn with.
 					customEnvVars: opts.env,
-					// Bare binary name on the far side, never the local resolved path or
-					// a local `customPath` override: those name a file on THIS machine.
-					// Same convention as every other SSH spawn site.
-					agentBinaryName: getAgentDefinition(identity.provider)?.binaryName,
+					// What to invoke on the far side. The caller resolves this for a
+					// remote target as `customPath || agent.binaryName` - the same
+					// convention as `process:spawn` - and deliberately never as the
+					// locally-detected path, which names a file on THIS machine. Over
+					// SSH a `customPath` is a path on the REMOTE host, which is what the
+					// user configured it for, so it is passed through untouched.
+					agentBinaryName: command,
 				},
 				opts.sshRemoteConfig,
 				opts.sshStore

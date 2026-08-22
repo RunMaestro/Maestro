@@ -95,6 +95,41 @@ describe('providerAuthStore smoke', () => {
 		await resetStores();
 	});
 
+	// A `providerAuth:changed` can land while `getAll()` is still in flight - a
+	// startup probe finishing, or the user marking a credential. Replacing the map
+	// with the resolved read rolled that newer record back, and the badge stayed
+	// stale until something else happened to touch the same credential.
+	it('keeps an update that lands mid-hydration', async () => {
+		let releaseGetAll: (value: Record<string, ProviderAuthSnapshot>) => void = () => {};
+		const pending = new Promise<Record<string, ProviderAuthSnapshot>>((resolve) => {
+			releaseGetAll = resolve;
+		});
+		installBridge({ getAll: vi.fn().mockReturnValue(pending) });
+
+		const hydrating = useProviderAuthStore.getState().hydrate();
+
+		// Newer than the read below, and arriving before it resolves.
+		const fresh = snapshotFor(DEFAULT_KEY, '.claude', 'authenticated', 200);
+		useProviderAuthStore.getState().applyChange(DEFAULT_KEY, fresh);
+
+		releaseGetAll({ [DEFAULT_KEY]: snapshotFor(DEFAULT_KEY, '.claude', 'logged-out', 100) });
+		await hydrating;
+
+		expect(useProviderAuthStore.getState().snapshots[DEFAULT_KEY]).toEqual(fresh);
+	});
+
+	it('takes the stored record when the read is the newer of the two', async () => {
+		const stored = snapshotFor(DEFAULT_KEY, '.claude', 'logged-out', 300);
+		installBridge({ getAll: vi.fn().mockResolvedValue({ [DEFAULT_KEY]: stored }) });
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'authenticated', 100));
+		await useProviderAuthStore.getState().hydrate();
+
+		expect(useProviderAuthStore.getState().snapshots[DEFAULT_KEY]).toEqual(stored);
+	});
+
 	it('resolves sessions onto one shared identity', async () => {
 		installBridge();
 

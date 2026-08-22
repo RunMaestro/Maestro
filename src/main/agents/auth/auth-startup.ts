@@ -136,6 +136,22 @@ export interface AuthTarget {
 	env: Record<string, string>;
 	cwd: string;
 	sshRemoteConfig?: AgentSshRemoteConfig;
+	/**
+	 * The agent's own binary override (`Session.customPath`), when it has one.
+	 *
+	 * The spawner prefers it over the detected binary on BOTH paths - locally,
+	 * and as the remote command over SSH (`process:spawn` resolves
+	 * `sessionCustomPath || agent.binaryName`). A probe that ignored it would
+	 * report on whichever installation Maestro happened to detect while the agent
+	 * runs a different one, which is the same class of bug as probing the wrong
+	 * credential.
+	 *
+	 * Not part of {@link CredentialIdentity.key}: two installations of one CLI
+	 * reading the same config dir present the SAME account, so this describes how
+	 * to ask, not who is being asked about. Deduped first-session-wins with the
+	 * env and cwd below.
+	 */
+	binaryPath?: string;
 }
 
 /**
@@ -180,6 +196,7 @@ function sessionTouchedAt(session: Record<string, unknown>): number | null {
  */
 function buildTarget(
 	session: Record<string, unknown>,
+	globalEnvVars: Record<string, string>,
 	agentLevelEnvVars: Record<string, string>,
 	mode: 'startup' | 'manual',
 	homeDir: string
@@ -211,7 +228,11 @@ function buildTarget(
 		session.customEnvVars && typeof session.customEnvVars === 'object'
 			? (session.customEnvVars as Record<string, string>)
 			: undefined;
-	const env = mergeEffectiveEnv(agentLevelEnvVars, sessionEnvVars);
+	// All three layers, in the order the spawner applies them. Settings ->
+	// Environment is where a user puts a key they want every agent to inherit, so
+	// omitting it would resolve such an agent to its default OAuth identity and
+	// probe an account it never uses.
+	const env = mergeEffectiveEnv(globalEnvVars, agentLevelEnvVars, sessionEnvVars);
 
 	// The remote host's home directory is not something Maestro knows, so a
 	// remote identity that falls back to a DEFAULT config dir is scoped by the
@@ -234,9 +255,15 @@ function buildTarget(
 				? session.projectRoot
 				: homeDir;
 
+	const customPath =
+		typeof session.customPath === 'string' && session.customPath !== ''
+			? session.customPath
+			: undefined;
+
 	return {
 		identity,
 		env,
+		...(customPath ? { binaryPath: customPath } : {}),
 		// A remote cwd is a path on the remote host and a local one is local;
 		// either way the status commands do not care where they run, so this only
 		// has to be a directory that exists on the machine running the probe.
@@ -293,6 +320,8 @@ function createBinaryPathResolver(
 export interface CollectAuthTargetsDeps {
 	sessionsStore: Pick<Store<SessionsData>, 'get'>;
 	agentConfigsStore: Pick<Store<AgentConfigsData>, 'get'>;
+	/** Settings -> Environment, the global env layer every agent inherits. */
+	settingsStore: Pick<Store<MaestroSettings>, 'get'>;
 	/** See the mode notes in the module docblock. */
 	mode: 'startup' | 'manual';
 	/** Epoch ms the pass runs at, for the `'startup'` recency window. */
@@ -314,7 +343,8 @@ export interface CollectAuthTargetsDeps {
  * credential, not a session, so any session presenting it produces the same run.
  */
 export function collectAuthTargets(deps: CollectAuthTargetsDeps): Map<string, AuthTarget> {
-	const { sessionsStore, agentConfigsStore, mode, now, homeDir } = deps;
+	const { sessionsStore, agentConfigsStore, settingsStore, mode, now, homeDir } = deps;
+	const globalEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
 	const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
 
 	const targetsByKey = new Map<string, AuthTarget>();
@@ -333,7 +363,7 @@ export function collectAuthTargets(deps: CollectAuthTargetsDeps): Map<string, Au
 			agentLevelEnvVars = getAgentLevelEnvVars(agentConfigsStore, toolType);
 			agentEnvCache.set(toolType, agentLevelEnvVars);
 		}
-		const target = buildTarget(session, agentLevelEnvVars, mode, homeDir);
+		const target = buildTarget(session, globalEnvVars, agentLevelEnvVars, mode, homeDir);
 		if (!target) continue;
 		if (!targetsByKey.has(target.identity.key)) {
 			targetsByKey.set(target.identity.key, target);
@@ -384,6 +414,7 @@ export async function runStartupAuthProbe(
 		const targetsByKey = collectAuthTargets({
 			sessionsStore: deps.sessionsStore,
 			agentConfigsStore: deps.agentConfigsStore,
+			settingsStore: deps.settingsStore,
 			mode,
 			now,
 			homeDir,
@@ -429,12 +460,17 @@ export async function runStartupAuthProbe(
 		await mapWithConcurrency(targets, PROBE_CONCURRENCY, async (target) => {
 			const { identity } = target;
 			try {
-				// A remote probe runs the provider on the remote host by bare binary
-				// name (`wrapSpawnWithSsh` substitutes `agentBinaryName` for the local
-				// path), so only a LOCAL identity is gated on local detection.
+				// Resolve the binary exactly as `process:spawn` does, so the probe
+				// reports on the installation the agent actually runs:
+				//   remote -> sessionCustomPath || agent.binaryName
+				//   local  -> customPath || detected path
+				// An agent's own `customPath` wins on BOTH paths. Over SSH it names a
+				// path on the REMOTE host (that is what the user configured it for),
+				// which is also why a remote identity is never gated on local
+				// detection - the far side resolves it, not this machine.
 				const binaryPath = target.sshRemoteConfig
-					? (getAgentDefinition(identity.provider)?.binaryName ?? null)
-					: await resolveBinaryPath(identity.provider);
+					? (target.binaryPath ?? getAgentDefinition(identity.provider)?.binaryName ?? null)
+					: (target.binaryPath ?? (await resolveBinaryPath(identity.provider)));
 				if (binaryPath === null) {
 					result.skippedNotInstalled++;
 					logger.debug('Skipping auth probe: no binary resolved for this provider', LOG_CONTEXT, {

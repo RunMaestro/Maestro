@@ -52,6 +52,7 @@ import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { logger } from '../utils/logger';
 import { notifyToast, useNotificationStore } from './notificationStore';
 import { selectSessionById, useSessionStore } from './sessionStore';
+import { useSettingsStore } from './settingsStore';
 
 const LOG_CONTEXT = '[ProviderAuth]';
 
@@ -365,7 +366,18 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 			}
 			try {
 				const snapshots = await api.getAll();
-				set({ snapshots: snapshots ?? {}, loaded: true });
+				// MERGE, never replace. A `providerAuth:changed` can land while this
+				// read is in flight - a startup probe finishing, or the user marking a
+				// credential - and that update is strictly newer than the map we asked
+				// for. Assigning the response wholesale would roll it back, leaving a
+				// stale badge until something else happened to touch that credential.
+				//
+				// `checkedAt` is the arbiter rather than arrival order, because the two
+				// writers race: the resolved read can arrive after the push it predates.
+				set((state) => ({
+					snapshots: mergeSnapshotsByRecency(state.snapshots, snapshots ?? {}),
+					loaded: true,
+				}));
 			} catch (error) {
 				// Main-side failures are logged in main; here the cost is an unmarked
 				// Left Bar, which is the same thing a fresh install shows.
@@ -507,6 +519,40 @@ const identityCache = new Map<string, IdentityCacheEntry>();
  * inputs can collide - and unlike the literal bytes that used to be here, an
  * escape leaves the file as text that `grep` will actually read.
  */
+/**
+ * Settings -> Environment, the global layer every agent inherits.
+ *
+ * Read live rather than mirrored into this store: it is the same value the main
+ * process feeds `collectAuthTargets`, and the two MUST agree. An identity the
+ * renderer resolves differently from the prober is a badge pointing at a
+ * credential nobody checked.
+ */
+function globalEnvVars(): Record<string, string> {
+	return useSettingsStore.getState().shellEnvVars ?? {};
+}
+
+/**
+ * Fold a full snapshot read into whatever is already held, keeping the newer
+ * record for every credential.
+ *
+ * Only ever ADDS keys from the incoming map. A key held locally but absent from
+ * the read is kept: main prunes nothing that the renderer can see first, so an
+ * absence means "this read predates that write", not "this credential is gone".
+ */
+function mergeSnapshotsByRecency(
+	current: Record<string, ProviderAuthSnapshot>,
+	incoming: Record<string, ProviderAuthSnapshot>
+): Record<string, ProviderAuthSnapshot> {
+	const merged: Record<string, ProviderAuthSnapshot> = { ...current };
+	for (const [key, snapshot] of Object.entries(incoming)) {
+		const held = merged[key];
+		if (!held || snapshot.checkedAt >= held.checkedAt) {
+			merged[key] = snapshot;
+		}
+	}
+	return merged;
+}
+
 function identityFingerprint(
 	toolType: string,
 	sshRemoteId: string | null,
@@ -548,7 +594,13 @@ function resolveSessionIdentity(
 	if (sshEnabled && remoteId === '') return null;
 	const sshRemoteId = sshEnabled ? remoteId : null;
 
-	const env = mergeEffectiveEnv(state.agentEnvVars[session.toolType], session.customEnvVars);
+	const env = mergeEffectiveEnv(
+		globalEnvVars(),
+		state.agentEnvVars[session.toolType],
+		session.customEnvVars
+	);
+	// The fingerprint is taken from the MERGED env, so a change to any layer -
+	// including the global one - invalidates the cached identity on its own.
 	const fingerprint = identityFingerprint(session.toolType, sshRemoteId, state.homeDir, env);
 	const cached = identityCache.get(session.id);
 	if (cached && cached.fingerprint === fingerprint) return cached.identity;
@@ -593,7 +645,7 @@ export function getIdentityForAgentType(
 	if (!state.homeDir) return null;
 	if (state.agentEnvFailures[toolType]) return null;
 
-	const env = mergeEffectiveEnv(state.agentEnvVars[toolType], undefined);
+	const env = mergeEffectiveEnv(globalEnvVars(), state.agentEnvVars[toolType], undefined);
 	return resolveCredentialIdentity({
 		toolType,
 		env,

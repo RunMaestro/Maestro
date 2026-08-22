@@ -469,12 +469,18 @@ describe('probeCredential', () => {
 
 			const snapshot = await probeCredential(
 				remoteIdentity(),
-				remoteOpts({ cwd: '/remote/project', env: { CLAUDE_CONFIG_DIR: '/remote/.claude-work' } })
+				// What `collectAuthTargets` resolves for a remote target with no
+				// customPath. A locally-detected path is never passed here: it names a
+				// file that does not exist on the far side.
+				remoteOpts({
+					binaryPath: 'claude',
+					cwd: '/remote/project',
+					env: { CLAUDE_CONFIG_DIR: '/remote/.claude-work' },
+				})
 			);
 
 			expect(snapshot.status).toBe('authenticated');
 			const wrapConfig = wrapSpawnWithSshMock.mock.calls[0][0];
-			// A local resolved path names a file that does not exist on the far side.
 			expect(wrapConfig.agentBinaryName).toBe('claude');
 			expect(wrapConfig.args).toEqual(['auth', 'status', '--json']);
 			expect(wrapConfig.cwd).toBe('/remote/project');
@@ -483,6 +489,18 @@ describe('probeCredential', () => {
 			expect(wrapConfig.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/remote/.claude-work' });
 			// And the local spawn is the ssh client the wrapper handed back.
 			expect(execFileNoThrowMock.mock.calls[0][0]).toBe('/usr/bin/ssh');
+		});
+
+		// An agent pointed at a different CLI install must be PROBED against that
+		// install, or the badge describes an account the agent never uses. Over SSH
+		// the override is a path on the remote host, so it travels verbatim.
+		it("invokes the agent's own remote customPath when it has one", async () => {
+			mockWrapOnto(REMOTE_ID);
+			mockRun({ stdout: JSON.stringify({ loggedIn: true }), exitCode: 0 });
+
+			await probeCredential(remoteIdentity(), remoteOpts({ binaryPath: '/opt/custom/claude' }));
+
+			expect(wrapSpawnWithSshMock.mock.calls[0][0].agentBinaryName).toBe('/opt/custom/claude');
 		});
 
 		it('gives a remote probe a longer timeout than a local one', async () => {

@@ -157,6 +157,7 @@ export async function startAuthLogin(
 	const target = collectAuthTargets({
 		sessionsStore: deps.sessionsStore,
 		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
 		mode: 'manual',
 		now: Date.now(),
 		homeDir: os.homedir(),

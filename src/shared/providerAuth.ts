@@ -22,8 +22,8 @@
  * ## Purity
  *
  * No Node builtins, like `shared/providerFailover.ts`, so the renderer can call
- * this as freely as the main process (the one import, `agentMetadata`, is itself
- * dependency-free). That is why {@link canonicalizeDirPath} exists
+ * this as freely as the main process (both imports, `agentEnvironment` and
+ * `agentMetadata`, are themselves dependency-free). That is why {@link canonicalizeDirPath} exists
  * instead of `path.resolve` and why {@link fingerprintSecret} carries its own
  * SHA-256 instead of `crypto.createHash`: both of those are Node builtins, the
  * renderer bundle has no polyfill for either (it never imports one - checked),
@@ -34,6 +34,7 @@
  * folding.
  */
 
+import { resolveAgentEnvironment } from './agentEnvironment';
 import { getAgentDisplayName } from './agentMetadata';
 
 // ============================================================================
@@ -258,24 +259,36 @@ function isFlagEnabled(value: string): boolean {
 }
 
 /**
- * Merge agent-level and session-level `customEnvVars` into the effective env for
- * a spawn. Session-level wins.
+ * The effective env an agent spawns with: global, then agent-level, then this
+ * agent's own overrides, each layer winning over the one before it.
  *
- * This precedence is already implemented in `claude-usage-startup.ts`
- * (`buildTarget()`) and `useQuotaAccounts.ts`, once on each side of the IPC
- * boundary. This is the third site and the last one that should be written by
- * hand: every consumer in the auth feature calls this so main and renderer
- * cannot drift.
+ * Delegates to {@link resolveAgentEnvironment} rather than restating the
+ * precedence. That function is what `process:spawnTerminalTab` resolves an
+ * agent's environment with, and an auth probe that merged differently would
+ * answer for a process nobody is running - it would read whichever credential
+ * the wrong layer named and file the verdict under the agent presenting a
+ * different one.
+ *
+ * The GLOBAL layer is not optional here. Settings -> Environment is where a user
+ * puts an `ANTHROPIC_API_KEY` or an `ANTHROPIC_BASE_URL` they want every agent to
+ * inherit, so dropping it resolves such an agent to its default OAuth identity
+ * and probes an account it does not use.
  *
  * Blank values are preserved rather than dropped - an explicitly emptied session
- * var is how a user turns an inherited agent-level var off, and {@link envValue}
- * already reads blank as unset at the point of use.
+ * var is how a user turns an inherited var off, and {@link envValue} already
+ * reads blank as unset at the point of use.
  */
 export function mergeEffectiveEnv(
+	global: Record<string, string> | undefined,
 	agentLevel: Record<string, string> | undefined,
 	sessionLevel: Record<string, string> | undefined
 ): Record<string, string> {
-	return { ...(agentLevel ?? {}), ...(sessionLevel ?? {}) };
+	const resolved = resolveAgentEnvironment({
+		global,
+		agent: agentLevel,
+		session: sessionLevel,
+	});
+	return Object.fromEntries(resolved.map((entry) => [entry.key, entry.value]));
 }
 
 // ============================================================================

@@ -381,6 +381,7 @@ describe('resolveLoginCommand', () => {
 describe('mergeEffectiveEnv', () => {
 	it('lets session-level win and keeps agent-only keys', () => {
 		const merged = mergeEffectiveEnv(
+			undefined,
 			{ CLAUDE_CONFIG_DIR: `${HOME}/.claude`, ANTHROPIC_MODEL: 'agent-model' },
 			{ CLAUDE_CONFIG_DIR: `${HOME}/.claude-smash` }
 		);
@@ -389,14 +390,41 @@ describe('mergeEffectiveEnv', () => {
 		expect(merged.ANTHROPIC_MODEL).toBe('agent-model');
 	});
 
-	it('handles either side being undefined', () => {
-		expect(mergeEffectiveEnv(undefined, undefined)).toEqual({});
-		expect(mergeEffectiveEnv({ A: '1' }, undefined)).toEqual({ A: '1' });
-		expect(mergeEffectiveEnv(undefined, { A: '1' })).toEqual({ A: '1' });
+	it('handles any side being undefined', () => {
+		expect(mergeEffectiveEnv(undefined, undefined, undefined)).toEqual({});
+		expect(mergeEffectiveEnv({ A: '1' }, undefined, undefined)).toEqual({ A: '1' });
+		expect(mergeEffectiveEnv(undefined, { A: '1' }, undefined)).toEqual({ A: '1' });
+		expect(mergeEffectiveEnv(undefined, undefined, { A: '1' })).toEqual({ A: '1' });
+	});
+
+	// Settings -> Environment is where a user puts a key every agent inherits.
+	// Dropping that layer resolved such an agent to its default OAuth identity,
+	// so the probe answered for an account the agent does not use.
+	it('applies the global layer, and lets the layers above it win', () => {
+		const merged = mergeEffectiveEnv(
+			{ ANTHROPIC_API_KEY: 'global-key', ANTHROPIC_BASE_URL: 'https://gateway.example' },
+			{ ANTHROPIC_API_KEY: 'agent-key' },
+			undefined
+		);
+
+		expect(merged.ANTHROPIC_API_KEY).toBe('agent-key');
+		expect(merged.ANTHROPIC_BASE_URL).toBe('https://gateway.example');
+	});
+
+	it('resolves a global API key to an api-key identity, not the default oauth one', () => {
+		const withGlobal = identity({
+			env: mergeEffectiveEnv({ ANTHROPIC_API_KEY: 'sk-global' }, undefined, undefined),
+		});
+		const withoutAny = identity({ env: mergeEffectiveEnv(undefined, undefined, undefined) });
+
+		expect(withGlobal.kind).toBe('api-key');
+		expect(withoutAny.kind).toBe('oauth');
+		expect(withGlobal.key).not.toBe(withoutAny.key);
 	});
 
 	it('drives the resolver: a session-level config dir overrides the agent default', () => {
 		const env = mergeEffectiveEnv(
+			undefined,
 			{ CLAUDE_CONFIG_DIR: `${HOME}/.claude` },
 			{ CLAUDE_CONFIG_DIR: `${HOME}/.claude-smash` }
 		);
