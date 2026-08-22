@@ -687,12 +687,12 @@ export const TerminalOutput = memo(
 						)}
 					</div>
 
-					{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy.
+					{/* End ref for scrolling - always rendered so the jump works even when busy.
 					    LOAD-BEARING: this marker MUST stay a direct child of the scroll container
 					    (the overflow-y-auto element above), NOT nested inside the contentRef wrapper.
-					    useMainKeyboardHandler's Alt+J "Jump to Bottom" resolves the scroll target via
-					    logsEndRef.current.parentElement, so if you wrap this marker in another subtree
-					    parentElement lands on an unscrollable element and Alt+J silently no-ops. */}
+					    useMainKeyboardHandler's Opt+Cmd+Down "Jump to Bottom" resolves the scroll target
+					    via logsEndRef.current.parentElement, so if you wrap this marker in another
+					    subtree parentElement lands on an unscrollable element and it silently no-ops. */}
 					<div ref={logsEndRef} />
 				</div>
 

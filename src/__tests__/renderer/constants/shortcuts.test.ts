@@ -160,7 +160,6 @@ describe('keyboard shortcut registry wiring', () => {
 	 * there. Do not extend it - pick an Opt+Cmd binding instead.
 	 */
 	const LEGACY_PLAIN_ALT_BINDINGS = new Set([
-		'jumpToBottom', // Opt+J
 		'openCue', // Opt+Q
 		'filterUnreadAgents', // Opt+U
 		'newFileTab', // Opt+N

@@ -126,6 +126,19 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 		],
 		toKeys: ['Alt', 'Meta', 'Shift', 'c'],
 	},
+	// jumpToBottom moved off Opt+J: the J key already carries Cmd+J (AI/Shell
+	// mode), Cmd+Shift+J (tile a new terminal) and Opt+Cmd+J (jump to nearest
+	// terminal), and a bare Opt+letter types a character in the composer. It now
+	// sits on Opt+Cmd+Down, the mirror of focusActiveTab's Opt+Cmd+Up.
+	jumpToBottom: {
+		fromKeys: [['Alt', 'j']],
+		toKeys: ['Alt', 'Meta', 'ArrowDown'],
+	},
+	// nextUnreadTab moved off Opt+Cmd+Down to hand that combo to jumpToBottom.
+	nextUnreadTab: {
+		fromKeys: [['Alt', 'Meta', 'ArrowDown']],
+		toKeys: ['Meta', 'Shift', 'ArrowDown'],
+	},
 };
 
 function keysEqual(a: string[], b: string[]): boolean {

@@ -95,7 +95,10 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Edit Last Queued Message',
 		keys: ['Meta', 'Shift', 'e'],
 	},
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
+	// Opt+Cmd+Down, not Opt+J: the J key is crowded (Cmd+J switches AI/Shell mode,
+	// Cmd+Shift+J tiles a new terminal, Opt+Cmd+J jumps to the nearest terminal),
+	// and a bare Opt+letter types a character while the composer has focus.
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'Meta', 'ArrowDown'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
@@ -150,7 +153,7 @@ export const DEFAULT_SHORTCUTS = {
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
 		label: 'Next Unread / Draft Tab',
-		keys: ['Alt', 'Meta', 'ArrowDown'],
+		keys: ['Meta', 'Shift', 'ArrowDown'],
 	},
 	jumpToTerminal: {
 		id: 'jumpToTerminal',

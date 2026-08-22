@@ -58,7 +58,7 @@ Tips and gotchas:
 | System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
 | Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
 | Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
-| Jump to Bottom              | `Opt+J`               | `Alt+J`                |
+| Jump to Bottom              | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`        |
 | Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
@@ -89,18 +89,18 @@ Tips and gotchas:
 
 These shortcuts work in AI Terminal mode and affect the current tab:
 
-| Action                 | macOS          | Windows/Linux   |
-| ---------------------- | -------------- | --------------- |
-| Toggle Save to History | `Cmd+S`        | `Ctrl+S`        |
-| Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
-| Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
-| Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
-| Toggle Tab Unread      | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
-| Filter Unread Agents   | `Opt+U`        | `Alt+U`         |
-| Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
-| Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
-| Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |
-| Open Prompt Composer   | `Cmd+Shift+P`  | `Ctrl+Shift+P`  |
+| Action                 | macOS            | Windows/Linux     |
+| ---------------------- | ---------------- | ----------------- |
+| Toggle Save to History | `Cmd+S`          | `Ctrl+S`          |
+| Toggle Read-Only Mode  | `Cmd+R`          | `Ctrl+R`          |
+| Toggle Show Thinking   | `Cmd+Shift+K`    | `Ctrl+Shift+K`    |
+| Toggle Tab Star        | `Cmd+Shift+S`    | `Ctrl+Shift+S`    |
+| Toggle Tab Unread      | `Cmd+Shift+U`    | `Ctrl+Shift+U`    |
+| Filter Unread Agents   | `Opt+U`          | `Alt+U`           |
+| Filter Unread Tabs     | `Cmd+U`          | `Ctrl+U`          |
+| Next Unread/Draft Tab  | `Cmd+Shift+Down` | `Ctrl+Shift+Down` |
+| Open Image Carousel    | `Cmd+Y`          | `Ctrl+Y`          |
+| Open Prompt Composer   | `Cmd+Shift+P`    | `Ctrl+Shift+P`    |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
