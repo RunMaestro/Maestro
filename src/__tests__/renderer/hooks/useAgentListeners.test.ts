@@ -16,7 +16,18 @@ import {
 } from '../../../renderer/hooks/agent/useAgentListeners';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
-import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
+import { openAuthRecoveryForSession } from '../../../renderer/services/authRecovery';
+import { markSessionAuthFailure } from '../../../renderer/stores/providerAuthStore';
+
+// An auth failure is handled against the CREDENTIAL, and resolving one needs a
+// hydrated snapshot map over IPC. That is the providerAuthStore's own contract,
+// tested there - here we only assert this hook routes the failure into it.
+vi.mock('../../../renderer/services/authRecovery', () => ({
+	openAuthRecoveryForSession: vi.fn().mockResolvedValue(true),
+}));
+vi.mock('../../../renderer/stores/providerAuthStore', () => ({
+	markSessionAuthFailure: vi.fn().mockResolvedValue(null),
+}));
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type { Session, AITab, AgentError } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -167,9 +178,7 @@ function createMockDeps(overrides: Partial<UseAgentListenersDeps> = {}): UseAgen
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	// Auth outages are provider-scoped and deliberately deduplicate, so a
-	// leftover outage would stop the next test's prompt from opening.
-	useAuthOutageStore.setState({ outages: {} });
+	vi.mocked(openAuthRecoveryForSession).mockResolvedValue(true);
 
 	// Reset captured handlers
 	onDataHandler = undefined;
@@ -1059,9 +1068,9 @@ describe('useAgentListeners', () => {
 			expect(data?.sessionId).toBe('sess-1');
 		});
 
-		// auth_expired bypasses the generic error modal: the login flow runs in the
-		// re-authentication terminal so the whole fix happens in one place.
-		it('opens the reauth modal for auth_expired', () => {
+		// auth_expired bypasses the generic error modal: the failure belongs to the
+		// credential, and the login that repairs it repairs every agent on it.
+		it('raises credential recovery rather than an error frame for auth_expired', () => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -1080,9 +1089,11 @@ describe('useAgentListeners', () => {
 			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
 
 			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
-			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
-			// Keyed by provider: one login fixes every agent sharing the credentials.
-			expect(useModalStore.getState().getData('reauth')?.providerKey).toBe('claude-code');
+			// Marked against the credential, so every other agent presenting the same
+			// login shows the problem before its next prompt burns.
+			expect(markSessionAuthFailure).toHaveBeenCalledWith('sess-1', baseError.message);
+			// The recovery dialog is raised on the credential, not on this one agent.
+			expect(openAuthRecoveryForSession).toHaveBeenCalledWith('sess-1');
 		});
 
 		it('does not open modal for session_not_found errors', () => {

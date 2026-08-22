@@ -171,8 +171,12 @@ export class PtySpawner {
 			// Terminal session IDs use the format {sessionId}-terminal-{tabId} (desktop)
 			// or {sessionId}-terminal (web). xterm.js renders escape sequences itself,
 			// so raw PTY data must be forwarded without any stripping.
-			// All other sessions go through stripControlSequences.
-			const isTerminalTab = sessionId.includes('-terminal-') || sessionId.endsWith('-terminal');
+			// All other sessions go through stripControlSequences, unless the caller
+			// opted in explicitly - see ProcessConfig.rawPtyOutput.
+			const isTerminalTab =
+				config.rawPtyOutput === true ||
+				sessionId.includes('-terminal-') ||
+				sessionId.endsWith('-terminal');
 
 			// Handle output
 			ptyProcess.onData((data) => {

@@ -174,6 +174,15 @@ helpers below.
 | `getBasename(path)`                    | `(string) => string`                   | Final path segment; handles `/` and `\`, ignores trailing sep.                    |
 | `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.                                  |
 
+### Queued-item labels (`src/renderer/utils/executionQueue.ts` - Renderer)
+
+`getQueuedItemLabel(item, maxLength?)` is the one-line, human-readable name of a `QueuedItem`, for
+any surface that has to show WHICH prompt it is about to act on (the post-login resend confirmation,
+queue rows, dismissal dialogs). It delegates to `truncateCommand`, keeps a slash command's arguments
+(`/commit` and `/commit --amend` are different requests), and falls back to an image count so an
+images-only item does not render as a blank row. Do not inline another
+`item.type === 'command' ? … : item.text ?? ''` ternary.
+
 ---
 
 ## Durations (`src/shared/duration.ts` - Both)

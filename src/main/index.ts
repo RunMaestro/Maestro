@@ -93,6 +93,7 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerProviderAuthHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -177,6 +178,7 @@ import {
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
+import { runStartupAuthProbe } from './agents/auth/auth-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
@@ -836,6 +838,27 @@ app
 			agentDetector,
 		}).catch((err: unknown) => {
 			logger.warn('Startup Claude usage sampling failed', 'Startup', {
+				error: err instanceof Error ? err.message : String(err),
+			});
+		});
+
+		// Fire-and-forget: one status probe per unique credential identity any
+		// recent session references, so the UI knows which logins are dead before
+		// the user sends a prompt into one. Failures here are non-fatal: the
+		// reactive `auth_expired` path still marks an identity logged out the
+		// moment a live agent hits the error, so the worst case is a badge that
+		// appears on first failure instead of at launch.
+		//
+		// The `providerAuthProbeOnStartup` opt-out (Settings -> Environment ->
+		// Provider Accounts) is enforced inside the pass, not here, so a future
+		// second boot-time caller cannot miss it.
+		void runStartupAuthProbe({
+			sessionsStore,
+			agentConfigsStore,
+			settingsStore: store,
+			agentDetector,
+		}).catch((err: unknown) => {
+			logger.warn('Startup provider auth probe failed', 'Startup', {
 				error: err instanceof Error ? err.message : String(err),
 			});
 		});
@@ -1542,6 +1565,16 @@ function setupIpcHandlers() {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register Provider Auth handlers (credential login state, manual re-probe,
+	// and the snapshot-change broadcast every window listens on)
+	registerProviderAuthHandlers({
+		sessionsStore,
+		agentConfigsStore,
+		settingsStore: store,
+		getAgentDetector: () => agentDetector,
+		getProcessManager: () => processManager,
+	});
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({

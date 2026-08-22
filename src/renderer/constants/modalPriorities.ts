@@ -26,8 +26,21 @@ export const MODAL_PRIORITIES = {
 	/** Quit confirmation modal - highest priority, blocks app quit */
 	QUIT_CONFIRM: 1020,
 
-	/** Provider re-authentication terminal - above the agent error modal it replaces */
-	REAUTH: 1015,
+	/**
+	 * Provider auth recovery modal (the login terminal).
+	 * Above AGENT_ERROR because it is usually opened FROM that modal: a login
+	 * started from an agent error must sit on top of the error it repairs, and
+	 * Escape must close the login first.
+	 */
+	AUTH_RECOVERY: 1015,
+
+	/**
+	 * Post-login resume confirmation ("resend the prompts that died?").
+	 * Opens as AUTH_RECOVERY closes, and sits above AGENT_ERROR because the error
+	 * modal underneath may still be settling closed - the user must answer this
+	 * one before anything is sent on their behalf.
+	 */
+	AUTH_RESEND: 1014,
 
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,

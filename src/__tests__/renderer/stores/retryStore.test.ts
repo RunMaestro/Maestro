@@ -24,6 +24,10 @@ import {
 	registerBatchResumer,
 	replayAfterAuth,
 	useRetryStore,
+	noteAuthBlockedPrompt,
+	getBlockedPrompts,
+	discardBlockedPrompts,
+	resendBlockedPrompts,
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
@@ -77,7 +81,7 @@ function seedSnapshot(id: string, tabId: string) {
 beforeEach(() => {
 	vi.useFakeTimers();
 	vi.setSystemTime(NOW);
-	useRetryStore.setState({ retries: {}, outages: {} });
+	useRetryStore.setState({ retries: {}, outages: {}, blocked: {} });
 	useSessionStore.setState({ sessions: [] } as any);
 	processQueuedItem = vi.fn().mockResolvedValue(undefined);
 	useAgentStore.setState({ processQueuedItem } as any);
@@ -283,6 +287,164 @@ describe('batch-resume mode', () => {
 	it('returns false when batch mode is requested but no resumer is registered', () => {
 		setupSession('s16', 't1');
 		expect(scheduleRetryForError('s16', 't1', overload(), { batch: true })).toBe(false);
+	});
+});
+
+describe('auth-blocked prompts (resume after a provider login)', () => {
+	/** Put several agents (one AI tab each) into the store at once. */
+	function setupSessions(...ids: [string, string][]) {
+		useSessionStore.setState({
+			sessions: ids.map(([id, tabId]) =>
+				createMockSession({
+					id,
+					name: id,
+					aiTabs: [createMockAITab({ id: tabId })],
+					activeTabId: tabId,
+				})
+			),
+		} as any);
+	}
+
+	/** Dispatch a distinctly-labelled prompt so previews are tellable apart. */
+	function dispatch(id: string, tabId: string, itemId: string, text: string) {
+		noteDispatch(id, { id: itemId, timestamp: 1, tabId, type: 'message', text }, deps);
+	}
+
+	it('parks the prompt an auth failure killed, with a preview of what would be resent', () => {
+		setupSessions(['a1', 't1']);
+		dispatch('a1', 't1', 'item-a1', 'refactor the parser');
+
+		expect(noteAuthBlockedPrompt('a1', 't1')).toBe(true);
+
+		const [parked] = getBlockedPrompts(['a1']);
+		expect(parked).toMatchObject({
+			sessionId: 'a1',
+			tabId: 't1',
+			itemId: 'item-a1',
+			failedAt: NOW,
+			preview: 'refactor the parser',
+		});
+	});
+
+	it('parks nothing when the tab has no snapshot to replay', () => {
+		setupSessions(['a2', 't1']);
+		expect(noteAuthBlockedPrompt('a2', 't1')).toBe(false);
+		expect(getBlockedPrompts(['a2'])).toEqual([]);
+	});
+
+	it('resends one prompt per blocked agent, in the order they failed', async () => {
+		setupSessions(['a3', 't1'], ['a4', 't1'], ['a5', 't1']);
+		dispatch('a3', 't1', 'item-a3', 'third to fail');
+		dispatch('a4', 't1', 'item-a4', 'first to fail');
+		dispatch('a5', 't1', 'item-a5', 'second to fail');
+
+		vi.setSystemTime(NOW + 1_000);
+		noteAuthBlockedPrompt('a4', 't1');
+		vi.setSystemTime(NOW + 2_000);
+		noteAuthBlockedPrompt('a5', 't1');
+		vi.setSystemTime(NOW + 3_000);
+		noteAuthBlockedPrompt('a3', 't1');
+
+		const resent = await resendBlockedPrompts(['a3', 'a4', 'a5']);
+
+		expect(resent).toEqual(['a4:t1', 'a5:t1', 'a3:t1']);
+		expect(processQueuedItem.mock.calls.map((call) => call[0])).toEqual(['a4', 'a5', 'a3']);
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			'a4',
+			expect.objectContaining({ id: 'item-a4' }),
+			deps
+		);
+		// The queue is answered once: a second login must not replay them again.
+		expect(getBlockedPrompts(['a3', 'a4', 'a5'])).toEqual([]);
+	});
+
+	it('resends nothing for agents on a different credential', async () => {
+		setupSessions(['a6', 't1'], ['a7', 't1']);
+		dispatch('a6', 't1', 'item-a6', 'mine');
+		dispatch('a7', 't1', 'item-a7', 'someone elses');
+		noteAuthBlockedPrompt('a6', 't1');
+		noteAuthBlockedPrompt('a7', 't1');
+
+		await resendBlockedPrompts(['a6']);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem).toHaveBeenCalledWith('a6', expect.anything(), deps);
+		// The other agent's prompt is still parked for ITS login.
+		expect(getBlockedPrompts(['a7'])).toHaveLength(1);
+	});
+
+	it('fires zero resends when the user declines, and forgets the queue', async () => {
+		setupSessions(['a8', 't1']);
+		dispatch('a8', 't1', 'item-a8', 'never mind');
+		noteAuthBlockedPrompt('a8', 't1');
+
+		discardBlockedPrompts(['a8']);
+		expect(getBlockedPrompts(['a8'])).toEqual([]);
+
+		await resendBlockedPrompts(['a8']);
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('drops a prompt already re-sent by other means (a newer dispatch on the tab)', async () => {
+		setupSessions(['a9', 't1']);
+		dispatch('a9', 't1', 'item-a9', 'original');
+		noteAuthBlockedPrompt('a9', 't1');
+
+		// The user typed it again themselves while the login was in progress.
+		dispatch('a9', 't1', 'item-a9-again', 'original');
+
+		expect(getBlockedPrompts(['a9'])).toEqual([]);
+		await resendBlockedPrompts(['a9']);
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('skips an agent deleted while the user was logging in, without throwing', async () => {
+		setupSessions(['a10', 't1'], ['a11', 't1']);
+		dispatch('a10', 't1', 'item-a10', 'gone by now');
+		dispatch('a11', 't1', 'item-a11', 'still here');
+		noteAuthBlockedPrompt('a10', 't1');
+		vi.setSystemTime(NOW + 1_000);
+		noteAuthBlockedPrompt('a11', 't1');
+
+		// a10 is deleted; its parked prompt has nowhere to land.
+		setupSessions(['a11', 't1']);
+
+		const resent = await resendBlockedPrompts(['a10', 'a11']);
+
+		expect(resent).toEqual(['a11:t1']);
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem).toHaveBeenCalledWith('a11', expect.anything(), deps);
+	});
+
+	it('skips a prompt whose tab is gone even though the agent survives', async () => {
+		setupSessions(['a12', 't1']);
+		dispatch('a12', 't1', 'item-a12', 'closed tab');
+		noteAuthBlockedPrompt('a12', 't1');
+
+		// Same agent, different tab: the failing tab was closed.
+		setupSessions(['a12', 't2']);
+
+		expect(getBlockedPrompts(['a12'])).toEqual([]);
+		await resendBlockedPrompts(['a12']);
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('keeps going when one resend throws', async () => {
+		setupSessions(['a13', 't1'], ['a14', 't1']);
+		dispatch('a13', 't1', 'item-a13', 'explodes');
+		dispatch('a14', 't1', 'item-a14', 'fine');
+		noteAuthBlockedPrompt('a13', 't1');
+		vi.setSystemTime(NOW + 1_000);
+		noteAuthBlockedPrompt('a14', 't1');
+
+		processQueuedItem.mockImplementation(async (sessionId: string) => {
+			if (sessionId === 'a13') throw new Error('spawn failed');
+		});
+
+		const resent = await resendBlockedPrompts(['a13', 'a14']);
+
+		expect(resent).toEqual(['a14:t1']);
+		expect(processQueuedItem).toHaveBeenCalledTimes(2);
 	});
 });
 

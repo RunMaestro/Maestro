@@ -29,7 +29,6 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 
 import { useModalHandlers } from '../../../renderer/hooks/modal/useModalHandlers';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
-import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -71,9 +70,6 @@ beforeEach(() => {
 
 	// Reset stores
 	useModalStore.setState({ modals: new Map() });
-	// Auth outages are provider-scoped and deliberately deduplicate, so a
-	// leftover outage would stop the next test's prompt from opening.
-	useAuthOutageStore.setState({ outages: {} });
 	useSessionStore.setState({
 		sessions: [],
 		activeSessionId: '',
@@ -803,32 +799,37 @@ describe('useModalHandlers', () => {
 			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 
-		it('handleAuthenticateAfterError calls agent store and swaps in the reauth modal', () => {
-			const mockAuth = vi.fn();
-			vi.spyOn(useAgentStore, 'getState').mockReturnValue({
-				...useAgentStore.getState(),
-				authenticateAfterError: mockAuth,
-			});
-			// The provider is resolved from the agent, so it has to exist.
-			useSessionStore.setState({
-				sessions: [createMockSession({ id: 'session-1', toolType: 'claude-code' })],
-			});
+		it('handleOpenAuthRecovery opens the recovery modal over the error modal', () => {
 			getModalActions().setAgentErrorModalSessionId('session-1');
 
 			const inputRef = createInputRef();
 			const { result } = renderHook(() => useModalHandlers(inputRef, createTerminalOutputRef()));
 			act(() => {
-				result.current.handleAuthenticateAfterError('session-1');
+				result.current.handleOpenAuthRecovery('claude-code::oauth::.claude::local');
 			});
 
-			expect(mockAuth).toHaveBeenCalledWith('session-1');
-			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
-			// The login now happens inside Maestro, so the error modal hands off to the
-			// re-authentication terminal instead of returning focus to the composer.
-			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
-			expect(useModalStore.getState().getData('reauth')).toMatchObject({
-				providerKey: 'claude-code',
+			expect(useModalStore.getState().isOpen('authRecovery')).toBe(true);
+			expect(useModalStore.getState().getData('authRecovery')?.identityKey).toBe(
+				'claude-code::oauth::.claude::local'
+			);
+			// The error modal stays underneath: the login has not succeeded yet, and
+			// closing it here would leave nothing behind a failed login.
+			expect(useModalStore.getState().isOpen('agentError')).toBe(true);
+		});
+
+		it('handleConfigureCredentials opens the agent editor and closes the error modal', () => {
+			const session = createMockSession({ id: 'session-1' });
+			getModalActions().setAgentErrorModalSessionId('session-1');
+
+			const inputRef = createInputRef();
+			const { result } = renderHook(() => useModalHandlers(inputRef, createTerminalOutputRef()));
+			act(() => {
+				result.current.handleConfigureCredentials(session);
 			});
+
+			expect(useModalStore.getState().isOpen('editAgent')).toBe(true);
+			expect(useModalStore.getState().getData('editAgent')?.session.id).toBe('session-1');
+			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
 		});
 	});
 

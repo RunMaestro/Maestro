@@ -461,6 +461,97 @@ describe('agentStore', () => {
 		});
 	});
 
+	describe('clearAuthErrors', () => {
+		const authError = { type: 'auth_expired', message: 'expired' } as any;
+		const otherError = { type: 'rate_limited', message: 'slow down' } as any;
+
+		const tab = (id: string, agentError?: unknown) =>
+			({
+				id,
+				agentSessionId: null,
+				name: null,
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: 0,
+				state: 'idle',
+				...(agentError ? { agentError } : {}),
+			}) as any;
+
+		it('clears the session frame and EVERY tab wearing an auth error', () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					state: 'error',
+					agentError: authError,
+					agentErrorTabId: 'tab-1',
+					agentErrorPaused: true,
+					aiTabs: [tab('tab-1', authError), tab('tab-2', authError), tab('tab-3')],
+					activeTabId: 'tab-1',
+				}),
+			]);
+
+			expect(useAgentStore.getState().clearAuthErrors('session-1')).toBe(true);
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('idle');
+			expect(updated.agentError).toBeUndefined();
+			expect(updated.agentErrorTabId).toBeUndefined();
+			expect(updated.agentErrorPaused).toBe(false);
+			expect(updated.aiTabs.every((t) => t.agentError === undefined)).toBe(true);
+			expect(mockClearError).toHaveBeenCalledWith('session-1');
+		});
+
+		it('leaves an error that a login cannot fix exactly where it is', () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					state: 'error',
+					agentError: otherError,
+					agentErrorTabId: 'tab-1',
+					agentErrorPaused: true,
+					aiTabs: [tab('tab-1', otherError)],
+					activeTabId: 'tab-1',
+				}),
+			]);
+
+			expect(useAgentStore.getState().clearAuthErrors('session-1')).toBe(false);
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('error');
+			expect(updated.agentError).toBe(otherError);
+			expect(updated.aiTabs[0].agentError).toBe(otherError);
+			expect(mockClearError).not.toHaveBeenCalled();
+		});
+
+		it('clears a tab-only auth error without touching the session state', () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					aiTabs: [tab('tab-1', authError)],
+					activeTabId: 'tab-1',
+				}),
+			]);
+
+			expect(useAgentStore.getState().clearAuthErrors('session-1')).toBe(true);
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
+			// No session-level frame was cleared, so nothing about the run changed.
+			expect(updated.state).toBe('busy');
+			expect(mockClearError).not.toHaveBeenCalled();
+		});
+
+		it('reports false for a session that does not exist', () => {
+			useSessionStore.getState().setSessions([]);
+
+			expect(useAgentStore.getState().clearAuthErrors('nope')).toBe(false);
+			expect(mockClearError).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('startNewSessionAfterError', () => {
 		it('clears error and creates a new tab', () => {
 			const session = createMockSession({
@@ -725,127 +816,6 @@ describe('agentStore', () => {
 		});
 	});
 
-	describe('authenticateAfterError', () => {
-		it('clears error and selects the agent without touching its input mode', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				state: 'error',
-				inputMode: 'ai',
-				agentError: { type: 'auth_expired', message: 'auth expired' } as any,
-			});
-
-			useSessionStore.getState().setSessions([session]);
-
-			useAgentStore.getState().authenticateAfterError('session-1');
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('idle');
-			// The login now happens in the re-authentication modal, so the agent must
-			// stay in AI mode - a forced terminal switch left the user in a shell they
-			// never asked for once the modal closed.
-			expect(updated.inputMode).toBe('ai');
-			expect(updated.agentError).toBeUndefined();
-			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
-		});
-
-		it('does nothing if session not found', () => {
-			useAgentStore.getState().authenticateAfterError('nonexistent');
-			// No crash, no IPC calls
-			expect(mockClearError).not.toHaveBeenCalled();
-		});
-
-		it('leaves a session that is already in terminal mode alone', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				state: 'error',
-				inputMode: 'terminal',
-			});
-
-			useSessionStore.getState().setSessions([session]);
-
-			useAgentStore.getState().authenticateAfterError('session-1');
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('idle');
-			expect(updated.inputMode).toBe('terminal');
-		});
-
-		it('switches active session even if it was already active', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				state: 'error',
-				inputMode: 'ai',
-			});
-
-			useSessionStore.getState().setSessions([session]);
-			useSessionStore.getState().setActiveSessionId('session-1');
-
-			useAgentStore.getState().authenticateAfterError('session-1');
-
-			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
-			expect(useSessionStore.getState().sessions[0].inputMode).toBe('ai');
-		});
-
-		it('calls IPC clearError via delegation', () => {
-			const session = createMockSession({ id: 'session-1', state: 'error' });
-			useSessionStore.getState().setSessions([session]);
-
-			useAgentStore.getState().authenticateAfterError('session-1');
-
-			expect(mockClearError).toHaveBeenCalledWith('session-1');
-		});
-
-		it('does not create new tabs or modify existing tabs', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				state: 'error',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'conv-1',
-						name: 'My Work',
-						starred: false,
-						logs: [{ type: 'user', content: 'hello' }],
-						inputValue: 'pending input',
-						stagedImages: [],
-						createdAt: Date.now(),
-						state: 'idle',
-					},
-				],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.getState().setSessions([session]);
-
-			useAgentStore.getState().authenticateAfterError('session-1');
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.aiTabs.length).toBe(1);
-			expect(updated.aiTabs[0].name).toBe('My Work');
-			expect(updated.aiTabs[0].inputValue).toBe('pending input');
-		});
-
-		it('leaves the open file tab alone', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				state: 'error',
-				inputMode: 'ai',
-				activeFileTabId: 'file-tab-1',
-			});
-
-			useSessionStore.getState().setSessions([session]);
-
-			useAgentStore.getState().authenticateAfterError('session-1');
-
-			// The old flow forced the agent into terminal mode, which orphaned the
-			// file preview and made this clear necessary. The re-authentication modal
-			// owns the login now, so the user's view must survive it intact.
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.inputMode).toBe('ai');
-			expect(updated.activeFileTabId).toBe('file-tab-1');
-		});
-	});
-
 	describe('killAgent', () => {
 		it('kills agent with default -ai suffix', async () => {
 			await useAgentStore.getState().killAgent('session-1');
@@ -934,7 +904,7 @@ describe('agentStore', () => {
 			expect(useAgentStore.getState().agentsDetected).toBe(true);
 		});
 
-		it('getState exposes all 10 action functions', () => {
+		it('getState exposes all 9 action functions', () => {
 			const state = useAgentStore.getState();
 
 			expect(typeof state.refreshAgents).toBe('function');
@@ -944,7 +914,6 @@ describe('agentStore', () => {
 			expect(typeof state.startNewSessionAfterError).toBe('function');
 			expect(typeof state.retryAfterError).toBe('function');
 			expect(typeof state.restartAgentAfterError).toBe('function');
-			expect(typeof state.authenticateAfterError).toBe('function');
 			expect(typeof state.killAgent).toBe('function');
 			expect(typeof state.interruptAgent).toBe('function');
 		});
@@ -1015,7 +984,7 @@ describe('agentStore', () => {
 
 			const after = useAgentStore.getState();
 
-			// All 10 actions must be referentially stable
+			// All 9 actions must be referentially stable
 			expect(before.refreshAgents).toBe(after.refreshAgents);
 			expect(before.getAgentConfig).toBe(after.getAgentConfig);
 			expect(before.processQueuedItem).toBe(after.processQueuedItem);
@@ -1023,7 +992,6 @@ describe('agentStore', () => {
 			expect(before.startNewSessionAfterError).toBe(after.startNewSessionAfterError);
 			expect(before.retryAfterError).toBe(after.retryAfterError);
 			expect(before.restartAgentAfterError).toBe(after.restartAgentAfterError);
-			expect(before.authenticateAfterError).toBe(after.authenticateAfterError);
 			expect(before.killAgent).toBe(after.killAgent);
 			expect(before.interruptAgent).toBe(after.interruptAgent);
 		});
@@ -1074,12 +1042,15 @@ describe('agentStore', () => {
 			expect(updated.aiTabs.length).toBeGreaterThanOrEqual(2);
 		});
 
-		it('authenticate switches active session to target', () => {
+		it('clearing an auth error leaves the active session and input mode alone', () => {
+			// Auth recovery is a modal now, not a mode switch: clearing the error must
+			// not move the user to another agent or drop them into the terminal.
 			const sessions = [
 				createMockSession({ id: 'session-1', state: 'idle' }),
 				createMockSession({
 					id: 'session-2',
 					state: 'error',
+					inputMode: 'ai',
 					agentError: { type: 'auth_expired', message: 'auth' } as any,
 				}),
 			];
@@ -1087,12 +1058,11 @@ describe('agentStore', () => {
 			useSessionStore.getState().setSessions(sessions);
 			useSessionStore.getState().setActiveSessionId('session-1');
 
-			useAgentStore.getState().authenticateAfterError('session-2');
+			useAgentStore.getState().clearAgentError('session-2');
 
-			// Active session switched to session-2
-			expect(useSessionStore.getState().activeSessionId).toBe('session-2');
-			// The login happens in the re-authentication modal, so the agent stays in AI mode
+			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
 			expect(useSessionStore.getState().sessions[1].inputMode).toBe('ai');
+			expect(useSessionStore.getState().sessions[1].agentError).toBeUndefined();
 		});
 
 		it('double clear is idempotent', () => {
@@ -1130,13 +1100,13 @@ describe('agentStore', () => {
 
 			// Different recovery actions on different sessions simultaneously
 			useAgentStore.getState().retryAfterError('session-1');
-			useAgentStore.getState().authenticateAfterError('session-2');
+			useAgentStore.getState().clearAgentError('session-2');
 
 			const updated = useSessionStore.getState().sessions;
 			expect(updated[0].state).toBe('idle');
 			expect(updated[0].agentError).toBeUndefined();
 			expect(updated[1].state).toBe('idle');
-			expect(updated[1].inputMode).toBe('ai');
+			expect(updated[1].agentError).toBeUndefined();
 		});
 
 		it('recovery after restart then new session', async () => {

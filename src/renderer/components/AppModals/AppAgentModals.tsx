@@ -1,6 +1,4 @@
-import { memo } from 'react';
-import { selectModalData, useModalStore } from '../../stores/modalStore';
-import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
+import { memo, useCallback, useMemo } from 'react';
 import type {
 	Theme,
 	Session,
@@ -15,11 +13,27 @@ import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from '../AgentErrorModal';
-import { ReauthModal } from '../ReauthModal';
+import { AuthRecoveryModal } from '../AuthRecoveryModal';
+import { AuthResendModal, type AuthResendRow } from '../AuthResendModal';
 import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
 import { TransferProgressModal } from '../TransferProgressModal';
 import { LeaderboardRegistrationModal } from '../LeaderboardRegistrationModal';
+
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
+import {
+	getSessionsForIdentity,
+	selectKnownIdentity,
+	useProviderAuthStore,
+} from '../../stores/providerAuthStore';
+import {
+	discardBlockedPrompts,
+	getBlockedPrompts,
+	resendBlockedPrompts,
+	useRetryStore,
+} from '../../stores/retryStore';
+import { getTabDisplayName } from '../../utils/tabHelpers';
 
 // Re-export types used by consumers
 export type { RecoveryAction, MergeOptions, SendToAgentOptions };
@@ -102,11 +116,152 @@ export interface AppAgentModalsProps {
 }
 
 /**
+ * Provider auth recovery slot.
+ *
+ * Self-sourced from `modalStore` rather than prop-threaded through App.tsx, the
+ * same shape the snooze and startup-command modals use. Open state is keyed by
+ * CREDENTIAL, so every entry point (the Left Bar auth indicator, the logged-out
+ * toast, the command palette, the Provider Accounts settings section) hands over
+ * an identity key and lands on the same modal.
+ *
+ * The identity comes from the stored snapshot when there is one and from the
+ * agents themselves when there is not: Settings lists credentials the startup
+ * pass skipped (SSH agents, agents nobody opened this week), and those have a
+ * resolvable identity with no record yet. Rendering nothing on an UNRESOLVABLE
+ * key is still the rule - a modal that cannot name the account it is repairing
+ * is exactly the modal this phase exists to avoid.
+ */
+const AuthRecoveryModalSlot = memo(function AuthRecoveryModalSlot({
+	theme,
+	sessions,
+}: {
+	theme: Theme;
+	sessions: Session[];
+}) {
+	const identityKey = useModalStore(selectModalData('authRecovery'))?.identityKey ?? null;
+
+	// The toast states the intent as data (so it survives the IPC bridge); this is
+	// the listener that performs it.
+	useEventListener('maestro:openProviderAuthRecovery', (e: Event) => {
+		const detail = (e as CustomEvent<{ identityKey?: string }>).detail;
+		if (detail?.identityKey) getModalActions().openAuthRecovery(detail.identityKey);
+	});
+
+	const identity = useProviderAuthStore((s) =>
+		identityKey ? selectKnownIdentity(identityKey)(s) : null
+	);
+
+	// Recomputed when the agent list changes, which is what keeps the "unblocks N
+	// agents" count honest while the modal is open.
+	// `sessions` is the invalidation signal only - the lookup itself reads the
+	// session store, so the identity resolution stays in one place.
+	const blockedSessions = useMemo(
+		() => (identityKey ? getSessionsForIdentity(identityKey) : []),
+		[identityKey, sessions]
+	);
+
+	const handleClose = useCallback(() => getModalActions().closeAuthRecovery(), []);
+
+	if (!identityKey || !identity) return null;
+
+	return (
+		// Keyed so a credential switch MOUNTS A FRESH MODAL rather than feeding a
+		// new identity to the old one. This slot stays mounted across the switch
+		// (the `maestro:openProviderAuthRecovery` listener above can open a
+		// different key), and the modal's login effect resets the spawn fields but
+		// not its verdict - so without this the previous credential's outcome
+		// renders under the new credential's name, e.g. "B still reports no active
+		// login" when only A was ever probed. The remote host note drifts the same
+		// way, and the login PTY's run id would be reused across two accounts.
+		<AuthRecoveryModal
+			key={identity.key}
+			identity={identity}
+			blockedSessions={blockedSessions}
+			theme={theme}
+			onClose={handleClose}
+		/>
+	);
+});
+
+/**
+ * Post-login resume slot.
+ *
+ * Opened by `verifyAuthRecovery` when a repaired credential still has prompts
+ * parked against it. Everything on screen is resolved HERE rather than carried
+ * in the modal data: the user spends time in the login flow, and an agent
+ * deleted (or a prompt re-sent by hand) while they were signing in must drop
+ * off the list instead of being offered and then silently skipped.
+ */
+const AuthResendModalSlot = memo(function AuthResendModalSlot({
+	theme,
+	sessions,
+}: {
+	theme: Theme;
+	sessions: Session[];
+}) {
+	const identityKey = useModalStore(selectModalData('authResend'))?.identityKey ?? null;
+
+	const identity = useProviderAuthStore((s) =>
+		identityKey ? (s.snapshots[identityKey]?.identity ?? null) : null
+	);
+
+	// The parked-prompt map is the invalidation signal - a prompt superseded
+	// while this modal is open disappears from the list rather than going out
+	// when the user clicks Resend.
+	const blocked = useRetryStore((s) => s.blocked);
+
+	const sessionIds = useMemo(
+		() => (identityKey ? getSessionsForIdentity(identityKey).map((s) => s.id) : []),
+		[identityKey, sessions]
+	);
+
+	const rows = useMemo<AuthResendRow[]>(
+		() =>
+			getBlockedPrompts(sessionIds).map((prompt) => {
+				const session = sessions.find((s) => s.id === prompt.sessionId);
+				const tab = session?.aiTabs.find((t) => t.id === prompt.tabId);
+				return {
+					key: prompt.key,
+					agentName: session?.name ?? 'Agent',
+					tabName: tab ? getTabDisplayName(tab) : '',
+					preview: prompt.preview,
+					failedAt: prompt.failedAt,
+				};
+			}),
+		[sessionIds, sessions, blocked]
+	);
+
+	const handleResend = useCallback(() => {
+		getModalActions().closeAuthResend();
+		void resendBlockedPrompts(sessionIds);
+	}, [sessionIds]);
+
+	const handleDecline = useCallback(() => {
+		getModalActions().closeAuthResend();
+		discardBlockedPrompts(sessionIds);
+	}, [sessionIds]);
+
+	if (!identityKey || !identity || rows.length === 0) return null;
+
+	return (
+		<AuthResendModal
+			identity={identity}
+			rows={rows}
+			theme={theme}
+			onResend={handleResend}
+			onDecline={handleDecline}
+		/>
+	);
+});
+
+/**
  * AppAgentModals - Renders agent error and context transfer modals
  *
  * Contains:
  * - LeaderboardRegistrationModal: Register for the runmaestro.ai leaderboard
  * - AgentErrorModal: Display agent errors with recovery options (agents and group chats)
+ * - AuthRecoveryModal: Repair one expired provider login (layers above AgentErrorModal)
+ * - AuthResendModal: Ask whether to resume the prompts that login had blocked
  * - MergeSessionModal: Merge current context into another session
  * - TransferProgressModal: Show progress during cross-agent context transfer
  * - SendToAgentModal: Send session context to another Maestro session
@@ -151,20 +306,6 @@ export const AppAgentModals = memo(function AppAgentModals({
 	onCloseSendToAgent,
 	onSendToAgent,
 }: AppAgentModalsProps) {
-	// Self-sourced (Tier 1B): the re-authentication modal is opened from the
-	// agent-error listener and from Cue pipeline failures, neither of which
-	// routes through App.tsx's modal props. It is keyed by PROVIDER - the roster
-	// of blocked agents lives in authOutageStore and grows while the dialog is
-	// open, so it is read live rather than captured at open time.
-	const reauthData = useModalStore(selectModalData('reauth'));
-	const closeReauthModal = useModalStore((s) => s.closeModal);
-	const reauthOutage = useAuthOutageStore(selectAuthOutage(reauthData?.providerKey));
-	// Any blocked agent can host the login shell; they share the credential
-	// store. The first is the one that failed first.
-	const reauthSession = reauthOutage
-		? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId)
-		: undefined;
-
 	return (
 		<>
 			{/* --- LEADERBOARD REGISTRATION MODAL --- */}
@@ -201,15 +342,11 @@ export const AppAgentModals = memo(function AppAgentModals({
 				/>
 			)}
 
-			{/* --- PROVIDER RE-AUTHENTICATION MODAL --- */}
-			{reauthOutage && reauthSession && (
-				<ReauthModal
-					theme={theme}
-					outage={reauthOutage}
-					session={reauthSession}
-					onClose={() => closeReauthModal('reauth')}
-				/>
-			)}
+			{/* --- PROVIDER AUTH RECOVERY MODAL --- */}
+			<AuthRecoveryModalSlot theme={theme} sessions={sessions} />
+
+			{/* --- POST-LOGIN RESUME CONFIRMATION --- */}
+			<AuthResendModalSlot theme={theme} sessions={sessions} />
 
 			{/* --- AGENT ERROR MODAL (group chats) --- */}
 			{groupChatError && (

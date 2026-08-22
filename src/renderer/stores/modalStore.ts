@@ -161,16 +161,27 @@ export interface AgentErrorModalData {
 }
 
 /**
- * Provider re-authentication modal data.
+ * Provider auth recovery modal data.
  *
- * Addressed by PROVIDER, not by agent: one expired token blocks every agent
- * that shares the credential store, and they are all fixed by one login. The
- * roster of blocked agents (and the error text) lives in `authOutageStore`
- * keyed by this value, so it stays correct as more agents fail while the prompt
- * is already open.
+ * Keyed by CREDENTIAL, not by agent: the thing that is broken is one login, and
+ * every agent presenting it is repaired by one recovery. Carrying a session id
+ * here would invite the modal to sign in to whatever account that one agent
+ * happens to use, which is the mistake the identity model exists to prevent.
  */
-export interface ReauthModalData {
-	providerKey: string;
+export interface AuthRecoveryModalData {
+	identityKey: string;
+}
+
+/**
+ * Post-login resume confirmation data.
+ *
+ * Keyed by the same CREDENTIAL as the recovery it follows: the prompts on offer
+ * are the ones that credential blocked, and the modal resolves them from the
+ * retry store at render time so a prompt that stopped being replayable while
+ * the user was logging in simply is not listed.
+ */
+export interface AuthResendModalData {
+	identityKey: string;
 }
 
 /** Delete agent modal data */
@@ -302,7 +313,8 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
-	| 'reauth'
+	| 'authRecovery'
+	| 'authResend'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -393,7 +405,8 @@ export interface ModalDataMap {
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
-	reauth: ReauthModalData;
+	authRecovery: AuthRecoveryModalData;
+	authResend: AuthResendModalData;
 	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
@@ -911,9 +924,16 @@ export function getModalActions() {
 		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
 			openModal('agentError', { sessionId, historicalError: error }),
 
-		// Provider Re-authentication Modal
-		openReauthModal: (data: ReauthModalData) => openModal('reauth', data),
-		closeReauthModal: () => closeModal('reauth'),
+		// Provider Auth Recovery Modal. Opening it for a second credential while the
+		// first is on screen replaces the data rather than stacking, since one login
+		// terminal at a time is all the user can act on.
+		openAuthRecovery: (identityKey: string) => openModal('authRecovery', { identityKey }),
+		closeAuthRecovery: () => closeModal('authRecovery'),
+
+		// Post-login resume confirmation. Opened by the recovery service only when
+		// that credential actually has prompts to replay.
+		openAuthResend: (identityKey: string) => openModal('authResend', { identityKey }),
+		closeAuthResend: () => closeModal('authResend'),
 
 		// Worktree Modals
 		setWorktreeConfigModalOpen: (open: boolean) =>
@@ -1079,7 +1099,6 @@ export function useModalActions() {
 	const wizardResumeModalOpen = useModalStore(selectModalOpen('wizardResume'));
 	const wizardResumeData = useModalStore(selectModalData('wizardResume'));
 	const agentErrorData = useModalStore(selectModalData('agentError'));
-	const reauthData = useModalStore(selectModalData('reauth'));
 	const worktreeConfigModalOpen = useModalStore(selectModalOpen('worktreeConfig'));
 	const createWorktreeModalOpen = useModalStore(selectModalOpen('createWorktree'));
 	const createWorktreeData = useModalStore(selectModalData('createWorktree'));
@@ -1244,7 +1263,6 @@ export function useModalActions() {
 		agentErrorModalSessionId: agentErrorData?.sessionId ?? null,
 
 		// Provider Re-authentication Modal
-		reauthModalData: reauthData ?? null,
 
 		// Worktree Modals
 		worktreeConfigModalOpen,

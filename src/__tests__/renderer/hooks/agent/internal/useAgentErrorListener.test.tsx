@@ -11,7 +11,22 @@ import {
 	cancelRetry,
 	registerBatchResumer,
 } from '../../../../../renderer/stores/retryStore';
-import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
+
+// The reactive auth marking is a fire-and-forget call into the provider auth
+// store; the store's own resolution is covered in its test, so here we only care
+// that the listener routes `auth_expired` to it and nothing else.
+const mockMarkSessionAuthFailure = vi.fn().mockResolvedValue(null);
+vi.mock('../../../../../renderer/stores/providerAuthStore', () => ({
+	markSessionAuthFailure: (...args: unknown[]) => mockMarkSessionAuthFailure(...args),
+}));
+
+// Raising the recovery dialog needs a resolved credential, which needs the
+// hydrated snapshot map over IPC. That is the service's own contract, tested
+// there; here we assert the listener routes to it and honors its answer.
+const mockOpenAuthRecoveryForSession = vi.fn().mockResolvedValue(true);
+vi.mock('../../../../../renderer/services/authRecovery', () => ({
+	openAuthRecoveryForSession: (...args: unknown[]) => mockOpenAuthRecoveryForSession(...args),
+}));
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
 let authExpiredHandler: ((payload: any) => void) | undefined;
@@ -55,8 +70,7 @@ beforeEach(() => {
 		removedWorktreePaths: new Set(),
 	});
 	useModalStore.getState().closeAll();
-	useAuthOutageStore.setState({ outages: {} });
-	useRetryStore.setState({ retries: {}, outages: {} });
+	useRetryStore.setState({ retries: {}, outages: {}, blocked: {} });
 	(window as any).maestro = { ...((window as any).maestro || {}), process: mockProcess };
 });
 
@@ -105,9 +119,7 @@ describe('useAgentErrorListener', () => {
 		expect(agentErrorEntry?.data).toEqual({ sessionId: 'sess-1' });
 	});
 
-	// An expired token downs every agent and pipeline on the provider at once,
-	// so it skips the generic error modal and goes straight to the login flow.
-	it('routes auth_expired to the reauth modal instead of the agentError modal', () => {
+	it('marks the credential and raises recovery on auth_expired', async () => {
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
 		useSessionStore.setState({ sessions: [session] } as any);
@@ -115,107 +127,75 @@ describe('useAgentErrorListener', () => {
 		renderHook(() => useAgentErrorListener(makeDeps()));
 		handler!('sess-1-ai-tab-1', baseError);
 
-		const modal = useModalStore.getState();
-		expect(modal.modals.get('agentError')?.open ?? false).toBe(false);
-		// Addressed by provider, not by agent - one login fixes every agent on it.
-		expect(modal.modals.get('reauth')?.data).toEqual({ providerKey: 'claude-code' });
-		// The session still carries the error so the transcript and Left Bar agree.
-		expect(useSessionStore.getState().sessions[0].agentError?.type).toBe('auth_expired');
-		// The failing tab is recorded now so the resume can replay exactly it.
-		expect(useAuthOutageStore.getState().outages['claude-code'].blocked).toEqual([
-			{ sessionId: 'sess-1', tabIds: ['tab-1'] },
-		]);
+		// Every other agent on this login shows the problem without burning a prompt.
+		expect(mockMarkSessionAuthFailure).toHaveBeenCalledWith('sess-1', 'expired');
+		expect(useSessionStore.getState().sessions[0].state).toBe('error');
+
+		await vi.waitFor(() => expect(mockOpenAuthRecoveryForSession).toHaveBeenCalledWith('sess-1'));
+		// The credential is the subject, so the per-agent error frame stays away.
+		// `isOpen`, not `modals.get`: the store keeps an entry after a close, so
+		// the entry existing proves nothing about what is on screen.
+		expect(useModalStore.getState().isOpen('agentError')).toBe(false);
 	});
 
-	// The whole point of the provider scope: 30 agents on one expired token is
-	// one problem with one fix, not 30 dialogs.
-	it('raises ONE prompt for many agents sharing an expired provider', () => {
-		const sessions = Array.from({ length: 30 }, (_, i) =>
-			createMockSession({
-				id: `sess-${i}`,
-				toolType: 'claude-code',
-				aiTabs: [createMockAITab({ id: `tab-${i}` })],
-				activeTabId: `tab-${i}`,
-			})
-		);
-		useSessionStore.setState({ sessions } as any);
-
-		renderHook(() => useAgentErrorListener(makeDeps()));
-		let opens = 0;
-		const unsub = useModalStore.subscribe((state, prev) => {
-			if (state.modals.get('reauth') !== prev.modals.get('reauth')) opens++;
-		});
-		sessions.forEach((s, i) => handler!(`${s.id}-ai-tab-${i}`, baseError));
-		unsub();
-
-		expect(opens).toBe(1);
-		// ...but every one of them is on the roster, or its queued work could
-		// never be resumed.
-		expect(useAuthOutageStore.getState().outages['claude-code'].blocked).toHaveLength(30);
-	});
-
-	it('keeps a different provider on its own prompt', () => {
-		useSessionStore.setState({
-			sessions: [
-				createMockSession({
-					id: 'sess-claude',
-					toolType: 'claude-code',
-					aiTabs: [createMockAITab({ id: 'tab-1' })],
-					activeTabId: 'tab-1',
-				}),
-				createMockSession({
-					id: 'sess-codex',
-					toolType: 'codex',
-					aiTabs: [createMockAITab({ id: 'tab-2' })],
-					activeTabId: 'tab-2',
-				}),
-			],
-		} as any);
-
-		renderHook(() => useAgentErrorListener(makeDeps()));
-		handler!('sess-claude-ai-tab-1', baseError);
-		handler!('sess-codex-ai-tab-2', baseError);
-
-		const outages = useAuthOutageStore.getState().outages;
-		expect(Object.keys(outages).sort()).toEqual(['claude-code', 'codex']);
-	});
-
-	// Cue spawns its agents outside the ProcessManager, so a pipeline auth
-	// failure arrives on its own channel - and that is the case where a silent
-	// failure costs the most.
-	it('folds a pipeline auth failure into the same provider outage', () => {
+	// A credential we cannot identify has no recovery to offer, so the failure
+	// must still be explained rather than silently swallowed.
+	it('falls back to the error frame when the credential cannot be identified', async () => {
+		mockOpenAuthRecoveryForSession.mockResolvedValueOnce(false);
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
 		useSessionStore.setState({ sessions: [session] } as any);
 
 		renderHook(() => useAgentErrorListener(makeDeps()));
-		authExpiredHandler!({
-			sessionId: 'sess-1',
-			agentId: 'claude-code',
-			message: 'OAuth token has expired.',
-			fromPipeline: true,
-		});
+		handler!('sess-1-ai-tab-1', baseError);
 
-		expect(useModalStore.getState().modals.get('reauth')?.data).toEqual({
-			providerKey: 'claude-code',
-		});
-		const outage = useAuthOutageStore.getState().outages['claude-code'];
-		expect(outage.fromPipeline).toBe(true);
-		// A pipeline run owns no AI tab, so there is no turn to replay for it.
-		expect(outage.blocked).toEqual([{ sessionId: 'sess-1', tabIds: [] }]);
+		await vi.waitFor(() => expect(useModalStore.getState().isOpen('agentError')).toBe(true));
+		expect(useModalStore.getState().getData('agentError')).toEqual({ sessionId: 'sess-1' });
 	});
 
-	it('ignores a pipeline auth failure for an agent that no longer exists', () => {
-		useSessionStore.setState({ sessions: [] } as any);
+	it('parks the prompt the auth failure killed, without sending anything', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
 
 		renderHook(() => useAgentErrorListener(makeDeps()));
-		authExpiredHandler!({
-			sessionId: 'deleted',
-			agentId: 'claude-code',
-			message: 'OAuth token has expired.',
-		});
+		handler!('sess-1-ai-tab-1', baseError);
 
-		expect(useModalStore.getState().modals.get('reauth')?.open ?? false).toBe(false);
+		// Parked for the login to offer back - NOT scheduled: a timer would just
+		// burn another prompt against a credential no one has repaired yet.
+		expect(useRetryStore.getState().blocked['sess-1:tab-1']).toMatchObject({
+			sessionId: 'sess-1',
+			tabId: 'tab-1',
+			itemId: 'item-1',
+			preview: 'hi',
+		});
+		expect(useRetryStore.getState().retries['sess-1:tab-1']).toBeUndefined();
+		// The error still surfaces normally.
+		expect(useSessionStore.getState().sessions[0].state).toBe('error');
+	});
+
+	it('parks nothing for a non-auth error', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'permission_denied' });
+
+		expect(useRetryStore.getState().blocked).toEqual({});
+	});
+
+	it('does not mark a credential for a non-auth error', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'network_error' });
+
+		expect(mockMarkSessionAuthFailure).not.toHaveBeenCalled();
 	});
 
 	it('clears stale agentSessionId on session_not_found', () => {

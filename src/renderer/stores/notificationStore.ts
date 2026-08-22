@@ -53,11 +53,18 @@ const TOAST_TYPE_TO_COLOR: Record<ToastType, ToastColor> = {
  *   - jump-session: switch to the agent (and optionally a specific AI tab)
  *   - open-file: switch to the agent and open a file in its File Preview pane
  *   - open-url: open an external URL in the system browser
+ *   - provider-auth-recovery: open the recovery flow for one credential
+ *
+ * `provider-auth-recovery` is renderer-produced only (the logged-out startup
+ * toast). It is deliberately NOT accepted by the CLI / Cue / web-server toast
+ * bridges: an external caller has no way to know a local identity key, and the
+ * flow it opens signs a user into an account on this machine.
  */
 export type ToastClickAction =
 	| { kind: 'jump-session'; sessionId: string; tabId?: string }
 	| { kind: 'open-file'; sessionId: string; path: string }
-	| { kind: 'open-url'; url: string };
+	| { kind: 'open-url'; url: string }
+	| { kind: 'provider-auth-recovery'; identityKey: string };
 
 export interface Toast {
 	id: string;

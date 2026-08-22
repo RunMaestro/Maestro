@@ -20,7 +20,7 @@ Settings are organized into tabs:
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                                                                                                   |
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
-| **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
+| **Environment**                 | Provider account logins, plus global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                          |
 | **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                                                                                                         |
 
 ## Maestro Prompts
@@ -112,6 +112,19 @@ When you start a session, Maestro includes your conductor profile in the system 
 ### Using in Custom Commands
 
 You can reference your conductor profile in [slash commands](./slash-commands) using the `{{CONDUCTOR_PROFILE}}` template variable. This is useful for commands that need to remind agents of your preferences mid-conversation.
+
+## Provider Accounts
+
+Settings → **Environment** → **Provider Accounts** lists every provider login Maestro knows about, one row per account rather than one per agent. Fifteen agents that share one Anthropic login are one row here, so signing in once unblocks all of them.
+
+Each row shows the account, whether it is signed in, the name the provider reported, and when it was last checked. Two actions per row:
+
+- **Sign In** runs the provider's login command inside Maestro and re-checks the account when it finishes. It is offered only for accounts that a login can repair.
+- **Re-check** (the circular arrow) runs one status command for that account. **Re-Check All Accounts** does it for every one.
+
+An account that presents an API key, a gateway token, or cloud credentials gets no Sign In button. There is nothing a login could fix, so the row names the environment variable to change instead, which you edit in the same tab (see below) or in that agent's own configuration.
+
+**Check provider logins at startup** is on by default: at launch Maestro runs one status command for each account it can check quickly, so an expired login is visible before you send a prompt into it. It deliberately skips accounts it checked recently, agents you have not opened in the last week, and anything running on an SSH remote - those are checked when you open the tab or press **Re-Check All Accounts**, so a launch never waits on a remote host. Turn it off if you would rather check accounts by hand; the buttons above keep working either way.
 
 ## Global Environment Variables
 

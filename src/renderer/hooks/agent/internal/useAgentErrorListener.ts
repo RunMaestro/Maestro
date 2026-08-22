@@ -15,6 +15,13 @@
  * If an Auto Run batch is active, this listener pauses it via
  * `pauseBatchOnErrorRef` and records a USER-facing history entry with a
  * remediation hint specific to the error type.
+ *
+ * An `auth_expired` error additionally marks the CREDENTIAL behind the agent
+ * (`markSessionAuthFailure`), so every other agent sharing that login surfaces
+ * the problem immediately rather than each rediscovering it one wasted prompt at
+ * a time, and parks the killed prompt (`noteAuthBlockedPrompt`) so the login can
+ * offer to resume it. Both are purely additive - nothing else in this listener
+ * changes shape because of them.
  */
 
 import { useEffect } from 'react';
@@ -22,6 +29,8 @@ import { useSessionStore } from '../../../stores/sessionStore';
 import { useModalStore } from '../../../stores/modalStore';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
 import { notifyToast } from '../../../stores/notificationStore';
+import { markSessionAuthFailure } from '../../../stores/providerAuthStore';
+import { openAuthRecoveryForSession } from '../../../services/authRecovery';
 import {
 	parseSessionId,
 	parseGroupChatSessionId,
@@ -32,8 +41,11 @@ import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
-import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
-import { reportAuthFailure } from '../../../stores/authOutageStore';
+import {
+	scheduleRetryForError,
+	getRetryEntry,
+	noteAuthBlockedPrompt,
+} from '../../../stores/retryStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -138,6 +150,20 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				message: error.message,
 				recoverable: error.recoverable,
 			});
+
+			// Mark the CREDENTIAL, not the agent. An expired login is dead for every
+			// agent presenting it, so the other fourteen show it now instead of each
+			// discovering it by burning a prompt. Fire-and-forget and additive: this
+			// changes nothing about the error frame, the modal, or auto-retry below.
+			//
+			// The prompt this error killed is parked at the same time, so a successful
+			// login can offer to resume it instead of the user discovering their work
+			// was silently dropped. Parking is not sending: nothing replays until the
+			// login lands and the user confirms.
+			if (agentError.type === 'auth_expired') {
+				void markSessionAuthFailure(actualSessionId, agentError.message);
+				if (tabIdFromSession) noteAuthBlockedPrompt(actualSessionId, tabIdFromSession);
+			}
 
 			const isSessionNotFound = agentError.type === 'session_not_found';
 
@@ -313,7 +339,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							willAutoRetryBatch
 								? '- Agent Resilience is retrying this automatically; the run will continue on its own once the provider recovers.'
 								: agentError.type === 'auth_expired'
-									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
+									? '- Sign in from the agent error dialog (or the provider badge in the Left Bar); Maestro runs the login for you'
 									: agentError.type === 'token_exhaustion'
 										? '- Start a new session to reset the context window'
 										: agentError.type === 'rate_limited'
@@ -353,25 +379,21 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				}
 			}
 
-			const erroredSession = getSessions().find((s) => s.id === actualSessionId);
-
 			if (!isSessionNotFound && !willAutoRetry) {
 				// An expired token is not a per-turn error: it fails every agent on
-				// that provider at once. The outage store groups them, so the tenth
-				// agent to fail joins the prompt already on screen instead of stacking
-				// a tenth copy of it - and joining is what puts the agent on the list
-				// of work to resume once the login succeeds.
+				// that credential at once. So raise the recovery modal on the
+				// CREDENTIAL rather than an error frame on this one agent - the login
+				// it asks for repairs all of them. The credential was already marked
+				// above, which is what raises the other agents' badges; this is the
+				// dialog for the user sitting here watching this one fail.
+				//
+				// Async because identity resolution needs the hydrated snapshot map.
+				// A credential we cannot identify falls back to the ordinary error
+				// frame rather than leaving the failure unexplained.
 				if (agentError.type === 'auth_expired') {
-					const { opened, providerKey } = reportAuthFailure({
-						sessionId: actualSessionId,
-						message: agentError.message,
-						// Recorded now so the resume can replay exactly this turn. Same
-						// resolution the state update above used: the tab named by the
-						// process id, else the active one.
-						tabId:
-							tabIdFromSession ?? (erroredSession ? getActiveTab(erroredSession)?.id : undefined),
+					void openAuthRecoveryForSession(actualSessionId).then((opened) => {
+						if (!opened) openModal('agentError', { sessionId: actualSessionId });
 					});
-					if (opened && providerKey) openModal('reauth', { providerKey });
 				} else {
 					openModal('agentError', { sessionId: actualSessionId });
 				}
@@ -391,19 +413,16 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 	// Auth expiry raised outside the streaming path (Cue pipeline runs). Those
 	// agents are spawned by Cue itself, so they never reach `agent:error` - and
 	// an unattended pipeline is exactly the case where a silent auth failure
-	// costs the most. Routed through the same outage store as an interactive
+	// costs the most. Marked against the same CREDENTIAL as an interactive
 	// failure, so a board where both chat agents and pipelines share one expired
-	// token still produces exactly one prompt listing all of them.
+	// login still produces exactly one badge and one recovery dialog.
 	useEffect(() => {
 		return window.maestro.process.onAuthExpired((payload) => {
-			const { opened, providerKey } = reportAuthFailure({
-				sessionId: payload.sessionId,
-				message: payload.message,
-				fromPipeline: payload.fromPipeline,
-			});
-			if (opened && providerKey) {
-				useModalStore.getState().openModal('reauth', { providerKey });
-			}
+			// No prompt is parked here: a pipeline run owns no AI tab, so there is
+			// no turn to offer back once the login lands.
+			void markSessionAuthFailure(payload.sessionId, payload.message).then(() =>
+				openAuthRecoveryForSession(payload.sessionId)
+			);
 		});
 	}, []);
 }

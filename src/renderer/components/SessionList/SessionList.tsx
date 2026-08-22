@@ -561,6 +561,13 @@ function SessionListInner(props: SessionListProps) {
 		setDragOverTarget(null);
 	}, []);
 
+	// Auth indicator click - memoized to prevent SessionItem re-renders.
+	// Opens the recovery modal for the CREDENTIAL, not for the row that was
+	// clicked: every agent on that login is repaired by the one sign-in.
+	const handleAuthIndicatorClick = useCallback((identityKey: string) => {
+		getModalActions().openAuthRecovery(identityKey);
+	}, []);
+
 	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders
 	const toggleBookmark = useCallback(
 		(sessionId: string) => {
@@ -883,6 +890,7 @@ function SessionListInner(props: SessionListProps) {
 					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
 					dragDisabled={dragDisabled}
+					onAuthIndicatorClick={handleAuthIndicatorClick}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -943,6 +951,7 @@ function SessionListInner(props: SessionListProps) {
 										wizardActive={wizardActiveSessions.has(child.id)}
 										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
 										dragDisabled={dragDisabled}
+										onAuthIndicatorClick={handleAuthIndicatorClick}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}

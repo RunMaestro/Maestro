@@ -59,6 +59,7 @@ import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
 import { createImagesApi } from './images';
+import { createProviderAuthApi } from './providerAuth';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -226,6 +227,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
+
+	// Provider Auth API (credential login state, re-probe, change events)
+	providerAuth: createProviderAuthApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -316,6 +320,8 @@ export {
 	createMemoryApi,
 	// Session Images
 	createImagesApi,
+	// Provider Auth
+	createProviderAuthApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -565,3 +571,10 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From providerAuth
+	ProviderAuthApi,
+	ProviderAuthChange,
+	ProviderAuthProbeCounts,
+	ProviderAuthReprobeResult,
+} from './providerAuth';

@@ -187,6 +187,12 @@ describe('searchableSettings', () => {
 			// SSH tab
 			['test connection', 'ssh-remotes'],
 
+			// Environment tab
+			['provider accounts', 'environment-provider-accounts'],
+			['sign in', 'environment-provider-accounts'],
+			['logged out', 'environment-provider-accounts'],
+			['re-check', 'environment-provider-accounts'],
+
 			// Encore tab
 			['lookback', 'encore-usage-stats'],
 			['coding activity', 'encore-usage-stats'],

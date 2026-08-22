@@ -53,7 +53,9 @@ describe('detectCueAuthFailure', () => {
 			'claude-code'
 		);
 		expect(message).toBeTruthy();
-		expect(message).toMatch(/re-authenticate|login/i);
+		// The point is that the message tells the user to re-authenticate, not the
+		// exact wording - the pattern bank owns that copy.
+		expect(message).toMatch(/re-authenticate|log ?in|sign in/i);
 	});
 
 	it('detects an auth failure that only appears on stdout', () => {

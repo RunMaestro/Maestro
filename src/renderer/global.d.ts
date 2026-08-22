@@ -3681,6 +3681,62 @@ interface MaestroAPI {
 		delete: (filePath: string) => Promise<void>;
 	};
 
+	// Provider Auth API (credential login state, re-probe, change events)
+	providerAuth: {
+		getAll: () => Promise<Record<string, import('../shared/providerAuth').ProviderAuthSnapshot>>;
+		reprobe: (
+			key: string,
+			options?: { source?: import('../shared/providerAuth').ProviderAuthSource }
+		) => Promise<{
+			identities: number;
+			probed: number;
+			skippedFresh: number;
+			skippedNotInstalled: number;
+			byStatus: Record<string, number>;
+			snapshot?: import('../shared/providerAuth').ProviderAuthSnapshot | null;
+		}>;
+		reprobeAll: () => Promise<{
+			identities: number;
+			probed: number;
+			skippedFresh: number;
+			skippedNotInstalled: number;
+			byStatus: Record<string, number>;
+		}>;
+		mark: (
+			key: string,
+			request?: {
+				status?: 'logged-out' | 'unsupported';
+				detail?: string;
+				source?: import('../shared/providerAuth').ProviderAuthSource;
+				identity?: import('../shared/providerAuth').CredentialIdentity;
+			}
+		) => Promise<import('../shared/providerAuth').ProviderAuthSnapshot | null>;
+		startLogin: (request: {
+			identityKey: string;
+			runSessionId: string;
+			cols?: number;
+			rows?: number;
+			preferConsole?: boolean;
+			sso?: boolean;
+		}) => Promise<{
+			started: boolean;
+			runSessionId: string;
+			commandLine?: string;
+			note?: string;
+			remote?: boolean;
+			remoteLabel?: string;
+			pid?: number;
+			error?: string;
+		}>;
+		stopLogin: (runSessionId: string) => Promise<boolean>;
+		onChange: (
+			callback: (change: {
+				key: string;
+				snapshot: import('../shared/providerAuth').ProviderAuthSnapshot | null;
+			}) => void
+		) => () => void;
+	};
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;

@@ -45,6 +45,13 @@ export interface ProcessConfig {
 	/** Human-readable remote command line (the actual agent invocation running on the
 	 *  remote host). Surfaced in Process Details above the local SSH command. */
 	sshRemoteCommand?: string;
+	/** Forward PTY output verbatim, without `stripControlSequences()`.
+	 *  Terminal tabs get this implicitly from their `{sessionId}-terminal-{tabId}`
+	 *  id; this flag is for a PTY that also renders into xterm.js but deliberately
+	 *  does NOT carry that id (the auth-recovery login PTY, whose id must match no
+	 *  agent listener). Without it the escape sequences the CLI's login screen
+	 *  draws itself with are filtered out before they reach the terminal. */
+	rawPtyOutput?: boolean;
 	/** PTY terminal width in columns (default 80) */
 	cols?: number;
 	/** PTY terminal height in rows (default 24) */

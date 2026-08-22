@@ -81,6 +81,9 @@ export interface MaestroSettings {
 	sshRemoteIgnorePatterns: string[];
 	// Whether to honor .gitignore files on remote hosts
 	sshRemoteHonorGitignore: boolean;
+	// Whether the startup pass probes provider logins (one status command per
+	// credential identity). Off means accounts are only checked on demand.
+	providerAuthProbeOnStartup: boolean;
 	// Unique installation identifier (generated once on first run)
 	installationId: string | null;
 	// WakaTime integration

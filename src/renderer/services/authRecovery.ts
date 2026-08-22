@@ -1,0 +1,196 @@
+/**
+ * authRecovery - what happens after a provider login finishes.
+ *
+ * The recovery modal runs the login command; this module decides whether it
+ * WORKED and repairs everything the dead login broke. Two rules shape it:
+ *
+ *   - **Nothing is claimed without a probe.** A finished browser flow is not
+ *     evidence: some CLIs keep running after the browser step, some redirect to
+ *     a success page and still fail to write a token. So the verdict always
+ *     comes from a fresh `providerAuth:reprobe`, and a probe that cannot answer
+ *     reports `unknown` rather than guessing at success.
+ *   - **A repaired login repairs every agent on it.** The error was recorded
+ *     against the CREDENTIAL, so clearing it against one agent would leave the
+ *     other fourteen wearing a badge for a login that already works. Clearing is
+ *     type-scoped: a rate-limit or network error on one of those agents is still
+ *     true and survives.
+ *   - **The work the dead login ate is offered back, never replayed silently.**
+ *     Each blocked prompt was parked in `retryStore`; a successful probe raises
+ *     the confirm modal listing them, and nothing is sent until the user says
+ *     so.
+ *
+ * Lives in `services/` rather than in a store because it is glue - it spans
+ * `providerAuthStore` (which credential, which agents), `agentStore` (clear the
+ * error), and `modalStore` (close the error modal that is now describing a fixed
+ * problem). No store imports it, so there is no cycle to reason about.
+ */
+
+import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { useAgentStore } from '../stores/agentStore';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { getModalActions, selectModalData, useModalStore } from '../stores/modalStore';
+import {
+	getIdentityForSession,
+	getSessionsForIdentity,
+	useProviderAuthStore,
+} from '../stores/providerAuthStore';
+import { getBlockedPrompts } from '../stores/retryStore';
+import { logger } from '../utils/logger';
+
+const LOG_CONTEXT = '[AuthRecovery]';
+
+/**
+ * What the post-login probe found.
+ *
+ * `unknown` is deliberately distinct from `logged-out`: one means the provider
+ * says there is no login, the other means Maestro could not get an answer. Both
+ * keep the modal open, but only the first has anything to explain.
+ */
+/**
+ * Open the recovery modal for the credential a failing agent presents.
+ *
+ * The agent that failed is not the subject - its credential is. Resolving the
+ * identity needs the hydrated snapshot map (identity depends on the home dir and
+ * the agent-level env), so this is async and callers on the error path fire it
+ * without awaiting; an error frame must not wait on an IPC round trip.
+ *
+ * Opening is idempotent per credential. The tenth agent to die on one expired
+ * login re-opens the same modal rather than stacking a tenth copy, which is what
+ * lets one dialog describe the whole blast radius.
+ *
+ * Never throws: a credential we cannot identify costs the automatic dialog, and
+ * the user can still reach it from the Left Bar badge. It must not disturb the
+ * error handling it runs alongside.
+ */
+export async function openAuthRecoveryForSession(sessionId: string): Promise<boolean> {
+	try {
+		await useProviderAuthStore.getState().hydrate();
+		const identity = getIdentityForSession(sessionId);
+		if (!identity) return false;
+		getModalActions().openAuthRecovery(identity.key);
+		return true;
+	} catch (error) {
+		logger.warn('Could not open auth recovery for session', LOG_CONTEXT, {
+			sessionId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return false;
+	}
+}
+
+export type AuthVerifyStatus = 'authenticated' | 'logged-out' | 'unknown';
+
+export interface AuthVerifyOutcome {
+	status: AuthVerifyStatus;
+	/** Agents whose auth error was cleared. Empty unless the login worked. */
+	clearedSessionIds: string[];
+}
+
+/**
+ * Clear the auth error on every agent presenting one credential.
+ *
+ * Returns the ids that actually had one, so the caller can say how much the
+ * login fixed. Also closes the agent-error modal when it is sitting on one of
+ * those agents: the recovery modal is layered on top of it, and leaving it
+ * behind would show the user an error frame for a problem that is now repaired.
+ */
+export function clearAuthErrorsForIdentity(identityKey: string): string[] {
+	const { clearAuthErrors } = useAgentStore.getState();
+	const cleared: string[] = [];
+	for (const session of getSessionsForIdentity(identityKey)) {
+		if (clearAuthErrors(session.id)) cleared.push(session.id);
+	}
+
+	const errorModalSessionId = selectModalData('agentError')(useModalStore.getState())?.sessionId;
+	if (errorModalSessionId && cleared.includes(errorModalSessionId)) {
+		getModalActions().setAgentErrorModalSessionId(null);
+	}
+
+	return cleared;
+}
+
+/**
+ * Re-probe one credential after a login and act on what comes back.
+ *
+ * On success this is the whole payoff: the snapshot is rewritten as
+ * `login-flow`, every agent on the credential drops its auth error, one green
+ * flash confirms it, and any prompt the outage killed is offered back through
+ * the resume modal. On anything else it reports honestly and changes
+ * nothing - the caller keeps its modal (and the terminal scrollback that
+ * explains what went wrong) on screen.
+ *
+ * Never throws: a failed probe is a verdict of `unknown`, not an exception for
+ * the modal to handle.
+ */
+export async function verifyAuthRecovery(identityKey: string): Promise<AuthVerifyOutcome> {
+	let probed = false;
+	try {
+		// `login-flow` so the stored record says WHY it says what it says: a user
+		// finished a login here, not a background sweep that found a live token.
+		const refresh = await useProviderAuthStore
+			.getState()
+			.refreshIdentity(identityKey, { source: 'login-flow' });
+		probed = refresh.probed;
+	} catch (error) {
+		// `refreshIdentity` swallows its own failures; this is the belt to its
+		// braces, and it lands on `unknown` below either way.
+		logger.warn('Re-probe after login failed', LOG_CONTEXT, {
+			identityKey,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+
+	const snapshot = useProviderAuthStore.getState().snapshots[identityKey];
+	// The stored snapshot is only evidence when a probe actually produced it. A
+	// pass that declined to probe - the detector was not up, the CLI is not
+	// installed here, no session references this credential any more - leaves the
+	// PREVIOUS record in place, and that record is usually the `error-pattern`
+	// mark that opened this modal. Reading it back would tell a user who just
+	// signed in successfully that they are still signed out, on the strength of a
+	// probe that never ran.
+	const status: AuthVerifyStatus = !probed
+		? 'unknown'
+		: snapshot?.status === 'authenticated'
+			? 'authenticated'
+			: snapshot?.status === 'logged-out'
+				? 'logged-out'
+				: 'unknown';
+
+	if (status !== 'authenticated') {
+		return { status, clearedSessionIds: [] };
+	}
+
+	const clearedSessionIds = clearAuthErrorsForIdentity(identityKey);
+
+	// The prompts this credential killed are parked, not lost. Offer them back
+	// rather than resending on our own: minutes have passed, and a prompt the
+	// user has since changed their mind about must not leave without being seen.
+	// Asked over every agent on the credential, not just the ones we cleared - a
+	// blocked prompt whose error was dismissed by hand is still a blocked prompt.
+	const resumable = getBlockedPrompts(getSessionsForIdentity(identityKey).map((s) => s.id));
+	if (resumable.length > 0) getModalActions().openAuthResend(identityKey);
+
+	const identity = snapshot?.identity;
+	const account = identity ? `${getAgentDisplayName(identity.provider)} (${identity.label})` : null;
+	notifyCenterFlash({
+		color: 'green',
+		message: account ? `Signed in to ${account}` : 'Signed in',
+		// The count is the answer to the question the user actually had, which was
+		// never "which key expired" but "what of mine is broken".
+		...(clearedSessionIds.length > 0
+			? {
+					detail:
+						clearedSessionIds.length === 1
+							? '1 agent unblocked'
+							: `${clearedSessionIds.length} agents unblocked`,
+				}
+			: {}),
+	});
+
+	logger.info('Provider login verified', LOG_CONTEXT, {
+		identityKey,
+		clearedSessions: clearedSessionIds.length,
+	});
+
+	return { status, clearedSessionIds };
+}

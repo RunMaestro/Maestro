@@ -27,7 +27,7 @@ import {
 import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
-import { reportAuthFailure } from '../../stores/authOutageStore';
+import { useSessionAuthSnapshot, useSessionIdentity } from '../../stores/providerAuthStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
@@ -100,7 +100,10 @@ export interface ModalHandlersReturn {
 	handleStartNewSessionAfterError: (sessionId: string) => void;
 	handleRetryAfterError: (sessionId: string) => void;
 	handleRestartAgentAfterError: (sessionId: string) => Promise<void>;
-	handleAuthenticateAfterError: (sessionId: string) => void;
+	/** Open the in-app login flow for one credential (the Auth Recovery Modal). */
+	handleOpenAuthRecovery: (identityKey: string) => void;
+	/** Open one agent's env-var editor, for credentials no login can repair. */
+	handleConfigureCredentials: (session: Session) => void;
 
 	// Open handlers
 	handleOpenQueueBrowser: () => void;
@@ -432,22 +435,27 @@ export function useModalHandlers(
 		[inputRef]
 	);
 
-	// Hand off to the re-authentication terminal rather than the bare terminal
-	// tab: the login flow finishes inside the modal, so the user never has to
-	// remember the provider's login command. Registering the failure first is
-	// what scopes the dialog to the provider and puts this agent on the list to
-	// resume - reached when the user opens a historical error by hand, so the
-	// outage may not exist yet.
-	const handleAuthenticateAfterError = useCallback((sessionId: string) => {
-		const session = selectSessionById(sessionId)(useSessionStore.getState());
-		const { providerKey } = reportAuthFailure({
-			sessionId,
-			message: session?.agentError?.message ?? 'The provider rejected the stored credentials.',
-			tabId: session?.agentErrorTabId,
-		});
-		useAgentStore.getState().authenticateAfterError(sessionId);
+	/**
+	 * Repair the login itself, in app.
+	 *
+	 * Keyed by CREDENTIAL, not by the failing agent: one recovery repairs every
+	 * agent presenting it. The error modal deliberately stays open underneath -
+	 * the recovery modal layers over it, `verifyAuthRecovery()` closes it the
+	 * moment the login checks out, and a login that does NOT check out leaves the
+	 * user looking at the error they were already reading rather than at nothing.
+	 */
+	const handleOpenAuthRecovery = useCallback((identityKey: string) => {
+		getModalActions().openAuthRecovery(identityKey);
+	}, []);
+
+	/**
+	 * The remedy for a credential no login can repair: the agent's own env-var
+	 * editor. The error is left recorded, because a rejected key is still rejected
+	 * until the user changes it.
+	 */
+	const handleConfigureCredentials = useCallback((session: Session) => {
 		getModalActions().setAgentErrorModalSessionId(null);
-		if (providerKey) getModalActions().openReauthModal({ providerKey });
+		getModalActions().setEditAgentSession(session);
 	}, []);
 
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
@@ -457,12 +465,20 @@ export function useModalHandlers(
 		? historicalAgentError
 		: (errorSession?.agentError ?? undefined);
 
+	// The credential behind the failing agent decides which auth remedy the modal
+	// offers, so it is resolved here rather than inside the recovery hook - the
+	// hook stays a pure mapping from (error, credential) to actions.
+	const authIdentity = useSessionIdentity(errorSession?.id ?? '');
+	const authSnapshot = useSessionAuthSnapshot(errorSession?.id ?? '');
+
 	// Use the agent error recovery hook to get recovery actions
 	// Historical errors get no recovery actions (they're read-only)
 	const { recoveryActions } = useAgentErrorRecovery({
 		error: effectiveError,
 		agentId: errorSession?.toolType || 'claude-code',
 		sessionId: errorSession?.id || '',
+		identity: authIdentity,
+		...(authSnapshot?.accountLabel ? { accountLabel: authSnapshot.accountLabel } : {}),
 		onNewSession:
 			!isHistorical && errorSession
 				? () => handleStartNewSessionAfterError(errorSession.id)
@@ -476,9 +492,11 @@ export function useModalHandlers(
 				? () => handleRestartAgentAfterError(errorSession.id)
 				: undefined,
 		onAuthenticate:
-			!isHistorical && errorSession
-				? () => handleAuthenticateAfterError(errorSession.id)
+			!isHistorical && errorSession && authIdentity
+				? () => handleOpenAuthRecovery(authIdentity.key)
 				: undefined,
+		onConfigureCredentials:
+			!isHistorical && errorSession ? () => handleConfigureCredentials(errorSession) : undefined,
 	});
 
 	// ====================================================================
@@ -1080,7 +1098,8 @@ export function useModalHandlers(
 		handleStartNewSessionAfterError,
 		handleRetryAfterError,
 		handleRestartAgentAfterError,
-		handleAuthenticateAfterError,
+		handleOpenAuthRecovery,
+		handleConfigureCredentials,
 
 		// Open handlers
 		handleOpenQueueBrowser,

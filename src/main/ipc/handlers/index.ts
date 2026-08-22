@@ -69,6 +69,7 @@ import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import { registerProviderAuthHandlers, ProviderAuthHandlerDependencies } from './provider-auth';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -132,6 +133,8 @@ export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerProviderAuthHandlers };
+export type { ProviderAuthHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -329,6 +332,16 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register Provider Auth handlers (credential login state + re-probe).
+	// NOTE: the running app does NOT call registerAllHandlers - the live
+	// registration is in setupIpcHandlers() in src/main/index.ts.
+	registerProviderAuthHandlers({
+		sessionsStore: deps.sessionsStore,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+		getAgentDetector: deps.getAgentDetector,
+		getProcessManager: deps.getProcessManager,
+	});
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

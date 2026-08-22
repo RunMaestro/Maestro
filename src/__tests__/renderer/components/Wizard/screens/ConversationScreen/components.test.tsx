@@ -153,7 +153,7 @@ describe('ConversationScreen components', () => {
 					type: 'auth_expired',
 					title: 'Auth failed',
 					message: 'Please sign in',
-					recoveryHint: 'Run login',
+					recoveryHint: 'The provider rejected the credentials for this agent.',
 					canRetry: false,
 				}}
 				errorRetryCount={3}
@@ -168,10 +168,78 @@ describe('ConversationScreen components', () => {
 		fireEvent.click(screen.getByRole('button', { name: '(Debug Logs)' }));
 
 		expect(screen.getByText('Auth failed')).toBeInTheDocument();
-		expect(screen.getByText('Run login')).toBeInTheDocument();
+		expect(
+			screen.getByText('The provider rejected the credentials for this agent.')
+		).toBeInTheDocument();
 		expect(onRetry).toHaveBeenCalledTimes(1);
 		expect(onGoBack).toHaveBeenCalledTimes(1);
 		expect(onDownloadDebugLogs).toHaveBeenCalledTimes(1);
+	});
+
+	it('offers the in-app sign-in when the credential can be repaired by one', () => {
+		const onSignIn = vi.fn();
+
+		render(
+			<ConversationErrorPanel
+				theme={mockTheme}
+				error="Raw error"
+				detectedError={{
+					type: 'auth_expired',
+					title: 'Authentication Required',
+					message: 'OAuth token has expired.',
+					recoveryHint: 'The provider rejected the credentials for this agent.',
+					canRetry: false,
+				}}
+				errorRetryCount={0}
+				authRecovery={{
+					hint: 'Sign in here and Maestro runs the login for you.',
+					action: { label: 'Sign in to Claude Code (.claude)', onClick: onSignIn },
+				}}
+				onRetry={vi.fn()}
+				onGoBack={vi.fn()}
+				onDownloadDebugLogs={vi.fn()}
+			/>
+		);
+
+		// The credential-aware hint replaces the generic one.
+		expect(
+			screen.getByText('Sign in here and Maestro runs the login for you.')
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText('The provider rejected the credentials for this agent.')
+		).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Sign in to Claude Code (.claude)' }));
+		expect(onSignIn).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows no sign-in button when a login cannot repair the credential', () => {
+		render(
+			<ConversationErrorPanel
+				theme={mockTheme}
+				error="Raw error"
+				detectedError={{
+					type: 'auth_expired',
+					title: 'Authentication Required',
+					message: 'Your API key is invalid.',
+					recoveryHint: 'The provider rejected the credentials for this agent.',
+					canRetry: false,
+				}}
+				errorRetryCount={0}
+				authRecovery={{
+					hint: 'ANTHROPIC_AUTH_TOKEN was rejected - signing in cannot fix it.',
+					action: null,
+				}}
+				onRetry={vi.fn()}
+				onGoBack={vi.fn()}
+				onDownloadDebugLogs={vi.fn()}
+			/>
+		);
+
+		expect(
+			screen.getByText('ANTHROPIC_AUTH_TOKEN was rejected - signing in cannot fix it.')
+		).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Sign in/ })).not.toBeInTheDocument();
 	});
 
 	it('shows Try Again after repeated generic errors', () => {

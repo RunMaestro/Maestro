@@ -98,7 +98,7 @@
 			},
 			{
 				"group": "Providers & CLI",
-				"pages": ["provider-notes", "multi-claude", "cli"]
+				"pages": ["provider-notes", "provider-auth", "multi-claude", "cli"]
 			},
 			{
 				"group": "Integrations",

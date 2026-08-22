@@ -9,8 +9,30 @@
  * taking index 0, and treat a queue with no runnable items as drained.
  */
 
+import { truncateCommand } from '../../shared/formatters';
 import type { QueuedItem, Session, SessionState } from '../types';
 import { getTabDisplayName, markTabRunningQueuedItem, resolveQueuedItemTarget } from './tabHelpers';
+
+/**
+ * One-line, human-readable label for a queued item, for any surface that has to
+ * show the user WHICH prompt it is about to act on (resend it, drop it, replay
+ * it after a login). A command is shown the way the user typed it, arguments
+ * included, since `/commit` and `/commit --amend` are different requests.
+ *
+ * An item with no text at all (images only) still gets a label: silence would
+ * read as an empty row rather than as "this one is a screenshot".
+ */
+export function getQueuedItemLabel(item: QueuedItem, maxLength = 80): string {
+	const raw =
+		item.type === 'command'
+			? [item.command, item.commandArgs].filter(Boolean).join(' ')
+			: (item.text ?? '');
+	const text = truncateCommand(raw, maxLength);
+	if (text) return text;
+	const images = item.images?.length ?? 0;
+	if (images > 0) return images === 1 ? '1 image' : `${images} images`;
+	return 'Empty prompt';
+}
 
 /** A queued item is runnable when it is not held/paused by the user. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {

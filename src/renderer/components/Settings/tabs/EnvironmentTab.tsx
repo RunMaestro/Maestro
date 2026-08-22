@@ -1,25 +1,39 @@
 /**
- * EnvironmentTab - Global environment variables settings tab
+ * EnvironmentTab - Provider accounts and global environment variables
  *
- * Provides a dedicated panel for managing global environment variables
- * that cascade to all agents and terminal sessions. Per-agent env vars
- * (configured in agent settings) override these globals.
+ * Both halves of this tab describe the same thing from two directions: the
+ * credential an agent presents, and the environment that decides which one it
+ * is. Provider Accounts comes first because it is the one a user goes looking
+ * for when something is broken, and because the env vars below it are exactly
+ * what a non-OAuth account's row tells them to change.
  */
 
 import { Globe } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme } from '../../../types';
 import { EnvVarsEditor } from '../EnvVarsEditor';
+import { ProviderAccountsSection } from '../ProviderAccountsSection';
 
 export interface EnvironmentTabProps {
 	theme: Theme;
 }
 
 export function EnvironmentTab({ theme }: EnvironmentTabProps) {
-	const { shellEnvVars, setShellEnvVars } = useSettings();
+	const {
+		shellEnvVars,
+		setShellEnvVars,
+		providerAuthProbeOnStartup,
+		setProviderAuthProbeOnStartup,
+	} = useSettings();
 
 	return (
 		<div className="space-y-5">
+			<ProviderAccountsSection
+				theme={theme}
+				probeOnStartup={providerAuthProbeOnStartup}
+				onProbeOnStartupChange={setProviderAuthProbeOnStartup}
+			/>
+
 			{/* Global Environment Variables */}
 			<div data-setting-id="environment-global-vars">
 				<div className="flex items-center gap-2 mb-1">
