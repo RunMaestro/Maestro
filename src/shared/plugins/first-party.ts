@@ -73,6 +73,12 @@ export interface FirstPartyAgentCommand {
 	command: string;
 }
 
+/** One step in a feature's ordered "get it working" walkthrough. */
+export interface FirstPartyUsageStep {
+	title: string;
+	body: string;
+}
+
 /**
  * How a first-party feature is actually used, rendered under its description in
  * the Extensions details pane.
@@ -90,6 +96,17 @@ export interface FirstPartyUsageGuide {
 	access?: readonly FirstPartyAccessPath[];
 	/** How an agent drives it, for features an agent operates rather than the user. */
 	agentCommands?: readonly FirstPartyAgentCommand[];
+	/**
+	 * Ordered walkthrough for a feature that takes more than one action to get
+	 * working. `access` says where the doors are; this says what to do once you
+	 * are inside. Omit it for a feature that is useful the moment it is on.
+	 */
+	steps?: readonly FirstPartyUsageStep[];
+	/**
+	 * Guard rails and limits worth stating plainly before someone enables it -
+	 * what the feature will never do on its own, and what turning it off costs.
+	 */
+	notes?: readonly string[];
 	/** Docs page slug on docs.runmaestro.ai (e.g. "concerto"). */
 	docsSlug?: string;
 }
@@ -153,6 +170,86 @@ export const PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[
 	},
 ] as const;
 
+/**
+ * Pianola's usage guide. Written against what the code actually does: the
+ * classifier (`shared/pianola/pianola-classifier.ts`), the policy engine
+ * (`pianola-policy.ts`, whose precedence the notes mirror), the supervisor
+ * (`main/pianola/pianola-supervisor.ts`), and the `maestro pianola` CLI verbs.
+ * Keep it in sync when that behaviour changes.
+ */
+export const PIANOLA_FIRST_PARTY_PLUGIN_USAGE: FirstPartyUsageGuide = {
+	overview: [
+		'Pianola is a manager agent that sits above your other agents. It watches the tabs you point it at, notices when one has stopped and is waiting on you (a permission prompt, a plan to review, a multiple-choice question), and decides what to do: answer it from a rule you wrote, or escalate it to you.',
+		'Enabling it pins one Pianola agent to the top of the Left Bar. It is a real chat agent, so you can talk to it like any other, and its workspace also carries a Dashboard: who needs you right now, who is still working, who just finished, and a live feed of every decision Pianola made.',
+		'Nothing is watched until you say so, and nothing is auto-answered without a rule you wrote. With no rules at all, Pianola is a monitor: it tells you who is stuck and stays out of the way.',
+	],
+	access: [
+		{
+			// No hotkey: Pianola is a pinned AGENT, so its first-class way in is the
+			// Left Bar row itself. The palette text is the literal command label.
+			label: 'Open the Pianola manager (rules, decisions, suggestions)',
+			commandPalette: 'Pianola',
+			menu: 'the pinned Pianola agent at the top of the Left Bar',
+		},
+	],
+	steps: [
+		{
+			title: 'Open its workspace',
+			body: 'Click the pinned Pianola agent, then use the Dashboard / Chat toggle in its tab strip. The manager and rules also open from the Settings tab and from the command palette.',
+		},
+		{
+			title: 'Put a watch on an agent',
+			body: 'On the Dashboard, the Watching section lists what Pianola is babysitting; the + button adds one of your other agents. Each watch is supervised by the desktop app: it restarts on crash and comes back when you relaunch, so it keeps working while you are away from the keyboard.',
+		},
+		{
+			title: 'Let it escalate first, then write rules',
+			body: 'Run it with no rules for a while. Every waiting prompt escalates to a toast and lands in the decision log, which shows you exactly what your agents keep asking. Those recurring asks are the ones worth automating.',
+		},
+		{
+			title: 'Write a rule for the asks you always answer the same way',
+			body: 'A rule is declarative: a scope (global, one project, or one tab), what it matches (maximum risk, signal kinds, topic substrings), and an action (auto-answer with a reply, escalate, or ignore). Lower priority numbers run first, and the first matching rule wins.',
+		},
+		{
+			title: 'Review the decision log',
+			body: 'The Decisions tab is the audit trail: what was asked, how it was classified, which rule matched, what Pianola sent, and how it turned out. Every decision is recorded before anything is dispatched, so a wrong rule is always visible after the fact.',
+		},
+		{
+			title: 'Approve learned suggestions (optional)',
+			body: 'Pianola can read your own past CLI transcripts and propose rules and a decision profile that match how you already answer. Proposals sit in the Suggestions tab until you approve them; approving only writes config, and an approved rule still goes through the safety checks at runtime.',
+		},
+	],
+	notes: [
+		'High-risk prompts ALWAYS escalate. No rule can auto-answer or silence one, because the transcript it is reading is not trusted input.',
+		'No matching rule means escalate. Pianola never invents an answer, and never auto-answers on a low-confidence read.',
+		'Only the agents you add a watch for are touched. Everything else is left alone.',
+		'Turning the feature off stops every supervised watcher immediately. Your rules, decisions, and the Pianola agent itself are kept, so switching it back on resumes where you left off.',
+	],
+	agentCommands: [
+		{
+			label: 'Watch one tab from the terminal (add --dry-run to classify without replying)',
+			command: 'maestro pianola watch <tab-id>',
+		},
+		{ label: 'List the configured rules (--json for scripting)', command: 'maestro pianola rules' },
+		{
+			label: 'Add a rule without opening the app',
+			command: 'maestro pianola add-rule --action auto_answer --answer "yes"',
+		},
+		{ label: 'Show the recent decision audit log', command: 'maestro pianola log' },
+		{
+			label: 'Crawl your installed CLI transcripts into a labeled decision corpus',
+			command: 'maestro pianola learn',
+		},
+		{
+			label: 'Inspect the watchers the desktop app keeps alive',
+			command: 'maestro pianola supervise list',
+		},
+		{
+			label: 'Run a saved task plan, dispatching each task as its dependencies finish',
+			command: 'maestro pianola orchestrate <plan-id>',
+		},
+	],
+};
+
 /** Pianola: the complete definition (the pattern the other features follow). */
 export const PIANOLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	id: PIANOLA_FIRST_PARTY_PLUGIN_ID,
@@ -172,6 +269,7 @@ export const PIANOLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				'Supervises Pianola watch/orchestrate targets and stops them when consent is off.',
 		},
 	],
+	usage: PIANOLA_FIRST_PARTY_PLUGIN_USAGE,
 };
 
 /** Broker capabilities Coworking actually touches. Coworking exposes the

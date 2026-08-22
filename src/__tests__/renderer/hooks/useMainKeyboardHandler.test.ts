@@ -683,6 +683,29 @@ describe('useMainKeyboardHandler', () => {
 			expect(mockHandleOpenTerminalTab).not.toHaveBeenCalled();
 		});
 
+		it.each([
+			['tileAiBelow', 'ai'],
+			['tileBrowserBelow', 'browser'],
+			['tileFileBelow', 'file'],
+		])('tiles a new %s tab once the user binds that shortcut', (shortcutId, kind) => {
+			// These three ship UNBOUND. They reach the handler only after a user
+			// records a chord in Settings, which is what the isShortcut stub models.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'k', metaKey: true, shiftKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', kind);
+		});
+
 		it('should allow tab cycle shortcut with brace characters when layers are open', () => {
 			// On macOS, Shift+[ produces '{' and Shift+] produces '}'
 			// The overlay guard must recognize brace characters as tab cycle shortcuts

@@ -40,7 +40,9 @@ export interface TerminalViewHandle {
 	 * `activeTabId`, and only for AI panes), so `focusActiveTerminal` would land on
 	 * the wrong terminal - or none at all - when a group owns the panel.
 	 */
-	focusTerminal(tabId: string): void;
+	/** Returns false when that tab's xterm has not registered yet (still
+	 *  mounting), so a caller can retry rather than silently losing the caret. */
+	focusTerminal(tabId: string): boolean;
 	searchActiveTerminal(query: string): boolean;
 	searchNext(): boolean;
 	searchPrevious(): boolean;
@@ -250,8 +252,11 @@ export const TerminalView = memo(
 						terminalRefs.current.get(activeTab.id)?.focus();
 					}
 				},
-				focusTerminal(tabId: string) {
-					terminalRefs.current.get(tabId)?.focus();
+				focusTerminal(tabId: string): boolean {
+					const term = terminalRefs.current.get(tabId);
+					if (!term) return false;
+					term.focus();
+					return true;
 				},
 				searchActiveTerminal(query: string): boolean {
 					if (!activeTab) return false;

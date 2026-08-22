@@ -729,6 +729,16 @@ Single source of truth for the Left Bar "unread agents only" (a.k.a. "needs atte
 
 For the event-time (non-reactive) path - `useCycleSession`'s `getState()` reads - build the outage set with `getActiveOutageSessionIds()` from `src/renderer/stores/retryStore.ts` and the batch set with `selectActiveBatchSessionIds(useBatchStore.getState())`.
 
+### Sidebar Session Visibility (`src/renderer/utils/sessionVisibility.ts`)
+
+Which agents the Left Bar may surface AT ALL - a different question from the unread filter above (what to show right now) and from `scopeSessionsToOwningWindow()` in `windowTargets.ts` (which window owns an agent). Today it answers exactly one case: the pinned Pianola manager agent PERSISTS in the session store after its Encore flag is switched off (so re-enabling restores the same agent and its chat), and `SessionList` just stops rendering its row. Any other surface that walks `sessions` - `Cmd+[` / `Cmd+]` cycling, arrow-key nav, `Opt+Cmd+NUMBER` jumps, the Starred section - would otherwise still land on a hidden agent and show "Pianola" for a disabled feature. Applied in `SidebarNavSync` (nav projections), `useStarredItems` (starred rows), and `cycleSession` (its own event-time visual order). A new agent that is conditionally hidden belongs in this predicate, not in a fourth open-coded check.
+
+| Function / Type                                  | Signature                                                          | Purpose                                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `SidebarVisibilityOptions`                       | `{ pianolaEnabled?: boolean }`                                     | Encore flags the predicate needs; omitted / false means Pianola is hidden.                                           |
+| `isSessionVisibleInSidebar(session, options)`    | `(VisibilityScopableSession, SidebarVisibilityOptions) => boolean` | True when the agent may appear in the Left Bar and its keyboard orders.                                              |
+| `filterSessionsVisibleInSidebar(sessions, opts)` | `<T>(T[], SidebarVisibilityOptions) => T[]`                        | Drop hidden agents. Returns the ORIGINAL array when nothing is filtered, so memoized consumers stay identity-stable. |
+
 ### Sentry (`src/renderer/utils/sentry.ts`)
 
 | Function                                   | Signature                                 | Purpose                                 |

@@ -70,8 +70,6 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	// opened instead of resetting them to the first one.
 	const gridRef = useRef<HTMLDivElement>(null);
 	const columns = useGridColumnCount(gridRef, visible.length);
-	const [returnFocusToGrid, setReturnFocusToGrid] = useState(false);
-
 	const openDetails = useCallback((ext: UnifiedExtension) => setSelectedKey(ext.key), []);
 
 	const {
@@ -95,10 +93,9 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	// While the details pane is open it owns Escape: back to the grid, not out of
 	// the whole Settings modal. Non-blocking / no focus trap so the rest of
 	// Settings (search, tab switching) keeps working underneath.
-	const closeDetails = useCallback(() => {
-		setSelectedKey(null);
-		setReturnFocusToGrid(true);
-	}, []);
+	// Remounting the grid is what restores focus to the tile that was opened -
+	// see ExtensionsGrid's mount-focus effect.
+	const closeDetails = useCallback(() => setSelectedKey(null), []);
 	useModalLayer(MODAL_PRIORITIES.EXTENSION_DETAILS, 'Extension Details', closeDetails, {
 		enabled: Boolean(selected),
 		blocksLowerLayers: false,
@@ -261,7 +258,6 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 						onActiveIndexChange={setActiveIndex}
 						onKeyDown={handleGridKeyDown}
 						gridRef={gridRef}
-						autoFocusActive={returnFocusToGrid}
 					/>
 				</>
 			)}

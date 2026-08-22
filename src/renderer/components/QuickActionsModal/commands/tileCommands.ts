@@ -7,10 +7,13 @@ import { canTileNewTab, type TileableTabKind } from '../../../hooks/tabs/tileNew
 interface BuildTileCommandsArgs {
 	activeSession: Session | undefined;
 	setQuickActionOpen: (open: boolean) => void;
-	/** Hotkeys to show on the rows that have one. Only the terminal kind does. */
-	shortcuts?: {
-		tileTerminalBelow?: QuickAction['shortcut'];
-	};
+	/**
+	 * Hotkeys to show on each row, keyed by the kind's shortcut id. Only the
+	 * terminal kind ships with a default chord; the rest render no badge until
+	 * the user assigns one in Settings -> Shortcuts, at which point it appears
+	 * here automatically.
+	 */
+	shortcuts?: Partial<Record<TileShortcutId, QuickAction['shortcut']>>;
 }
 
 /**
@@ -19,26 +22,41 @@ interface BuildTileCommandsArgs {
  * palette filters on a plain substring of the label and sorts alphabetically,
  * so the shared prefix is what clusters them).
  */
-const TILE_KINDS: ReadonlyArray<{ kind: TileableTabKind; label: string; subtext: string }> = [
+export type TileShortcutId =
+	| 'tileAiBelow'
+	| 'tileBrowserBelow'
+	| 'tileFileBelow'
+	| 'tileTerminalBelow';
+
+const TILE_KINDS: ReadonlyArray<{
+	kind: TileableTabKind;
+	label: string;
+	subtext: string;
+	shortcutId: TileShortcutId;
+}> = [
 	{
 		kind: 'ai',
 		label: 'Tile New AI Chat Below',
 		subtext: 'Split the current view and open a new AI chat in the bottom half',
+		shortcutId: 'tileAiBelow',
 	},
 	{
 		kind: 'browser',
 		label: 'Tile New Browser Below',
 		subtext: 'Split the current view and open a new browser tab in the bottom half',
+		shortcutId: 'tileBrowserBelow',
 	},
 	{
 		kind: 'file',
 		label: 'Tile New File Below',
 		subtext: 'Split the current view and open a new file tab in the bottom half',
+		shortcutId: 'tileFileBelow',
 	},
 	{
 		kind: 'terminal',
 		label: 'Tile New Terminal Below',
 		subtext: 'Split the current view and open a new terminal in the bottom half',
+		shortcutId: 'tileTerminalBelow',
 	},
 ];
 
@@ -63,11 +81,13 @@ export function buildTileCommands({
 		// Browser tabs need the Electron <webview>, which is inert in the
 		// web-desktop bundle; tiling one there would place an empty pane.
 		({ kind }) => kind !== 'browser' || !isWebDesktop()
-	).map(({ kind, label, subtext }) => ({
+	).map(({ kind, label, subtext, shortcutId }) => ({
 		id: `tileBelow:${kind}`,
 		label,
 		subtext,
-		shortcut: kind === 'terminal' ? shortcuts?.tileTerminalBelow : undefined,
+		// An unbound entry has `keys: []`; drop the badge entirely rather than
+		// rendering an empty pill next to the label.
+		shortcut: shortcuts?.[shortcutId]?.keys?.length ? shortcuts[shortcutId] : undefined,
 		action: () => {
 			setQuickActionOpen(false);
 			tileNewTabInSession(sessionId, kind);

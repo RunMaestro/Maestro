@@ -25,6 +25,7 @@ import {
 	onStarredSessionsChanged,
 } from '../../utils/starredSessions';
 import { captureException } from '../../utils/sentry';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 
 // ============================================================================
 // Types
@@ -112,6 +113,10 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 	);
 	const sessionCount = useSessionStore((s) => s.sessions.length);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
+	// Pianola survives in the store while its Encore flag is off; a star inside it
+	// must not resurface the hidden agent in the Starred section (or in the
+	// Cmd+[ / Cmd+] order that shares this list).
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
 
 	// Closed/named starred sessions are loaded lazily from disk (the parent agent
 	// may not even be open). Cached here and refreshed when the agent list changes
@@ -162,7 +167,9 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 	// flat list rendered by the "Starred Sessions" Left Bar section.
 	const starredItems = useMemo<StarredItem[]>(() => {
 		if (!showStarredSessionsSection) return [];
-		const sessions = useSessionStore.getState().sessions;
+		const sessions = filterSessionsVisibleInSidebar(useSessionStore.getState().sessions, {
+			pianolaEnabled,
+		});
 		const items: StarredItem[] = [];
 		// Suppress a closed/named row whenever its conversation is already open as a
 		// tab, regardless of that tab's star state. Tracking every open tab's
@@ -211,7 +218,13 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 		scoped.sort((a, b) => a.displayName.localeCompare(b.displayName));
 		return scoped;
 		// starredOpenSignature pins star/open-tab fields without a full sessions[] sub.
-	}, [showStarredSessionsSection, starredOpenSignature, starredNamedSessions, ownsSession]);
+	}, [
+		showStarredSessionsSection,
+		starredOpenSignature,
+		starredNamedSessions,
+		ownsSession,
+		pianolaEnabled,
+	]);
 
 	const activateStarredItem = useCallback(
 		async (item: StarredItem) => {

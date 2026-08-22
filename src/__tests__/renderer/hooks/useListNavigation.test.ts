@@ -935,6 +935,23 @@ describe('useListNavigation', () => {
 			expect(result.current.selectedIndex).toBe(9);
 		});
 
+		it('still answers left/right when the grid has reflowed to one column', () => {
+			// Gating the horizontal arrows on `columns > 1` used to kill them exactly
+			// when the window got narrow. In a one-column grid left/right are just
+			// previous/next.
+			const { result } = grid({ columns: 1 });
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowRight'));
+			});
+			expect(result.current.selectedIndex).toBe(1);
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowLeft'));
+			});
+			expect(result.current.selectedIndex).toBe(0);
+		});
+
 		it('leaves left/right alone in list mode, where other things own them', () => {
 			const { result } = renderHook(() => useListNavigation({ listLength: 5, onSelect: vi.fn() }));
 

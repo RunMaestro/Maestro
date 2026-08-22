@@ -705,9 +705,15 @@ tab switcher, git log, history). Do NOT hand-roll another
 `selectedIndex` + keydown switch.
 
 Pass `columns` to navigate a 2-D **grid** instead: left/right step one tile,
-up/down jump a full row. `columns` of 1 (the default) is exactly the old list
-behavior, and left/right stay inert there because other things own those keys
-(text carets, tree expand/collapse).
+up/down jump a full row. Omitting it is exactly the old list behavior, where
+left/right stay inert because other things own those keys (text carets, tree
+expand/collapse).
+
+Grid mode keys on the option's **presence**, not on `columns > 1`. A grid that
+has reflowed down to a single column still answers all four arrows - there,
+left/right simply mean previous/next. Gating the horizontal arrows on the
+measured value makes them die exactly when the window gets narrow, which reads
+as broken rather than as a narrow grid.
 
 For a responsive grid, feed it the MEASURED column count from
 `useGridColumnCount(ref, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
@@ -735,9 +741,13 @@ the button's own activation so the item opens exactly once.
 Two things the Extensions grid (`Settings/Extensions/`) gets right and a new
 grid should copy:
 
+- **Take focus on mount.** A grid the user navigated to is the thing they came
+  to use, so claim focus rather than making them click or Tab into it first.
+  Consume that with a ref so it happens once per mount; re-focusing on every
+  index change yanks the caret back from wherever the user moved it.
 - **Own the active index ABOVE the grid** when the grid unmounts for a detail
-  view, and restore focus to that item on the way back. Otherwise Escape drops
-  the user on the first tile and they lose their place.
+  view, and let the remount restore focus. Otherwise Escape drops the user on
+  the first tile and they lose their place.
 - **Move DOM focus only when focus is already inside the grid.** An effect that
   focuses on every index change steals the caret out of the search box the
   moment filtering changes the list.

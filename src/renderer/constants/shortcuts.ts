@@ -260,14 +260,35 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
-	// The one "tile a NEW tab" command with a hotkey. It sits on Cmd+Shift+J, one
-	// modifier away from Cmd+J (open a new terminal tab), because a terminal is the
-	// thing users want beside their work often enough to earn a key. The other
-	// tileable kinds (AI, file, browser) stay palette-only - "Tile ... Below".
+	// The "tile a NEW tab" family. Only the terminal ships with a binding: it sits
+	// on Cmd+Shift+J, one modifier away from Cmd+J (open a new terminal tab),
+	// because a terminal beside your work is the common case. The other three are
+	// registered UNBOUND (`keys: []`) rather than left out - that keeps them in
+	// Settings -> Shortcuts where a user can record their own binding, without
+	// Maestro claiming three more default chords nobody asked for. An empty `keys`
+	// never matches an event (see isShortcut) and renders as "Not set".
 	tileTerminalBelow: {
 		id: 'tileTerminalBelow',
 		label: 'Tile New Terminal Below',
 		keys: ['Meta', 'Shift', 'j'],
+		windowScoped: true,
+	},
+	tileAiBelow: {
+		id: 'tileAiBelow',
+		label: 'Tile New AI Chat Below',
+		keys: [],
+		windowScoped: true,
+	},
+	tileBrowserBelow: {
+		id: 'tileBrowserBelow',
+		label: 'Tile New Browser Below',
+		keys: [],
+		windowScoped: true,
+	},
+	tileFileBelow: {
+		id: 'tileFileBelow',
+		label: 'Tile New File Below',
+		keys: [],
 		windowScoped: true,
 	},
 } satisfies Record<string, Shortcut>;

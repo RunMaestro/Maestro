@@ -117,11 +117,17 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						backgroundColor:
 							recordingId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
 						color: recordingId === sc.id ? theme.colors.accent : theme.colors.textDim,
+						opacity: recordingId !== sc.id && sc.keys.length === 0 ? 0.6 : 1,
 						'--tw-ring-color': theme.colors.accent,
 					} as React.CSSProperties
 				}
 			>
-				{recordingId === sc.id ? 'Press keys...' : formatShortcutKeys(sc.keys)}
+				{recordingId === sc.id
+					? 'Press keys...'
+					: // An action registered with no default chord (keys: []) formats to an
+						// empty string, which renders as a blank button the user cannot tell
+						// is clickable. Label it so it reads as "assign one here".
+						formatShortcutKeys(sc.keys) || 'Not set'}
 			</button>
 		</div>
 	);

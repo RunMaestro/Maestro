@@ -8,6 +8,12 @@
  * summon it. This closes that gap for every first-party feature at once: fill in
  * `usage` on the plugin definition and the section appears.
  *
+ * Four optional sections, each drawn only when the definition fills it in:
+ * `overview` (what it does), `access` (every way in), `steps` (an ordered
+ * walkthrough for a feature that takes more than one action to get working),
+ * `notes` (guard rails worth stating before someone enables it), and
+ * `agentCommands` (what an agent types to drive it).
+ *
  * Key bindings are resolved from the user's LIVE shortcuts by `shortcutId`, not
  * printed from literal text in the definition. A rebound key would otherwise
  * leave this panel confidently advertising a combination that does nothing.
@@ -106,6 +112,55 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 							</div>
 						);
 					})}
+				</div>
+			)}
+
+			{usage.steps && usage.steps.length > 0 && (
+				<ol className="mt-4 space-y-3" data-testid="extension-usage-steps">
+					{usage.steps.map((step, index) => (
+						<li key={step.title} className="flex gap-3">
+							<span
+								className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+								style={{ backgroundColor: theme.colors.accent + '22', color: theme.colors.accent }}
+							>
+								{index + 1}
+							</span>
+							<div className="min-w-0">
+								<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+									{step.title}
+								</div>
+								<div
+									className="mt-0.5 text-xs leading-relaxed"
+									style={{ color: theme.colors.textDim }}
+								>
+									{step.body}
+								</div>
+							</div>
+						</li>
+					))}
+				</ol>
+			)}
+
+			{usage.notes && usage.notes.length > 0 && (
+				<div className="mt-4" data-testid="extension-usage-notes">
+					<h4
+						className="text-[11px] font-bold uppercase tracking-wide mb-2"
+						style={{ color: theme.colors.textDim }}
+					>
+						Good to know
+					</h4>
+					<ul className="space-y-1.5">
+						{usage.notes.map((note) => (
+							<li
+								key={note}
+								className="flex gap-2 text-xs leading-relaxed"
+								style={{ color: theme.colors.textDim }}
+							>
+								<span style={{ color: theme.colors.accent }}>-</span>
+								<span>{note}</span>
+							</li>
+						))}
+					</ul>
 				</div>
 			)}
 

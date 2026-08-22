@@ -4,6 +4,8 @@
  * The grid is a composite widget: one roving tabindex for the whole thing,
  * arrows to move, Enter to open, Escape to come back. These tests defend the
  * parts that are easy to regress:
+ *  - the grid takes focus as soon as the pane is on screen, so the arrows work
+ *    without clicking or tabbing into it first
  *  - exactly one tile is tabbable, and it tracks the active tile
  *  - left/right step one tile, up/down jump a full ROW (measured column count,
  *    not a hard-coded 3)
@@ -121,13 +123,23 @@ afterEach(() => {
 });
 
 describe('ExtensionsView grid keyboard navigation', () => {
+	it('focuses the grid on mount so the arrows work straight away', () => {
+		renderView();
+
+		expect(document.activeElement).toBe(activeTile());
+		expect(activeTile()).toBe(tiles()[0]);
+
+		// No click, no Tab - just an arrow.
+		press('ArrowRight');
+		expect(document.activeElement).toBe(tiles()[1]);
+	});
+
 	it('exposes a single tab stop that follows the active tile', () => {
 		renderView();
 
 		expect(tiles().filter((t) => t.getAttribute('tabindex') === '0')).toHaveLength(1);
 		expect(activeTile()).toBe(tiles()[0]);
 
-		act(() => tiles()[0].focus());
 		press('ArrowRight');
 
 		expect(activeTile()).toBe(tiles()[1]);
@@ -137,7 +149,6 @@ describe('ExtensionsView grid keyboard navigation', () => {
 
 	it('steps one tile with left/right and moves the DOM focus along', () => {
 		renderView();
-		act(() => tiles()[0].focus());
 
 		press('ArrowRight');
 		expect(document.activeElement).toBe(tiles()[1]);
@@ -148,7 +159,6 @@ describe('ExtensionsView grid keyboard navigation', () => {
 
 	it('jumps a full row with up/down, using the measured column count', () => {
 		renderView();
-		act(() => tiles()[0].focus());
 
 		press('ArrowDown');
 		expect(document.activeElement).toBe(tiles()[COLUMNS]);
@@ -159,7 +169,6 @@ describe('ExtensionsView grid keyboard navigation', () => {
 
 	it('jumps to the first and last tile with Home and End', () => {
 		renderView();
-		act(() => tiles()[0].focus());
 
 		press('End');
 		expect(activeTile()).toBe(tiles()[tiles().length - 1]);
@@ -170,7 +179,6 @@ describe('ExtensionsView grid keyboard navigation', () => {
 
 	it('opens the active tile once on Enter', () => {
 		renderView();
-		act(() => tiles()[0].focus());
 		press('ArrowRight');
 		const expected = tiles()[1].querySelector('.truncate')?.textContent;
 
@@ -182,7 +190,6 @@ describe('ExtensionsView grid keyboard navigation', () => {
 
 	it('restores focus to the tile the user opened after Escape', () => {
 		renderView();
-		act(() => tiles()[0].focus());
 		press('ArrowDown');
 		const opened = activeTile();
 
@@ -208,6 +215,20 @@ describe('ExtensionsView grid keyboard navigation', () => {
 		});
 
 		expect(document.activeElement).toBe(activeTile());
+	});
+
+	it('keeps left/right working when the grid reflows to a single column', () => {
+		// A narrow Settings pane drops the grid to one column. Horizontal arrows
+		// have to keep stepping there, not go dead.
+		vi.restoreAllMocks();
+		stubGridColumns(1);
+		renderView();
+
+		press('ArrowRight');
+		expect(document.activeElement).toBe(tiles()[1]);
+
+		press('ArrowLeft');
+		expect(document.activeElement).toBe(tiles()[0]);
 	});
 
 	it('does not steal focus from the search box while filtering', () => {

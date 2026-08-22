@@ -763,9 +763,22 @@ The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the 
 | **Tile New File Below**     | New blank file tab takes the bottom half              |
 | **Tile New Terminal Below** | New terminal takes the bottom half                    |
 
-**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab. The other three stay in Quick Actions.
+**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab.
 
-Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half, and the new pane takes focus, so you can start typing in it right away.
+The other three ship with no key assigned, so Maestro is not claiming three more chords on your behalf. They are still in the shortcuts list: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want - it reads **Not set** - and click it to record whatever combination you like. Once bound, the key works everywhere the terminal one does, and Quick Actions starts showing it next to the command.
+
+Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half.
+
+**The new pane takes the keyboard**, so you can start typing immediately without reaching for the mouse. Where the caret lands depends on what you tiled:
+
+| New pane | Where you start typing                                             |
+| -------- | ------------------------------------------------------------------ |
+| AI chat  | The chat input, ready for a prompt                                 |
+| Terminal | The command prompt, ready for a command                            |
+| Browser  | The address bar, with the current URL selected so you type over it |
+| File     | The editor, on a blank Untitled file - handy for a quick note      |
+
+If a pane needs a moment to appear (a browser starting up, a file editor loading for the first time), Maestro waits for it and puts the caret in as soon as it is ready.
 
 If a tile is already on screen, the split happens inside the pane you are working in rather than under the whole grid. That is what lets you build a layout one command at a time: tile a terminal under your chat, click into the terminal, then tile a browser under that.
 

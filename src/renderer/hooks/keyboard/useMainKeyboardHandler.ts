@@ -15,6 +15,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
+import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -47,6 +48,21 @@ const FONT_SIZE_DEFAULT = 14;
 
 /** Delay (ms) to allow React re-render before focusing the input element. */
 const FOCUS_AFTER_RENDER_DELAY_MS = 50;
+
+/**
+ * The "Tile New ... Below" shortcut family, paired with the tab kind each one
+ * creates. Only `tileTerminalBelow` has a default binding (Cmd+Shift+J); the
+ * other three are registered with `keys: []` so they appear in Settings ->
+ * Shortcuts as "Not set" and do nothing until a user records a chord. Keeping
+ * them in one table means adding a tileable kind is a single line here rather
+ * than a fourth branch in the keydown chain.
+ */
+const TILE_SHORTCUTS: ReadonlyArray<{ shortcutId: string; kind: TileableTabKind }> = [
+	{ shortcutId: 'tileTerminalBelow', kind: 'terminal' },
+	{ shortcutId: 'tileAiBelow', kind: 'ai' },
+	{ shortcutId: 'tileBrowserBelow', kind: 'browser' },
+	{ shortcutId: 'tileFileBelow', kind: 'file' },
+];
 
 export type KeyboardHandlerContext = any;
 
@@ -430,6 +446,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// Escape in main area focuses terminal output
 			if (ctx.handleEscapeInMain(e)) return;
 
+			// Which "Tile New ... Below" command this event matches, if any. Resolved
+			// once here rather than as four more links in the else-if chain below.
+			// Only the terminal entry ships with a default chord; the rest sit unbound
+			// until a user records one in Settings -> Shortcuts.
+			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isShortcut(e, t.shortcutId)) ?? null;
+
 			// Helper to track shortcut usage for keyboard mastery gamification
 			// AND for the daily-usage time series shown on the Usage Dashboard.
 			// Mastery is short-circuited on second+ firings of the same shortcut
@@ -594,15 +616,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				}
 				trackShortcut('toggleMode');
-			} else if (ctx.isShortcut(e, 'tileTerminalBelow')) {
-				// Cmd+Shift+J: the tiled twin of Cmd+J. Instead of a new terminal tab
-				// that takes over the panel, split the current view and put the terminal
-				// in the bottom half. tileNewTabInSession focuses the new pane; it
-				// flashes and no-ops when the agent has nothing on screen to tile with.
+			} else if (matchedTile) {
+				// The tile-below family. Cmd+Shift+J is the tiled twin of Cmd+J: instead
+				// of a new terminal tab that takes over the panel, split the current view
+				// and put the terminal in the bottom half. The AI / browser / file
+				// entries ship UNBOUND and only reach here once a user records a binding
+				// in Settings (an empty `keys` never matches). tileNewTabInSession
+				// focuses the new pane; it flashes and no-ops when the agent has nothing
+				// on screen to tile with.
 				e.preventDefault();
 				if (ctx.activeSessionId) {
-					tileNewTabInSession(ctx.activeSessionId, 'terminal');
-					trackShortcut('tileTerminalBelow');
+					tileNewTabInSession(ctx.activeSessionId, matchedTile.kind);
+					trackShortcut(matchedTile.shortcutId);
 				}
 			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
 				e.preventDefault();

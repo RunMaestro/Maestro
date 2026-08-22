@@ -28,8 +28,9 @@
  * });
  *
  * // As a 2-D grid (like the Extensions tile grid): left/right step one tile,
- * // up/down jump a whole row. `columns` is the LIVE column count, so a
- * // responsive grid stays navigable as it reflows.
+ * // up/down jump a whole row. Passing `columns` at all is what selects grid
+ * // mode; the value is the LIVE column count, so a responsive grid keeps
+ * // jumping by a real row as it reflows.
  * const { selectedIndex, handleKeyDown } = useListNavigation({
  *   listLength: tiles.length,
  *   onSelect: openTile,
@@ -81,12 +82,17 @@ export interface UseListNavigationOptions {
 	wrap?: boolean;
 
 	/**
-	 * Number of items per row. Defaults to 1 (a plain vertical list).
+	 * Items per row. PASSING THIS AT ALL selects grid mode, whatever the value:
+	 * ArrowLeft/ArrowRight step one item along the flattened order, and
+	 * ArrowUp/ArrowDown jump a full row. Omit it for a plain vertical list,
+	 * where left/right stay inert because other things own those keys (text
+	 * carets, tree expand/collapse).
 	 *
-	 * Anything above 1 puts the hook in grid mode: ArrowLeft/ArrowRight step one
-	 * item along the flattened order, and ArrowUp/ArrowDown jump a full row.
-	 * Left/right are deliberately inert in list mode, where those keys usually
-	 * belong to something else (text carets, tree expand/collapse).
+	 * Grid mode is keyed on the option's PRESENCE rather than on `columns > 1`
+	 * so a grid that has reflowed down to a single column still answers all four
+	 * arrows - in a one-column grid, left/right simply mean previous/next item.
+	 * Gating on the measured value made the horizontal arrows die exactly when
+	 * the window got narrow, which reads as broken rather than as a narrow grid.
 	 *
 	 * For a responsive grid, pass the measured column count (see
 	 * `useGridColumnCount`) rather than a constant: the row jump has to match
@@ -173,13 +179,13 @@ export interface UseListNavigationReturn {
 
 	/**
 	 * Navigate one item forward along the flattened order (grid mode only; a
-	 * no-op when `columns` is 1).
+	 * no-op when `columns` was not passed).
 	 */
 	navigateNext: () => void;
 
 	/**
 	 * Navigate one item back along the flattened order (grid mode only; a no-op
-	 * when `columns` is 1).
+	 * when `columns` was not passed).
 	 */
 	navigatePrev: () => void;
 
@@ -221,7 +227,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 		onSelectAlternate,
 		initialIndex = 0,
 		wrap = false,
-		columns = 1,
+		columns,
 		enableVimKeys = false,
 		enablePageNavigation = false,
 		pageSize = 10,
@@ -243,10 +249,11 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 		});
 	}, [listLength]);
 
-	// A row's worth of movement. In list mode (`columns` 1) this is the classic
-	// one-item step, so every existing caller is unaffected; in grid mode
-	// ArrowUp/ArrowDown move by a full row instead.
-	const rowStep = Math.max(1, Math.floor(columns) || 1);
+	// Grid mode is the option's presence, not its value - see `columns`.
+	const isGrid = columns !== undefined;
+	// A row's worth of movement. One in list mode (the classic one-item step, so
+	// every existing caller is unaffected) and in a single-column grid.
+	const rowStep = Math.max(1, Math.floor(columns ?? 1) || 1);
 
 	// `step` walks the flattened order by `delta`. Without wrap it clamps, EXCEPT
 	// for a row jump that would run off the end: landing on the last item there
@@ -272,14 +279,14 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 	const navigateUp = useCallback(() => step(-rowStep), [step, rowStep]);
 
 	const navigateNext = useCallback(() => {
-		if (rowStep === 1) return;
+		if (!isGrid) return;
 		step(1);
-	}, [step, rowStep]);
+	}, [step, isGrid]);
 
 	const navigatePrev = useCallback(() => {
-		if (rowStep === 1) return;
+		if (!isGrid) return;
 		step(-1);
-	}, [step, rowStep]);
+	}, [step, isGrid]);
 
 	const navigatePageDown = useCallback(() => {
 		if (listLength === 0) return;
@@ -357,13 +364,13 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 
 			// Grid mode only - see the `columns` option for why list mode leaves
 			// left/right alone.
-			if (key === 'ArrowRight' && rowStep > 1) {
+			if (key === 'ArrowRight' && isGrid) {
 				e.preventDefault();
 				navigateNext();
 				return;
 			}
 
-			if (key === 'ArrowLeft' && rowStep > 1) {
+			if (key === 'ArrowLeft' && isGrid) {
 				e.preventDefault();
 				navigatePrev();
 				return;
@@ -428,7 +435,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 			navigateUp,
 			navigateNext,
 			navigatePrev,
-			rowStep,
+			isGrid,
 			enableVimKeys,
 			enablePageNavigation,
 			navigatePageDown,

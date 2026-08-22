@@ -28,6 +28,7 @@ import {
 	resolveTabRefTitle,
 	splitPaneRectsByKind,
 } from '../../utils/panelLayout';
+import { focusPaneInputWhenReady } from '../../utils/paneFocus';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
@@ -620,9 +621,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	//     here: a tiled terminal pane never sets `activeTerminalTabId`.
 	//   - ai       -> the shared chat textarea, which is already scoped to the
 	//     focused pane's tab (focusPaneInSession syncs activeTabId for AI panes).
-	//   - browser  -> skipped; the webview takes Chromium input off
-	//     `groupFocusedBrowserTabId` on its own.
-	//   - file     -> skipped; a preview has no text input to land in.
+	//   - browser  -> that tab's address bar, selected.
+	//   - file     -> that tab's editor (or the preview container in preview mode).
+	// The per-kind routing lives in utils/paneFocus so it stays testable and so the
+	// two DOM-resolved kinds (browser overlay, CodeMirror editor) are described in
+	// one place rather than inline here.
 	// Deferred a frame: the request is published in the same tick as the session
 	// commit, so the newly focused pane has not rendered/unhidden yet.
 	const paneFocusRequest = useUIStore((s) => s.paneFocusRequest);
@@ -641,14 +644,22 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		// the arrow keys keep navigating that other region while the caret sits in a
 		// pane. Set synchronously - it is plain state, nothing to wait for.
 		useUIStore.getState().setActiveFocus('main');
-		const timer = setTimeout(() => {
-			if (tab.type === 'terminal') {
-				terminalViewRefs.current.get(sessionId)?.focusTerminal(tab.id);
-			} else if (tab.type === 'ai') {
-				inputRef.current?.focus();
-			}
-		}, PANE_FOCUS_DELAY_MS);
-		return () => clearTimeout(timer);
+		// Retried rather than fired once: a pane created and tiled in the same commit
+		// has not rendered yet, and the file editor (lazy CodeMirror) and browser
+		// address bar (keep-alive overlay) can take several frames to exist.
+		return focusPaneInputWhenReady(
+			tab,
+			{
+				focusTerminal: (tabId) =>
+					terminalViewRefs.current.get(sessionId)?.focusTerminal(tabId) ?? false,
+				focusAiInput: () => {
+					if (!inputRef.current) return false;
+					inputRef.current.focus();
+					return true;
+				},
+			},
+			{ intervalMs: PANE_FOCUS_DELAY_MS }
+		);
 	}, [paneFocusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
 	// Number of open modal/overlay layers. When any layer is open over a browser
 	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
