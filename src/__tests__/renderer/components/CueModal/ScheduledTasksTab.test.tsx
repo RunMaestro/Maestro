@@ -91,7 +91,7 @@ describe('ScheduledTasksTab', () => {
 		// reminders with pipeline schedule triggers, and cancelling one of those
 		// breaks the pipeline.
 		expect(screen.getByText(/nightly-summary · Tasks/)).toBeInTheDocument();
-		expect(screen.getByText('21:00 (every day)')).toBeInTheDocument();
+		expect(screen.getByText('21:00 · Every day')).toBeInTheDocument();
 		expect(screen.getByText('Alpha')).toBeInTheDocument();
 		expect(screen.getByText(/^in /)).toBeInTheDocument();
 	});
@@ -257,14 +257,44 @@ describe('ScheduledTasksTab sorting', () => {
 		expect(renderedTaskOrder()).toEqual(['Alpha task', 'Gamma task', 'Beta task']);
 	});
 
-	it('sorts Repeats by recurrence, not by the alphabetical label', async () => {
+	it('orders one-shots by their real fire time, not by the localized month name', async () => {
+		// December sorts before August alphabetically; the comparator must use
+		// the underlying fire_at, not the rendered "Aug 22, 4:00 PM".
+		const august = task({
+			name: 'aug',
+			label: 'August task',
+			kind: 'once',
+			event: 'time.once',
+			scheduleTimes: undefined,
+			fireAt: new Date(2030, 7, 1, 9, 0).toISOString(),
+			nextFireAtMs: new Date(2030, 7, 1, 9, 0).getTime(),
+		});
+		const december = task({
+			name: 'dec',
+			label: 'December task',
+			kind: 'once',
+			event: 'time.once',
+			scheduleTimes: undefined,
+			fireAt: new Date(2030, 11, 1, 9, 0).toISOString(),
+			nextFireAtMs: new Date(2030, 11, 1, 9, 0).getTime(),
+		});
+		listScheduledTasks.mockResolvedValue({ tasks: [december, august], warnings: [] });
+
+		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
+		await screen.findByText('August task');
+
+		fireEvent.click(screen.getByTitle('Sort by how the task repeats, then by time of day'));
+		expect(renderedTaskOrder()).toEqual(['August task', 'December task']);
+	});
+
+	it('sorts Schedule by recurrence first, not by the raw schedule text', async () => {
 		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
 		await screen.findByText('Beta task');
 
-		fireEvent.click(screen.getByTitle('Sort by how the task repeats'));
+		fireEvent.click(screen.getByTitle('Sort by how the task repeats, then by time of day'));
 
-		// once → daily → interval. Alphabetically the labels would be
-		// "At set times", "Interval", "Once", which reads as arbitrary.
+		// once → daily → interval. Sorting the schedule strings alone would
+		// interleave a one-shot's date with a daily task's time of day.
 		expect(renderedTaskOrder()).toEqual(['Beta task', 'Alpha task', 'Gamma task']);
 	});
 
@@ -368,6 +398,54 @@ describe('ScheduledTasksTab filtering', () => {
 		expect(screen.getByTestId('scheduled-tasks-no-matches')).toBeInTheDocument();
 		// The empty state means "you have nothing scheduled", which would be a lie.
 		expect(screen.queryByText('No scheduled tasks')).not.toBeInTheDocument();
+	});
+
+	it('the kind filter narrows to one recurrence', async () => {
+		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
+		await screen.findByText('Wispr Sync');
+
+		fireEvent.click(screen.getByTestId('scheduled-tasks-kind-filter-once'));
+
+		// Both fixtures are daily, so filtering to one-offs empties the list.
+		expect(screen.getByTestId('scheduled-tasks-no-matches')).toBeInTheDocument();
+		expect(screen.getByTestId('scheduled-tasks-no-matches')).toHaveTextContent(
+			'No once tasks are scheduled'
+		);
+	});
+
+	it('combines the kind filter with the text filter', async () => {
+		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
+		await screen.findByText('Wispr Sync');
+
+		fireEvent.click(screen.getByTestId('scheduled-tasks-kind-filter-daily'));
+		expect(screen.getByTestId('scheduled-tasks-filter-count')).toHaveTextContent('2 of 2');
+
+		fireEvent.change(screen.getByTestId('scheduled-tasks-filter-input'), {
+			target: { value: 'wispr' },
+		});
+		expect(screen.getByTestId('scheduled-tasks-filter-count')).toHaveTextContent('1 of 2');
+		expect(screen.queryByText('Mon-Fri vault digest')).not.toBeInTheDocument();
+	});
+
+	it('shows the count for a kind-only filter, with no text typed', async () => {
+		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
+		await screen.findByText('Wispr Sync');
+
+		// A kind filter narrows the list just as much as typing does, so the
+		// count must not be gated on the text box holding something.
+		fireEvent.click(screen.getByTestId('scheduled-tasks-kind-filter-interval'));
+		expect(screen.getByTestId('scheduled-tasks-filter-count')).toHaveTextContent('0 of 2');
+	});
+
+	it('drops the pipeline from the subtitle when it just repeats the agent name', async () => {
+		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
+		await screen.findByText('Wispr Sync');
+
+		// "Wispr Sync" is on agent Pedsidian in pipeline Pedsidian: the pipeline
+		// is already its own column and repeating it was noise on most rows.
+		expect(screen.getByText('Pedsidian-Wispr-Sync · command')).toBeInTheDocument();
+		// The digest's pipeline differs from its agent, so it is still shown.
+		expect(screen.getByText('Daily-Digest · Daily Digest')).toBeInTheDocument();
 	});
 
 	it('the clear button restores the full list', async () => {

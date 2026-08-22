@@ -97,11 +97,18 @@ The Scheduled Tasks tab is the clock-driven slice of Cue in one list: every task
 | **At set times** | `time.scheduled` | At chosen `HH:MM` times, optionally only on chosen days   |
 | **Interval**     | `time.heartbeat` | Every N minutes                                           |
 
-Each row shows the task label, the subscription name and its pipeline, the agent that runs it, how it repeats, its schedule, and a countdown to the next fire. A paused task is dimmed and marked `paused`.
+Each row shows the task label, the subscription name and its pipeline, the agent that runs it, its schedule, and a countdown to the next fire. The pipeline is omitted when it just repeats the agent name. A paused task is dimmed and marked `paused`.
 
-**Sorting.** Click any column header to sort by it; click the active header again to reverse it. Switching columns starts that column in its own natural order rather than inheriting the previous one. The default is **Next**, soonest first. Tasks with no projected next fire (a repeating interval, whose phase lives in engine run state rather than in the YAML) always sort last, in both directions.
+**Sorting.** Click any column header to sort by it; click the active header again to reverse it. Switching columns starts that column in its own natural order rather than inheriting the previous one. The default is **Next**, soonest first. Tasks with no projected next fire (a repeating interval, whose phase lives in engine run state rather than in the YAML) always sort last, in both directions. **Schedule** groups by recurrence first (one-offs, then set times, then intervals) and orders within each group by when it actually fires.
 
-**Filtering.** The box in the header narrows the list as you type. The task label, subscription name, and agent are matched fuzzily, so `wspr` finds "Wispr Sync". The pipeline, schedule text, and action are matched as plain substrings, so `18:00` or `command` pull up exactly what you would expect. A live count next to the box shows how many of the total are showing, and `Esc` clears the filter before it closes the modal.
+**Filtering.** Two filters, and they stack:
+
+- The **text box** narrows the list as you type. The task label, subscription name, and agent are matched fuzzily, so `wspr` finds "Wispr Sync". The pipeline, schedule text, and action are matched as plain substrings, so `18:00` or `command` pull up exactly what you would expect.
+- The **All / Once / At set times / Interval** buttons narrow by recurrence, which is the fast way to separate one-off reminders from standing jobs.
+
+A live count shows how many of the total are showing whenever either filter is narrowing the list, and `Esc` clears the text filter before it closes the modal.
+
+**Reading the schedule.** Day sets are written as compactly as they can be read: all seven days is `Every day`, Monday through Friday is `Weekdays`, Saturday and Sunday is `Weekends`, and anything else uses one- or two-letter days (`M`, `T`, `W`, `Th`, `F`, `Sa`, `Su`) with runs of three or more collapsed into a range. So `06:05 · Every day`, `15:30 · Weekdays`, `08:00 · Su`, `09:00 · M-W, Sa`. A one-off shows its fire time in your own timezone rather than the UTC timestamp stored in the YAML. The icon at the left of the cell is the recurrence, matching the filter buttons above.
 
 Three buttons per row:
 
@@ -150,11 +157,13 @@ In the **All Pipelines** view there are no edges between pipeline cards to cross
 
 The Pipeline List tab is the same pipelines read as text rather than drawn as a graph. Once you have more than a handful, a canvas is good at showing how one pipeline is wired and bad at answering "what do all of these do, and is anything broken?" That is what this tab is for.
 
-Each row states:
+Each row collapses to a one-line overview:
 
-- **What it does** - the trigger and its configuration, then the agents and commands it runs, in execution order: `Scheduled (09:00) → rc → Maestro`. The order follows the edges, not the order nodes happen to sit in the file.
+- **What it does** - a small pipeline shows its literal flow: `Scheduled (09:00) → rc → Maestro`, following the edges rather than the order nodes happen to sit in the file. A pipeline with many triggers or steps shows counts instead: `39 triggers (Scheduled, File Change) → 39 agents`. That is not just brevity - a pipeline like that is usually 39 _independent_ chains grouped under one name, so chaining their names with arrows would describe a sequence that does not exist.
 - **How it is doing** - a health badge, the outcome and age of the last run, how many recent runs there were and how many of those failed, and the number of steps.
-- **What is wrong** - any configuration problems, spelled out verbatim (a trigger with no schedule, an agent with no prompt, a node pointing at an agent that no longer exists).
+- **What is wrong** - any configuration problems, spelled out verbatim (a trigger with no schedule, an agent with no prompt, a node pointing at an agent that no longer exists). These stay visible while collapsed; a broken pipeline should not need a click to admit it.
+
+Click a row (or focus it and press `Enter` / `Space`) to expand it into two columns: every **Trigger** with its configuration and underlying subscription name, and every **Step** with its agent name or command body. Several rows can be open at once, which is the point - expanding two pipelines side by side is the usual reason to expand at all.
 
 Health is derived, not stored. The badge is one of:
 
@@ -169,9 +178,36 @@ Health is derived, not stored. The badge is one of:
 
 "No recent runs" is deliberately not "never run" - the activity log is a bounded window, so a pipeline that ran successfully a long time ago lands here too.
 
-The toolbar offers a search box, a health filter (**All**, **Attention**, **Running**, **Quiet**), and a sort (**Health**, **Name**, **Last run**). Health is the default sort so anything needing a human sits at the top rather than being buried under a couple dozen working pipelines.
+### Searching, filtering, and sorting
 
-Each row has two actions: **Run now** fires the pipeline's trigger subscriptions on demand (all of them, when a pipeline has more than one trigger), and **Graph** jumps to the Pipeline Graph tab with that pipeline selected. The list itself is read-only - editing stays on the graph.
+The toolbar narrows the list three ways. All three combine.
+
+**Search** matches the pipeline name, the trigger labels and their configuration, every agent and command name, and the health label - so `09:00`, `rc`, and `failing` are all valid queries.
+
+**Filter** by health:
+
+| Filter        | Shows                                                   |
+| ------------- | ------------------------------------------------------- |
+| **All**       | Every pipeline (default)                                |
+| **Attention** | Needs attention or Failing - the rows that want a human |
+| **Running**   | Pipelines with a run in flight right now                |
+| **Quiet**     | Disabled, or nothing in the recent activity window      |
+
+**Sort** by:
+
+| Sort         | Orders by                                                                         |
+| ------------ | --------------------------------------------------------------------------------- |
+| **Health**   | Worst first: Needs attention, Failing, Running, No recent runs, Disabled, Healthy |
+| **Name**     | Alphabetical, ignoring any leading emoji                                          |
+| **Last run** | Most recently finished first; pipelines that have not run land at the bottom      |
+
+Health is the default so anything needing a human sits at the top rather than being buried under a couple dozen working pipelines.
+
+### Row actions
+
+**Run now** fires the pipeline on demand. It appears only when the pipeline has exactly one trigger subscription. With several triggers the button would be ambiguous (which event is being simulated? each trigger carries its own prompt) and dangerous - a 39-trigger pipeline would dispatch 39 agent runs on one click. Multi-trigger pipelines instead get a **Run** button next to each trigger in the expanded detail, so you fire exactly the one you meant.
+
+**Graph** jumps to the Pipeline Graph tab with that pipeline selected. The list itself is read-only - editing stays on the graph.
 
 ## Activity Log
 

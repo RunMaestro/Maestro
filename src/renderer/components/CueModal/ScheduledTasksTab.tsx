@@ -25,6 +25,7 @@ import {
 import type { Theme } from '../../types';
 import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
 import { EscCloseButton } from '../ui/EscCloseButton';
+import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
 import { SortableTh } from '../ui/SortableTh';
 import { getModalActions } from '../../stores/modalStore';
 import { useScheduledTasks } from '../../hooks/cue/useScheduledTasks';
@@ -62,25 +63,67 @@ const KIND_LABEL: Record<ScheduledTaskKind, string> = {
 	interval: 'Interval',
 };
 
-/** Sort order for the Repeats column: soonest-lived kind first. Alphabetical
- *  on the labels would read as arbitrary ("At set times" before "Once"). */
+/** Sort order within the Schedule column: soonest-lived kind first. Sorting the
+ *  labels alphabetically would read as arbitrary ("At set times" before "Once"). */
 const KIND_RANK: Record<ScheduledTaskKind, number> = { once: 0, daily: 1, interval: 2 };
 
-type TaskSortKey = 'task' | 'agent' | 'repeats' | 'schedule' | 'next';
+type KindFilter = 'all' | ScheduledTaskKind;
+
+const KIND_FILTER_OPTIONS: SegmentedOption<KindFilter>[] = [
+	{ value: 'all', label: 'All', title: 'Every scheduled task' },
+	{
+		value: 'once',
+		label: 'Once',
+		title: 'One-off tasks that fire a single time, then delete themselves',
+	},
+	{ value: 'daily', label: 'At set times', title: 'Tasks that repeat at chosen times of day' },
+	{ value: 'interval', label: 'Interval', title: 'Tasks that repeat every N minutes' },
+];
+
+type TaskSortKey = 'task' | 'agent' | 'schedule' | 'next';
 
 /** Text columns read best A-Z; the countdown reads best soonest-first, which is
  *  also ascending, so every column starts ascending. */
 const SORT_TITLES: Record<TaskSortKey, string> = {
 	task: 'Sort by task label',
 	agent: 'Sort by owning agent',
-	repeats: 'Sort by how the task repeats',
-	schedule: 'Sort by schedule',
+	schedule: 'Sort by how the task repeats, then by time of day',
 	next: 'Sort by time until the next fire',
 };
 
 /** What the Task column sorts and filters on. */
 function taskTitle(task: ScheduledTask): string {
 	return task.label || task.name;
+}
+
+/**
+ * Second line under the task title: the subscription name, then whatever else
+ * distinguishes this row.
+ *
+ * The pipeline is dropped when it merely repeats the agent name (the common
+ * case for per-agent pipelines like "Pedsidian") - it is already its own
+ * column, and repeating it was pure noise on most rows.
+ */
+function subtitleFor(task: ScheduledTask): string {
+	const parts = [task.name];
+	if (task.pipelineName && task.pipelineName !== task.agentName) parts.push(task.pipelineName);
+	if (task.action !== 'prompt') parts.push(task.action);
+	if (!task.enabled) parts.push('paused');
+	return parts.join(' · ');
+}
+
+/**
+ * Sort key for the Schedule column, within one recurrence kind.
+ *
+ * Deliberately NOT the rendered text: a one-shot renders as a localized date
+ * (`Aug 22, 4:00 PM`), and comparing those strings sorts by month NAME - April
+ * before August before December. Compare the underlying values instead, padded
+ * so a plain string compare is also a numeric one.
+ */
+function scheduleSortValue(task: ScheduledTask): string {
+	if (task.kind === 'once') return task.fireAt ?? '';
+	if (task.kind === 'interval') return String(task.intervalMinutes ?? 0).padStart(6, '0');
+	return (task.scheduleTimes ?? []).join(',');
 }
 
 /** "in 4m" / "overdue" / "-" for a task whose next fire cannot be projected. */
@@ -128,6 +171,7 @@ export function ScheduledTasksTab({
 	>(null);
 
 	const [filterQuery, setFilterQuery] = useState('');
+	const [kindFilter, setKindFilter] = useState<KindFilter>('all');
 	const filterInputRef = useRef<HTMLInputElement>(null);
 	const { sortKey, direction, isDescending, toggleSort } = useTableSort<TaskSortKey>('next');
 
@@ -152,13 +196,20 @@ export function ScheduledTasksTab({
 
 	const agentCount = useMemo(() => new Set(tasks.map((task) => task.agentId)).size, [tasks]);
 
+	/** True when either filter is narrowing the list, so the count is worth showing. */
+	const isNarrowed = filterQuery.trim().length > 0 || kindFilter !== 'all';
+
 	// Filter first, then sort: the chosen column is the user's stated order and
 	// survives filtering untouched. There is no "relevance" column to sort by,
 	// and re-ranking by fuzzy score would silently scramble the countdown order
 	// people rely on to see what fires next.
 	const visibleTasks = useMemo(() => {
 		const query = filterQuery.trim();
-		const filtered = query ? tasks.filter((task) => taskMatchesFilter(task, query)) : tasks;
+		const filtered = tasks.filter(
+			(task) =>
+				(kindFilter === 'all' || task.kind === kindFilter) &&
+				(!query || taskMatchesFilter(task, query))
+		);
 
 		const sorted = filtered.slice().sort((a, b) => {
 			let diff = 0;
@@ -171,13 +222,11 @@ export function ScheduledTasksTab({
 						compareNamesIgnoringEmojis(a.agentName, b.agentName) ||
 						compareNamesIgnoringEmojis(taskTitle(a), taskTitle(b));
 					break;
-				case 'repeats':
+				case 'schedule':
 					diff =
 						KIND_RANK[a.kind] - KIND_RANK[b.kind] ||
+						scheduleSortValue(a).localeCompare(scheduleSortValue(b)) ||
 						compareNamesIgnoringEmojis(taskTitle(a), taskTitle(b));
-					break;
-				case 'schedule':
-					diff = describeSchedule(a).localeCompare(describeSchedule(b));
 					break;
 				case 'next': {
 					// Tasks with no projection (an interval's phase lives in engine
@@ -194,7 +243,7 @@ export function ScheduledTasksTab({
 			return isDescending ? -diff : diff;
 		});
 		return sorted;
-	}, [tasks, filterQuery, sortKey, isDescending]);
+	}, [tasks, filterQuery, kindFilter, sortKey, isDescending]);
 
 	function confirmCancel(task: ScheduledTask) {
 		getModalActions().showConfirmation(
@@ -220,11 +269,19 @@ export function ScheduledTasksTab({
 	}
 
 	const headerClass = 'pb-2 font-medium whitespace-nowrap';
+	// The header stays put while 100+ rows scroll past under it. The background
+	// is required: without it the rows show through the transparent cells.
+	const stickyHeaderStyle = {
+		position: 'sticky' as const,
+		top: 0,
+		zIndex: 1,
+		backgroundColor: theme.colors.bgMain,
+	};
 
 	return (
 		<div className="flex-1 min-h-0 flex flex-col">
 			<div
-				className="flex items-center justify-between gap-3 px-5 py-3 border-b"
+				className="flex items-center justify-between gap-3 flex-wrap px-5 py-3 border-b"
 				style={{ borderColor: theme.colors.border }}
 			>
 				<div className="flex flex-col shrink-0">
@@ -241,8 +298,8 @@ export function ScheduledTasksTab({
 					</span>
 				</div>
 
-				<div className="flex items-center gap-2 min-w-0 flex-1 justify-center">
-					<div className="relative flex items-center" style={{ width: 320, maxWidth: '100%' }}>
+				<div className="flex items-center gap-2 min-w-0 flex-1 justify-center flex-wrap">
+					<div className="relative flex items-center" style={{ width: 260, maxWidth: '100%' }}>
 						<Search
 							className="absolute left-2 w-3.5 h-3.5 pointer-events-none"
 							style={{ color: filterQuery ? theme.colors.accent : theme.colors.textDim }}
@@ -253,7 +310,7 @@ export function ScheduledTasksTab({
 							type="text"
 							value={filterQuery}
 							onChange={(e) => setFilterQuery(e.target.value)}
-							placeholder="Filter tasks, agents, pipelines, schedules..."
+							placeholder="Filter tasks, agents, schedules..."
 							className="w-full rounded border bg-transparent outline-none text-xs py-1 pl-7"
 							style={{
 								borderColor: filterQuery ? theme.colors.accent : theme.colors.border,
@@ -273,7 +330,15 @@ export function ScheduledTasksTab({
 							/>
 						)}
 					</div>
-					{filterQuery && (
+					<SegmentedControl
+						value={kindFilter}
+						onChange={setKindFilter}
+						options={KIND_FILTER_OPTIONS}
+						theme={theme}
+						ariaLabel="Filter by how the task repeats"
+						testId="scheduled-tasks-kind-filter"
+					/>
+					{isNarrowed && (
 						<span
 							className="text-xs tabular-nums whitespace-nowrap"
 							style={{ color: theme.colors.textDim }}
@@ -322,10 +387,22 @@ export function ScheduledTasksTab({
 						data-testid="scheduled-tasks-no-matches"
 						role="status"
 					>
-						No scheduled tasks match &ldquo;{filterQuery.trim()}&rdquo;
+						{filterQuery.trim()
+							? `No scheduled tasks match "${filterQuery.trim()}"`
+							: `No ${KIND_FILTER_OPTIONS.find((option) => option.value === kindFilter)?.label.toLowerCase()} tasks are scheduled`}
 					</div>
 				) : (
-					<table className="w-full text-sm">
+					<table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+						{/* Fixed widths keep the columns from reflowing as the filter
+						    changes which rows are visible, and give the Task cell a
+						    definite width to truncate against. */}
+						<colgroup>
+							<col style={{ width: '38%' }} />
+							<col style={{ width: '18%' }} />
+							<col style={{ width: '26%' }} />
+							<col style={{ width: '10%' }} />
+							<col style={{ width: '8%' }} />
+						</colgroup>
 						<thead>
 							<tr
 								className="text-left text-xs border-b"
@@ -335,7 +412,6 @@ export function ScheduledTasksTab({
 									[
 										['task', 'Task', 'left'],
 										['agent', 'Agent', 'left'],
-										['repeats', 'Repeats', 'left'],
 										['schedule', 'Schedule', 'left'],
 										['next', 'Next', 'right'],
 									] as [TaskSortKey, string, 'left' | 'right'][]
@@ -351,10 +427,11 @@ export function ScheduledTasksTab({
 										align={align}
 										title={SORT_TITLES[key]}
 										className={`${headerClass}${align === 'right' ? ' text-right' : ''}`}
+										style={stickyHeaderStyle}
 										testId={`scheduled-tasks-sort-${key}`}
 									/>
 								))}
-								<th className={`${headerClass} text-right`} />
+								<th className={`${headerClass} text-right`} style={stickyHeaderStyle} />
 							</tr>
 						</thead>
 						<tbody>
@@ -367,35 +444,48 @@ export function ScheduledTasksTab({
 										style={{ borderColor: theme.colors.border, opacity: task.enabled ? 1 : 0.55 }}
 									>
 										<td className="py-2 pr-3" style={{ color: theme.colors.textMain }}>
-											<div className="flex flex-col">
-												<span>{taskTitle(task)}</span>
+											<div className="flex flex-col min-w-0">
+												<span className="truncate" title={taskTitle(task)}>
+													{taskTitle(task)}
+												</span>
 												{/* The pipeline matters here: this list mixes standalone reminders
 												    with the schedule triggers that drive a whole pipeline, and
-												    cancelling one of those breaks the pipeline. */}
-												<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-													{task.name}
-													{` · ${task.pipelineName}`}
-													{task.action !== 'prompt' ? ` · ${task.action}` : ''}
-													{task.enabled ? '' : ' · paused'}
+												    cancelling one of those breaks the pipeline. It is dropped when
+												    it merely repeats the agent name, which is its own column. */}
+												<span
+													className="text-xs font-mono truncate"
+													style={{ color: theme.colors.textDim }}
+													title={subtitleFor(task)}
+												>
+													{subtitleFor(task)}
 												</span>
 											</div>
 										</td>
-										<td className="py-2 pr-3" style={{ color: theme.colors.textDim }}>
+										<td
+											className="py-2 pr-3 truncate"
+											style={{ color: theme.colors.textDim }}
+											title={task.agentName}
+										>
 											{task.agentName}
 										</td>
 										<td className="py-2 pr-3" style={{ color: theme.colors.textDim }}>
-											<span className="inline-flex items-center gap-1.5">
-												<Icon className="w-3.5 h-3.5" />
-												{KIND_LABEL[task.kind]}
+											{/* The kind lives here as an icon rather than as its own text
+											    column: it was the same three words on almost every row and
+											    wrapped each one onto a second line. */}
+											<span className="flex items-center gap-1.5 min-w-0">
+												<Icon className="w-3.5 h-3.5 shrink-0" aria-label={KIND_LABEL[task.kind]} />
+												<span
+													className="font-mono text-xs truncate"
+													title={`${KIND_LABEL[task.kind]} · ${describeSchedule(task)}`}
+												>
+													{describeSchedule(task)}
+												</span>
 											</span>
 										</td>
 										<td
-											className="py-2 pr-3 font-mono text-xs"
+											className="py-2 pr-3 text-right whitespace-nowrap"
 											style={{ color: theme.colors.textDim }}
 										>
-											{describeSchedule(task)}
-										</td>
-										<td className="py-2 pr-3 text-right" style={{ color: theme.colors.textDim }}>
 											{formatCountdown(task, nowMs)}
 										</td>
 										<td className="py-2">
