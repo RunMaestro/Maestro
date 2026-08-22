@@ -188,6 +188,93 @@ describe('ExitHandler', () => {
 			expect(dataEvents).toContain('Auth Bug Fix');
 		});
 
+		it('emits an error, not data, when the trailing envelope reports a failure', async () => {
+			// A CLI that reports its failure in-band and then exits 0 used to settle
+			// the turn with nothing at all: isResultMessage rejects the error event,
+			// and detectErrorFromExit returns null on exit code 0.
+			const errorJson = '{"event":"result","result":{"error":"quota exhausted"}}';
+			const raw = JSON.parse(errorJson);
+			const agentError = {
+				type: 'rate_limited',
+				message: 'quota exhausted',
+				recoverable: true,
+				agentId: 'antigravity',
+				timestamp: 0,
+			};
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw,
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(
+					() => agentError
+				) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			const errorEvents: unknown[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('agent-error', (_sid: string, err: unknown) => errorEvents.push(err));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(mockParser.detectErrorFromParsed).toHaveBeenCalledWith(raw);
+			expect(errorEvents).toHaveLength(1);
+			expect(errorEvents[0]).toMatchObject({
+				type: 'rate_limited',
+				sessionId: 'test-session',
+			});
+			// The failure text must never reach the user as the agent's answer.
+			expect(dataEvents).not.toContain('quota exhausted');
+			expect(proc.errorEmitted).toBe(true);
+		});
+
+		it('does not double-report a trailing error already emitted from stdout', async () => {
+			const errorJson = '{"event":"result","result":{"error":"quota exhausted"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'quota exhausted',
+					recoverable: true,
+					agentId: 'antigravity',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			proc.errorEmitted = true;
+			processes.set('test-session', proc);
+
+			const errorEvents: unknown[] = [];
+			emitter.on('agent-error', (_sid: string, err: unknown) => errorEvents.push(err));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
+			expect(errorEvents).toHaveLength(0);
+		});
+
 		it('should not process jsonBuffer if already empty', async () => {
 			const mockParser = createMockOutputParser();
 

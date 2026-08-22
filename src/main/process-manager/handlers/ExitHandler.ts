@@ -137,7 +137,24 @@ export class ExitHandler {
 			});
 			try {
 				const event = outputParser.parseJsonLine(remainingLine);
-				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
+				// A terminal envelope that reports a FAILURE has to leave through the
+				// error path, not the result path. Emitting its text as data would
+				// render a provider failure as the agent's answer, and dropping it
+				// silently is worse still: `detectErrorFromExit` below returns null on
+				// exit code 0, so a CLI that reports the failure in-band and then exits
+				// clean would settle the turn with no answer and no error at all - the
+				// tab just stops, and no retry or recovery handling ever fires.
+				if (event?.type === 'error' && !managedProcess.errorEmitted) {
+					const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
+					if (agentError) {
+						managedProcess.errorEmitted = true;
+						agentError.sessionId = sessionId;
+						if (managedProcess.sshRemoteId) {
+							agentError.sshRemoteId = managedProcess.sshRemoteId;
+						}
+						this.emitter.emit('agent-error', sessionId, agentError);
+					}
+				} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 					managedProcess.resultEmitted = true;
 					const resultText = event.text || managedProcess.streamedText || '';
 					if (resultText) {
