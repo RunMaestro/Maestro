@@ -6,7 +6,7 @@
  */
 
 import { memo } from 'react';
-import { ChevronDown, Clock, Eye, EyeOff, Loader2, RefreshCw, Users } from 'lucide-react';
+import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime } from '../../../../shared/formatters';
 import { QUOTA_REFRESH_OPTIONS, resolveQuotaFillColor } from './quotaFormatting';
@@ -158,6 +158,74 @@ export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 		>
 			<Users className="w-3 h-3" aria-hidden="true" />
 			{label}
+		</span>
+	);
+});
+
+/**
+ * The login email for an account row, printed beside the account pill.
+ *
+ * This is the account's real identity; the pill next to it is only the config
+ * DIRECTORY the user happened to name. The two disagree the moment someone runs
+ * `/login` inside an existing dir, so both are shown rather than picking one.
+ */
+export const QuotaAccountEmail = memo(function QuotaAccountEmail({
+	email,
+	testId,
+	theme,
+}: {
+	email: string;
+	testId?: string;
+	theme: Theme;
+}) {
+	return (
+		<div
+			className="text-xs truncate"
+			style={{ color: theme.colors.textDim, opacity: 0.7 }}
+			title={`Logged in as ${email}`}
+			data-testid={testId}
+		>
+			{email}
+		</div>
+	);
+});
+
+/**
+ * "Shares one quota with these other accounts" chip.
+ *
+ * Two config dirs logged into the SAME Anthropic account draw from one quota
+ * bucket, so their bars are identical by definition. Without this chip that
+ * looks like the sampler copying one account's numbers onto another row - the
+ * exact conclusion a user reaches when two differently-named rows show the same
+ * percentages. Naming the siblings turns an apparent bug into a fact.
+ */
+export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
+	siblingNames,
+	testId,
+	theme,
+}: {
+	/** Display names of the other accounts in this quota bucket. */
+	siblingNames: string[];
+	testId?: string;
+	theme: Theme;
+}) {
+	if (siblingNames.length === 0) return null;
+	const color = theme.colors.warning ?? theme.colors.accent;
+	const joined = siblingNames.join(', ');
+
+	return (
+		<span
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium flex-shrink-0"
+			style={{
+				color,
+				backgroundColor: `${color}15`,
+				border: `1px solid ${color}35`,
+			}}
+			title={`Same Anthropic account as ${joined}. These rows share one quota, so identical bars are expected.`}
+			data-testid={testId}
+		>
+			<Link2 className="w-3 h-3" aria-hidden="true" />
+			shared with {joined}
 		</span>
 	);
 });
@@ -420,6 +488,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 	deriveShortName,
 	deriveDisplayName,
 	getTabStatus,
+	getTabTitle,
 }: {
 	theme: Theme;
 	accountKeys: string[];
@@ -431,6 +500,13 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 	deriveShortName: (key: string | undefined) => string;
 	deriveDisplayName: (key: string | undefined) => string;
 	getTabStatus: (key: string) => QuotaTabStatus;
+	/**
+	 * Hover text for a tab. Defaults to the raw account key. Providers that can
+	 * resolve the account's real identity override this so a tab named after a
+	 * config directory still reveals which login it belongs to - two tabs can
+	 * be the same account, and the tab strip has no room to say so inline.
+	 */
+	getTabTitle?: (key: string) => string;
 }) {
 	return (
 		<div
@@ -456,7 +532,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 							color: isActive ? theme.colors.accent : theme.colors.textDim,
 							borderBottom: `2px solid ${isActive ? theme.colors.accent : 'transparent'}`,
 						}}
-						title={key}
+						title={getTabTitle ? getTabTitle(key) : key}
 						data-testid={`${testIdPrefix}-tab-${shortName}`}
 					>
 						<span className="flex items-center gap-1.5">

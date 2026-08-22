@@ -15,6 +15,7 @@ import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexU
 import { useUIStore } from '../../stores/uiStore';
 import { makeAccountKeyHelpers } from './quota/quotaFormatting';
 import {
+	QuotaAccountEmail,
 	QuotaAccountPill,
 	QuotaAgentCountBadge,
 	QuotaAccountTabs,
@@ -76,9 +77,11 @@ const AccountRow = memo(function AccountRow({
 					theme={theme}
 				/>
 				{snapshot.email && (
-					<div className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
-						{snapshot.email}
-					</div>
+					<QuotaAccountEmail
+						email={snapshot.email}
+						testId={`${TEST_ID_PREFIX}-email-${shortName}`}
+						theme={theme}
+					/>
 				)}
 				{snapshot.planType && (
 					<div

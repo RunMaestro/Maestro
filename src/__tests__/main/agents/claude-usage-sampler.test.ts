@@ -24,9 +24,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // vi.hoisted(), the factory closes over a `mockExecFile` that hasn't been
 // initialized yet, and the first `import` from the source module crashes
 // with "Cannot access 'mockExecFile' before initialization".
-const { mockExecFile, captureMessageMock } = vi.hoisted(() => ({
+const { mockExecFile, captureMessageMock, readAccountIdentityMock } = vi.hoisted(() => ({
 	mockExecFile: vi.fn(),
 	captureMessageMock: vi.fn(),
+	readAccountIdentityMock: vi.fn(),
 }));
 
 vi.mock('child_process', async (importOriginal) => {
@@ -71,6 +72,12 @@ vi.mock('os', async (importOriginal) => {
 
 vi.mock('../../../main/utils/sentry', () => ({
 	captureMessage: captureMessageMock,
+}));
+
+// Stubbed so the sampler's `.claude.json` read never touches the real disk -
+// the account identity has its own test file.
+vi.mock('../../../main/agents/claude-account-identity', () => ({
+	readClaudeAccountIdentity: readAccountIdentityMock,
 }));
 
 import path from 'path';
@@ -132,6 +139,10 @@ describe('claude-usage-sampler', () => {
 		mockExecFile.mockReset();
 		captureMessageMock.mockReset();
 		captureMessageMock.mockResolvedValue(undefined);
+		// Default: no identity available, which is the shape every pre-existing
+		// assertion in this file was written against.
+		readAccountIdentityMock.mockReset();
+		readAccountIdentityMock.mockResolvedValue(null);
 		// Restore env to a known baseline; some tests intentionally drop
 		// CLAUDE_CONFIG_DIR from `process.env` to verify the ~/.claude fallback.
 		for (const key of Object.keys(process.env)) {
@@ -147,6 +158,67 @@ describe('claude-usage-sampler', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	describe('account identity', () => {
+		it('stamps the account email / uuid / org onto the snapshot', async () => {
+			// The quota is bucketed per Anthropic ACCOUNT, but the snapshot is
+			// keyed by config DIRECTORY. Without these fields the dashboard can
+			// only label a row by its directory name, and two dirs sharing one
+			// login look like a sampling bug.
+			readAccountIdentityMock.mockResolvedValue({
+				email: 'pedram@smashlabs.com',
+				accountUuid: '2acf84ae-d765-4a12-ae90-296b9f903018',
+				organizationName: "pedram@smashlabs.com's Organization",
+			});
+			primeSuccess(wireEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap?.accountEmail).toBe('pedram@smashlabs.com');
+			expect(snap?.accountUuid).toBe('2acf84ae-d765-4a12-ae90-296b9f903018');
+			expect(snap?.organizationName).toBe("pedram@smashlabs.com's Organization");
+		});
+
+		it('reads the identity from the canonical config dir, not the wire echo', async () => {
+			// `config_dir` in the wire is whatever string maestro-p printed;
+			// the snapshot key is the locally-resolved path. Reading the
+			// identity from anything but the key would let the two disagree.
+			readAccountIdentityMock.mockResolvedValue(null);
+			primeSuccess(wireEnvelope({ config_dir: '/some/echoed/path/' }));
+
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				cwd: '/tmp',
+				configDir: '/Users/test/.claude-smash',
+			});
+
+			expect(readAccountIdentityMock).toHaveBeenCalledWith('/Users/test/.claude-smash');
+		});
+
+		it('omits the identity fields entirely when the account is unknown', async () => {
+			// Absent rather than `undefined`-valued, so a snapshot from a dir
+			// that was never logged into persists in the same shape it always
+			// did and older cached snapshots stay comparable.
+			readAccountIdentityMock.mockResolvedValue(null);
+			primeSuccess(wireEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap).not.toHaveProperty('accountEmail');
+			expect(snap).not.toHaveProperty('accountUuid');
+			expect(snap).not.toHaveProperty('organizationName');
+		});
+
+		it('keeps the fields it does know when the identity is partial', async () => {
+			readAccountIdentityMock.mockResolvedValue({ email: 'legacy@example.com' });
+			primeSuccess(wireEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap?.accountEmail).toBe('legacy@example.com');
+			expect(snap).not.toHaveProperty('accountUuid');
+		});
 	});
 
 	describe('happy path', () => {

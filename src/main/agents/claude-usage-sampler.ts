@@ -59,6 +59,7 @@ import { promisify } from 'util';
 
 import { captureMessage } from '../utils/sentry';
 import { resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageStore';
+import { readClaudeAccountIdentity } from './claude-account-identity';
 
 const execFileAsync = promisify(execFile);
 
@@ -205,10 +206,23 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		return null;
 	}
 
+	// WHO this config dir is logged in as, read straight from
+	// `<configDir>/.claude.json`. Stamped onto the snapshot rather than looked
+	// up at render time so the dashboard's label and its percentages always
+	// describe the same moment: `/login` can repoint a dir at another account
+	// between samples, and a row captioned with the new account over the old
+	// account's bars would be a worse lie than the directory name it replaces.
+	// Best-effort - null just falls back to the directory name downstream.
+	const configDirKey = resolveConfigDirKey(childEnv);
+	const identity = await readClaudeAccountIdentity(configDirKey);
+
 	return {
 		sampledAt: new Date().toISOString(),
-		configDirKey: resolveConfigDirKey(childEnv),
+		configDirKey,
 		authState: parsed.auth_state ?? 'authenticated',
+		...(identity?.email ? { accountEmail: identity.email } : {}),
+		...(identity?.accountUuid ? { accountUuid: identity.accountUuid } : {}),
+		...(identity?.organizationName ? { organizationName: identity.organizationName } : {}),
 		session: toStoreWindow(parsed.session),
 		weekAllModels: toStoreWindow(parsed.week_all_models),
 		weekSonnetOnly: {
