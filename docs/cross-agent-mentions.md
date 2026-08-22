@@ -48,7 +48,7 @@ If your agent is busy, the message you send is added to its [execution queue](./
 
 That keeps the order you wrote in. A queued "finish the refactor, then have @Reviewer check it" reaches the reviewer after the refactor lands, with the transcript as it stands then, rather than pulling the reviewer into work that has not happened yet. Editing a queued message updates its pending consultation too, so adding or removing an `@name` before it runs does what you would expect. **Force Send** on a queued item runs the consultation immediately, along with the rest of that message.
 
-A message addressed **only** to another agent (one that starts with `@name`) has no turn of your own to wait for, so it is consulted right away even while your agent is working.
+This applies to a message addressed **only** to another agent too (one that starts with `@name`). Your agent does not answer it, but that is not the same as having nothing to wait for - if you lined work up first, the position of the message is the instruction, so it waits its turn like anything else. It is consulted immediately only when there is genuinely nothing ahead of it: no turn in flight, no queued items, no Auto Run.
 
 ### Who answers: your agent, the mentioned agents, or both
 

@@ -2515,6 +2515,87 @@ describe('useInputProcessing', () => {
 			expect(queued.crossAgentMention).toBe(true);
 		});
 
+		// The reported bug: the user queued /commit, then sent "@rc sync up" meaning
+		// "after the commit". Because the message LEADS with the mention, the source
+		// agent does not answer it - but that does not mean it has nothing to wait
+		// for. Its POSITION in the queue is the instruction.
+		it('queues a mention-only message behind work the user already lined up', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			session.executionQueue = [
+				{
+					id: 'queued-commit',
+					timestamp: 1,
+					tabId: session.aiTabs[0].id,
+					type: 'command',
+					command: '/commit',
+				},
+			];
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Resolved, but nobody consulted: /commit is still ahead of it.
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			// Queued AFTER the commit, flagged as consult-only so the drain fires the
+			// mention without spawning a local turn.
+			expect(updated.executionQueue.map((i: { id: string }) => i.id)).toEqual([
+				'queued-commit',
+				expect.any(String),
+			]);
+			const queued = updated.executionQueue[1];
+			expect(queued.text).toBe('@rc pull in the latest changes');
+			expect(queued.crossAgentMention).toBe(true);
+			expect(queued.crossAgentOnly).toBe(true);
+			// No user bubble yet - it is appended when the item actually dispatches.
+			expect(updated.aiTabs[0].logs).toEqual([]);
+		});
+
+		it('queues a mention-only message while the agent is mid-turn', async () => {
+			// Same rule with nothing in the queue: a turn in flight is still work
+			// ahead, and the consulted agent should see the transcript after it lands.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'busy' });
+			session.aiTabs[0].state = 'busy';
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
 		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {
 			// Cross-agent resolution is gated on a real input-box submit
 			// (`overrideInputValue === undefined`) so a queued replay never re-consults.

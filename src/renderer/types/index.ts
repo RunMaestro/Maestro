@@ -384,6 +384,12 @@ export interface QueuedItem {
 	// mentioned agent is pulled in at the moment the message becomes the agent's
 	// turn - not when the user typed it into a queue that was minutes deep.
 	crossAgentMention?: boolean;
+	// The message is addressed ONLY at the mentioned agent(s) - it leads with an
+	// `@agent` mention, so this agent does not answer it. Dispatching the item
+	// fires the consult and nothing else: no spawn, no turn. It still occupies a
+	// queue slot, because its POSITION is what the user is expressing ("finish
+	// that, then ask them"). Always paired with `crossAgentMention`.
+	crossAgentOnly?: boolean;
 }
 
 export interface WorkLogItem {

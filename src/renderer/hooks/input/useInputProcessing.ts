@@ -23,6 +23,7 @@ import { requestAiCommand } from '../../services/aiCommand';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
+import { hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
 import { resolveForceParallel } from '../../stores/settingsStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
@@ -635,11 +636,64 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const sourceTab = resolveTargetTab(activeSession);
 
 				// The message leads with an `@agent` mention, so it is addressed only at
-				// the consulted agent(s) - there is no local turn for it to queue behind,
-				// so consult now. Record the user's bubble (so the streamed cross-agent
-				// replies have an anchor and the user sees what they asked), then STOP:
-				// do not queue or dispatch to the source agent, do not mark it busy.
+				// the consulted agent(s): this agent does not answer it.
 				if (crossAgentMentionPlan.suppressLocal) {
+					// ...but "this agent doesn't answer it" is NOT the same as "it has
+					// nothing to wait for". When the user has already put work in front
+					// of it - a turn in flight, an item in the queue - the POSITION of
+					// the message is the instruction ("finish the commit, THEN have them
+					// sync"). Queue it as a mention-only item and let the drain fire the
+					// consult when its turn comes, exactly like any other queued message.
+					if (
+						hasWorkAheadOfNewMessage(activeSession, {
+							autoRunActive: getBatchState(activeSession.id).isRunning,
+						})
+					) {
+						const activeTab = resolveTargetTab(activeSession);
+						const mentionQueuedItem: QueuedItem = {
+							id: generateId(),
+							timestamp: Date.now(),
+							tabId: activeTab?.id || activeSession.activeTabId,
+							type: 'message',
+							text: effectiveInputValue,
+							images: [...effectiveImages],
+							tabName:
+								activeTab?.name ||
+								(activeTab?.agentSessionId
+									? activeTab.agentSessionId.split('-')[0].toUpperCase()
+									: 'New'),
+							readOnlyMode: activeTab?.readOnlyMode === true,
+							crossAgentMention: true,
+							crossAgentOnly: true,
+						};
+
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== resolvedSessionId) return s;
+								const trimmed = effectiveInputValue.trim();
+								const priorHistory = s.aiCommandHistory || [];
+								return {
+									...s,
+									aiCommandHistory:
+										trimmed && priorHistory[priorHistory.length - 1] !== trimmed
+											? [...priorHistory, trimmed].slice(-50)
+											: priorHistory,
+									executionQueue: [...s.executionQueue, mentionQueuedItem],
+								};
+							})
+						);
+
+						setInputValue('');
+						if (!usingOverrideImages) setStagedImages([]);
+						syncAiInputToSession('', syncTarget);
+						if (inputRef.current) inputRef.current.style.height = 'auto';
+						return;
+					}
+
+					// Nothing ahead of it, so consult now. Record the user's bubble (the
+					// streamed cross-agent replies need an anchor, and the user should see
+					// what they asked), then STOP: do not queue or dispatch to the source
+					// agent, do not mark it busy.
 					onDispatchCrossAgentMentions?.(
 						crossAgentMentionPlan,
 						effectiveInputValue,

@@ -46,6 +46,7 @@ import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import { dispatchCrossAgentMentionsForMessage } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
+import { applyQueuedItemRelease } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -382,6 +383,21 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// question that is still sitting behind other queued work.
 		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
 			dispatchCrossAgentMentionsForMessage(item.text, session, targetTab.id);
+
+			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
+			// dispatch. Return before spawning - and before `noteDispatch`, since there
+			// is no local turn for Agent Resilience to retry. The dequeue already marked
+			// this tab busy and appended the user's bubble, so release it here; nothing
+			// else will, because no process is starting. Going idle with items still
+			// queued is what lets the drain pick up the next one.
+			if (item.crossAgentOnly) {
+				useSessionStore
+					.getState()
+					.setSessions((prev) =>
+						prev.map((s) => (s.id === sessionId ? applyQueuedItemRelease(s, targetTab.id) : s))
+					);
+				return;
+			}
 		}
 
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target

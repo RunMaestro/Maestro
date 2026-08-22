@@ -1315,6 +1315,53 @@ describe('agentStore', () => {
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
 		});
 
+		// A mention-only item (the message was addressed at the other agent) fires
+		// the consult and nothing else - there is no local turn to run.
+		it('consults and stops for a crossAgentOnly item, releasing the agent', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: 1,
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'busy',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: '@rc pull in the latest changes',
+				crossAgentMention: true,
+				crossAgentOnly: true,
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledTimes(1);
+			// No local turn: the source agent was never asked to answer this.
+			expect(mockSpawn).not.toHaveBeenCalled();
+
+			// The dequeue marked the tab busy and nothing else will close it out, so
+			// this path has to release it or the agent hangs on a turn that never ran.
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(updated.state).toBe('idle');
+			expect(updated.busySource).toBeUndefined();
+		});
+
 		it('does not consult anyone for an item without a pending mention', async () => {
 			// Queued items from Auto Run, Cue, and the CLI never planned a consult.
 			// An `@` in their text must not turn into one at dispatch time.

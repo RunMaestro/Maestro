@@ -10,7 +10,12 @@
  */
 
 import type { QueuedItem, Session, SessionState } from '../types';
-import { getTabDisplayName, markTabRunningQueuedItem, resolveQueuedItemTarget } from './tabHelpers';
+import {
+	getBusyTabs,
+	getTabDisplayName,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from './tabHelpers';
 
 /** A queued item is runnable when it is not held/paused by the user. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
@@ -44,6 +49,66 @@ export function takeNextRunnableQueueItem(queue: QueuedItem[]): {
 	return {
 		item: queue[index],
 		remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+	};
+}
+
+/**
+ * Whether a message submitted right now would have work ahead of it in this
+ * agent's order: a tab mid-turn (including a closed-but-still-thinking orphan),
+ * or an item already waiting in the queue.
+ *
+ * This is the ORDERING question, deliberately separate from the fuller
+ * queue-vs-dispatch decision in `useInputProcessing`, which also weighs
+ * read-only parallelism and forced-parallel overrides. Those only matter to
+ * something that spawns a local turn. A cross-agent mention-only message spawns
+ * nothing, so the single thing that decides whether it waits is whether the user
+ * put work in front of it.
+ *
+ * `autoRunActive` comes from the batch store rather than the session (Auto Run
+ * runs in isolation and never marks the agent busy), so callers pass it in.
+ */
+export function hasWorkAheadOfNewMessage(
+	session: Session,
+	opts: { autoRunActive?: boolean } = {}
+): boolean {
+	if (opts.autoRunActive) return true;
+	if (getBusyTabs(session, { includeOrphans: true }).length > 0) return true;
+	return hasRunnableQueueItem(session.executionQueue ?? []);
+}
+
+/**
+ * Release the busy state a dequeue took, without re-queueing anything: the
+ * inverse of {@link applyQueuedItemDispatch}'s state half.
+ *
+ * The agent only returns to idle when no OTHER tab is still working - a
+ * multi-tab agent can have a turn running elsewhere, and blanking the session
+ * state would strand its thinking pill.
+ *
+ * Used wherever a dequeued item ends without a process to close it out: a
+ * dispatch that threw before spawning, and a cross-agent mention-only item,
+ * which fires its consult and by design never spawns a local turn.
+ */
+export function applyQueuedItemRelease(session: Session, tabId: string | undefined): Session {
+	const releaseTab = <T extends { id: string; state?: string; thinkingStartTime?: number }>(
+		tab: T
+	): T => (tab.id === tabId ? { ...tab, state: 'idle', thinkingStartTime: undefined } : tab);
+
+	const aiTabs = session.aiTabs.map(releaseTab);
+	const orphans = session.orphanedThinkingTabs?.map(releaseTab);
+	const stillWorking =
+		aiTabs.some((tab) => tab.state === 'busy') || !!orphans?.some((tab) => tab.state === 'busy');
+
+	return {
+		...session,
+		aiTabs,
+		...(orphans && { orphanedThinkingTabs: orphans }),
+		...(stillWorking
+			? {}
+			: {
+					state: 'idle' as SessionState,
+					busySource: undefined,
+					thinkingStartTime: undefined,
+				}),
 	};
 }
 
