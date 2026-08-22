@@ -209,6 +209,23 @@ export interface CueModalData {
 	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
 	 *  `shared/uiSurfaces.ts`. */
 	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
+	/**
+	 * Agent to highlight and scroll to in the dashboard's session table.
+	 *
+	 * The Left Bar's per-agent "Configure Maestro Cue" opens a table of EVERY
+	 * Cue-enabled agent, so without this the menu item promises one agent and
+	 * delivers a list with nothing marking which row you asked for.
+	 *
+	 * Deliberately NOT a filter: cue.yaml is a per-PROJECT file and several
+	 * agents can share one projectRoot, so narrowing the table to one agent
+	 * would hide the sibling that actually owns the config - which is exactly
+	 * the row that explains why this agent shows zero subscriptions.
+	 *
+	 * Optional: the keyboard shortcut, command palette and Settings entry
+	 * points open the dashboard with no agent in hand and nothing to
+	 * disambiguate.
+	 */
+	focusSessionId?: string;
 }
 
 /** Cue YAML editor data */
@@ -1065,8 +1082,8 @@ export function getModalActions() {
 
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
-		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>) =>
-			openModal('cueModal', { initialTab: tab }),
+		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>, focusSessionId?: string) =>
+			openModal('cueModal', { initialTab: tab, focusSessionId }),
 
 		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)
 		openCueYamlEditor: (sessionId: string, projectRoot: string) =>

@@ -5,7 +5,7 @@
  * Pure presentational. Parent CueModal owns all data + callbacks.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueSessionStatus } from '../../hooks/useCue';
@@ -43,6 +43,11 @@ export interface CueDashboardProps {
 	 *  promise is discarded; errors should be surfaced via toasts in the caller. */
 	onStopRun: (runId: string) => void;
 	onStopAll: () => void;
+	/**
+	 * Agent to highlight and scroll to, set when the dashboard was opened from
+	 * one agent's right-click menu. Undefined for the global entry points.
+	 */
+	focusSessionId?: string;
 }
 
 export function CueDashboard({
@@ -67,6 +72,7 @@ export function CueDashboard({
 	onTriggerSubscription,
 	onStopRun,
 	onStopAll,
+	focusSessionId,
 }: CueDashboardProps) {
 	// Average runtime across the loaded activity log. Excludes still-running
 	// entries (durationMs is final-state only). null when no finished runs are
@@ -85,6 +91,17 @@ export function CueDashboard({
 	// agents that ARE wired into a pipeline. Toggle reveals them when
 	// debugging shared-cwd ownership.
 	const [showWarningSessions, setShowWarningSessions] = useState(false);
+
+	// A focused agent that carries an ownershipWarning is filtered out by
+	// default, so highlighting it would scroll to a row that is not rendered.
+	// Reveal the flagged rows when the dashboard was opened FOR one of them.
+	// Runs as an effect rather than in the initial state so it still fires when
+	// the status query resolves after mount.
+	useEffect(() => {
+		if (!focusSessionId) return;
+		const focused = sessions.find((s) => s.sessionId === focusSessionId);
+		if (focused?.ownershipWarning) setShowWarningSessions(true);
+	}, [focusSessionId, sessions]);
 
 	// Sort alphabetically (ignoring leading emojis so 🧠 Substrate sorts as
 	// "Substrate", not by emoji codepoint) then optionally drop ownership-
@@ -187,6 +204,7 @@ export function CueDashboard({
 				</div>
 				<SessionsTable
 					sessions={visibleSessions}
+					focusSessionId={focusSessionId}
 					theme={theme}
 					onViewInPipeline={onViewInPipeline}
 					onEditYaml={onEditYaml}

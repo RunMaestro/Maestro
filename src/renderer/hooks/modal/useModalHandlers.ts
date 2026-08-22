@@ -547,20 +547,24 @@ export function useModalHandlers(
 		getModalActions().setCreatePRSession(session);
 	}, []);
 
-	const handleConfigureCue = useCallback(async (_session: Session) => {
-		// Pick the initial tab based on whether *any* Cue config already exists:
-		// returning users land on the Dashboard, first-time users land in the
-		// Pipeline Graph where they can build their first pipeline. Falls back
-		// to 'pipeline' if the status query fails - first-run is the safer
-		// landing for a user who has nothing configured yet.
+	const handleConfigureCue = useCallback(async (session: Session) => {
+		// Pick the initial tab from whether THIS agent already has Cue config:
+		// an agent that is already wired up lands on the Dashboard, one that is
+		// not lands in the Pipeline Graph where its first pipeline gets built.
+		// Asking "does *any* agent have config" instead dumps someone who just
+		// right-clicked a fresh agent onto a dashboard that says nothing about
+		// it. Falls back to 'pipeline' if the status query fails - first-run is
+		// the safer landing for a user who has nothing configured yet.
 		let initialTab: 'dashboard' | 'pipeline' = 'pipeline';
 		try {
 			const sessions = await cueService.getStatus();
-			if (sessions.length > 0) initialTab = 'dashboard';
+			if (sessions.some((s) => s.sessionId === session.id)) initialTab = 'dashboard';
 		} catch {
 			initialTab = 'pipeline';
 		}
-		getModalActions().openCueModalWithTab(initialTab);
+		// The dashboard lists every Cue-enabled agent. Carrying the id through is
+		// what lets it mark the row the user actually right-clicked.
+		getModalActions().openCueModalWithTab(initialTab, session.id);
 	}, []);
 
 	// ====================================================================
