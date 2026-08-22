@@ -23,6 +23,9 @@ import {
 	checkGhAuthentication,
 	getDefaultBranch,
 	createDraftPR,
+	validateContributionId,
+	toSafeDocumentFileName,
+	uniqueDocumentFileName,
 	SymphonyHandlerDependencies,
 } from './shared';
 
@@ -497,6 +500,11 @@ This PR will be updated automatically when the Auto Run completes.`;
 				} = params;
 
 				// Validate inputs
+				const idValidation = validateContributionId(contributionId);
+				if (!idValidation.valid) {
+					return { success: false, error: idValidation.error };
+				}
+
 				const slugValidation = validateRepoSlug(repoSlug);
 				if (!slugValidation.valid) {
 					return { success: false, error: slugValidation.error };
@@ -593,11 +601,36 @@ This PR will be updated automatically when the Auto Run completes.`;
 
 					// Track resolved document paths for Auto Run
 					const resolvedDocs: { name: string; path: string; isExternal: boolean }[] = [];
+					// Names already written in this batch, so two references that reduce
+					// to the same file name do not overwrite each other.
+					const usedFileNames = new Set<string>();
 
 					for (const doc of documentPaths) {
 						if (doc.isExternal) {
-							// Download external file (GitHub attachment) to cache directory
-							const destPath = path.join(symphonyDocsDir, doc.name);
+							// Download external file (GitHub attachment) to cache directory.
+							// The name is link text from the issue body, so reduce it to a
+							// bare file name before joining it onto the cache directory.
+							const safeFileName = toSafeDocumentFileName(doc.name);
+							if (!safeFileName) {
+								logger.warn('Skipping document with unusable name', LOG_CONTEXT, {
+									name: doc.name,
+								});
+								continue;
+							}
+							const uniqueFileName = uniqueDocumentFileName(safeFileName, usedFileNames);
+							if (!uniqueFileName) {
+								logger.warn('Skipping document, cannot find a free file name', LOG_CONTEXT, {
+									name: doc.name,
+								});
+								continue;
+							}
+							if (uniqueFileName !== safeFileName) {
+								logger.info('Renamed document to avoid a name collision', LOG_CONTEXT, {
+									name: doc.name,
+									to: uniqueFileName,
+								});
+							}
+							const destPath = path.join(symphonyDocsDir, uniqueFileName);
 							try {
 								logger.info('Downloading external document', LOG_CONTEXT, {
 									name: doc.name,

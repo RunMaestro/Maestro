@@ -19,6 +19,7 @@ import {
 	readState,
 	writeState,
 	broadcastSymphonyUpdate,
+	isContributionClone,
 	SymphonyHandlerDependencies,
 } from './shared';
 
@@ -461,13 +462,23 @@ export function registerLifecycleHandlers({
 
 				const contribution = state.active[index];
 
-				// Optionally cleanup local files
+				// Optionally cleanup local files. localPath is renderer-supplied and a
+				// user may legitimately choose any working directory, so confirm the
+				// directory is this contribution's clone before removing it
+				// recursively rather than trusting the stored path.
 				if (cleanup && contribution.localPath) {
-					try {
-						await fs.rm(contribution.localPath, { recursive: true, force: true });
-					} catch (e) {
-						void captureException(e);
-						logger.warn('Failed to cleanup contribution directory', LOG_CONTEXT, { error: e });
+					if (await isContributionClone(contribution.localPath, contribution.repoSlug)) {
+						try {
+							await fs.rm(contribution.localPath, { recursive: true, force: true });
+						} catch (e) {
+							void captureException(e);
+							logger.warn('Failed to cleanup contribution directory', LOG_CONTEXT, { error: e });
+						}
+					} else {
+						logger.warn("Skipping cleanup, path is not this contribution's clone", LOG_CONTEXT, {
+							contributionId,
+							localPath: contribution.localPath,
+						});
 					}
 				}
 
