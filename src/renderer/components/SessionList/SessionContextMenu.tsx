@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
 	ArrowDown,
 	ArrowDownToLine,
@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
@@ -79,6 +80,13 @@ export function SessionContextMenu({
 		vertical: 'below' | 'above';
 		horizontal: 'right' | 'left';
 	}>({ vertical: 'below', horizontal: 'right' });
+
+	// Same ordering the Left Bar uses for its group headers, so the submenu
+	// reads in the order the user already scans the sidebar in.
+	const sortedGroups = useMemo(
+		() => [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
+		[groups]
+	);
 
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
@@ -289,7 +297,7 @@ export function SessionContextMenu({
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 							)}
 
-							{groups.map((group) => (
+							{sortedGroups.map((group) => (
 								<button
 									type="button"
 									key={group.id}

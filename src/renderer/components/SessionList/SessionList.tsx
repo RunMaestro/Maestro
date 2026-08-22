@@ -332,6 +332,15 @@ function SessionListInner(props: SessionListProps) {
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
 	const unreadGroupChatIds = useGroupChatStore((s) => s.unreadGroupChatIds);
 
+	// Previous nav-cursor snapshot, so the reveal effect below can tell a real
+	// move apart from the active group chat simply going away.
+	const prevNavTargetRef = useRef({
+		selectedSidebarIndex,
+		sidebarExtraSelection,
+		activeGroupChatId,
+		activeSessionId,
+	});
+
 	// Shared with the group chat rows' status dots and the agent jumper's LIVE
 	// bucket, so all three agree on what "running" means.
 	const isAnyGroupChatBusy = useMemo(
@@ -359,6 +368,25 @@ function SessionListInner(props: SessionListProps) {
 	// group chat, then the agent index) and scroll it into the list viewport.
 	// Fires for both arrow-key navigation and the global Cmd+[ / Cmd+] cycle.
 	useEffect(() => {
+		const prev = prevNavTargetRef.current;
+		prevNavTargetRef.current = {
+			selectedSidebarIndex,
+			sidebarExtraSelection,
+			activeGroupChatId,
+			activeSessionId,
+		};
+		// Closing the active group chat (archive, close, delete of the last chat)
+		// clears activeGroupChatId without moving the cursor. Nothing new became
+		// active, so there is nothing to reveal - falling through to the agent row
+		// under `selectedSidebarIndex` would scroll the list to a row the user
+		// never navigated to, most visibly to the very top, since that cursor
+		// defaults to index 0.
+		const closedGroupChat = prev.activeGroupChatId !== null && activeGroupChatId === null;
+		const cursorMoved =
+			prev.selectedSidebarIndex !== selectedSidebarIndex ||
+			prev.sidebarExtraSelection !== sidebarExtraSelection ||
+			prev.activeSessionId !== activeSessionId;
+		if (closedGroupChat && !cursorMoved) return;
 		const container = listScrollRef.current;
 		if (!container) return;
 		let navKey: string | null = null;

@@ -571,24 +571,29 @@ Prompts support template variables substituted at runtime via `src/shared/templa
 
 The batch processor outputs machine-parseable JSON Lines events (defined in `src/cli/output/jsonl.ts`):
 
-| Event               | Fields                                                                   | Description                 |
-| ------------------- | ------------------------------------------------------------------------ | --------------------------- |
-| `start`             | `playbook`, `session`                                                    | Batch run started           |
-| `document_start`    | `document`, `index`, `taskCount`                                         | Starting a document         |
-| `task_start`        | `document`, `taskIndex`                                                  | Starting a task             |
-| `task_complete`     | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats` | Task finished               |
-| `document_complete` | `document`, `tasksCompleted`                                             | All tasks in document done  |
-| `loop_complete`     | `iteration`                                                              | One loop iteration finished |
-| `synopsis`          | `text`, `sessionId`                                                      | AI-generated summary        |
-| `history`           | `entry`                                                                  | History entry written       |
-| `complete`          | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost`    | Batch run finished          |
-| `error`             | `message`, `document?`, `taskIndex?`                                     | Error occurred              |
-| `skipped`           | `reason`                                                                 | Task or document skipped    |
-| `waiting`           | `reason`                                                                 | Waiting for agent           |
+| Event               | Fields                                                                     | Description                                          |
+| ------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `start`             | `playbook`, `session`                                                      | Batch run started                                    |
+| `document_start`    | `document`, `index`, `taskCount`                                           | Starting a document                                  |
+| `task_start`        | `document`, `taskIndex`                                                    | Starting a task                                      |
+| `task_complete`     | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats`   | Task finished                                        |
+| `document_complete` | `document`, `tasksCompleted`                                               | All tasks in document done                           |
+| `loop_complete`     | `iteration`                                                                | One loop iteration finished                          |
+| `synopsis`          | `text`, `sessionId`                                                        | AI-generated summary                                 |
+| `history`           | `entry`                                                                    | History entry written                                |
+| `complete`          | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost`      | Batch run finished                                   |
+| `error`             | `message`, `document?`, `taskIndex?`                                       | Error occurred                                       |
+| `skipped`           | `reason`                                                                   | Task or document skipped                             |
+| `waiting`           | `reason`                                                                   | Waiting for agent                                    |
+| `model_resolution`  | `document`, `taskIndex`, `model`, `effort`, `notes`, `warnings`, `message` | A `MAESTRO:MODEL` hint was applied (or could not be) |
+
+`model_resolution` is deliberately NOT gated on `--verbose`. A hint the provider could not honor (non-empty `warnings`) is exactly the case the feature exists to make visible, and an operator who never sees it concludes tier hints are broken rather than unmapped. `model`/`effort` are `null` when the agent's own default was used.
 
 ### Synopsis Generation
 
 After all tasks complete, the batch processor spawns the agent one more time to generate a synopsis (summary of work done). This uses a special prompt from `src/prompts/` and the same agent session for context continuity. The synopsis is parsed for structured data (title, description, files changed).
+
+The synopsis turn is pinned to the bottom of both ladders via `cheapTurnSettings()` (`src/shared/modelTiers.ts`) regardless of what the tasks ran at - it summarizes work that already happened, so paying premium rates for it is one wasted turn per task. Safe only because the synopsis is a leaf: its returned `agentSessionId` is discarded, so the downgrade cannot follow the conversation into a later real turn.
 
 ### CLI Activity Registration
 

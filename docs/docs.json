@@ -56,6 +56,7 @@
 					"media-player",
 					"remote-control",
 					"ssh-remote-execution",
+					"agent-resilience",
 					"feedback",
 					"configuration"
 				]

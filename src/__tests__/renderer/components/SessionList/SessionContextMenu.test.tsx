@@ -272,4 +272,30 @@ describe('SessionContextMenu', () => {
 			)
 		);
 	});
+
+	it('lists Move to Group targets in the Left Bar order, ignoring leading emojis', () => {
+		// Stored order is arbitrary; the submenu must read in the order the user
+		// already scans the sidebar in, and an emoji in the name must not sort a
+		// group to the top of the list.
+		renderMenu({
+			groups: [
+				{ id: 'g1', name: 'Zebra', emoji: '🦓', collapsed: false },
+				{ id: 'g2', name: '🚀 Apollo', emoji: '🚀', collapsed: false },
+				{ id: 'g3', name: 'Mercury', emoji: '☿', collapsed: false },
+			],
+		});
+
+		fireEvent.mouseEnter(screen.getByText('Move to Group').closest('div') as HTMLElement);
+
+		const names = screen
+			.getAllByRole('button')
+			.map((button) => button.textContent ?? '')
+			.filter((text) => ['Zebra', '🚀 Apollo', 'Mercury'].some((name) => text.includes(name)));
+
+		expect(names.map((text) => text.replace(/[^A-Za-z]/g, ''))).toEqual([
+			'Apollo',
+			'Mercury',
+			'Zebra',
+		]);
+	});
 });

@@ -63,6 +63,8 @@ Claude Code agents can bill against either your Anthropic API credit or your Cla
 | TUI Wrapper (Max plan) | `TUI Wrapper` | Always drives the Claude interactive TUI against your Max plan quota.                    |
 | Dynamic                | `Dynamic ...` | Starts on the Max plan TUI, then auto-switches to API when the quota is near exhaustion. |
 
+When a window does run dry, [Agent Resilience](/agent-resilience) takes the turn over: it reads the reset moment out of Claude's own banner (`resets 11:40am (America/Chicago)`) and resends your prompt then, instead of leaving you to notice and retype it.
+
 The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI (the mode that draws on your Max plan quota rather than per-token API credit). It ships bundled with the desktop app, so local agents work out of the box.
 
 <Note>

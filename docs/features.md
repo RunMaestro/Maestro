@@ -16,6 +16,7 @@ icon: sparkles
 - 💻 **[Command Line Interface](./cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks, manage settings and agent configs - all from the command line. Settings changes take effect instantly in the running app.
 - 🚀 **Multi-Agent Management** - Run unlimited agents in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **[Message Queueing](./general-usage#message-queue)** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Edit, copy, hold/resume, reorder, or remove anything still waiting. Never lose a thought.
+- 🛡️ **[Agent Resilience](./agent-resilience)** - Providers fail; your turn does not have to. When a turn dies on `529 Overloaded` or a spent plan quota, Maestro resends the exact prompt on its own - backing off in seconds for a blip, or waiting for the real reset time it reads out of the error. One live status card in the transcript replaces the wall of error dialogs, Auto Run batches resume themselves, and an agent can optionally fail over to a backup endpoint instead of waiting out the window.
 - 🔐 **[Global Environment Variables](./configuration#global-environment-variables)** - Configure environment variables once in Settings and they apply to all agent processes and terminal sessions. Perfect for API keys, proxy settings, and tool paths.
 
 ## Core Features

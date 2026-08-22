@@ -21,6 +21,9 @@ import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { getCliPrompt } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
+import { findActiveModelHint } from '../../shared/autorunModelHints';
+import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
+import { cheapTurnSettings } from '../../shared/modelTiers';
 
 /**
  * Detect the `<!-- maestro:halt -->` early-exit marker in a document.
@@ -68,6 +71,9 @@ export async function* runPlaybook(
 		skipSynopsis = false,
 	} = options;
 	const batchStartTime = Date.now();
+	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
+	// it depends only on the provider, which cannot change mid-run.
+	const cheapSynopsis = cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -477,9 +483,36 @@ export async function* runPlaybook(
 					// Run task. Synopsis spawn below intentionally omits this
 					// - it's a resume into the same agent that already has the
 					// prompt and re-sending would waste tokens.
+					// Resolve the document's model hint for THIS task. Recomputed per
+					// dispatch rather than carried as run state, so editing the document
+					// mid-run takes effect on the next task.
+					const turnSettings = resolveTurnSettings(
+						session.toolType,
+						findActiveModelHint(expandedDocContent),
+						session.customModel,
+						session.customEffort
+					);
+					// Its own event type rather than `verbose`: a hint that could not be
+					// honored has to reach the operator whether or not they passed
+					// --verbose, and a distinct type lets consumers filter for it.
+					const turnSettingsNote = describeTurnSettings(turnSettings);
+					if (turnSettingsNote) {
+						yield {
+							type: 'model_resolution',
+							timestamp: Date.now(),
+							document: docEntry.filename,
+							taskIndex,
+							model: turnSettings.model ?? null,
+							effort: turnSettings.effort ?? null,
+							notes: turnSettings.notes,
+							warnings: turnSettings.warnings,
+							message: turnSettingsNote,
+						};
+					}
+
 					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-						customModel: session.customModel,
-						customEffort: session.customEffort,
+						customModel: turnSettings.model,
+						customEffort: turnSettings.effort,
 						customArgs: session.customArgs,
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
@@ -528,8 +561,14 @@ export async function* runPlaybook(
 							await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
 							result.agentSessionId,
 							{
-								customModel: session.customModel,
-								customEffort: session.customEffort,
+								// A synopsis is a throwaway summarization of work that already
+								// happened, so it runs at the bottom of both ladders regardless of
+								// what the task ran at. On a long playbook this is one premium turn
+								// per task saved. Safe because the synopsis is a leaf: its returned
+								// agentSessionId is discarded, so the downgrade cannot follow the
+								// conversation into the next real turn.
+								customModel: cheapSynopsis.model ?? session.customModel,
+								customEffort: cheapSynopsis.effort ?? session.customEffort,
 								customArgs: session.customArgs,
 								customEnvVars: session.customEnvVars,
 								sshRemoteConfig: session.sessionSshRemoteConfig,

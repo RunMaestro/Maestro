@@ -14,6 +14,11 @@ import {
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+// Type-only, so the cycle with useDocumentProcessor (which imports
+// AgentSpawnErrorKind from here) is erased at build. One definition of the
+// override shape keeps the declared signature and the implementation in step.
+import type { AutoRunTurnOverrides } from '../batch/useDocumentProcessor';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
 
@@ -73,7 +78,7 @@ export interface UseAgentExecutionReturn {
 		cwdOverride?: string,
 		options?: {
 			isAutoRun?: boolean;
-		}
+		} & AutoRunTurnOverrides
 	) => Promise<AgentSpawnResult>;
 	/** Spawn an agent with a prompt for the active session */
 	spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
@@ -201,9 +206,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			sessionId: string,
 			prompt: string,
 			cwdOverride?: string,
+			/**
+			 * `modelOverride` / `effortOverride` are the per-task values from an
+			 * Auto Run document's model hint. Absent on every other call path, in
+			 * which case the agent's own configured values are used.
+			 */
 			options?: {
 				isAutoRun?: boolean;
-			}
+			} & AutoRunTurnOverrides
 		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -556,7 +566,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomPath: session.customPath,
 							sessionCustomArgs: session.customArgs,
 							sessionCustomEnvVars: session.customEnvVars,
-							sessionCustomModel: session.customModel,
+							sessionCustomModel: options?.modelOverride ?? session.customModel,
+							// The agent's effort was silently dropped here while the CLI Auto Run
+							// path passed it through, so the same playbook ran at different effort
+							// depending on whether it was launched from the app or maestro-cli.
+							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
@@ -639,6 +653,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				if (!commandToUse) {
 					throw new Error(`${toolType} agent has no command configured`);
 				}
+
+				const cheapSynopsis = cheapTurnSettings(toolType);
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -745,7 +761,19 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomPath: sessionConfig?.customPath,
 							sessionCustomArgs: sessionConfig?.customArgs,
 							sessionCustomEnvVars: sessionConfig?.customEnvVars,
-							sessionCustomModel: sessionConfig?.customModel,
+							// A synopsis summarizes a conversation that already happened. It is
+							// pinned to the bottom of both ladders rather than inheriting the
+							// tab's model, because running a few sentences of prose on the model
+							// that just did the engineering is pure waste - one premium turn per
+							// completed turn, forever. Falls back to the tab's own model where
+							// the provider has no tier mapping.
+							//
+							// Safe only because the synopsis is a LEAF: every caller discards the
+							// agentSessionId it returns rather than adopting it, so the cheap
+							// model cannot follow the conversation into the next real turn. A
+							// future caller that adopts that id must revisit this.
+							sessionCustomModel: cheapSynopsis.model ?? sessionConfig?.customModel,
+							sessionCustomEffort: cheapSynopsis.effort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the

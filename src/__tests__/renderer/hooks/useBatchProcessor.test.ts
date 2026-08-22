@@ -3705,7 +3705,12 @@ describe('useBatchProcessor hook', () => {
 			});
 
 			// Should have called spawn with cwd override
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/custom/worktree');
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/custom/worktree',
+				expect.anything()
+			);
 		});
 	});
 
@@ -3991,7 +3996,12 @@ describe('useBatchProcessor hook', () => {
 			);
 
 			// Should have spawned agent with worktree path
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/test/worktree');
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/test/worktree',
+				expect.anything()
+			);
 		});
 
 		it('should handle worktree checkout failure with uncommitted changes', async () => {

@@ -214,8 +214,13 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				.getState()
 				.setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...updates } : s)));
 		},
-		onSpawnAgent: (sessionId, prompt, cwdOverride) =>
-			spawnAgentForSession(sessionId, prompt, cwdOverride, { isAutoRun: true }),
+		onSpawnAgent: (sessionId, prompt, cwdOverride, turnSettings) =>
+			spawnAgentForSession(sessionId, prompt, cwdOverride, {
+				isAutoRun: true,
+				// Per-task model/effort from the document's MAESTRO:MODEL hint. Must be
+				// forwarded, not dropped: this is the last hop before the spawn.
+				...turnSettings,
+			}),
 		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({
 				...entry,

@@ -210,6 +210,84 @@ Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the *
 
 Paste images directly into your documents. Images are saved to an `images/` subfolder with relative paths for portability.
 
+## Model Tier and Effort per Phase
+
+Most playbooks change gears partway through. Surveying an existing codebase is cheap, mechanical work; designing the migration that follows is not. Rather than running the whole document at one setting, a marker sets the model tier and effort for the tasks below it:
+
+```markdown
+## Research
+
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Summarize the current request flow
+
+## Design
+
+<!-- MAESTRO:MODEL tier="high" effort="high" -->
+
+- [ ] Write the migration plan
+
+## Mechanical cleanup
+
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Update the import paths
+```
+
+Both attributes take `low`, `medium`, or `high`. They are optional and independent, so you can set the tier, the effort, or both:
+
+| Attribute | Controls                   | Values                             |
+| --------- | -------------------------- | ---------------------------------- |
+| `tier`    | Which model runs the task  | `low`, `medium`, `high`, `default` |
+| `effort`  | How hard that model thinks | `low`, `medium`, `high`, `default` |
+
+`default` returns that axis to the agent's own configuration, which is how a document steps back down after a section that needed the expensive setting.
+
+### How a marker is applied
+
+The **nearest marker above the next unfinished task** wins, and it is re-read before every task. Three consequences worth knowing:
+
+- A **checked task does not clear a marker.** A setting applies to everything below it until the document says otherwise, so one marker per section covers that whole section even as tasks complete.
+- **Editing the document mid-run works.** Change a marker while the playbook is running and the next task picks it up. There is no cached state to reset.
+- **Markers inside fenced code blocks are ignored**, so a playbook can document this syntax without changing its own behavior.
+
+### `low`, `medium`, and `high` are positions, not literal values
+
+The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's effort ladder runs `low, medium, high, xhigh, max`, so:
+
+| You write         | Claude Code sends | Codex sends |
+| ----------------- | ----------------- | ----------- |
+| `effort="low"`    | `low`             | `minimal`   |
+| `effort="medium"` | `high`            | `medium`    |
+| `effort="high"`   | `max`             | `xhigh`     |
+
+Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever that happens to be called, and keeps working when a provider adds a rung.
+
+### Provider support
+
+| Provider      | Model tier              | Effort |
+| ------------- | ----------------------- | ------ |
+| Claude Code   | Yes (haiku/sonnet/opus) | Yes    |
+| Factory Droid | Yes                     | Yes    |
+| Codex         | Agent default           | Yes    |
+| Copilot-CLI   | Agent default           | Yes    |
+| OpenCode      | Agent default           | None   |
+
+Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
+
+If you omit markers entirely, every task uses the agent's own configured model and effort. That is the right default for most playbooks; reach for markers when a document genuinely changes gears.
+
+### Synopses always run cheap
+
+The per-task synopsis is pinned to the cheapest model and lowest effort regardless of what the task itself ran at, and the same applies to the synopsis after a regular AI chat turn. A synopsis summarizes work that already happened, so paying premium rates for a few sentences of prose is waste - on a long playbook that is one expensive turn per task. There is nothing to configure.
+
+## Provider Outages During a Run
+
+A run does not die because the provider had a bad minute. If a task fails on `529 Overloaded` or a spent plan quota, [Agent Resilience](/agent-resilience) parks the loop, waits out the backoff (for a quota failure, until the real reset time), and resumes the run from where it stopped. You get a **Auto Run: retrying** toast and a History entry recording the outage, rather than a run that quietly stalled overnight.
+
+Cancel the auto-retry from the status card in the transcript and the usual resume, skip, and abort controls come back. Resilience is on by default per agent; batches launched from `maestro-cli` do not auto-retry.
+
 ## Stopping the Runner
 
 Click the **Stop** button at any time. The runner will:

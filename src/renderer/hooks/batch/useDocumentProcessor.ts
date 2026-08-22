@@ -19,6 +19,8 @@ import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
+import { findActiveModelHint } from '../../../shared/autorunModelHints';
+import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
 
 /**
  * Configuration for document processing
@@ -179,25 +181,46 @@ export interface DocumentReadResult {
 }
 
 /**
+ * Per-task model/effort resolved from the document's `MAESTRO:MODEL` hint.
+ * Undefined on either axis means the agent's configured value stands.
+ */
+export interface AutoRunTurnOverrides {
+	modelOverride?: string;
+	effortOverride?: string;
+}
+
+/**
+ * Spawn one Auto Run task.
+ *
+ * The canonical signature for the whole Auto Run callback chain
+ * (`useBatchHandlers` -> `useBatchProcessor` -> `useBatchRunner` ->
+ * `useDocumentProcessor`). It was declared separately at three of those levels,
+ * which meant adding an argument here required finding and editing all three or
+ * the value was silently dropped partway down. One type, imported by the rest.
+ */
+export type AutoRunSpawnAgentFn = (
+	sessionId: string,
+	prompt: string,
+	cwdOverride?: string,
+	turnSettings?: AutoRunTurnOverrides
+) => Promise<{
+	success: boolean;
+	response?: string;
+	agentSessionId?: string;
+	usageStats?: UsageStats;
+	contextUsage?: number;
+	error?: string;
+	errorKind?: AgentSpawnErrorKind;
+}>;
+
+/**
  * Callbacks required for document processing
  */
 export interface DocumentProcessorCallbacks {
 	/**
 	 * Spawn an agent with a prompt
 	 */
-	onSpawnAgent: (
-		sessionId: string,
-		prompt: string,
-		cwdOverride?: string
-	) => Promise<{
-		success: boolean;
-		response?: string;
-		agentSessionId?: string;
-		usageStats?: UsageStats;
-		contextUsage?: number;
-		error?: string;
-		errorKind?: AgentSpawnErrorKind;
-	}>;
+	onSpawnAgent: AutoRunSpawnAgentFn;
 }
 
 /**
@@ -334,11 +357,13 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				documentPath: docFilePath,
 			};
 
+			let documentContent = '';
 			if (docReadResult.success && docReadResult.content) {
 				const expandedDocContent = substituteTemplateVariables(
 					docReadResult.content,
 					templateContext
 				);
+				documentContent = expandedDocContent;
 
 				// Write the expanded content back to the document temporarily
 				// (Agent will read this file, so it needs the expanded variables)
@@ -350,6 +375,20 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						sshRemoteId
 					);
 				}
+			}
+
+			// Resolve this task's model hint from the document. Recomputed per
+			// dispatch rather than tracked as run state, so editing the document
+			// mid-run takes effect on the next task and there is nothing to get out
+			// of sync. Mirrors the CLI engine, which reads the same helpers.
+			const turnSettings = resolveTurnSettings(
+				session.toolType,
+				findActiveModelHint(documentContent),
+				session.customModel,
+				session.customEffort
+			);
+			for (const warning of turnSettings.warnings) {
+				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
 			}
 
 			// Resolve the task-selection block placeholder before the generic template
@@ -371,7 +410,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const result = await callbacks.onSpawnAgent(
 				session.id,
 				finalPrompt,
-				effectiveCwd !== session.cwd ? effectiveCwd : undefined
+				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+				{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
 			);
 
 			// Capture elapsed time (machine sleep excluded)

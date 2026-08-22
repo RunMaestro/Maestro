@@ -4,7 +4,6 @@ import type {
 	BatchRunConfig,
 	Session,
 	HistoryEntry,
-	UsageStats,
 	Group,
 	AutoRunStats,
 	AgentError,
@@ -15,7 +14,7 @@ import { useBatchStore } from '../../stores/batchStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
-import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
+import type { AutoRunSpawnAgentFn } from './useDocumentProcessor';
 // Decomposed internal hooks (see ./internal/)
 import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
@@ -57,19 +56,7 @@ interface UseBatchProcessorProps {
 	sessions: Session[];
 	groups: Group[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
-	onSpawnAgent: (
-		sessionId: string,
-		prompt: string,
-		cwdOverride?: string
-	) => Promise<{
-		success: boolean;
-		response?: string;
-		agentSessionId?: string;
-		usageStats?: UsageStats;
-		contextUsage?: number;
-		error?: string;
-		errorKind?: AgentSpawnErrorKind;
-	}>;
+	onSpawnAgent: AutoRunSpawnAgentFn;
 	onAddHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => void | Promise<void>;
 	onComplete?: (info: BatchCompleteInfo) => void;
 	// Callback for PR creation results (success or failure)

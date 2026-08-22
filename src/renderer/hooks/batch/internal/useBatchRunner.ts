@@ -5,12 +5,10 @@ import type {
 	BatchRunConfig,
 	Session,
 	HistoryEntry,
-	UsageStats,
 	Group,
 	AutoRunStats,
 	AgentError,
 } from '../../../types';
-import type { AgentSpawnErrorKind } from '../../agent/useAgentExecution';
 import { gitService } from '../../../services/git';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -28,7 +26,7 @@ import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 import type { UseWorktreeManagerReturn } from '../useWorktreeManager';
-import type { UseDocumentProcessorReturn } from '../useDocumentProcessor';
+import type { AutoRunSpawnAgentFn, UseDocumentProcessorReturn } from '../useDocumentProcessor';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -38,19 +36,7 @@ type UpdateBatchStateFn = (
 	immediate?: boolean
 ) => void;
 
-type SpawnAgentFn = (
-	sessionId: string,
-	prompt: string,
-	cwdOverride?: string
-) => Promise<{
-	success: boolean;
-	response?: string;
-	agentSessionId?: string;
-	usageStats?: UsageStats;
-	contextUsage?: number;
-	error?: string;
-	errorKind?: AgentSpawnErrorKind;
-}>;
+type SpawnAgentFn = AutoRunSpawnAgentFn;
 
 export interface UseBatchRunnerDeps {
 	// Refs
