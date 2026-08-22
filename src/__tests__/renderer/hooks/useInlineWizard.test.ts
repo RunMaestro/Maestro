@@ -75,8 +75,12 @@ vi.mock('../../../renderer/services/inlineWizardDocumentGeneration', () => ({
 }));
 
 // Mock window.maestro.agents.get for agent availability checks
+const mockProcessKill = vi.fn().mockResolvedValue(undefined);
 Object.defineProperty(window, 'maestro', {
 	value: {
+		process: {
+			kill: mockProcessKill,
+		},
 		agents: {
 			get: vi.fn().mockResolvedValue({
 				id: 'claude-code',
@@ -616,6 +620,106 @@ describe('useInlineWizard', () => {
 			);
 			// Mode should have changed to 'new'
 			expect(result.current.wizardMode).toBe('new');
+		});
+	});
+
+	describe('cancelTurn', () => {
+		/** Start a wizard on a tab and leave a turn in flight (sendWizardMessage never resolves). */
+		async function startTurnInFlight() {
+			const { sendWizardMessage } =
+				await import('../../../renderer/services/inlineWizardConversation');
+			const mockSend = vi.mocked(sendWizardMessage);
+			let resolveTurn: (value: any) => void = () => {};
+			mockSend.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveTurn = resolve;
+					})
+			);
+
+			const { result } = renderHook(() => useInlineWizard());
+			await act(async () => {
+				await result.current.startWizard(
+					'build me a thing',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project',
+					'tab-1'
+				);
+			});
+
+			act(() => {
+				void result.current.sendMessage('build me a thing', undefined, undefined, 'tab-1');
+			});
+			await waitFor(() => expect(result.current.isWaiting).toBe(true));
+
+			return { result, resolveTurn: (v: any) => resolveTurn(v) };
+		}
+
+		it('kills the wizard process and clears the waiting state', async () => {
+			const { result } = await startTurnInFlight();
+
+			await act(async () => {
+				await result.current.cancelTurn('tab-1');
+			});
+
+			expect(mockProcessKill).toHaveBeenCalledWith('test-session-id');
+			expect(result.current.isWaiting).toBe(false);
+			expect(result.current.error).toBeNull();
+			const last = result.current.conversationHistory.at(-1);
+			expect(last?.role).toBe('system');
+			expect(last?.content).toContain('Turn stopped');
+		});
+
+		it('leaves the wizard active so the conversation can change direction', async () => {
+			const { result } = await startTurnInFlight();
+
+			await act(async () => {
+				await result.current.cancelTurn('tab-1');
+			});
+
+			expect(result.current.isWizardActive).toBe(true);
+			expect(result.current.conversationHistory.some((m) => m.role === 'user')).toBe(true);
+		});
+
+		it('does not surface the killed turn as an error', async () => {
+			const { result, resolveTurn } = await startTurnInFlight();
+
+			await act(async () => {
+				await result.current.cancelTurn('tab-1');
+			});
+
+			// The kill makes the agent exit non-zero; that resolution must stay silent.
+			await act(async () => {
+				resolveTurn({ success: false, error: 'Agent exited with code 143' });
+				await Promise.resolve();
+			});
+
+			expect(result.current.error).toBeNull();
+			expect(result.current.isWaiting).toBe(false);
+		});
+
+		it('is a no-op when no turn is running', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+			await act(async () => {
+				await result.current.startWizard(
+					'build me a thing',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project',
+					'tab-1'
+				);
+			});
+
+			let stopped: boolean | undefined;
+			await act(async () => {
+				stopped = await result.current.cancelTurn('tab-1');
+			});
+
+			expect(stopped).toBe(false);
+			expect(mockProcessKill).not.toHaveBeenCalled();
 		});
 	});
 

@@ -11,7 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { useRef, useState } from 'react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { WizardInputPanel } from '../../../../renderer/components/InlineWizard/WizardInputPanel';
 import {
 	formatShortcutKeys,
@@ -567,6 +568,137 @@ describe('WizardInputPanel', () => {
 			expect(screen.queryByText('Exit Wizard?')).not.toBeInTheDocument();
 		});
 
+		it('exits the wizard instead of closing a tab that already holds a conversation', () => {
+			const onExitWizard = vi.fn();
+			const sessionWithLogs = createMockSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Main',
+						logs: [
+							{ id: 'l1', timestamp: Date.now(), source: 'system', text: 'Starting wizard...' },
+							{ id: 'l2', timestamp: Date.now(), source: 'user', text: 'earlier work' },
+						],
+					},
+					{ id: 'tab-2', name: 'Other', logs: [] },
+				] as any,
+			});
+			render(
+				<WizardInputPanel {...defaultProps} session={sessionWithLogs} onExitWizard={onExitWizard} />
+			);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(mockSetSessions).not.toHaveBeenCalled();
+			expect(onExitWizard).toHaveBeenCalledTimes(1);
+		});
+
+		it('closes its own untouched wizard tab on Escape', () => {
+			const onExitWizard = vi.fn();
+			const sessionWithWizardTab = createMockSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Wizard',
+						logs: [
+							{ id: 'l1', timestamp: Date.now(), source: 'system', text: 'Starting wizard...' },
+						],
+					},
+					{ id: 'tab-2', name: 'Other', logs: [] },
+				] as any,
+			});
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					session={sessionWithWizardTab}
+					onExitWizard={onExitWizard}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(mockSetSessions).toHaveBeenCalledTimes(1);
+			expect(onExitWizard).not.toHaveBeenCalled();
+		});
+
+		it('stops the running turn instead of closing the tab when Escape is pressed mid-turn', () => {
+			const onStopWizardTurn = vi.fn();
+			const onExitWizard = vi.fn();
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					isBusy={true}
+					onStopTurn={onStopWizardTurn}
+					onExitWizard={onExitWizard}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			// The turn is stopped, the wizard stays open, and the tab survives
+			expect(onStopWizardTurn).toHaveBeenCalledWith('tab-1');
+			expect(onExitWizard).not.toHaveBeenCalled();
+			expect(mockSetSessions).not.toHaveBeenCalled();
+			expect(screen.queryByText('Exit Wizard?')).not.toBeInTheDocument();
+		});
+
+		it('stops the turn while initializing rather than closing the tab', () => {
+			const onStopWizardTurn = vi.fn();
+			const onExitWizard = vi.fn();
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					isInitializing={true}
+					onStopTurn={onStopWizardTurn}
+					onExitWizard={onExitWizard}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(onStopWizardTurn).toHaveBeenCalledWith('tab-1');
+			expect(onExitWizard).not.toHaveBeenCalled();
+			expect(mockSetSessions).not.toHaveBeenCalled();
+		});
+
+		it('falls back to the exit confirmation mid-turn when no stop handler is wired', () => {
+			const onExitWizard = vi.fn();
+			render(<WizardInputPanel {...defaultProps} isBusy={true} onExitWizard={onExitWizard} />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			// Never a silent tab close while a turn is running
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
+			expect(onExitWizard).not.toHaveBeenCalled();
+			expect(mockSetSessions).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('stop turn button', () => {
+		it('replaces the send button with a stop button while a turn is running', () => {
+			const onStopWizardTurn = vi.fn();
+			render(<WizardInputPanel {...defaultProps} isBusy={true} onStopTurn={onStopWizardTurn} />);
+
+			const stopButton = screen.getByTestId('wizard-stop-turn-button');
+			fireEvent.click(stopButton);
+
+			expect(onStopWizardTurn).toHaveBeenCalledWith('tab-1');
+		});
+
+		it('shows the send button when idle', () => {
+			const onStopWizardTurn = vi.fn();
+			render(<WizardInputPanel {...defaultProps} isBusy={false} onStopTurn={onStopWizardTurn} />);
+
+			expect(screen.queryByTestId('wizard-stop-turn-button')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('wizard pill', () => {
 		it('shows exit dialog when WizardPill is clicked', () => {
 			render(<WizardInputPanel {...defaultProps} />);
 
@@ -575,6 +707,81 @@ describe('WizardInputPanel', () => {
 
 			// Dialog should appear
 			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
+		});
+	});
+
+	describe('auto-grow', () => {
+		const CONTENT_HEIGHT = 300;
+
+		/** Controlled harness so the panel sees a real value change on each keystroke. */
+		function Harness({ initialValue }: { initialValue: string }) {
+			const [value, setValue] = useState(initialValue);
+			const ref = useRef<HTMLTextAreaElement | null>(null);
+
+			return (
+				<div
+					ref={() => {
+						// jsdom has no layout, so stub the two measurements the autosize path
+						// reads. React has already pointed `ref` at the textarea by the time
+						// this parent ref callback runs.
+						const el = ref.current;
+						if (el && !Object.getOwnPropertyDescriptor(el, 'scrollHeight')) {
+							Object.defineProperty(el, 'scrollHeight', {
+								value: CONTENT_HEIGHT,
+								configurable: true,
+							});
+							Object.defineProperty(el, 'selectionEnd', {
+								get: () => el.value.length,
+								configurable: true,
+							});
+						}
+					}}
+				>
+					<WizardInputPanel
+						{...defaultProps}
+						inputRef={ref as React.RefObject<HTMLTextAreaElement>}
+						inputValue={value}
+						setInputValue={setValue}
+					/>
+				</div>
+			);
+		}
+
+		/** Let any requestAnimationFrame callback the panel scheduled actually run. */
+		const flushAnimationFrames = async () => {
+			await act(async () => {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			});
+		};
+
+		it('caps the grown height at the composer max height', async () => {
+			render(<Harness initialValue="line one" />);
+			const textarea = screen.getByPlaceholderText(
+				'Tell the wizard about your project...'
+			) as HTMLTextAreaElement;
+
+			fireEvent.change(textarea, { target: { value: 'line one\nline two' } });
+			await flushAnimationFrames();
+
+			expect(textarea.style.height).toBe('112px');
+		});
+
+		it('pins the scroll to the caret after a keystroke', async () => {
+			// Guards the pin itself (removing useAutosizeTextarea from the panel fails
+			// here). It canNOT reproduce the original bug: that was a raw height='auto'
+			// toggle in a requestAnimationFrame collapsing the textarea's scroll AFTER
+			// the pin, and jsdom has no layout engine, so a height change never moves
+			// scrollTop there. Verified in a real browser instead.
+			render(<Harness initialValue="line one" />);
+			const textarea = screen.getByPlaceholderText(
+				'Tell the wizard about your project...'
+			) as HTMLTextAreaElement;
+
+			fireEvent.change(textarea, { target: { value: 'line one\nline two' } });
+			await flushAnimationFrames();
+
+			expect(textarea.scrollTop).toBe(CONTENT_HEIGHT);
 		});
 	});
 });

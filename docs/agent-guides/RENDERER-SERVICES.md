@@ -204,7 +204,15 @@ Turns a plain-English request into one shell command line, shows it, and runs it
 
 **The handler never executes anything.** The accepted command goes back through the ordinary command-mode path, so a suggested command and a typed one run in the same directory, on the same SSH remote, through the same code.
 
-`shared/aiCommand.ts` holds the two pure pieces, unit-testable without either process: `buildAiCommandPrompt()` (the request is substituted LAST, so a request containing `{{CWD}}` cannot rewrite the environment block above it) and `extractCommandLine()` (strips fences, `$`/`%` prompts, wrapping backticks, and lead-in lines; returns null rather than proposing an empty run).
+**Follow-ups carry history.** `requestAiCommand` mines the target tab's transcript with `collectRecentCommands()` and sends the last `AI_COMMAND_HISTORY_LIMIT` (8) command lines, oldest first, so "actually just give me a count" can refine the `find` command above it instead of composing a new one. Three things about that:
+
+- It reads the **transcript**, not `aiCommandHistory`. That list is per agent, deduplicated, and order-normalized (a repeat moves to the end), so it cannot answer "what did I just run in THIS tab" - which is the only question a follow-up is asking.
+- It reads the **target tab** (`tabId`), not the active one. A tab switch while a suggestion is in flight must not hand one tab's commands to another tab's request.
+- Failures are **labeled, not filtered**. "That didn't work, try something else" is a common follow-up, and a model that cannot see the failure proposes the same broken command again.
+
+Commands and exit statuses are sent; output is not. The refinement cases are about the command's shape, and a `find` over a large tree would swamp the prompt with its own results.
+
+`shared/aiCommand.ts` holds the two pure pieces, unit-testable without either process: `buildAiCommandPrompt()` (substitution runs in ONE pass, so no substituted value is rescanned for further tokens - chained `.replace()` calls let a previously-run command like `echo {{USER_REQUEST}}` sitting in the history get filled in by the next replace in the chain) and `extractCommandLine()` (strips fences, `$`/`%` prompts, wrapping backticks, and lead-in lines; returns null rather than proposing an empty run).
 
 ---
 

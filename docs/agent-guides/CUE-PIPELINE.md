@@ -318,6 +318,20 @@ questions a canvas is bad at: what does each pipeline do, and is it working? It
 renders `dashboardPipelines` (the same disk-loaded pipelines the Dashboard uses),
 so it needs no editor state and no save path.
 
+**Row-level "Run now" is gated on a SINGLE trigger subscription.** With several
+triggers the button is ambiguous (each trigger is its own subscription with its
+own prompt) and destructive - the real 39-trigger "Pedsidian" pipeline would
+dispatch 39 agent runs on one click. Multi-trigger pipelines expose a per-trigger
+Run inside the expanded detail instead. Do not "simplify" this back to a
+fire-them-all button.
+
+**Remembered tab.** `lastOpenCueTab` is module-level state in `CueModal.tsx`,
+resolved in the `useState` lazy initializer (a restore effect double-fires under
+StrictMode and clobbers the saved value). Same shape as `lastOpenSettingsTab` in
+`Settings/SettingsModal.tsx`. An explicit `initialTab` from modal data always
+wins. Tests must call `__resetLastOpenCueTabForTests()` in `beforeEach`, or the
+remembered tab leaks between cases.
+
 ### CuePipelineEditor (`src/renderer/components/CuePipelineEditor/`)
 
 Visual pipeline editor using React Flow for drag-and-drop pipeline construction.
@@ -404,9 +418,14 @@ renderer, a future CLI listing, and tests all describe a pipeline identically.
   `09:00, 17:00`). Used by BOTH the graph's trigger nodes and the list, which is
   why it lives here rather than in `CuePipelineEditor/utils/pipelineGraph.ts`.
 - `summarizeCommandNode(data)` - the `$ cmd` / `cli send → target` line.
-- `describePipeline(pipeline)` - triggers, steps in execution order, and a one-line
-  `Scheduled (09:00) → rc → Maestro` flow. Step order comes from a BFS over the
-  edges, NOT array position: hand-authored YAML can list the last agent first.
+- `describePipeline(pipeline)` - triggers, steps in execution order, and the
+  strings the list renders. Step order comes from a BFS over the edges, NOT array
+  position: hand-authored YAML can list the last agent first. It returns BOTH
+  `flow` (the full `a → b → c` chain) and `headline` (what the collapsed row
+  shows). Render `headline`, never `flow`: a pipeline with >1 trigger or >4 steps
+  is usually N independent chains grouped under one name, so arrow-chaining their
+  node names describes a sequence that does not exist - and a 39-node line buries
+  every other row. `flow` stays exported for the search haystack.
 - `derivePipelineHealth(pipeline, ctx)` - the health badge. Precedence is
   `running > invalid > disabled > failing > healthy > idle`. Feed it `configErrors`
   from `validatePipelines` (prefix-stripped via `stripPipelinePrefix`) and the

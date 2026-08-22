@@ -193,6 +193,7 @@ export interface MainPanelContentProps {
 
 	// Inline wizard exit handler
 	onExitWizard?: () => void;
+	onStopWizardTurn?: (tabId?: string) => void;
 
 	// Props forwarded to child components (from MainPanelProps)
 	onDeleteLog?: (logId: string) => number | null;
@@ -368,6 +369,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		mergeTargetName,
 		onCancelMerge,
 		onExitWizard,
+		onStopWizardTurn,
 		onDeleteLog,
 		onScrollPositionChange,
 		onAtBottomChange,
@@ -795,6 +797,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									onCancelMerge={onCancelMerge}
 									// Inline wizard mode
 									onExitWizard={onExitWizard}
+									onStopWizardTurn={onStopWizardTurn}
 									wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
 									onToggleWizardShowThinking={onToggleWizardShowThinking}
 									// Model/Effort quick-change pills

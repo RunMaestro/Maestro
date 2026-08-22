@@ -97,8 +97,41 @@ export interface CuePipelineDescription {
 	agentIds: string[];
 	/** Nodes the loader could not resolve to a live agent. */
 	errorCount: number;
-	/** One-line `Scheduled 09:00 → rc → Maestro` flow sentence. */
+	/**
+	 * The COLLAPSED one-liner. A small pipeline gets its literal flow
+	 * (`Scheduled (09:00) → rc → Maestro`); a large one gets counts
+	 * (`39 triggers (Scheduled, File Change) → 39 agents`).
+	 *
+	 * The threshold is not cosmetic. A pipeline like "Pedsidian" groups 39
+	 * INDEPENDENT trigger→agent chains under one name, so chaining its node
+	 * names with arrows produces a 39-arrow line that reads as a sequence and
+	 * is simply false. Counts are both shorter and more accurate; the real
+	 * structure belongs in the expanded detail.
+	 */
+	headline: string;
+	/** `Scheduled (09:00)` or `39 triggers (Scheduled, File Change)`. */
+	triggerHeadline: string;
+	/** `27 agents, 12 commands`. */
+	stepHeadline: string;
+	/**
+	 * Full `a → b → c` chain of every step. Useful as a search haystack and for
+	 * small pipelines, but do NOT render it unconditionally - see `headline`.
+	 */
 	flow: string;
+}
+
+/** How many trigger kinds to name before the list itself becomes noise. */
+const MAX_NAMED_TRIGGER_KINDS = 3;
+
+/** How many steps a flow line can hold before counts read better than arrows. */
+const MAX_FLOW_STEPS = 4;
+
+/** `2 agents` / `1 command` / `3 unresolved`, omitting empty categories. */
+function countPhrase(counts: Array<[number, string, string]>): string {
+	const parts = counts
+		.filter(([n]) => n > 0)
+		.map(([n, singular, plural]) => `${n} ${n === 1 ? singular : plural}`);
+	return parts.join(', ');
 }
 
 /**
@@ -189,21 +222,47 @@ export function describePipeline(pipeline: CuePipeline): CuePipelineDescription 
 		}
 	}
 
-	const head =
+	// Distinct trigger KINDS, in first-seen order - "39 triggers" alone says
+	// nothing about what wakes the pipeline up, and 39 labels say too much.
+	const kinds: string[] = [];
+	for (const t of triggers) {
+		const kind = CUE_EVENT_LABELS[t.eventType] || t.label;
+		if (!kinds.includes(kind)) kinds.push(kind);
+	}
+	const namedKinds = kinds.slice(0, MAX_NAMED_TRIGGER_KINDS).join(', ');
+	const kindSuffix = kinds.length > MAX_NAMED_TRIGGER_KINDS ? `${namedKinds}, …` : namedKinds;
+
+	const triggerHeadline =
 		triggers.length === 0
 			? 'No trigger'
 			: triggers.length === 1
 				? triggers[0].summary
 					? `${triggers[0].label} (${triggers[0].summary})`
 					: triggers[0].label
-				: `${triggers.length} triggers`;
-	const flow = [head, ...steps.map((s) => s.label)].join(' → ');
+				: `${triggers.length} triggers (${kindSuffix})`;
+
+	const errorCount = steps.filter((s) => s.kind === 'error').length;
+	const stepHeadline =
+		countPhrase([
+			[steps.filter((s) => s.kind === 'agent').length, 'agent', 'agents'],
+			[steps.filter((s) => s.kind === 'command').length, 'command', 'commands'],
+			[errorCount, 'unresolved node', 'unresolved nodes'],
+		]) || 'no steps';
+
+	const flow = [triggerHeadline, ...steps.map((s) => s.label)].join(' → ');
+	const headline =
+		triggers.length <= 1 && steps.length <= MAX_FLOW_STEPS
+			? flow
+			: `${triggerHeadline} → ${stepHeadline}`;
 
 	return {
 		triggers,
 		steps,
 		agentIds,
-		errorCount: steps.filter((s) => s.kind === 'error').length,
+		errorCount,
+		headline,
+		triggerHeadline,
+		stepHeadline,
 		flow,
 	};
 }

@@ -133,6 +133,7 @@ export const MainPanel = React.memo(
 			onCancelMerge,
 			// Inline wizard exit handler
 			onExitWizard,
+			onStopWizardTurn,
 		} = props;
 
 		// Phase 3C: Direct store subscriptions (migrated from props)
@@ -1042,6 +1043,7 @@ export const MainPanel = React.memo(
 							mergeTargetName={mergeTargetName}
 							onCancelMerge={onCancelMerge}
 							onExitWizard={onExitWizard}
+							onStopWizardTurn={onStopWizardTurn}
 							onDeleteLog={props.onDeleteLog}
 							onScrollPositionChange={props.onScrollPositionChange}
 							onAtBottomChange={props.onAtBottomChange}

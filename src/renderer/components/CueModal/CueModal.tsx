@@ -37,6 +37,18 @@ import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
 
+// In-memory only - last tab the user was on. Reopening the modal lands here
+// instead of snapping back to Dashboard, matching how the Settings modal
+// behaves. Resets on app restart by design, and an explicit `initialTab`
+// (a deep link, `maestro-cli open cue --tab ...`) always wins over it.
+let lastOpenCueTab: CueModalTab | null = null;
+
+/** Test-only: clear the remembered tab so suites that assume a fresh open
+ *  aren't polluted by a prior test in the same file. */
+export function __resetLastOpenCueTabForTests(): void {
+	lastOpenCueTab = null;
+}
+
 export interface CueModalProps {
 	theme: Theme;
 	onClose: () => void;
@@ -140,8 +152,18 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	});
 
 	// Read initial tab from modal data (e.g., when navigating from YAML editor)
+	// Resolved once in the lazy initializer rather than via a restore effect:
+	// under StrictMode a restore-via-effect double-fires and clobbers the
+	// remembered value with the default before it lands.
 	const cueModalData = useModalStore(selectModalData('cueModal'));
-	const [activeTab, setActiveTab] = useState<CueModalTab>(cueModalData?.initialTab ?? 'dashboard');
+	const [activeTab, setActiveTab] = useState<CueModalTab>(
+		() => cueModalData?.initialTab ?? lastOpenCueTab ?? 'dashboard'
+	);
+
+	// Remember the tab for the next open.
+	useEffect(() => {
+		lastOpenCueTab = activeTab;
+	}, [activeTab]);
 
 	// Graph data (owned by hook: fetch on mount + tab change, cancellation race guard, refreshGraphData)
 	const {

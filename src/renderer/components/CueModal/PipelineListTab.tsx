@@ -3,16 +3,31 @@
  *
  * The Pipeline Graph tab answers "how is this wired?" by drawing it. This tab
  * answers the two questions the canvas is bad at: what does each pipeline
- * actually do, and is it working? One row per pipeline, with a prose flow line
- * and a health verdict derived from config validation plus the recent run
- * history.
+ * actually do, and is it working? One row per pipeline, collapsed to a
+ * one-line overview plus a health verdict derived from config validation and
+ * the recent run history; click a row to expand its triggers and steps in full.
+ *
+ * The collapse is load-bearing, not decoration. A pipeline like "Pedsidian"
+ * groups 39 independent chains under one name, and listing all 39 node names
+ * inline drowns the 16 other pipelines on the screen.
  *
  * Read-only by design. Editing stays on the graph tab - the "Graph" action on
  * each row jumps there with that pipeline pre-selected.
  */
 
-import { useMemo, useState } from 'react';
-import { AlertTriangle, GitFork, Play, Search, X } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import {
+	AlertTriangle,
+	Bot,
+	ChevronDown,
+	ChevronRight,
+	GitFork,
+	Play,
+	Search,
+	Terminal,
+	X,
+	Zap,
+} from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CuePipeline, CueGraphSession } from '../../../shared/cue-pipeline-types';
 import type { CueRunResult } from '../../../shared/cue/contracts';
@@ -97,6 +112,17 @@ export function PipelineListTab({
 	const [query, setQuery] = useState('');
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 	const [sortMode, setSortMode] = useState<SortMode>('health');
+	// Which rows are expanded. A Set of ids (not a single id) because comparing
+	// two pipelines side by side is the common reason to expand at all.
+	const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+
+	const toggleExpanded = useCallback((pipelineId: string) => {
+		setExpandedIds((prev) => {
+			const next = new Set(prev);
+			if (!next.delete(pipelineId)) next.add(pipelineId);
+			return next;
+		});
+	}, []);
 
 	// On-disk enabled flag per subscription. A pipeline whose every trigger is
 	// switched off in cue.yaml is reported as disabled rather than idle - "it
@@ -304,6 +330,8 @@ export function PipelineListTab({
 							key={row.pipeline.id}
 							row={row}
 							theme={theme}
+							expanded={expandedIds.has(row.pipeline.id)}
+							onToggleExpanded={toggleExpanded}
 							onViewInGraph={onViewInGraph}
 							onTriggerSubscription={onTriggerSubscription}
 						/>
@@ -317,121 +345,270 @@ export function PipelineListTab({
 function PipelineListRow({
 	row,
 	theme,
+	expanded,
+	onToggleExpanded,
 	onViewInGraph,
 	onTriggerSubscription,
 }: {
 	row: PipelineRow;
 	theme: Theme;
+	expanded: boolean;
+	onToggleExpanded: (pipelineId: string) => void;
 	onViewInGraph: (pipelineId: string) => void;
 	onTriggerSubscription: (subscriptionName: string) => void;
 }) {
 	const { pipeline, health, description, triggerSubs } = row;
 	const badgeColor = healthColor(health.status, theme);
+	// "Run now" at the row level only when there is exactly ONE subscription to
+	// fire. With several triggers the button is ambiguous (which event is being
+	// simulated? they can carry entirely different prompts) and dangerous - a
+	// 39-trigger pipeline would dispatch 39 agent runs on one click. Multi-
+	// trigger pipelines get a per-trigger Run in the expanded panel instead.
+	const singleRunSub = triggerSubs.length === 1 ? triggerSubs[0] : null;
 
 	return (
 		<div
-			className="rounded-md px-3 py-2.5"
+			className="rounded-md"
 			style={{
 				backgroundColor: theme.colors.bgActivity,
 				border: `1px solid ${health.status === 'invalid' || health.status === 'failing' ? `${badgeColor}55` : theme.colors.border}`,
 			}}
 			data-testid={`pipeline-list-row-${pipeline.id}`}
 		>
-			{/* Heading: name, health badge, actions */}
-			<div className="flex items-center gap-2">
-				<PipelineDot color={pipeline.color} name={pipeline.name} />
-				<span
-					className="text-sm font-semibold truncate"
-					style={{ color: theme.colors.textMain }}
-					title={pipeline.name}
-				>
-					{pipeline.name}
-				</span>
-				<span
-					className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
-					style={{ backgroundColor: `${badgeColor}20`, color: badgeColor }}
-				>
-					{health.label}
-				</span>
-				<span className="flex-1" />
-				{triggerSubs.length > 0 && (
+			{/* Summary. The whole block is the expand target, so the click area
+			    matches what the user reads rather than a 12px chevron. */}
+			<div
+				role="button"
+				tabIndex={0}
+				aria-expanded={expanded}
+				aria-label={`${pipeline.name} details`}
+				onClick={() => onToggleExpanded(pipeline.id)}
+				onKeyDown={(e) => {
+					if (e.key !== 'Enter' && e.key !== ' ') return;
+					e.preventDefault();
+					onToggleExpanded(pipeline.id);
+				}}
+				className="px-3 py-2.5 cursor-pointer outline-none focus-visible:ring-1"
+				style={{ ...({ '--tw-ring-color': theme.colors.accent } as React.CSSProperties) }}
+			>
+				{/* Heading: name, health badge, actions */}
+				<div className="flex items-center gap-2">
+					{expanded ? (
+						<ChevronDown
+							className="w-3.5 h-3.5 flex-shrink-0"
+							style={{ color: theme.colors.textDim }}
+						/>
+					) : (
+						<ChevronRight
+							className="w-3.5 h-3.5 flex-shrink-0"
+							style={{ color: theme.colors.textDim }}
+						/>
+					)}
+					<PipelineDot color={pipeline.color} name={pipeline.name} />
+					<span
+						className="text-sm font-semibold truncate"
+						style={{ color: theme.colors.textMain }}
+						title={pipeline.name}
+					>
+						{pipeline.name}
+					</span>
+					<span
+						className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
+						style={{ backgroundColor: `${badgeColor}20`, color: badgeColor }}
+					>
+						{health.label}
+					</span>
+					<span className="flex-1" />
+					{singleRunSub && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onTriggerSubscription(singleRunSub);
+							}}
+							className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
+							style={{ color: theme.colors.textDim }}
+							title={`Run "${singleRunSub}" now`}
+						>
+							<Play className="w-3 h-3" />
+							Run now
+						</button>
+					)}
 					<button
-						onClick={() => triggerSubs.forEach((name) => onTriggerSubscription(name))}
+						onClick={(e) => {
+							e.stopPropagation();
+							onViewInGraph(pipeline.id);
+						}}
 						className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
 						style={{ color: theme.colors.textDim }}
-						title={
-							triggerSubs.length === 1
-								? `Run "${triggerSubs[0]}" now`
-								: `Run all ${triggerSubs.length} triggers now: ${triggerSubs.join(', ')}`
-						}
+						title="Open this pipeline on the Pipeline Graph tab"
 					>
-						<Play className="w-3 h-3" />
-						Run now
+						<GitFork className="w-3 h-3" />
+						Graph
 					</button>
-				)}
-				<button
-					onClick={() => onViewInGraph(pipeline.id)}
-					className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
-					style={{ color: theme.colors.textDim }}
-					title="Open this pipeline on the Pipeline Graph tab"
+				</div>
+
+				{/* What it does, at a glance */}
+				<div
+					className="text-xs mt-1.5 break-words"
+					style={{ color: theme.colors.textMain, opacity: 0.85 }}
 				>
-					<GitFork className="w-3 h-3" />
-					Graph
-				</button>
+					{description.headline}
+				</div>
+
+				{/* How it is doing */}
+				<div
+					className="text-[11px] mt-1 flex items-center gap-1.5 flex-wrap"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span style={{ color: badgeColor }}>{health.detail}</span>
+					{health.lastRun && (
+						<>
+							<span>·</span>
+							<span title={new Date(health.lastRun.endedAt).toLocaleString()}>
+								Last run {formatRelativeTime(health.lastRun.endedAt)} in{' '}
+								{formatDuration(health.lastRun.durationMs)}
+							</span>
+						</>
+					)}
+					{health.recentRunCount > 0 && (
+						<>
+							<span>·</span>
+							<span>
+								{health.recentRunCount} recent run{health.recentRunCount === 1 ? '' : 's'}
+								{health.recentFailureCount > 0 ? `, ${health.recentFailureCount} failed` : ''}
+							</span>
+						</>
+					)}
+					<span>·</span>
+					<span>
+						{description.steps.length} step{description.steps.length === 1 ? '' : 's'}
+					</span>
+				</div>
+
+				{/* Config problems, verbatim. Shown collapsed too - a broken
+				    pipeline should not need a click to admit it. */}
+				{health.issues.length > 0 && (
+					<ul className="mt-1.5 space-y-0.5">
+						{health.issues.map((issue, i) => (
+							<li
+								key={i}
+								className="text-[11px] flex items-start gap-1.5"
+								style={{ color: theme.colors.warning }}
+							>
+								<AlertTriangle className="w-3 h-3 flex-shrink-0 mt-[1px]" />
+								<span className="break-words">{issue}</span>
+							</li>
+						))}
+					</ul>
+				)}
 			</div>
 
-			{/* What it does */}
-			<div
-				className="text-xs mt-1.5 break-words"
-				style={{ color: theme.colors.textMain, opacity: 0.85 }}
-			>
-				{description.flow}
-			</div>
+			{expanded && (
+				<div
+					className="px-3 pb-3 pt-1 grid gap-4 sm:grid-cols-2"
+					style={{ borderTop: `1px solid ${theme.colors.border}` }}
+					data-testid={`pipeline-list-detail-${pipeline.id}`}
+				>
+					<DetailColumn
+						title={`Triggers (${description.triggers.length})`}
+						theme={theme}
+						empty="No triggers configured"
+					>
+						{description.triggers.map((t, i) => (
+							<li key={i} className="flex items-baseline gap-1.5">
+								<Zap
+									className="w-3 h-3 flex-shrink-0 translate-y-[1px]"
+									style={{ color: theme.colors.accent }}
+								/>
+								<span className="flex-1 break-words" style={{ color: theme.colors.textMain }}>
+									{t.label}
+									{t.summary && <span style={{ color: theme.colors.textDim }}> · {t.summary}</span>}
+									{t.subscriptionName && (
+										<span
+											className="block text-[10px] font-mono break-all"
+											style={{ color: theme.colors.textDim, opacity: 0.7 }}
+										>
+											{t.subscriptionName}
+										</span>
+									)}
+								</span>
+								{/* Per-trigger Run replaces the row-level button on
+								    multi-trigger pipelines - each trigger is its own
+								    subscription with its own prompt. */}
+								{!singleRunSub && t.subscriptionName && (
+									<button
+										onClick={() => onTriggerSubscription(t.subscriptionName!)}
+										className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] hover:opacity-80 transition-opacity flex-shrink-0"
+										style={{ color: theme.colors.textDim }}
+										title={`Run "${t.subscriptionName}" now`}
+									>
+										<Play className="w-2.5 h-2.5" />
+										Run
+									</button>
+								)}
+							</li>
+						))}
+					</DetailColumn>
 
-			{/* How it is doing */}
+					<DetailColumn
+						title={`Steps (${description.steps.length})`}
+						theme={theme}
+						empty="No agents or commands"
+					>
+						{description.steps.map((s, i) => {
+							const Icon =
+								s.kind === 'agent' ? Bot : s.kind === 'command' ? Terminal : AlertTriangle;
+							const color = s.kind === 'error' ? theme.colors.error : theme.colors.textDim;
+							return (
+								<li key={i} className="flex items-baseline gap-1.5">
+									<Icon className="w-3 h-3 flex-shrink-0 translate-y-[1px]" style={{ color }} />
+									<span className="break-words" style={{ color: theme.colors.textMain }}>
+										{s.label}
+										{s.detail && (
+											<span
+												className="block text-[10px] font-mono break-all"
+												style={{ color, opacity: 0.7 }}
+											>
+												{s.detail}
+											</span>
+										)}
+									</span>
+								</li>
+							);
+						})}
+					</DetailColumn>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** One labeled column inside an expanded row. */
+function DetailColumn({
+	title,
+	theme,
+	empty,
+	children,
+}: {
+	title: string;
+	theme: Theme;
+	empty: string;
+	children: React.ReactNode[];
+}) {
+	return (
+		<div>
 			<div
-				className="text-[11px] mt-1 flex items-center gap-1.5 flex-wrap"
+				className="text-[10px] font-bold uppercase tracking-wider mb-1"
 				style={{ color: theme.colors.textDim }}
 			>
-				<span style={{ color: badgeColor }}>{health.detail}</span>
-				{health.lastRun && (
-					<>
-						<span>·</span>
-						<span title={new Date(health.lastRun.endedAt).toLocaleString()}>
-							Last run {formatRelativeTime(health.lastRun.endedAt)} in{' '}
-							{formatDuration(health.lastRun.durationMs)}
-						</span>
-					</>
-				)}
-				{health.recentRunCount > 0 && (
-					<>
-						<span>·</span>
-						<span>
-							{health.recentRunCount} recent run{health.recentRunCount === 1 ? '' : 's'}
-							{health.recentFailureCount > 0 ? `, ${health.recentFailureCount} failed` : ''}
-						</span>
-					</>
-				)}
-				<span>·</span>
-				<span>
-					{description.steps.length} step{description.steps.length === 1 ? '' : 's'}
-				</span>
+				{title}
 			</div>
-
-			{/* Config problems, verbatim */}
-			{health.issues.length > 0 && (
-				<ul className="mt-1.5 space-y-0.5">
-					{health.issues.map((issue, i) => (
-						<li
-							key={i}
-							className="text-[11px] flex items-start gap-1.5"
-							style={{ color: theme.colors.warning }}
-						>
-							<AlertTriangle className="w-3 h-3 flex-shrink-0 mt-[1px]" />
-							<span className="break-words">{issue}</span>
-						</li>
-					))}
-				</ul>
+			{children.length === 0 ? (
+				<div className="text-[11px]" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+					{empty}
+				</div>
+			) : (
+				<ul className="space-y-1 text-[11px]">{children}</ul>
 			)}
 		</div>
 	);

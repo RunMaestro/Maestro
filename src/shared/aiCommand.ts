@@ -38,6 +38,110 @@ export interface AiCommandHost {
 	remoteName?: string;
 }
 
+/**
+ * How many previously-run commands the prompt carries.
+ *
+ * A follow-up ("actually just the count") almost always refines the command
+ * immediately above it, so the first entry does nearly all the work. The rest
+ * are there for the case where the user ran something unrelated in between, and
+ * the tail is cheap. Far more than this and the history starts to outweigh the
+ * request itself, which makes the model refine an old command instead of
+ * answering the new question.
+ */
+export const AI_COMMAND_HISTORY_LIMIT = 8;
+
+/** Longest command line carried into the history block, before ellipsis. */
+const MAX_HISTORY_COMMAND_LENGTH = 400;
+
+/** One previously-run command, as the prompt sees it. */
+export interface AiCommandHistoryEntry {
+	/** The command line that ran. */
+	command: string;
+	/** Its exit code, when it finished. */
+	exitCode?: number;
+	/** Whether it finished, was stopped, or is still going. */
+	status?: 'running' | 'finished' | 'cancelled';
+}
+
+/** The minimum a transcript entry must look like to be mined for history. */
+export interface CommandCardLike {
+	shellCommand?: {
+		command: string;
+		exitCode?: number;
+		status?: 'running' | 'finished' | 'cancelled';
+	};
+}
+
+/**
+ * Pull the most recent commands out of a tab's transcript, newest last.
+ *
+ * Reads the transcript rather than `aiCommandHistory` on purpose. That list is
+ * per AGENT, deduplicated, and order-normalized (a repeat moves to the end), so
+ * it cannot answer "what did I just run in THIS tab" - which is the only
+ * question a follow-up is asking. The transcript is per tab and in true
+ * chronological order.
+ *
+ * Consecutive repeats collapse: re-running the same command to watch it change
+ * is common, and eight copies of one line crowds out the context that matters.
+ */
+export function collectRecentCommands(
+	logs: readonly CommandCardLike[],
+	limit: number = AI_COMMAND_HISTORY_LIMIT
+): AiCommandHistoryEntry[] {
+	if (limit <= 0) return [];
+
+	const entries: AiCommandHistoryEntry[] = [];
+	// Walk backwards so the cap keeps the NEWEST commands, then restore order.
+	for (let i = logs.length - 1; i >= 0 && entries.length < limit; i--) {
+		const shell = logs[i]?.shellCommand;
+		if (!shell?.command) continue;
+		if (entries[entries.length - 1]?.command === shell.command) continue;
+		entries.push({
+			command: shell.command,
+			...(shell.exitCode !== undefined && { exitCode: shell.exitCode }),
+			...(shell.status && { status: shell.status }),
+		});
+	}
+	return entries.reverse();
+}
+
+/**
+ * Render the history block, or an empty string when there is nothing to show.
+ *
+ * Failures are labeled rather than filtered out. "That didn't work, try
+ * something else" is a common follow-up, and a model that cannot see the
+ * failure just proposes the same broken command again.
+ */
+export function formatRecentCommands(entries: readonly AiCommandHistoryEntry[]): string {
+	if (entries.length === 0) return '';
+
+	const lines = entries.map((entry) => {
+		const command =
+			entry.command.length > MAX_HISTORY_COMMAND_LENGTH
+				? `${entry.command.slice(0, MAX_HISTORY_COMMAND_LENGTH)}...`
+				: entry.command;
+
+		const note =
+			entry.status === 'running'
+				? ' (still running)'
+				: entry.status === 'cancelled'
+					? ' (stopped by the user)'
+					: entry.exitCode !== undefined && entry.exitCode !== 0
+						? ` (failed, exit ${entry.exitCode})`
+						: '';
+
+		return `- ${command}${note}`;
+	});
+
+	return [
+		'## Recent commands',
+		'',
+		'Commands already run in this conversation, oldest first. The LAST one is the most recent, and is what a follow-up request almost always refers to.',
+		'',
+		...lines,
+	].join('\n');
+}
+
 /** Human-readable OS name for the prompt. */
 export function describePlatform(platform: string, release?: string): string {
 	const name =
@@ -54,28 +158,42 @@ export function describePlatform(platform: string, release?: string): string {
 /**
  * Fill the `ai-command` prompt template with the host facts and the request.
  *
- * Substitution is a plain replace rather than the template-variable engine
+ * Substitution is a plain token swap rather than the template-variable engine
  * because this prompt is never user-authored with arbitrary variables - it has
- * a fixed, documented set, and the user request is injected LAST so a request
- * that happens to contain `{{CWD}}` cannot rewrite the environment block above
- * it.
+ * a fixed, documented set.
+ *
+ * It runs in ONE pass, so substituted text is never rescanned for further
+ * tokens. That matters because two of the values are attacker-adjacent: the
+ * request is whatever the user typed, and the history is command lines they
+ * previously ran. Chained `.replace()` calls would let a command like
+ * `echo {{USER_REQUEST}}` sitting in the history get filled in by the next
+ * replace in the chain, silently rewriting the prompt from inside its own data.
+ * A single pass makes every value inert by construction, with no ordering rule
+ * for a future edit to get wrong.
  */
 export function buildAiCommandPrompt(
 	template: string,
 	host: AiCommandHost,
-	request: string
+	request: string,
+	recentCommands: readonly AiCommandHistoryEntry[] = []
 ): string {
-	const remoteLine = host.remoteName
-		? `- Remote: this command runs on the SSH remote "${host.remoteName}", not on the local machine`
-		: '';
+	const values: Record<string, string> = {
+		OS: describePlatform(host.platform, host.release),
+		SHELL: host.shell || 'unknown',
+		CWD: host.cwd,
+		IS_GIT_REPO: host.isGitRepo ? 'yes' : 'no',
+		REMOTE_LINE: host.remoteName
+			? `- Remote: this command runs on the SSH remote "${host.remoteName}", not on the local machine`
+			: '',
+		RECENT_COMMANDS: formatRecentCommands(recentCommands),
+		USER_REQUEST: request,
+	};
 
-	return template
-		.replace(/\{\{OS\}\}/g, describePlatform(host.platform, host.release))
-		.replace(/\{\{SHELL\}\}/g, host.shell || 'unknown')
-		.replace(/\{\{CWD\}\}/g, host.cwd)
-		.replace(/\{\{IS_GIT_REPO\}\}/g, host.isGitRepo ? 'yes' : 'no')
-		.replace(/\{\{REMOTE_LINE\}\}/g, remoteLine)
-		.replace(/\{\{USER_REQUEST\}\}/g, request);
+	// An unknown token is left verbatim rather than blanked: a typo in an edited
+	// prompt should be visible, not silently swallowed.
+	return template.replace(/\{\{([A-Z_]+)\}\}/g, (match, token: string) =>
+		token in values ? values[token] : match
+	);
 }
 
 /** Lines a model adds around an answer that are never part of the command. */

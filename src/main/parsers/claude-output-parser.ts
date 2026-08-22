@@ -14,7 +14,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, isClaudeLimitNotice, matchErrorPattern } from './error-patterns';
 
 /**
  * Content block in Claude assistant messages
@@ -390,6 +390,36 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		// flag a still-streaming (and ultimately successful) response as failed.
 		if (obj.type === 'system') {
 			return null;
+		}
+
+		// A `result` event is the CLI's own end-of-turn envelope, so it never
+		// carries an `error` field - but it IS how Claude Code reports a hit plan
+		// limit ("You've hit your session limit - resets 11:40am (America/Chicago)",
+		// legacy "Claude AI usage limit reached|1755500000"). Without this branch
+		// the notice rendered as an ordinary assistant reply, the turn looked
+		// successful, and Agent Resilience never saw a failure to retry.
+		//
+		// Deliberately narrow: ONLY an anchored limit notice, never the whole
+		// result body through the pattern bank. A result is normal assistant prose,
+		// and any answer that merely discusses "rate limit" would false-positive.
+		if (obj.type === 'result' && typeof obj.result === 'string') {
+			const resultText = obj.result;
+			if (isClaudeLimitNotice(resultText)) {
+				const match = matchErrorPattern(getErrorPatterns(this.agentId), resultText);
+				return {
+					type: match?.type ?? 'rate_limited',
+					// Keep the CLI's own wording rather than the generic pattern message:
+					// it names which limit was hit and when it resets, which is both what
+					// the user wants to read and what `tokenExhaustionResetAt` parses.
+					message: resultText.trim(),
+					recoverable: true,
+					agentId: this.agentId,
+					timestamp: Date.now(),
+					parsedJson: parsed,
+				};
+			}
+			// Anything else in a result body is normal assistant prose. Fall through
+			// so a result that DOES carry a structured `error` still gets classified.
 		}
 
 		let errorText: string | null = null;

@@ -53,8 +53,8 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 	const percent = Math.round(fontScale * 100);
 
 	const buttonClass = floating
-		? 'focus-ring flex items-center justify-center w-7 h-7 rounded-full transition-colors'
-		: 'focus-ring flex items-center justify-center w-7 h-7 rounded transition-colors';
+		? 'focus-ring flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors'
+		: 'focus-ring flex items-center justify-center w-7 h-7 shrink-0 rounded transition-colors';
 
 	const buttonStyle = (enabled: boolean): React.CSSProperties => ({
 		color: theme.colors.textDim,
@@ -68,7 +68,7 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 			data-testid={testId}
 			className={`flex items-center gap-1 ${
 				floating
-					? 'px-1 py-1 rounded-full shadow-lg opacity-70 hover:opacity-100 transition-opacity'
+					? 'self-start shrink-0 px-1 py-1 rounded-full shadow-lg opacity-70 hover:opacity-100 transition-opacity'
 					: ''
 			} ${className}`.trim()}
 			style={

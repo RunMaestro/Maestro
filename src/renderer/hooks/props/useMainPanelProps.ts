@@ -298,6 +298,8 @@ export interface UseMainPanelPropsDeps {
 	retryInlineWizardMessage: () => void;
 	clearInlineWizardError: () => void;
 	endInlineWizard: () => void;
+	/** Stop the wizard turn running on a tab, keeping the wizard open */
+	cancelInlineWizardTurn: (tabId?: string) => void;
 	handleAutoRunRefresh: () => void;
 
 	// File tree refresh
@@ -551,6 +553,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			},
 			// Inline wizard callbacks handled inline to maintain closure access
 			onExitWizard: deps.endInlineWizard,
+			onStopWizardTurn: deps.cancelInlineWizardTurn,
 			onWizardCancelGeneration: deps.endInlineWizard,
 			// Complex wizard handlers (passed through from App.tsx)
 			onWizardComplete: deps.onWizardComplete,
@@ -744,6 +747,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setIsGraphViewOpen,
 			deps.handleOpenBrowserTabAt,
 			deps.endInlineWizard,
+			deps.cancelInlineWizardTurn,
 			// Complex wizard handlers
 			deps.onWizardComplete,
 			deps.onWizardCompleteAndStartAutoRun,

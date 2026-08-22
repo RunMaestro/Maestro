@@ -99,6 +99,7 @@ export function InlineWizardProvider({ children }: InlineWizardProviderProps) {
 			wizardState.startWizard,
 			wizardState.endWizard,
 			wizardState.sendMessage,
+			wizardState.cancelTurn,
 			wizardState.setConfidence,
 			wizardState.setMode,
 			wizardState.setGoal,

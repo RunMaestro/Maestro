@@ -96,6 +96,27 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Delete')).toBeTruthy();
 	});
 
+	// Right-clicking a top-level file is the only way to create a sibling in the
+	// workspace root when the root has no folder to right-click.
+	it('offers New File and New Folder on a file, creating alongside it', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		fireEvent.click(screen.getByText('New Folder'));
+		expect(defaultProps.onOpenNewFolder).toHaveBeenCalled();
+	});
+
+	it('offers New File and New Folder on the empty-space root menu', () => {
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={{ x: 10, y: 20, node: null, path: '' }} />
+		);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		expect(screen.getByText('New Folder')).toBeTruthy();
+		// Root menu has no target row, so nothing to rename or delete.
+		expect(screen.queryByText('Rename')).toBeNull();
+	});
+
 	it('shows New File + Preview all + Copy Path + Reveal + Rename + Delete for a folder', () => {
 		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
 		expect(screen.getByText('New File')).toBeTruthy();

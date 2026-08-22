@@ -718,4 +718,60 @@ describe('ClaudeOutputParser', () => {
 			expect(error2?.message).toContain('exited with code -1');
 		});
 	});
+
+	describe('plan-limit notices in result events', () => {
+		it('reports the session-limit notice as a recoverable rate_limited error', () => {
+			const notice = "You've hit your session limit · resets 11:40am (America/Chicago)";
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'success',
+				result: notice,
+				session_id: 'sess-1',
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(true);
+			// The CLI's own wording is preserved so the reset time survives to the
+			// retry scheduler and to the user.
+			expect(error?.message).toBe(notice);
+			expect(error?.parsedJson).toMatchObject({ result: notice });
+		});
+
+		it('reports the legacy "usage limit reached|<epoch>" marker', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				result: 'Claude AI usage limit reached|1755500000',
+			});
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.message).toBe('Claude AI usage limit reached|1755500000');
+		});
+
+		it('recognizes weekly and 5-hour limit phrasing', () => {
+			for (const notice of [
+				"You've hit your weekly limit · resets Monday at 9am (America/Chicago)",
+				"You've hit your 5-hour limit · resets 3pm (Europe/London)",
+			]) {
+				expect(parser.detectErrorFromParsed({ type: 'result', result: notice })).not.toBeNull();
+			}
+		});
+
+		it('does NOT flag a normal answer that merely discusses limits', () => {
+			const chatty =
+				'Here is what happens when you hit your usage limit: the CLI prints a notice and ' +
+				'Maestro schedules a retry. Rate limit handling lives in retryClassification.ts.';
+			expect(parser.detectErrorFromParsed({ type: 'result', result: chatty })).toBeNull();
+			expect(
+				parser.detectErrorFromParsed({ type: 'result', result: 'All done - tests pass.' })
+			).toBeNull();
+		});
+
+		it('does NOT flag an assistant chunk that opens with the notice wording', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'assistant',
+					message: { role: 'assistant', content: "You've hit your session limit · resets 11:40am" },
+				})
+			).toBeNull();
+		});
+	});
 });

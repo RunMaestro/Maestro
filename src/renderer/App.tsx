@@ -1556,6 +1556,7 @@ function MaestroConsoleInner() {
 		retryLastMessage: retryInlineWizardMessage,
 		generateDocuments: generateInlineWizardDocuments,
 		endWizard: endInlineWizard,
+		cancelTurn: cancelInlineWizardTurn,
 		isWizardActiveForTab,
 	} = inlineWizardContext;
 
@@ -2673,6 +2674,7 @@ function MaestroConsoleInner() {
 		retryInlineWizardMessage,
 		clearInlineWizardError,
 		endInlineWizard,
+		cancelInlineWizardTurn,
 		handleAutoRunRefresh,
 
 		// Complex wizard handlers

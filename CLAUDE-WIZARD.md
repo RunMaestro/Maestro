@@ -183,6 +183,17 @@ The Inline Wizard creates Auto Run Playbook documents from within an existing ag
 - On completion, tab renamed to "Project: {SubfolderName}"
 - Final AI message summarizes generated docs and next steps
 - Same `agentSessionId` preserved for context continuity
+- **Escape is a ladder, not a single action.** Mid-turn it stops the running turn
+  and stays in the wizard (same as a regular AI tab); idle with user messages it
+  opens the exit confirmation; idle with none it leaves wizard mode. The mid-turn
+  branch must return early: during the first turn the conversation still looks
+  untouched, which is how one Escape used to destroy the whole wizard tab while
+  the agent was running. The composer shows a Stop button in place of Send for
+  the same reason - a keyboard-only exit strands anyone on a tablet or remote
+  desktop.
+- **`/wizard` runs in place**, so the untouched-wizard branch only closes the tab
+  when the host tab has no non-`system` log entries. Otherwise a wizard started
+  in a tab with a real conversation would throw that conversation away.
 
 ### Architecture
 
@@ -193,7 +204,7 @@ src/renderer/components/InlineWizard/
 ├── DocumentGenerationView.tsx  # Generation phase with Austin Facts
 └── ... (see index.ts for full documentation)
 
-src/renderer/hooks/useInlineWizard.ts    # Main hook
+src/renderer/hooks/batch/useInlineWizard.ts    # Main hook
 src/renderer/contexts/InlineWizardContext.tsx  # State provider
 ```
 

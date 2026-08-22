@@ -3123,13 +3123,38 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByText('New File')).toBeInTheDocument();
 		});
 
-		it('does not show "New File" option on file context menu', () => {
+		it('shows "New File" option on file context menu', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
 				el.textContent?.includes('package.json')
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-			expect(screen.queryByText('New File')).not.toBeInTheDocument();
+			expect(screen.getByText('New File')).toBeInTheDocument();
+		});
+
+		// A top-level file is the only right-click target in a project whose root
+		// holds no folder, so its New File has to create in the workspace root.
+		it('creates a new file next to the right-clicked top-level file', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'newthing.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(writeFile).toHaveBeenCalledWith('/Users/test/project/newthing.ts', '', undefined);
 		});
 
 		it('shows "Preview All Files in Folder" option on folder context menu', () => {

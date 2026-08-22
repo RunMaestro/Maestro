@@ -114,6 +114,8 @@ export interface InputAreaProps {
 	mergeTargetName?: string;
 	onCancelMerge?: () => void;
 	onExitWizard?: () => void;
+	/** Stop the wizard turn currently running on this tab (Escape / Stop button) */
+	onStopWizardTurn?: (tabId?: string) => void;
 	wizardShowThinking?: boolean;
 	onToggleWizardShowThinking?: () => void;
 	currentModel?: string;
