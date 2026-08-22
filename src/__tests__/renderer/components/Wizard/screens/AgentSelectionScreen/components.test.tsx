@@ -14,6 +14,8 @@ import {
 	SshConnectionErrorPanel,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components';
 import { AGENT_TILES } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
+import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
+import { AGENT_LOGO_FALLBACK_TESTID } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo';
 
 vi.mock('../../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 	AgentConfigPanel: (props: any) => (
@@ -51,6 +53,32 @@ describe('AgentSelectionScreen components', () => {
 		rerender(<AgentLogo agentId="unknown" supported={false} detected={false} theme={mockTheme} />);
 
 		expect(container.querySelector('div')).toHaveClass('rounded-full');
+	});
+
+	it('draws a real mark for every provider a user can pick', () => {
+		// A provider that reaches a picker without a mark of its own renders as the
+		// blank fallback ring, which reads as a bug. Assert on the fallback's own
+		// marker rather than "some svg rendered": the fallback is a div today, but
+		// were it ever redrawn as an svg, a presence check would start passing for
+		// exactly the providers this test exists to catch.
+		for (const agentId of PICKABLE_AGENT_IDS) {
+			const { queryByTestId, unmount } = render(
+				<AgentLogo agentId={agentId} supported detected theme={mockTheme} />
+			);
+			expect(
+				queryByTestId(AGENT_LOGO_FALLBACK_TESTID),
+				`${agentId} has no logo of its own and fell through to the fallback`
+			).toBeNull();
+			unmount();
+		}
+	});
+
+	it('marks the fallback so the coverage test above cannot pass vacuously', () => {
+		const { queryByTestId } = render(
+			<AgentLogo agentId="not-a-real-provider" supported detected theme={mockTheme} />
+		);
+
+		expect(queryByTestId(AGENT_LOGO_FALLBACK_TESTID)).toBeInTheDocument();
 	});
 
 	it('renders tile states, beta badges, disabled unavailable agents, and customize actions', () => {

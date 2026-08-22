@@ -4,15 +4,20 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name          | Status     | Notes                                                                                                                                              |
-| --------------- | ------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                     |
-| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                                                                                                          |
-| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                   |
-| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
-| `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
-| `grok`          | Grok CLI      | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |
-| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
+| ID              | Name            | Status     | Notes                                                                                                                                              |
+| --------------- | --------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                     |
+| `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                          |
+| `opencode`      | OpenCode        | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                   |
+| `factory-droid` | Factory Droid   | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
+| `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
+| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |
+| `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`                                      |
+| `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                        |
+| `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                       |
+| `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                       |
+| `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                             |
+| `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
 
 ## Agent Capabilities
 
@@ -60,8 +65,30 @@ Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 
 - `getAgentDisplayName(agentId)` - human-readable name with fallback
 - `isBetaAgent(agentId)` - beta badge check
+- `getAgentLoginCommand(agentId, customPath?)` - the shell command that re-authenticates the provider
+- `getAgentPickerMeta(agentId)` / `PICKABLE_AGENT_IDS` - which providers a user may choose, and how they present
 
 The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-private. Use the functions above to access it.
+
+### Provider Pickers: One Registry, Three Surfaces
+
+Maestro asks the user to choose a provider in three places, and all three read
+`AGENT_PICKER_META` in `src/shared/agentMetadata.ts`:
+
+| Surface                       | Reads                                                     |
+| ----------------------------- | --------------------------------------------------------- |
+| New Agent modal               | `SUPPORTED_AGENTS` (re-exports `PICKABLE_AGENT_IDS`)      |
+| New Agent Wizard tile strip   | `AGENT_TILES` (derived from `AGENT_PICKER_META`)          |
+| Group Chat moderator dropdown | `AGENT_TILES`, filtered by what detection found installed |
+
+The record is keyed by `AgentId`, so a new id does not compile until it is either
+given picker metadata or explicitly set to `null`. Before that was true, the
+three lists were hand-written and drifted: Grok and Qwen3 Coder were selectable
+in the New Agent modal for months while being absent from the wizard and
+un-pickable as a group chat moderator.
+
+Note that the `supportsGroupChatModeration` capability flag is advisory - the
+moderator dropdown does not filter on it, and offers any installed provider.
 
 ## Agent-Specific Details
 
@@ -136,9 +163,13 @@ To add support for a new agent:
 3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (24 boolean flags)
 4. Add display name and beta status to `src/shared/agentMetadata.ts` (internal maps, accessed via `getAgentDisplayName()` / `isBetaAgent()`)
 5. Add context window default to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
-6. Sync `AgentCapabilities` interface in renderer: `useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`
-7. (If `supportsJsonOutput`) Create output parser in `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
-8. (If `supportsSessionStorage`) Create session storage extending `BaseSessionStorage` in `src/main/storage/`
-9. (Optional) Add error patterns to `src/main/parsers/error-patterns.ts`
+6. **Register it in the pickers**: add an entry to `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`, or `null` to withhold it. This is what makes the provider appear in the New Agent modal, the wizard tile strip, and the Group Chat moderator dropdown
+7. Add a re-auth command to `AGENT_LOGIN_COMMANDS` in `src/shared/agentMetadata.ts`
+8. Draw the tile logo: a `case` in `AgentSelectionScreen/components/AgentLogo.tsx`, plus a glyph in `src/renderer/constants/agentIcons.ts`
+9. Add install locations to `src/main/agents/path-prober.ts` if the binary does not always land on `$PATH`
+10. Sync `AgentCapabilities` interface in renderer: `useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`
+11. (If `supportsJsonOutput`) Create output parser in `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
+12. (If `supportsSessionStorage`) Create session storage extending `BaseSessionStorage` in `src/main/storage/`
+13. (If the agent has an output parser) Add error patterns to `src/main/parsers/error-patterns.ts` - required, not optional: `agent-completeness.test.ts` fails CI when a registered parser has no patterns
 
 The `agent-completeness.test.ts` CI test will fail if required steps are missed. See [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for comprehensive integration documentation.

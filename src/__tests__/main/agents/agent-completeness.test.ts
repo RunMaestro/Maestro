@@ -27,6 +27,11 @@ import { initializeOutputParsers, getOutputParser, getErrorPatterns } from '../.
 import { getSessionStorage, clearStorageRegistry } from '../../../main/agents/session-storage';
 import { initializeSessionStorages } from '../../../main/storage';
 import { AGENT_IDS } from '../../../shared/agentIds';
+import {
+	AGENT_PICKER_META,
+	PICKABLE_AGENT_IDS,
+	getAgentLoginCommand,
+} from '../../../shared/agentMetadata';
 import { createAgentRegistry } from '../../../shared/plugins/agent-registry';
 
 beforeAll(() => {
@@ -162,6 +167,63 @@ describe('Agent Completeness', () => {
 				});
 			});
 		}
+	});
+
+	describe('provider picker registration', () => {
+		it('every agent id has a picker decision, shown or explicitly withheld', () => {
+			for (const agentId of AGENT_IDS) {
+				expect(
+					Object.prototype.hasOwnProperty.call(AGENT_PICKER_META, agentId),
+					`Agent "${agentId}" has no entry in AGENT_PICKER_META. Add presentation ` +
+						'metadata to offer it in the pickers, or null to withhold it.'
+				).toBe(true);
+			}
+		});
+
+		it('every pickable agent is a real, non-hidden definition', () => {
+			for (const agentId of PICKABLE_AGENT_IDS) {
+				const def = AGENT_DEFINITIONS.find((d) => d.id === agentId);
+				expect(def, `Pickable agent "${agentId}" has no definition`).toBeDefined();
+				expect(def?.hidden, `Pickable agent "${agentId}" is hidden`).toBeFalsy();
+			}
+		});
+
+		// Providers that hold no credentials of their own, so `null` from
+		// getAgentLoginCommand is the correct answer rather than a missing entry.
+		// Pi and Oh My Pi are harnesses over a provider the user configures
+		// elsewhere; Hermes ships no login flow. Adding an id here is a deliberate
+		// claim that the agent cannot be logged in to, not a way to silence a gap.
+		const CREDENTIALLESS_AGENTS = new Set(['hermes', 'pi', 'omp']);
+
+		it('every pickable agent can be re-authenticated from the UI', () => {
+			// A provider offered in a picker whose auth expires needs a way back in.
+			// An earlier version of this test skipped a null command outright, which
+			// let a genuinely missing entry pass as if it were credentialless.
+			for (const agentId of PICKABLE_AGENT_IDS) {
+				const login = getAgentLoginCommand(agentId);
+
+				if (CREDENTIALLESS_AGENTS.has(agentId)) {
+					expect(
+						login,
+						`Agent "${agentId}" is listed as credentialless but declares a login command. ` +
+							'Remove it from CREDENTIALLESS_AGENTS.'
+					).toBeNull();
+					continue;
+				}
+
+				expect(
+					login,
+					`Agent "${agentId}" is pickable but has no login command. Add one to ` +
+						'AGENT_LOGIN_COMMANDS, or add the id to CREDENTIALLESS_AGENTS if it ' +
+						'genuinely carries no credentials.'
+				).not.toBeNull();
+				expect(login?.binary?.trim(), `Agent "${agentId}" has an empty login binary`).toBeTruthy();
+				expect(
+					typeof login?.args,
+					`Agent "${agentId}" must declare args (empty string when the bare binary is the flow)`
+				).toBe('string');
+			}
+		});
 	});
 
 	describe('no orphaned capabilities', () => {
