@@ -19,6 +19,7 @@ import { CalendarDays, Clock, BellRing } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, CalendarPicker } from './ui';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import {
 	parseSnoozeInput,
 	formatSnoozeTarget,
@@ -67,6 +68,12 @@ export function SnoozeTabModal({
 	);
 
 	const inputRef = useRef<HTMLInputElement>(null);
+
+	// The note is free-form prose the user writes to their future self, so the
+	// height they drag it to is a preference worth remembering. Capped so a long
+	// note can't be dragged tall enough to push the presets and date picker out
+	// of view inside the modal's own scroll area.
+	const noteResize = useResizableTextarea({ sizeKey: 'snooze-tab-note', maxHeight: 320 });
 
 	// `now` is captured per keystroke rather than per render so relative
 	// expressions ("2h") stay pinned while typing instead of drifting.
@@ -248,15 +255,17 @@ export function SnoozeTabModal({
 						Note to self <span className="normal-case tracking-normal">(optional)</span>
 					</label>
 					<textarea
+						ref={noteResize.textareaRef}
 						value={note}
 						onChange={(e) => setNote(e.target.value)}
 						rows={2}
 						placeholder="Why are you coming back to this?"
-						className="w-full px-2.5 py-1.5 rounded text-sm outline-none resize-none"
+						className="w-full px-2.5 py-1.5 rounded text-sm outline-none resize-y"
 						style={{
 							backgroundColor: theme.colors.bgMain,
 							color: theme.colors.textMain,
 							border: `1px solid ${theme.colors.border}`,
+							...noteResize.style,
 						}}
 					/>
 				</div>
