@@ -139,6 +139,40 @@ describe('execFile.ts', () => {
 			expect(result.stdout).toBe('up');
 		});
 
+		it('cancel() kills a grandchild that inherited the pipes', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+
+			// The shape that made Cancel look broken: `git push` runs a pre-push
+			// hook, the hook inherits stdout/stderr, and signalling git alone
+			// leaves the hook running with the pipes open - so `close` never
+			// fires and the console sits on "Running..." forever.
+			const script = [
+				'const { spawn } = require("child_process");',
+				'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] });',
+				'process.stdout.write("pid:" + child.pid + "\\n");',
+				'setInterval(() => {}, 1000);',
+			].join('');
+
+			let grandchildPid = 0;
+			const handle = execFileStreaming(NODE, ['-e', script], {
+				onChunk: (chunk) => {
+					const match = /pid:(\d+)/.exec(chunk);
+					if (!match) return;
+					grandchildPid = Number(match[1]);
+					handle.cancel();
+				},
+			});
+
+			const result = await handle.result;
+			expect(result.exitCode).toBe('SIGTERM');
+			expect(grandchildPid).toBeGreaterThan(0);
+
+			await vi.waitFor(() => {
+				// kill(pid, 0) throws ESRCH once the process is gone.
+				expect(() => process.kill(grandchildPid, 0)).toThrow();
+			});
+		});
+
 		it('resolves with the spawn error code when the binary is missing', async () => {
 			const { execFileStreaming } = await import('../../../main/utils/execFile');
 

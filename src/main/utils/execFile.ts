@@ -2,6 +2,9 @@ import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { isWindows } from '../../shared/platformDetection';
+// Cycle-safe: processTree only reaches back into this module from inside its
+// own function bodies, so neither module's top level depends on the other.
+import { killProcessTreeNow } from './processTree';
 
 const execFileAsync = promisify(execFile);
 
@@ -268,16 +271,33 @@ export function execFileStreaming(
 	child.stderr?.on('data', collect('stderr'));
 
 	const result = new Promise<ExecResult>((resolve) => {
+		let settled = false;
+		const settle = (value: ExecResult) => {
+			if (settled) return;
+			settled = true;
+			resolve(value);
+		};
+
 		child.on('close', (code) => {
-			resolve({
+			settle({
 				stdout,
 				stderr,
 				exitCode: cancelled ? 'SIGTERM' : (code ?? 1),
 			});
 		});
 
+		// A cancelled run resolves on `exit`, not `close`. `close` waits for every
+		// copy of the stdio pipes to be released, and a grandchild that inherited
+		// them (a pre-push hook, say) can hold them open past the kill. The tree
+		// kill takes those grandchildren too, but this makes Cancel independent of
+		// whether the OS finished tearing the pipes down.
+		child.on('exit', () => {
+			if (!cancelled) return;
+			settle({ stdout, stderr, exitCode: 'SIGTERM' });
+		});
+
 		child.on('error', (err) => {
-			resolve({
+			settle({
 				stdout,
 				stderr: stderr || err.message,
 				// Node stamps spawn failures with a string code (ENOENT, EACCES, ...).
@@ -290,7 +310,11 @@ export function execFileStreaming(
 		result,
 		cancel: () => {
 			cancelled = true;
-			child.kill();
+			// SIGTERM to the direct child is not enough: `git push` runs its hooks
+			// as children, so signalling git alone leaves a pre-push test suite
+			// running and the transfer neither dead nor finished. Kill the tree.
+			if (child.pid) killProcessTreeNow(child.pid, { label: `exec:${command}` });
+			else child.kill();
 		},
 	};
 }
