@@ -223,6 +223,11 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	const configDirKey = resolveConfigDirKey(childEnv);
 	const identity = await readClaudeAccountIdentity(configDirKey);
 
+	// The sample worked, so forget whatever was last wrong with this config dir.
+	// Without this a dir that breaks, recovers, then breaks again the same way
+	// would stay silent until the re-report interval elapsed.
+	clearFailureHistory(failureKey(opts));
+
 	return {
 		sampledAt: new Date().toISOString(),
 		configDirKey,
@@ -325,18 +330,87 @@ function classifySpawnError(err: unknown): string {
 }
 
 /**
+ * Last reported failure signature per config dir, plus when it was reported.
+ * Module-level because the sampler is a set of free functions sharing one
+ * process; `resetFailureReportingForTests` clears it between cases.
+ */
+const lastReportedFailure = new Map<string, { signature: string; reportedAt: number }>();
+
+/**
+ * Re-report a failure that has not changed only this often. Long enough that a
+ * permanently broken account costs a handful of events per day instead of one
+ * per tick, short enough that an ongoing outage is still visible in Sentry.
+ */
+export const FAILURE_REREPORT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The key both the memo and the Sentry payload use for a config dir. Same
+ * expression in both places on purpose - a memo keyed differently from what it
+ * reports would dedupe the wrong things.
+ */
+function failureKey(opts: SampleUsageOptions): string {
+	return opts.configDir ?? path.join(os.homedir(), '.claude');
+}
+
+/**
+ * Decide whether this failure is worth reporting, and record it either way.
+ *
+ * The sampler runs on a timer and keeps running after a failure, so a config
+ * dir that is broken for a week reported the identical warning on every single
+ * tick - one install produced over ten thousand of them, which is most of the
+ * project's Sentry volume (MAESTRO-Q2). We report the FIRST occurrence of each
+ * distinct (stage, reason) signature per config dir, re-report an unchanged one
+ * every `FAILURE_REREPORT_INTERVAL_MS`, and suppress the rest.
+ *
+ * Note what this deliberately does NOT do: it makes no claim that any exit code
+ * is expected. Every distinct failure a user hits still reaches Sentry, and a
+ * regression that hits many installs still shows up as many events, one per
+ * install, instead of being buried under one install's repeats.
+ */
+function shouldReportFailure(configDirKey: string, signature: string, now: number): boolean {
+	const previous = lastReportedFailure.get(configDirKey);
+	if (previous && previous.signature === signature) {
+		if (now - previous.reportedAt < FAILURE_REREPORT_INTERVAL_MS) {
+			return false;
+		}
+	}
+	lastReportedFailure.set(configDirKey, { signature, reportedAt: now });
+	return true;
+}
+
+/**
+ * Forget a config dir's failure history after a successful sample, so a
+ * flapping account reports again the next time it breaks rather than staying
+ * silent for the rest of the process's life.
+ */
+function clearFailureHistory(configDirKey: string): void {
+	lastReportedFailure.delete(configDirKey);
+}
+
+/** Test-only: drop all remembered failure signatures. */
+export function resetFailureReportingForTests(): void {
+	lastReportedFailure.clear();
+}
+
+/**
  * Emit a Sentry warning breadcrumb with the safe subset of context - stage,
  * binPath, configDir, reason. Full env / full stdout are deliberately omitted.
+ *
+ * Repeats of an unchanged failure are dropped - see `shouldReportFailure`.
  */
 async function reportFailure(
 	stage: 'spawn' | 'parse',
 	opts: SampleUsageOptions,
 	reason: string
 ): Promise<void> {
+	const configDir = failureKey(opts);
+	if (!shouldReportFailure(configDir, `${stage}|${reason}`, Date.now())) {
+		return;
+	}
 	await captureMessage('maestro-p --status sample failed', 'warning', {
 		stage,
 		binPath: opts.binPath,
-		configDir: opts.configDir ?? path.join(os.homedir(), '.claude'),
+		configDir,
 		reason,
 	});
 }

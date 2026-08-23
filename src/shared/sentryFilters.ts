@@ -46,6 +46,16 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// Out of disk space - user environment, never a Maestro bug.
 	if (/ENOSPC: no space left on device/i.test(haystack)) return true;
 
+	// The same out-of-disk condition as above, worded by SQLite instead of libuv.
+	// better-sqlite3 raises `SqliteError: database or disk is full` (SQLITE_FULL)
+	// from any write once the volume fills, which lights up every stats / cue DB
+	// writer at once - the query-event buffer flush is just the one that reached
+	// us first (MAESTRO-ZD). Those writes are best-effort telemetry and the code
+	// already drops the batch rather than retrying, so there is nothing to fix.
+	// Narrow on purpose: SQLITE_CORRUPT, SQLITE_BUSY and I/O errors still report,
+	// because those are the shapes that can indicate a real bug of ours.
+	if (/database or disk is full/i.test(haystack)) return true;
+
 	// Broken pipe writing to a closed stdout/stderr (process torn down underneath us).
 	// Two message shapes reach us: libuv fs-style writes surface as `EPIPE: broken pipe`,
 	// while Node stream/socket writes (console.* into a stdout pipe whose reader already

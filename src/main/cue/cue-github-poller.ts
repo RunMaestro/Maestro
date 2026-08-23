@@ -129,6 +129,46 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 	);
 }
 
+/**
+ * Detect an unusable `gh` credential. The CLI is authenticated out-of-band by
+ * the user (`gh auth login`), so a token that is missing, expired or revoked is
+ * a configuration state we cannot fix from inside Maestro - the same class as
+ * the connectivity case above, not an app fault.
+ *
+ * It matters because the poller retries on a fixed schedule and never gives up:
+ * one install whose `gh` token went stale produced ~1000 identical
+ * `HTTP 401: Bad credentials` reports in two weeks (MAESTRO-KE), drowning out
+ * real poll failures. The poll is still skipped and still logged for the user;
+ * only the Sentry report is dropped.
+ *
+ * Deliberately NOT matched here: `HTTP 403`. `gh` returns 403 both for a
+ * permissions problem and for a rate limit, and `isGitHubRateLimitError`
+ * already claims it so the backoff keeps working. Leaving it alone keeps that
+ * ordering intact.
+ */
+export function isGitHubAuthError(err: unknown): boolean {
+	const msg = (
+		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
+			? err.message
+			: String(err ?? '')
+	).toLowerCase();
+	const stderr =
+		err &&
+		typeof err === 'object' &&
+		'stderr' in err &&
+		typeof (err as { stderr: unknown }).stderr === 'string'
+			? (err as { stderr: string }).stderr.toLowerCase()
+			: '';
+	const haystack = `${msg}\n${stderr}`;
+	return (
+		/\bhttp\s+401\b/.test(haystack) ||
+		haystack.includes('bad credentials') ||
+		haystack.includes('gh auth login') ||
+		haystack.includes('not logged into any github hosts') ||
+		haystack.includes('authentication required')
+	);
+}
+
 /** Expanded env so packaged Electron can find gh in /opt/homebrew/bin, /usr/local/bin, etc. */
 const ghEnv = getExpandedEnv();
 
@@ -271,12 +311,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				throw err;
 			}
 			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" - skipping poll`);
-			// GitHub being unreachable or degraded is the same expected operational
-			// condition the doPoll catch below suppresses. Repo auto-detection runs
-			// first, so without this a `gh repo view` 5xx during an outage would
-			// still page Sentry once per tick for every auto-detect trigger
-			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
-			if (!isGitHubConnectivityError(err)) {
+			// GitHub being unreachable or degraded, and a `gh` that is not
+			// authenticated, are the same expected operational conditions the doPoll
+			// catch below suppresses. Repo auto-detection runs FIRST, so without
+			// mirroring both carve-outs here a `gh repo view` 5xx during an outage -
+			// or a stale token - would still page Sentry once per tick for every
+			// auto-detect trigger (MAESTRO-KE). Skipping the poll and returning null
+			// is unchanged.
+			if (!isGitHubConnectivityError(err) && !isGitHubAuthError(err)) {
 				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			}
 			return null;
@@ -589,6 +631,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				onLog(
 					'warn',
 					`[CUE] GitHub poll skipped for "${triggerName}" because GitHub is unreachable: ${message}`
+				);
+			} else if (isGitHubAuthError(err)) {
+				// The user has to fix this outside Maestro (`gh auth login`), and the
+				// poller keeps ticking until they do, so reporting it would repeat
+				// forever. Tell them in the Cue log instead (MAESTRO-KE).
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated (run \`gh auth login\`): ${message}`
 				);
 			} else {
 				// Emit typed payload so the metric interceptor bumps the

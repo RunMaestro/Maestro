@@ -20,6 +20,12 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 // Mock modules BEFORE importing the hook
 // ============================================================================
 
+const captureExceptionMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: captureExceptionMock,
+	captureMessage: vi.fn(),
+}));
+
 vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => 'mock-id-' + Math.random().toString(36).slice(2, 8)),
 }));
@@ -57,6 +63,7 @@ import {
 	useRemoteHandlers,
 	type UseRemoteHandlersDeps,
 } from '../../../renderer/hooks/remote/useRemoteHandlers';
+import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -1822,6 +1829,46 @@ describe('useRemoteHandlers', () => {
 				inputMode: 'ai',
 			});
 
+			expect(receipts()).toHaveLength(1);
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('remote-spawn-error');
+		});
+
+		it('reports a rejecting spawn to Sentry', async () => {
+			captureExceptionMock.mockClear();
+			(window.maestro.process.spawn as any).mockRejectedValueOnce(
+				new Error('spawn ENOENT: claude')
+			);
+
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+		});
+
+		// MAESTRO-ZS: a remote command that lands while the agent is mid-turn is
+		// refused by ProcessManager on purpose. The caller still gets an honest
+		// rejection - it just isn't a fault worth paging Sentry over, and the
+		// remote sender can retry on any cadence it likes, so it repeated.
+		it('does not report a busy-agent refusal to Sentry but still rejects', async () => {
+			captureExceptionMock.mockClear();
+			(window.maestro.process.spawn as any).mockRejectedValueOnce(
+				new Error(
+					"Error invoking remote method 'process:spawn': Error: " +
+						agentAlreadyRunningMessage('session-1-ai-tab-1')
+				)
+			);
+
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(captureExceptionMock).not.toHaveBeenCalled();
 			expect(receipts()).toHaveLength(1);
 			expect(receipts()[0][1]).toBe(false);
 			expect(String(receipts()[0][2])).toContain('remote-spawn-error');

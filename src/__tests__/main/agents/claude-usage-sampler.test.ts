@@ -82,7 +82,11 @@ vi.mock('../../../main/agents/claude-account-identity', () => ({
 
 import os from 'os';
 import path from 'path';
-import { sampleUsage } from '../../../main/agents/claude-usage-sampler';
+import {
+	FAILURE_REREPORT_INTERVAL_MS,
+	resetFailureReportingForTests,
+	sampleUsage,
+} from '../../../main/agents/claude-usage-sampler';
 import { asarNodePath, canonKey } from '../../helpers/pathExpect';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
@@ -141,6 +145,10 @@ describe('claude-usage-sampler', () => {
 		mockExecFile.mockReset();
 		captureMessageMock.mockReset();
 		captureMessageMock.mockResolvedValue(undefined);
+		// The failure memo behind MAESTRO-Q2 is module-level process state, so it
+		// outlives a single case. Without this, the second test to hit the same
+		// (configDir, stage, reason) would see its report suppressed.
+		resetFailureReportingForTests();
 		// Default: no identity available, which is the shape every pre-existing
 		// assertion in this file was written against.
 		readAccountIdentityMock.mockReset();
@@ -585,6 +593,78 @@ describe('claude-usage-sampler', () => {
 			);
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
 			expect(snap?.weekSonnetOnly.label).toBe('Fable');
+		});
+	});
+
+	describe('repeat-failure suppression (MAESTRO-Q2)', () => {
+		const OPTS = { binPath: '/bin/maestro-p.js', cwd: '/tmp', configDir: '/home/u/.claude' };
+
+		it('reports the first failure but not identical repeats', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			for (let i = 0; i < 5; i++) {
+				expect(await sampleUsage(OPTS)).toBeNull();
+			}
+
+			// Every tick still returns null and still logs; only the report is deduped.
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+			expect(captureMessageMock.mock.calls[0][2]).toMatchObject({
+				stage: 'spawn',
+				reason: 'exit: 1',
+			});
+		});
+
+		it('reports again when the failure signature changes', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			// Same config dir, different reason - this is new information.
+			primeFailure(Object.assign(new Error('nope'), { code: 'ENOENT' }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(captureMessageMock.mock.calls[1][2]).toMatchObject({ reason: 'ENOENT' });
+		});
+
+		it('keeps config dirs independent so one broken account cannot mute another', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-a' });
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-a' });
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-b' });
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(
+				captureMessageMock.mock.calls.map((c) => (c[2] as { configDir: string }).configDir)
+			).toEqual(['/home/u/.claude-a', '/home/u/.claude-b']);
+		});
+
+		it('re-reports an unchanged failure once the interval elapses', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS - 1));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+		});
+
+		it('forgets the history after a success so a flapping account reports again', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			primeSuccess(wireEnvelope());
+			expect(await sampleUsage(OPTS)).not.toBeNull();
+
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
 		});
 	});
 
