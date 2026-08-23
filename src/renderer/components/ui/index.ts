@@ -77,3 +77,6 @@ export type { GitChangeCountsProps } from './GitChangeCounts';
 
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';
+
+export { CountBadge } from './CountBadge';
+export type { CountBadgeProps } from './CountBadge';
