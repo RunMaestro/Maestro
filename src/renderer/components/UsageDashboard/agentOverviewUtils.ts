@@ -2,11 +2,12 @@ import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { Session, SessionState, Theme } from '../../types';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 
-export type SortMode = 'name' | 'created' | 'queries' | 'tabs' | 'auto';
+export type SortMode = 'name' | 'created' | 'recent' | 'queries' | 'tabs' | 'auto';
 
 export const AGENT_OVERVIEW_SORT_OPTIONS: { value: SortMode; label: string }[] = [
 	{ value: 'name', label: 'Name' },
 	{ value: 'created', label: 'Created' },
+	{ value: 'recent', label: 'Recent' },
 	{ value: 'queries', label: 'Queries' },
 	{ value: 'tabs', label: 'Tabs' },
 	{ value: 'auto', label: 'Auto %' },
@@ -53,6 +54,15 @@ export function getSessionQueryCount(
 		if (sameProviderCount !== 1) return 0;
 	}
 	return data.byAgent?.[session.toolType]?.count ?? 0;
+}
+
+/**
+ * Epoch ms of the agent's most recent query inside the selected range, or
+ * `null` when it has none. `bySessionByDay` only resolves to a calendar day,
+ * so ordering by it would tie every agent that ran today.
+ */
+export function getSessionLastQueryAt(session: Session, data: StatsAggregation): number | null {
+	return data.bySessionLastQuery?.[session.id] ?? null;
 }
 
 export function getSessionAutoPercent(session: Session, data: StatsAggregation): number | null {
@@ -109,6 +119,20 @@ export function sortAgentOverviewSessions(
 
 	if (sortMode === 'tabs') {
 		return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
+	}
+
+	if (sortMode === 'recent') {
+		// Most-recently-queried first. Agents with no query in the range have no
+		// timestamp to rank on, so they sink below every agent that does rather
+		// than mixing into the middle on a zero.
+		return alphabetical.slice().sort((a, b) => {
+			const aTs = getSessionLastQueryAt(a, data);
+			const bTs = getSessionLastQueryAt(b, data);
+			if (aTs === null && bTs === null) return 0;
+			if (aTs === null) return 1;
+			if (bTs === null) return -1;
+			return bTs - aTs;
+		});
 	}
 
 	return alphabetical.slice().sort((a, b) => {

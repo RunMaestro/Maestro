@@ -383,6 +383,27 @@ function queryBySessionSource(
 	return result;
 }
 
+function queryBySessionLastQuery(db: Database.Database, startTime: number): Record<string, number> {
+	const perfStart = perfMetrics.start();
+	const rows = db
+		.prepare(
+			`
+      SELECT session_id, MAX(start_time) as last_query
+      FROM query_events
+      WHERE start_time >= ?
+      GROUP BY session_id
+    `
+		)
+		.all(startTime) as Array<{ session_id: string; last_query: number }>;
+
+	const result: Record<string, number> = {};
+	for (const row of rows) {
+		result[row.session_id] = row.last_query;
+	}
+	perfMetrics.end(perfStart, 'getAggregatedStats:bySessionLastQuery');
+	return result;
+}
+
 /**
  * Query duration distribution overall and per agent type.
  *
@@ -480,6 +501,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const sessionStats = querySessionStats(db, startTime);
 	const bySessionByDay = queryBySessionByDay(db, startTime);
 	const bySessionSource = queryBySessionSource(db, startTime);
+	const bySessionLastQuery = queryBySessionLastQuery(db, startTime);
 	const worktreeStatus = queryByWorktreeStatus(db, startTime);
 	const durationPercentiles = queryDurationPercentiles(db, startTime);
 	const autoRunTaskDurationPercentiles = queryAutoRunTaskPercentiles(db, startTime);
@@ -515,6 +537,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		byAgentByDay,
 		bySessionByDay,
 		bySessionSource,
+		bySessionLastQuery,
 		worktreeQueries: worktreeStatus.worktreeQueries,
 		parentQueries: worktreeStatus.parentQueries,
 		byWorktreeStatus: worktreeStatus.byWorktreeStatus,

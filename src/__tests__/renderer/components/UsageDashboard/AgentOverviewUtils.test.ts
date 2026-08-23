@@ -5,6 +5,7 @@ import { THEMES } from '../../../../shared/themes';
 import {
 	buildSessionSparkline,
 	getSessionAutoPercent,
+	getSessionLastQueryAt,
 	getSessionQueryCount,
 	getStatusColor,
 	isSessionHighlighted,
@@ -68,6 +69,10 @@ const data: StatsAggregation = {
 		codexSession: { user: 1, auto: 3 },
 		emptySession: { user: 0, auto: 0 },
 	},
+	bySessionLastQuery: {
+		codexSession: 1_700_000_000_000,
+		claude: 1_700_000_500_000,
+	},
 	worktreeQueries: 0,
 	parentQueries: 12,
 	byWorktreeStatus: {
@@ -119,6 +124,14 @@ describe('agentOverviewUtils', () => {
 		expect(isSessionHighlighted(worktree, 'worktree')).toBe(true);
 	});
 
+	it('reads the last-query timestamp, and reports null when the agent has none', () => {
+		const codex = makeSession({ id: 'codexSession' });
+		const quiet = makeSession({ id: 'emptySession' });
+
+		expect(getSessionLastQueryAt(codex, data)).toBe(1_700_000_000_000);
+		expect(getSessionLastQueryAt(quiet, data)).toBeNull();
+	});
+
 	it('sorts visible agents by name, created date, query count, tabs, and auto percent', () => {
 		const alpha = makeSession({
 			id: 'codexSession',
@@ -144,5 +157,31 @@ describe('agentOverviewUtils', () => {
 		expect(sortAgentOverviewSessions(sessions, data, 'queries')[0].name).toBe('Alpha');
 		expect(sortAgentOverviewSessions(sessions, data, 'tabs')[0].name).toBe('Beta');
 		expect(sortAgentOverviewSessions(sessions, data, 'auto')[0].name).toBe('Alpha');
+	});
+
+	it('sorts by most recently queried and sinks agents with no queries in range', () => {
+		// Alpha was created later and has more queries, but Beta queried last.
+		const alpha = makeSession({
+			id: 'codexSession',
+			name: 'Alpha',
+			toolType: 'codex',
+			createdAt: 300,
+		});
+		const beta = makeSession({
+			id: 'claude',
+			name: 'Beta',
+			toolType: 'claude-code',
+			createdAt: 200,
+		});
+		const quiet = makeSession({
+			id: 'emptySession',
+			name: 'Aardvark',
+			toolType: 'codex',
+			createdAt: 100,
+		});
+
+		expect(
+			sortAgentOverviewSessions([quiet, alpha, beta], data, 'recent').map((session) => session.name)
+		).toEqual(['Beta', 'Alpha', 'Aardvark']);
 	});
 });

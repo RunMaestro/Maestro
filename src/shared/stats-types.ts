@@ -111,6 +111,12 @@ export interface StatsAggregation {
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** User vs auto query counts per Maestro session (for per-card auto% on the dashboard) */
 	bySessionSource: Record<string, { user: number; auto: number }>;
+	/**
+	 * Epoch ms of the most recent query per Maestro session, scoped to the
+	 * selected range. Day-bucketed `bySessionByDay` can only order agents to the
+	 * nearest calendar day, so the "Recent" sort reads this instead.
+	 */
+	bySessionLastQuery: Record<string, number>;
 	/** Count of queries originating from worktree (child) agents */
 	worktreeQueries: number;
 	/** Count of queries originating from parent (non-worktree) agents */

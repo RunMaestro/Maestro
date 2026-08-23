@@ -67,6 +67,7 @@ const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	bySessionLastQuery: {},
 	...overrides,
 });
 
@@ -421,6 +422,57 @@ describe('AgentOverviewCards', () => {
 			expect(cards[0].textContent).toContain('Newest');
 			expect(cards[1].textContent).toContain('Middle');
 			expect(cards[2].textContent).toContain('Oldest');
+		});
+	});
+
+	describe('Recent / last query', () => {
+		it('sorts cards by last query descending and sinks agents with none', () => {
+			const now = Date.now();
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Stale', createdAt: now }),
+				buildSession({ id: 's2', name: 'Fresh', createdAt: now }),
+				buildSession({ id: 's3', name: 'Never', createdAt: now }),
+			];
+			const data = buildData({
+				bySessionLastQuery: { s1: now - 86_400_000, s2: now - 60_000 },
+			});
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			const cards = screen.getAllByTestId('agent-card');
+			expect(cards[0].textContent).toContain('Fresh');
+			expect(cards[1].textContent).toContain('Stale');
+			expect(cards[2].textContent).toContain('Never');
+		});
+
+		it('swaps the corner badge from age to last query and highlights it', () => {
+			const now = Date.now();
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: now - 3 * 86_400_000 }),
+			];
+			const data = buildData({ bySessionLastQuery: { s1: now - 5 * 60_000 } });
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+			expect(screen.getByTestId('agent-card-age').textContent).toBe('3d');
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			const age = screen.getByTestId('agent-card-age') as HTMLElement;
+			expect(age.textContent).toBe('5m');
+			expect(age.dataset.highlighted).toBe('true');
+		});
+
+		it('drops the corner badge when the agent has no query in range', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 86_400_000 }),
+			];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			expect(screen.queryByTestId('agent-card-age')).toBeNull();
 		});
 	});
 

@@ -18,26 +18,29 @@ import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { compareNamesIgnoringEmojis, stripLeadingEmojis } from '../../../shared/emojiUtils';
+import { stripLeadingEmojis } from '../../../shared/emojiUtils';
 import { formatAgeShort } from '../../../shared/formatters';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { EscCloseButton } from '../ui/EscCloseButton';
-import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import { EntityTile } from './EntityTile';
 import {
+	AGENT_OVERVIEW_SORT_OPTIONS,
 	buildSessionSparkline,
 	getSessionAutoPercent,
+	getSessionLastQueryAt,
 	getSessionQueryCount,
 	getStatusColor,
 	isSessionHighlighted,
+	sortAgentOverviewSessions,
 	type SortMode,
 } from './agentOverviewUtils';
 
 /** Per-card stat we should visually emphasize. Mirrors `SortMode` minus `name`
  *  (the default sort has no per-card highlight). */
-type HighlightedStat = 'created' | 'queries' | 'tabs' | 'auto' | null;
+type HighlightedStat = 'created' | 'recent' | 'queries' | 'tabs' | 'auto' | null;
 
 interface AgentCardProps {
 	session: Session;
@@ -71,13 +74,14 @@ const AgentCard = memo(function AgentCard({
 	const isWorktree = Boolean(session.parentSessionId);
 	const isClickable = Boolean(onShowDetails);
 
-	const { queryCount, sparklineData, autoPercent } = useMemo(() => {
+	const { queryCount, sparklineData, autoPercent, lastQueryAt } = useMemo(() => {
 		const sessionByDay = data.bySessionByDay?.[session.id];
 		const sparkline = buildSessionSparkline(sessionByDay);
 		return {
 			queryCount: getSessionQueryCount(session, data, visibleSessions),
 			sparklineData: sparkline,
 			autoPercent: getSessionAutoPercent(session, data),
+			lastQueryAt: getSessionLastQueryAt(session, data),
 		};
 	}, [data, session, visibleSessions]);
 
@@ -85,15 +89,23 @@ const AgentCard = memo(function AgentCard({
 	const statusColor = getStatusColor(session.state, theme);
 
 	const autoPctLabel = autoPercent === null ? 'no recorded queries' : `${autoPercent}% auto`;
-	const ageLabel = session.createdAt ? formatAgeShort(session.createdAt) : undefined;
-	const ageTitle = session.createdAt
-		? `Created ${new Date(session.createdAt).toLocaleString()}`
-		: undefined;
+
+	// The corner badge normally carries the agent's age. Under the Recent sort
+	// that number explains nothing about the order, so the badge switches to the
+	// last-query time - the value the cards are actually ranked on.
+	const showLastQuery = highlightedStat === 'recent';
+	const cornerTs = showLastQuery ? lastQueryAt : (session.createdAt ?? null);
+	const ageLabel = cornerTs !== null ? formatAgeShort(cornerTs) : undefined;
+	const ageTitle =
+		cornerTs !== null
+			? `${showLastQuery ? 'Last query' : 'Created'} ${new Date(cornerTs).toLocaleString()}`
+			: showLastQuery
+				? 'No queries in this range'
+				: undefined;
+	const cornerAriaLabel = ageLabel ? `, ${showLastQuery ? 'last query' : 'age'} ${ageLabel}` : '';
 	const baseAriaLabel = `${session.name}, ${session.state}, ${queryCount} ${
 		queryCount === 1 ? 'query' : 'queries'
-	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}${
-		ageLabel ? `, age ${ageLabel}` : ''
-	}`;
+	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}${cornerAriaLabel}`;
 
 	return (
 		<EntityTile
@@ -104,7 +116,7 @@ const AgentCard = memo(function AgentCard({
 			statusPulsing={session.state === 'busy'}
 			age={ageLabel}
 			ageTitle={ageTitle}
-			ageHighlighted={highlightedStat === 'created'}
+			ageHighlighted={highlightedStat === 'created' || showLastQuery}
 			badges={isWorktree ? [{ label: 'WT', testId: 'agent-card-wt-badge' }] : undefined}
 			subtitle={isWorktree ? (session.worktreeBranch ?? undefined) : undefined}
 			subtitleTestId="agent-card-branch"
@@ -191,14 +203,6 @@ function scoreSessionForFilter(session: Session, query: string): number | null {
 	return best < 0 ? null : best;
 }
 
-const SORT_OPTIONS: SegmentedOption<SortMode>[] = [
-	{ value: 'name', label: 'Name' },
-	{ value: 'created', label: 'Created' },
-	{ value: 'queries', label: 'Queries' },
-	{ value: 'tabs', label: 'Tabs' },
-	{ value: 'auto', label: 'Auto %' },
-];
-
 export const AgentOverviewCards = memo(function AgentOverviewCards({
 	sessions,
 	data,
@@ -226,57 +230,13 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		capturesFocus: false,
 	});
 
-	// Terminal sessions aren't "agents" - exclude them so the card row
-	// matches the agent count shown elsewhere in the dashboard. Default sort
-	// is alphabetical (ascending), ignoring any leading emoji prefix to match
-	// how the Left Bar's session list orders names; the user can switch to
-	// query or tab count (descending) via the sort control above the grid.
-	const activeSessions = useMemo(() => {
-		const filtered = sessions.filter((s) => s.toolType !== 'terminal');
-		const byName = (a: Session, b: Session) => compareNamesIgnoringEmojis(a.name, b.name);
-
-		if (sortMode === 'name') {
-			return filtered.slice().sort(byName);
-		}
-
-		// Pre-sort alphabetically so equal counts fall back to a stable, scannable order.
-		const alphabetical = filtered.slice().sort(byName);
-
-		if (sortMode === 'created') {
-			// Most-recent-first. Sessions missing `createdAt` (legacy data) sink
-			// to the bottom rather than masquerading as the newest agent.
-			return alphabetical.slice().sort((a, b) => {
-				const aTs = a.createdAt ?? 0;
-				const bTs = b.createdAt ?? 0;
-				return bTs - aTs;
-			});
-		}
-
-		if (sortMode === 'queries') {
-			return alphabetical
-				.slice()
-				.sort(
-					(a, b) =>
-						getSessionQueryCount(b, data, alphabetical) -
-						getSessionQueryCount(a, data, alphabetical)
-				);
-		}
-
-		if (sortMode === 'tabs') {
-			return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
-		}
-
-		// 'auto' - descending by auto %, sessions with no recorded queries
-		// sink to the bottom so the leaderboard isn't polluted by null cards.
-		return alphabetical.slice().sort((a, b) => {
-			const aPct = getSessionAutoPercent(a, data);
-			const bPct = getSessionAutoPercent(b, data);
-			if (aPct === null && bPct === null) return 0;
-			if (aPct === null) return 1;
-			if (bPct === null) return -1;
-			return bPct - aPct;
-		});
-	}, [sessions, data, sortMode]);
+	// Terminal sessions aren't "agents" - exclude them so the card row matches
+	// the agent count shown elsewhere in the dashboard. Ordering lives in
+	// `sortAgentOverviewSessions` so the grid and its sort control can't drift.
+	const activeSessions = useMemo(
+		() => sortAgentOverviewSessions(sessions, data, sortMode),
+		[sessions, data, sortMode]
+	);
 
 	// Live fuzzy filter. With the default Name sort we re-rank by match score so
 	// the best hit lands first; an explicit sort (Queries, Tabs, ...) is the
@@ -349,7 +309,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					<SegmentedControl
 						value={sortMode}
 						onChange={setSortMode}
-						options={SORT_OPTIONS}
+						options={AGENT_OVERVIEW_SORT_OPTIONS}
 						theme={theme}
 						ariaLabel="Sort agents"
 						testId="agent-overview-sort"
