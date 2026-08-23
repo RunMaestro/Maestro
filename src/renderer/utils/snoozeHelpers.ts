@@ -514,3 +514,34 @@ export function getSnoozedTabLabel(entry: SnoozedTabEntry): string {
 			return entry.tab.name || clampLabel(entry.tab.cwd) || 'Terminal';
 	}
 }
+
+/**
+ * Whether a snoozed tab can still be restored.
+ *
+ * Only a FILE snooze can become unrestorable: a file can be deleted, renamed,
+ * or moved while the tab sleeps, and restoring it would produce a tab pointing
+ * at nothing - an empty preview the user has to work out for themselves. Every
+ * other kind restores from state it carries, so it is always restorable.
+ *
+ * Deliberately a standalone predicate rather than a branch inside the wake
+ * path: waking is otherwise pure and synchronous, and this is the one piece
+ * that has to touch the filesystem. Keeping it separate means the wake logic
+ * stays testable without mocking fs, and callers that restore several tabs at
+ * once (a tiled group) can run the checks concurrently and decide what to do
+ * with the failures themselves.
+ *
+ * `fs.stat` is SSH-aware, so a file on a remote is checked on that remote
+ * rather than being reported missing because it is absent locally.
+ */
+export async function isSnoozeRestorable(entry: SnoozedTabEntry): Promise<boolean> {
+	if (entry.type !== 'file') return true;
+	try {
+		const stat = await window.maestro.fs.stat(entry.tab.path, entry.tab.sshRemoteId);
+		return !!stat?.isFile;
+	} catch {
+		// A failed check is not proof the file is gone - the remote could be
+		// unreachable. Restore the tab and let the preview report the real error,
+		// rather than silently discarding a snooze the user asked for.
+		return true;
+	}
+}

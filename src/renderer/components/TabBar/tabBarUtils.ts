@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { MessageSquare, FileText, Globe, TerminalSquare } from 'lucide-react';
+import { MessageSquare, FileText, Globe, TerminalSquare, LayoutGrid } from 'lucide-react';
 import type { Theme, UnifiedTab } from '../../types';
 
 /** The kind of content a tab holds - matches the UnifiedTab discriminant. */
@@ -27,6 +27,12 @@ export function getTabKindIcon(kind: TabKind): LucideIcon {
 			return Globe;
 		case 'terminal':
 			return TerminalSquare;
+		default:
+			// Unreachable for TabKind as declared here, but deliberate: branches that
+			// add a kind (rc carries a `group` tile) would otherwise fail this switch
+			// to compile rather than merge. A generic glyph is the right answer for a
+			// kind this map has not been taught yet.
+			return LayoutGrid;
 	}
 }
 

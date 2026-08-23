@@ -575,6 +575,7 @@ function TabBarInner({
 										isDragging={draggingTabId === fileTab.id}
 										isDragOver={dragOverTabId === fileTab.id}
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
+										onSnooze={onSnooze || undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -614,6 +615,7 @@ function TabBarInner({
 										isDragging={draggingTabId === terminalTab.id}
 										isDragOver={dragOverTabId === terminalTab.id}
 										registerRef={(el) => registerTabRef(terminalTab.id, el)}
+										onSnooze={onSnooze || undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -653,6 +655,7 @@ function TabBarInner({
 										isDragging={draggingTabId === browserTab.id}
 										isDragOver={dragOverTabId === browserTab.id}
 										registerRef={(el) => registerTabRef(browserTab.id, el)}
+										onSnooze={onSnooze || undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}

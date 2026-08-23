@@ -27,6 +27,7 @@ import { recordSnoozeResolution, useSnoozeHistoryStore } from '../stores/snoozeH
 import { SnoozeHistoryModal } from './SnoozeHistoryModal';
 import { releaseSnoozedTranscript } from '../utils/snoozeTranscriptMirror';
 import { formatSnoozeTarget, formatSnoozeCountdown } from '../../shared/snooze';
+import { getTabKindIcon, getTabKindColor } from './TabBar/tabBarUtils';
 
 export interface SnoozedTabsModalProps {
 	theme: Theme;
@@ -172,6 +173,7 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 							{items.map(({ entry, sessionId, sessionName }) => {
 								const label = getSnoozedTabLabel(entry);
 								const overdue = entry.wakeAt <= Date.now();
+								const KindIcon = getTabKindIcon(entry.type);
 
 								return (
 									<div
@@ -185,11 +187,20 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 										<div className="flex items-start gap-3">
 											<div className="flex-1 min-w-0 select-text">
 												<div
-													className="text-sm truncate"
+													className="text-sm truncate flex items-center gap-1.5"
 													style={{ color: theme.colors.textMain }}
 													title={label}
 												>
-													{label}
+													{/* Kind icon: the list mixes conversations, files, browser
+														tabs and terminals, and the label alone often cannot tell
+														them apart (a file and a browser tab can both read as a
+														bare name). One shared map, so this list and every other
+														mixed-kind surface show the same glyph. */}
+													<KindIcon
+														className="w-3.5 h-3.5 shrink-0"
+														style={{ color: getTabKindColor(entry.type, theme) }}
+													/>
+													<span className="truncate">{label}</span>
 												</div>
 
 												<div

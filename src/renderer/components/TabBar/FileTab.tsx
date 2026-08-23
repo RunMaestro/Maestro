@@ -8,6 +8,7 @@ import {
 	ExternalLink,
 	FolderOpen,
 	ChevronsLeft,
+	Clock,
 	ChevronsRight,
 	FileText,
 } from 'lucide-react';
@@ -43,6 +44,8 @@ export interface FileTabProps {
 	isDragOver: boolean;
 	registerRef?: (el: HTMLDivElement | null) => void;
 	/** Stable callback - receives tabId */
+	/** Park this tab until a chosen moment. Omitted when snoozing is unavailable. */
+	onSnooze?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
@@ -96,6 +99,7 @@ export const FileTab = memo(function FileTab({
 	isDragging,
 	isDragOver,
 	registerRef,
+	onSnooze,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -206,6 +210,15 @@ export const FileTab = memo(function FileTab({
 			setOverlayOpen(false);
 		},
 		[tab.path, setOverlayOpen]
+	);
+
+	const handleSnoozeClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onSnooze?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onSnooze, tab.id, setOverlayOpen]
 	);
 
 	const handleMoveToFirstClick = useCallback(
@@ -496,6 +509,21 @@ export const FileTab = memo(function FileTab({
 									>
 										<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										{getRevealLabel(window.maestro.platform)}
+									</button>
+								)}
+
+								{/* Snooze - park the file until a chosen moment. The path is
+									re-checked on wake, so a file deleted while it slept comes back
+									as a notice rather than an empty tab. */}
+								{onSnooze && (
+									<button
+										onClick={handleSnoozeClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Snooze Tab
+										{tabShortcuts.snoozeTab && <ShortcutHint keys={tabShortcuts.snoozeTab.keys} />}
 									</button>
 								)}
 
