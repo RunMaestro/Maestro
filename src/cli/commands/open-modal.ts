@@ -31,7 +31,9 @@ interface OpenModalOptions {
 function shortcutFor(surface: UiSurface): string | undefined {
 	if (!surface.shortcutId) return undefined;
 	const shortcut = DEFAULT_SHORTCUTS[surface.shortcutId] ?? FIXED_SHORTCUTS[surface.shortcutId];
-	if (!shortcut) return undefined;
+	// An action can be registered with no default binding, in which case there is
+	// no hotkey to print - same answer as a surface that names no shortcut at all.
+	if (!shortcut?.keys?.length) return undefined;
 	return formatShortcutKeysFor(shortcut.keys, isMacOS(), '+');
 }
 

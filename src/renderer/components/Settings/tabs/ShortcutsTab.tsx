@@ -27,6 +27,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	const [shortcutsFilter, setShortcutsFilter] = useState('');
 	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
 	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
+	const [showUnassignedOnly, setShowUnassignedOnly] = useState(false);
 	const shortcutsFilterRef = useRef<HTMLInputElement>(null);
 
 	// Notify parent of recording state changes (for escape handler coordination)
@@ -76,7 +77,12 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		...Object.values(tabShortcuts).map((sc) => ({ ...sc, isTabShortcut: true })),
 	];
 	const totalShortcuts = allShortcuts.length;
+	const unassignedCount = allShortcuts.filter((sc) => !sc.keys?.length).length;
 	const filteredShortcuts = allShortcuts.filter((sc) => {
+		// The unassigned view is a mode, not another filter: someone asking "what
+		// can I still bind?" wants the whole list of them, not the intersection
+		// with whatever they last typed.
+		if (showUnassignedOnly) return !sc.keys?.length;
 		if (filterShortcutKeys.length > 0) {
 			return shortcutKeysEqual(sc.keys, filterShortcutKeys);
 		}
@@ -120,7 +126,14 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					} as React.CSSProperties
 				}
 			>
-				{recordingId === sc.id ? 'Press keys...' : formatShortcutKeys(sc.keys)}
+				{recordingId === sc.id
+					? 'Press keys...'
+					: sc.keys?.length
+						? formatShortcutKeys(sc.keys)
+						: // An unassigned action renders a word, not an empty box. A blank
+							// button reads as a rendering bug and gives the user nothing to
+							// aim at.
+							'Unassigned'}
 			</button>
 		</div>
 	);
@@ -146,6 +159,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					onChange={(e) => {
 						setShortcutsFilter(e.target.value);
 						setFilterShortcutKeys([]);
+						setShowUnassignedOnly(false);
 					}}
 					placeholder="Filter shortcuts..."
 					className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
@@ -158,6 +172,28 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					recording={recordingFilterShortcut}
 					onRecordingChange={setRecordingFilterShortcut}
 				/>
+				{unassignedCount > 0 && (
+					<button
+						type="button"
+						onClick={() => {
+							setShowUnassignedOnly((v) => !v);
+							setShortcutsFilter('');
+							setFilterShortcutKeys([]);
+						}}
+						aria-pressed={showUnassignedOnly}
+						title="Show only actions with no key assigned"
+						className="text-xs px-2 rounded font-medium whitespace-nowrap border"
+						style={{
+							backgroundColor: showUnassignedOnly
+								? theme.colors.accentDim
+								: theme.colors.bgActivity,
+							borderColor: showUnassignedOnly ? theme.colors.accent : theme.colors.border,
+							color: showUnassignedOnly ? theme.colors.accent : theme.colors.textDim,
+						}}
+					>
+						Unassigned {unassignedCount}
+					</button>
+				)}
 				<span
 					className="text-xs px-2 rounded font-medium flex items-center"
 					style={{
@@ -165,7 +201,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						color: theme.colors.textDim,
 					}}
 				>
-					{shortcutsFilter || filterShortcutKeys.length > 0
+					{shortcutsFilter || filterShortcutKeys.length > 0 || showUnassignedOnly
 						? `${filteredCount} / ${totalShortcuts}`
 						: totalShortcuts}
 				</span>
