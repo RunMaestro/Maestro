@@ -605,8 +605,45 @@ describe('ClaudePlanUsage — account identity', () => {
 
 		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
 
-		expect(screen.getByTestId('claude-plan-shared-gmail')).toHaveTextContent('shared with smash');
-		expect(screen.getByTestId('claude-plan-shared-smash')).toHaveTextContent('shared with gmail');
+		// One row, not two: the quota is the account's, so a second row would
+		// be a bar-for-bar copy and read as double-reporting.
+		expect(screen.getByTestId('claude-plan-row-gmail')).toBeInTheDocument();
+		expect(screen.queryByTestId('claude-plan-row-smash')).toBeNull();
+		expect(screen.getByTestId('claude-plan-shared-gmail')).toHaveTextContent('also smash');
+	});
+
+	it('honors a sampler-declared alias whose dir has no snapshot of its own', () => {
+		// The sampler skips a dir it recognizes as a duplicate, so that dir
+		// never gets a snapshot. Rendering it as its own row would produce a
+		// permanent "hit Refresh" that nothing can ever satisfy.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				...identifiedSnapshot('/Users/me/.claude-gmail', { accountEmail: 'p@smashlabs.com' }),
+				aliasConfigDirKeys: ['/Users/me/.claude-smash'],
+			},
+		});
+		seedSessions(['/Users/me/.claude-gmail', '/Users/me/.claude-smash']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.queryByTestId('claude-plan-row-smash-pending')).toBeNull();
+		expect(screen.getByTestId('claude-plan-shared-gmail')).toHaveTextContent('also smash');
+	});
+
+	it('counts agents on a folded dir against the account that absorbed it', () => {
+		// An agent pointed at the folded dir still burns this quota, so leaving
+		// it out under-reports the row it actually belongs to.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				...identifiedSnapshot('/Users/me/.claude-gmail', { accountEmail: 'p@smashlabs.com' }),
+				aliasConfigDirKeys: ['/Users/me/.claude-smash'],
+			},
+		});
+		seedSessions(['/Users/me/.claude-gmail', '/Users/me/.claude-smash', '/Users/me/.claude-smash']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-gmail')).toHaveTextContent('3 agents');
 	});
 
 	it('does not flag accounts that are genuinely distinct', () => {
@@ -625,11 +662,13 @@ describe('ClaudePlanUsage — account identity', () => {
 
 		expect(screen.queryByTestId('claude-plan-shared-gmail')).toBeNull();
 		expect(screen.queryByTestId('claude-plan-shared-banaco')).toBeNull();
+		expect(screen.getByTestId('claude-plan-row-gmail')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-row-banaco')).toBeInTheDocument();
 	});
 
-	it('flags the shared account in the single-account tab view too', () => {
-		// The tab view renders one row at a time, so the badge has to come
-		// from the full snapshot map rather than from the visible row.
+	it('collapses the duplicate out of the tab bar too', () => {
+		// The tab strip is the same account list in another shape; leaving the
+		// folded dir there gives the user a tab that shows the identical bars.
 		seedSnapshots({
 			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
 				accountEmail: 'p@smashlabs.com',
@@ -643,8 +682,9 @@ describe('ClaudePlanUsage — account identity', () => {
 
 		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
 
+		expect(screen.getByTestId('claude-plan-tab-gmail')).toBeInTheDocument();
+		expect(screen.queryByTestId('claude-plan-tab-smash')).toBeNull();
 		expect(screen.getByTestId('claude-plan-shared-gmail')).toBeInTheDocument();
-		expect(screen.queryByTestId('claude-plan-shared-smash')).toBeNull();
 	});
 
 	it('names the account and its quota siblings in the tab hover text', () => {
@@ -664,6 +704,6 @@ describe('ClaudePlanUsage — account identity', () => {
 		const title = screen.getByTestId('claude-plan-tab-gmail').getAttribute('title') ?? '';
 		expect(title).toContain('/Users/me/.claude-gmail');
 		expect(title).toContain('Logged in as p@smashlabs.com');
-		expect(title).toContain('Shares one quota with smash');
+		expect(title).toContain('Same account as smash');
 	});
 });

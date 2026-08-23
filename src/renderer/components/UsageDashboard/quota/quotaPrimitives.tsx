@@ -191,20 +191,19 @@ export const QuotaAccountEmail = memo(function QuotaAccountEmail({
 });
 
 /**
- * "Shares one quota with these other accounts" chip.
+ * "This account is also reachable as ..." chip.
  *
- * Two config dirs logged into the SAME Anthropic account draw from one quota
- * bucket, so their bars are identical by definition. Without this chip that
- * looks like the sampler copying one account's numbers onto another row - the
- * exact conclusion a user reaches when two differently-named rows show the same
- * percentages. Naming the siblings turns an apparent bug into a fact.
+ * Several config dirs can be logged into ONE provider account, which means one
+ * quota bucket and therefore one row. The folded directories still exist in the
+ * user's settings, so a row that silently absorbed them reads as a directory
+ * that went missing. Naming them makes the collapse legible.
  */
 export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 	siblingNames,
 	testId,
 	theme,
 }: {
-	/** Display names of the other accounts in this quota bucket. */
+	/** Display names of the other directories folded into this row. */
 	siblingNames: string[];
 	testId?: string;
 	theme: Theme;
@@ -221,11 +220,11 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 				backgroundColor: `${color}15`,
 				border: `1px solid ${color}35`,
 			}}
-			title={`Same Anthropic account as ${joined}. These rows share one quota, so identical bars are expected.`}
+			title={`Also configured as ${joined}. Those directories are the same account, so they share the quota shown here and are listed once.`}
 			data-testid={testId}
 		>
 			<Link2 className="w-3 h-3" aria-hidden="true" />
-			shared with {joined}
+			also {joined}
 		</span>
 	);
 });

@@ -18,7 +18,7 @@ import {
 } from '../../shared/agentCapabilities';
 import type { UsageSnapshot } from '../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../stores/codexUsageStore';
-import type { KnownAuthDirs } from '../../shared/authPaths';
+import type { EnvVarSuggestions } from '../../shared/envVarSuggestions';
 
 // Re-export for consumers that import from preload. `AgentStatus` is
 // re-exported only (no local usage in this file); TypeScript's
@@ -163,10 +163,12 @@ export function createAgentsApi() {
 			ipcRenderer.invoke('agents:getAllCustomEnvVars'),
 
 		/**
-		 * Return locally configured Claude and Codex account paths without
-		 * enumerating provider directories on disk.
+		 * Variable names and per-name values to offer in the env var editors,
+		 * built from what is already configured. Never enumerates provider
+		 * directories on disk, so a stale account can't be suggested as live.
 		 */
-		getKnownAuthDirs: (): Promise<KnownAuthDirs> => ipcRenderer.invoke('agents:getKnownAuthDirs'),
+		getEnvVarSuggestions: (): Promise<EnvVarSuggestions> =>
+			ipcRenderer.invoke('agents:getEnvVarSuggestions'),
 
 		/**
 		 * Discover available models for agents that support model selection

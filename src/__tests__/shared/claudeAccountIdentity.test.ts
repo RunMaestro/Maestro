@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	accountIdentityFingerprint,
+	collapseAccountKeys,
 	groupAccountKeysByIdentity,
 	parseClaudeAccountIdentity,
 } from '../../shared/claudeAccountIdentity';
@@ -144,5 +145,86 @@ describe('groupAccountKeysByIdentity', () => {
 
 	it('returns an empty map for an empty input', () => {
 		expect(groupAccountKeysByIdentity({})).toEqual({});
+	});
+});
+
+describe('collapseAccountKeys', () => {
+	const uuid = (id: string) => ({ accountUuid: id });
+
+	it('returns one group per key when every account is distinct', () => {
+		const groups = collapseAccountKeys(['a', 'b'], { a: uuid('u1'), b: uuid('u2') });
+
+		expect(groups).toEqual([
+			{ primaryKey: 'a', aliasKeys: [] },
+			{ primaryKey: 'b', aliasKeys: [] },
+		]);
+	});
+
+	it('folds keys that share an account into the first one', () => {
+		const groups = collapseAccountKeys(['gmail', 'smash', 'banaco'], {
+			gmail: uuid('smash-uuid'),
+			smash: uuid('smash-uuid'),
+			banaco: uuid('banaco-uuid'),
+		});
+
+		expect(groups).toEqual([
+			{ primaryKey: 'gmail', aliasKeys: ['smash'] },
+			{ primaryKey: 'banaco', aliasKeys: [] },
+		]);
+	});
+
+	it('honors sampler-declared aliases even when the alias has no identity', () => {
+		// The folded dir has no snapshot of its own precisely because the
+		// sampler skipped it, so its identity is unknown to the renderer.
+		// Ignoring the declaration would render a row that can never fill in.
+		const groups = collapseAccountKeys(
+			['primary', 'folded'],
+			{ primary: uuid('u1') },
+			{ primary: ['folded'] }
+		);
+
+		expect(groups).toEqual([{ primaryKey: 'primary', aliasKeys: ['folded'] }]);
+	});
+
+	it('folds an alias that appears before its primary in the key order', () => {
+		const groups = collapseAccountKeys(
+			['folded', 'primary'],
+			{ primary: uuid('u1') },
+			{ primary: ['folded'] }
+		);
+
+		expect(groups).toEqual([{ primaryKey: 'primary', aliasKeys: ['folded'] }]);
+	});
+
+	it('ignores a declared alias that is not in the key list', () => {
+		const groups = collapseAccountKeys(['primary'], {}, { primary: ['deleted-account'] });
+
+		expect(groups).toEqual([{ primaryKey: 'primary', aliasKeys: [] }]);
+	});
+
+	it('never lets a key appear in more than one group', () => {
+		const groups = collapseAccountKeys(
+			['a', 'b', 'c'],
+			{ a: uuid('u1'), b: uuid('u1'), c: uuid('u1') },
+			{ a: ['b'] }
+		);
+
+		const seen = groups.flatMap((g) => [g.primaryKey, ...g.aliasKeys]);
+		expect(new Set(seen).size).toBe(seen.length);
+		expect(seen.sort()).toEqual(['a', 'b', 'c']);
+	});
+
+	it('keeps keys with unknown identities separate', () => {
+		// Two accounts we cannot identify are not evidence of one account.
+		const groups = collapseAccountKeys(['a', 'b'], {});
+
+		expect(groups).toEqual([
+			{ primaryKey: 'a', aliasKeys: [] },
+			{ primaryKey: 'b', aliasKeys: [] },
+		]);
+	});
+
+	it('returns an empty list for no keys', () => {
+		expect(collapseAccountKeys([], {})).toEqual([]);
 	});
 });

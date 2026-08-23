@@ -397,57 +397,78 @@ describe('EnvVarsEditor', () => {
 		expect(lastCall['CLAUDE_CONFIG_DIR']).toBe('/Users/me/.claude-smash');
 	});
 
-	it('renders known account selects for auth path keys only', () => {
+	it('offers a value dropdown only for keys that have suggestions', () => {
 		render(
 			<EnvVarsEditor
 				envVars={{
 					CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
-					CODEX_HOME: '/Users/me/.codex-work',
 					OTHER_PATH: '/usr/local/bin',
 				}}
 				setEnvVars={mockSetEnvVars}
 				theme={mockTheme}
-				knownAuthDirs={{
-					claudeConfigDirs: ['/Users/me/.claude-work'],
-					codexHomes: ['/Users/me/.codex-work'],
+				suggestions={{
+					keys: ['CLAUDE_CONFIG_DIR'],
+					valuesByKey: { CLAUDE_CONFIG_DIR: ['/Users/me/.claude-work'] },
 				}}
 			/>
 		);
 
-		expect(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths')).toHaveValue(
-			'/Users/me/.claude-work'
-		);
-		expect(screen.getByLabelText('Known CODEX_HOME paths')).toHaveValue('/Users/me/.codex-work');
-		expect(screen.getAllByPlaceholderText('value')).toHaveLength(1);
+		// One value caret (CLAUDE_CONFIG_DIR); OTHER_PATH has no known values
+		// and stays a plain field rather than sprouting an empty dropdown.
+		expect(screen.getAllByTitle('Show environment variable value suggestions')).toHaveLength(1);
 	});
 
-	it('reveals the validated text input for a custom auth path', () => {
+	it("never offers another variable's value for a key", () => {
+		// Clicking a token count as a config directory produces a broken agent,
+		// so the value list is scoped to the key it was observed under.
 		render(
 			<EnvVarsEditor
 				envVars={{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' }}
 				setEnvVars={mockSetEnvVars}
 				theme={mockTheme}
-				knownAuthDirs={{ claudeConfigDirs: ['/Users/me/.claude-work'], codexHomes: [] }}
+				suggestions={{
+					keys: ['CLAUDE_CONFIG_DIR', 'MAX_THINKING_TOKENS'],
+					valuesByKey: {
+						CLAUDE_CONFIG_DIR: ['/Users/me/.claude-work'],
+						MAX_THINKING_TOKENS: ['63999'],
+					},
+				}}
 			/>
 		);
 
-		fireEvent.change(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
-			target: { value: '__custom__' },
-		});
-		const valueInput = screen.getByPlaceholderText('value');
-		expect(valueInput).toHaveValue('/Users/me/.claude-work');
+		fireEvent.click(screen.getByTitle('Show environment variable value suggestions'));
 
-		fireEvent.change(valueInput, { target: { value: 'relative/.claude' } });
+		expect(screen.getByTitle('/Users/me/.claude-work')).toBeInTheDocument();
+		expect(screen.queryByTitle('63999')).toBeNull();
+	});
+
+	it('keeps validating a hand-typed value that is not in the list', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				suggestions={{
+					keys: ['CLAUDE_CONFIG_DIR'],
+					valuesByKey: { CLAUDE_CONFIG_DIR: ['/Users/me/.claude-work'] },
+				}}
+			/>
+		);
+
+		fireEvent.change(screen.getByLabelText('Environment variable value'), {
+			target: { value: 'relative/.claude' },
+		});
+
 		expect(screen.getByText(/CLAUDE_CONFIG_DIR must be an absolute path/)).toBeInTheDocument();
 	});
 
-	it('falls back to a text input when no known auth paths exist', () => {
+	it('falls back to a plain text field when nothing is known for the key', () => {
 		render(
 			<EnvVarsEditor
 				envVars={{ CODEX_HOME: '/Users/me/.codex-work' }}
 				setEnvVars={mockSetEnvVars}
 				theme={mockTheme}
-				knownAuthDirs={{ claudeConfigDirs: [], codexHomes: [] }}
+				suggestions={{ keys: [], valuesByKey: {} }}
 			/>
 		);
 
@@ -455,26 +476,67 @@ describe('EnvVarsEditor', () => {
 		expect(screen.getByPlaceholderText('value')).toHaveValue('/Users/me/.codex-work');
 	});
 
-	it('commits a selected known auth path through the existing change callback', () => {
+	it('commits a picked value through the existing change callback', () => {
 		render(
 			<EnvVarsEditor
 				envVars={{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' }}
 				setEnvVars={mockSetEnvVars}
 				theme={mockTheme}
-				knownAuthDirs={{
-					claudeConfigDirs: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
-					codexHomes: [],
+				suggestions={{
+					keys: ['CLAUDE_CONFIG_DIR'],
+					valuesByKey: {
+						CLAUDE_CONFIG_DIR: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
+					},
 				}}
 			/>
 		);
 
-		fireEvent.change(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
-			target: { value: '/Users/me/.claude-personal' },
-		});
+		fireEvent.click(screen.getByTitle('Show environment variable value suggestions'));
+		fireEvent.mouseDown(screen.getByTitle('/Users/me/.claude-personal'));
 
 		expect(mockSetEnvVars).toHaveBeenLastCalledWith({
 			CLAUDE_CONFIG_DIR: '/Users/me/.claude-personal',
 		});
+	});
+
+	it('picks a variable NAME from the key dropdown', () => {
+		// The value is already an absolute path so the rename commits; the
+		// per-key validation still applies to whatever the name becomes.
+		render(
+			<EnvVarsEditor
+				envVars={{ VAR: '/Users/me/.claude-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				suggestions={{ keys: ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'], valuesByKey: {} }}
+			/>
+		);
+
+		fireEvent.click(screen.getByTitle('Show environment variable name suggestions'));
+		fireEvent.mouseDown(screen.getByTitle('CLAUDE_CONFIG_DIR'));
+
+		expect(mockSetEnvVars).toHaveBeenLastCalledWith({
+			CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+		});
+	});
+
+	it("applies the new key's validation after a rename", () => {
+		// Renaming a plain variable to CLAUDE_CONFIG_DIR must subject its
+		// existing value to the absolute-path rule, or the rename is a way to
+		// smuggle a relative path past the check.
+		render(
+			<EnvVarsEditor
+				envVars={{ VAR: 'relative/path' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				suggestions={{ keys: ['CLAUDE_CONFIG_DIR'], valuesByKey: {} }}
+			/>
+		);
+
+		fireEvent.click(screen.getByTitle('Show environment variable name suggestions'));
+		fireEvent.mouseDown(screen.getByTitle('CLAUDE_CONFIG_DIR'));
+
+		expect(screen.getByText(/CLAUDE_CONFIG_DIR must be an absolute path/)).toBeInTheDocument();
+		expect(mockSetEnvVars).toHaveBeenLastCalledWith({});
 	});
 
 	it('validates custom CODEX_HOME values as absolute paths', () => {

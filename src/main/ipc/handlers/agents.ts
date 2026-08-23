@@ -45,7 +45,11 @@ import {
 	discoverClaudeConfigDirs,
 } from '../../agents/claude-usage-startup';
 import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
-import type { KnownAuthDirs } from '../../../shared/authPaths';
+import {
+	WELL_KNOWN_ENV_VAR_KEYS,
+	isSecretValuedEnvKey,
+	type EnvVarSuggestions,
+} from '../../../shared/envVarSuggestions';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -92,30 +96,75 @@ function isLocalSession(session: Record<string, unknown>): boolean {
 	return typeof session.cwd !== 'string' || !session.cwd.includes('://');
 }
 
-function collectKnownAuthPaths(
-	agentEnvVars: Record<string, unknown>,
-	sessions: Array<Record<string, unknown>>,
-	toolType: string,
-	envVarName: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME',
-	resolveKey: AuthPathResolver
-): string[] {
-	const pathsByKey = new Map<string, string>();
-	const addPath = (envVars: Record<string, unknown>) => {
-		const value = envVars[envVarName];
-		if (typeof value !== 'string' || value.length === 0) return;
-		const canonicalPath = resolveKey({ [envVarName]: value });
-		if (!pathsByKey.has(canonicalPath)) {
-			pathsByKey.set(canonicalPath, canonicalPath);
+/**
+ * Canonicalizers for the variables whose values name a directory, so
+ * `~/.claude/` and `/Users/me/.claude` collapse to one suggestion rather than
+ * appearing twice under different spellings.
+ */
+const PATH_VALUE_RESOLVERS: Record<string, AuthPathResolver> = {
+	CLAUDE_CONFIG_DIR: resolveConfigDirKey,
+	CODEX_HOME: resolveCodexHomeKey,
+};
+
+/**
+ * Build the name / value suggestion sets for the env var editors from
+ * everything already configured on this host: global settings, per-agent
+ * config, and every LOCAL session's overrides.
+ *
+ * Two rules do the real work:
+ *
+ *   - Values are bucketed BY VARIABLE NAME. A flat pool would offer a
+ *     `MAX_THINKING_TOKENS` number as a candidate `CLAUDE_CONFIG_DIR` - a
+ *     suggestion that is not merely useless but actively wrong to click.
+ *   - Secret-looking names contribute their NAME but never their VALUE, so a
+ *     dropdown opened during a screen share cannot spill an API key.
+ *
+ * Remote sessions are skipped: their paths name directories on another
+ * machine, so offering them locally points an agent at something that isn't
+ * there. This never touches the filesystem - scanning for account dirs would
+ * surface stale ones, and selecting a stale account is how you end up staring
+ * at an OAuth prompt you did not ask for.
+ */
+function collectEnvVarSuggestions(
+	globalEnvVars: Record<string, unknown>,
+	agentConfigs: Record<string, unknown>,
+	sessions: Array<Record<string, unknown>>
+): EnvVarSuggestions {
+	const keys = new Set<string>(WELL_KNOWN_ENV_VAR_KEYS);
+	const valuesByKey = new Map<string, Set<string>>();
+
+	const absorb = (envVars: Record<string, unknown>) => {
+		for (const [key, rawValue] of Object.entries(envVars)) {
+			if (!key) continue;
+			keys.add(key);
+			if (typeof rawValue !== 'string' || rawValue.length === 0) continue;
+			if (isSecretValuedEnvKey(key)) continue;
+			const resolver = PATH_VALUE_RESOLVERS[key];
+			const value = resolver ? resolver({ [key]: rawValue }) : rawValue;
+			const bucket = valuesByKey.get(key);
+			if (bucket) bucket.add(value);
+			else valuesByKey.set(key, new Set([value]));
 		}
 	};
 
-	addPath(agentEnvVars);
+	absorb(globalEnvVars);
+	for (const config of Object.values(agentConfigs)) {
+		absorb(getCustomEnvVars(config));
+	}
 	for (const session of sessions) {
-		if (session.toolType !== toolType || !isLocalSession(session)) continue;
-		addPath({ ...agentEnvVars, ...getCustomEnvVars(session) });
+		if (!isLocalSession(session)) continue;
+		absorb(getCustomEnvVars(session));
 	}
 
-	return Array.from(pathsByKey.values()).sort((a, b) => a.localeCompare(b));
+	const sortedValues: Record<string, string[]> = {};
+	for (const [key, values] of valuesByKey) {
+		sortedValues[key] = Array.from(values).sort((a, b) => a.localeCompare(b));
+	}
+
+	return {
+		keys: Array.from(keys).sort((a, b) => a.localeCompare(b)),
+		valuesByKey: sortedValues,
+	};
 }
 // Copilot CLI built-in slash commands (always available in interactive mode)
 const COPILOT_BUILTIN_COMMANDS = [
@@ -1456,32 +1505,20 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
-	// Return only account paths explicitly configured on local sessions or
-	// agent settings. This deliberately does not inspect the filesystem: stale
-	// config directories can trigger provider OAuth flows when sampled.
+	// Name / value suggestions for the env var editors, built only from what is
+	// already configured (global settings, agent configs, local sessions) plus
+	// the well-known names. This deliberately does not inspect the filesystem:
+	// stale account directories would be offered as if they were live, and
+	// selecting one triggers a provider OAuth flow.
 	ipcMain.handle(
-		'agents:getKnownAuthDirs',
+		'agents:getEnvVarSuggestions',
 		withIpcErrorLogging(
-			handlerOpts('getKnownAuthDirs', CONFIG_LOG_CONTEXT),
-			async (): Promise<KnownAuthDirs> => {
+			handlerOpts('getEnvVarSuggestions', CONFIG_LOG_CONTEXT),
+			async (): Promise<EnvVarSuggestions> => {
 				const allConfigs = agentConfigsStore.get('configs', {});
 				const sessions = sessionsStore?.get('sessions', []) ?? [];
-				return {
-					claudeConfigDirs: collectKnownAuthPaths(
-						getCustomEnvVars(allConfigs['claude-code']),
-						sessions,
-						'claude-code',
-						'CLAUDE_CONFIG_DIR',
-						resolveConfigDirKey
-					),
-					codexHomes: collectKnownAuthPaths(
-						getCustomEnvVars(allConfigs.codex),
-						sessions,
-						'codex',
-						'CODEX_HOME',
-						resolveCodexHomeKey
-					),
-				};
+				const globalEnvVars = (settingsStore?.get('shellEnvVars') ?? {}) as Record<string, unknown>;
+				return collectEnvVarSuggestions(globalEnvVars, allConfigs, sessions);
 			}
 		)
 	);

@@ -23,6 +23,13 @@ const { sampleUsageMock, loggerWarnMock, loggerInfoMock, loggerDebugMock } = vi.
 	loggerDebugMock: vi.fn(),
 }));
 
+// Account identity drives the pre-spawn collapse. Mocked so tests can declare
+// "these two dirs are one account" without writing .claude.json files.
+const readAccountIdentityMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../main/agents/claude-account-identity', () => ({
+	readClaudeAccountIdentity: readAccountIdentityMock,
+}));
+
 vi.mock('../../../main/agents/claude-usage-sampler', () => ({
 	sampleUsage: sampleUsageMock,
 }));
@@ -173,6 +180,8 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date(FROZEN_NOW));
 		sampleUsageMock.mockReset();
+		readAccountIdentityMock.mockReset();
+		readAccountIdentityMock.mockResolvedValue(null);
 		loggerWarnMock.mockReset();
 		loggerInfoMock.mockReset();
 		loggerDebugMock.mockReset();
@@ -524,12 +533,13 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			);
 		});
 
-		it('skips sessions with no explicit CLAUDE_CONFIG_DIR (no default fallback)', async () => {
-			// User's directive: never sample a "guessed" account. If neither
-			// the session nor the agent sets CLAUDE_CONFIG_DIR, claude would
-			// inherit the host default (~/.claude) - but that default may not
-			// match the user's Keychain tokens and would trigger an OAuth
-			// browser prompt. Better to skip than to pop a browser.
+		it('samples the implicit ~/.claude for a session with no CLAUDE_CONFIG_DIR', async () => {
+			// A session that sets no CLAUDE_CONFIG_DIR runs claude against the
+			// host default, so that IS the account it burns quota on. Skipping
+			// it left the default account permanently unsampled while the
+			// dashboard still listed it - a row stuck forever on "hit Refresh".
+			// The OAuth-browser hazard that once justified the skip is handled
+			// in the sampler, which pins BROWSER to a no-op.
 			sampleUsageMock.mockResolvedValue(makeSnapshot({ configDirKey: '/Users/test/.claude' }));
 
 			const deps = {
@@ -543,8 +553,11 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			await runStartupUsageSampling(deps);
 
-			expect(sampleUsageMock).not.toHaveBeenCalled();
-			expect(getSnapshot('/Users/test/.claude')).toBeNull();
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+			expect(sampleUsageMock.mock.calls[0]?.[0]).toMatchObject({
+				configDir: '/Users/test/.claude',
+			});
+			expect(getSnapshot('/Users/test/.claude')).not.toBeNull();
 		});
 
 		it('skips SSH-remote sessions even when they set CLAUDE_CONFIG_DIR', async () => {
@@ -823,13 +836,11 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(sampleUsageMock).not.toHaveBeenCalled();
 		});
 
-		it('does NOT sample a claude-code session that pins no CLAUDE_CONFIG_DIR', async () => {
-			// Scope-to-configured-agents contract: a claude-code session that
-			// declares no account (neither session- nor agent-level
-			// CLAUDE_CONFIG_DIR) is skipped rather than sampled against a guessed
-			// or discovered account. Guards against re-introducing the
-			// filesystem sweep that popped OAuth browsers for stale ~/.claude-*
-			// dirs no agent uses.
+		it('samples the default account for a session that pins no CLAUDE_CONFIG_DIR', async () => {
+			// The default account is the one that session actually runs on, so
+			// it gets sampled. This is still not a filesystem sweep: only the
+			// ONE implicit default is added, never every stale ~/.claude-* dir
+			// on disk, each of which would burn a 30s timeout per refresh tick.
 			sampleUsageMock.mockResolvedValue(makeSnapshot());
 
 			const deps = {
@@ -852,7 +863,10 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			await runStartupUsageSampling(deps);
 
-			expect(sampleUsageMock).not.toHaveBeenCalled();
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+			expect(sampleUsageMock.mock.calls[0]?.[0]).toMatchObject({
+				configDir: '/Users/test/.claude',
+			});
 		});
 
 		it('samples agent-level CLAUDE_CONFIG_DIR when sessions inherit it', async () => {
@@ -945,5 +959,126 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(isMaestroPBinaryPath(null)).toBe(false);
 			expect(isMaestroPBinaryPath('')).toBe(false);
 		});
+	});
+});
+
+describe('claude-usage-startup → account collapse', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(FROZEN_NOW));
+		sampleUsageMock.mockReset();
+		readAccountIdentityMock.mockReset();
+		readAccountIdentityMock.mockResolvedValue(null);
+		loggerWarnMock.mockReset();
+		loggerInfoMock.mockReset();
+		loggerDebugMock.mockReset();
+		resetUsageStore();
+		clearUsageStore();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	function twoAccountDeps() {
+		return {
+			sessionsStore: makeStore({
+				sessions: [
+					recentClaudeSession({
+						id: 's-a',
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-a' },
+					}),
+					recentClaudeSession({
+						id: 's-b',
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-b' },
+					}),
+				],
+			}) as never,
+			agentConfigsStore: makeStore({ configs: {} }) as never,
+			settingsStore: makeStore({}) as never,
+			agentDetector: makeDetector(FAKE_AGENT) as never,
+			mode: 'manual' as const,
+		};
+	}
+
+	it('spawns once for two dirs logged into the same account', async () => {
+		// The whole point: a duplicate account costs a ~30s `--status` spawn to
+		// re-learn a number the first sample already produced.
+		readAccountIdentityMock.mockResolvedValue({ accountUuid: 'one-account' });
+		sampleUsageMock.mockImplementation(async (opts: { configDir?: string }) =>
+			makeSnapshot({ configDirKey: opts.configDir })
+		);
+
+		await runStartupUsageSampling(twoAccountDeps());
+
+		expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+		expect(sampleUsageMock.mock.calls[0]?.[0]).toMatchObject({
+			configDir: '/Users/test/.claude-a',
+		});
+	});
+
+	it('records the collapsed dir as an alias on the surviving snapshot', async () => {
+		// Without this the dashboard has no way to show that the folded dir
+		// still exists, and it reads as a directory that vanished.
+		readAccountIdentityMock.mockResolvedValue({ accountUuid: 'one-account' });
+		sampleUsageMock.mockImplementation(async (opts: { configDir?: string }) =>
+			makeSnapshot({ configDirKey: opts.configDir })
+		);
+
+		await runStartupUsageSampling(twoAccountDeps());
+
+		expect(getSnapshot('/Users/test/.claude-a')?.aliasConfigDirKeys).toEqual([
+			'/Users/test/.claude-b',
+		]);
+		expect(getSnapshot('/Users/test/.claude-b')).toBeNull();
+	});
+
+	it('spawns per dir when the accounts genuinely differ', async () => {
+		readAccountIdentityMock.mockImplementation(async (dir: string) => ({
+			accountUuid: dir.endsWith('-a') ? 'account-a' : 'account-b',
+		}));
+		sampleUsageMock.mockImplementation(async (opts: { configDir?: string }) =>
+			makeSnapshot({ configDirKey: opts.configDir })
+		);
+
+		await runStartupUsageSampling(twoAccountDeps());
+
+		expect(sampleUsageMock).toHaveBeenCalledTimes(2);
+		expect(getSnapshot('/Users/test/.claude-a')?.aliasConfigDirKeys).toBeUndefined();
+		expect(getSnapshot('/Users/test/.claude-b')).not.toBeNull();
+	});
+
+	it('does not collapse dirs whose account cannot be determined', async () => {
+		// Two unknowns are not evidence of a match. Failing open costs an extra
+		// sample; failing closed would hide a real second account.
+		readAccountIdentityMock.mockResolvedValue(null);
+		sampleUsageMock.mockImplementation(async (opts: { configDir?: string }) =>
+			makeSnapshot({ configDirKey: opts.configDir })
+		);
+
+		await runStartupUsageSampling(twoAccountDeps());
+
+		expect(sampleUsageMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('omits the alias field entirely for an account with only one dir', async () => {
+		readAccountIdentityMock.mockResolvedValue({ accountUuid: 'solo' });
+		sampleUsageMock.mockResolvedValue(makeSnapshot({ configDirKey: '/Users/test/.claude-a' }));
+
+		await runStartupUsageSampling({
+			sessionsStore: makeStore({
+				sessions: [
+					recentClaudeSession({
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-a' },
+					}),
+				],
+			}) as never,
+			agentConfigsStore: makeStore({ configs: {} }) as never,
+			settingsStore: makeStore({}) as never,
+			agentDetector: makeDetector(FAKE_AGENT) as never,
+			mode: 'manual' as const,
+		});
+
+		expect(getSnapshot('/Users/test/.claude-a')).not.toHaveProperty('aliasConfigDirKeys');
 	});
 });

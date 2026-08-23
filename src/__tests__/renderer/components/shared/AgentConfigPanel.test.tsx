@@ -246,10 +246,12 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
-	it('selects a known local auth path for agent environment variables', async () => {
-		vi.mocked(window.maestro.agents.getKnownAuthDirs).mockResolvedValueOnce({
-			claudeConfigDirs: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
-			codexHomes: [],
+	it('picks a known account path from the value suggestions', async () => {
+		vi.mocked(window.maestro.agents.getEnvVarSuggestions).mockResolvedValueOnce({
+			keys: ['CLAUDE_CONFIG_DIR'],
+			valuesByKey: {
+				CLAUDE_CONFIG_DIR: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
+			},
 		});
 		const onEnvVarValueChange = vi.fn();
 
@@ -262,14 +264,63 @@ describe('AgentConfigPanel', () => {
 			/>
 		);
 
-		fireEvent.change(await screen.findByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
-			target: { value: '/Users/me/.claude-personal' },
-		});
+		// The caret only renders once suggestions have loaded, so finding it is
+		// also the wait for the async fetch.
+		fireEvent.click(await screen.findByTitle('Show environment variable value suggestions'));
+		fireEvent.mouseDown(screen.getByTitle('/Users/me/.claude-personal'));
 
 		expect(onEnvVarValueChange).toHaveBeenCalledWith(
 			'CLAUDE_CONFIG_DIR',
 			'/Users/me/.claude-personal'
 		);
+	});
+
+	it('scopes value suggestions to the variable being edited', async () => {
+		// A value seen for one variable must never be offered for another -
+		// clicking a token count as a config directory produces a broken agent.
+		vi.mocked(window.maestro.agents.getEnvVarSuggestions).mockResolvedValueOnce({
+			keys: ['CLAUDE_CONFIG_DIR', 'MAX_THINKING_TOKENS'],
+			valuesByKey: {
+				CLAUDE_CONFIG_DIR: ['/Users/me/.claude-work'],
+				MAX_THINKING_TOKENS: ['63999'],
+			},
+		});
+
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				})}
+			/>
+		);
+
+		fireEvent.click(await screen.findByTitle('Show environment variable value suggestions'));
+
+		expect(screen.getByTitle('/Users/me/.claude-work')).toBeInTheDocument();
+		expect(screen.queryByTitle('63999')).toBeNull();
+	});
+
+	it('offers variable names in the key field', async () => {
+		vi.mocked(window.maestro.agents.getEnvVarSuggestions).mockResolvedValueOnce({
+			keys: ['ANTHROPIC_BASE_URL', 'CLAUDE_CONFIG_DIR'],
+			valuesByKey: {},
+		});
+		const onEnvVarKeyChange = vi.fn();
+
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					customEnvVars: { VAR: '' },
+					onEnvVarKeyChange,
+				})}
+			/>
+		);
+
+		fireEvent.click(await screen.findByTitle('Show environment variable name suggestions'));
+		fireEvent.mouseDown(screen.getByTitle('CLAUDE_CONFIG_DIR'));
+
+		// The rename is deferred to blur, so the commit carries the picked name.
+		expect(onEnvVarKeyChange).toHaveBeenCalledWith('VAR', 'CLAUDE_CONFIG_DIR', '');
 	});
 
 	describe('Model field clear button', () => {

@@ -438,17 +438,20 @@ describe('Agents Preload API', () => {
 			expect(result).toEqual(keys);
 		});
 
-		it('should invoke agents:getKnownAuthDirs', async () => {
-			const dirs = {
-				claudeConfigDirs: ['/Users/me/.claude-work'],
-				codexHomes: ['/Users/me/.codex-work'],
+		it('should invoke agents:getEnvVarSuggestions', async () => {
+			const suggestions = {
+				keys: ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'],
+				valuesByKey: {
+					CLAUDE_CONFIG_DIR: ['/Users/me/.claude-work'],
+					CODEX_HOME: ['/Users/me/.codex-work'],
+				},
 			};
-			mockInvoke.mockResolvedValue(dirs);
+			mockInvoke.mockResolvedValue(suggestions);
 
-			const result = await api.getKnownAuthDirs();
+			const result = await api.getEnvVarSuggestions();
 
-			expect(mockInvoke).toHaveBeenCalledWith('agents:getKnownAuthDirs');
-			expect(result).toEqual(dirs);
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getEnvVarSuggestions');
+			expect(result).toEqual(suggestions);
 		});
 	});
 });

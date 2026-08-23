@@ -16,8 +16,13 @@ import { Plus, Trash2 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { isAbsolutePath } from '../../../shared/formatters';
 import type { Theme } from '../../types';
-import { AuthPathValueInput } from '../shared/AuthPathValueInput';
-import { EMPTY_KNOWN_AUTH_DIRS, type KnownAuthDirs } from '../../../shared/authPaths';
+import { EnvVarSuggestInput } from '../shared/EnvVarSuggestInput';
+import {
+	EMPTY_ENV_VAR_SUGGESTIONS,
+	PATH_VALUED_ENV_VAR_KEYS,
+	suggestedValuesFor,
+	type EnvVarSuggestions,
+} from '../../../shared/envVarSuggestions';
 
 /**
  * Variable names whose values MUST be absolute filesystem paths. A relative
@@ -46,8 +51,8 @@ export interface EnvVarsEditorProps {
 	label?: string | null;
 	/** Optional description displayed below the editor. Pass null to hide. */
 	description?: string | null;
-	/** Local account directories previously configured for Claude and Codex. */
-	knownAuthDirs?: KnownAuthDirs;
+	/** Variable names and per-name values to offer in the two fields. */
+	suggestions?: EnvVarSuggestions;
 }
 
 export function EnvVarsEditor({
@@ -56,7 +61,7 @@ export function EnvVarsEditor({
 	theme,
 	label = 'Environment Variables (optional)',
 	description = 'Environment variables passed to all terminal sessions and AI agent processes.',
-	knownAuthDirs = EMPTY_KNOWN_AUTH_DIRS,
+	suggestions = EMPTY_ENV_VAR_SUGGESTIONS,
 }: EnvVarsEditorProps) {
 	// Convert object to array with stable IDs for editing
 	const [entries, setEntries] = useState<EnvVarEntry[]>(() => {
@@ -194,12 +199,15 @@ export function EnvVarsEditor({
 					return (
 						<div key={entry.id}>
 							<div className="flex gap-2 items-center">
-								<input
-									type="text"
+								<EnvVarSuggestInput
 									value={entry.key}
-									onChange={(e) => updateEntry(entry.id, 'key', e.target.value)}
+									suggestions={suggestions.keys}
+									onChange={(value) => updateEntry(entry.id, 'key', value)}
 									placeholder="VARIABLE_NAME"
-									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									ariaLabel="Environment variable name"
+									theme={theme}
+									className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									containerClassName="flex-1 min-w-0"
 									style={{
 										borderColor: error ? '#ef4444' : theme.colors.border,
 										color: theme.colors.textMain,
@@ -208,12 +216,17 @@ export function EnvVarsEditor({
 								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 									=
 								</span>
-								<AuthPathValueInput
-									envVarKey={entry.key}
+								{/* Values are scoped to THIS variable, so a number set for
+								    some other key can never be offered as a directory. */}
+								<EnvVarSuggestInput
 									value={entry.value}
-									knownAuthDirs={knownAuthDirs}
+									suggestions={suggestedValuesFor(suggestions, entry.key)}
 									onChange={(value) => updateEntry(entry.id, 'value', value)}
-									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									placeholder="value"
+									ariaLabel="Environment variable value"
+									abbreviateHome={PATH_VALUED_ENV_VAR_KEYS.includes(entry.key)}
+									theme={theme}
+									className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									containerClassName="flex-1 min-w-0"
 									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								/>

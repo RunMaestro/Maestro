@@ -48,6 +48,12 @@ export interface ClaudeUsageSnapshot {
 	accountEmail?: string;
 	accountUuid?: string;
 	organizationName?: string;
+	/**
+	 * Other config dirs that resolve to this same account and were collapsed
+	 * into this snapshot at sample time. One account is one quota bucket, so
+	 * these keys share the percentages below rather than having their own.
+	 */
+	aliasConfigDirKeys?: string[];
 	// `resetsAt` is absent when claude's panel painted a percentage but no
 	// "Resets ..." row (it omits the row for an idle 0% window). Render the
 	// percentage anyway and drop the caption.

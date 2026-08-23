@@ -117,3 +117,81 @@ export function groupAccountKeysByIdentity(
 	}
 	return shared;
 }
+
+/**
+ * One entry per Anthropic account: the key that owns the data, plus every
+ * other key that reaches the same account.
+ */
+export interface AccountKeyGroup {
+	/** The key whose snapshot represents the account. */
+	primaryKey: string;
+	/** Other keys folded into `primaryKey`, in input order. Possibly empty. */
+	aliasKeys: string[];
+}
+
+/**
+ * Fold a list of account keys into one entry per Anthropic account, so the
+ * dashboard renders a row per ACCOUNT rather than a row per directory.
+ *
+ * Two inputs decide what collapses, and they answer different questions:
+ *
+ *   - `aliasesByKey` is what the SAMPLER already collapsed. It is
+ *     authoritative: those keys have no snapshot of their own precisely
+ *     because the sampler recognized them as the same account and skipped
+ *     them. Ignoring it would render a permanently empty row.
+ *   - `identities` catches pairs the sampler did not collapse - snapshots
+ *     cached before the collapse existed, or two dirs that were each sampled
+ *     while their `.claude.json` still disagreed.
+ *
+ * A key that is claimed as an alias never becomes a primary, and the first
+ * key claiming a given account wins, so the output is stable and no key
+ * appears twice. Keys with no resolvable identity stand alone - two unknowns
+ * are not evidence of a match.
+ */
+export function collapseAccountKeys(
+	keys: string[],
+	identities: Record<string, ClaudeAccountIdentity | null | undefined>,
+	aliasesByKey: Record<string, string[] | undefined> = {}
+): AccountKeyGroup[] {
+	const keySet = new Set(keys);
+
+	// Sampler-declared aliases first: an alias listed by a primary that is not
+	// itself in `keys` is dropped, since there is no row to fold it into.
+	const primaryOfAlias = new Map<string, string>();
+	for (const key of keys) {
+		for (const alias of aliasesByKey[key] ?? []) {
+			if (alias === key || !keySet.has(alias)) continue;
+			if (!primaryOfAlias.has(alias)) primaryOfAlias.set(alias, key);
+		}
+	}
+
+	const groups: AccountKeyGroup[] = [];
+	const groupByPrimary = new Map<string, AccountKeyGroup>();
+	const primaryOfFingerprint = new Map<string, string>();
+
+	for (const key of keys) {
+		const declaredPrimary = primaryOfAlias.get(key);
+		if (declaredPrimary && declaredPrimary !== key) continue; // folded below
+
+		const fingerprint = accountIdentityFingerprint(identities[key]);
+		const existingPrimary = fingerprint ? primaryOfFingerprint.get(fingerprint) : undefined;
+		if (existingPrimary) {
+			groupByPrimary.get(existingPrimary)?.aliasKeys.push(key);
+			continue;
+		}
+
+		const group: AccountKeyGroup = { primaryKey: key, aliasKeys: [] };
+		groups.push(group);
+		groupByPrimary.set(key, group);
+		if (fingerprint) primaryOfFingerprint.set(fingerprint, key);
+	}
+
+	// Attach sampler-declared aliases to their primary's group. Done after the
+	// primary pass so an alias that appears before its primary in `keys` still
+	// lands in the right group instead of opening one of its own.
+	for (const [alias, primary] of primaryOfAlias) {
+		groupByPrimary.get(primary)?.aliasKeys.push(alias);
+	}
+
+	return groups;
+}

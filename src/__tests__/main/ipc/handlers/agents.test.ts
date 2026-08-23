@@ -188,7 +188,7 @@ describe('agents IPC handlers', () => {
 				'agents:getRemoteMaestroPAvailable',
 				'agents:getClaudeUsageSnapshots',
 				'agents:getClaudeUsageAccountKeys',
-				'agents:getKnownAuthDirs',
+				'agents:getEnvVarSuggestions',
 				'agents:getLimitResetAt',
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
@@ -203,7 +203,7 @@ describe('agents IPC handlers', () => {
 		});
 	});
 
-	describe('agents:getKnownAuthDirs', () => {
+	describe('agents:getEnvVarSuggestions', () => {
 		it('returns canonical local auth paths from agent and session env vars', async () => {
 			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
 				if (key !== 'configs') return fallback;
@@ -252,20 +252,18 @@ describe('agents IPC handlers', () => {
 				>,
 			});
 
-			const handler = handlers.get('agents:getKnownAuthDirs');
+			const handler = handlers.get('agents:getEnvVarSuggestions');
 			expect(handler).toBeDefined();
 			const result = await handler?.({});
 
-			expect(result).toEqual({
-				claudeConfigDirs: [
-					path.resolve('/Users/me/.claude-agent'),
-					path.resolve('/Users/me/.claude-session'),
-				],
-				codexHomes: [
-					path.resolve('/Users/me/.codex-agent'),
-					path.resolve('/Users/me/.codex-session'),
-				],
-			});
+			expect(result?.valuesByKey.CLAUDE_CONFIG_DIR).toEqual([
+				path.resolve('/Users/me/.claude-agent'),
+				path.resolve('/Users/me/.claude-session'),
+			]);
+			expect(result?.valuesByKey.CODEX_HOME).toEqual([
+				path.resolve('/Users/me/.codex-agent'),
+				path.resolve('/Users/me/.codex-session'),
+			]);
 		});
 
 		it('excludes sessions whose migrated SSH enabled value explicitly enables SSH', async () => {
@@ -306,13 +304,13 @@ describe('agents IPC handlers', () => {
 				>,
 			});
 
-			const handler = handlers.get('agents:getKnownAuthDirs');
+			const handler = handlers.get('agents:getEnvVarSuggestions');
 			const result = await handler?.({});
 
-			expect(result).toEqual({
-				claudeConfigDirs: [path.resolve('/Users/me/.claude-agent')],
-				codexHomes: [path.resolve('/Users/me/.codex-agent')],
-			});
+			expect(result?.valuesByKey.CLAUDE_CONFIG_DIR).toEqual([
+				path.resolve('/Users/me/.claude-agent'),
+			]);
+			expect(result?.valuesByKey.CODEX_HOME).toEqual([path.resolve('/Users/me/.codex-agent')]);
 		});
 
 		it('includes session auth paths when a migrated SSH enabled value explicitly disables SSH', async () => {
@@ -338,16 +336,97 @@ describe('agents IPC handlers', () => {
 				>,
 			});
 
-			const handler = handlers.get('agents:getKnownAuthDirs');
+			const handler = handlers.get('agents:getEnvVarSuggestions');
 			const result = await handler?.({});
 
-			expect(result).toEqual({
-				claudeConfigDirs: [
-					path.resolve('/Users/me/.claude-agent'),
-					path.resolve('/Users/me/.claude-migrated'),
-				],
-				codexHomes: [],
+			expect(result?.valuesByKey.CLAUDE_CONFIG_DIR).toEqual([
+				path.resolve('/Users/me/.claude-agent'),
+				path.resolve('/Users/me/.claude-migrated'),
+			]);
+			expect(result?.valuesByKey.CODEX_HOME).toBeUndefined();
+		});
+
+		it('buckets values by variable name so a value never leaks across keys', () => {
+			// This is the whole reason valuesByKey exists: a flat pool would
+			// offer a token count as a candidate config directory.
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': {
+					customEnvVars: {
+						CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+						MAX_THINKING_TOKENS: '63999',
+					},
+				},
 			});
+			registerAgentsHandlers({ ...deps });
+
+			return handlers
+				.get('agents:getEnvVarSuggestions')?.({})
+				.then((result: any) => {
+					expect(result.valuesByKey.CLAUDE_CONFIG_DIR).toEqual([
+						path.resolve('/Users/me/.claude-work'),
+					]);
+					expect(result.valuesByKey.MAX_THINKING_TOKENS).toEqual(['63999']);
+					expect(result.valuesByKey.CLAUDE_CONFIG_DIR).not.toContain('63999');
+				});
+		});
+
+		it('offers the well-known names even with nothing configured', () => {
+			mockAgentConfigsStore.get.mockReturnValue({});
+			registerAgentsHandlers({ ...deps });
+
+			return handlers
+				.get('agents:getEnvVarSuggestions')?.({})
+				.then((result: any) => {
+					expect(result.keys).toContain('CLAUDE_CONFIG_DIR');
+					expect(result.keys).toContain('CODEX_HOME');
+				});
+		});
+
+		it('includes a configured name that is not well-known', () => {
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': { customEnvVars: { MY_PRIVATE_TOOL: '/opt/tool' } },
+			});
+			registerAgentsHandlers({ ...deps });
+
+			return handlers
+				.get('agents:getEnvVarSuggestions')?.({})
+				.then((result: any) => {
+					expect(result.keys).toContain('MY_PRIVATE_TOOL');
+					expect(result.valuesByKey.MY_PRIVATE_TOOL).toEqual(['/opt/tool']);
+				});
+		});
+
+		it('offers a secret-looking name but never its value', () => {
+			// These panels get opened during screen shares. The name is the
+			// useful part; the value is a live credential.
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': { customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-secret' } },
+			});
+			registerAgentsHandlers({ ...deps });
+
+			return handlers
+				.get('agents:getEnvVarSuggestions')?.({})
+				.then((result: any) => {
+					expect(result.keys).toContain('ANTHROPIC_API_KEY');
+					expect(result.valuesByKey.ANTHROPIC_API_KEY).toBeUndefined();
+					expect(JSON.stringify(result)).not.toContain('sk-ant-secret');
+				});
+		});
+
+		it('collapses two spellings of one directory into a single suggestion', () => {
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': { customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work/' } },
+				codex: { customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' } },
+			});
+			registerAgentsHandlers({ ...deps });
+
+			return handlers
+				.get('agents:getEnvVarSuggestions')?.({})
+				.then((result: any) => {
+					expect(result.valuesByKey.CLAUDE_CONFIG_DIR).toEqual([
+						path.resolve('/Users/me/.claude-work'),
+					]);
+				});
 		});
 	});
 

@@ -16,7 +16,16 @@
  *   resolve the effective env per session (agent-level customEnvVars merged
  *   with session-level customEnvVars; session wins, matching the spawner's
  *   runtime precedence), then `resolveConfigDirKey()`-dedup so two sessions
- *   pointing at the same account only sample once.
+ *   pointing at the same directory only sample once. A session with no env
+ *   var targets the implicit `~/.claude`, since that is the account it will
+ *   really run against.
+ *
+ *   Directory is not identity, though: `/login` inside an existing dir
+ *   repoints it, so several dirs can be ONE account. A second pass
+ *   (`dedupeTargetsByAccount`) reads each dir's `.claude.json` and collapses
+ *   those groups before spawning, recording the dropped keys as
+ *   `aliasConfigDirKeys` on the surviving snapshot. One account, one spawn,
+ *   one dashboard row.
  *
  * Filter window:
  *   Only sessions younger than 7 days (`createdAt >= now - 7d`) are sampled.
@@ -46,6 +55,8 @@ import type { MaestroSettings } from '../ipc/handlers/persistence';
 import { logger } from '../utils/logger';
 import { isMaestroPBinaryPath } from './claudeSpawnCore';
 import { sampleUsage } from './claude-usage-sampler';
+import { readClaudeAccountIdentity } from './claude-account-identity';
+import { accountIdentityFingerprint } from '../../shared/claudeAccountIdentity';
 import { resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
 
 const LOG_CONTEXT = '[ClaudeUsageStartup]';
@@ -218,18 +229,16 @@ function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): st
  * extract `CLAUDE_CONFIG_DIR`, canonicalize, and produce the call shape
  * `sampleUsage()` expects.
  *
+ * A session with no `CLAUDE_CONFIG_DIR` anywhere targets the implicit
+ * `~/.claude`, because that is the account it will actually run against. This
+ * used to return null instead, which is why the default account could never
+ * produce a snapshot.
+ *
  * Returns null when:
  *   - The session is SSH-remote (`sessionSshRemoteConfig.enabled`). Its
- *     `CLAUDE_CONFIG_DIR` points at the remote host; sampling it locally is
- *     meaningless and can pop an OAuth browser against a tokenless local dir.
+ *     `CLAUDE_CONFIG_DIR` points at the remote host; sampling it locally reads
+ *     the wrong machine's account.
  *   - The session has no `cwd` (malformed record).
- *   - Neither the session nor the agent explicitly sets `CLAUDE_CONFIG_DIR`
- *     in customEnvVars. We refuse to sample "default" accounts the user
- *     hasn't explicitly configured: the user may have multiple Anthropic
- *     accounts on this host, and the default `~/.claude` may not match
- *     wherever claude's tokens actually live in the Keychain - so a
- *     "guess the default" sample would trigger an OAuth browser prompt.
- *     Better to skip than to pop a browser the user didn't ask for.
  */
 function buildTarget(
 	session: Record<string, unknown>,
@@ -262,24 +271,69 @@ function buildTarget(
 		return null;
 	}
 
-	// Hard requirement: sample only explicitly-configured accounts. If the
-	// user didn't set CLAUDE_CONFIG_DIR anywhere, we don't guess - the
-	// spawn would inherit the default `~/.claude`, which may have stale
-	// `.claude.json` metadata pointing at an account whose Keychain tokens
-	// no longer exist, and that combination triggers a browser OAuth flow.
-	const explicitConfigDir = customEnvVars.CLAUDE_CONFIG_DIR;
-	if (!explicitConfigDir) {
-		return null;
-	}
-	const envForKey: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: explicitConfigDir };
+	// An agent with no CLAUDE_CONFIG_DIR still runs claude - against the
+	// implicit `~/.claude`. Skipping it left the default account permanently
+	// unsampled while `discoverClaudeConfigDirs()` still listed it, so the
+	// dashboard showed a row stuck forever on "hit Refresh" with nothing that
+	// could ever fill it. The original reason for the skip (a stale account
+	// launching claude's OAuth browser on an unattended tick) no longer holds:
+	// the sampler pins `BROWSER` to a no-op, so the consent flow opens nothing
+	// and the spawn just times out. See `claude-usage-sampler.ts`.
+	const configDir = customEnvVars.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+	const envForKey: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: configDir };
 	const configDirKey = resolveConfigDirKey(envForKey);
 
 	return {
-		configDir: explicitConfigDir,
+		configDir,
 		configDirKey,
 		cwd,
 		customEnvVars,
 	};
+}
+
+/**
+ * Collapse targets that turn out to be ONE Anthropic account.
+ *
+ * `CLAUDE_CONFIG_DIR` names a directory, but the plan quota is metered per
+ * account, and re-running `/login` inside an existing dir silently repoints it
+ * at a different account. Two dirs can therefore be the same account - the
+ * common case being `~/.claude` and whichever named dir the user logged into
+ * with the same email. Sampling both costs a second ~30s `maestro-p --status`
+ * spawn per refresh tick to learn a number we already have.
+ *
+ * The identity comes from each dir's `.claude.json` (a cheap read next to a
+ * multi-second spawn), so grouping happens BEFORE any sampling. Dirs whose
+ * account can't be determined are never grouped - two unknowns are not
+ * evidence of a match - so the failure mode is an extra sample, not a wrong
+ * one. Group order follows the caller's target order, and the first target in
+ * each group is the one sampled.
+ */
+async function dedupeTargetsByAccount(
+	targets: SamplingTarget[]
+): Promise<{ sampled: SamplingTarget[]; aliasesByKey: Record<string, string[]> }> {
+	const identities = await Promise.all(
+		targets.map((target) => readClaudeAccountIdentity(target.configDirKey))
+	);
+
+	const sampled: SamplingTarget[] = [];
+	const aliasesByKey: Record<string, string[]> = {};
+	const firstKeyByFingerprint = new Map<string, string>();
+
+	targets.forEach((target, index) => {
+		const fingerprint = accountIdentityFingerprint(identities[index]);
+		const owner = fingerprint ? firstKeyByFingerprint.get(fingerprint) : undefined;
+		if (owner) {
+			aliasesByKey[owner].push(target.configDirKey);
+			return;
+		}
+		if (fingerprint) {
+			firstKeyByFingerprint.set(fingerprint, target.configDirKey);
+		}
+		aliasesByKey[target.configDirKey] = [];
+		sampled.push(target);
+	});
+
+	return { sampled, aliasesByKey };
 }
 
 /**
@@ -352,14 +406,13 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 		}
 	}
 
-	// NB: manual mode does NOT sweep the filesystem for ~/.claude-* account
-	// dirs. A blind sweep would spawn `maestro-p --status` against every
-	// leftover/stale account on disk, and any whose Keychain tokens have
-	// expired launch the Claude TUI's OAuth browser flow on each refresh tick.
-	// We sample only what a configured agent explicitly references, exactly
-	// like the startup path - see buildTarget()'s "don't guess the account"
-	// guard. (discoverClaudeConfigDirs() still backs the account-key listing
-	// IPC handler, which lists keys without spawning anything.)
+	// NB: neither mode sweeps the filesystem for ~/.claude-* account dirs. A
+	// blind sweep would spawn `maestro-p --status` against every leftover /
+	// stale account on disk and burn a 30s timeout on each, every refresh
+	// tick. We sample what a configured agent references plus the implicit
+	// default account an env-var-less agent actually runs on - see
+	// buildTarget(). (discoverClaudeConfigDirs() still backs the account-key
+	// listing IPC handler, which lists keys without spawning anything.)
 
 	if (targetsByKey.size === 0) {
 		logger.info('Skipping Claude usage sampling: no eligible accounts to sample', LOG_CONTEXT, {
@@ -369,8 +422,19 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 		return;
 	}
 
-	logger.info(`Sampling Claude usage for ${targetsByKey.size} account(s)`, LOG_CONTEXT, {
-		accounts: Array.from(targetsByKey.keys()),
+	// Collapse config dirs that are one Anthropic account before spawning
+	// anything - adding the implicit `~/.claude` target above makes a
+	// duplicate likely (it is commonly the same login as a named dir), and a
+	// duplicate costs a full `--status` spawn to re-learn a number we already
+	// have. The dropped keys ride along on the surviving snapshot as aliases
+	// so the dashboard can still show every dir that maps to the account.
+	const { sampled: targets, aliasesByKey } = await dedupeTargetsByAccount(
+		Array.from(targetsByKey.values())
+	);
+
+	logger.info(`Sampling Claude usage for ${targets.length} account(s)`, LOG_CONTEXT, {
+		accounts: targets.map((t) => t.configDirKey),
+		collapsed: targetsByKey.size - targets.length,
 	});
 
 	// The real claude binary path: prefer the detector's resolved `path`
@@ -379,7 +443,6 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// (in which case maestro-p will PATH-resolve internally).
 	const claudeRealBinPath = claudeAgent.path || claudeAgent.command;
 
-	const targets = Array.from(targetsByKey.values());
 	await Promise.all(
 		targets.map(async (target) => {
 			// Compose the env passed to sampleUsage:
@@ -408,10 +471,17 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 				return;
 			}
 
+			// Config dirs collapsed into this one ride along on the snapshot,
+			// so the dashboard can render a single row that names every dir
+			// pointing at the account rather than a row per dir with no data
+			// behind the ones we skipped.
+			const aliases = aliasesByKey[target.configDirKey] ?? [];
+
 			try {
-				setSnapshot(snapshot);
+				setSnapshot(aliases.length > 0 ? { ...snapshot, aliasConfigDirKeys: aliases } : snapshot);
 				logger.info('Stored Claude usage snapshot', LOG_CONTEXT, {
 					configDirKey: snapshot.configDirKey,
+					aliasConfigDirKeys: aliases,
 					sessionPercent: snapshot.session.percent,
 					weekAllPercent: snapshot.weekAllModels.percent,
 				});

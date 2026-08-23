@@ -27,8 +27,9 @@ import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/ope
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
-import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
-import { AuthPathValueInput } from './AuthPathValueInput';
+import { useEnvVarSuggestions } from '../../hooks/agent/useEnvVarSuggestions';
+import { EnvVarSuggestInput } from './EnvVarSuggestInput';
+import { PATH_VALUED_ENV_VAR_KEYS, suggestedValuesFor } from '../../../shared/envVarSuggestions';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -440,7 +441,7 @@ export function AgentConfigPanel({
 		refresh: refreshRemoteMaestroP,
 	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
-	const knownAuthDirs = useKnownAuthDirs(!isSshEnabled);
+	const envVarSuggestions = useEnvVarSuggestions(!isSshEnabled);
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
 	// maestro-p path input and the live Time/API-limits pill.
@@ -884,26 +885,37 @@ export function AgentConfigPanel({
 					{/* User-defined env vars */}
 					{Object.entries(customEnvVars).map(([key, value]) => (
 						<div key={`env-var-${getEnvVarId(key)}`} className="flex gap-2 items-center">
-							<input
-								type="text"
+							{/* Renaming stays deferred to blur: the key IS the record's
+							    identity, so committing per keystroke would rewrite the map
+							    on every character and lose focus mid-edit. */}
+							<EnvVarSuggestInput
 								value={getKeyDisplayValue(key)}
-								onChange={(e) => handleKeyInputChange(key, e.target.value)}
+								suggestions={envVarSuggestions.keys}
+								onChange={(updatedKey) => handleKeyInputChange(key, updatedKey)}
 								onBlur={() => handleKeyBlur(key, value)}
-								onClick={(e) => e.stopPropagation()}
 								placeholder="VARIABLE_NAME"
-								className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								ariaLabel="Environment variable name"
+								theme={theme}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								containerClassName="flex-1 min-w-0"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							/>
 							<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 								=
 							</span>
-							<AuthPathValueInput
-								envVarKey={key}
+							{/* Scoped to the key being edited (the pending rename, not the
+							    committed one) so the offered values match the field the
+							    user believes they are filling in. */}
+							<EnvVarSuggestInput
 								value={value}
-								knownAuthDirs={knownAuthDirs}
+								suggestions={suggestedValuesFor(envVarSuggestions, getKeyDisplayValue(key))}
 								onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue)}
 								onBlur={onEnvVarsBlur}
-								className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								placeholder="value"
+								ariaLabel="Environment variable value"
+								abbreviateHome={PATH_VALUED_ENV_VAR_KEYS.includes(getKeyDisplayValue(key))}
+								theme={theme}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
 								containerClassName="flex-[2] min-w-0"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							/>

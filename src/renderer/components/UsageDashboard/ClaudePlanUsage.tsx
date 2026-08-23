@@ -37,7 +37,7 @@ import {
 	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
-import { groupAccountKeysByIdentity } from '../../../shared/claudeAccountIdentity';
+import { collapseAccountKeys } from '../../../shared/claudeAccountIdentity';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
 
@@ -64,10 +64,11 @@ interface AccountRowProps {
 	/** Agents pointed at this CLAUDE_CONFIG_DIR. */
 	agentCount: number;
 	/**
-	 * Display names of the other config dirs logged into this same Anthropic
-	 * account. Empty when this row owns its quota bucket alone.
+	 * Display names of the other config dirs that reach this same Anthropic
+	 * account and were folded into this row. Empty when the account is only
+	 * reachable through one directory.
 	 */
-	sharedWith: string[];
+	alsoKnownAs: string[];
 	theme: Theme;
 }
 
@@ -75,7 +76,7 @@ const AccountRow = memo(function AccountRow({
 	configDirKey,
 	snapshot,
 	agentCount,
-	sharedWith,
+	alsoKnownAs,
 	theme,
 }: AccountRowProps) {
 	const shortName = deriveShortName(configDirKey);
@@ -105,8 +106,11 @@ const AccountRow = memo(function AccountRow({
 						theme={theme}
 					/>
 				)}
+				{/* The row is one ACCOUNT; these are the other directories that
+				    reach it. Naming them is what stops a collapsed row from
+				    looking like a directory that silently went missing. */}
 				<QuotaSharedAccountBadge
-					siblingNames={sharedWith}
+					siblingNames={alsoKnownAs}
 					testId={`${TEST_ID_PREFIX}-shared-${shortName}`}
 					theme={theme}
 				/>
@@ -189,41 +193,91 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			},
 		});
 
-	const selectedSnapshot: ClaudeUsageSnapshot | null = effectiveSelectedKey
-		? (snapshots[effectiveSelectedKey] ?? null)
-		: null;
 	const snapshotCount = Object.keys(snapshots).length;
 
-	// Config dirs that resolve to one Anthropic account share a single quota
-	// bucket, so their bars are identical by construction. Resolve the sibling
-	// sets here (over every snapshot, not just the rendered ones) and label the
-	// rows, so identical percentages read as "same account" rather than as the
-	// sampler double-reporting one account under two names.
-	const sharedAccountNames = useMemo(() => {
+	// One row per ANTHROPIC ACCOUNT, not per config directory. The quota is
+	// metered per account, so several dirs logged into one account produce
+	// bar-for-bar identical rows - which reads as the sampler double-reporting
+	// rather than as the fact it is. Collapsing them removes the confusion at
+	// the source and, because the sampler skipped the folded dirs, avoids
+	// rows that could never hold data.
+	const accountGroups = useMemo(() => {
 		const identities: Record<string, { accountUuid?: string; email?: string }> = {};
+		const aliasesByKey: Record<string, string[] | undefined> = {};
 		for (const [key, snapshot] of Object.entries(snapshots)) {
 			identities[key] = { accountUuid: snapshot.accountUuid, email: snapshot.accountEmail };
+			aliasesByKey[key] = snapshot.aliasConfigDirKeys;
 		}
-		const grouped = groupAccountKeysByIdentity(identities);
+		return collapseAccountKeys(configuredAccountKeys, identities, aliasesByKey);
+	}, [configuredAccountKeys, snapshots]);
+
+	/** Collapsed keys, so the tab bar and the list view agree on what to show. */
+	const accountKeysToShow = useMemo(
+		() => accountGroups.map((group) => group.primaryKey),
+		[accountGroups]
+	);
+
+	/** Primary key -> display names of the dirs folded into it. */
+	const aliasNamesByKey = useMemo(() => {
 		const named: Record<string, string[]> = {};
-		for (const [key, siblings] of Object.entries(grouped)) {
-			named[key] = siblings.map(deriveDisplayName);
+		for (const group of accountGroups) {
+			if (group.aliasKeys.length > 0) {
+				named[group.primaryKey] = group.aliasKeys.map(deriveDisplayName);
+			}
 		}
 		return named;
-	}, [snapshots]);
+	}, [accountGroups]);
+
+	/**
+	 * Any key -> the key whose row now represents it. The selection state lives
+	 * in `useQuotaAccounts`, which knows nothing about accounts, so a key it
+	 * hands back may be one we just folded away; without this the tab view
+	 * would land on a row that is no longer rendered.
+	 */
+	const primaryKeyOf = useMemo(() => {
+		const map: Record<string, string> = {};
+		for (const group of accountGroups) {
+			map[group.primaryKey] = group.primaryKey;
+			for (const alias of group.aliasKeys) map[alias] = group.primaryKey;
+		}
+		return map;
+	}, [accountGroups]);
+
+	const selectedKey = effectiveSelectedKey
+		? (primaryKeyOf[effectiveSelectedKey] ?? effectiveSelectedKey)
+		: null;
+	const selectedSnapshot: ClaudeUsageSnapshot | null = selectedKey
+		? (snapshots[selectedKey] ?? null)
+		: null;
+
+	/**
+	 * Agents counted against the whole account, not just the dir that happened
+	 * to be sampled. An agent pointed at a folded dir still burns this quota,
+	 * so leaving it out would under-report the row it actually belongs to.
+	 */
+	const groupedAgentCounts = useMemo(() => {
+		const counts: Record<string, number> = {};
+		for (const group of accountGroups) {
+			counts[group.primaryKey] = [group.primaryKey, ...group.aliasKeys].reduce(
+				(sum, key) => sum + (agentCountsByAccount[key] ?? 0),
+				0
+			);
+		}
+		return counts;
+	}, [accountGroups, agentCountsByAccount]);
 
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
 	const toggleHidden = useUIStore((s) => s.toggleHiddenQuotaAccount);
 	const hiddenSet = useMemo(() => new Set(hiddenKeys ?? []), [hiddenKeys]);
 	const [revealHidden, setRevealHidden] = useState(false);
-	// Count only hidden keys still present in the configured set so a stale key
-	// for a removed account never shows a phantom "Show all" badge.
-	const hiddenVisibleCount = configuredAccountKeys.filter((k) => hiddenSet.has(k)).length;
+	// Count only hidden keys still present in the shown set so a stale key for
+	// a removed (or now-collapsed) account never shows a phantom "Show all".
+	const hiddenVisibleCount = accountKeysToShow.filter((k) => hiddenSet.has(k)).length;
 	const accountsToRender =
 		revealHidden || hiddenVisibleCount === 0
-			? configuredAccountKeys
-			: configuredAccountKeys.filter((k) => !hiddenSet.has(k));
+			? accountKeysToShow
+			: accountKeysToShow.filter((k) => !hiddenSet.has(k));
 
 	// Trigger the main re-sample, then re-pull the store. The store re-pull runs
 	// even when the sampler IPC throws so the dashboard reflects the latest cache.
@@ -240,7 +294,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		providerId: PROVIDER_ID,
 		refreshing,
 		autoRefresh,
-		accountCount: configuredAccountKeys.length,
+		accountCount: accountKeysToShow.length,
 		snapshotCount,
 		doRefresh,
 	});
@@ -250,13 +304,13 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			const shortName = deriveShortName(configDirKey);
 			const snapshot = snapshots[configDirKey];
 			const isHidden = hiddenSet.has(configDirKey);
-			const agentCount = agentCountsByAccount[configDirKey] ?? 0;
+			const agentCount = groupedAgentCounts[configDirKey] ?? 0;
 			const body = snapshot ? (
 				<AccountRow
 					configDirKey={configDirKey}
 					snapshot={snapshot}
 					agentCount={agentCount}
-					sharedWith={sharedAccountNames[configDirKey] ?? EMPTY_SIBLINGS}
+					alsoKnownAs={aliasNamesByKey[configDirKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 				/>
 			) : (
@@ -295,7 +349,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount, sharedAccountNames]
+		[snapshots, theme, hiddenSet, toggleHidden, groupedAgentCounts, aliasNamesByKey]
 	);
 
 	return (
@@ -336,7 +390,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 				</div>
 			</div>
 
-			{showAllAccounts && configuredAccountKeys.length > 0 && (
+			{showAllAccounts && accountKeysToShow.length > 0 && (
 				<div className="space-y-4">
 					{accountsToRender.length > 0 ? (
 						accountsToRender.map(renderAccount)
@@ -356,11 +410,11 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			{/* Account tab bar - renders whenever at least one account is
 			    configured so the structure stays consistent when accounts are
 			    added/removed. A bare empty state still hides the bar. */}
-			{!showAllAccounts && configuredAccountKeys.length >= 1 && (
+			{!showAllAccounts && accountKeysToShow.length >= 1 && (
 				<QuotaAccountTabs
 					theme={theme}
-					accountKeys={configuredAccountKeys}
-					effectiveSelectedKey={effectiveSelectedKey}
+					accountKeys={accountKeysToShow}
+					effectiveSelectedKey={selectedKey}
 					onSelect={setSelectedKey}
 					testIdPrefix={TEST_ID_PREFIX}
 					ariaLabel="Claude account selector"
@@ -379,43 +433,42 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					// without switching between them and comparing bars.
 					getTabTitle={(configDirKey) => {
 						const email = snapshots[configDirKey]?.accountEmail;
-						const shared = sharedAccountNames[configDirKey];
+						const aliases = aliasNamesByKey[configDirKey];
 						const lines = [configDirKey];
 						if (email) lines.push(`Logged in as ${email}`);
-						if (shared?.length) lines.push(`Shares one quota with ${shared.join(', ')}`);
+						if (aliases?.length) lines.push(`Same account as ${aliases.join(', ')}`);
 						return lines.join('\n');
 					}}
 				/>
 			)}
 
-			{configuredAccountKeys.length === 0 ? (
+			{accountKeysToShow.length === 0 ? (
 				<div
 					className="flex items-center justify-center h-24 text-sm text-center px-4"
 					style={{ color: theme.colors.textDim }}
 					data-testid="claude-plan-empty"
 				>
-					No Claude accounts configured. Set CLAUDE_CONFIG_DIR on a Claude Code session (or the
-					agent) - we sample only explicitly-configured accounts so we never trigger a browser OAuth
-					prompt.
+					No Claude accounts found. Add a Claude Code agent, or point one at an account with
+					CLAUDE_CONFIG_DIR.
 				</div>
-			) : showAllAccounts ? null : effectiveSelectedKey && selectedSnapshot ? (
+			) : showAllAccounts ? null : selectedKey && selectedSnapshot ? (
 				<AccountRow
-					key={effectiveSelectedKey}
-					configDirKey={effectiveSelectedKey}
+					key={selectedKey}
+					configDirKey={selectedKey}
 					snapshot={selectedSnapshot}
-					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
-					sharedWith={sharedAccountNames[effectiveSelectedKey] ?? EMPTY_SIBLINGS}
+					agentCount={groupedAgentCounts[selectedKey] ?? 0}
+					alsoKnownAs={aliasNamesByKey[selectedKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 				/>
-			) : effectiveSelectedKey ? (
+			) : selectedKey ? (
 				// Account is configured but no snapshot in the store yet - guide
 				// the user to hit Refresh rather than silently rendering nothing.
 				<QuotaPendingRow
-					accountKey={effectiveSelectedKey}
-					shortName={deriveShortName(effectiveSelectedKey)}
-					displayName={deriveDisplayName(effectiveSelectedKey)}
+					accountKey={selectedKey}
+					shortName={deriveShortName(selectedKey)}
+					displayName={deriveDisplayName(selectedKey)}
 					testIdPrefix={TEST_ID_PREFIX}
-					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					agentCount={groupedAgentCounts[selectedKey] ?? 0}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>

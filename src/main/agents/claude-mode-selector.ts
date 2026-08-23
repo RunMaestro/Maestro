@@ -47,6 +47,16 @@ export interface UsageSnapshot {
 	accountEmail?: string;
 	accountUuid?: string;
 	organizationName?: string;
+	/**
+	 * Other `CLAUDE_CONFIG_DIR`s that resolve to this same Anthropic account
+	 * and were therefore not sampled separately. Present only when the account
+	 * really is reachable through more than one directory; a lone account
+	 * omits the field rather than carrying an empty array.
+	 *
+	 * These are display aliases, not sampled data: every key listed here maps
+	 * to the quota in THIS snapshot, because one account is one quota bucket.
+	 */
+	aliasConfigDirKeys?: string[];
 	// `resetsAt` is absent when claude painted a percentage but no "Resets ..."
 	// row for that window (it omits the row for an idle 0% session). Consumers
 	// render the percentage anyway and drop the reset caption.
