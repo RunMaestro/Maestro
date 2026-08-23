@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
+import path from 'path';
 
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
@@ -640,6 +641,12 @@ describe('filesystem handlers', () => {
 	});
 
 	describe('fs:compressFolder', () => {
+		// The LOCAL branch builds its destination with `path.join`, so the expected
+		// path is `\project\Competition.zip` on Windows. Route the expectations
+		// through the same primitive rather than hardcoding POSIX literals - the
+		// product is right on both platforms, the assertions were not. (The SSH
+		// cases below stay literal on purpose: remote paths are POSIX regardless of
+		// what the desktop runs on, and the handler joins them with '/' explicitly.)
 		it('zips a folder into <name>.zip beside it, nesting under the folder name', async () => {
 			vi.mocked(existsSync).mockReturnValue(false);
 
@@ -649,16 +656,19 @@ describe('filesystem handlers', () => {
 			expect(archiveMock.directory).toHaveBeenCalledWith('/project/Competition', 'Competition');
 			expect(result).toEqual({
 				success: true,
-				path: '/project/Competition.zip',
+				path: path.join('/project', 'Competition.zip'),
 				name: 'Competition.zip',
 			});
 		});
 
 		it('increments a numeric suffix until the archive name is free', async () => {
-			// Competition.zip and Competition-1.zip are taken; -2 is free.
+			// Competition.zip and Competition-1.zip are taken; -2 is free. The mock
+			// has to match on the joined form too, or the "is it taken?" probe never
+			// fires on Windows and the suffix never increments.
 			vi.mocked(existsSync).mockImplementation(
 				(candidate) =>
-					candidate === '/project/Competition.zip' || candidate === '/project/Competition-1.zip'
+					candidate === path.join('/project', 'Competition.zip') ||
+					candidate === path.join('/project', 'Competition-1.zip')
 			);
 
 			const handler = registeredHandlers.get('fs:compressFolder');
@@ -666,7 +676,7 @@ describe('filesystem handlers', () => {
 
 			expect(result).toEqual({
 				success: true,
-				path: '/project/Competition-2.zip',
+				path: path.join('/project', 'Competition-2.zip'),
 				name: 'Competition-2.zip',
 			});
 		});
