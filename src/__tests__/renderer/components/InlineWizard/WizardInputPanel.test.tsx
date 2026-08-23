@@ -435,16 +435,51 @@ describe('WizardInputPanel', () => {
 	});
 
 	describe('escape key handling', () => {
-		it('exits wizard directly when Escape is pressed with no user interaction', () => {
+		it('confirms before exiting even when the user has not interacted yet', () => {
 			const onExitWizard = vi.fn();
 			render(<WizardInputPanel {...defaultProps} onExitWizard={onExitWizard} />);
 
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
 
-			// No dialog - exits directly (only 1 tab, so falls back to onExitWizard)
-			expect(screen.queryByText('Exit Wizard?')).not.toBeInTheDocument();
-			expect(onExitWizard).toHaveBeenCalledTimes(1);
+			// Never a direct exit - the dialog is the only way out
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
+			expect(onExitWizard).not.toHaveBeenCalled();
+			expect(mockSetSessions).not.toHaveBeenCalled();
+		});
+
+		it('never loses the wizard on a second Escape', () => {
+			const onExitWizard = vi.fn();
+			const onStopWizardTurn = vi.fn();
+			const { rerender } = render(
+				<WizardInputPanel
+					{...defaultProps}
+					isBusy={true}
+					onStopTurn={onStopWizardTurn}
+					onExitWizard={onExitWizard}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+
+			// First Escape stops the turn
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+			expect(onStopWizardTurn).toHaveBeenCalledTimes(1);
+
+			// The turn ended, so the panel is no longer busy - second Escape only asks
+			rerender(
+				<WizardInputPanel
+					{...defaultProps}
+					isBusy={false}
+					onStopTurn={onStopWizardTurn}
+					onExitWizard={onExitWizard}
+				/>
+			);
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
+			expect(onExitWizard).not.toHaveBeenCalled();
+			expect(mockSetSessions).not.toHaveBeenCalled();
 		});
 
 		it('shows exit confirmation dialog when Escape is pressed with user interaction', () => {
@@ -467,7 +502,7 @@ describe('WizardInputPanel', () => {
 			// Dialog should appear
 			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
 			expect(
-				screen.getByText('Progress will be lost. Are you sure you want to exit the wizard?')
+				screen.getByText(/Are you sure you want to exit the wizard and lose your progress\?/)
 			).toBeInTheDocument();
 		});
 
@@ -535,9 +570,19 @@ describe('WizardInputPanel', () => {
 			fireEvent.keyDown(textarea, { key: 'Escape' });
 
 			// Click Exit button
-			fireEvent.click(screen.getByRole('button', { name: 'Exit' }));
+			fireEvent.click(screen.getByTestId('wizard-exit-confirm-button'));
 
 			expect(onExitWizard).toHaveBeenCalledTimes(1);
+		});
+
+		it('focuses the destructive button so Enter confirms the exit', () => {
+			render(<WizardInputPanel {...defaultProps} />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			// Enter must land on "Yes, Exit", not on Cancel
+			expect(screen.getByTestId('wizard-exit-confirm-button')).toHaveFocus();
 		});
 
 		it('closes dialog when Cancel is clicked', () => {
@@ -589,12 +634,13 @@ describe('WizardInputPanel', () => {
 
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
+			fireEvent.click(screen.getByTestId('wizard-exit-confirm-button'));
 
 			expect(mockSetSessions).not.toHaveBeenCalled();
 			expect(onExitWizard).toHaveBeenCalledTimes(1);
 		});
 
-		it('closes its own untouched wizard tab on Escape', () => {
+		it('closes its own untouched wizard tab once the exit is confirmed', () => {
 			const onExitWizard = vi.fn();
 			const sessionWithWizardTab = createMockSession({
 				aiTabs: [
@@ -618,6 +664,11 @@ describe('WizardInputPanel', () => {
 
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			// Still nothing destroyed until the red button is pressed
+			expect(mockSetSessions).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByTestId('wizard-exit-confirm-button'));
 
 			expect(mockSetSessions).toHaveBeenCalledTimes(1);
 			expect(onExitWizard).not.toHaveBeenCalled();
@@ -645,7 +696,7 @@ describe('WizardInputPanel', () => {
 			expect(screen.queryByText('Exit Wizard?')).not.toBeInTheDocument();
 		});
 
-		it('stops the turn while initializing rather than closing the tab', () => {
+		it('asks to exit while initializing - there is no turn to stop yet', () => {
 			const onStopWizardTurn = vi.fn();
 			const onExitWizard = vi.fn();
 			render(
@@ -660,7 +711,10 @@ describe('WizardInputPanel', () => {
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
 
-			expect(onStopWizardTurn).toHaveBeenCalledWith('tab-1');
+			// Initialization is local doc scanning, not an agent turn, so there is nothing
+			// to kill - but it still must not exit without asking.
+			expect(onStopWizardTurn).not.toHaveBeenCalled();
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
 			expect(onExitWizard).not.toHaveBeenCalled();
 			expect(mockSetSessions).not.toHaveBeenCalled();
 		});
