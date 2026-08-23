@@ -450,9 +450,38 @@ function TabBarInner({
 				e.preventDefault();
 				setDraggingTabId(null);
 				setDragOverTabId(null);
+				return;
 			}
+
+			// A chip released on the bar's own background: the strip's padding, the
+			// gap between two chips, or the empty space past the last one.
+			//
+			// This used to be inert for a defensible reason - the bar had no
+			// `dragover` handler at all, so the browser rejected the drop and the
+			// chip snapped back. Nothing happened, and the cursor said so. Tiling
+			// changed that without meaning to: every tab drag now carries a tile
+			// payload, `handleBarDragOver` accepts anything carrying one, and the
+			// cursor started promising a move that this handler then declined,
+			// because the only thing it knew was promoting a tiled pane.
+			//
+			// A target that advertises a drop has to honour it. Past the last chip
+			// reads as "put it at the end", so that is what it does.
+			const sourceTabId = e.dataTransfer.getData('text/plain');
+			if (!sourceTabId) return;
+			e.preventDefault();
+			if (unifiedTabs && onUnifiedTabReorder) {
+				const si = unifiedTabs.findIndex((ut) => ut.id === sourceTabId);
+				const ti = unifiedTabs.length - 1;
+				if (si !== -1 && si !== ti) onUnifiedTabReorder(si, ti);
+			} else if (onTabReorder) {
+				const si = tabs.findIndex((t) => t.id === sourceTabId);
+				const ti = tabs.length - 1;
+				if (si !== -1 && si !== ti) onTabReorder(si, ti);
+			}
+			setDraggingTabId(null);
+			setDragOverTabId(null);
 		},
-		[promotePaneFromDrag]
+		[promotePaneFromDrag, tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
 	const handleRenameRequest = useCallback(
