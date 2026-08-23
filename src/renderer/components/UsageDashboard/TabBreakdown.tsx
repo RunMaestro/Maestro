@@ -104,7 +104,10 @@ function indexKnownTabs(session: Session): Map<string, { tab: AITab; status: Tab
 	for (const entry of session.closedTabHistory ?? []) {
 		known.set(entry.tab.id, { tab: entry.tab, status: 'closed' });
 	}
+	// Usage is measured per AI tab - a snoozed file or terminal tab has no
+	// tokens, cost, or turns to break down, so it isn't part of this index.
 	for (const entry of session.snoozedTabs ?? []) {
+		if (entry.type !== 'ai') continue;
 		known.set(entry.tab.id, { tab: entry.tab, status: 'snoozed' });
 	}
 	for (const tab of session.aiTabs ?? []) {
