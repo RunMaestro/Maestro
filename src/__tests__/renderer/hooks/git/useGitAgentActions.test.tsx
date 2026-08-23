@@ -10,6 +10,12 @@ import {
 	resolveGitCwd,
 	resolveGitSshRemoteId,
 } from '../../../../renderer/hooks/git/useGitAgentActions';
+import {
+	gitRunKey,
+	useGitCommandRunStore,
+	type GitCommandRun,
+	type GitRunStatus,
+} from '../../../../renderer/stores/gitCommandRunStore';
 import type { Session } from '../../../../renderer/types';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 4, behind: 1 };
@@ -353,6 +359,87 @@ describe('useGitAgentActions', () => {
 		it('is unavailable for a non-git agent', () => {
 			const { result } = renderHook(() => useGitAgentActions(makeSession({ isGitRepo: false })));
 			expect(result.current.canConfigureWorktrees).toBe(false);
+		});
+	});
+
+	// A pull/push survives its console being dismissed with Run in Background,
+	// so every menu row has to be able to say the command is still going.
+	describe('background run indicators', () => {
+		function seedRun(overrides: Partial<GitCommandRun> & { operation: 'pull' | 'push' }) {
+			const key = gitRunKey({ operation: overrides.operation, cwd: '/test/repo' });
+			useGitCommandRunStore.setState({
+				runs: {
+					[key]: {
+						key,
+						runId: 'run-1',
+						sessionId: 'session-1',
+						cwd: '/test/repo',
+						setUpstream: false,
+						output: '',
+						status: 'running' as GitRunStatus,
+						announced: false,
+						...overrides,
+					} as GitCommandRun,
+				},
+			});
+			return key;
+		}
+
+		beforeEach(() => {
+			useGitCommandRunStore.setState({ runs: {} });
+		});
+
+		it('reports nothing running on a quiet repo', () => {
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pullRunning).toBe(false);
+			expect(result.current.pushRunning).toBe(false);
+		});
+
+		it('flags the operation that is running, not the other one', () => {
+			seedRun({ operation: 'push' });
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pushRunning).toBe(true);
+			expect(result.current.pullRunning).toBe(false);
+		});
+
+		it('stops flagging once the run settles', () => {
+			seedRun({ operation: 'push', status: 'success' });
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pushRunning).toBe(false);
+		});
+
+		// Runs are keyed by repo, so a push in a sibling worktree must not light
+		// up this agent's row.
+		it('ignores a run against a different repo', () => {
+			const key = gitRunKey({ operation: 'push', cwd: '/other/repo' });
+			useGitCommandRunStore.setState({
+				runs: {
+					[key]: {
+						key,
+						runId: 'run-2',
+						sessionId: 'session-2',
+						operation: 'push',
+						cwd: '/other/repo',
+						setUpstream: false,
+						output: '',
+						status: 'running',
+						announced: false,
+					} as GitCommandRun,
+				},
+			});
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pushRunning).toBe(false);
+		});
+
+		it('reports nothing for a null agent', () => {
+			const { result } = renderHook(() => useGitAgentActions(null));
+
+			expect(result.current.pullRunning).toBe(false);
+			expect(result.current.pushRunning).toBe(false);
 		});
 	});
 });
