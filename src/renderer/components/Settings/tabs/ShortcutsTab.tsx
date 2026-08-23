@@ -12,6 +12,7 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
 import { shortcutKeysEqual } from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
+import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 import type { Theme, Shortcut } from '../../../types';
 
 export interface ShortcutsTabProps {
@@ -28,6 +29,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
 	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
 	const [showUnassignedOnly, setShowUnassignedOnly] = useState(false);
+	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
 	const shortcutsFilterRef = useRef<HTMLInputElement>(null);
 
 	// Notify parent of recording state changes (for escape handler coordination)
@@ -57,6 +59,31 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 
 		const keys = buildKeysFromEvent(e);
 		if (!keys) return;
+
+		// Refuse a chord that is already spoken for. Scanning FIXED_SHORTCUTS too
+		// is the part that is easy to miss: those cannot be rebound, so a
+		// collision with one is unresolvable from this screen and silently
+		// shadowing it would be the worst outcome of the three.
+		//
+		// Reject rather than auto-steal. Taking the chord would leave the other
+		// action dead with no indication, and the user would find out weeks later
+		// when a key they have used for months stops working.
+		const conflict = [
+			...Object.values(shortcuts),
+			...Object.values(tabShortcuts),
+			...Object.values(FIXED_SHORTCUTS),
+		].find((sc) => sc.id !== actionId && shortcutKeysEqual(sc.keys, keys));
+
+		if (conflict) {
+			// Name the LABEL, not the id: the user picked this action from a list of
+			// labels, and 'closeOtherTabs' is not what they read.
+			setConflictMessage(
+				`${formatShortcutKeys(keys)} is already used by "${conflict.label}". Pick another combination, or clear that one first.`
+			);
+			setRecordingId(null);
+			return;
+		}
+		setConflictMessage(null);
 
 		if (isTabShortcut) {
 			setTabShortcuts({
@@ -206,6 +233,18 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						: totalShortcuts}
 				</span>
 			</div>
+			{conflictMessage && (
+				<p
+					role="alert"
+					className="text-xs mb-3 px-2 py-1.5 rounded"
+					style={{
+						backgroundColor: `${theme.colors.error}20`,
+						color: theme.colors.error,
+					}}
+				>
+					{conflictMessage}
+				</p>
+			)}
 			<p className="text-xs opacity-50 mb-3" style={{ color: theme.colors.textDim }}>
 				Not all shortcuts can be modified. Press{' '}
 				<kbd
