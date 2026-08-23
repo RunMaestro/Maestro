@@ -250,11 +250,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
 					(e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}');
-				// Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) and next-unread (Alt+Cmd+ArrowDown) even when modals are open
+				// Allow sidebar toggle shortcuts (Alt+Cmd+Left/Right) even when modals are open
 				const isLayoutShortcut =
-					e.altKey &&
-					(e.metaKey || e.ctrlKey) &&
-					(e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowDown');
+					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+				// Next unread / draft tab is benign navigation, so it stays live behind a
+				// modal. Resolved by SHORTCUT ID rather than by key: it has already moved
+				// combos once, and the hard-coded arrow left behind by that move silently
+				// stopped matching it.
+				const isNextUnreadTabShortcut = ctx.isShortcut(e, 'nextUnreadTab');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();
 				const isRightPanelShortcut =
@@ -383,6 +386,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					// jumpToBottom, jumpToTerminal, markdown toggle, and font size to work (these are benign navigation/viewing preferences)
 					if (
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
@@ -404,6 +408,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (
 						!isCycleShortcut &&
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isRightPanelShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
