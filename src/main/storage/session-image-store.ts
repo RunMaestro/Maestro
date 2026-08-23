@@ -30,6 +30,7 @@ import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { getImageMimeType } from '../../shared/gitUtils';
 
 const IMAGE_DIR_NAME = 'session-images';
 export const IMAGE_REF_PREFIX = 'maestro-image://store/';
@@ -48,11 +49,10 @@ function extFromMediaType(mediaType: string): string {
 	return sub;
 }
 
-function mediaTypeFromExt(ext: string): string {
-	const e = ext.toLowerCase();
-	if (e === 'svg') return 'image/svg+xml';
-	return `image/${e}`;
-}
+// The media type is derived by the shared `getImageMimeType`, never by
+// `image/${ext}`: `image/jpg` is not a real media type and Electron's
+// nativeImage refuses to decode it, which is what made "Copy Image" paste a
+// data URL as text instead of the picture.
 
 let baseDir: string | null = null;
 let cachedDir: string | null = null;
@@ -145,7 +145,7 @@ export async function resolveToDataUrl(value: string): Promise<string | null> {
 	try {
 		const buffer = await fsPromises.readFile(filePath);
 		const ext = path.extname(filePath).slice(1);
-		return `data:${mediaTypeFromExt(ext)};base64,${buffer.toString('base64')}`;
+		return `data:${getImageMimeType(ext)};base64,${buffer.toString('base64')}`;
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
 		logger.warn(`Missing session image for ref: ${value}`, 'SessionImageStore');
@@ -171,7 +171,7 @@ export function resolveToBytesSync(value: string): { buffer: Buffer; mediaType: 
 	try {
 		const buffer = fs.readFileSync(filePath);
 		const ext = path.extname(filePath).slice(1);
-		return { buffer, mediaType: mediaTypeFromExt(ext) };
+		return { buffer, mediaType: getImageMimeType(ext) };
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
 		logger.warn(`Missing session image for ref: ${value}`, 'SessionImageStore');

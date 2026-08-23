@@ -186,19 +186,28 @@ function validateSection(
 }
 
 /**
- * Slice out the first complete, brace-balanced JSON object in `raw`.
+ * Slice out the first complete, bracket-balanced JSON object in `raw`.
  *
  * Scanning to the matching close brace (tracking string state so a `{`/`}`
- * inside a bullet's text doesn't move the depth counter) rather than to the
- * LAST `}` in the response: agents routinely append a closing code fence or a
- * trailing "Note: ..." sentence, and a naive `lastIndexOf('}')` swallows that
- * epilogue into the slice and fails an otherwise-valid object.
+ * inside a bullet's text doesn't move the counter) rather than to the LAST `}`
+ * in the response: agents routinely append a closing code fence or a trailing
+ * "Note: ..." sentence, and a naive `lastIndexOf('}')` swallows that epilogue
+ * into the slice and fails an otherwise-valid object.
+ *
+ * The stack tracks WHICH bracket opened each frame, not just how deep we are.
+ * A depth counter that treats `}` and `]` as interchangeable balances back to
+ * zero on a response whose brackets are merely mismatched - an agent writing
+ * `}` where the `sections` array needed `]` - and reports the object as
+ * complete. That slice can never parse, and worse, it convinces the repair path
+ * in `closeTruncatedJsonObject` that there is nothing to repair.
  */
-function extractFirstJsonObject(raw: string): string | null {
+function findFirstJsonObject(
+	raw: string
+): { text: string } | { text: null; failure: 'absent' | 'unclosed' | 'mismatched' } {
 	const start = raw.indexOf('{');
-	if (start === -1) return null;
+	if (start === -1) return { text: null, failure: 'absent' };
 
-	let depth = 0;
+	const stack: string[] = [];
 	let inString = false;
 	let escaped = false;
 
@@ -213,14 +222,25 @@ function extractFirstJsonObject(raw: string): string | null {
 		}
 
 		if (char === '"') inString = true;
-		else if (char === '{') depth++;
-		else if (char === '}') {
-			depth--;
-			if (depth === 0) return raw.slice(start, i + 1);
+		else if (char === '{' || char === '[') stack.push(char);
+		else if (char === '}' || char === ']') {
+			// A closer that does not match its frame means the structure is
+			// corrupt, not complete. Bail rather than hand back a slice that
+			// only looks balanced.
+			if (stack[stack.length - 1] !== (char === '}' ? '{' : '[')) {
+				return { text: null, failure: 'mismatched' };
+			}
+			stack.pop();
+			if (stack.length === 0) return { text: raw.slice(start, i + 1) };
 		}
 	}
 
-	return null;
+	return { text: null, failure: 'unclosed' };
+}
+
+/** {@link findFirstJsonObject} for callers that only care whether it worked. */
+function extractFirstJsonObject(raw: string): string | null {
+	return findFirstJsonObject(raw).text;
 }
 
 /**
@@ -287,23 +307,28 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 		return { ok: false, error: 'Response was empty.' };
 	}
 
-	const jsonText = extractFirstJsonObject(raw);
-	if (jsonText === null) {
-		// An unterminated object is the common failure (an agent stopping at its
-		// output limit), and it is NOT the same as prose with no object at all.
+	const found = findFirstJsonObject(raw);
+	if (found.text === null) {
+		// Each failure sends the reader somewhere different, so name the right
+		// one. An unterminated object is an agent stopping at its output limit;
+		// a mismatched bracket is an agent that finished but closed a container
+		// with the wrong character; neither is prose with no object at all.
 		// Saying "no JSON object found" about a response that visibly starts with
 		// one sends the reader hunting for the wrong problem.
 		return {
 			ok: false,
-			error: raw.includes('{')
-				? 'The JSON object was never closed - the response was cut off before it finished.'
-				: 'No JSON object found in the response.',
+			error:
+				found.failure === 'absent'
+					? 'No JSON object found in the response.'
+					: found.failure === 'mismatched'
+						? 'The JSON brackets do not match - a container was closed with the wrong bracket.'
+						: 'The JSON object was never closed - the response was cut off before it finished.',
 		};
 	}
 
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(jsonText);
+		parsed = JSON.parse(found.text);
 	} catch (err) {
 		const detail = err instanceof Error ? err.message : String(err);
 		return { ok: false, error: `Response is not valid JSON: ${detail}` };
@@ -330,25 +355,39 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 }
 
 /**
- * Rebuild a JSON object whose tail was cut off mid-stream.
+ * Rebuild a JSON object whose tail was cut off mid-stream or closed with the
+ * wrong bracket.
  *
  * A synopsis run costs minutes of agent time and emits one very long single-line
  * object, so a response that dies partway through is the difference between a
  * readable report and nothing at all. Scan to the last COMPLETE nested container
  * (an item or a section object), cut there, and close the containers that are
  * still open. Cutting at a completed `}`/`]` is what makes this safe: it drops
- * any half-written string, dangling key, or trailing comma along with it.
+ * any half-written string, dangling key, trailing comma, or wrong bracket along
+ * with it.
  *
- * `lossless` distinguishes the two very different shapes of "truncated". An
- * agent writing right up against its output limit routinely finishes the whole
- * structure and loses only the final `}`: every section and bullet is present,
- * `sections` closed on its own, and the repair is pure punctuation. That is a
+ * The scan is bracket-TYPE aware, and that is the whole point. A model that
+ * writes `...}]}}` where the last `}` should have been `]` has produced a
+ * complete report behind one wrong character, but a scanner that only counts
+ * depth sees a balanced object and reports "nothing to repair" - so the strict
+ * parser's error is all the user ever gets, for a report that is entirely
+ * intact. A mismatched closer ends the scan and the last MATCHED container
+ * becomes the cut site.
+ *
+ * `lossless` distinguishes the two very different shapes of damage. An agent
+ * writing right up against its output limit, or fumbling one bracket while
+ * closing up, finishes the whole structure and loses only punctuation: every
+ * section and bullet is present, and the repair is pure syntax. That is a
  * COMPLETE report and must not be shown to the user as a damaged one. A cut in
  * the middle of the bullet list is the real thing - content is gone - and
- * `lossless` is false. The test is exact: the cut discarded nothing but
- * whitespace, and the only frame left to close was the top-level object.
+ * `lossless` is false. Two conditions decide it: the discarded tail carries no
+ * CONTENT (only whitespace and structural punctuation), and the frames left to
+ * close are shallow enough that the last section had finished. Sitting inside a
+ * section or its item list means the report stopped mid-list; sitting in
+ * `sections` counts only when the agent was visibly writing closers, since an
+ * agent that just stopped there still had sections coming.
  *
- * Returns `null` when the input is not truncated (the top-level object closes on
+ * Returns `null` when the input is not damaged (the top-level object closes on
  * its own, so the strict path already had its shot) or when nothing completed.
  */
 function closeTruncatedJsonObject(raw: string): { text: string; lossless: boolean } | null {
@@ -358,8 +397,8 @@ function closeTruncatedJsonObject(raw: string): { text: string; lossless: boolea
 	const stack: string[] = [];
 	let inString = false;
 	let escaped = false;
-	// Index of the last `}`/`]` that closed a NESTED container, plus the frames
-	// still open at that point - the cut site and the closers it needs.
+	// Index of the last `}`/`]` that correctly closed a NESTED container, plus
+	// the frames still open at that point - the cut site and the closers it needs.
 	let cutIndex = -1;
 	let cutStack: string[] = [];
 
@@ -376,8 +415,11 @@ function closeTruncatedJsonObject(raw: string): { text: string; lossless: boolea
 		if (char === '"') inString = true;
 		else if (char === '{' || char === '[') stack.push(char);
 		else if (char === '}' || char === ']') {
+			// Wrong closer for this frame: everything from here is corrupt, so
+			// stop and repair from the last container that closed cleanly.
+			if (stack[stack.length - 1] !== (char === '}' ? '{' : '[')) break;
 			stack.pop();
-			// The top-level object closed: this response is not truncated.
+			// The top-level object closed: this response is not damaged.
 			if (stack.length === 0) return null;
 			cutIndex = i;
 			cutStack = [...stack];
@@ -386,7 +428,13 @@ function closeTruncatedJsonObject(raw: string): { text: string; lossless: boolea
 
 	if (cutIndex === -1) return null;
 
-	const lossless = cutStack.length === 1 && raw.slice(cutIndex + 1).trim().length === 0;
+	const discarded = raw.slice(cutIndex + 1);
+	const discardedContent = discarded.trim();
+	const discardedIsPunctuationOnly = /^[\s{}[\],]*$/.test(discarded);
+	const lastSectionFinished =
+		cutStack.length === 1 || (cutStack.length === 2 && discardedContent.length > 0);
+	const lossless = discardedIsPunctuationOnly && lastSectionFinished;
+
 	const closers = cutStack
 		.reverse()
 		.map((open) => (open === '{' ? '}' : ']'))

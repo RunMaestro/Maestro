@@ -462,17 +462,24 @@ Tier maps ship only where model IDs are stable (`claude-code` permanent aliases,
 
 ## Auto Run Model Hints (`src/shared/autorunModelHints.ts`, `src/shared/autorunTurnSettings.ts` - Both)
 
-`<!-- MAESTRO:MODEL tier="high" effort="high" -->` sets the model and effort for the tasks below it. Resolution is "nearest marker above the next unfinished task", recomputed before every dispatch rather than tracked as run state, so editing a document mid-run takes effect on the next task.
+`<!-- MAESTRO:MODEL tier="high" effort="high" -->` sets the model and effort. **Placement is the scope**, and there is no third syntax: a marker on its OWN line applies from there down until the next standalone marker (above the first task that is the whole document, under a section heading it is that phase), while a marker at the END of a task line applies to that ONE task and the next task reverts. Resolution is recomputed before every dispatch rather than tracked as run state, so editing a document mid-run takes effect on the next task.
 
-| Function                                                         | File                     | Purpose                                                                                                      |
-| ---------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `findActiveModelHint(content)`                                   | `autorunModelHints.ts`   | The hint governing the next task, or `null`. Last marker above the task wins; checked tasks do not clear it. |
-| `findAllModelHints(content)`                                     | `autorunModelHints.ts`   | Every marker in order, for authoring-time validation.                                                        |
-| `parseModelMarker(inner, line)`                                  | `autorunModelHints.ts`   | Parse one marker's attributes. Records invalid values instead of dropping them.                              |
-| `resolveTurnSettings(toolType, hint, agentModel?, agentEffort?)` | `autorunTurnSettings.ts` | Join hint + provider capability into `{ model, effort, notes, warnings }`.                                   |
-| `describeTurnSettings(resolved)`                                 | `autorunTurnSettings.ts` | One-line summary for a log line or History entry. `null` when the document set no hint.                      |
+| Function                                                         | File                     | Purpose                                                                                                                |
+| ---------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `findActiveModelHint(content)`                                   | `autorunModelHints.ts`   | The hint governing the next task, or `null`. Prevailing standalone marker with that task's inline marker layered over. |
+| `findAllModelHints(content)`                                     | `autorunModelHints.ts`   | Every marker in order, tagged with its scope, for authoring-time validation.                                           |
+| `parseModelMarker(inner, line, scope?)`                          | `autorunModelHints.ts`   | Parse one marker's attributes. Records invalid values instead of dropping them.                                        |
+| `resolveTurnSettings(toolType, hint, agentModel?, agentEffort?)` | `autorunTurnSettings.ts` | Join hint + provider capability into `{ model, effort, notes, warnings }`.                                             |
+| `describeTurnSettings(resolved)`                                 | `autorunTurnSettings.ts` | One-line summary for a log line or History entry. `null` when the document set no hint.                                |
 
-Precedence: the document's hint (if the provider can act on it), then the agent's configured value, then the provider default. A hint the provider cannot honor falls back **and warns** - the whole point is that an unresolvable hint is loud. `tier="default"` returns that axis to the agent's config.
+Precedence: the document's hint (if the provider can act on it), then the agent's configured value, then the provider default. A hint the provider cannot honor falls back **and warns** - the whole point is that an unresolvable hint is loud.
+
+Two rules the scopes turn on, both of which look like details and are not:
+
+- **The scopes layer PER AXIS.** An inline marker that names only `tier` keeps the prevailing `effort`. Merging wholesale would make `tier="high"` on a task inside a high-effort section quietly LOWER its effort to the agent default.
+- **`'default'` survives parsing rather than collapsing to `undefined`.** Both mean "use the agent's value" at resolution time, but they differ when scopes merge: a task saying `tier="default"` must override a document-wide `tier="high"`, while a task saying nothing about `tier` must inherit it. That is how one task opts out of a document-wide hint.
+
+A checked task is stepped over entirely, marker and all. That keeps a half-finished phase on the setting the rest of it needs, and stops a completed task's inline marker from leaking onto the tasks below it.
 
 ---
 

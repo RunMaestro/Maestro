@@ -24,15 +24,48 @@ export interface QueueDecision {
 	item: QueuedItem | null;
 }
 
+/**
+ * Is the execution queue frozen by an Agent Resilience retry?
+ *
+ * A pending retry means the provider just refused a turn and we are waiting out
+ * its quota/backoff. Dispatching into that wall is wrong two ways: the item
+ * fails against the same limit, AND the dispatch supersedes the pending retry
+ * (see `retryStore.noteDispatch`), silently discarding the prompt that retry was
+ * holding. So the queue holds and drains in order once the retry lands.
+ *
+ * Checks BOTH tabs, because they can differ:
+ *  - the EXITING tab, whose outage means this agent's provider is refusing work
+ *    right now, so the next item would just burn a call rediscovering the wall;
+ *  - the queued item's OWN target tab, which may be a different tab sitting in
+ *    its own outage. Dispatching there supersedes THAT tab's retry and loses its
+ *    prompt - the exiting tab finishing cleanly says nothing about whether the
+ *    target tab is ready.
+ *
+ * Exported so the onExit reducer applies the identical rule rather than
+ * re-deriving it: if the two disagree, a tab is marked busy for a spawn that
+ * never happens (or an item dequeues with nothing running it).
+ */
+export function queueIsHeldByRetry(
+	session: Pick<Session, 'executionQueue'> | undefined,
+	exitingTabId: string | undefined,
+	isRetryPending: (tabId: string) => boolean
+): boolean {
+	if (exitingTabId && isRetryPending(exitingTabId)) return true;
+	const nextItem = session ? nextRunnableQueueItem(session.executionQueue) : undefined;
+	return !!nextItem?.tabId && isRetryPending(nextItem.tabId);
+}
+
 export function chooseNextQueuedItem(
 	session: Pick<Session, 'executionQueue' | 'state' | 'agentError' | 'aiTabs'>,
 	exitingTabId: string | undefined,
 	/**
-	 * Agent Resilience has a retry counting down for the exiting tab (see
-	 * `retryStore.hasPendingRetry`). Passed in rather than read off the session
-	 * so this helper stays pure.
+	 * Does this tab have an Agent Resilience retry counting down? (see
+	 * `retryStore.hasPendingRetry`). Injected as a predicate rather than read off
+	 * the session so this helper stays pure - and so it can be asked about BOTH
+	 * the exiting tab and the queued item's own target tab, which are not always
+	 * the same tab.
 	 */
-	retryPending = false
+	isRetryPending: (tabId: string) => boolean = () => false
 ): QueueDecision {
 	// Paused items are held by the user - skip them and run the first runnable
 	// item. If everything is held (or the queue is empty), there's nothing to do.
@@ -45,13 +78,9 @@ export function chooseNextQueuedItem(
 		return { action: 'none', item: null };
 	}
 
-	// A pending retry means the provider just refused this turn and we are
-	// waiting it out. Draining the queue into it would fail every queued item
-	// against the same wall - and worse, each dispatch supersedes the previous
-	// item's scheduled retry (see `retryStore.noteDispatch`), so a queue of N
-	// messages would silently discard the first N-1 prompts. Hold the queue; it
-	// drains in order once the retry lands.
-	if (retryPending) {
+	// Agent Resilience holds the queue while a retry is counting down; see
+	// queueIsHeldByRetry above for which tabs it checks and why.
+	if (queueIsHeldByRetry(session, exitingTabId, isRetryPending)) {
 		return { action: 'wait', item: nextItem };
 	}
 	const otherTabsBusy = !!session.aiTabs?.some(

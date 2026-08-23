@@ -139,37 +139,40 @@ A stale HITL marker left above an unchecked task will pause every re-run until t
 
 Each `- [ ]` task starts a fresh AI context and receives the entire document. This is token-heavy, so favor grouping related operations and separating unrelated work.
 
-### Model Tier and Effort per Phase
+### Model Tier and Effort
 
-A playbook rarely wants one setting end to end. Surveying a codebase is cheap mechanical work; designing the migration that follows is not. A marker sets the model tier and effort for the tasks below it:
+A playbook rarely wants one setting end to end. Surveying a codebase is cheap mechanical work; designing the migration that follows is not. A marker sets the model tier and the effort level, at whichever scope fits:
 
 ```markdown
-## Research
-
 <!-- MAESTRO:MODEL tier="low" effort="low" -->
 
 - [ ] Catalogue every call site of the auth middleware
-
-## Design
-
-<!-- MAESTRO:MODEL tier="high" effort="high" -->
-
-- [ ] Write the migration plan
+- [ ] Summarize the current request flow
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
 ```
 
-Both attributes take `low`, `medium`, or `high`, and both are optional and independent - set the tier, the effort, or both. `tier="default"` (or `effort="default"`) returns that axis to the agent's own configuration, which is how a document steps back down after an expensive section.
+Two placements, and the placement IS the scope:
+
+| Placement                 | Scope                                                     |
+| ------------------------- | --------------------------------------------------------- |
+| On its own line           | Applies from there down, until the next standalone marker |
+| At the end of a task line | Applies to that ONE task; the next task reverts           |
+
+Put a standalone marker above the first task and it governs the whole document. Put one under a section heading and it governs that phase. Put an inline marker on a single task and only that task is affected - in the example above, "Apply the mechanical renames" runs back at `low`/`low`, not at `high`/`high`.
+
+Both attributes take `low`, `medium`, or `high`, and both are optional. The two scopes layer **per axis**: an inline marker that sets only `tier` keeps the prevailing `effort`. Use `tier="default"` (or `effort="default"`) to push one axis back to the agent's own configuration - that is how a single expensive-looking task opts out of a document-wide hint.
 
 The rules that matter when authoring:
 
-- **The nearest marker ABOVE the next unfinished task wins**, re-read before every task. A checked task does not clear a marker, so one marker per section covers that whole section. Editing the document mid-run takes effect on the next task.
+- **`low`/`medium`/`high` are ladder POSITIONS, not literal provider values.** `high` means the ceiling of whatever that provider offers, so on Claude Code `effort="high"` becomes `max`, not `high`. Never write a provider-specific value here.
 - **`tier` and `effort` are different axes.** `tier` picks which model; `effort` picks how hard it thinks. A low tier at high effort is a sensible request.
-- **`low`/`medium`/`high` are ladder POSITIONS, not literal provider values.** `high` means the ceiling of whatever that provider offers, so on Claude Code `effort="high"` becomes `max`, not `high`. Do not write provider-specific values here.
-- **Not every provider can honor a tier.** Model tiers ship for Claude Code and Factory Droid; Codex, Copilot-CLI, and OpenCode discover their catalogues at runtime, so a tier hint there falls back to the agent's configured model and logs a warning. Effort works everywhere except OpenCode, which has no effort setting at all.
+- **Not every provider can honor a tier.** Model tiers ship for Claude Code and Factory Droid; Codex, Copilot-CLI, and OpenCode discover their catalogues at runtime, so a tier hint there falls back to the agent's configured model and logs a warning. Effort works everywhere except OpenCode, which has no effort setting.
 - **Markers inside fenced code blocks are ignored**, so a playbook can document this syntax (as above) without changing its own behavior.
 
-Omit the marker entirely when the whole playbook wants one setting - the agent's own configured model and effort are used, which is the right default. Reach for it when a document genuinely changes gears, and prefer one marker per phase heading over one per task.
+Reach for a hint when a task's cost and its difficulty are genuinely mismatched - a document-wide `low` with a couple of inline `high` tasks is the common shape, and it is usually cheaper than the default. Omit markers entirely when the whole playbook wants one setting; the agent's own configuration is then used, which is the right default.
 
-Per-task synopses always run at the cheapest model and lowest effort regardless of the tier a task ran at. They summarize work that already happened, so they never need the expensive model, and you do not need to configure this.
+Per-task synopses always run at the cheapest model and lowest effort regardless of what the task ran at. They summarize work that already happened, so they never need the expensive model, and there is nothing to configure.
 
 ### Early Exit (Halt Marker)
 

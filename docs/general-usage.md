@@ -214,6 +214,30 @@ Where you drop decides what happens:
 Importing into the tree copies from your local machine, so it is not available for agents running on an SSH remote. Attaching files to the chat still works on remotes.
 </Note>
 
+### Drag Files Out of Maestro
+
+Hold **Option** (**Alt** on Windows and Linux) while dragging a row out of the **Files tab** to hand the real file to anything that accepts a file drop: your Desktop, Finder or Explorer, a Mail or iMessage message, a browser upload field.
+
+- **Select several rows first** to drag the whole group out at once.
+- **Folders drag out too**, with all of their contents.
+- The original stays in the project. Dragging out copies, it never moves or removes anything.
+
+A hint appears at the bottom of the panel as soon as you start dragging, to remind you which key to hold.
+
+Hold the key **before** you begin the drag. A plain drag is reserved for Maestro's own targets, so the app has to decide which kind of drag it is the moment you start one, and pressing Option partway through has no effect. If that happens the hint tells you so: drop the file, then drag again with the key already held.
+
+Where a plain drag lands still decides what happens inside the app:
+
+| Drag                               | Result                                                        |
+| ---------------------------------- | ------------------------------------------------------------- |
+| **Plain drag** onto a folder row   | Moves the file to that folder inside the project              |
+| **Plain drag** onto the main panel | Attaches the file to your message, or inserts an `@reference` |
+| **Option-drag** anywhere outside   | Copies the real file out to the app or folder you drop on     |
+
+<Note>
+For agents running on an SSH remote, drag-out covers files but not folders, and the first Option-drag of a file downloads it before it can leave the app. Maestro flashes "drag again" when the file is ready, and the second drag carries it. This is deliberate, so a half-downloaded file is never handed to another app.
+</Note>
+
 ### Publish as GitHub Gist
 
 Share files directly as GitHub Gists from the File Preview:

@@ -62,9 +62,14 @@ const TOKEN_EXHAUSTION_RE =
 /**
  * Transient upstream availability / throttling phrasing. HTTP status codes use
  * word boundaries so we don't match ports or version numbers.
+ *
+ * `rate[\s_-]?limit` rather than `rate\s+limit`: providers send the machine tag
+ * `rate_limit` (Claude Code puts exactly that in the `error` field of its
+ * plan-limit message), and a whitespace-only pattern classified it as `unknown`,
+ * which is not retryable - so a real 429 got no retry at all.
  */
 const AVAILABILITY_RE =
-	/overloaded|\b529\b|\b503\b|\b502\b|\b500\b|service\s+(?:unavailable|overloaded)|temporarily\s+(?:unavailable|overloaded)|too\s+many\s+requests|rate\s+limit|\b429\b|try\s+again/i;
+	/overloaded|\b529\b|\b503\b|\b502\b|\b500\b|service\s+(?:unavailable|overloaded)|temporarily\s+(?:unavailable|overloaded)|too\s+many\s+requests|rate[\s_-]?limit|\b429\b|try\s+again/i;
 
 /** The minimal shape {@link classifyRetryableError} needs from an AgentError. */
 export interface ClassifiableError {
@@ -167,9 +172,16 @@ function coerceResetNumber(value: number, now: number): number | undefined {
 	return now + value * 1000; // relative seconds
 }
 
-function parseResetFromJson(parsedJson: unknown, now: number): number | undefined {
-	if (!parsedJson || typeof parsedJson !== 'object') return undefined;
-	const record = parsedJson as Record<string, unknown>;
+/**
+ * Nested objects that carry a reset hint. Claude Code puts the authoritative
+ * value at `quotaLimits.resetsAt` (epoch seconds) on its plan-limit message, so
+ * a top-level-only scan misses the one field that makes the retry land on the
+ * exact reset second rather than an hourly poll.
+ */
+const RESET_JSON_CONTAINERS = ['quotaLimits', 'quota_limits', 'rateLimit', 'rate_limit'] as const;
+
+/** Scan one flat object for any recognized reset key. */
+function scanResetKeys(record: Record<string, unknown>, now: number): number | undefined {
 	for (const key of RESET_JSON_KEYS) {
 		const raw = record[key];
 		if (typeof raw === 'number') {
@@ -184,6 +196,24 @@ function parseResetFromJson(parsedJson: unknown, now: number): number | undefine
 		}
 	}
 	return undefined;
+}
+
+function parseResetFromJson(parsedJson: unknown, now: number): number | undefined {
+	if (!parsedJson || typeof parsedJson !== 'object') return undefined;
+	const record = parsedJson as Record<string, unknown>;
+
+	// Prefer a nested quota container: when a provider sends both, the specific
+	// one is the quota's real reset and any top-level value is a generic retry
+	// hint for the request.
+	for (const container of RESET_JSON_CONTAINERS) {
+		const nested = record[container];
+		if (nested && typeof nested === 'object') {
+			const found = scanResetKeys(nested as Record<string, unknown>, now);
+			if (found !== undefined) return found;
+		}
+	}
+
+	return scanResetKeys(record, now);
 }
 
 /** Parse "retry after 30 seconds" / "try again in 5 minutes" style hints. */

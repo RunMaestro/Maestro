@@ -424,7 +424,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 													...(s.orphanedThinkingTabs && {
 														orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
 															tab.id === target.tabId
-																? markTabRunningQueuedItem(tab, nextItem)
+																? markTabRunningQueuedItem(tab, nextItem, s)
 																: tab
 														),
 													}),
@@ -442,7 +442,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											// markTabRunningQueuedItem with the other dispatch paths so the
 											// busy-state + log construction stays identical.
 											const updatedAiTabs = s.aiTabs.map((tab) =>
-												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
 											);
 
 											return {

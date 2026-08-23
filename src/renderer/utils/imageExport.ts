@@ -195,6 +195,18 @@ export async function copyImageElementToClipboard(el: ExportableImage): Promise<
 
 	const dataUrl = await imgToDataUrl(el);
 	if (dataUrl && (await safeClipboardWriteImage(dataUrl))) return 'image';
+
+	// The native clipboard only decodes PNG and JPEG, so a webp/gif/bmp source
+	// gets repainted through a canvas to become PNG bytes. Skipped for anything
+	// the browser could not load (naturalWidth 0), which would rasterize blank.
+	if (el.naturalWidth > 0) {
+		try {
+			if (await safeClipboardWriteImage(imgToPngDataUrl(el))) return 'image';
+		} catch {
+			// Tainted canvas (cross-origin image without CORS) - fall through to text.
+		}
+	}
+
 	const src = el.currentSrc || el.src;
 	if (!src) return 'failed';
 	return (await safeClipboardWrite(src)) ? 'text' : 'failed';

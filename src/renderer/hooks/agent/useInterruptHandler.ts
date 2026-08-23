@@ -172,7 +172,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						// background send never leaks onto the active tab.
 						const updatedAiTabs = s.aiTabs.map((tab) => {
 							if (tab.id === target.tabId) {
-								return markTabRunningQueuedItem(tab, nextItem);
+								return markTabRunningQueuedItem(tab, nextItem, s);
 							}
 							// Set any other busy tabs to idle (they were interrupted) and add canceled log
 							// Also clear any thinking/tool logs since the process was interrupted
@@ -196,7 +196,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						const updatedOrphans =
 							target.location === 'orphan' && s.orphanedThinkingTabs
 								? s.orphanedThinkingTabs.map((tab) =>
-										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
 									)
 								: s.orphanedThinkingTabs;
 
@@ -367,7 +367,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								// active tab.
 								const updatedAiTabs = updatedSession.aiTabs.map((tab) => {
 									if (tab.id === target.tabId) {
-										return markTabRunningQueuedItem(tab, nextItem);
+										return markTabRunningQueuedItem(tab, nextItem, updatedSession);
 									}
 									if (tab.state === 'busy') {
 										const logsWithoutThinkingOrTools = tab.logs.filter(
@@ -386,7 +386,9 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								const updatedOrphans =
 									target.location === 'orphan' && updatedSession.orphanedThinkingTabs
 										? updatedSession.orphanedThinkingTabs.map((tab) =>
-												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+												tab.id === target.tabId
+													? markTabRunningQueuedItem(tab, nextItem, updatedSession)
+													: tab
 											)
 										: updatedSession.orphanedThinkingTabs;
 

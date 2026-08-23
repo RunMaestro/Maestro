@@ -50,6 +50,32 @@ export interface SystemHandlerDependencies {
 }
 
 /**
+ * Decode a data URL into a NativeImage for the clipboard.
+ *
+ * `nativeImage.createFromDataURL()` trusts the DECLARED media type and accepts
+ * only `image/png` and `image/jpeg`, so a JPEG announced as `image/jpg` decodes
+ * to an empty image and the copy silently degrades to pasting the data URL as
+ * text. Every producer here should emit a canonical type (see
+ * `getImageMimeType`), but the clipboard follows the BYTES rather than the
+ * label: on an empty decode the base64 payload is handed to
+ * `createFromBuffer`, which sniffs the PNG/JPEG magic itself.
+ *
+ * Formats Chromium's image decoder does not expose to nativeImage (webp, gif)
+ * still come back empty - the renderer rasterizes those to PNG before it gets
+ * here.
+ */
+function decodeClipboardImage(dataUrl: string): Electron.NativeImage {
+	const direct = nativeImage.createFromDataURL(dataUrl);
+	if (!direct.isEmpty()) return direct;
+
+	const comma = dataUrl.indexOf(',');
+	if (comma < 0 || !/^data:[^,]*;base64$/i.test(dataUrl.slice(0, comma))) {
+		return direct;
+	}
+	return nativeImage.createFromBuffer(Buffer.from(dataUrl.slice(comma + 1), 'base64'));
+}
+
+/**
  * Register all system-related IPC handlers.
  */
 export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
@@ -331,7 +357,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		if (!dataUrl || typeof dataUrl !== 'string') {
 			throw new Error('Invalid data URL: must be a non-empty string');
 		}
-		const img = nativeImage.createFromDataURL(dataUrl);
+		const img = decodeClipboardImage(dataUrl);
 		if (img.isEmpty()) {
 			throw new Error('Failed to create image from data URL');
 		}

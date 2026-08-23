@@ -76,11 +76,13 @@ describe('findActiveModelHint', () => {
 		expect(hint?.tier).toBeUndefined();
 	});
 
-	it('treats "default" as inherit rather than as a level', () => {
+	it('keeps "default" as an explicit directive rather than collapsing it', () => {
+		// It must survive parsing so a task-scoped `default` can override a
+		// document-scoped level. Resolution treats it as "use the agent's value".
 		const doc = `<!-- MAESTRO:MODEL tier="default" effort="default" -->\n- [ ] task`;
 		const hint = findActiveModelHint(doc);
-		expect(hint?.tier).toBeUndefined();
-		expect(hint?.effort).toBeUndefined();
+		expect(hint?.tier).toBe('default');
+		expect(hint?.effort).toBe('default');
 		expect(hint?.invalid).toBeUndefined();
 	});
 
@@ -91,6 +93,99 @@ describe('findActiveModelHint', () => {
 		const hint = findActiveModelHint(doc);
 		expect(hint?.tier).toBeUndefined();
 		expect(hint?.invalid).toEqual([{ attribute: 'tier', value: 'hgih' }]);
+	});
+});
+
+describe('hint scopes', () => {
+	it('carries a document-scoped marker to every task below it', () => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="low" effort="low" -->',
+			'- [x] first',
+			'- [ ] second',
+			'- [ ] third',
+		].join('\n');
+		expect(findActiveModelHint(doc)).toMatchObject({ tier: 'low', effort: 'low' });
+	});
+
+	it('applies an inline marker to that task only', () => {
+		const doc = ['- [ ] design the migration <!-- MAESTRO:MODEL tier="high" -->'].join('\n');
+		const hint = findActiveModelHint(doc);
+		expect(hint?.tier).toBe('high');
+		expect(hint?.scopes?.tier).toBe('task');
+	});
+
+	it('reverts to the document scope once the inline task is checked off', () => {
+		// The whole point of task scope: the NEXT task must not inherit it.
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="low" effort="low" -->',
+			'- [x] design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->',
+			'- [ ] apply the renames',
+		].join('\n');
+		expect(findActiveModelHint(doc)).toMatchObject({ tier: 'low', effort: 'low' });
+	});
+
+	it('reverts to no hint at all when there was no document scope', () => {
+		const doc = [
+			'- [x] design the migration <!-- MAESTRO:MODEL tier="high" -->',
+			'- [ ] apply the renames',
+		].join('\n');
+		expect(findActiveModelHint(doc)).toBeNull();
+	});
+
+	it('layers the two per axis rather than wholesale', () => {
+		// A task raising only the tier must keep the document's effort - otherwise
+		// tier="high" would silently LOWER the effort inside a high-effort section.
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="low" effort="high" -->',
+			'- [ ] design <!-- MAESTRO:MODEL tier="high" -->',
+		].join('\n');
+		const hint = findActiveModelHint(doc);
+		expect(hint?.tier).toBe('high');
+		expect(hint?.effort).toBe('high');
+		expect(hint?.scopes).toEqual({ tier: 'task', effort: 'document' });
+	});
+
+	it('lets one task opt out of a document-wide hint with "default"', () => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="high" effort="high" -->',
+			'- [ ] trivial rename <!-- MAESTRO:MODEL tier="default" effort="default" -->',
+		].join('\n');
+		const hint = findActiveModelHint(doc);
+		expect(hint?.tier).toBe('default');
+		expect(hint?.effort).toBe('default');
+	});
+
+	it('does not let an inline marker on a checked task become a section marker', () => {
+		const doc = ['- [x] design <!-- MAESTRO:MODEL tier="high" -->', '- [ ] a', '- [ ] b'].join(
+			'\n'
+		);
+		expect(findActiveModelHint(doc)).toBeNull();
+	});
+
+	it('ignores an inline marker inside fenced code', () => {
+		// The fence promise has to hold for BOTH forms, or a playbook that
+		// documents the inline syntax silently changes its own model.
+		const doc = [
+			'```markdown',
+			'- [ ] example <!-- MAESTRO:MODEL tier="high" -->',
+			'```',
+			'- [ ] the real task',
+		].join('\n');
+		expect(findActiveModelHint(doc)).toBeNull();
+	});
+
+	it('keeps a typo on either scope reportable after they merge', () => {
+		// Merging must not swallow the document's invalid value in favor of the
+		// task's, or a misspelled marker warns only until someone adds an inline
+		// one below it.
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="hgih" -->',
+			'- [ ] design <!-- MAESTRO:MODEL effort="hihg" -->',
+		].join('\n');
+		expect(findActiveModelHint(doc)?.invalid).toEqual([
+			{ attribute: 'tier', value: 'hgih' },
+			{ attribute: 'effort', value: 'hihg' },
+		]);
 	});
 });
 
@@ -105,6 +200,22 @@ describe('findAllModelHints', () => {
 		const all = findAllModelHints(doc);
 		expect(all).toHaveLength(2);
 		expect(all[1].invalid).toEqual([{ attribute: 'tier', value: 'bogus' }]);
+	});
+
+	it('tags each marker with the scope it would apply at', () => {
+		// Authoring-time validation reports where a hint reaches, so a marker the
+		// author meant as document-wide but wrote onto a task line has to be
+		// distinguishable from one that really is standalone.
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="low" -->',
+			'- [ ] a <!-- MAESTRO:MODEL tier="high" -->',
+			'- [x] b <!-- MAESTRO:MODEL effort="high" -->',
+		].join('\n');
+		expect(findAllModelHints(doc).map((hint) => hint.scopes)).toEqual([
+			{ tier: 'document' },
+			{ tier: 'task' },
+			{ effort: 'task' },
+		]);
 	});
 });
 
@@ -143,6 +254,31 @@ describe('resolveTurnSettings', () => {
 		expect(resolved.effort).toBe('xhigh');
 		expect(resolved.model).toBe('gpt-5.3-codex');
 		expect(resolved.warnings).toHaveLength(1);
+	});
+
+	it('resolves an explicit "default" back to the agent\'s own values', () => {
+		const hint = findActiveModelHint(
+			[
+				'<!-- MAESTRO:MODEL tier="high" effort="high" -->',
+				'- [ ] trivial <!-- MAESTRO:MODEL tier="default" effort="default" -->',
+			].join('\n')
+		);
+		const resolved = resolveTurnSettings('claude-code', hint, 'sonnet', 'medium');
+		expect(resolved.model).toBe('sonnet');
+		expect(resolved.effort).toBe('medium');
+		expect(resolved.warnings).toEqual([]);
+	});
+
+	it('reports which scope supplied each axis', () => {
+		const hint = findActiveModelHint(
+			[
+				'<!-- MAESTRO:MODEL effort="high" -->',
+				'- [ ] design <!-- MAESTRO:MODEL tier="high" -->',
+			].join('\n')
+		);
+		const resolved = resolveTurnSettings('claude-code', hint, undefined, undefined);
+		expect(resolved.notes.join(' ')).toContain('(task)');
+		expect(resolved.notes.join(' ')).toContain('(document)');
 	});
 
 	it('surfaces a misspelled value as a warning', () => {

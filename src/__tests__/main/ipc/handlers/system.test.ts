@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
-import { ipcMain, dialog, shell, BrowserWindow, App } from 'electron';
+import { ipcMain, dialog, shell, clipboard, nativeImage, BrowserWindow, App } from 'electron';
 import Store from 'electron-store';
 import {
 	registerSystemHandlers,
@@ -44,6 +44,14 @@ vi.mock('electron', () => ({
 	app: {
 		getVersion: vi.fn(),
 		getPath: vi.fn(),
+	},
+	clipboard: {
+		writeImage: vi.fn(),
+		readImage: vi.fn(),
+	},
+	nativeImage: {
+		createFromDataURL: vi.fn(),
+		createFromBuffer: vi.fn(),
 	},
 }));
 
@@ -265,6 +273,50 @@ describe('system IPC handlers', () => {
 
 			// Verify exact count
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('clipboard:writeImage', () => {
+		const JPEG_DATA_URL = 'data:image/jpg;base64,/9j/4AAQSkZJRg==';
+
+		it('writes the image when the declared media type decodes', async () => {
+			const image = { isEmpty: () => false };
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue(image as any);
+
+			await handlers.get('clipboard:writeImage')!({} as any, 'data:image/png;base64,iVBORw0KGgo=');
+
+			expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
+			expect(clipboard.writeImage).toHaveBeenCalledWith(image);
+		});
+
+		// nativeImage only accepts image/png and image/jpeg, so a JPEG mislabeled
+		// `image/jpg` decodes empty. The bytes still have to reach the clipboard.
+		it('falls back to the raw bytes when the media type is mislabeled', async () => {
+			const image = { isEmpty: () => false };
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue({ isEmpty: () => true } as any);
+			vi.mocked(nativeImage.createFromBuffer).mockReturnValue(image as any);
+
+			await handlers.get('clipboard:writeImage')!({} as any, JPEG_DATA_URL);
+
+			const buffer = vi.mocked(nativeImage.createFromBuffer).mock.calls[0][0] as Buffer;
+			expect(buffer.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+			expect(clipboard.writeImage).toHaveBeenCalledWith(image);
+		});
+
+		it('throws when the bytes cannot be decoded either', async () => {
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue({ isEmpty: () => true } as any);
+			vi.mocked(nativeImage.createFromBuffer).mockReturnValue({ isEmpty: () => true } as any);
+
+			await expect(
+				handlers.get('clipboard:writeImage')!({} as any, 'data:image/webp;base64,UklGRg==')
+			).rejects.toThrow('Failed to create image from data URL');
+			expect(clipboard.writeImage).not.toHaveBeenCalled();
+		});
+
+		it('rejects an empty data URL', async () => {
+			await expect(handlers.get('clipboard:writeImage')!({} as any, '')).rejects.toThrow(
+				'Invalid data URL'
+			);
 		});
 	});
 

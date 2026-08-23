@@ -32,6 +32,7 @@ import {
 	LOCAL_IGNORE_DEFAULTS,
 } from '../../../shared/globUtils';
 import { isMediaFile } from '../../../shared/mediaTypes';
+import { getImageMimeType } from '../../../shared/gitUtils';
 import { buildLocalMediaStreamUrl } from '../../media/media-stream';
 import {
 	readDirRemote,
@@ -312,8 +313,7 @@ export function registerFilesystemHandlers(): void {
 							}
 							throw new Error(imgResult.error || 'Failed to read remote image');
 						}
-						const mimeType = imgExt === 'svg' ? 'image/svg+xml' : `image/${imgExt}`;
-						return `data:${mimeType};base64,${imgResult.data}`;
+						return `data:${getImageMimeType(imgExt || '')};base64,${imgResult.data}`;
 					}
 
 					let result: Awaited<ReturnType<typeof readFileRemote>>;
@@ -354,8 +354,7 @@ export function registerFilesystemHandlers(): void {
 					// Read image as buffer and convert to base64 data URL
 					const buffer = await fs.readFile(filePath);
 					const base64 = buffer.toString('base64');
-					const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
-					return `data:${mimeType};base64,${base64}`;
+					return `data:${getImageMimeType(ext || '')};base64,${base64}`;
 				} else if (isMediaFile(filePath)) {
 					// Audio/video never gets inlined the way images do - a long
 					// recording would blow up the IPC payload and pin the whole file

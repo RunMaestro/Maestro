@@ -1181,11 +1181,102 @@ describe('ClaudeOutputParser', () => {
 			).toBeNull();
 		});
 
-		it('does NOT flag an assistant chunk that opens with the notice wording', () => {
+		// THE SHAPE THAT ACTUALLY HAPPENS. Copied from a real captured transcript
+		// (2026-08-22), trimmed of identifiers. Claude Code does not emit an error
+		// event for a hit plan limit - it emits a SYNTHETIC ASSISTANT MESSAGE whose
+		// text is the banner, with the reset time in `quotaLimits.resetsAt`.
+		//
+		// Before this was handled, `detectErrorFromParsed` took the generic
+		// `obj.error` branch, classified the bare tag "rate_limit" as `unknown`,
+		// and `classifyRetryableError` returned null - so no retry was ever
+		// scheduled and the notice rendered as an ordinary reply.
+		it('reports the real synthetic-assistant limit message', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				error: 'rate_limit',
+				isApiErrorMessage: true,
+				apiErrorStatus: 429,
+				quotaLimits: {
+					status: 'rejected',
+					resetsAt: 1787416800,
+					rateLimitType: 'five_hour',
+					overageStatus: 'rejected',
+					overageDisabledReason: 'out_of_credits',
+				},
+				message: {
+					role: 'assistant',
+					model: '<synthetic>',
+					stop_reason: 'stop_sequence',
+					content: [
+						{
+							type: 'text',
+							text: "You've hit your session limit · resets 11:40am (America/Chicago)",
+						},
+					],
+				},
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.message).toBe(
+				"You've hit your session limit · resets 11:40am (America/Chicago)"
+			);
+			// quotaLimits must survive onto parsedJson - it is what lets the retry
+			// land on the exact reset second instead of a blind hourly poll.
+			expect(
+				(error?.parsedJson as { quotaLimits?: { resetsAt?: number } })?.quotaLimits?.resetsAt
+			).toBe(1787416800);
+		});
+
+		it('flags the notice even when only `message` survives the transport', () => {
+			// Plain `--output-format stream-json` may forward just the message
+			// envelope, dropping the top-level error/quotaLimits markers. The text
+			// alone still has to be enough, or API-mode agents never retry.
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [
+						{
+							type: 'text',
+							text: "You've hit your session limit · resets 11:40am (America/Chicago)",
+						},
+					],
+				},
+			});
+			expect(error?.type).toBe('rate_limited');
+		});
+
+		it('does NOT flag a real reply that merely discusses the banner', () => {
+			// Maestro's own agents write about this constantly. The banner has to BE
+			// the message, not appear inside it.
+			for (const text of [
+				'The CLI prints "You\'ve hit your session limit" and then just sits there.',
+				"When you've hit your session limit, Maestro schedules a retry for you.",
+				"Fixed. You've hit your session limit · resets 11:40am (America/Chicago) now classifies as rate_limited, so resilience picks it up.",
+			]) {
+				expect(
+					parser.detectErrorFromParsed({
+						type: 'assistant',
+						message: { role: 'assistant', content: [{ type: 'text', text }] },
+					})
+				).toBeNull();
+			}
+		});
+
+		it('does NOT flag an assistant turn that is doing tool work', () => {
+			// A message carrying tool_use blocks is a live turn, not a synthetic
+			// notice - even if some text block happens to lead with the wording.
 			expect(
 				parser.detectErrorFromParsed({
 					type: 'assistant',
-					message: { role: 'assistant', content: "You've hit your session limit · resets 11:40am" },
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'text', text: "You've hit your session limit" },
+							{ type: 'tool_use', name: 'Bash', id: 't1', input: {} },
+						],
+					},
 				})
 			).toBeNull();
 		});
