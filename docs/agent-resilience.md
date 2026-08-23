@@ -25,12 +25,16 @@ The resend is your original prompt replayed through the same code path that sent
 
 For a quota failure, backing off in seconds is pointless. Maestro reads the reset moment out of the error itself, in descending order of confidence:
 
-1. A structured `retryAfter` / `resetAt` field on the provider's error payload.
-2. A `retry after 30 seconds` / `try again in 5 minutes` phrase.
+1. The provider's own quota block. Claude Code sends `quotaLimits.resetsAt` alongside the limit message, which is the exact reset second, so the retry lands the moment your window reopens rather than up to an hour late.
+2. A top-level `retryAfter` / `resetAt` field, or a `retry after 30 seconds` / `try again in 5 minutes` phrase.
 3. Claude Code's legacy `Claude AI usage limit reached|1755500000` epoch marker.
-4. Claude Code's current banner, which names its own timezone: `You've hit your session limit · resets 11:40am (America/Chicago)`.
+4. The banner text itself, which names its own timezone: `You've hit your session limit · resets 11:40am (America/Chicago)`. This is the fallback for paths that forward only the message.
 
 If none of those parse, it falls back to waiting an hour and retrying hourly. A wall-clock phrase with no timezone (`resets at 3pm`) is deliberately ignored, since a wrong guess is worse than the reliable hourly poll.
+
+<Note>
+Claude Code does not report a hit plan limit as an error. It sends an ordinary-looking assistant message whose text is the banner, which is why an unpatched build showed the notice as a normal reply and the turn appeared to succeed. Maestro recognizes that message specifically. It requires the banner to be the entire message, so an agent that merely writes *about* usage limits is never mistaken for one.
+</Note>
 
 ### What it will never retry
 

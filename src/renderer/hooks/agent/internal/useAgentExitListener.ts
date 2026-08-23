@@ -33,7 +33,7 @@ import {
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
-import { chooseNextQueuedItem } from './helpers/exitDequeue';
+import { chooseNextQueuedItem, queueIsHeldByRetry } from './helpers/exitDequeue';
 import { takeNextRunnableQueueItem } from '../../../utils/executionQueue';
 import { refreshGitRefsAfterTerminalExit } from './helpers/exitGitRefresh';
 import {
@@ -213,15 +213,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			let synopsisData: SynopsisData | null = null;
 			let synopsisDidWork = false;
 
-			// Agent Resilience: is a retry counting down for the tab that just exited?
-			// Read AFTER clearRetryIfSettled above, so a resend that completed cleanly
-			// has already been cleared and only a genuinely pending retry reads true.
-			// A pending retry freezes the execution queue (see chooseNextQueuedItem).
-			const retryPending = !!(
+			// Agent Resilience: does a given tab have a retry counting down? Read
+			// AFTER clearRetryIfSettled above, so a resend that completed cleanly has
+			// already been cleared and only a genuinely pending retry reads true. A
+			// pending retry freezes the execution queue (see chooseNextQueuedItem),
+			// which asks about both the exiting tab and the next item's target tab.
+			const isRetryPending = (tabId: string): boolean => hasPendingRetry(actualSessionId, tabId);
+			// The same answer, precomputed for the reducer below, which re-derives the
+			// dequeue decision and must stay in step with chooseNextQueuedItem.
+			const retryPending =
 				isFromAi &&
-				tabIdFromSession &&
-				hasPendingRetry(actualSessionId, tabIdFromSession)
-			);
+				queueIsHeldByRetry(
+					getSessions().find((s) => s.id === actualSessionId),
+					tabIdFromSession,
+					isRetryPending
+				);
 
 			if (isFromAi) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
@@ -229,7 +235,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					const queueDecision = chooseNextQueuedItem(
 						currentSession,
 						tabIdFromSession,
-						retryPending
+						isRetryPending
 					);
 					if (queueDecision.action === 'dequeue' && queueDecision.item) {
 						queuedItemToProcess = {

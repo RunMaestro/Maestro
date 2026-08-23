@@ -151,6 +151,33 @@ describe('tokenExhaustionResetAt', () => {
 		);
 	});
 
+	// Claude Code's real plan-limit message puts the authoritative reset time in a
+	// NESTED container. A top-level-only scan misses it and falls back to the
+	// blind hourly poll, which is what made the retry land up to an hour late.
+	it('reads quotaLimits.resetsAt from the real Claude limit payload', () => {
+		const resetSeconds = 1787416800;
+		const e = err({
+			message: "You've hit your session limit · resets 11:40am (America/Chicago)",
+			parsedJson: {
+				error: 'rate_limit',
+				isApiErrorMessage: true,
+				quotaLimits: { status: 'rejected', resetsAt: resetSeconds, rateLimitType: 'five_hour' },
+			},
+		});
+		expect(tokenExhaustionResetAt(e, now)).toBe(resetSeconds * 1000 + RESET_TIME_BUFFER_MS);
+	});
+
+	it('prefers a nested quota reset over a generic top-level retry hint', () => {
+		// A top-level retryAfter is a hint for the REQUEST; the quota container is
+		// the actual window. Taking the request hint would retry into the wall.
+		const resetSeconds = Math.floor(now / 1000) + 7200;
+		const e = err({
+			message: 'usage limit reached',
+			parsedJson: { retryAfter: 30, quotaLimits: { resetsAt: resetSeconds } },
+		});
+		expect(tokenExhaustionResetAt(e, now)).toBe(resetSeconds * 1000 + RESET_TIME_BUFFER_MS);
+	});
+
 	it('parses the legacy "usage limit reached|<epoch>" marker', () => {
 		const resetSeconds = Math.floor(now / 1000) + 1800;
 		const e = err({ message: `Claude AI usage limit reached|${resetSeconds}` });
@@ -196,6 +223,14 @@ describe('tokenExhaustionResetAt', () => {
 			const e = err({ message: "You've hit your session limit · resets 3pm (Not/AZone)" });
 			expect(tokenExhaustionResetAt(e, noon)).toBe(noon + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS);
 		});
+	});
+
+	it('classifies the bare machine tag "rate_limit" as availability', () => {
+		// Claude Code puts exactly this in the `error` field of a 429. A
+		// whitespace-only pattern missed it, leaving a real rate limit unretryable.
+		for (const message of ['rate_limit', 'rate-limit', 'rate_limited']) {
+			expect(classifyRetryableError(err({ type: 'unknown', message }))).toBe('availability');
+		}
 	});
 
 	it('classifies the Claude CLI limit notice as token-exhaustion', () => {

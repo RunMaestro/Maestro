@@ -157,15 +157,22 @@ describe('chooseNextQueuedItem', () => {
 			};
 		}
 
+		/** Every tab is mid-outage. */
+		const allPending = () => true;
+		/** No tab has a retry counting down. */
+		const nonePending = () => false;
+
 		it('holds the queue instead of dequeuing', () => {
-			const decision = chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1', true);
+			const decision = chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1', allPending);
 			expect(decision.action).toBe('wait');
 			// The item is reported but NOT consumed - it stays queued, in order.
 			expect(decision.item?.id).toBe('q1');
 		});
 
 		it('dequeues normally once no retry is pending', () => {
-			expect(chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1', false).action).toBe('dequeue');
+			expect(chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1', nonePending).action).toBe(
+				'dequeue'
+			);
 			// Defaulting the parameter must not change existing callers.
 			expect(chooseNextQueuedItem(idleSessionWithQueue(), 'tab-1').action).toBe('dequeue');
 		});
@@ -177,7 +184,7 @@ describe('chooseNextQueuedItem', () => {
 				agentError: undefined,
 				aiTabs: [tab()],
 			};
-			expect(chooseNextQueuedItem(session, 'tab-1', true).action).toBe('wait');
+			expect(chooseNextQueuedItem(session, 'tab-1', allPending).action).toBe('wait');
 		});
 
 		it('still reports "none" for an empty queue', () => {
@@ -187,7 +194,10 @@ describe('chooseNextQueuedItem', () => {
 				agentError: undefined,
 				aiTabs: [tab()],
 			};
-			expect(chooseNextQueuedItem(session, 'tab-1', true)).toEqual({ action: 'none', item: null });
+			expect(chooseNextQueuedItem(session, 'tab-1', allPending)).toEqual({
+				action: 'none',
+				item: null,
+			});
 		});
 	});
 });
