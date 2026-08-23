@@ -53,41 +53,11 @@ export function useSnoozeScheduler(): void {
 	// prior setSessions is still in flight, which would double-notify.
 	const wokenRef = useRef<Set<string>>(new Set());
 
-	const sweep = useCallback(async () => {
+	/** Apply every due wake. Split out so the fs check can gate it without
+	 *  making the whole sweep asynchronous for snoozes that need no check. */
+	const applyWakes = useCallback((unrestorable: Set<string>) => {
 		const now = Date.now();
-		const { sessions, setSessions } = useSessionStore.getState();
-
-		// Nothing due? Bail before touching the store at all - this runs every
-		// 15s for the entire life of the app.
-		const hasDue = sessions.some((session) =>
-			getDueSnoozes(session, now).some((entry) => !wokenRef.current.has(entry.id))
-		);
-		if (!hasDue) return;
-
-		// A file can be deleted while its tab sleeps. Checking that touches the
-		// filesystem, and the reducer below has to stay synchronous, so resolve
-		// every due entry's restorability FIRST and hand the reducer a plain set.
-		// Keyed by tab id, which is unique across kinds.
-		const unrestorable = new Set<string>();
-		await Promise.all(
-			sessions.flatMap((session) =>
-				getDueSnoozes(session, now)
-					.filter((entry) => !wokenRef.current.has(entry.id))
-					.flatMap((entry) =>
-						isSnoozedGroup(entry)
-							? entry.members.map(async (member) => {
-									if (!(await isSnoozeRestorable({ ...member, ...entry } as SnoozedTabEntry))) {
-										unrestorable.add(member.tab.id);
-									}
-								})
-							: [
-									(async () => {
-										if (!(await isSnoozeRestorable(entry))) unrestorable.add(entry.tab.id);
-									})(),
-								]
-					)
-			)
-		);
+		const { setSessions } = useSessionStore.getState();
 
 		const pending: PendingWake[] = [];
 		/** Entries dropped entirely because the one thing they held is gone. */
@@ -205,17 +175,60 @@ export function useSnoozeScheduler(): void {
 		}
 	}, []);
 
+	const sweep = useCallback(() => {
+		const now = Date.now();
+		const { sessions } = useSessionStore.getState();
+
+		// Nothing due? Bail before touching the store at all - this runs every
+		// 15s for the entire life of the app.
+		const hasDue = sessions.some((session) =>
+			getDueSnoozes(session, now).some((entry) => !wokenRef.current.has(entry.id))
+		);
+		if (!hasDue) return;
+
+		// Only a FILE snooze can become unrestorable, and checking that touches the
+		// filesystem. Everything else resolves synchronously, so the common sweep -
+		// AI tabs coming back - must not be pushed onto a microtask just in case.
+		// Collect the entries that actually need a check; if there are none, wake
+		// in this tick exactly as before.
+		const fileChecks: { id: string; entry: SnoozedTabEntry }[] = [];
+		for (const session of sessions) {
+			for (const entry of getDueSnoozes(session, now)) {
+				if (wokenRef.current.has(entry.id)) continue;
+				if (isSnoozedGroup(entry)) {
+					for (const member of entry.members) {
+						if (member.type === 'file') {
+							fileChecks.push({
+								id: member.tab.id,
+								entry: { ...member, ...entry } as SnoozedTabEntry,
+							});
+						}
+					}
+				} else if (entry.type === 'file') {
+					fileChecks.push({ id: entry.tab.id, entry });
+				}
+			}
+		}
+
+		if (fileChecks.length === 0) {
+			applyWakes(new Set());
+			return;
+		}
+
+		void Promise.all(
+			fileChecks.map(async ({ id, entry }) => ((await isSnoozeRestorable(entry)) ? null : id))
+		).then((results) => applyWakes(new Set(results.filter((id): id is string => id !== null))));
+	}, [applyWakes]);
+
 	useEffect(() => {
-		// Immediate sweep catches wakes missed while the app was closed. The sweep
-		// is async now (it stats files before restoring them); nothing awaits it,
-		// and a failure inside it must not become an unhandled rejection.
-		void sweep();
-		const timer = window.setInterval(() => void sweep(), SWEEP_INTERVAL_MS);
+		// Immediate sweep catches wakes missed while the app was closed.
+		sweep();
+		const timer = window.setInterval(sweep, SWEEP_INTERVAL_MS);
 		return () => window.clearInterval(timer);
 	}, [sweep]);
 
 	// The interval stalls while the machine is asleep, so re-sweep whenever the
 	// window regains focus - otherwise a wake due overnight waits for the next
 	// tick after wake-from-sleep.
-	useEventListener('focus', () => void sweep());
+	useEventListener('focus', sweep);
 }
