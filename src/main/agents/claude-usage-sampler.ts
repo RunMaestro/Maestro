@@ -170,6 +170,14 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 			: asarModules;
 	}
 
+	// The canonical key for WHICH account this sample is about. Resolved before
+	// the spawn because the failure paths below need it too: `CLAUDE_CONFIG_DIR`
+	// can arrive via `customEnvVars` rather than `opts.configDir`, and keying off
+	// `opts.configDir` alone collapses two such accounts onto the same
+	// home-directory key - one broken account would then mute the other's reports
+	// and name the wrong directory in the breadcrumb.
+	const configDirKey = resolveConfigDirKey(childEnv);
+
 	let stdout: string;
 	try {
 		const result = await execFileAsync(process.execPath, [opts.binPath, '--status'], {
@@ -181,18 +189,18 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		});
 		stdout = result.stdout;
 	} catch (err) {
-		void reportFailure('spawn', opts, classifySpawnError(err));
+		void reportFailure('spawn', opts, configDirKey, classifySpawnError(err));
 		return null;
 	}
 
 	if (!stdout || stdout.trim().length === 0) {
-		void reportFailure('parse', opts, 'empty stdout');
+		void reportFailure('parse', opts, configDirKey, 'empty stdout');
 		return null;
 	}
 
 	const jsonLine = extractFirstJsonLine(stdout);
 	if (jsonLine === null) {
-		void reportFailure('parse', opts, 'no json object line found');
+		void reportFailure('parse', opts, configDirKey, 'no json object line found');
 		return null;
 	}
 
@@ -203,13 +211,14 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		void reportFailure(
 			'parse',
 			opts,
+			configDirKey,
 			`json parse: ${err instanceof Error ? err.message : String(err)}`
 		);
 		return null;
 	}
 
 	if (!isStatusWireEnvelope(parsed)) {
-		void reportFailure('parse', opts, 'wire shape rejected by type guard');
+		void reportFailure('parse', opts, configDirKey, 'wire shape rejected by type guard');
 		return null;
 	}
 
@@ -220,13 +229,12 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	// between samples, and a row captioned with the new account over the old
 	// account's bars would be a worse lie than the directory name it replaces.
 	// Best-effort - null just falls back to the directory name downstream.
-	const configDirKey = resolveConfigDirKey(childEnv);
 	const identity = await readClaudeAccountIdentity(configDirKey);
 
 	// The sample worked, so forget whatever was last wrong with this config dir.
 	// Without this a dir that breaks, recovers, then breaks again the same way
 	// would stay silent until the re-report interval elapsed.
-	clearFailureHistory(failureKey(opts));
+	clearFailureHistory(configDirKey);
 
 	return {
 		sampledAt: new Date().toISOString(),
@@ -344,15 +352,6 @@ const lastReportedFailure = new Map<string, { signature: string; reportedAt: num
 export const FAILURE_REREPORT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
- * The key both the memo and the Sentry payload use for a config dir. Same
- * expression in both places on purpose - a memo keyed differently from what it
- * reports would dedupe the wrong things.
- */
-function failureKey(opts: SampleUsageOptions): string {
-	return opts.configDir ?? path.join(os.homedir(), '.claude');
-}
-
-/**
  * Decide whether this failure is worth reporting, and record it either way.
  *
  * The sampler runs on a timer and keeps running after a failure, so a config
@@ -401,16 +400,16 @@ export function resetFailureReportingForTests(): void {
 async function reportFailure(
 	stage: 'spawn' | 'parse',
 	opts: SampleUsageOptions,
+	configDirKey: string,
 	reason: string
 ): Promise<void> {
-	const configDir = failureKey(opts);
-	if (!shouldReportFailure(configDir, `${stage}|${reason}`, Date.now())) {
+	if (!shouldReportFailure(configDirKey, `${stage}|${reason}`, Date.now())) {
 		return;
 	}
 	await captureMessage('maestro-p --status sample failed', 'warning', {
 		stage,
 		binPath: opts.binPath,
-		configDir,
+		configDir: configDirKey,
 		reason,
 	});
 }

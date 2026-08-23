@@ -640,7 +640,32 @@ describe('claude-usage-sampler', () => {
 			expect(captureMessageMock).toHaveBeenCalledTimes(2);
 			expect(
 				captureMessageMock.mock.calls.map((c) => (c[2] as { configDir: string }).configDir)
-			).toEqual(['/home/u/.claude-a', '/home/u/.claude-b']);
+			).toEqual([canonKey('/home/u/.claude-a'), canonKey('/home/u/.claude-b')]);
+		});
+
+		it('keys off customEnvVars.CLAUDE_CONFIG_DIR too, not just opts.configDir', async () => {
+			// `CLAUDE_CONFIG_DIR` can arrive through customEnvVars instead of the
+			// explicit option, and the sampler honors it for the snapshot key. A memo
+			// keyed on opts.configDir alone would collapse both of these onto
+			// ~/.claude: the first account would mute the second, and both
+			// breadcrumbs would name the wrong directory.
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				cwd: '/tmp',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-a' },
+			});
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				cwd: '/tmp',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-b' },
+			});
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(
+				captureMessageMock.mock.calls.map((c) => (c[2] as { configDir: string }).configDir)
+			).toEqual([canonKey('/home/u/.claude-env-a'), canonKey('/home/u/.claude-env-b')]);
 		});
 
 		it('re-reports an unchanged failure once the interval elapses', async () => {
@@ -704,7 +729,7 @@ describe('claude-usage-sampler', () => {
 			primeSuccess('garbage\n');
 			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
-			expect(extras.configDir).toBe(path.join(os.homedir(), '.claude'));
+			expect(extras.configDir).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
 	});
 });
