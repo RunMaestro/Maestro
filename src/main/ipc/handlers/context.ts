@@ -29,6 +29,8 @@ import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
 import { captureException } from '../../utils/sentry';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -152,6 +154,13 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					customPath?: string;
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
+					/**
+					 * Pin this turn to the bottom of both ladders. Summarization sets it;
+					 * grooming and transfer must not, because their output becomes the
+					 * context every later turn reads. The handler cannot tell the three
+					 * apart - it only receives a prompt string - so the caller decides.
+					 */
+					cheapTurn?: boolean;
 				}
 			): Promise<string> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
@@ -160,6 +169,10 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				// Look up agent-level config values for override resolution
 				const allConfigs = agentConfigsStore.get('configs', {});
 				const agentConfigValues = allConfigs[agentType] || {};
+
+				// Only summarization opts in (see `cheapTurn` above). Left undefined
+				// for grooming and transfer, which keep the agent's configured model.
+				const cheapTurn = options?.cheapTurn ? cheapTurnSettings(agentType as ToolType) : undefined;
 
 				// Use the shared groomContext utility
 				const result = await groomContext(
@@ -178,6 +191,11 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						sessionCustomPath: options?.customPath,
 						sessionCustomArgs: options?.customArgs,
 						sessionCustomEnvVars: options?.customEnvVars,
+						// Undefined unless the caller asked for a cheap turn, and
+						// undefined means "inherit the agent's own value" all the way
+						// down - so grooming and transfer are untouched by this.
+						sessionCustomModel: cheapTurn?.model,
+						sessionCustomEffort: cheapTurn?.effort,
 						agentConfigValues,
 					},
 					processManager,

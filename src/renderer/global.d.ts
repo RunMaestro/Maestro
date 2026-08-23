@@ -194,6 +194,11 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				// Run this turn at the bottom of the model/effort ladders. Set it for
+				// summarization, whose output a human reads once. Do NOT set it for
+				// grooming or transfer - their output becomes the context every later
+				// turn reads, so a cheap compaction compounds silently.
+				cheapTurn?: boolean;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions

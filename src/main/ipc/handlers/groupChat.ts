@@ -79,6 +79,8 @@ import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { getSessionsStore, getSettingsStore } from '../../stores';
 import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 
 const LOG_CONTEXT = '[GroupChat]';
 
@@ -808,6 +810,8 @@ Respond with ONLY the summary text, no additional commentary.`;
 				// local machine, where that session does not exist (issue #1416).
 				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participantName);
 
+				const cheapSummary = cheapTurnSettings(participant.agentId as ToolType);
+
 				// Use the shared groomContext utility to get the summary
 				// This spawns a batch process, collects the response, and handles cleanup
 				let summaryResponse = '';
@@ -820,6 +824,14 @@ Respond with ONLY the summary text, no additional commentary.`;
 							agentSessionId: participant.agentSessionId, // Resume existing session for context
 							readOnlyMode: true, // Summary is read-only
 							timeoutMs: 60000, // 60 second timeout for summary
+							// Pinned to the bottom of both ladders, same as a history
+							// synopsis. Safe because this is a LEAF turn: it resumes the
+							// participant's finished session and the caller keeps only
+							// `response` and `durationMs`, discarding any session id - so
+							// the cheap model cannot follow the conversation forward into
+							// the participant's next real turn.
+							sessionCustomModel: cheapSummary.model,
+							sessionCustomEffort: cheapSummary.effort,
 							sessionSshRemoteConfig: participantSshRemoteConfig,
 							sshStore: participantSshRemoteConfig?.enabled
 								? createSshRemoteStoreAdapter(getSettingsStore())
