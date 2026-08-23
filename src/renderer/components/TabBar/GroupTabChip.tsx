@@ -1,6 +1,14 @@
 import React, { useCallback, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronsLeft, ChevronsRight, LayoutGrid, Pencil, Smile, Ungroup } from 'lucide-react';
+import {
+	ChevronsLeft,
+	ChevronsRight,
+	Clock,
+	LayoutGrid,
+	Pencil,
+	Smile,
+	Ungroup,
+} from 'lucide-react';
 import type { TabGroup, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
@@ -17,6 +25,8 @@ export interface GroupTabChipProps {
 	onSelect: (groupId: string) => void;
 	/** Commit a new name for the group (raw input; upstream trims + auto-name fallback). */
 	onRename?: (groupId: string, name: string) => void;
+	/** Park the whole group until later. Omitted where snooze does not apply. */
+	onSnooze?: (groupId: string) => void;
 	/** Set the group's chip emoji (empty string clears it back to the grid glyph). */
 	onSetEmoji?: (groupId: string, emoji: string) => void;
 	/** Break the group apart into standalone tabs (gated by this chip's confirm dialog). */
@@ -55,6 +65,7 @@ export const GroupTabChip = memo(function GroupTabChip({
 	theme,
 	onSelect,
 	onRename,
+	onSnooze,
 	onSetEmoji,
 	onBreakApart,
 	onDragStart,
@@ -163,6 +174,15 @@ export const GroupTabChip = memo(function GroupTabChip({
 			requestBreakApart();
 		},
 		[requestBreakApart]
+	);
+
+	const handleSnoozeClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onSnooze?.(group.id);
+			setOverlayOpen(false);
+		},
+		[onSnooze, group.id, setOverlayOpen]
 	);
 
 	const handleMoveToFirstClick = useCallback(
@@ -277,7 +297,7 @@ export const GroupTabChip = memo(function GroupTabChip({
 			{/* Hover overlay menu (Rename group / Change icon / Break apart) */}
 			{overlayOpen &&
 				overlayPosition &&
-				(onRename || onSetEmoji || onBreakApart) &&
+				(onRename || onSetEmoji || onBreakApart || onSnooze) &&
 				createPortal(
 					<div
 						ref={setOverlayRef}
@@ -328,6 +348,16 @@ export const GroupTabChip = memo(function GroupTabChip({
 									>
 										<Smile className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Change icon
+									</button>
+								)}
+								{onSnooze && (
+									<button
+										onClick={handleSnoozeClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Snooze group
 									</button>
 								)}
 								{onBreakApart && (

@@ -20,6 +20,9 @@ import { notifyToast } from '../../stores/notificationStore';
 import { useEventListener } from '../utils/useEventListener';
 import {
 	wakeSnoozedTab,
+	wakeSnoozedTabGroup,
+	isSnoozeRestorable,
+	isSnoozedGroup,
 	getDueSnoozes,
 	getSnoozedTabLabel,
 	buildSnoozeHistoryRecord,
@@ -50,7 +53,7 @@ export function useSnoozeScheduler(): void {
 	// prior setSessions is still in flight, which would double-notify.
 	const wokenRef = useRef<Set<string>>(new Set());
 
-	const sweep = useCallback(() => {
+	const sweep = useCallback(async () => {
 		const now = Date.now();
 		const { sessions, setSessions } = useSessionStore.getState();
 
@@ -61,7 +64,34 @@ export function useSnoozeScheduler(): void {
 		);
 		if (!hasDue) return;
 
+		// A file can be deleted while its tab sleeps. Checking that touches the
+		// filesystem, and the reducer below has to stay synchronous, so resolve
+		// every due entry's restorability FIRST and hand the reducer a plain set.
+		// Keyed by tab id, which is unique across kinds.
+		const unrestorable = new Set<string>();
+		await Promise.all(
+			sessions.flatMap((session) =>
+				getDueSnoozes(session, now)
+					.filter((entry) => !wokenRef.current.has(entry.id))
+					.flatMap((entry) =>
+						isSnoozedGroup(entry)
+							? entry.members.map(async (member) => {
+									if (!(await isSnoozeRestorable({ ...member, ...entry } as SnoozedTabEntry))) {
+										unrestorable.add(member.tab.id);
+									}
+								})
+							: [
+									(async () => {
+										if (!(await isSnoozeRestorable(entry))) unrestorable.add(entry.tab.id);
+									})(),
+								]
+					)
+			)
+		);
+
 		const pending: PendingWake[] = [];
+		/** Entries dropped entirely because the one thing they held is gone. */
+		const dropped: PendingWake[] = [];
 
 		setSessions((prev: Session[]) =>
 			prev.map((session) => {
@@ -73,19 +103,49 @@ export function useSnoozeScheduler(): void {
 				let next = session;
 				for (const entry of due) {
 					wokenRef.current.add(entry.id);
-					const result = wakeSnoozedTab(next, entry.id);
-					if (!result) continue;
-					next = result.session;
-					pending.push({
+					const common = {
 						sessionId: session.id,
 						sessionName: session.name,
-						tabId: result.tabId,
 						label: getSnoozedTabLabel(entry),
 						note: entry.note,
 						wakeAt: entry.wakeAt,
 						session,
 						entry,
-					});
+					};
+
+					// A group rebuilds a layout rather than restoring one tab, so it
+					// takes the group entry point. Panes whose file has gone are
+					// dropped and the split rebalances around the survivors.
+					if (isSnoozedGroup(entry)) {
+						const result = wakeSnoozedTabGroup(
+							next,
+							entry.id,
+							(member) => !unrestorable.has(member.tab.id)
+						);
+						if (!result) continue;
+						next = result.session;
+						(result.droppedMembers.length === entry.members.length ? dropped : pending).push({
+							...common,
+							tabId: result.groupId,
+						});
+						continue;
+					}
+
+					// A single tab whose file is gone is not restored at all: a tab
+					// pointing at nothing is worse than a notification saying so.
+					if (!isSnoozedGroup(entry) && unrestorable.has(entry.tab.id)) {
+						next = {
+							...next,
+							snoozedTabs: (next.snoozedTabs || []).filter((s) => s.id !== entry.id),
+						};
+						dropped.push({ ...common, tabId: entry.tab.id });
+						continue;
+					}
+
+					const result = wakeSnoozedTab(next, entry.id);
+					if (!result) continue;
+					next = result.session;
+					pending.push({ ...common, tabId: result.tabId });
 				}
 				return next;
 			})
@@ -124,17 +184,38 @@ export function useSnoozeScheduler(): void {
 				clickAction: { kind: 'jump-session', sessionId: wake.sessionId, tabId: wake.tabId },
 			});
 		}
+
+		// A snooze that came due but had nothing left to restore still has to be
+		// reported. Silently dropping it would look like the reminder never fired.
+		for (const wake of dropped) {
+			logger.info(`[snooze] dropped ${wake.tabId} in session ${wake.sessionId} - file is gone`);
+			recordSnoozeResolution(
+				buildSnoozeHistoryRecord(wake.entry, 'woke', wake.session, wake.tabId)
+			);
+			notifyToast({
+				color: 'orange',
+				title: wake.label,
+				message: wake.note
+					? `${wake.note} (the file is no longer there, so nothing was reopened)`
+					: 'This snooze came due, but the file is no longer there.',
+				project: wake.sessionName,
+				dismissible: true,
+				sessionId: wake.sessionId,
+			});
+		}
 	}, []);
 
 	useEffect(() => {
-		// Immediate sweep catches wakes missed while the app was closed.
-		sweep();
-		const timer = window.setInterval(sweep, SWEEP_INTERVAL_MS);
+		// Immediate sweep catches wakes missed while the app was closed. The sweep
+		// is async now (it stats files before restoring them); nothing awaits it,
+		// and a failure inside it must not become an unhandled rejection.
+		void sweep();
+		const timer = window.setInterval(() => void sweep(), SWEEP_INTERVAL_MS);
 		return () => window.clearInterval(timer);
 	}, [sweep]);
 
 	// The interval stalls while the machine is asleep, so re-sweep whenever the
 	// window regains focus - otherwise a wake due overnight waits for the next
 	// tick after wake-from-sleep.
-	useEventListener('focus', sweep);
+	useEventListener('focus', () => void sweep());
 }

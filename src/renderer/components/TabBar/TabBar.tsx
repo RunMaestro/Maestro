@@ -885,6 +885,9 @@ function TabBarInner({
 										onRename={onGroupRename}
 										onSetEmoji={onGroupSetEmoji}
 										onBreakApart={onGroupBreakApart}
+										// Same handler the tab items use: the modal it opens resolves the
+										// id's kind for itself, so a group needs no separate entry point.
+										onSnooze={onSnooze || undefined}
 										onDragStart={handleDragStart}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}
