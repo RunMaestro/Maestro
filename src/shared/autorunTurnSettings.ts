@@ -68,11 +68,14 @@ export function resolveTurnSettings(
 		);
 	}
 
-	if (hint?.tier) {
+	// `'default'` reaches here as an explicit "use the agent's value", which is
+	// what `model` already holds - so it is skipped exactly like an absent axis.
+	// The two only differ when scopes merge, upstream of this.
+	if (hint?.tier && hint.tier !== 'default') {
 		const tierModel = resolveTierModel(toolType, hint.tier);
 		if (tierModel) {
 			model = tierModel;
-			notes.push(`tier="${hint.tier}" -> model ${tierModel}`);
+			notes.push(`tier="${hint.tier}" (${hint.scopes?.tier ?? 'document'}) -> model ${tierModel}`);
 		} else {
 			warnings.push(
 				supportsTierSelection(toolType)
@@ -82,11 +85,13 @@ export function resolveTurnSettings(
 		}
 	}
 
-	if (hint?.effort) {
+	if (hint?.effort && hint.effort !== 'default') {
 		const effortValue = resolveEffortLevel(toolType, hint.effort);
 		if (effortValue) {
 			effort = effortValue;
-			notes.push(`effort="${hint.effort}" -> ${effortValue}`);
+			notes.push(
+				`effort="${hint.effort}" (${hint.scopes?.effort ?? 'document'}) -> ${effortValue}`
+			);
 		} else {
 			warnings.push(
 				supportsEffortSelection(toolType)

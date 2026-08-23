@@ -210,47 +210,51 @@ Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the *
 
 Paste images directly into your documents. Images are saved to an `images/` subfolder with relative paths for portability.
 
-## Model Tier and Effort per Phase
+## Model Tier and Effort
 
-Most playbooks change gears partway through. Surveying an existing codebase is cheap, mechanical work; designing the migration that follows is not. Rather than running the whole document at one setting, a marker sets the model tier and effort for the tasks below it:
+Most playbooks change gears partway through. Surveying an existing codebase is cheap, mechanical work; designing the migration that follows is not. Rather than running everything at one setting, a marker sets the model tier and effort level:
 
 ```markdown
-## Research
-
 <!-- MAESTRO:MODEL tier="low" effort="low" -->
 
 - [ ] Catalogue every call site of the auth middleware
 - [ ] Summarize the current request flow
-
-## Design
-
-<!-- MAESTRO:MODEL tier="high" effort="high" -->
-
-- [ ] Write the migration plan
-
-## Mechanical cleanup
-
-<!-- MAESTRO:MODEL tier="low" effort="low" -->
-
-- [ ] Update the import paths
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
 ```
 
-Both attributes take `low`, `medium`, or `high`. They are optional and independent, so you can set the tier, the effort, or both:
+That document runs three tasks cheaply, one expensively, and the fourth back at the cheap setting. Both attributes take `low`, `medium`, or `high`, and both are optional:
 
 | Attribute | Controls                   | Values                             |
 | --------- | -------------------------- | ---------------------------------- |
 | `tier`    | Which model runs the task  | `low`, `medium`, `high`, `default` |
 | `effort`  | How hard that model thinks | `low`, `medium`, `high`, `default` |
 
-`default` returns that axis to the agent's own configuration, which is how a document steps back down after a section that needed the expensive setting.
+### Placement is the scope
 
-### How a marker is applied
+| Where you put the marker  | What it covers                                        |
+| ------------------------- | ----------------------------------------------------- |
+| On its own line           | Everything below it, until the next standalone marker |
+| At the end of a task line | That one task; the next task reverts                  |
 
-The **nearest marker above the next unfinished task** wins, and it is re-read before every task. Three consequences worth knowing:
+So there are three useful scopes from two placements:
 
-- A **checked task does not clear a marker.** A setting applies to everything below it until the document says otherwise, so one marker per section covers that whole section even as tasks complete.
-- **Editing the document mid-run works.** Change a marker while the playbook is running and the next task picks it up. There is no cached state to reset.
-- **Markers inside fenced code blocks are ignored**, so a playbook can document this syntax without changing its own behavior.
+- **Whole document** - one standalone marker above the first task.
+- **A phase** - a standalone marker under each section heading. Each one takes over where the previous left off.
+- **A single task** - an inline marker on that task's line. When the task finishes, whatever was in effect before takes back over.
+
+Markers render as nothing in the Auto Run panel (they are HTML comments), so a task with an inline hint still reads as plain task text.
+
+### The two layer per axis
+
+An inline marker only overrides the axes it names. Given a document-wide `tier="low" effort="high"`, a task marked `<!-- MAESTRO:MODEL tier="high" -->` runs at high tier **and** high effort - it inherits the effort rather than resetting it. Use `default` to push one axis explicitly back to the agent's own configuration:
+
+```markdown
+<!-- MAESTRO:MODEL tier="high" effort="high" -->
+
+- [ ] Design the caching layer
+- [ ] Rename the config keys <!-- MAESTRO:MODEL tier="default" effort="default" -->
+```
 
 ### `low`, `medium`, and `high` are positions, not literal values
 
@@ -262,7 +266,7 @@ The three levels mean the floor, the middle, and the ceiling of whatever that pr
 | `effort="medium"` | `high`            | `medium`    |
 | `effort="high"`   | `max`             | `xhigh`     |
 
-Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever that happens to be called, and keeps working when a provider adds a rung.
+Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
 
 ### Provider support
 
@@ -276,7 +280,13 @@ Write the Maestro level, not the provider's word. A playbook that says `effort="
 
 Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
 
-If you omit markers entirely, every task uses the agent's own configured model and effort. That is the right default for most playbooks; reach for markers when a document genuinely changes gears.
+### When to reach for it
+
+Use a hint when a task's cost and its difficulty are genuinely mismatched. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs **less** than running the whole playbook at the default.
+
+Do not decorate every task. A document with a marker on all ten says nothing about which two actually matter, and omitting markers entirely is the right default - every task then uses the agent's own configured model and effort.
+
+Hints are re-read before every task, so editing a marker while a playbook is running takes effect on the next task. There is no cached state to reset. Markers inside fenced code blocks are ignored, so a playbook can document this syntax without changing its own behavior.
 
 ### Synopses always run cheap
 
