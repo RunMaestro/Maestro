@@ -10,6 +10,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
+import { shortcutKeysEqual } from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import type { Theme, Shortcut } from '../../../types';
 
@@ -77,9 +78,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	const totalShortcuts = allShortcuts.length;
 	const filteredShortcuts = allShortcuts.filter((sc) => {
 		if (filterShortcutKeys.length > 0) {
-			const sortedFilter = [...filterShortcutKeys].sort().join('+');
-			const sortedKeys = [...sc.keys].sort().join('+');
-			return sortedKeys === sortedFilter;
+			return shortcutKeysEqual(sc.keys, filterShortcutKeys);
 		}
 		return sc.label.toLowerCase().includes(shortcutsFilter.toLowerCase());
 	});
