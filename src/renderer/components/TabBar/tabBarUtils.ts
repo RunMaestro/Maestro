@@ -1,7 +1,34 @@
+import type { LucideIcon } from 'lucide-react';
+import { MessageSquare, FileText, Globe, TerminalSquare } from 'lucide-react';
 import type { Theme, UnifiedTab } from '../../types';
 
 /** The kind of content a tab holds - matches the UnifiedTab discriminant. */
 export type TabKind = UnifiedTab['type'];
+
+/**
+ * Signature icon for each tab kind, the counterpart to
+ * {@link getTabKindColor}.
+ *
+ * Any surface that lists tabs of MIXED kind - the snoozed-tab list, the closed
+ * tab history, a group's member list - reads from this one map. Picking icons
+ * per surface is how two lists end up showing a different glyph for the same
+ * thing, and the tab strip itself is not a usable source: each tab component
+ * imports its own icons directly and layers state on top (a busy AI tab shows a
+ * spinner, a failed one an alert), which is right for the strip and wrong for a
+ * list of parked tabs.
+ */
+export function getTabKindIcon(kind: TabKind): LucideIcon {
+	switch (kind) {
+		case 'ai':
+			return MessageSquare;
+		case 'file':
+			return FileText;
+		case 'browser':
+			return Globe;
+		case 'terminal':
+			return TerminalSquare;
+	}
+}
 
 /**
  * Signature color for each tab kind. AI/file/terminal track the active theme

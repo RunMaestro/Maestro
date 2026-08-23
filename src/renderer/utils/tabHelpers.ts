@@ -1700,6 +1700,44 @@ export function fileTabFocusFields(tabId: string): Partial<Session> {
 	};
 }
 
+/**
+ * Session patch that lands on a specific browser tab.
+ *
+ * Same contract as {@link fileTabFocusFields}: clear every selection that
+ * outranks a browser tab in the render precedence, or the previous view stays
+ * on screen and the focus silently does nothing. A browser tab renders in AI
+ * mode, so `inputMode` goes to `'ai'` and the terminal selection is cleared.
+ *
+ * @param tabId - The browser tab to activate.
+ */
+export function browserTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeBrowserTabId: tabId,
+		activeFileTabId: null,
+		activeTerminalTabId: null,
+		inputMode: 'ai',
+	};
+}
+
+/**
+ * Session patch that lands on a specific terminal tab.
+ *
+ * The one focus helper that sets `inputMode: 'terminal'` - a terminal tab is
+ * only rendered in terminal mode, so leaving the mode alone would activate a
+ * tab the user cannot see. File and browser selections are cleared for the same
+ * precedence reason as the other helpers.
+ *
+ * @param tabId - The terminal tab to activate.
+ */
+export function terminalTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeTerminalTabId: tabId,
+		activeFileTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'terminal',
+	};
+}
+
 export interface SetActiveTabResult {
 	tab: AITab; // The newly active tab
 	session: Session; // Updated session with activeTabId changed

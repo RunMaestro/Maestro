@@ -107,6 +107,7 @@ describe('buildTabStats', () => {
 			snoozedTabs: [
 				{
 					id: 'snooze-1',
+					type: 'ai' as const,
 					tab: createMockAITab({ id: 'sleepy', name: 'Snoozed one' }),
 					unifiedIndex: 0,
 					snoozedAt: NOW,
@@ -450,6 +451,7 @@ describe('TabBreakdown', () => {
 			snoozedTabs: [
 				{
 					id: 'snooze-1',
+					type: 'ai' as const,
 					tab: createMockAITab({ id: 'sleepy', name: 'Sleepy' }),
 					unifiedIndex: 0,
 					snoozedAt: NOW,

@@ -175,20 +175,27 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	// survive a quit), so they get the same log budget and runtime-state reset as
 	// live tabs - otherwise a pile of snoozes reintroduces the session-file bloat
 	// the aiTabs truncation above exists to prevent.
-	const cleanedSnoozedTabs = (session.snoozedTabs || []).map((entry) => ({
-		...entry,
-		tab: {
-			...entry.tab,
-			logs:
-				entry.tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-					? entry.tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
-					: entry.tab.logs,
-			state: 'idle' as const,
-			thinkingStartTime: undefined,
-			agentError: undefined,
-			wizardState: undefined,
-		},
-	}));
+	// Only an AI snooze carries a transcript to trim or live state to reset; a
+	// snoozed file, browser, or terminal tab is already small and inert, so it
+	// persists verbatim.
+	const cleanedSnoozedTabs = (session.snoozedTabs || []).map((entry) =>
+		entry.type !== 'ai'
+			? entry
+			: {
+					...entry,
+					tab: {
+						...entry.tab,
+						logs:
+							entry.tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
+								? entry.tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
+								: entry.tab.logs,
+						state: 'idle' as const,
+						thinkingStartTime: undefined,
+						agentError: undefined,
+						wizardState: undefined,
+					},
+				}
+	);
 
 	return {
 		...sessionWithoutRuntimeFields,
