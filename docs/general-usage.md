@@ -777,13 +777,28 @@ You can always rename tabs manually:
 
 ### Changing a Tab's Model and Effort
 
-Every AI tab can run a different model and a different reasoning effort from the rest of the agent. The pills under the composer set both with the mouse; `Opt+Cmd+.` / `Alt+Ctrl+.` does it without one.
+Every AI tab can run a different model and a different reasoning effort from the rest of the agent. The pills under the composer set both with the mouse; `Opt+Cmd+.` / `Alt+Ctrl+.` opens a console that sets both without one.
 
-The dialog puts the two knobs on two axes: **Up/Down** walks the model list, **Left/Right** walks the effort scale, **Enter** applies both, and **Escape** leaves the tab exactly as it was. Nothing is written until you press Enter, so browsing the list costs nothing.
+The console puts the two knobs on two axes, so the direction you press matches the axis you see:
 
-- Which models and effort levels appear depends on the agent. A multi-provider CLI (Copilot-CLI, for example) lists its catalog grouped by vendor, so Claude, OpenAI, Gemini and the rest each get their own short section.
+| Key              | Does                                                           |
+| ---------------- | -------------------------------------------------------------- |
+| `Up` / `Down`    | Turn the model wheel. It wraps, so you can run off either end. |
+| `Left` / `Right` | Move along the effort scale. It wraps too.                     |
+| Any letter       | Jump the wheel to a model whose name starts with it.           |
+| `Enter`          | Apply both and close.                                          |
+| `Escape`         | Close and leave the tab exactly as it was.                     |
+
+Nothing is written until you press Enter, so browsing costs nothing.
+
+**Typing to find a model.** On an agent with a long catalog, press the first letter or two instead of arrowing: `f` jumps to `fable`, `so` to `sonnet`. Pressing the same letter again walks to the next model that starts with it, so `o`, `o` steps from `opus` to `opus[1m]`. Type `d` to reach `(default)`.
+
+**Without a keyboard.** Click a model row or an effort stop to select it, and double-click to apply and close. Clicking outside the console cancels, the same as Escape.
+
+- Which models and effort levels appear depends on the agent. The caption under the wheel names the vendor of whichever model you are on, which is what tells Claude, OpenAI and Gemini entries apart on a multi-provider CLI like Copilot-CLI.
 - `(default)` clears the tab's override and falls back to the agent's own setting.
 - Not every model honors effort. Agents that expose the knob pass it through, and a model that has no reasoning budget ignores it.
+- The effort bars under the stops rise with the level, so you can read where you are on the scale without reading the labels. `(default)` sits apart from the scale and has no bar - it means "let the agent decide" rather than naming a level.
 
 You can also reach it from Quick Actions (`Cmd+K` / `Ctrl+K`) as **Change Tabs Model and Effort**. It applies to AI tabs only.
 

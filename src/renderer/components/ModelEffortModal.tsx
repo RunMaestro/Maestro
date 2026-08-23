@@ -23,10 +23,18 @@
  *     its new slot.
  *   - Effort is drawn as a level meter because it IS an ordered scale - bars
  *     fill up to the selection. Model is a set with no order, so it gets none.
- *   - The shortcut legend is the button row. Each hint is a real keycap that
- *     sinks when you press the matching key, and Apply / Cancel are clickable,
- *     which is what keeps a pointer-only user (remote desktop, tablet) able to
- *     leave. See UI-PATTERNS.md on graphical exits.
+ *   - There is no shortcut legend. The two axes are self-describing (a vertical
+ *     wheel and a horizontal scale), and a caption naming the keys was the only
+ *     thing on screen that had to be read rather than seen.
+ *
+ * Typing a letter jumps the wheel to the matching model, which is what makes a
+ * thirty-model catalog usable without arrowing through it. Repeating the same
+ * letter walks every model that starts with it.
+ *
+ * Pointer-only users (remote desktop, tablet) are served without a button row:
+ * clicking the scrim cancels, and double-clicking a model row or an effort stop
+ * applies. Both are the same handlers Escape and Enter run, so the two input
+ * methods cannot drift.
  *
  * Options and the tab > session > agent-default ladder come from the same hook
  * and resolver the composer pills use, so the two surfaces can't disagree about
@@ -40,7 +48,6 @@ import { createPortal } from 'react-dom';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { KeycapHint } from './ui';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import {
@@ -89,10 +96,58 @@ const WHEEL_DEPTH = [
 /** Trackpad delta to absorb before the wheel advances one row. */
 const WHEEL_STEP_DELTA = 24;
 
-/** How long a keycap stays sunk after its key fires, in ms. */
-const KEY_FLASH_MS = 140;
+/**
+ * How long a typed prefix stays live before the next letter starts a new
+ * search. Long enough to type 'son' without rushing, short enough that a
+ * letter pressed after a pause means "jump to that letter" rather than
+ * extending whatever was typed a minute ago.
+ */
+const TYPEAHEAD_RESET_MS = 900;
 
-type AxisKey = 'up' | 'down' | 'left' | 'right' | 'enter' | 'escape';
+/**
+ * True for a plain printable character - the kind that should jump the wheel
+ * rather than reach the app. Modified keys are excluded on purpose: Cmd+W has
+ * to keep closing the window, and swallowing it here would trap the user
+ * inside the console.
+ */
+function isTypeaheadKey(e: React.KeyboardEvent): boolean {
+	return e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && e.key !== ' ';
+}
+
+/**
+ * The text a model is matched against. '' is the inherit-the-default row,
+ * which the wheel labels '(default)' - matching it on 'default' means typing
+ * 'd' reaches it, while the parentheses stay a display detail.
+ */
+function typeaheadText(model: string): string {
+	return (model || 'default').toLowerCase();
+}
+
+/**
+ * Index of the first model matching `query`, searching forward from `from`
+ * and wrapping.
+ *
+ * The search starts at `from` rather than at 0 so that repeating a letter
+ * walks through every model beginning with it instead of pinning to the first
+ * one - which is what makes 'o', 'o' step opus -> opus[1m] on a catalog where
+ * several ids share an initial. Falls back to a substring match so a
+ * provider-qualified id ('github-copilot/claude-sonnet-4.5') is still
+ * reachable by typing the model's own name.
+ */
+function findTypeaheadMatch(models: string[], query: string, from: number): number {
+	if (!query) return -1;
+	const count = models.length;
+	for (const test of [
+		(text: string) => text.startsWith(query),
+		(text: string) => text.includes(query),
+	]) {
+		for (let step = 0; step < count; step++) {
+			const index = (from + step) % count;
+			if (test(typeaheadText(models[index]))) return index;
+		}
+	}
+	return -1;
+}
 
 export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProps) {
 	const activeSession = useSessionStore(selectActiveSession);
@@ -135,17 +190,35 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 	useFocusOnMount(containerRef, 0);
 	useModalLayer(MODAL_PRIORITIES.MODEL_EFFORT, 'Change model and effort', onClose);
 
-	// Which keycap is currently sunk. Set when a key fires and released on a
-	// timer, because a key that repeats never sends keyup between repeats and
-	// the cap would stay stuck down while the user holds an arrow.
-	const [flashedKey, setFlashedKey] = useState<AxisKey | null>(null);
-	const flashTimerRef = useRef<ReturnType<typeof setTimeout>>();
-	const flashKey = useCallback((key: AxisKey) => {
-		setFlashedKey(key);
-		clearTimeout(flashTimerRef.current);
-		flashTimerRef.current = setTimeout(() => setFlashedKey(null), KEY_FLASH_MS);
-	}, []);
-	useEffect(() => () => clearTimeout(flashTimerRef.current), []);
+	// Type-to-jump. Letters accumulate into a short-lived prefix so 'son' lands
+	// on sonnet, while the same letter pressed repeatedly cycles through every
+	// model starting with it. The buffer is a ref, not state: it must not
+	// re-render the wheel on its own, and the search reads it synchronously in
+	// the same keystroke that appended to it.
+	const typedRef = useRef('');
+	const typedTimerRef = useRef<ReturnType<typeof setTimeout>>();
+	useEffect(() => () => clearTimeout(typedTimerRef.current), []);
+
+	const jumpToTyped = useCallback(
+		(char: string) => {
+			if (modelOptions.length === 0) return;
+
+			const repeated = typedRef.current === char.toLowerCase();
+			typedRef.current = repeated ? char.toLowerCase() : typedRef.current + char.toLowerCase();
+			clearTimeout(typedTimerRef.current);
+			typedTimerRef.current = setTimeout(() => {
+				typedRef.current = '';
+			}, TYPEAHEAD_RESET_MS);
+
+			// Extending a prefix re-searches from the current row so the match the
+			// user is already on can win; repeating one letter starts at the NEXT
+			// row so it advances instead of matching the row it is already on.
+			const from = repeated ? modelIndex + 1 : modelIndex;
+			const match = findTypeaheadMatch(modelOptions, typedRef.current, from);
+			if (match >= 0) setPickedModel(modelOptions[match]);
+		},
+		[modelOptions, modelIndex]
+	);
 
 	const stepModel = useCallback(
 		(delta: number) => {
@@ -167,14 +240,27 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 		[effortOptions, effortIndex]
 	);
 
-	const handleConfirm = useCallback(() => {
-		const { setTabModel, setTabEffort } = useTabStore.getState();
-		setTabModel(tabId, selectedModel || undefined);
-		if (effortOptions.length > 0) {
-			setTabEffort(tabId, selectedEffort || undefined);
-		}
-		onClose();
-	}, [tabId, selectedModel, selectedEffort, effortOptions.length, onClose]);
+	/**
+	 * Commit and close.
+	 *
+	 * `overrides` exists for the double-click path. A double-click on a row the
+	 * wheel is not already on delivers click, click, dblclick, and the dblclick
+	 * handler is a closure built before those clicks were applied - so reading
+	 * the selection from state would commit whatever was selected BEFORE the
+	 * user pointed at the row they wanted. Passing the row's own value makes the
+	 * commit independent of that ordering.
+	 */
+	const handleConfirm = useCallback(
+		(overrides?: { model?: string; effort?: string }) => {
+			const { setTabModel, setTabEffort } = useTabStore.getState();
+			setTabModel(tabId, (overrides?.model ?? selectedModel) || undefined);
+			if (effortOptions.length > 0) {
+				setTabEffort(tabId, (overrides?.effort ?? selectedEffort) || undefined);
+			}
+			onClose();
+		},
+		[tabId, selectedModel, selectedEffort, effortOptions.length, onClose]
+	);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -183,27 +269,24 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				if (modelOptions.length === 0) return;
 				e.preventDefault();
-				const down = e.key === 'ArrowDown';
-				flashKey(down ? 'down' : 'up');
-				stepModel(down ? 1 : -1);
+				stepModel(e.key === 'ArrowDown' ? 1 : -1);
 			} else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
 				if (effortOptions.length === 0) return;
 				e.preventDefault();
-				const right = e.key === 'ArrowRight';
-				flashKey(right ? 'right' : 'left');
-				stepEffort(right ? 1 : -1);
+				stepEffort(e.key === 'ArrowRight' ? 1 : -1);
 			} else if (e.key === 'Enter') {
 				e.preventDefault();
 				e.stopPropagation();
-				flashKey('enter');
 				handleConfirm();
-			} else if (e.key === 'Escape') {
-				// The layer stack owns the actual close; this only echoes the press
-				// on the cap so the legend stays honest about what fired.
-				flashKey('escape');
+			} else if (isTypeaheadKey(e)) {
+				// A printable key with no command modifier is a jump, not a
+				// shortcut. Checking the modifiers matters: Cmd+W must still reach
+				// the window, and swallowing it here would trap the user.
+				e.preventDefault();
+				jumpToTyped(e.key);
 			}
 		},
-		[modelOptions.length, effortOptions.length, stepModel, stepEffort, handleConfirm, flashKey]
+		[modelOptions.length, effortOptions.length, stepModel, stepEffort, handleConfirm, jumpToTyped]
 	);
 
 	// Trackpad scrolling over the wheel. Deltas are accumulated so a light
@@ -217,10 +300,9 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				const direction = scrollAccumulatorRef.current > 0 ? 1 : -1;
 				scrollAccumulatorRef.current -= direction * WHEEL_STEP_DELTA;
 				stepModel(direction);
-				flashKey(direction > 0 ? 'down' : 'up');
 			}
 		},
-		[modelOptions.length, stepModel, flashKey]
+		[modelOptions.length, stepModel]
 	);
 
 	// The slots currently on the wheel. The radius is capped at half the catalog
@@ -277,7 +359,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				key={model || '__default__'}
 				type="button"
 				onClick={() => setPickedModel(model)}
-				onDoubleClick={handleConfirm}
+				onDoubleClick={() => handleConfirm({ model })}
 				tabIndex={-1}
 				aria-current={isSelected || undefined}
 				className="maestro-wheel-row absolute left-0 right-0 top-1/2 flex items-center justify-center gap-2 px-6 font-mono cursor-pointer"
@@ -325,7 +407,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				<button
 					type="button"
 					onClick={() => setPickedEffort(effort)}
-					onDoubleClick={handleConfirm}
+					onDoubleClick={() => handleConfirm({ effort })}
 					tabIndex={-1}
 					aria-current={isSelected || undefined}
 					className="maestro-effort-stop px-3 py-1 rounded-full text-xs cursor-pointer whitespace-nowrap"
@@ -517,60 +599,6 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 						)}
 					</>
 				)}
-
-				{/* The legend is the button row: every hint echoes its key, and the
-				    two that commit or abandon are clickable for pointer-only users. */}
-				<div
-					className="relative flex items-center gap-1 rounded-full px-2.5 py-1.5 backdrop-blur-md"
-					style={{
-						backgroundColor: `${theme.colors.bgMain}cc`,
-						border: `1px solid ${theme.colors.border}`,
-						boxShadow: '0 10px 30px rgba(0, 0, 0, 0.35)',
-					}}
-				>
-					{hasModels && (
-						<KeycapHint
-							theme={theme}
-							keys={['↑', '↓']}
-							label="Model"
-							tone="accent"
-							pressed={flashedKey === 'up' || flashedKey === 'down'}
-						/>
-					)}
-					{hasEfforts && (
-						<KeycapHint
-							theme={theme}
-							keys={['←', '→']}
-							label="Effort"
-							tone="warning"
-							pressed={flashedKey === 'left' || flashedKey === 'right'}
-						/>
-					)}
-					<span
-						aria-hidden
-						className="w-px h-4 mx-1 shrink-0"
-						style={{ backgroundColor: theme.colors.border }}
-					/>
-					<KeycapHint
-						theme={theme}
-						keys={['↵']}
-						label="Apply"
-						tone="accent"
-						pressed={flashedKey === 'enter'}
-						onClick={hasNothingToTune ? undefined : handleConfirm}
-						title="Apply model and effort (Enter)"
-						testId="model-effort-apply"
-					/>
-					<KeycapHint
-						theme={theme}
-						keys={['esc']}
-						label="Cancel"
-						pressed={flashedKey === 'escape'}
-						onClick={onClose}
-						title="Cancel (Esc)"
-						testId="model-effort-cancel"
-					/>
-				</div>
 			</div>
 		</div>,
 		document.body

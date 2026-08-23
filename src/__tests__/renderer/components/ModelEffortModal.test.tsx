@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, createEvent } from '@testing-library/react';
 import { ModelEffortModal } from '../../../renderer/components/ModelEffortModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -224,47 +224,92 @@ describe('ModelEffortModal', () => {
 		await waitFor(() => expect(screen.getByText('gpt-5')).toBeInTheDocument());
 	});
 
-	it('applies and cancels from the keycap hints, for pointer-only users', async () => {
-		// Escape and Enter are unavailable over remote desktop and on tablets, so
-		// the legend has to be the control rather than a caption describing one.
-		seedStore({ customModel: 'gpt-5', customEffort: 'high' });
-		const { onClose } = renderModal();
-		await screen.findByText('gpt-5');
-
-		fireEvent.click(screen.getByTestId('model-effort-apply'));
-		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gpt-5');
-		expect(onClose).toHaveBeenCalled();
-	});
-
-	it('cancels without writing when the cancel hint is clicked', async () => {
-		const { onClose } = renderModal();
+	it('jumps the wheel to the model matching a typed letter', async () => {
+		// The point of type-to-jump: a thirty-model catalog should not require
+		// arrowing through it.
+		renderModal();
 		await screen.findByText('claude-sonnet-4.5');
 
-		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
-		fireEvent.click(screen.getByTestId('model-effort-cancel'));
+		fireEvent.keyDown(keyTarget(), { key: 'g' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
 
-		expect(setTabModel).not.toHaveBeenCalled();
-		expect(onClose).toHaveBeenCalled();
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gpt-5');
 	});
 
-	it('sinks the matching keycap while a key is firing, then releases it', async () => {
-		vi.useFakeTimers();
-		try {
-			renderModal();
-			// findBy* needs real timers; the list is already resolved by the time
-			// the arrow fires, so pump the microtask queue instead.
-			await vi.advanceTimersByTimeAsync(0);
+	it('extends a typed prefix so a shared initial can be narrowed', async () => {
+		// 'g' alone lands on gpt-5; 'ge' has to reach past it to gemini.
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
 
-			fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
-			expect(screen.getByText('↓')).toHaveAttribute('data-pressed', 'true');
+		fireEvent.keyDown(keyTarget(), { key: 'g' });
+		fireEvent.keyDown(keyTarget(), { key: 'e' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
 
-			// A held key repeats without ever sending keyup, so the cap has to
-			// release on a timer or it stays stuck down.
-			await vi.advanceTimersByTimeAsync(200);
-			expect(screen.getByText('↓')).not.toHaveAttribute('data-pressed');
-		} finally {
-			vi.useRealTimers();
-		}
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gemini-2.5-pro');
+	});
+
+	it('walks every match when the same letter is repeated', async () => {
+		(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue([
+			'opus',
+			'opus[1m]',
+		]);
+		renderModal();
+		await screen.findByText('opus[1m]');
+
+		// First 'o' takes the first match; the second must advance rather than
+		// re-matching the row it already sits on.
+		fireEvent.keyDown(keyTarget(), { key: 'o' });
+		fireEvent.keyDown(keyTarget(), { key: 'o' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'opus[1m]');
+	});
+
+	it("reaches the '(default)' row by typing its label", async () => {
+		// The row's model id is '', so it is matched on the word the wheel shows.
+		seedStore({ customModel: 'gpt-5' });
+		renderModal();
+		await screen.findByText('gpt-5');
+
+		fireEvent.keyDown(keyTarget(), { key: 'd' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', undefined);
+	});
+
+	it('lets a modified key through instead of treating it as a jump', async () => {
+		// Swallowing Cmd+W here would stop it reaching the window and trap the
+		// user inside the console.
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		const event = createEvent.keyDown(keyTarget(), { key: 'w', metaKey: true });
+		fireEvent(keyTarget(), event);
+
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it('applies by double-clicking a model row, for pointer-only users', async () => {
+		// There is no button row, so the double-click IS the pointer path to
+		// Apply. It commits the row that was double-clicked, not whatever the
+		// wheel was on: the dblclick handler is a closure built before the two
+		// clicks that preceded it, so reading the selection from state here would
+		// commit the previous model.
+		renderModal();
+		const row = await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.doubleClick(row);
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'claude-sonnet-4.5');
+	});
+
+	it('applies by double-clicking an effort stop', async () => {
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.doubleClick(screen.getByText('high'));
+
+		expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'high');
 	});
 
 	it('closes when the scrim behind the composition is clicked', async () => {
