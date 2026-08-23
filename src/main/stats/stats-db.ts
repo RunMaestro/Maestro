@@ -38,6 +38,7 @@ import {
 	hasPendingMigrations,
 } from './migrations';
 import { insertQueryEvent, getQueryEvents, clearQueryEventCache } from './query-events';
+import { flushQueryEventsSync } from './query-events-buffer';
 import {
 	insertAutoRunSession,
 	updateAutoRunSession,
@@ -152,10 +153,24 @@ export class StatsDB {
 	}
 
 	/**
-	 * Close the database connection
+	 * Close the database connection.
+	 *
+	 * Flushes the query-event write buffer first. Buffered events are persisted
+	 * by a `before-quit` listener of their own, but listener order across modules
+	 * is not guaranteed and the quit handler re-emits `before-quit`, so that flush
+	 * could land *after* this close - writing against a dead connection, throwing,
+	 * and losing the batch (MAESTRO-ZC). Flushing here means the last events of a
+	 * session are written while the handle is unambiguously open, and the later
+	 * listener finds an empty buffer and no-ops.
+	 *
+	 * Only the lifecycle close does this. The corruption-recovery paths close
+	 * `this.db` directly, on purpose: flushing into a database we already believe
+	 * is corrupt would just turn one fault into two.
 	 */
 	close(): void {
 		if (this.db) {
+			flushQueryEventsSync();
+
 			this.db.close();
 			this.db = null;
 			this.initialized = false;

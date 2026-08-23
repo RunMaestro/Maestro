@@ -101,6 +101,28 @@ export function flushQueryEventsSync(): void {
 		return;
 	}
 
+	// The stats DB can already be closed by the time we get here. `closeStatsDB()`
+	// runs from the quit handler's cleanup, which itself executes inside a
+	// `before-quit` listener that re-enters `app.quit()`; the re-emitted
+	// `before-quit` then runs the stats module's flush listener *after* the close.
+	// better-sqlite3 answers that with `TypeError: The database connection is not
+	// open`, thrown from inside the transaction, which the catch below used to
+	// report to Sentry as a crash (MAESTRO-ZC).
+	//
+	// A closed handle during shutdown is an expected boundary, not a bug: drop the
+	// batch with a warning and let go of the dead handle so a late `enqueueQueryEvent`
+	// can't keep feeding it. `StatsDB.close()` now flushes while the connection is
+	// still open, so in practice there is nothing left to drop here.
+	if (!lastDb.open) {
+		logger.warn('Stats DB already closed - dropping buffered query events', LOG_CONTEXT, {
+			count: buffer.length,
+		});
+		buffer = [];
+		stmtCache.clear();
+		lastDb = null;
+		return;
+	}
+
 	const events = buffer;
 	buffer = [];
 
