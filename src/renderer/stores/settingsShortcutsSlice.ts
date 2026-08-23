@@ -8,6 +8,7 @@
  */
 
 import type { StateCreator } from 'zustand';
+import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import type { Shortcut } from '../types';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import type { SettingsStore } from './settingsStore';
@@ -141,14 +142,6 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 	},
 };
 
-function keysEqual(a: string[], b: string[]): boolean {
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) return false;
-	}
-	return true;
-}
-
 /**
  * Migrate shortcuts: fix macOS Alt+key special characters, apply one-time
  * default remaps, and merge with current defaults. Returns the merged shortcuts
@@ -185,7 +178,7 @@ function migrateShortcuts(
 	// for a remapped shortcut, bump them to the NEW default. Preserve custom bindings.
 	for (const [id, remap] of Object.entries(SHORTCUT_DEFAULT_REMAPS)) {
 		const current = migrated[id];
-		if (current && remap.fromKeys.some((from) => keysEqual(current.keys, from))) {
+		if (current && remap.fromKeys.some((from) => shortcutKeysEqual(current.keys, from))) {
 			migrated[id] = { ...current, keys: remap.toKeys };
 			needsMigration = true;
 		}
