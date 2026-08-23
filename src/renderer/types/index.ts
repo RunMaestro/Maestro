@@ -1063,12 +1063,50 @@ interface SnoozedTabEntryBase {
  * - `terminal` restores the tab and its position, NOT the shell. A PTY cannot
  *   be parked; it comes back as a fresh shell at the same cwd. That is the
  *   promise: the layout survives, the process does not.
+ * - `group` parks a whole tiled group. See {@link SnoozedGroupPayload}.
  */
 export type SnoozedTabEntry =
 	| ({ type: 'ai'; tab: AITab } & SnoozedTabEntryBase)
 	| ({ type: 'file'; tab: FilePreviewTab } & SnoozedTabEntryBase)
 	| ({ type: 'terminal'; tab: TerminalTab } & SnoozedTabEntryBase)
-	| ({ type: 'browser'; tab: BrowserTab } & SnoozedTabEntryBase);
+	| ({ type: 'browser'; tab: BrowserTab } & SnoozedTabEntryBase)
+	| (SnoozedGroupPayload & SnoozedTabEntryBase);
+
+/**
+ * One pane of a snoozed group - the same per-kind payload the single-tab
+ * variants carry, minus the snooze bookkeeping, which lives on the group.
+ * A group never nests, so `group` is not a member kind.
+ */
+export type SnoozedGroupMember =
+	| { type: 'ai'; tab: AITab }
+	| { type: 'file'; tab: FilePreviewTab }
+	| { type: 'terminal'; tab: TerminalTab }
+	| { type: 'browser'; tab: BrowserTab };
+
+/**
+ * A parked tiled group.
+ *
+ * `group` carries the whole {@link TabGroup} - crucially its `layout` tree and
+ * `focusedPaneId` - so the wake replays the arrangement verbatim rather than
+ * re-deriving it from a member list. Split direction, sizes and the focused
+ * pane are all inside `layout`, which is why nothing extra is stored for them.
+ *
+ * `members` holds each pane's tab, because the layout tree only references
+ * panes by `UnifiedTabRef` and those tabs are removed from the session while
+ * the group sleeps. Order is the tree's own leaf order, so a restore that has
+ * to drop a member (a file whose path is gone) can still rebuild the rest.
+ *
+ * Note the shape: this variant has `group`/`members` and NO `tab`. Anything
+ * reading `entry.tab` must narrow on `type` first - the compiler enforces it.
+ */
+export interface SnoozedGroupPayload {
+	type: 'group';
+	group: TabGroup;
+	members: SnoozedGroupMember[];
+}
+
+/** The group variant of {@link SnoozedTabEntry}, named so guards can return it. */
+export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
 export interface Session {
 	id: string;
