@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -192,6 +192,43 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 				expect(screen.getByText('Available')).toBeInTheDocument();
 			});
+		});
+
+		it('should list supported agents alphabetically, with coming-soon ones below', async () => {
+			// Detection order is arbitrary, so the rows must not inherit it. Each
+			// bucket sorts by the name the row renders, matching the wizard tile
+			// strip and the Group Chat moderator dropdown.
+			const expected = ['Antigravity CLI', 'Codex', 'Grok CLI', 'OpenCode', 'Gemini CLI'];
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'opencode', name: 'OpenCode', available: true }),
+				createAgentConfig({ id: 'gemini-cli', name: 'Gemini CLI', available: false }),
+				createAgentConfig({ id: 'grok', name: 'Grok CLI', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: true }),
+				createAgentConfig({ id: 'antigravity', name: 'Antigravity CLI', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Antigravity CLI')).toBeInTheDocument();
+			});
+
+			const names = within(screen.getByRole('listbox', { name: 'Agent provider selection' }))
+				.getAllByRole('option')
+				.map((row) => row.textContent ?? '')
+				.map((text) => expected.find((name) => text.includes(name)));
+
+			// Gemini CLI is not pickable, so it sinks to the bottom even though
+			// its name sorts ahead of Grok CLI and OpenCode.
+			expect(names).toEqual(expected);
 		});
 
 		it('should display path for available agents', async () => {

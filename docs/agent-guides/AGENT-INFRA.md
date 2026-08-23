@@ -53,7 +53,8 @@ export type AgentId = (typeof AGENT_IDS)[number];
 AGENT_DISPLAY_NAMES: Record<AgentId, string>       // Human-readable names
 BETA_AGENTS: ReadonlySet<AgentId>                  // Agents showing "(Beta)" badge
 AGENT_PICKER_META: Record<AgentId, Meta | null>    // Picker presentation, null = never offered
-PICKABLE_AGENT_IDS: readonly AgentId[]             // Picker order, derived from the record
+PICKABLE_AGENT_IDS: readonly AgentId[]             // Picker order, sorted by display name
+AGENT_AUTOSELECT_ORDER: readonly AgentId[]         // Which provider a picker defaults to
 getAgentDisplayName(agentId): string               // Get name with fallback
 isBetaAgent(agentId): boolean                      // Check beta status
 getAgentPickerMeta(agentId): Meta | null           // Description + brand color, or null
@@ -71,6 +72,12 @@ type and back-compat only). Because the record is keyed by `AgentId`, a new id
 does not compile until that decision is made. Do NOT add a fourth hand-written
 list of agent ids for a new picker; the three used to be hand-written, and Grok
 and Qwen3 Coder shipped selectable in one of them and missing from the other two.
+
+`PICKABLE_AGENT_IDS` sorts the record by display name, so all three surfaces show
+the same alphabetical list and the record's key order carries no meaning - add a
+new entry wherever it reads best. A picker that has to choose for the user reads
+`AGENT_AUTOSELECT_ORDER` and takes the first entry that is installed; do NOT
+default to `PICKABLE_AGENT_IDS[0]`, which is only ever "whatever sorts first".
 
 Registering a provider also means drawing it: a `case` in `AgentLogo`
 (`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)

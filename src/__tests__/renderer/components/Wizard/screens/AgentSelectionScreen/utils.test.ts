@@ -61,7 +61,9 @@ describe('AgentSelectionScreen utils', () => {
 		];
 
 		expect(countSelectableAgentTiles(AGENT_TILES, detected)).toBe(2);
-		expect(findFirstSelectableTileIndex(AGENT_TILES, detected)).toBe(0);
+		// The strip is alphabetical, so assert on the tile found rather than a
+		// fixed index that moves whenever a provider is added.
+		expect(AGENT_TILES[findFirstSelectableTileIndex(AGENT_TILES, detected)].id).toBe('claude-code');
 		expect(findFirstSelectableTileIndex(AGENT_TILES, [])).toBe(-1);
 	});
 

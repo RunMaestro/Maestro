@@ -87,6 +87,14 @@ three lists were hand-written and drifted: Grok and Qwen3 Coder were selectable
 in the New Agent modal for months while being absent from the wizard and
 un-pickable as a group chat moderator.
 
+**Order and default are two different things.** `PICKABLE_AGENT_IDS` sorts the
+record by display name, so all three surfaces render one alphabetical list and a
+provider sits where the user expects no matter which one they open. The record's
+key order is therefore irrelevant - put a new entry anywhere. What a picker
+auto-selects comes from `AGENT_AUTOSELECT_ORDER` instead: a preference list whose
+first installed entry wins. Defaulting to the head of the alphabetical list would
+hand a fresh Group Chat to Antigravity CLI.
+
 Note that the `supportsGroupChatModeration` capability flag is advisory - the
 moderator dropdown does not filter on it, and offers any installed provider.
 

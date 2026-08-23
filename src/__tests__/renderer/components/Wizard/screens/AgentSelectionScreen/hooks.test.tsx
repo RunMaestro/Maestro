@@ -7,6 +7,7 @@ import { useAgentDetection } from '../../../../../../renderer/components/Wizard/
 import { useAgentSelectionFocus } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useAgentSelectionFocus';
 import { useAgentSelectionKeyboard } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useAgentSelectionKeyboard';
 import { useSshRemotes } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useSshRemotes';
+import { AGENT_TILES } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentTiles';
 import { captureException } from '../../../../../../renderer/utils/sentry';
 
 vi.mock('../../../../../../renderer/utils/sentry', () => ({
@@ -45,6 +46,9 @@ function createRefs() {
 		},
 	};
 }
+
+const FIRST_TILE_ID = AGENT_TILES[0].id;
+const SECOND_TILE_ID = AGENT_TILES[1].id;
 
 describe('AgentSelectionScreen hooks', () => {
 	beforeEach(() => {
@@ -301,7 +305,7 @@ describe('AgentSelectionScreen hooks', () => {
 				}),
 			{
 				initialProps: {
-					detectedAgents: [agent({ id: 'claude-code', available: true })],
+					detectedAgents: [agent({ id: FIRST_TILE_ID, available: true })],
 					selectedAgent: null as string | null,
 				},
 			}
@@ -310,12 +314,14 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(nameInput.focus).toHaveBeenCalled();
 		expect(setIsNameFieldFocused).toHaveBeenCalledWith(true);
 
+		// Tile order is alphabetical and grows with every new provider, so drive
+		// the assertion off the strip rather than off two hard-coded ids.
 		rerender({
 			detectedAgents: [
-				agent({ id: 'claude-code', available: true }),
-				agent({ id: 'codex', available: true }),
+				agent({ id: FIRST_TILE_ID, available: true }),
+				agent({ id: SECOND_TILE_ID, available: true }),
 			],
-			selectedAgent: 'codex',
+			selectedAgent: SECOND_TILE_ID,
 		});
 
 		expect(setFocusedTileIndex).toHaveBeenCalledWith(1);
@@ -336,8 +342,8 @@ describe('AgentSelectionScreen hooks', () => {
 					isNameFieldFocused,
 					focusedTileIndex,
 					detectedAgents: [
-						agent({ id: 'claude-code', available: true }),
-						agent({ id: 'codex', available: true }),
+						agent({ id: FIRST_TILE_ID, available: true }),
+						agent({ id: SECOND_TILE_ID, available: true }),
 					],
 					nameInputRef: refs.nameInputRef,
 					tileRefs: refs.tileRefs,
@@ -359,7 +365,7 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(nameInput.focus).toHaveBeenCalled();
 
 		act(() => result.current({ key: ' ', preventDefault } as any));
-		expect(setSelectedAgent).toHaveBeenCalledWith('claude-code');
+		expect(setSelectedAgent).toHaveBeenCalledWith(FIRST_TILE_ID);
 
 		act(() => result.current({ key: 'Enter', preventDefault } as any));
 		expect(nextStep).toHaveBeenCalledTimes(1);

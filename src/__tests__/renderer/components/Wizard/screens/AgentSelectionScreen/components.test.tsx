@@ -110,11 +110,14 @@ describe('AgentSelectionScreen components', () => {
 		expect(screen.getAllByText('Beta').length).toBeGreaterThan(0);
 		expect(screen.getAllByText('Not installed').length).toBeGreaterThan(0);
 
+		// One customize action per tile, so the strip's alphabetical order decides
+		// which one belongs to Codex.
+		const codexTileIndex = AGENT_TILES.findIndex((tile) => tile.id === 'codex');
 		const customizeActions = screen.getAllByTitle('Customize agent settings');
-		fireEvent.click(customizeActions[1]);
+		fireEvent.click(customizeActions[codexTileIndex]);
 		expect(onOpenConfig).toHaveBeenCalledWith('codex');
-		expect(customizeActions[1]).toHaveAttribute('tabindex', '0');
-		fireEvent.keyDown(customizeActions[1], { key: 'Enter' });
+		expect(customizeActions[codexTileIndex]).toHaveAttribute('tabindex', '0');
+		fireEvent.keyDown(customizeActions[codexTileIndex], { key: 'Enter' });
 		expect(onOpenConfig).toHaveBeenCalledTimes(2);
 	});
 
@@ -219,7 +222,7 @@ describe('AgentSelectionScreen components', () => {
 				isTransitioning={false}
 				isDetecting
 				configuringAgent={detectedAgent('codex')}
-				configuringTile={AGENT_TILES[1]}
+				configuringTile={AGENT_TILES.find((tile) => tile.id === 'codex')}
 				detectedConfigAgent={undefined}
 				sshRemotes={[{ id: 'remote-1', name: 'Server', host: 'host' } as any]}
 				sshRemoteConfig={undefined}
