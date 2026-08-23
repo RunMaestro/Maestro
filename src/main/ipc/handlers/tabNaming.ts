@@ -28,6 +28,8 @@ import {
 	type ClaudeSpawnDecision,
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -183,12 +185,24 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 					});
 
-					// Apply config overrides from store
+					// Apply config overrides from store.
+					//
+					// Naming is pinned to the bottom of both ladders, the same way a
+					// synopsis is (see cheapTurnSettings). The whole job is turning one
+					// sentence into 2-4 words, and running it on whatever the agent is
+					// configured with means paying opus rates for a tab title on every
+					// first message. `undefined` from either resolver means the provider
+					// isn't mapped, and applyAgentConfigOverrides then falls through to
+					// the agent's own configured value - so an unmapped provider keeps
+					// exactly the behaviour it had before.
+					const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
 					const allConfigs = agentConfigsStore.get('configs', {});
 					const agentConfigValues = allConfigs[effectiveAgentType] || {};
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 						agentConfigValues,
 						readOnlyMode: true,
+						sessionCustomModel: cheapNaming.model,
+						sessionCustomEffort: cheapNaming.effort,
 					});
 					finalArgs = configResolution.args;
 

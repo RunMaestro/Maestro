@@ -208,6 +208,9 @@ export class ContextSummarizationService {
 					customPath: request.customPath,
 					customArgs: request.customArgs,
 					customEnvVars: request.customEnvVars,
+					// Summaries are read once by a human and never fed back into
+					// context, so this turn runs at the bottom of both ladders.
+					cheapTurn: true,
 				}
 			);
 			logger.info(
@@ -287,6 +290,9 @@ export class ContextSummarizationService {
 					customPath: request.customPath,
 					customArgs: request.customArgs,
 					customEnvVars: request.customEnvVars,
+					// Summaries are read once by a human and never fed back into
+					// context, so this turn runs at the bottom of both ladders.
+					cheapTurn: true,
 				}
 			);
 			chunkSummaries.push(summary);
@@ -327,6 +333,9 @@ export class ContextSummarizationService {
 					customPath: request.customPath,
 					customArgs: request.customArgs,
 					customEnvVars: request.customEnvVars,
+					// Summaries are read once by a human and never fed back into
+					// context, so this turn runs at the bottom of both ladders.
+					cheapTurn: true,
 				}
 			);
 
