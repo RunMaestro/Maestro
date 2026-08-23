@@ -59,6 +59,15 @@ export function formatMetaKeyName(): string {
 }
 
 /**
+ * Spelled-out name of the platform alt/option key, for prose in hints and
+ * tooltips. Returns 'Option' on macOS, 'Alt' on Windows/Linux. Pair it with
+ * `formatKey('Alt')` when the copy shows the symbol and the word together.
+ */
+export function formatAltKeyName(): string {
+	return isMac() ? 'Option' : 'Alt';
+}
+
+/**
  * Format the enter-to-send display text.
  * Used by input areas that toggle between Enter and Cmd+Enter to send.
  *

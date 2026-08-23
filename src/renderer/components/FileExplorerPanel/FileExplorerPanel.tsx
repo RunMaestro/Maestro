@@ -14,16 +14,17 @@ import {
 	FolderInput,
 	FolderUp,
 	AlertTriangle,
+	ExternalLink,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
-import { getOpenInLabel } from '../../utils/platformUtils';
+import { getOpenInLabel, fileManagerName } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { formatShortcutKeys, formatKey, formatAltKeyName } from '../../utils/shortcutFormatter';
 import { dragHasOsFiles } from '../../utils/osFileDrop';
 
 import type { FileExplorerPanelProps } from './types';
@@ -299,6 +300,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		dragOverFolder,
 		isExternalDrag,
 		internalDragActive,
+		showRootReceptacle,
 		moveConflict,
 		isMoving,
 		handleFolderDrop,
@@ -372,6 +374,33 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		sshRemoteId,
 	});
 
+	// ── Drag-out hint ─────────────────────────────────────────────────────────
+	// True once the user presses Option/Alt with an in-tree drag already in
+	// flight. The OS hand-off has to be claimed in `dragstart` (Electron's
+	// startDrag cancels the HTML5 drag, so the choice is made before anyone knows
+	// where the drop lands), which means pressing the key now does nothing. Rather
+	// than leave the user holding a dead key, the hint says so and tells them how
+	// to recover. Read from `dragover` because a keydown during a drag doesn't
+	// reach us - the drag session swallows key events, but every dragover carries
+	// the live modifier state.
+	const [altPressedMidDrag, setAltPressedMidDrag] = useState(false);
+	const handleDragOverCapture = useCallback(
+		(e: React.DragEvent) => {
+			// Capture phase: row and folder handlers stopPropagation, so a bubbling
+			// listener would never see a drag over the tree itself.
+			if (!internalDragActive) return;
+			setAltPressedMidDrag(e.altKey);
+		},
+		[internalDragActive]
+	);
+	const handleRowDragEnd = useCallback(() => {
+		setAltPressedMidDrag(false);
+		handleInternalDragEnd();
+	}, [handleInternalDragEnd]);
+
+	const altKeySymbol = formatKey('Alt');
+	const altKeyName = formatAltKeyName();
+
 	// ── Internal drag bubble suppression ──────────────────────────────────────
 	// Swallow drag-enter/leave that propagate to the app-level overlay handler
 	// while a Files-panel drag is moving WITHIN the panel itself.
@@ -428,6 +457,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			className="flex flex-col h-full relative"
 			onDragEnter={handleRootDragEnter}
 			onDragOver={handleRootDragOver}
+			onDragOverCapture={handleDragOverCapture}
 			onDragLeave={handleRootDragLeave}
 			onDrop={handleRootDrop}
 			style={
@@ -809,7 +839,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											handleFolderDragLeave={handleFolderDragLeave}
 											handleFolderDrop={handleFolderDrop}
 											onInternalDragStart={handleInternalDragStart}
-											onInternalDragEnd={handleInternalDragEnd}
+											onInternalDragEnd={handleRowDragEnd}
 											onOsDragOut={handleOsDragStart}
 											toggleFolder={toggleFolder}
 											toggleFolderRecursive={toggleFolderRecursive}
@@ -842,30 +872,89 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				/>
 			)}
 
-			{/* Move-to-root receptacle - appears only while an in-tree row is being
-			    dragged, giving items buried in subfolders a target to land back at
-			    the workspace root. Sits at the bottom of the panel, just above the
-			    stats bar. Mirrors the Left Bar's "Drop here to ungroup" zone for UI
-			    consistency. Items already at root never trigger it (the dragstart
-			    handler suppresses it when every dragged item is already at root). */}
+			{/* Mid-drag footer - mounts on the deferred dragstart tick (see
+			    handleInternalDragStart: a synchronous reflow aborts the drag) and
+			    unmounts on dragend. Holds the move-to-root receptacle, when the drag
+			    has anywhere to land, above the drag-out hint. */}
 			{internalDragActive && (
-				<div
-					className="flex-shrink-0 mt-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
-					onDragEnter={(e) => handleFolderDragEnter(e, '')}
-					onDragOver={(e) => handleFolderDragOver(e, '')}
-					onDragLeave={handleFolderDragLeave}
-					onDrop={(e) => handleFolderDrop(e, '')}
-					style={{
-						borderColor: theme.colors.accent,
-						color: theme.colors.textDim,
-						backgroundColor:
-							dragOverFolder === '' && !isExternalDrag
-								? `${theme.colors.accent}25`
-								: `${theme.colors.accent}10`,
-					}}
-				>
-					<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-					Drop here to move to root
+				<div className="flex-shrink-0 mt-2 flex flex-col gap-1.5 animate-in">
+					{/* Move-to-root receptacle - gives items buried in subfolders a
+					    target to land back at the workspace root. Mirrors the Left Bar's
+					    "Drop here to ungroup" zone for UI consistency. Items already at
+					    root never trigger it (the dragstart handler suppresses it when
+					    every dragged item is already at root). */}
+					{showRootReceptacle && (
+						<div
+							className="px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
+							onDragEnter={(e) => handleFolderDragEnter(e, '')}
+							onDragOver={(e) => handleFolderDragOver(e, '')}
+							onDragLeave={handleFolderDragLeave}
+							onDrop={(e) => handleFolderDrop(e, '')}
+							style={{
+								borderColor: theme.colors.accent,
+								color: theme.colors.textDim,
+								backgroundColor:
+									dragOverFolder === '' && !isExternalDrag
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+							}}
+						>
+							<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							Drop here to move to root
+						</div>
+					)}
+
+					{/* Drag-out hint - a plain drag only reaches targets inside Maestro
+					    (a folder row, the AI composer), so the one gesture that leaves
+					    the app is worth saying out loud while the drag is live. Not a
+					    drop target: pointer-events-none keeps it out of the way of the
+					    receptacle above it and of anything the drag passes over. */}
+					<div
+						className="px-2.5 py-1.5 rounded text-[11px] flex items-center justify-center gap-1.5 transition-colors pointer-events-none"
+						style={{
+							// Borderless and faintly tinted so it doesn't read as another
+							// bordered bar next to the stats strip right below it. The
+							// accent lifts when the key is pressed too late, so the hint
+							// visibly answers rather than sitting there as wallpaper.
+							backgroundColor: `${theme.colors.accent}${altPressedMidDrag ? '1f' : '0d'}`,
+							color: altPressedMidDrag ? theme.colors.textMain : theme.colors.textDim,
+						}}
+					>
+						{altPressedMidDrag ? (
+							<>
+								<AlertTriangle
+									className="w-3 h-3 flex-shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<span>
+									Hold {altKeyName} <strong>before</strong> the drag - drop and try again
+								</span>
+							</>
+						) : (
+							<>
+								<ExternalLink
+									className="w-3 h-3 flex-shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<span className="flex items-center gap-1.5">
+									{altKeySymbol !== altKeyName && (
+										<kbd
+											className="px-1 py-px rounded text-[10px] font-semibold leading-none"
+											style={{
+												border: `1px solid ${theme.colors.border}`,
+												color: theme.colors.textMain,
+											}}
+										>
+											{altKeySymbol}
+										</kbd>
+									)}
+									<span>
+										{altKeyName}-drag to copy out to {fileManagerName()}
+									</span>
+								</span>
+							</>
+						)}
+					</div>
 				</div>
 			)}
 

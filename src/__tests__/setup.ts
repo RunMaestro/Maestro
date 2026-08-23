@@ -112,6 +112,7 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 	}),
 	formatMetaKey: vi.fn(() => 'Ctrl'),
 	formatMetaKeyName: vi.fn(() => 'Ctrl'),
+	formatAltKeyName: vi.fn(() => 'Alt'),
 	formatEnterToSend: vi.fn((enterToSend: boolean) => (enterToSend ? 'Enter' : 'Ctrl + Enter')),
 	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) =>
 		enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'
