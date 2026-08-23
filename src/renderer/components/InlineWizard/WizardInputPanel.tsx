@@ -172,55 +172,25 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 		inputRef.current?.focus();
 	}, [onStopTurn, session.activeTabId, inputRef]);
 
-	// Handle Escape key to show exit confirmation (only if user has interacted)
+	// Escape is a LADDER, and no rung of it destroys anything without a confirmation:
+	//   1. mid-turn  -> stop the running turn, stay in the wizard
+	//   2. otherwise -> open the exit confirmation
+	//   3. dialog open -> the dialog's own Escape cancels it
+	// Leaving the wizard is only ever reachable through the dialog's red button (or
+	// Enter, which it focuses). There is deliberately NO condition under which Escape
+	// exits directly: the old "no interaction yet, just close the tab" shortcut read
+	// the conversation to decide, so two Escapes during the very first turn - when
+	// history still looks empty - silently threw the whole wizard away.
 	const handleEscapeKey = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				e.stopPropagation();
-				// Mid-turn, Escape means "stop this turn" - same as a regular AI tab. It must
-				// never fall through to the close-the-tab branch below: during the first turn
-				// the conversation still looks untouched, which is how a single Escape used to
-				// destroy the whole wizard tab while the agent was running.
-				if (isBusy || isInitializing) {
-					if (onStopTurn) {
-						handleStopTurn();
-					} else {
-						setShowExitConfirm(true);
-					}
+				if (isBusy && onStopTurn) {
+					handleStopTurn();
 					return;
 				}
-				const hasUserMessages = session.wizardState?.conversationHistory?.some(
-					(m) => m.role === 'user'
-				);
-				const hasInput = inputValue.trim() !== '';
-				const hasImages = stagedImages.length > 0;
-				if (hasUserMessages || hasInput || hasImages) {
-					setShowExitConfirm(true);
-				} else {
-					// No interaction - close the tab if safe, otherwise just exit wizard.
-					// "Safe" also means the tab is the wizard's own: `/wizard` runs in place,
-					// so closing an untouched wizard that took over a tab with a real
-					// conversation would throw that conversation away. System logs don't
-					// count - the wizard writes its own "Starting wizard..." line.
-					const { setSessions } = useSessionStore.getState();
-					const activeTabId = session.activeTabId;
-					const hostTab = session.aiTabs.find((t) => t.id === activeTabId);
-					const hostTabHasConversation = (hostTab?.logs ?? []).some(
-						(log) => log.source !== 'system'
-					);
-					if (activeTabId && session.aiTabs.length > 1 && !hostTabHasConversation) {
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== session.id) return s;
-								const result = closeTab(s, activeTabId, false, { skipHistory: true });
-								return result ? result.session : s;
-							})
-						);
-					} else {
-						onExitWizard();
-					}
-				}
+				setShowExitConfirm(true);
 				return;
 			}
 			// Block Enter (any modifier combo) from triggering send while the wizard is
@@ -233,24 +203,33 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			// Forward other key events to the parent handler
 			handleInputKeyDown(e);
 		},
-		[
-			handleInputKeyDown,
-			session,
-			inputValue,
-			stagedImages,
-			onExitWizard,
-			isBusy,
-			isInitializing,
-			onStopTurn,
-			handleStopTurn,
-		]
+		[handleInputKeyDown, isBusy, onStopTurn, handleStopTurn]
 	);
 
-	// Handle exit confirmation
+	// Handle exit confirmation. Reached ONLY from the dialog, never straight off a keypress.
 	const handleConfirmExit = useCallback(() => {
 		setShowExitConfirm(false);
+		// A wizard that got its own fresh tab is disposable, so close the tab outright.
+		// `/wizard` also runs IN PLACE though, and then the tab may hold a real
+		// conversation that has nothing to do with the wizard - exit wizard mode and
+		// hand that tab back instead. System logs don't count as a conversation: the
+		// wizard writes its own "Starting wizard..." line.
+		const { setSessions } = useSessionStore.getState();
+		const activeTabId = session.activeTabId;
+		const hostTab = session.aiTabs.find((t) => t.id === activeTabId);
+		const hostTabHasConversation = (hostTab?.logs ?? []).some((log) => log.source !== 'system');
+		if (activeTabId && session.aiTabs.length > 1 && !hostTabHasConversation) {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== session.id) return s;
+					const result = closeTab(s, activeTabId, false, { skipHistory: true });
+					return result ? result.session : s;
+				})
+			);
+			return;
+		}
 		onExitWizard();
-	}, [onExitWizard]);
+	}, [onExitWizard, session]);
 
 	// Handle cancel exit
 	const handleCancelExit = useCallback(() => {

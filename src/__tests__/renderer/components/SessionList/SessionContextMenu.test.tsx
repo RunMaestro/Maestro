@@ -9,6 +9,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SessionContextMenu } from '../../../../renderer/components/SessionList/SessionContextMenu';
+import {
+	gitRunKey,
+	useGitCommandRunStore,
+	type GitCommandRun,
+} from '../../../../renderer/stores/gitCommandRunStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -119,6 +124,37 @@ describe('SessionContextMenu', () => {
 		renderMenu();
 		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
 		expect(screen.getByTestId('session-context-git-push')).toHaveTextContent('2');
+	});
+
+	// A push dismissed with Run in Background left no trace anywhere until this
+	// badge, so the menu that started it now says it is still going.
+	it('badges push as running while a backgrounded run is in flight', () => {
+		const key = gitRunKey({ operation: 'push', cwd: '/test/repo' });
+		useGitCommandRunStore.setState({
+			runs: {
+				[key]: {
+					key,
+					runId: 'run-1',
+					sessionId: 'session-1',
+					operation: 'push',
+					cwd: '/test/repo',
+					setUpstream: false,
+					output: '',
+					status: 'running',
+					announced: false,
+				} as GitCommandRun,
+			},
+		});
+		renderMenu();
+
+		expect(screen.getByTestId('session-context-git-push-running')).toBeInTheDocument();
+		// The running badge replaces the ahead count, which is stale mid-push.
+		expect(screen.getByTestId('session-context-git-push')).not.toHaveTextContent('2');
+		// Pull is untouched: the runs are keyed per operation.
+		expect(screen.queryByTestId('session-context-git-pull-running')).not.toBeInTheDocument();
+		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
+
+		useGitCommandRunStore.setState({ runs: {} });
 	});
 
 	// Without this the row offered a diff without saying whether there was one.

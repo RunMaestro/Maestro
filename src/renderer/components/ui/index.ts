@@ -75,6 +75,9 @@ export type { FontScaleControlProps } from './FontScaleControl';
 export { GitChangeCounts } from './GitChangeCounts';
 export type { GitChangeCountsProps } from './GitChangeCounts';
 
+export { GitRunningBadge } from './GitRunningBadge';
+export type { GitRunningBadgeProps } from './GitRunningBadge';
+
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';
 

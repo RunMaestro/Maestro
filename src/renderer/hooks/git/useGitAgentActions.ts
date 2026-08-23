@@ -17,6 +17,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGitBranch, useGitDetail, useGitFileStatus } from '../../contexts/GitStatusContext';
 import { gitService } from '../../services/git';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useGitRunActive } from '../../stores/gitCommandRunStore';
 import type { GitChangeTotals, GitStreamingOperation } from '../../../shared/gitUtils';
 import type { Session } from '../../types';
 
@@ -46,6 +47,14 @@ export interface GitAgentActions {
 	viewDiff: () => Promise<void>;
 	pull: () => void;
 	push: () => void;
+	/**
+	 * True while a `git pull` / `git push` started from this agent's repo is
+	 * still running, including after its console was dismissed with Run in
+	 * Background. Menus badge the row with it; clicking the row re-opens the
+	 * console attached to that same run.
+	 */
+	pullRunning: boolean;
+	pushRunning: boolean;
 	switchBranch: () => void;
 	createPR: () => void;
 	/**
@@ -173,6 +182,12 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 	const pull = useCallback(() => runCommand('pull'), [runCommand]);
 	const push = useCallback(() => runCommand('push'), [runCommand]);
 
+	// Keyed on the same repo + operation the run store uses, so a run started
+	// from any surface (or from a different agent on the same worktree) shows up
+	// here too.
+	const pullRunning = useGitRunActive(target ? { ...target, operation: 'pull' } : null);
+	const pushRunning = useGitRunActive(target ? { ...target, operation: 'push' } : null);
+
 	const switchBranch = useCallback(() => {
 		if (!target) return;
 		useModalStore.getState().openModal('branchSwitcher', {
@@ -211,6 +226,8 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		viewDiff,
 		pull,
 		push,
+		pullRunning,
+		pushRunning,
 		switchBranch,
 		createPR,
 		configureWorktrees,
