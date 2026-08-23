@@ -192,12 +192,12 @@ export function applyQueuedItemDispatch(session: Session, item: QueuedItem): Ses
 	if (!target) return session;
 
 	const aiTabs = session.aiTabs.map((tab) =>
-		tab.id === target.tabId ? markTabRunningQueuedItem(tab, item) : tab
+		tab.id === target.tabId ? markTabRunningQueuedItem(tab, item, session) : tab
 	);
 	const orphans =
 		target.location === 'orphan' && session.orphanedThinkingTabs
 			? session.orphanedThinkingTabs.map((tab) =>
-					tab.id === target.tabId ? markTabRunningQueuedItem(tab, item) : tab
+					tab.id === target.tabId ? markTabRunningQueuedItem(tab, item, session) : tab
 				)
 			: session.orphanedThinkingTabs;
 

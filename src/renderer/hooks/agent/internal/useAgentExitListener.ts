@@ -492,13 +492,13 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								return {
 									...s,
 									aiTabs: s.aiTabs.map((tab) =>
-										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextRunnable) : tab
+										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextRunnable, s) : tab
 									),
 									orphanedThinkingTabs:
 										orphansWithoutExited.length > 0
 											? orphansWithoutExited.map((tab) =>
 													tab.id === target.tabId
-														? markTabRunningQueuedItem(tab, nextRunnable)
+														? markTabRunningQueuedItem(tab, nextRunnable, s)
 														: tab
 												)
 											: undefined,
@@ -629,7 +629,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							// idle (its target branch never matches a live aiTab in that case).
 							const updatedAiTabs = s.aiTabs.map((tab) => {
 								if (tab.id === target.tabId) {
-									return markTabRunningQueuedItem(tab, nextItem);
+									return markTabRunningQueuedItem(tab, nextItem, s);
 								}
 								if (tabIdFromSession && tab.id === tabIdFromSession) {
 									return {
@@ -644,7 +644,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							const updatedOrphans =
 								target.location === 'orphan' && s.orphanedThinkingTabs
 									? s.orphanedThinkingTabs.map((tab) =>
-											tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+											tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
 										)
 									: s.orphanedThinkingTabs;
 

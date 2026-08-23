@@ -27,6 +27,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { isWindowsPlatform } from './platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersistence';
 import { getLiveDraft } from './liveDraftStore';
+import { codifyTurnSettings } from './providerTabSessions';
 
 /**
  * Build the unified tab list from a session's tab data.
@@ -528,10 +529,22 @@ export function resolveQueuedItemTarget(
  * items, append the user-visible log entry. Shared by every dispatch path so the
  * busy-state + log construction stays identical (and lands on the resolved target tab,
  * which may be an orphan - see {@link resolveQueuedItemTarget}).
+ *
+ * `session` is required because a dequeued turn is a SEND: it codifies the same
+ * provider/model/effort stamp the direct composer path freezes, so the transcript
+ * can attribute the response to the configuration it ran under. Without it, every
+ * message typed while the agent was busy (the common case on a multi-tab agent,
+ * where session-level busy sends the message to the queue) answered with no model
+ * or effort pills at all.
  */
-export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem): AITab {
+export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const now = Date.now();
-	const next: AITab = { ...tab, state: 'busy', thinkingStartTime: now };
+	const next: AITab = {
+		...tab,
+		state: 'busy',
+		thinkingStartTime: now,
+		...codifyTurnSettings(tab, session),
+	};
 	if (item.type === 'message' && item.text) {
 		const logEntry: LogEntry = {
 			id: generateId(),
