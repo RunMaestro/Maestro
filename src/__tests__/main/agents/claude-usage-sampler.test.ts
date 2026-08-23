@@ -722,7 +722,9 @@ describe('claude-usage-sampler', () => {
 				configDir: '/Users/test/.claude-explicit',
 			});
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
-			expect(extras.configDir).toBe('/Users/test/.claude-explicit');
+			// Resolved, like the snapshot key it now mirrors - a bare POSIX literal
+			// fails on Windows where `path.resolve` drive-anchors it.
+			expect(extras.configDir).toBe(canonKey('/Users/test/.claude-explicit'));
 		});
 
 		it('falls back to ~/.claude in the breadcrumb when configDir is omitted', async () => {
