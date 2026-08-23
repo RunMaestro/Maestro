@@ -371,6 +371,11 @@ export const TAB_SHORTCUTS = {
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },
 	snoozeTab: { id: 'snoozeTab', label: 'Snooze Tab', keys: ['Alt', 'Meta', 's'] },
+	// Registered unassigned: the snoozed-tab list is reachable by click today and
+	// there is no spare chord near Opt+Cmd+S worth spending by default. Listing
+	// it here is what makes it appear in Settings -> Shortcuts so a user can bind
+	// it, which is the whole point of allowing an empty `keys`.
+	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
 	closeTabsLeft: {
 		id: 'closeTabsLeft',
 		label: 'Close Tabs to Left',

@@ -7,6 +7,7 @@ import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
 import { openUrl } from '../utils/openUrl';
@@ -83,9 +84,7 @@ export function ShortcutsHelpModal({
 	const filteredShortcuts = Object.values(allShortcuts)
 		.filter((sc) => {
 			if (filterShortcutKeys.length > 0) {
-				const sortedFilter = [...filterShortcutKeys].sort().join('+');
-				const sortedKeys = [...sc.keys].sort().join('+');
-				return sortedKeys === sortedFilter;
+				return shortcutKeysEqual(sc.keys, filterShortcutKeys);
 			}
 			return fuzzyMatch(sc.label, searchQuery) || fuzzyMatch(sc.keys.join(' '), searchQuery);
 		})

@@ -32,6 +32,12 @@ export function getTabKindIcon(kind: TabKind): LucideIcon {
 			// tab strip falls back to when no emoji is set (GroupTabChip), so a
 			// parked group is recognisable as the thing that was on the strip.
 			return LayoutGrid;
+		default:
+			// Unreachable for TabKind as declared here, but deliberate: a branch that
+			// adds a kind should merge rather than fail this switch to compile. A
+			// generic glyph is the right answer for a kind this map has not been
+			// taught yet.
+			return LayoutGrid;
 	}
 }
 
