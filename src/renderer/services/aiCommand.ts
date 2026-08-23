@@ -104,6 +104,9 @@ export function acceptAiCommand(session: Session, entry: AiCommandEntry): void {
 		session,
 		tabId: entry.tabId,
 		command: entry.command,
+		// Carried onto the card so the request outlives the proposal: it is what
+		// the card shows as provenance, and what a later follow-up refines.
+		request: entry.request,
 	}).catch((error) => {
 		logger.error('[aiCommand] Accepted command failed to run', undefined, error);
 	});

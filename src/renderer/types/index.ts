@@ -283,6 +283,17 @@ export interface LogEntry {
 	shellCommand?: {
 		/** The command as typed, without the leading `!`. */
 		command: string;
+		/**
+		 * The plain-English request this command was generated from, when it came
+		 * from AI command mode. Absent for a command the user typed themselves -
+		 * that command IS the intent, with nothing upstream of it.
+		 *
+		 * Kept because the command alone loses the "why": `find . -newermt '2 days
+		 * ago' -type f` does not say it was asked for as "files edited in the past
+		 * two days", and a follow-up ("actually just the count") is refining the
+		 * REQUEST at least as much as the command line.
+		 */
+		request?: string;
 		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
 		cwd: string;
 		/** SSH remote name when the agent runs remotely, else undefined. */

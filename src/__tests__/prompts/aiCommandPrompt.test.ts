@@ -60,6 +60,14 @@ describe('ai-command.md', () => {
 		expect(built).toContain('count the files changed today');
 	});
 
+	test('teaches the model to read the Asked line with its command', () => {
+		// The history block emits "Asked:" / "Ran:" pairs; the prompt has to say
+		// what they mean, or the labels are just unexplained noise.
+		expect(prompt).toContain('Asked:');
+		expect(prompt).toContain('Ran:');
+		expect(prompt).toMatch(/Asked" line/i);
+	});
+
 	test('still reads as one-command-only instructions', () => {
 		// The whole contract with the caller: exactly one line comes back, and it
 		// is pasted straight into a shell.

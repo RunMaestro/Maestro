@@ -312,6 +312,40 @@ describe('cancelShellCommand', () => {
 	});
 });
 
+describe('the generating request', () => {
+	test('is stamped on the card when the command came from AI command mode', async () => {
+		await runShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: "find . -newermt '2 days ago' -type f",
+			request: 'what files were edited in the past two days',
+		});
+
+		expect(getCard()?.shellCommand?.request).toBe('what files were edited in the past two days');
+	});
+
+	test('is absent for a typed command, so its presence means "generated"', async () => {
+		await runShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'git status',
+		});
+
+		expect(getCard()?.shellCommand).not.toHaveProperty('request');
+	});
+
+	test('survives dispatchShellCommand rather than being dropped in the handoff', async () => {
+		await dispatchShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'du -sh *',
+			request: 'how big is everything here',
+		});
+
+		expect(getCard()?.shellCommand?.request).toBe('how big is everything here');
+	});
+});
+
 describe('dispatchShellCommand', () => {
 	function history(): string[] {
 		return (

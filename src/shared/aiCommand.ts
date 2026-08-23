@@ -53,10 +53,42 @@ export const AI_COMMAND_HISTORY_LIMIT = 8;
 /** Longest command line carried into the history block, before ellipsis. */
 const MAX_HISTORY_COMMAND_LENGTH = 400;
 
+/**
+ * Longest request carried into the history block. Shorter than the command
+ * cap: the command has to stay runnable-looking to be refined, while a request
+ * only has to convey intent, and the first sentence carries nearly all of it.
+ */
+const MAX_HISTORY_REQUEST_LENGTH = 200;
+
+/**
+ * Flatten to one line and cap the length.
+ *
+ * The newline collapse is not cosmetic. The history block is a list where one
+ * entry is one or two labeled lines, and a request is typed into a MULTILINE
+ * composer - so a request containing a newline would otherwise inject what
+ * looks like a new list item, letting the user's own text forge entries in the
+ * block above their request.
+ */
+function flattenForHistory(value: string, maxLength: number): string {
+	const flat = value.replace(/\s+/g, ' ').trim();
+	return flat.length > maxLength ? `${flat.slice(0, maxLength)}...` : flat;
+}
+
 /** One previously-run command, as the prompt sees it. */
 export interface AiCommandHistoryEntry {
 	/** The command line that ran. */
 	command: string;
+	/**
+	 * The plain-English request it was generated from, when it came from AI
+	 * command mode. Absent for a command the user typed.
+	 *
+	 * Carried because a follow-up refines the REQUEST as much as the command:
+	 * "actually just the count" against `find . -newermt '2 days ago' -type f`
+	 * is far easier to honour when the model can also see that the line was
+	 * asked for as "files edited in the past two days". Without it, the model
+	 * has to reverse-engineer the intent from flags.
+	 */
+	request?: string;
 	/** Its exit code, when it finished. */
 	exitCode?: number;
 	/** Whether it finished, was stopped, or is still going. */
@@ -67,6 +99,7 @@ export interface AiCommandHistoryEntry {
 export interface CommandCardLike {
 	shellCommand?: {
 		command: string;
+		request?: string;
 		exitCode?: number;
 		status?: 'running' | 'finished' | 'cancelled';
 	};
@@ -98,6 +131,7 @@ export function collectRecentCommands(
 		if (entries[entries.length - 1]?.command === shell.command) continue;
 		entries.push({
 			command: shell.command,
+			...(shell.request && { request: shell.request }),
 			...(shell.exitCode !== undefined && { exitCode: shell.exitCode }),
 			...(shell.status && { status: shell.status }),
 		});
@@ -115,11 +149,8 @@ export function collectRecentCommands(
 export function formatRecentCommands(entries: readonly AiCommandHistoryEntry[]): string {
 	if (entries.length === 0) return '';
 
-	const lines = entries.map((entry) => {
-		const command =
-			entry.command.length > MAX_HISTORY_COMMAND_LENGTH
-				? `${entry.command.slice(0, MAX_HISTORY_COMMAND_LENGTH)}...`
-				: entry.command;
+	const lines = entries.flatMap((entry) => {
+		const command = flattenForHistory(entry.command, MAX_HISTORY_COMMAND_LENGTH);
 
 		const note =
 			entry.status === 'running'
@@ -130,13 +161,22 @@ export function formatRecentCommands(entries: readonly AiCommandHistoryEntry[]):
 						? ` (failed, exit ${entry.exitCode})`
 						: '';
 
-		return `- ${command}${note}`;
+		// The request goes ABOVE its command, so the pair reads in the order it
+		// happened: the user asked, then this ran.
+		return entry.request
+			? [
+					`- Asked: ${flattenForHistory(entry.request, MAX_HISTORY_REQUEST_LENGTH)}`,
+					`  Ran: ${command}${note}`,
+				]
+			: [`- Ran: ${command}${note}`];
 	});
 
 	return [
 		'## Recent commands',
 		'',
 		'Commands already run in this conversation, oldest first. The LAST one is the most recent, and is what a follow-up request almost always refers to.',
+		'',
+		'"Asked" is the plain-English request a command was generated from - use it to understand what the command was FOR, since the command line alone rarely says. An entry with no "Asked" line was typed directly by the user.',
 		'',
 		...lines,
 	].join('\n');
