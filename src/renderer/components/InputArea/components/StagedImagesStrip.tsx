@@ -1,6 +1,9 @@
-import React, { memo } from 'react';
-import { PenLine, X } from 'lucide-react';
+import React, { memo, useState } from 'react';
+import { Maximize2 } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { StagedImageTile } from './StagedImageTile';
+import { useStagedImageDnd } from './stagedImageDrag';
+import { StagedImagesOrganizerModal } from './StagedImagesOrganizerModal';
 
 interface StagedImagesStripProps {
 	isVisible: boolean;
@@ -13,6 +16,8 @@ interface StagedImagesStripProps {
 	) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
 	openAnnotator: (image: string, onSave: (newDataUrl: string) => void) => void;
+	/** Move an image, renumbering any `Screenshot N` references in the draft. */
+	onReorder: (from: number, to: number) => void;
 }
 
 export const StagedImagesStrip = memo(function StagedImagesStrip({
@@ -22,63 +27,74 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 	setLightboxImage,
 	setStagedImages,
 	openAnnotator,
+	onReorder,
 }: StagedImagesStripProps) {
+	const [organizerOpen, setOrganizerOpen] = useState(false);
+	const dnd = useStagedImageDnd(stagedImages.length, onReorder);
+
 	if (!isVisible || stagedImages.length === 0) {
 		return null;
 	}
 
+	const removeImage = (img: string) => setStagedImages((p) => p.filter((x) => x !== img));
+	const annotateImage = (img: string) =>
+		openAnnotator(img, (newDataUrl) =>
+			setStagedImages((prev) => prev.map((s) => (s === img ? newDataUrl : s)))
+		);
+
 	return (
-		<div className="flex gap-2 mb-3 pb-2 overflow-x-auto overflow-y-visible scrollbar-thin">
-			{stagedImages.map((img, idx) => (
-				<div
-					key={img}
-					className="relative group shrink-0 flex items-center justify-center"
-					style={{ minWidth: '64px' }}
+		<>
+			<div className="flex items-center gap-2 mb-3">
+				<button
+					type="button"
+					onClick={() => setOrganizerOpen(true)}
+					title="Open image organizer"
+					aria-label="Open image organizer"
+					className="shrink-0 self-center p-1.5 rounded border transition-colors hover:opacity-80 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					<button
-						type="button"
-						className="p-0 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
-						onClick={() => setLightboxImage(img, stagedImages, 'staged')}
-					>
-						<img
-							src={img}
-							alt={`Staged image ${idx + 1}`}
-							className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity block"
-							style={{
-								borderColor: theme.colors.border,
-								objectFit: 'contain',
-								maxWidth: '200px',
-							}}
+					<Maximize2 className="w-4 h-4" />
+				</button>
+
+				<div
+					className="flex gap-2 pb-2 flex-1 overflow-x-auto overflow-y-visible scrollbar-thin"
+					{...dnd.containerHandlers}
+				>
+					{stagedImages.map((img, idx) => (
+						<StagedImageTile
+							key={img}
+							image={img}
+							index={idx}
+							theme={theme}
+							size="strip"
+							// Numbers appear only while a drag is in flight: they answer
+							// "which slot am I aiming at", and a permanent badge on every
+							// thumbnail is noise the rest of the time.
+							showSlotNumber={dnd.isDragging}
+							isDragging={dnd.dragIndex === idx}
+							isDimmed={dnd.isDragging && dnd.dragIndex !== idx}
+							dropBefore={dnd.dropGap === idx}
+							dropAfter={dnd.dropGap === idx + 1 && idx === stagedImages.length - 1}
+							dragHandlers={dnd.tileHandlers(idx)}
+							onOpen={() => setLightboxImage(img, stagedImages, 'staged')}
+							onAnnotate={() => annotateImage(img)}
+							onRemove={() => removeImage(img)}
 						/>
-					</button>
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation();
-							openAnnotator(img, (newDataUrl) =>
-								setStagedImages((prev) => prev.map((s) => (s === img ? newDataUrl : s)))
-							);
-						}}
-						title="Annotate image"
-						aria-label="Annotate image"
-						className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded-full p-1 shadow-md hover:bg-black/80 transition-colors opacity-90 hover:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-white"
-					>
-						<PenLine className="w-3 h-3" />
-					</button>
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation();
-							setStagedImages((p) => p.filter((x) => x !== img));
-						}}
-						title={`Remove image ${idx + 1}`}
-						aria-label={`Remove image ${idx + 1}`}
-						className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors opacity-90 hover:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-white"
-					>
-						<X className="w-3 h-3" />
-					</button>
+					))}
 				</div>
-			))}
-		</div>
+			</div>
+
+			{organizerOpen && (
+				<StagedImagesOrganizerModal
+					theme={theme}
+					stagedImages={stagedImages}
+					onClose={() => setOrganizerOpen(false)}
+					onReorder={onReorder}
+					onRemove={removeImage}
+					onAnnotate={annotateImage}
+					setLightboxImage={setLightboxImage}
+				/>
+			)}
+		</>
 	);
 });
