@@ -47,6 +47,35 @@ describe('convertBracketMath', () => {
 		expect(convertBracketMath(input)).toBe(input);
 	});
 
+	// Over-escaped delimiters: agents routinely emit `\\(x\\)` when they escape
+	// the backslash one time too many. Matching only the two-character closer left
+	// a stray `\` in front of the generated `$$`, which markdown read as an
+	// escaped dollar, so the reader saw a literal `$$x$$` instead of math.
+	it('converts the over-escaped \\\\(...\\\\) inline form', () => {
+		expect(convertBracketMath('all \\\\(N\\\\) documents')).toBe('all $$N$$ documents');
+	});
+
+	it('converts several over-escaped inline runs on one line', () => {
+		const input = 'has \\\\(\\text{df} = N\\\\), so \\\\(\\text{IDF} = \\log 1 = 0\\\\).';
+		expect(convertBracketMath(input)).toBe(
+			'has $$\\text{df} = N$$, so $$\\text{IDF} = \\log 1 = 0$$.'
+		);
+	});
+
+	it('converts the over-escaped \\\\[...\\\\] display form', () => {
+		expect(convertBracketMath('a \\\\[x=1\\\\] b')).toBe('a \n\n$$x=1$$\n\n b');
+	});
+
+	it('leaves an over-escaped run inside an inline code span alone', () => {
+		const input = 'Code: `\\\\(y\\\\)` stays literal';
+		expect(convertBracketMath(input)).toBe(input);
+	});
+
+	it('emits an unterminated over-escaped \\\\( verbatim', () => {
+		const input = 'Broken \\\\(x + y and more prose that must survive.';
+		expect(convertBracketMath(input)).toBe(input);
+	});
+
 	it('handles a multi-line \\[...\\] display block', () => {
 		const input = '\\[\\begin{aligned}\na &= b\n\\end{aligned}\\]';
 		expect(convertBracketMath(input)).toBe('\n\n$$\\begin{aligned}\na &= b\n\\end{aligned}$$\n\n');

@@ -32,6 +32,31 @@
  * `$$...$$` block that the normalizer then tidies onto its own lines.
  */
 
+/**
+ * Find the closing `\)` / `\]` for a bracket-math run, tolerating the doubled
+ * `\\)` / `\\]` form. Agents routinely emit `\\(N\\)` when they escape the
+ * delimiter one time too many. Matching only the two-character form there
+ * consumes the SECOND backslash of the closer, leaving a stray `\` in front of
+ * the generated `$$`, and markdown then reads `\$$` as an escaped dollar - the
+ * reader sees a literal `$$N$$` instead of math. Preferring the three-character
+ * form when both match keeps the pair balanced.
+ *
+ * Returns the offsets of the closer, or null when the run is unterminated.
+ */
+function findBracketMathClose(
+	src: string,
+	from: number,
+	bracket: string
+): { start: number; end: number } | null {
+	const closeChar = bracket === '(' ? ')' : ']';
+	for (let i = from; i < src.length; i++) {
+		if (src[i] !== '\\') continue;
+		if (src[i + 1] === '\\' && src[i + 2] === closeChar) return { start: i, end: i + 3 };
+		if (src[i + 1] === closeChar) return { start: i, end: i + 2 };
+	}
+	return null;
+}
+
 export function convertBracketMath(src: string): string {
 	// Fast path: nothing to do.
 	if (!src.includes('\\(') && !src.includes('\\[')) return src;
@@ -128,19 +153,24 @@ export function convertBracketMath(src: string): string {
 			continue;
 		}
 
-		// A bracket-math opener in normal text?
-		if (c === '\\' && (src[i + 1] === '(' || src[i + 1] === '[')) {
-			const open = src[i + 1];
-			const closeSeq = open === '(' ? '\\)' : '\\]';
-			const end = src.indexOf(closeSeq, i + 2);
-			if (end !== -1) {
-				const inner = src.slice(i + 2, end).trim();
-				out += open === '(' ? `$$${inner}$$` : `\n\n$$${inner}$$\n\n`;
-				i = end + 2;
-				atLineStart = false;
-				continue;
+		// A bracket-math opener in normal text? Accepts both the correct `\(` form
+		// and the over-escaped `\\(` form that agents emit when they escape the
+		// delimiter for markdown (see findBracketMathClose).
+		if (c === '\\') {
+			const doubled = src[i + 1] === '\\';
+			const bracket = src[i + (doubled ? 2 : 1)];
+			if (bracket === '(' || bracket === '[') {
+				const innerStart = i + (doubled ? 3 : 2);
+				const close = findBracketMathClose(src, innerStart, bracket);
+				if (close) {
+					const inner = src.slice(innerStart, close.start).trim();
+					out += bracket === '(' ? `$$${inner}$$` : `\n\n$$${inner}$$\n\n`;
+					i = close.end;
+					atLineStart = false;
+					continue;
+				}
+				// Unterminated: fall through and emit the backslash literally.
 			}
-			// Unterminated: fall through and emit the backslash literally.
 		}
 
 		out += c;
