@@ -108,6 +108,12 @@ export interface RunShellCommandOptions {
 	tabId: string;
 	/** The command, already stripped of its leading `!`. */
 	command: string;
+	/**
+	 * The plain-English request the command was generated from, when it came
+	 * from AI command mode. Omitted for a typed command, where the command line
+	 * already IS the intent.
+	 */
+	request?: string;
 }
 
 /**
@@ -117,7 +123,7 @@ export interface RunShellCommandOptions {
  * forget - all user-visible reporting happens through the transcript card.
  */
 export async function runShellCommand(options: RunShellCommandOptions): Promise<void> {
-	const { session, tabId, command } = options;
+	const { session, tabId, command, request } = options;
 
 	const runId = generateId();
 	const runSessionId = buildShellRunSessionId(session.id, runId);
@@ -134,6 +140,9 @@ export async function runShellCommand(options: RunShellCommandOptions): Promise<
 		text: '',
 		shellCommand: {
 			command,
+			// Only stamped when there IS one, so the field's presence is exactly
+			// "this command was generated, not typed".
+			...(request && { request }),
 			cwd,
 			remoteName: session.sshRemote?.name,
 			status: 'running',
@@ -275,7 +284,7 @@ export async function runShellCommand(options: RunShellCommandOptions): Promise<
  * back out (up-arrow recall, and the command-mode completion source).
  */
 export function dispatchShellCommand(options: RunShellCommandOptions): Promise<void> {
-	const { session, tabId, command } = options;
+	const { session, command } = options;
 	const historyEntry = `${SHELL_COMMAND_PREFIX}${command}`;
 
 	updateSessionWith(session.id, (s) => ({
@@ -286,5 +295,7 @@ export function dispatchShellCommand(options: RunShellCommandOptions): Promise<v
 		].slice(-AI_COMMAND_HISTORY_LIMIT),
 	}));
 
-	return runShellCommand({ session, tabId, command });
+	// Forward the whole options object rather than the three fields this function
+	// happens to name, so a future field cannot be silently dropped here.
+	return runShellCommand(options);
 }

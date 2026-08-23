@@ -291,12 +291,37 @@ describe('acceptAiCommand', () => {
 		acceptAiCommand(session, entryNow()!);
 
 		// The SAME dispatch a typed `!` command uses, so the run is indistinguishable.
-		expect(mockDispatch).toHaveBeenCalledWith({
-			session,
-			tabId: TAB_ID,
-			command: 'du -sh *',
-		});
+		// `objectContaining` on purpose: this test is about the routing, and the
+		// request field it also carries has its own test below.
+		expect(mockDispatch).toHaveBeenCalledWith(
+			expect.objectContaining({
+				session,
+				tabId: TAB_ID,
+				command: 'du -sh *',
+			})
+		);
 		expect(entryNow()).toBeUndefined();
+	});
+
+	it('carries the original request onto the card it runs', () => {
+		// Without this the request dies with the proposal, and a later follow-up
+		// sees a bare command line with no record of what it was asked for.
+		useAiCommandStore.getState().beginAiCommand({
+			requestId: 'req-1',
+			sessionId: SESSION_ID,
+			tabId: TAB_ID,
+			request: 'what files were edited in the past two days',
+		});
+		useAiCommandStore.getState().resolveAiCommand('req-1', "find . -newermt '2 days ago' -type f");
+
+		acceptAiCommand(makeSession(), entryNow()!);
+
+		expect(mockDispatch).toHaveBeenCalledWith(
+			expect.objectContaining({
+				command: "find . -newermt '2 days ago' -type f",
+				request: 'what files were edited in the past two days',
+			})
+		);
 	});
 
 	it('does nothing while the suggestion is still thinking', () => {

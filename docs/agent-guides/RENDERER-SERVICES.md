@@ -105,7 +105,7 @@ Command mode ("bang commands"): running a `!command` typed in the AI composer an
 
 **Key exports:**
 
-- `dispatchShellCommand({ session, tabId, command })` - record the command in `aiCommandHistory` (bang-prefixed) and run it. **This is the entry point every command surface uses**: a typed `!` command and an accepted AI command mode suggestion both go through it, which is what makes an accepted suggestion indistinguishable from a typed command afterwards, in the transcript and in up-arrow recall alike
+- `dispatchShellCommand({ session, tabId, command, request? })` - record the command in `aiCommandHistory` (bang-prefixed) and run it. **This is the entry point every command surface uses**: a typed `!` command and an accepted AI command mode suggestion both go through it, so both run, record, and recall identically. It forwards its whole options object to `runShellCommand` rather than destructuring the fields it happens to name, so a field added later cannot be silently dropped here. The optional `request` is the only thing separating the two: present, it marks the command as generated rather than typed
 - `runShellCommand({ session, tabId, command })` - append a live output card to the tab and run the command; resolves on exit. Use `dispatchShellCommand` unless you deliberately want the run WITHOUT the history entry
 - `cancelShellCommand(logId)` - stop a running command by its card's log id (the card's Stop button)
 - `resolveCommandCwd(session)` - where a bang command runs (agent `cwd`, or the SSH remote's working dir). Deliberately NOT `shellCwd`, which only terminal mode's `cd` moves. The composer's `CommandModeBar` and Tab completion both call this so the advertised directory, the completion source, and the actual run directory can never disagree
@@ -209,6 +209,10 @@ Turns a plain-English request into one shell command line, shows it, and runs it
 - It reads the **transcript**, not `aiCommandHistory`. That list is per agent, deduplicated, and order-normalized (a repeat moves to the end), so it cannot answer "what did I just run in THIS tab" - which is the only question a follow-up is asking.
 - It reads the **target tab** (`tabId`), not the active one. A tab switch while a suggestion is in flight must not hand one tab's commands to another tab's request.
 - Failures are **labeled, not filtered**. "That didn't work, try something else" is a common follow-up, and a model that cannot see the failure proposes the same broken command again.
+
+Each entry carries the **request as well as the command**, rendered as an `Asked:` / `Ran:` pair. `LogEntry.shellCommand.request` is stamped by `runShellCommand` only when the caller supplies one, so the field's presence means exactly "this command was generated, not typed" - and `ShellCommandCard` shows it above the command as provenance. This matters because a follow-up refines the ASK at least as much as the command line: `find . -newermt '2 days ago' -type f` does not say it was requested as "files edited in the past two days", so without the request the model has to reverse-engineer intent from flags.
+
+`formatRecentCommands` collapses whitespace in both fields before emitting them. That is not cosmetic: the block is a list where one entry is one or two labeled lines, and a request is typed into a MULTILINE composer, so a newline in a request would inject what looks like another entry into the block above it.
 
 Commands and exit statuses are sent; output is not. The refinement cases are about the command's shape, and a `find` over a large tree would swamp the prompt with its own results.
 

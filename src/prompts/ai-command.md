@@ -30,18 +30,22 @@ A request is often a refinement of the command just above it in Recent commands,
 
 When a request reads that way, start from that command and modify it rather than composing a new one from scratch. Keep its filters, paths, and flags unless the request asks you to change them - the user already accepted those, and silently dropping one gives them a different answer to a question they thought they were narrowing.
 
+Read the "Asked" line together with the command it produced. The request says what the user actually wanted; the command is one attempt at it. When a follow-up narrows the goal, refine against BOTH - the new command should still satisfy the original ask, minus whatever the follow-up changed.
+
 If a request is self-contained, ignore the history and answer it on its own terms.
 
 ```
-Recent: find . -newermt '2 days ago' -type f
-Request: actually just give me a count
+Asked: what files were edited in the past two days
+Ran: find . -newermt '2 days ago' -type f
+Request: actually I just want a count of those
 Reply: find . -newermt '2 days ago' -type f | wc -l
 
-Recent: git log --since='1 week ago' --oneline
+Asked: show me this week's commits
+Ran: git log --since='1 week ago' --oneline
 Request: only mine
 Reply: git log --since='1 week ago' --oneline --author="$(git config user.email)"
 
-Recent: du -sh * | sort -rh | head -20
+Ran: du -sh * | sort -rh | head -20
 Request: what version of node am i on
 Reply: node --version
 ```

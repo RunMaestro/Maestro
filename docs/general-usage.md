@@ -362,7 +362,9 @@ Press `Enter` and Maestro asks **this tab's own model**, at the model and effort
 
 Declining hands your original request back to the composer so you can reword it and ask again, which is nearly always what you want - a wrong answer usually means a vague question. The card owns the keyboard until you answer it, so `Enter` can never run something you have not looked at.
 
-A command you accept runs through exactly the same path as one you typed yourself: same working directory, same SSH remote, same card in the transcript, and it joins your `↑` recall history the same way. After it runs there is nothing to distinguish it from a command you typed.
+A command you accept runs through exactly the same path as one you typed yourself: same working directory, same SSH remote, same card in the transcript, and it joins your `↑` recall history the same way. The one thing it keeps is what you asked for, shown above the command on its card - so a transcript you read back weeks later says why those flags were there, not just what ran.
+
+That request travels with the command. When you ask for a follow-up, the model sees both the earlier ask and the command it produced, so "actually just give me a count" is refined against what you originally wanted rather than reverse-engineered from the flags.
 
 **How the suggestion is made:**
 

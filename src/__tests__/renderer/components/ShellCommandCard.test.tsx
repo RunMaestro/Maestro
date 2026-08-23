@@ -246,6 +246,33 @@ describe('ShellCommandCard', () => {
 		expect(screen.getByText('No output')).toBeTruthy();
 	});
 
+	describe('the request that generated the command', () => {
+		it('shows the plain-English ask above the command', () => {
+			// A transcript read weeks later needs the intent to make sense of the
+			// flags; the command line alone does not carry it.
+			renderCard(
+				makeLog({
+					shellCommand: {
+						command: "find . -newermt '2 days ago' -type f",
+						request: 'what files were edited in the past two days',
+						status: 'finished',
+						exitCode: 0,
+					} as never,
+				})
+			);
+
+			expect(screen.getByTestId('shell-command-request')).toHaveTextContent(
+				'what files were edited in the past two days'
+			);
+		});
+
+		it('shows nothing extra for a command the user typed', () => {
+			renderCard(makeLog());
+
+			expect(screen.queryByTestId('shell-command-request')).toBeNull();
+		});
+	});
+
 	describe('deleting the card', () => {
 		const finished = () =>
 			makeLog({ text: 'out', shellCommand: { status: 'finished', exitCode: 0 } as never });
