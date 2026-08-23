@@ -203,7 +203,10 @@ describe('claude-usage-sampler', () => {
 				configDir: '/Users/test/.claude-smash',
 			});
 
-			expect(readAccountIdentityMock).toHaveBeenCalledWith('/Users/test/.claude-smash');
+			// The identity is read with the RESOLVED key, so the expectation has to go
+			// through the same primitive - a bare POSIX literal fails on Windows, where
+			// `path.resolve` drive-anchors it. Every sibling assertion already does this.
+			expect(readAccountIdentityMock).toHaveBeenCalledWith(canonKey('/Users/test/.claude-smash'));
 		});
 
 		it('omits the identity fields entirely when the account is unknown', async () => {
