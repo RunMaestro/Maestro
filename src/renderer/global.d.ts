@@ -1089,6 +1089,14 @@ interface MaestroAPI {
 			targetPath: string,
 			options?: { recursive?: boolean; sshRemoteId?: string }
 		) => Promise<{ success: boolean }>;
+		/**
+		 * Delete many paths in one IPC call. Resolves with a per-path outcome in
+		 * input order instead of rejecting on the first failure.
+		 */
+		deleteMany: (
+			targetPaths: string[],
+			options?: { recursive?: boolean; sshRemoteId?: string }
+		) => Promise<{ results: Array<{ path: string; success: boolean; error?: string }> }>;
 		countItems: (
 			dirPath: string,
 			sshRemoteId?: string

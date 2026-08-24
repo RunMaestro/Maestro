@@ -18,6 +18,18 @@
 export const REMOTE_SESSION_READ_CONCURRENCY = 6;
 
 /**
+ * Cap on parallel local filesystem deletes when removing a multi-selection.
+ *
+ * Deleting sequentially costs one full renderer->main round trip plus one
+ * `stat` per file; on a slow volume (a network share or an external disk) that
+ * per-file latency dominates, and 125 files took over 30 seconds (issue #1423).
+ * Overlapping the deletes hides that latency. The cap keeps a large selection
+ * from flooding libuv's threadpool and starving unrelated filesystem work in
+ * the main process, and past ~16 the threadpool serializes anyway.
+ */
+export const LOCAL_FILE_DELETE_CONCURRENCY = 16;
+
+/**
  * Map `items` with a bounded concurrency.
  *
  * Spawns up to `limit` workers that pull from a shared cursor; results are

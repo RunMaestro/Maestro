@@ -99,6 +99,9 @@ const mockMaestro = {
 	shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
 	fs: {
 		delete: vi.fn().mockResolvedValue({ success: true }),
+		deleteMany: vi.fn(async (paths: string[]) => ({
+			results: paths.map((path) => ({ path, success: true })),
+		})),
 		downloadRemoteFile: vi.fn().mockResolvedValue({ success: true, path: '/local/App.tsx' }),
 		compressFolder: vi
 			.fn()
@@ -660,14 +663,46 @@ describe('useFileContextMenu', () => {
 			await result.current.handleDeleteMulti();
 		});
 
-		expect(mockMaestro.fs.delete).toHaveBeenCalledWith('/project/README.md', {
-			sshRemoteId: undefined,
-		});
-		expect(mockMaestro.fs.delete).toHaveBeenCalledWith('/project/docs/a.md', {
-			sshRemoteId: undefined,
-		});
+		// One batched call for the whole selection, not one call per file - the
+		// per-file loop put a round trip in front of every path (issue #1423).
+		expect(mockMaestro.fs.deleteMany).toHaveBeenCalledTimes(1);
+		expect(mockMaestro.fs.deleteMany).toHaveBeenCalledWith(
+			['/project/README.md', '/project/docs/a.md'],
+			{ sshRemoteId: undefined }
+		);
+		expect(mockMaestro.fs.delete).not.toHaveBeenCalled();
 		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
 		expect(setSelectedPaths).toHaveBeenCalledWith(expect.any(Set));
+		expect(result.current.multiDeleteModal).toBeNull();
+	});
+
+	it('handleDeleteMulti reports partial failures without losing the successes', async () => {
+		const refreshFileTree = vi.fn().mockResolvedValue(undefined);
+		const onShowFlash = vi.fn();
+		const selectedPathsRef = { current: new Set(['README.md', 'docs/a.md']) };
+		// A bulk delete is partially successful all the time (one locked or
+		// permission-denied file among many), so the batch resolves with a
+		// per-path outcome rather than rejecting on the first failure.
+		mockMaestro.fs.deleteMany.mockResolvedValueOnce({
+			results: [
+				{ path: '/project/README.md', success: true },
+				{ path: '/project/docs/a.md', success: false, error: 'Permission denied' },
+			],
+		});
+
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, selectedPathsRef, refreshFileTree, onShowFlash })
+		);
+
+		act(() => {
+			result.current.handleOpenDeleteMulti();
+		});
+		await act(async () => {
+			await result.current.handleDeleteMulti();
+		});
+
+		expect(onShowFlash).toHaveBeenCalledWith('Deleted 1, 1 failed');
+		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
 		expect(result.current.multiDeleteModal).toBeNull();
 	});
 	it('handleCompressFolder zips the folder, toasts the archive name, and refreshes', async () => {

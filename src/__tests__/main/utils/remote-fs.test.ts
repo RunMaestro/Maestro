@@ -13,6 +13,7 @@ import {
 	listDirWithStatsRemote,
 	bulkStatFileInSubdirsRemote,
 	listTreeRemote,
+	deleteManyRemote,
 	__resetHostLimitersForTest,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
@@ -1431,6 +1432,105 @@ describe('remote-fs', () => {
 			);
 
 			expect(results.every((r) => r.status === 'rejected')).toBe(true);
+		});
+	});
+
+	describe('deleteManyRemote', () => {
+		const ok: ExecResult = { stdout: '', stderr: '', exitCode: 0 };
+
+		it('deletes a whole batch in a single SSH round trip', async () => {
+			const deps = createMockDeps(ok);
+
+			const results = await deleteManyRemote(
+				['/remote/a.txt', '/remote/b.txt', '/remote/c.txt'],
+				baseConfig,
+				true,
+				deps
+			);
+
+			// This is the whole point: one handshake for N paths, not N.
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const cmd = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			expect(cmd).toBe("rm -rf '/remote/a.txt' '/remote/b.txt' '/remote/c.txt'");
+			expect(results).toEqual([{ success: true }, { success: true }, { success: true }]);
+		});
+
+		it('uses rm -f when recursive is off', async () => {
+			const deps = createMockDeps(ok);
+
+			await deleteManyRemote(['/remote/a.txt'], baseConfig, false, deps);
+
+			expect((deps.execSsh as any).mock.calls[0][1].at(-1)).toBe("rm -f '/remote/a.txt'");
+		});
+
+		it('escapes paths so a hostile filename cannot break out of the command', async () => {
+			const deps = createMockDeps(ok);
+
+			await deleteManyRemote(["/remote/a'; rm -rf ~; echo '.txt"], baseConfig, true, deps);
+
+			const cmd = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			// The whole filename stays one single-quoted argument - the embedded
+			// quote is closed and re-opened as '\'' rather than ending it, so the
+			// injected `rm -rf ~` is data the outer rm receives, not a command the
+			// shell runs. Batching several paths into one command line makes this
+			// the load-bearing property of the whole function.
+			expect(cmd).toBe(`rm -rf '/remote/a'\\''; rm -rf ~; echo '\\''.txt'`);
+		});
+
+		it('chunks a batch too large for one command line', async () => {
+			const deps = createMockDeps(ok);
+			// Each path is ~1 KB escaped, so 64 of them blow past the 32 KB cap.
+			const paths = Array.from({ length: 64 }, (_, i) => `/remote/${'x'.repeat(1000)}-${i}.txt`);
+
+			const results = await deleteManyRemote(paths, baseConfig, true, deps);
+
+			expect((deps.execSsh as any).mock.calls.length).toBeGreaterThan(1);
+			for (const call of (deps.execSsh as any).mock.calls) {
+				expect(Buffer.byteLength(call[1].at(-1), 'utf8')).toBeLessThanOrEqual(32 * 1024);
+			}
+			// Chunking must not drop or reorder anything.
+			expect(results).toHaveLength(paths.length);
+			expect(results.every((r) => r.success)).toBe(true);
+		});
+
+		it('retries a failed chunk per path to attribute the failure', async () => {
+			// `rm` exits non-zero without naming the offending argument, so the
+			// batch is replayed one path at a time to find out which one failed.
+			const execSsh = vi
+				.fn()
+				// Batch attempt fails as a whole.
+				.mockResolvedValueOnce({ stdout: '', stderr: 'rm: permission denied', exitCode: 1 })
+				// Per-path replay: a.txt fine, b.txt is the culprit, c.txt fine.
+				.mockResolvedValueOnce(ok)
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: 'rm: /remote/b.txt: Permission denied',
+					exitCode: 1,
+				})
+				.mockResolvedValueOnce(ok);
+			const deps: RemoteFsDeps = {
+				execSsh,
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+			};
+
+			const results = await deleteManyRemote(
+				['/remote/a.txt', '/remote/b.txt', '/remote/c.txt'],
+				baseConfig,
+				true,
+				deps
+			);
+
+			expect(results[0]).toEqual({ success: true });
+			expect(results[1].success).toBe(false);
+			expect(results[1].error).toContain('Permission denied');
+			expect(results[2]).toEqual({ success: true });
+		});
+
+		it('returns nothing and opens no connection for an empty batch', async () => {
+			const deps = createMockDeps(ok);
+
+			expect(await deleteManyRemote([], baseConfig, true, deps)).toEqual([]);
+			expect(deps.execSsh).not.toHaveBeenCalled();
 		});
 	});
 });
