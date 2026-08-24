@@ -148,13 +148,13 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 					if (!target) return s;
 
 					const updatedAiTabs = s.aiTabs.map((tab) =>
-						tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem) : tab
+						tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem, s) : tab
 					);
 
 					const updatedOrphans =
 						target.location === 'orphan' && s.orphanedThinkingTabs
 							? s.orphanedThinkingTabs.map((tab) =>
-									tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem) : tab
+									tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem, s) : tab
 								)
 							: s.orphanedThinkingTabs;
 

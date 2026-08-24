@@ -218,6 +218,11 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				// Run this turn at the bottom of the model/effort ladders. Set it for
+				// summarization, whose output a human reads once. Do NOT set it for
+				// grooming or transfer - their output becomes the context every later
+				// turn reads, so a cheap compaction compounds silently.
+				cheapTurn?: boolean;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions
@@ -491,6 +496,8 @@ interface MaestroAPI {
 		) => () => void;
 		onRemoteCadenzaFlash: (callback: (id: string) => void) => () => void;
 		flashCadenza: (id: string) => void;
+		onRemoteCadenzaHidden: (callback: (hidden: boolean) => void) => () => void;
+		setCadenzasHidden: (hidden: boolean) => void;
 		onRemoteMovement: (
 			callback: (
 				params: {
@@ -898,7 +905,7 @@ interface MaestroAPI {
 			feedbackText: string,
 			attachments?: Array<{ name: string; dataUrl: string }>
 		) => Promise<{ prompt: string }>;
-		getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+		getConversationPrompt: () => Promise<{ prompt: string; environment: string; cwd: string }>;
 		submitConversation: (payload: {
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
 			summary: string;
@@ -1479,6 +1486,11 @@ interface MaestroAPI {
 			dirPath: string,
 			sshRemoteId?: string
 		) => Promise<{ fileCount: number; folderCount: number }>;
+		/** Zip a folder into a `.zip` beside it, auto-suffixing on name collision. */
+		compressFolder: (
+			folderPath: string,
+			options?: { sshRemoteId?: string }
+		) => Promise<{ success: boolean; path: string; name: string }>;
 		copyPath: (
 			sourcePath: string,
 			destPath: string,
@@ -1584,6 +1596,9 @@ interface MaestroAPI {
 					sampledAt: string;
 					configDirKey: string;
 					authState?: 'authenticated' | 'unauthenticated';
+					accountEmail?: string;
+					accountUuid?: string;
+					organizationName?: string;
 					session: { percent: number; resetsAt?: string };
 					weekAllModels: { percent: number; resetsAt?: string };
 					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
@@ -1971,6 +1986,10 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
+		/** Publish merged shortcut bindings so the native menu shows real accelerators. */
+		setMenuShortcutKeys: (keys: Record<string, string[]>) => void;
+		/** Native application menu click, carrying the clicked item's shortcut id. */
+		onMenuCommand: (callback: (shortcutId: string) => void) => () => void;
 	};
 	platform: string;
 	/** Resolved on-disk maestro-cli.js path (dev vs packaged), or null. */
@@ -3405,6 +3424,7 @@ interface MaestroAPI {
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionSource: Record<string, { user: number; auto: number }>;
+			bySessionLastQuery: Record<string, number>;
 			worktreeQueries: number;
 			parentQueries: number;
 			byWorktreeStatus: {
@@ -3896,6 +3916,11 @@ interface MaestroAPI {
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
 			customEffort?: string;
+			recentCommands?: {
+				command: string;
+				exitCode?: number;
+				status?: 'running' | 'finished' | 'cancelled';
+			}[];
 		}) => Promise<{ success: boolean; command?: string; error?: string }>;
 	};
 

@@ -18,6 +18,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
 import {
@@ -64,10 +65,8 @@ function readCopilotConfiguredModel(): string | null {
  * should fall back to the user-configured model in that case.
  */
 async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), MODELS_DEV_FETCH_TIMEOUT_MS);
 	try {
-		const response = await fetch(MODELS_DEV_API_URL, { signal: controller.signal });
+		const response = await fetchWithTimeout(MODELS_DEV_API_URL, {}, MODELS_DEV_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			return null;
 		}
@@ -85,8 +84,6 @@ async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
 			error: String(err),
 		});
 		return null;
-	} finally {
-		clearTimeout(timeout);
 	}
 }
 

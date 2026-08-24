@@ -14,7 +14,7 @@
  * aggregated per session.
  */
 
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, Theme } from '../../types';
 import type { QueryEvent, StatsAggregation } from '../../../shared/stats-types';
 import {
@@ -29,6 +29,7 @@ import { Modal } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { computePercentiles } from '../../../shared/percentiles';
+import { useElementWidth } from '../../hooks/ui/useElementWidth';
 import { logger } from '../../utils/logger';
 import { Sparkline } from './Sparkline';
 import { TabBreakdown } from './TabBreakdown';
@@ -158,8 +159,12 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		return { parent: null, siblings: children.length, children };
 	}, [session, allSessions]);
 
-	// Sparkline for the entire byDay window (not capped at 7 days like the card)
+	// Sparkline for the entire byDay window (not capped at 7 days like the card).
+	// The modal is resizable, so the chart's width has to be measured rather than
+	// hard-coded - an inline SVG needs real pixels for its viewBox.
 	const fullSparkline = useMemo(() => aggregates.byDay.map((d) => d.count), [aggregates]);
+	const activityRef = useRef<HTMLDivElement>(null);
+	const activityWidth = useElementWidth(activityRef);
 
 	const isWorktree = Boolean(session.parentSessionId);
 	const headerLabel = `${session.name}${isWorktree ? ' (worktree)' : ''}`;
@@ -172,8 +177,12 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 			onClose={onClose}
 			width={860}
 			maxHeight="85vh"
+			resizeKey="modal-usage-agent-detail"
+			defaultSize={{ width: 860, height: 720 }}
+			minSize={{ width: 460, height: 360 }}
 			closeOnBackdropClick={true}
 			testId="agent-detail-modal"
+			contentClassName="p-6 overflow-y-auto flex-1 min-h-0"
 		>
 			<div className="space-y-5">
 				{/* Identity row */}
@@ -253,13 +262,22 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 					<section>
 						<SectionHeading theme={theme}>Daily Activity</SectionHeading>
 						<div
+							ref={activityRef}
 							className="rounded-md p-3 border"
 							style={{
 								borderColor: theme.colors.border,
 								backgroundColor: theme.colors.bgMain,
 							}}
 						>
-							<Sparkline data={fullSparkline} color={theme.colors.accent} width={820} height={64} />
+							<Sparkline
+								data={fullSparkline}
+								color={theme.colors.accent}
+								// 24px of horizontal padding on the measured container.
+								// Width is 0 until the observer fires; fall back to the
+								// default frame width so the first paint is not empty.
+								width={activityWidth > 0 ? Math.max(120, activityWidth - 24) : 800}
+								height={64}
+							/>
 							<div
 								className="flex justify-between mt-1 text-[10px]"
 								style={{ color: theme.colors.textDim }}

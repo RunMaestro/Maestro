@@ -24,7 +24,12 @@ import type { Session } from '../../../../renderer/types';
 import { createMockSession, createMockAITab } from '../../../helpers';
 import { THEMES } from '../../../../shared/themes';
 
-vi.mock('lucide-react', () => ({}));
+// TabBreakdown itself uses no icons, but the Pager it renders once the tab
+// list overflows a page needs its chevrons.
+vi.mock('lucide-react', () => ({
+	ChevronLeft: () => <span data-testid="chevron-left" />,
+	ChevronRight: () => <span data-testid="chevron-right" />,
+}));
 
 const theme = THEMES['dracula'];
 
@@ -102,6 +107,7 @@ describe('buildTabStats', () => {
 			snoozedTabs: [
 				{
 					id: 'snooze-1',
+					type: 'ai' as const,
 					tab: createMockAITab({ id: 'sleepy', name: 'Snoozed one' }),
 					unifiedIndex: 0,
 					snoozedAt: NOW,
@@ -323,6 +329,121 @@ describe('TabBreakdown', () => {
 		expect(screen.getByTestId('tab-breakdown-empty').textContent).toContain('Last 10');
 	});
 
+	describe('pagination', () => {
+		/**
+		 * N retired tabs, newest first by construction. The ids deliberately
+		 * carry no dash: the unknown-tab label takes everything before the first
+		 * one, so `tab-1` and `tab-2` would both render as "TAB" and the tests
+		 * could not tell one page from the next.
+		 */
+		const manyEvents = (n: number): QueryEvent[] =>
+			Array.from({ length: n }, (_, i) =>
+				buildEvent({
+					id: `e${i}`,
+					tabId: `tabid${String(i).padStart(3, '0')}`,
+					startTime: NOW - i * 1000,
+				})
+			);
+
+		it('leaves the pager off when everything fits on one page', () => {
+			const session = createMockSession({ aiTabs: [] });
+			renderBreakdown(session, manyEvents(20));
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
+
+			expect(screen.getAllByTestId('tab-card')).toHaveLength(20);
+			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
+			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('20 of 20');
+		});
+
+		it('caps the grid at one page and shows the pager once it overflows', () => {
+			const session = createMockSession({ aiTabs: [] });
+			renderBreakdown(session, manyEvents(100));
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
+
+			expect(screen.getAllByTestId('tab-card')).toHaveLength(32);
+			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('1 / 4');
+			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('1-32 of 100');
+		});
+
+		it('walks pages and renders a short final page', () => {
+			const session = createMockSession({ aiTabs: [] });
+			renderBreakdown(session, manyEvents(100));
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
+
+			const firstTitle = screen.getAllByTestId('tab-card')[0].textContent;
+
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('2 / 4');
+			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('33-64 of 100');
+			expect(screen.getAllByTestId('tab-card')[0].textContent).not.toBe(firstTitle);
+
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('4 / 4');
+			// 100 items over 32-per-page leaves 4 on the last page.
+			expect(screen.getAllByTestId('tab-card')).toHaveLength(4);
+			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('97-100 of 100');
+
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-prev'));
+			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('3 / 4');
+		});
+
+		it('disables the edges rather than wrapping around', () => {
+			const session = createMockSession({ aiTabs: [] });
+			renderBreakdown(session, manyEvents(100));
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
+
+			expect(screen.getByTestId('tab-breakdown-pager-prev')).toBeDisabled();
+
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+			expect(screen.getByTestId('tab-breakdown-pager-next')).toBeDisabled();
+		});
+
+		it('returns to page 1 when the sort changes', () => {
+			const session = createMockSession({ aiTabs: [] });
+			renderBreakdown(session, manyEvents(100));
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('2 / 4');
+
+			// Page 2 of a brand-new ordering is an arbitrary slice, so the pager
+			// snaps back rather than leaving the user mid-list.
+			fireEvent.click(screen.getByTestId('tab-breakdown-sort-name'));
+			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('1 / 4');
+		});
+
+		it('drops the pager entirely when a narrower filter fits on one page', () => {
+			const session = createMockSession({
+				aiTabs: [createMockAITab({ id: 'tabid000', name: 'Still open' })],
+			});
+			renderBreakdown(session, manyEvents(100));
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
+			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
+
+			// Narrowing from 100 tabs on page 2 down to a single open tab must not
+			// strand the grid on a page that no longer exists.
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-open'));
+			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
+			expect(screen.getAllByTestId('tab-card')).toHaveLength(1);
+			expect(screen.getByTestId('tab-card').textContent).toContain('Still open');
+		});
+
+		it('never paginates the bounded filters', () => {
+			const session = createMockSession({ aiTabs: [] });
+			renderBreakdown(session, manyEvents(100));
+
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-recent10'));
+			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
+			expect(screen.getAllByTestId('tab-card')).toHaveLength(10);
+
+			fireEvent.click(screen.getByTestId('tab-breakdown-filter-recent25'));
+			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
+			expect(screen.getAllByTestId('tab-card')).toHaveLength(25);
+		});
+	});
+
 	it('badges the active tab and marks a snoozed one', () => {
 		const session = createMockSession({
 			activeTabId: 'tab-a',
@@ -330,6 +451,7 @@ describe('TabBreakdown', () => {
 			snoozedTabs: [
 				{
 					id: 'snooze-1',
+					type: 'ai' as const,
 					tab: createMockAITab({ id: 'sleepy', name: 'Sleepy' }),
 					unifiedIndex: 0,
 					snoozedAt: NOW,

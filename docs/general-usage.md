@@ -155,6 +155,21 @@ preserved, so a 2x podcast still sounds like a person.
 You can also set the speed outside the app with
 `maestro-cli settings set mediaPlaybackRate 1.5`.
 
+### Compressing a Folder
+
+Right-click any folder in the Files tab and choose **Compress**. Maestro zips the
+folder into a `.zip` that lands beside it in the parent directory, named after
+the folder itself. Unzipping gives you back the folder, not its loose contents
+sprayed into the current directory.
+
+If `name.zip` already exists, the next free name is used - `name-1.zip`, then
+`name-2.zip`, and so on. Compressing the same folder twice never overwrites the
+archive you made the first time. A toast tells you the name of the file that was
+actually written, and the file tree refreshes so you can see it right away.
+
+This works on remote agents too. The remote host needs the `zip` command
+installed; without it, Maestro says so rather than failing quietly.
+
 ### File Explorer Keyboard Shortcuts
 
 With the Files tab focused, navigate the file list without touching the mouse:
@@ -197,6 +212,30 @@ Where you drop decides what happens:
 
 <Note>
 Importing into the tree copies from your local machine, so it is not available for agents running on an SSH remote. Attaching files to the chat still works on remotes.
+</Note>
+
+### Drag Files Out of Maestro
+
+Hold **Option** (**Alt** on Windows and Linux) while dragging a row out of the **Files tab** to hand the real file to anything that accepts a file drop: your Desktop, Finder or Explorer, a Mail or iMessage message, a browser upload field.
+
+- **Select several rows first** to drag the whole group out at once.
+- **Folders drag out too**, with all of their contents.
+- The original stays in the project. Dragging out copies, it never moves or removes anything.
+
+A hint appears at the bottom of the panel as soon as you start dragging, to remind you which key to hold.
+
+Hold the key **before** you begin the drag. A plain drag is reserved for Maestro's own targets, so the app has to decide which kind of drag it is the moment you start one, and pressing Option partway through has no effect. If that happens the hint tells you so: drop the file, then drag again with the key already held.
+
+Where a plain drag lands still decides what happens inside the app:
+
+| Drag                               | Result                                                        |
+| ---------------------------------- | ------------------------------------------------------------- |
+| **Plain drag** onto a folder row   | Moves the file to that folder inside the project              |
+| **Plain drag** onto the main panel | Attaches the file to your message, or inserts an `@reference` |
+| **Option-drag** anywhere outside   | Copies the real file out to the app or folder you drop on     |
+
+<Note>
+For agents running on an SSH remote, drag-out covers files but not folders, and the first Option-drag of a file downloads it before it can leave the app. Maestro flashes "drag again" when the file is ready, and the second drag carries it. This is deliberate, so a half-downloaded file is never handed to another app.
 </Note>
 
 ### Publish as GitHub Gist
@@ -323,7 +362,9 @@ Press `Enter` and Maestro asks **this tab's own model**, at the model and effort
 
 Declining hands your original request back to the composer so you can reword it and ask again, which is nearly always what you want - a wrong answer usually means a vague question. The card owns the keyboard until you answer it, so `Enter` can never run something you have not looked at.
 
-A command you accept runs through exactly the same path as one you typed yourself: same working directory, same SSH remote, same card in the transcript, and it joins your `↑` recall history the same way. After it runs there is nothing to distinguish it from a command you typed.
+A command you accept runs through exactly the same path as one you typed yourself: same working directory, same SSH remote, same card in the transcript, and it joins your `↑` recall history the same way. The one thing it keeps is what you asked for, shown above the command on its card - so a transcript you read back weeks later says why those flags were there, not just what ran.
+
+That request travels with the command. When you ask for a follow-up, the model sees both the earlier ask and the command it produced, so "actually just give me a count" is refined against what you originally wanted rather than reverse-engineered from the flags.
 
 **How the suggestion is made:**
 
@@ -738,13 +779,28 @@ You can always rename tabs manually:
 
 ### Changing a Tab's Model and Effort
 
-Every AI tab can run a different model and a different reasoning effort from the rest of the agent. The pills under the composer set both with the mouse; `Opt+Cmd+.` / `Alt+Ctrl+.` does it without one.
+Every AI tab can run a different model and a different reasoning effort from the rest of the agent. The pills under the composer set both with the mouse; `Opt+Cmd+.` / `Alt+Ctrl+.` opens a console that sets both without one.
 
-The dialog puts the two knobs on two axes: **Up/Down** walks the model list, **Left/Right** walks the effort scale, **Enter** applies both, and **Escape** leaves the tab exactly as it was. Nothing is written until you press Enter, so browsing the list costs nothing.
+The console puts the two knobs on two axes, so the direction you press matches the axis you see:
 
-- Which models and effort levels appear depends on the agent. A multi-provider CLI (Copilot-CLI, for example) lists its catalog grouped by vendor, so Claude, OpenAI, Gemini and the rest each get their own short section.
+| Key              | Does                                                           |
+| ---------------- | -------------------------------------------------------------- |
+| `Up` / `Down`    | Turn the model wheel. It wraps, so you can run off either end. |
+| `Left` / `Right` | Move along the effort scale. It wraps too.                     |
+| Any letter       | Jump the wheel to a model whose name starts with it.           |
+| `Enter`          | Apply both and close.                                          |
+| `Escape`         | Close and leave the tab exactly as it was.                     |
+
+Nothing is written until you press Enter, so browsing costs nothing.
+
+**Typing to find a model.** On an agent with a long catalog, press the first letter or two instead of arrowing: `f` jumps to `fable`, `so` to `sonnet`. Pressing the same letter again walks to the next model that starts with it, so `o`, `o` steps from `opus` to `opus[1m]`. Type `d` to reach `(default)`.
+
+**Without a keyboard.** Click a model row or an effort stop to select it, and double-click to apply and close. Clicking outside the console cancels, the same as Escape.
+
+- Which models and effort levels appear depends on the agent. The caption under the wheel names the vendor of whichever model you are on, which is what tells Claude, OpenAI and Gemini entries apart on a multi-provider CLI like Copilot-CLI.
 - `(default)` clears the tab's override and falls back to the agent's own setting.
 - Not every model honors effort. Agents that expose the knob pass it through, and a model that has no reasoning budget ignores it.
+- The effort bars under the stops rise with the level, so you can read where you are on the scale without reading the labels. `(default)` sits apart from the scale and has no bar - it means "let the agent decide" rather than naming a level.
 
 You can also reach it from Quick Actions (`Cmd+K` / `Ctrl+K`) as **Change Tabs Model and Effort**. It applies to AI tabs only.
 
@@ -763,7 +819,22 @@ The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the 
 | **Tile New File Below**     | New blank file tab takes the bottom half              |
 | **Tile New Terminal Below** | New terminal takes the bottom half                    |
 
-Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half, and the new pane takes focus, so you can start typing in it right away.
+**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab.
+
+The other three ship with no key assigned, so Maestro is not claiming three more chords on your behalf. They are still in the shortcuts list: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want - it reads **Not set** - and click it to record whatever combination you like. Once bound, the key works everywhere the terminal one does, and Quick Actions starts showing it next to the command.
+
+Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half.
+
+**The new pane takes the keyboard**, so you can start typing immediately without reaching for the mouse. Where the caret lands depends on what you tiled:
+
+| New pane | Where you start typing                                             |
+| -------- | ------------------------------------------------------------------ |
+| AI chat  | The chat input, ready for a prompt                                 |
+| Terminal | The command prompt, ready for a command                            |
+| Browser  | The address bar, with the current URL selected so you type over it |
+| File     | The editor, on a blank Untitled file - handy for a quick note      |
+
+If a pane needs a moment to appear (a browser starting up, a file editor loading for the first time), Maestro waits for it and puts the caret in as soon as it is ready.
 
 If a tile is already on screen, the split happens inside the pane you are working in rather than under the whole grid. That is what lets you build a layout one command at a time: tile a terminal under your chat, click into the terminal, then tile a browser under that.
 

@@ -14,7 +14,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, isClaudeLimitNotice, matchErrorPattern } from './error-patterns';
 
 /**
  * Content block in Claude assistant messages
@@ -619,6 +619,29 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		// ── Plan-limit notice ───────────────────────────────────────────────────
+		// Claude Code does NOT report a hit plan limit as an error event. It emits
+		// a SYNTHETIC ASSISTANT MESSAGE whose text is the banner:
+		//
+		//   { type: 'assistant', error: 'rate_limit', isApiErrorMessage: true,
+		//     apiErrorStatus: 429, message: { model: '<synthetic>', content:
+		//       [{ type:'text', text: "You've hit your session limit · resets …" }] },
+		//     quotaLimits: { resetsAt: 1787416800, rateLimitType: 'five_hour', … } }
+		//
+		// Verified against a real captured transcript. Two consequences that cost
+		// us before: it is an `assistant` event (so it rendered as an ordinary
+		// reply and the turn looked successful), and the top-level `error` is the
+		// bare tag `"rate_limit"`, which matched no pattern and classified as
+		// `unknown` - so Agent Resilience never saw a retryable failure.
+		//
+		// The richer top-level fields are only present on some paths (the
+		// transcript carries them; plain `--output-format stream-json` stdout may
+		// forward just `message`), so recognizing the TEXT is what makes this work
+		// everywhere. `quotaLimits` is preserved on `parsedJson` when present so
+		// the retry lands on the exact reset second instead of an hourly poll.
+		const limitError = this.detectPlanLimitNotice(obj, parsed);
+		if (limitError) return limitError;
+
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 
@@ -668,6 +691,70 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Recognize Claude Code's plan-limit notice on any envelope that can carry it,
+	 * or return null when this isn't one.
+	 *
+	 * Handles three shapes, in the order they occur in the wild:
+	 *  - a synthetic `assistant` message whose text is the banner (what actually
+	 *    happens on a hit limit - see the block that calls this),
+	 *  - a `result` envelope whose `result` string is the banner,
+	 *  - the legacy `Claude AI usage limit reached|<epoch>` marker in either.
+	 *
+	 * False positives are the real risk here: Maestro's own agents discuss usage
+	 * limits constantly, and mistaking a normal reply for a quota failure aborts a
+	 * good turn. So the banner must be the ENTIRE message text (anchored and
+	 * length-capped by `isClaudeLimitNotice`), not merely contained in it - a reply
+	 * that quotes or explains the banner always carries surrounding prose. An
+	 * explicit marker (`isApiErrorMessage`, `error: 'rate_limit'`, or the
+	 * `<synthetic>` model Claude stamps on generated messages) is accepted as
+	 * corroboration but never required, since not every path forwards it.
+	 */
+	private detectPlanLimitNotice(obj: Record<string, unknown>, parsed: unknown): AgentError | null {
+		const msg = obj as unknown as ClaudeRawMessage;
+		const isAssistant = obj.type === 'assistant';
+		const isResult = obj.type === 'result';
+		if (!isAssistant && !isResult) return null;
+
+		const text = isResult
+			? typeof obj.result === 'string'
+				? obj.result
+				: ''
+			: this.extractTextFromMessage(msg);
+		if (!isClaudeLimitNotice(text)) return null;
+
+		// A synthetic limit message carries no tool calls and no other content, so
+		// requiring the notice to BE the message (not just start it) is what keeps
+		// an agent explaining limits from tripping this.
+		const message = obj.message as { model?: unknown } | undefined;
+		const explicitlyFlagged =
+			obj.isApiErrorMessage === true ||
+			obj.error === 'rate_limit' ||
+			message?.model === '<synthetic>';
+		if (isAssistant && !explicitlyFlagged && this.extractToolUseBlocks(msg).length > 0) {
+			return null;
+		}
+
+		const match = matchErrorPattern(getErrorPatterns(this.agentId), text);
+		return {
+			// `rate_limited` rather than `token_exhaustion`: Maestro's
+			// `token_exhaustion` means the CONTEXT WINDOW is full, which is not
+			// retryable. Plan quota lives under `rate_limited`; the retry strategy is
+			// then chosen from the message text by `classifyRetryableError`.
+			type: match?.type ?? 'rate_limited',
+			// Keep Claude's own wording rather than the generic pattern message: it
+			// names which limit was hit and when it resets, which is both what the
+			// user wants to read and what `tokenExhaustionResetAt` falls back to
+			// parsing when no structured `quotaLimits` came through.
+			message: text.trim(),
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			// Carries `quotaLimits.resetsAt` through to the retry scheduler.
+			parsedJson: parsed,
+		};
 	}
 
 	/**

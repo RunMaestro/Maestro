@@ -19,6 +19,7 @@
  *   - Worktree children skipped when parent's worktreesExpanded === false
  *   - Position tracking via cyclePosition store field
  *   - Unread filter restricts cycling to unread/busy agents only
+ *   - Pianola is skipped while its Encore flag is off, and cycled when on
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -2140,6 +2141,80 @@ describe('cycleSession', () => {
 			cycleSession('next', deps);
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 			expect(useSessionStore.getState().cyclePosition).toBe(0);
+		});
+	});
+	// =========================================================================
+	// Pianola - hidden agent while its Encore flag is off
+	// =========================================================================
+	describe('pianola encore flag', () => {
+		it('skips the Pianola agent when the flag is off', () => {
+			// Pianola persists in the session store after the flag is switched off and
+			// SessionList stops rendering its row, so cycling must not land on it.
+			const pianola = makeSession({ id: 'p', name: 'Pianola', isPianola: true });
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [pianola, sessA, sessB],
+				activeSessionId: 'b',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				encoreFeatures: { pianola: false },
+			} as any);
+
+			// Order without Pianola: [Alpha, Beta] → next from Beta wraps to Alpha.
+			cycleSession('next', makeDeps());
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+		});
+
+		it('includes the Pianola agent when the flag is on', () => {
+			const pianola = makeSession({ id: 'p', name: 'Pianola', isPianola: true });
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+
+			useSessionStore.setState({
+				sessions: [pianola, sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				encoreFeatures: { pianola: true },
+			} as any);
+
+			// Order: [Alpha, Pianola] → next from Alpha lands on Pianola.
+			cycleSession('next', makeDeps());
+			expect(useSessionStore.getState().activeSessionId).toBe('p');
+		});
+
+		it('skips a starred row owned by Pianola when the flag is off', () => {
+			// A starred tab inside Pianola must not resurface the hidden agent through
+			// the Starred section that shares the cycle order.
+			const pianola = makeSession({ id: 'p', name: 'Pianola', isPianola: true });
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+
+			useSessionStore.setState({
+				sessions: [pianola, sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+				encoreFeatures: { pianola: false },
+			} as any);
+
+			// Deps carry a stale starred row for Pianola (as a fixture would); the
+			// visual order must still exclude it.
+			const deps = makeDeps({ starredItems: [makeOpenStarred('p', 't1', 'Manager chat')] });
+
+			cycleSession('next', deps);
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+			expect(deps.activateStarredItem).not.toHaveBeenCalled();
 		});
 	});
 });

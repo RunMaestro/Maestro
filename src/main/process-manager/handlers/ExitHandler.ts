@@ -6,6 +6,7 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
@@ -135,18 +136,60 @@ export class ExitHandler {
 				remainingLineLength: remainingLine.length,
 				remainingLinePreview: remainingLine.substring(0, 200),
 			});
+			// Scoped to the parse alone. A malformed last line is an expected,
+			// recoverable condition with a defined fallback (emit it raw), but
+			// classifying and dispatching the event below is not - widening this
+			// catch around that work would swallow a real defect AND emit the failed
+			// envelope's JSON to the user as if it were the answer.
+			let event: ParsedEvent | null = null;
 			try {
-				const event = outputParser.parseJsonLine(remainingLine);
-				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
-					managedProcess.resultEmitted = true;
-					const resultText = event.text || managedProcess.streamedText || '';
-					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
+				event = outputParser.parseJsonLine(remainingLine);
+			} catch {
+				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
+			}
+
+			// Capture the provider's session id BEFORE dispatching, and for a failed
+			// envelope as much as a successful one. When the flushed line is the first
+			// event to carry one - a short-lived run whose whole output is this single
+			// trailing envelope - this is the only chance to record it. Without it the
+			// tab has no id to resume from, so recovery from a *recoverable* error
+			// silently opens a fresh conversation and drops the context the retry was
+			// supposed to continue. StdoutHandler does this for mid-stream lines; the
+			// flush is the same event arriving without a trailing newline.
+			if (event) {
+				const eventSessionId = outputParser.extractSessionId(event);
+				if (eventSessionId) {
+					managedProcess.agentSessionId = eventSessionId;
+					if (!managedProcess.sessionIdEmitted) {
+						managedProcess.sessionIdEmitted = true;
+						this.emitter.emit('session-id', sessionId, eventSessionId);
 					}
 				}
-			} catch {
-				// If parsing fails, emit the raw line as data
-				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
+			}
+
+			// A terminal envelope that reports a FAILURE has to leave through the
+			// error path, not the result path. Emitting its text as data would render
+			// a provider failure as the agent's answer, and dropping it silently is
+			// worse still: `detectErrorFromExit` below returns null on exit code 0, so
+			// a CLI that reports the failure in-band and then exits clean would settle
+			// the turn with no answer and no error at all - the tab just stops, and no
+			// retry or recovery handling ever fires.
+			if (event?.type === 'error' && !managedProcess.errorEmitted) {
+				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
+				if (agentError) {
+					managedProcess.errorEmitted = true;
+					agentError.sessionId = sessionId;
+					if (managedProcess.sshRemoteId) {
+						agentError.sshRemoteId = managedProcess.sshRemoteId;
+					}
+					this.emitter.emit('agent-error', sessionId, agentError);
+				}
+			} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
+				managedProcess.resultEmitted = true;
+				const resultText = event.text || managedProcess.streamedText || '';
+				if (resultText) {
+					this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
+				}
 			}
 		}
 

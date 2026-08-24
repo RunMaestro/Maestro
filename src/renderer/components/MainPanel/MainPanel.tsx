@@ -1396,6 +1396,7 @@ export const MainPanel = React.memo(
 									mergeTargetName={mergeTargetName}
 									onCancelMerge={onCancelMerge}
 									onExitWizard={onExitWizard}
+									onStopWizardTurn={props.onStopWizardTurn}
 									paneTabActions={paneTabActions}
 									paneFileActions={paneFileActions}
 									onDeleteLog={props.onDeleteLog}

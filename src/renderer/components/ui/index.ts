@@ -5,7 +5,7 @@
  * patterns used throughout the application.
  */
 
-export { Modal, ModalFooter } from './Modal';
+export { Modal, ModalFooter, ModalSubtitle } from './Modal';
 export type { ModalProps, ModalFooterProps } from './Modal';
 
 export { FormInput } from './FormInput';
@@ -29,8 +29,14 @@ export type { RadioGroupProps, RadioOption } from './RadioGroup';
 export { SegmentedControl } from './SegmentedControl';
 export type { SegmentedControlProps, SegmentedOption } from './SegmentedControl';
 
+export { SortableTh } from './SortableTh';
+export type { SortableThProps } from './SortableTh';
+
 export { Spinner } from './Spinner';
 export type { SpinnerProps } from './Spinner';
+
+export { Pager } from './Pager';
+export type { PagerProps } from './Pager';
 
 export { GhostIconButton } from './GhostIconButton';
 export type { GhostIconButtonProps } from './GhostIconButton';
@@ -57,6 +63,9 @@ export type { CalendarPickerProps } from './CalendarPicker';
 export { EscCloseButton } from './EscCloseButton';
 export type { EscCloseButtonProps } from './EscCloseButton';
 
+export { Keycap, KeycapHint } from './Keycap';
+export type { KeycapProps, KeycapHintProps, KeycapTone } from './Keycap';
+
 export { CopyIconButton } from './CopyIconButton';
 export type { CopyIconButtonProps } from './CopyIconButton';
 
@@ -66,5 +75,11 @@ export type { FontScaleControlProps } from './FontScaleControl';
 export { GitChangeCounts } from './GitChangeCounts';
 export type { GitChangeCountsProps } from './GitChangeCounts';
 
+export { GitRunningBadge } from './GitRunningBadge';
+export type { GitRunningBadgeProps } from './GitRunningBadge';
+
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';
+
+export { CountBadge } from './CountBadge';
+export type { CountBadgeProps } from './CountBadge';

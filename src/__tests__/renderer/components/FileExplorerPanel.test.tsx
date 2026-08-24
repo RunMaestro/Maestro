@@ -175,6 +175,11 @@ vi.mock('lucide-react', () => ({
 			💾
 		</span>
 	),
+	FileArchive: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="file-archive-icon" className={className} style={style}>
+			🗜️
+		</span>
+	),
 }));
 
 // Mock @tanstack/react-virtual for virtualization
@@ -2036,6 +2041,14 @@ describe('FileExplorerPanel', () => {
 			return row;
 		}
 
+		/** A dragover that actually carries the Option/Alt modifier (see below). */
+		function dragOverWithAlt(altKey: boolean): MouseEvent {
+			const event = new MouseEvent('dragover', { bubbles: true, cancelable: true, altKey });
+			// A real dragover always carries one; the row handlers read it unguarded.
+			Object.defineProperty(event, 'dataTransfer', { value: makeDataTransfer() });
+			return event;
+		}
+
 		it('writes the relative path under the custom MIME type on drag start', () => {
 			const { container } = renderWithExpanded();
 			const row = getRow(container, 'package.json');
@@ -2100,6 +2113,102 @@ describe('FileExplorerPanel', () => {
 				undefined
 			);
 			expect(onShowFlash).toHaveBeenCalledWith('Moved "index.ts"');
+		});
+
+		// The drag-out gesture (Option/Alt-drag to Finder) is invisible otherwise:
+		// a plain drag only reaches targets inside Maestro, so the hint is the only
+		// thing telling a user the file can leave the app at all.
+		it('shows the drag-out hint while a row drag is active', () => {
+			const { container, queryByText } = renderWithExpanded();
+			expect(queryByText(/drag to copy out to/i)).toBeNull();
+
+			const row = getRow(container, 'index.ts');
+			act(() => {
+				fireEvent.dragStart(row, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+			expect(queryByText(/Alt-drag to copy out to Finder/i)).not.toBeNull();
+
+			fireEvent.dragEnd(row, { dataTransfer: makeDataTransfer() });
+			expect(queryByText(/drag to copy out to/i)).toBeNull();
+		});
+
+		// The global setup mock pins the non-Mac key vocabulary, so every other
+		// assertion here reads "Alt-drag". macOS is the branch that also renders a
+		// ⌥ keycap beside the spelled-out word, since the symbol alone is the thing
+		// people don't recognize - cover it by flipping just the two formatters.
+		it('renders the Option keycap alongside the spelled-out key on macOS', async () => {
+			const { formatKey, formatAltKeyName } =
+				await import('../../../renderer/utils/shortcutFormatter');
+			vi.mocked(formatKey).mockImplementation((key: string) => (key === 'Alt' ? '⌥' : key));
+			vi.mocked(formatAltKeyName).mockReturnValue('Option');
+			try {
+				const { container, queryByText } = renderWithExpanded();
+				const row = getRow(container, 'index.ts');
+				act(() => {
+					fireEvent.dragStart(row, { dataTransfer: makeDataTransfer() });
+					vi.advanceTimersByTime(0);
+				});
+				expect(queryByText(/Option-drag to copy out to Finder/i)).not.toBeNull();
+				// The keycap is a sibling element, not part of the sentence.
+				expect(container.querySelector('kbd')?.textContent).toBe('⌥');
+			} finally {
+				vi.mocked(formatKey).mockImplementation((key: string) => key);
+				vi.mocked(formatAltKeyName).mockReturnValue('Alt');
+			}
+		});
+
+		// Windows and Linux spell the key the same way the symbol reads, so the
+		// keycap would just print "Alt" twice in a row.
+		it('omits the keycap when the symbol and the spelled-out key match', () => {
+			const { container } = renderWithExpanded();
+			const row = getRow(container, 'index.ts');
+			act(() => {
+				fireEvent.dragStart(row, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+			expect(container.querySelector('kbd')).toBeNull();
+		});
+
+		// A root-level file suppresses the receptacle (nowhere to move it), but the
+		// drag-out hint applies to every file regardless of where it sits.
+		it('shows the drag-out hint even when the move-to-root receptacle is suppressed', () => {
+			const { container, queryByText } = renderWithExpanded();
+			const rootRow = getRow(container, 'package.json');
+			act(() => {
+				fireEvent.dragStart(rootRow, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+			expect(queryByText('Drop here to move to root')).toBeNull();
+			expect(queryByText(/Alt-drag to copy out to Finder/i)).not.toBeNull();
+		});
+
+		// Option has to be held BEFORE dragstart (Electron's startDrag cancels the
+		// HTML5 drag, so the fork is taken before the drop target is known).
+		// Pressing it mid-drag is a dead end, so the hint owns the recovery.
+		it('tells the user to restart the drag when Option is pressed mid-drag', () => {
+			const { container, queryByText } = renderWithExpanded();
+			const row = getRow(container, 'index.ts');
+			act(() => {
+				fireEvent.dragStart(row, { dataTransfer: makeDataTransfer() });
+				vi.advanceTimersByTime(0);
+			});
+
+			// jsdom has no DragEvent, and testing-library's fallback drops the
+			// modifier flags - dispatch a real MouseEvent named 'dragover' so
+			// `altKey` actually reaches the handler (React maps it the same way).
+			act(() => {
+				fireEvent(row, dragOverWithAlt(true));
+			});
+			expect(queryByText(/drop and try again/i)).not.toBeNull();
+			expect(queryByText(/Alt-drag to copy out to Finder/i)).toBeNull();
+
+			// Releasing the key puts the plain hint back - the state tracks the live
+			// modifier rather than latching on the first press.
+			act(() => {
+				fireEvent(row, dragOverWithAlt(false));
+			});
+			expect(queryByText(/Alt-drag to copy out to Finder/i)).not.toBeNull();
 		});
 
 		it('suppresses the move-to-root receptacle when dragging a file already at root', () => {
@@ -3133,13 +3242,38 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByText('New File')).toBeInTheDocument();
 		});
 
-		it('does not show "New File" option on file context menu', () => {
+		it('shows "New File" option on file context menu', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
 				el.textContent?.includes('package.json')
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-			expect(screen.queryByText('New File')).not.toBeInTheDocument();
+			expect(screen.getByText('New File')).toBeInTheDocument();
+		});
+
+		// A top-level file is the only right-click target in a project whose root
+		// holds no folder, so its New File has to create in the workspace root.
+		it('creates a new file next to the right-clicked top-level file', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'newthing.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(writeFile).toHaveBeenCalledWith('/Users/test/project/newthing.ts', '', undefined);
 		});
 
 		it('shows "Preview All Files in Folder" option on folder context menu', () => {

@@ -19,6 +19,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'claude-code': 'Claude Code',
 	codex: 'Codex',
 	'gemini-cli': 'Gemini CLI',
+	antigravity: 'Antigravity CLI',
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
 	'factory-droid': 'Factory Droid',
@@ -140,6 +141,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'qwen3-coder',
 	'omp',
 	'grok',
+	'antigravity',
 ]);
 
 /**
@@ -147,6 +149,89 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
  */
 export function isBetaAgent(agentId: AgentId | string): boolean {
 	return BETA_AGENTS.has(agentId as AgentId);
+}
+
+/**
+ * Presentation metadata for the provider pickers.
+ */
+export interface AgentPickerMeta {
+	/** One-line pitch rendered under the provider name. */
+	description: string;
+	/** Provider brand color, used for the tile logo and the selection ring. */
+	brandColor: string;
+}
+
+/**
+ * Which providers a user may pick, in the order every picker renders them.
+ *
+ * This is the SINGLE source of truth behind all three provider pickers: the New
+ * Agent modal's list, the New Agent Wizard's tile strip, and the Group Chat
+ * moderator dropdown. They used to keep their own hand-written arrays, which is
+ * how Grok and Qwen3 Coder shipped selectable in the New Agent modal yet absent
+ * from the wizard and un-pickable as a moderator for months.
+ *
+ * `null` means the agent is never offered to the user: `terminal` is internal
+ * plumbing, and `gemini-cli` is retained only for type and back-compat reasons
+ * (superseded by Antigravity).
+ *
+ * The record is keyed by AgentId, so adding an id to AGENT_IDS does not compile
+ * until a decision is made here. Key order is NOT picker order - PICKABLE_AGENT_IDS
+ * sorts by display name, so a new entry can go anywhere in this record and still
+ * land in the right place in every picker.
+ */
+export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
+	antigravity: { description: "Google's agentic coding CLI", brandColor: '#4285F4' },
+	'claude-code': { description: "Anthropic's AI coding assistant", brandColor: '#D97757' },
+	codex: { description: "OpenAI's AI coding assistant", brandColor: '#10A37F' },
+	'copilot-cli': { description: "GitHub's AI coding assistant", brandColor: '#24292F' },
+	'factory-droid': { description: "Factory's AI coding assistant", brandColor: '#3B82F6' },
+	grok: { description: "xAI's AI coding assistant", brandColor: '#B4B8C0' },
+	hermes: { description: "Nous Research's AI coding assistant", brandColor: '#2323FF' },
+	omp: { description: 'Multi-model coding agent', brandColor: '#9B4DFF' },
+	opencode: { description: 'Open-source AI coding assistant', brandColor: '#F97316' },
+	pi: { description: 'Your own agent harness', brandColor: '#E4E4E7' },
+	'qwen3-coder': { description: "Alibaba's AI coding assistant", brandColor: '#615CED' },
+	terminal: null,
+	'gemini-cli': null,
+};
+
+/**
+ * Every agent a user may pick as a provider, in picker order: alphabetical by
+ * display name, so the user scans one predictable list everywhere. Derived from
+ * AGENT_PICKER_META so the two can never disagree.
+ *
+ * Sorting is done here rather than trusted to the record's key order, which is
+ * easy to get wrong when a provider is added and impossible to notice in review.
+ */
+export const PICKABLE_AGENT_IDS: readonly AgentId[] = (Object.keys(AGENT_PICKER_META) as AgentId[])
+	.filter((id) => AGENT_PICKER_META[id] !== null)
+	.sort((a, b) => getAgentDisplayName(a).localeCompare(getAgentDisplayName(b)));
+
+/**
+ * Which provider a picker should land on when it has to choose for the user.
+ *
+ * Display order is alphabetical, but "first in the list" is a bad default: it
+ * would hand a fresh Group Chat to whichever beta provider happens to sort
+ * first. This is the preference order instead - the first entry the user
+ * actually has installed wins, and anything absent here falls back to the
+ * alphabetical order.
+ */
+export const AGENT_AUTOSELECT_ORDER: readonly AgentId[] = [
+	'claude-code',
+	'codex',
+	'antigravity',
+	'opencode',
+	'factory-droid',
+	'copilot-cli',
+];
+
+/**
+ * Picker metadata for an agent, or null when it is never offered (unknown ids
+ * included, so a stale persisted toolType can't crash a picker).
+ */
+export function getAgentPickerMeta(agentId: AgentId | string): AgentPickerMeta | null {
+	if (!Object.prototype.hasOwnProperty.call(AGENT_PICKER_META, agentId)) return null;
+	return AGENT_PICKER_META[agentId as AgentId];
 }
 
 /**
@@ -181,6 +266,9 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	opencode: { binary: 'opencode', args: 'auth login' },
 	'factory-droid': { binary: 'droid', args: '', followUp: '/login' },
 	'copilot-cli': { binary: 'copilot', args: 'login' },
+	// Antigravity has no login subcommand: headless runs reuse the credentials
+	// cached by one interactive sign-in, so the bare TUI is the whole flow.
+	antigravity: { binary: 'agy', args: '' },
 	grok: { binary: 'grok', args: 'login' },
 	hermes: null,
 	pi: null,

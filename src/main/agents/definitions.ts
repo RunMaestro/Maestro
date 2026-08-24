@@ -372,6 +372,79 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'antigravity',
+		name: 'Antigravity CLI',
+		binaryName: 'agy',
+		command: 'agy',
+		args: [],
+		batchModePrefix: [],
+		// Headless mode soft-denies anything that would normally prompt (shell commands
+		// default to "Ask"), so a batch run without this flag stalls out on its first
+		// terminal tool call instead of failing loudly.
+		// https://antigravity.google/docs/cli/headless
+		batchModeArgs: ['--dangerously-skip-permissions'],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		// `agy -p "..." --conversation <id>` resumes a specific conversation. The id
+		// comes back as `conversation_id` on every stream-json event.
+		resumeArgs: (sessionId: string) => ['--conversation', sessionId],
+		// Best-effort only: `--sandbox` restricts terminal commands, but reading AND
+		// writing files inside the active workspace stays auto-allowed in headless
+		// mode. There is no CLI flag that makes the agent truly read-only, hence
+		// readOnlyCliEnforced: false and supportsReadOnlyMode: false.
+		//
+		// Consequence worth knowing: tab naming spawns with readOnlyMode: true and
+		// relies on `noToolsArgs` to keep a task-like first message from turning into
+		// a real agentic run. The CLI exposes no tool-disabling flag, so there is
+		// nothing to put in `noToolsArgs` and a naming run can still touch workspace
+		// files. Wire `noToolsArgs` here the moment such a flag ships.
+		readOnlyArgs: ['--sandbox'],
+		readOnlyCliEnforced: false,
+		yoloModeArgs: ['--dangerously-skip-permissions'],
+		// No working-directory flag; the CLI takes its workspace from the spawn cwd
+		// (echoed back as `init.cwd`). No documented image attachment flag either.
+		workingDirArgs: undefined,
+		imageArgs: undefined,
+		modelArgs: (modelId: string) => ['--model', modelId],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model slug override (e.g., gemini-3.6-flash-high). Leave empty to use the CLI default. Run `agy --help` for the slugs your account can reach.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'effort',
+				type: 'select',
+				label: 'Reasoning Effort',
+				description: 'How much the model should reason before responding.',
+				options: ['', 'low', 'medium', 'high'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--effort', value.trim()] : []),
+			},
+			{
+				key: 'printTimeout',
+				type: 'text',
+				label: 'Headless Timeout',
+				description:
+					'Maximum time a single headless run may take (Go duration, e.g. 30m, 2h). The CLI default of 5m cuts off longer agent runs.',
+				default: '30m',
+				argBuilder: (value: string) =>
+					value && value.trim() ? ['--print-timeout', value.trim()] : [],
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description: 'Maximum context window size in tokens. Gemini 3.x models expose a 1M window.',
+				default: 1048576,
+			},
+		],
+	},
+	{
 		id: 'qwen3-coder',
 		name: 'Qwen3 Coder',
 		binaryName: 'qwen',

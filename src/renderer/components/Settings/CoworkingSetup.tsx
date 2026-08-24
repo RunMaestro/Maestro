@@ -52,6 +52,16 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 	const [busyAgentId, setBusyAgentId] = useState<string | null>(null);
 	const [busyAll, setBusyAll] = useState(false);
 	const [loading, setLoading] = useState(true);
+	// Alphabetical by display name, matching every other provider list.
+	const sortedStatuses = useMemo(
+		() =>
+			[...statuses].sort((a, b) =>
+				getAgentDisplayName(a.agentId as AgentId).localeCompare(
+					getAgentDisplayName(b.agentId as AgentId)
+				)
+			),
+		[statuses]
+	);
 	const browserInteractionAgents = useSettingsStore((s) => s.coworkingBrowserInteraction);
 	const setBrowserInteractionAgents = useSettingsStore((s) => s.setCoworkingBrowserInteraction);
 	const toggleInteraction = useCallback(
@@ -279,7 +289,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 			</div>
 
 			<div className="space-y-1.5">
-				{statuses.map((s) => {
+				{sortedStatuses.map((s) => {
 					const isBusy = busyAgentId === s.agentId || busyAll;
 					const interactionOn = browserInteractionAgents.includes(s.agentId);
 					const confirmPolicy = browserConfirm[s.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;

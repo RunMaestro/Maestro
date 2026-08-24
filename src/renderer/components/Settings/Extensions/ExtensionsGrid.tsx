@@ -41,9 +41,6 @@ interface ExtensionsGridProps {
 	onKeyDown: (e: React.KeyboardEvent) => void;
 	/** Measured by the parent, which owns the navigation math. */
 	gridRef: React.RefObject<HTMLDivElement>;
-	/** Focus the active tile on mount - set when returning from the details
-	 * pane, so Escape puts the user back where they left off. */
-	autoFocusActive?: boolean;
 }
 
 /** Finds the one tabbable tile. Shared so callers outside this file (the search
@@ -76,16 +73,20 @@ export function ExtensionsGrid({
 	onActiveIndexChange,
 	onKeyDown,
 	gridRef,
-	autoFocusActive = false,
 }: ExtensionsGridProps) {
-	// Consumed on the first run: `autoFocusActive` stays true for the life of the
-	// mount, and without this every later arrow press would yank focus back into
-	// the grid from wherever the user actually put it.
-	const pendingAutoFocus = useRef(autoFocusActive);
+	// The grid claims focus on mount, so the arrows work the moment the pane is
+	// on screen - no click or Tab needed to "get into" it first. The grid mounts
+	// exactly twice per visit: when the pane opens, and when the details pane
+	// closes. Both want focus here, and the second is what makes Escape land the
+	// user back on the tile they opened.
+	//
+	// Consumed on the first effect run: without the ref every later arrow press
+	// would re-focus, yanking focus back from wherever the user actually put it.
+	const pendingAutoFocus = useRef(true);
 
-	// Move real DOM focus with the active tile, but only while focus already sits
-	// inside the grid (or a details-pane close asked us to restore it). Otherwise
-	// merely filtering the list would steal focus out of the search box.
+	// Afterwards, move real DOM focus with the active tile only while focus is
+	// already inside the grid. Otherwise merely filtering the list would steal
+	// the caret out of the search box.
 	useEffect(() => {
 		const grid = gridRef.current;
 		if (!grid) return;

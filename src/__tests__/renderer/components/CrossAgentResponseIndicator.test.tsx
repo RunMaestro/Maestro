@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CrossAgentResponseIndicator } from '../../../renderer/components/CrossAgentResponseIndicator';
 import {
@@ -30,13 +30,15 @@ function seed(...requests: InFlightCrossAgentRequest[]): void {
 
 function renderIndicator(
 	sourceSessionId: string | null = SESSION,
-	sourceTabId: string | null = TAB
+	sourceTabId: string | null = TAB,
+	onSessionClick?: (sessionId: string, tabId?: string) => void
 ) {
 	return render(
 		<CrossAgentResponseIndicator
 			theme={mockTheme}
 			sourceSessionId={sourceSessionId}
 			sourceTabId={sourceTabId}
+			onSessionClick={onSessionClick}
 		/>
 	);
 }
@@ -90,6 +92,39 @@ describe('CrossAgentResponseIndicator', () => {
 		expect(screen.getByText('Backend')).toBeInTheDocument();
 		expect(toggle).toHaveAttribute('aria-expanded', 'true');
 		expect(toggle).toHaveAttribute('title', 'Hide consulted agents');
+	});
+
+	it('jumps to the consulted agent AND its consult tab when a chip is clicked', () => {
+		seed(req({ targetSessionId: 'target-1', targetTabId: 'consult-tab-9' }));
+		const onSessionClick = vi.fn();
+		renderIndicator(SESSION, TAB, onSessionClick);
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		const chip = screen.getByRole('button', { name: /Backend/ });
+		expect(chip).toHaveAttribute('title', expect.stringContaining('Jump to Backend'));
+
+		fireEvent.click(chip);
+		expect(onSessionClick).toHaveBeenCalledWith('target-1', 'consult-tab-9');
+	});
+
+	it('still jumps to the agent when the consult tab is unknown', () => {
+		seed(req({ targetSessionId: 'target-1', targetTabId: undefined }));
+		const onSessionClick = vi.fn();
+		renderIndicator(SESSION, TAB, onSessionClick);
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		fireEvent.click(screen.getByRole('button', { name: /Backend/ }));
+		expect(onSessionClick).toHaveBeenCalledWith('target-1', undefined);
+	});
+
+	it('leaves the chip inert when no navigation handler is provided', () => {
+		seed(req());
+		renderIndicator();
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		const chip = screen.getByRole('button', { name: /Backend/ });
+		expect(chip).toBeDisabled();
+		expect(chip.getAttribute('title')).toMatch(/^Backend · \d+s$/);
 	});
 
 	it('renders nothing when the tab id is missing', () => {

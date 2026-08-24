@@ -39,6 +39,13 @@ export interface UseQuotaAccountsOptions {
 
 export interface UseQuotaAccountsResult {
 	configuredAccountKeys: string[];
+	/**
+	 * How many agents of this provider resolve to each account key. Computed in
+	 * the same pass that builds `configuredAccountKeys` so the badge can never
+	 * disagree with the tab/row list about which account an agent belongs to.
+	 * Accounts with no agent (a cached snapshot, a discovered dir) are absent.
+	 */
+	agentCountsByAccount: Record<string, number>;
 	selectedKey: string | null;
 	setSelectedKey: (key: string) => void;
 	effectiveSelectedKey: string | null;
@@ -113,8 +120,9 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 	}, [homeDir]);
 	const defaultAccountKey = homeDir ? normalizeKey(`${homeDir}/${defaultSubdir}`) : null;
 
-	const configuredAccountKeys = useMemo(() => {
+	const { configuredAccountKeys, agentCountsByAccount } = useMemo(() => {
 		const keys = new Set<string>();
+		const counts: Record<string, number> = {};
 		for (const key of accountKeys) keys.add(normalizeKey(key));
 		for (const key of discoveredAccountKeys) keys.add(normalizeKey(key));
 		for (const s of sessions) {
@@ -122,11 +130,14 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
 			const merged = { ...agentLevelEnvVars, ...sessionEnv };
 			const dir = merged[envVarName];
-			if (typeof dir === 'string' && dir.length > 0) {
-				keys.add(normalizeKey(dir));
-			} else if (defaultAccountKey) {
-				keys.add(defaultAccountKey);
-			}
+			// An agent with no env var runs against the implicit `~/<subdir>`
+			// account, so it belongs to that bucket - unless $HOME hasn't
+			// resolved yet, in which case there is no key to attribute it to.
+			const resolved =
+				typeof dir === 'string' && dir.length > 0 ? normalizeKey(dir) : defaultAccountKey;
+			if (!resolved) continue;
+			keys.add(resolved);
+			counts[resolved] = (counts[resolved] ?? 0) + 1;
 		}
 		// Also include any snapshot key not surfaced in session config - e.g. an
 		// account sampled in a previous run whose session was since deleted.
@@ -149,9 +160,24 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 				byFold.set(fold, key);
 			}
 		}
-		return Array.from(byFold.values()).sort((a, b) =>
-			deriveShortName(a).localeCompare(deriveShortName(b))
-		);
+		const foldedKeys = Array.from(byFold.values());
+
+		// The counts were tallied per raw spelling, so fold them the same way. A
+		// count left under a spelling that just lost the fold would be stranded:
+		// its key is no longer in the list, and the surviving row would under-report
+		// its agents - exactly the tab/badge disagreement this map exists to prevent.
+		const foldedCounts: Record<string, number> = {};
+		for (const [rawKey, count] of Object.entries(counts)) {
+			const survivor = byFold.get(rawKey.toLowerCase()) ?? rawKey;
+			foldedCounts[survivor] = (foldedCounts[survivor] ?? 0) + count;
+		}
+
+		return {
+			configuredAccountKeys: foldedKeys.sort((a, b) =>
+				deriveShortName(a).localeCompare(deriveShortName(b))
+			),
+			agentCountsByAccount: foldedCounts,
+		};
 	}, [
 		accountKeys,
 		discoveredAccountKeys,
@@ -180,5 +206,11 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 
 	const effectiveSelectedKey = selectedKey ?? configuredAccountKeys[0] ?? null;
 
-	return { configuredAccountKeys, selectedKey, setSelectedKey, effectiveSelectedKey };
+	return {
+		configuredAccountKeys,
+		agentCountsByAccount,
+		selectedKey,
+		setSelectedKey,
+		effectiveSelectedKey,
+	};
 }

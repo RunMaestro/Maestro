@@ -38,7 +38,7 @@ Tips and gotchas:
 | Toggle Right Panel          | `Opt+Cmd+Right`       | `Alt+Ctrl+Right`       |
 | New Agent                   | `Cmd+N`               | `Ctrl+N`               |
 | New Agent Wizard            | `Cmd+Shift+N`         | `Ctrl+Shift+N`         |
-| New Group Chat              | `Opt+Cmd+C`           | `Alt+Ctrl+C`           |
+| New Group Chat              | `Opt+Cmd+G`           | `Alt+Ctrl+G`           |
 | Remove Agent                | `Cmd+Shift+Backspace` | `Ctrl+Shift+Backspace` |
 | Move Agent to Group         | `Opt+Cmd+M`           | `Alt+Ctrl+M`           |
 | Open Memory Viewer          | `Cmd+Shift+M`         | `Ctrl+Shift+M`         |
@@ -58,11 +58,13 @@ Tips and gotchas:
 | System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
 | Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
 | Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
-| Jump to Bottom              | `Opt+J`               | `Alt+J`                |
+| Jump to Bottom              | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`        |
 | Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
 | Maestro Cue                 | `Opt+Q`               | `Alt+Q`                |
+| Show/Hide Concerto Stage    | `Opt+Cmd+C`           | `Alt+Ctrl+C`           |
+| Show/Hide All Cadenzas      | `Opt+Cmd+Shift+C`     | `Alt+Ctrl+Shift+C`     |
 | Edit Image from Clipboard   | `Opt+Cmd+E`           | `Alt+Ctrl+E`           |
 | Forced Parallel Send        | `Cmd+Shift+Enter`     | `Ctrl+Shift+Enter`     |
 | Cycle Focus Areas           | `Tab`                 | `Tab`                  |
@@ -87,18 +89,18 @@ Tips and gotchas:
 
 These shortcuts work in AI Terminal mode and affect the current tab:
 
-| Action                 | macOS          | Windows/Linux   |
-| ---------------------- | -------------- | --------------- |
-| Toggle Save to History | `Cmd+S`        | `Ctrl+S`        |
-| Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
-| Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
-| Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
-| Toggle Tab Unread      | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
-| Filter Unread Agents   | `Opt+U`        | `Alt+U`         |
-| Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
-| Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
-| Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |
-| Open Prompt Composer   | `Cmd+Shift+P`  | `Ctrl+Shift+P`  |
+| Action                 | macOS            | Windows/Linux     |
+| ---------------------- | ---------------- | ----------------- |
+| Toggle Save to History | `Cmd+S`          | `Ctrl+S`          |
+| Toggle Read-Only Mode  | `Cmd+R`          | `Ctrl+R`          |
+| Toggle Show Thinking   | `Cmd+Shift+K`    | `Ctrl+Shift+K`    |
+| Toggle Tab Star        | `Cmd+Shift+S`    | `Ctrl+Shift+S`    |
+| Toggle Tab Unread      | `Cmd+Shift+U`    | `Ctrl+Shift+U`    |
+| Filter Unread Agents   | `Opt+U`          | `Alt+U`           |
+| Filter Unread Tabs     | `Cmd+U`          | `Ctrl+U`          |
+| Next Unread/Draft Tab  | `Cmd+Shift+Down` | `Ctrl+Shift+Down` |
+| Open Image Carousel    | `Cmd+Y`          | `Ctrl+Y`          |
+| Open Prompt Composer   | `Cmd+Shift+P`    | `Ctrl+Shift+P`    |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
@@ -159,6 +161,10 @@ These act on the tiled set showing in the Main Panel. See [Tiling Tabs](./genera
 | Maximize / Restore Pane   | `Ctrl+Cmd+Z`       | `Ctrl+Win+Z`       |
 | Rebalance Panes           | `Ctrl+Cmd+=`       | `Ctrl+Win+=`       |
 | Close Focused Pane        | `Ctrl+Cmd+W`       | `Ctrl+Win+W`       |
+| Tile New Terminal Below   | `Cmd+Shift+J`      | `Ctrl+Shift+J`     |
+| Tile New AI Chat Below    | _Not set_          | _Not set_          |
+| Tile New Browser Below    | _Not set_          | _Not set_          |
+| Tile New File Below       | _Not set_          | _Not set_          |
 
 <Note>
 The pane family deliberately requires **both** Ctrl and Cmd so it can never collide with the plain-Cmd equivalents (`Cmd+W` closes a tab, `Ctrl+Cmd+W` closes a pane). On Windows and Linux the second modifier is the Windows / Super key.
@@ -170,7 +176,11 @@ Maximize expands the focused pane to fill the panel and hides the rest; press it
 
 Closing a pane returns its tab to the tab bar rather than closing it. When only one pane is left the group dissolves and that tab goes back to the bar too.
 
-To create a tile without a drag, run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four.
+To create a tile without a drag, run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four. The terminal one has a key of its own, `Cmd+Shift+J`: one modifier away from `Cmd+J` (new terminal tab), because a terminal beside your work is the split people reach for most.
+
+The other three are listed as **Not set**. That is a binding you can record, not a missing feature - see [Customizing Shortcuts](#customizing-shortcuts). Whatever you assign shows up next to the command in Quick Actions too.
+
+A freshly tiled pane takes the keyboard, and the caret lands in whatever that pane's input is: the chat box for an AI tab, the command prompt for a terminal, the address bar (URL selected) for a browser, the editor for a file. See [Tiling Tabs](./general-usage#tiling-tabs).
 
 ## Input & Output
 
@@ -272,6 +282,7 @@ In AI mode, use `@` to reference files in your prompts:
 | Multi-select Files               | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
 | Filter Files (in Files tab)      | `Cmd+F`                            | `Ctrl+F`                           |
 | Filter History (in History tab)  | `Cmd+F`                            | `Ctrl+F`                           |
+| Jump to Entry Session (History)  | `Cmd+Enter` on selected entry      | `Ctrl+Enter` on selected entry     |
 | Search Output (in Main Window)   | `Cmd+F`                            | `Ctrl+F`                           |
 | Search Messages (All Agent Tabs) | `Opt+Cmd+F`                        | `Alt+Ctrl+F`                       |
 | Search System Logs               | `Cmd+F`                            | `Ctrl+F`                           |
@@ -348,6 +359,8 @@ Most shortcuts can be remapped to fit your workflow:
 3. Click the current key binding (shows the shortcut like `⌘ K` or `Ctrl+K`)
 4. Press your desired key combination
 5. The new binding is saved immediately
+
+Some actions ship with **no** key assigned and read **Not set** instead of a combination - the tile-below family for AI, browser, and file tabs is the current example. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 

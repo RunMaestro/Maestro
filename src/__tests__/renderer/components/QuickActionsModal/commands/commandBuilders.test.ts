@@ -321,8 +321,36 @@ describe('QuickActions command builders', () => {
 		browser.find((a) => a.id === 'copyBrowserContent')!.action();
 		expect(copyActiveBrowserContent).toHaveBeenCalled();
 
-		// File previews expose no context/buffer/content actions.
+		// File previews expose no context/buffer/content actions, and no delete
+		// entry either while there is no open preview tab to act on.
 		expect(buildActiveTabContextCommands({ ...baseArgs, activeTabType: 'file' })).toEqual([]);
+
+		// ...but an open file preview offers the (confirmed) delete action.
+		const fileSession = createMockSession({
+			id: 's1',
+			inputMode: 'ai',
+			activeFileTabId: 'file-1',
+			filePreviewTabs: [
+				{ id: 'file-1', path: '/repo/notes.md', name: 'notes', extension: '.md' },
+			] as any,
+		});
+		const fileCommands = buildActiveTabContextCommands({
+			...baseArgs,
+			activeSession: fileSession,
+			activeTabType: 'file',
+		});
+		expect(fileCommands.map((a) => a.id)).toEqual(['deletePreviewedFile']);
+		expect(fileCommands[0].subtext).toBe('notes.md');
+
+		// A file tab selected while the panel shows a terminal is not a live
+		// preview, so the delete entry stays out of the palette.
+		expect(
+			buildActiveTabContextCommands({
+				...baseArgs,
+				activeSession: { ...fileSession, inputMode: 'terminal' } as any,
+				activeTabType: 'file',
+			})
+		).toEqual([]);
 
 		// AI-context feature commands (Compact / Merge / Send) hide on non-AI tabs.
 		const featureArgs = {

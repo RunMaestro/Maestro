@@ -21,7 +21,7 @@
 import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { useSessionStore } from '../../../stores/sessionStore';
-import { clearRetryIfSettled } from '../../../stores/retryStore';
+import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
@@ -33,7 +33,7 @@ import {
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
-import { chooseNextQueuedItem } from './helpers/exitDequeue';
+import { chooseNextQueuedItem, queueIsHeldByRetry } from './helpers/exitDequeue';
 import { takeNextRunnableQueueItem } from '../../../utils/executionQueue';
 import { refreshGitRefsAfterTerminalExit } from './helpers/exitGitRefresh';
 import {
@@ -220,10 +220,30 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			let synopsisData: SynopsisData | null = null;
 			let synopsisDidWork = false;
 
+			// Agent Resilience: does a given tab have a retry counting down? Read
+			// AFTER clearRetryIfSettled above, so a resend that completed cleanly has
+			// already been cleared and only a genuinely pending retry reads true. A
+			// pending retry freezes the execution queue (see chooseNextQueuedItem),
+			// which asks about both the exiting tab and the next item's target tab.
+			const isRetryPending = (tabId: string): boolean => hasPendingRetry(actualSessionId, tabId);
+			// The same answer, precomputed for the reducer below, which re-derives the
+			// dequeue decision and must stay in step with chooseNextQueuedItem.
+			const retryPending =
+				isFromAi &&
+				queueIsHeldByRetry(
+					getSessions().find((s) => s.id === actualSessionId),
+					tabIdFromSession,
+					isRetryPending
+				);
+
 			if (isFromAi) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
 				if (currentSession) {
-					const queueDecision = chooseNextQueuedItem(currentSession, tabIdFromSession);
+					const queueDecision = chooseNextQueuedItem(
+						currentSession,
+						tabIdFromSession,
+						isRetryPending
+					);
 					if (queueDecision.action === 'dequeue' && queueDecision.item) {
 						queuedItemToProcess = {
 							sessionId: actualSessionId,
@@ -491,13 +511,13 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								return {
 									...s,
 									aiTabs: s.aiTabs.map((tab) =>
-										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextRunnable) : tab
+										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextRunnable, s) : tab
 									),
 									orphanedThinkingTabs:
 										orphansWithoutExited.length > 0
 											? orphansWithoutExited.map((tab) =>
 													tab.id === target.tabId
-														? markTabRunningQueuedItem(tab, nextRunnable)
+														? markTabRunningQueuedItem(tab, nextRunnable, s)
 														: tab
 												)
 											: undefined,
@@ -575,7 +595,16 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							const otherTabsBusy = s.aiTabs?.some(
 								(tab) => tab.id !== tabIdFromSession && tab.state === 'busy'
 							);
-							if (!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy) {
+							// `retryPending` holds the whole queue: the provider just refused
+							// this turn, so dispatching the next item only fails it too - and
+							// the dispatch would cancel the pending retry, losing that prompt.
+							// Mirrors the same condition in chooseNextQueuedItem, which already
+							// kept `queuedItemToProcess` null; this keeps the reducer in step so
+							// no tab is marked busy for a spawn that never happens.
+							if (
+								retryPending ||
+								(!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy)
+							) {
 								// Don't dequeue - mark the exiting tab idle and keep session busy
 								const updatedAiTabs = s.aiTabs.map((tab) =>
 									tabIdFromSession && tab.id === tabIdFromSession
@@ -619,7 +648,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							// idle (its target branch never matches a live aiTab in that case).
 							const updatedAiTabs = s.aiTabs.map((tab) => {
 								if (tab.id === target.tabId) {
-									return markTabRunningQueuedItem(tab, nextItem);
+									return markTabRunningQueuedItem(tab, nextItem, s);
 								}
 								if (tabIdFromSession && tab.id === tabIdFromSession) {
 									return {
@@ -634,7 +663,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							const updatedOrphans =
 								target.location === 'orphan' && s.orphanedThinkingTabs
 									? s.orphanedThinkingTabs.map((tab) =>
-											tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+											tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
 										)
 									: s.orphanedThinkingTabs;
 

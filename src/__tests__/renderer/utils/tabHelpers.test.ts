@@ -5554,7 +5554,7 @@ describe('tabHelpers', () => {
 				text: 'run this',
 				timestamp: 1700000000000,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.state).toBe('busy');
 			expect(result.thinkingStartTime).toBeDefined();
 			expect(result.logs).toHaveLength(1);
@@ -5574,7 +5574,7 @@ describe('tabHelpers', () => {
 				forceParallel: true,
 				readOnlyMode: true,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.logs[0]).toMatchObject({ forceParallel: true, readOnly: true });
 		});
 
@@ -5587,9 +5587,49 @@ describe('tabHelpers', () => {
 				command: '/commit',
 				timestamp: 1700000000000,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.state).toBe('busy');
 			expect(result.logs).toHaveLength(0);
+		});
+
+		// A dequeued turn is a send, so it must freeze the same model/effort stamp the
+		// direct composer path freezes. Every message typed while the agent was busy
+		// comes through here, and an unstamped turn renders no attribution pills.
+		it('codifies the turn provider, model, and effort at dispatch', () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const session = createMockSession({
+				aiTabs: [tab],
+				toolType: 'claude-code',
+				customModel: 'opus[1m]',
+				customEffort: 'high',
+			});
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'queued while busy',
+				timestamp: 1700000000000,
+			};
+			const result = markTabRunningQueuedItem(tab, item, session);
+			expect(result.turnProvider).toBe('claude-code');
+			expect(result.turnModel).toBe('opus[1m]');
+			expect(result.turnEffort).toBe('high');
+		});
+
+		it('prefers the tab override over the agent default when codifying', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'fable' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				customModel: 'opus[1m]',
+				customEffort: 'high',
+			});
+			const result = markTabRunningQueuedItem(
+				tab,
+				{ id: 'q1', tabId: 't1', type: 'command', command: '/commit', timestamp: 1700000000000 },
+				session
+			);
+			expect(result.turnModel).toBe('fable');
+			expect(result.turnEffort).toBe('high');
 		});
 	});
 

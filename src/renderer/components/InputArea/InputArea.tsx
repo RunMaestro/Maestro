@@ -40,6 +40,11 @@ import { AiCommandProposal } from './components/AiCommandProposal';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import {
+	buildSlotRemap,
+	moveStagedImage,
+	renumberScreenshotReferences,
+} from '../../utils/stagedImageOrder';
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -127,6 +132,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onCancelMerge,
 		// Inline wizard mode props
 		onExitWizard,
+		onStopWizardTurn,
 		// Wizard thinking toggle
 		wizardShowThinking = false,
 		onToggleWizardShowThinking,
@@ -241,6 +247,24 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// Non-reactive store handles for the change handler below.
 	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
 	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
+
+	// Reordering the strip reorders what the agent receives, so any `Screenshot N`
+	// already sitting in the draft is now pointing at the wrong picture. Rewrite
+	// those references through the same permutation, in one place, so the strip
+	// and the organizer modal cannot drift on it.
+	const handleReorderStagedImages = useCallback(
+		(from: number, to: number) => {
+			const remap = buildSlotRemap(stagedImages.length, from, to);
+			if (remap.size === 0) return;
+			setStagedImages((prev) => moveStagedImage(prev, from, to));
+			// Read at call time: this fires on a drop, so the store always holds the
+			// live draft and subscribing here would re-render on every keystroke.
+			const draft = useComposerInputStore.getState().aiValue;
+			const renumbered = renumberScreenshotReferences(draft, remap);
+			if (renumbered !== draft) setInputValue(renumbered);
+		},
+		[stagedImages.length, setStagedImages, setInputValue]
+	);
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 
@@ -408,6 +432,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				isInitializing={wizardState.isInitializing ?? false}
 				isBusy={wizardState.isWaiting || activeTab?.state === 'busy'}
 				onExitWizard={onExitWizard}
+				onStopTurn={onStopWizardTurn}
 				enterToSend={enterToSend}
 				setEnterToSend={setEnterToSend}
 				onInputFocus={onInputFocus}
@@ -435,6 +460,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					theme={theme}
 					sourceSessionId={session.id}
 					sourceTabId={getActiveTab(session)?.id}
+					onSessionClick={onSessionClick}
 				/>
 			)}
 
@@ -480,6 +506,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				setLightboxImage={setLightboxImage}
 				setStagedImages={setStagedImages}
 				openAnnotator={openAnnotator}
+				onReorder={handleReorderStagedImages}
 			/>
 
 			<SlashCommandPopover

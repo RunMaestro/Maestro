@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+	clampModalPosition,
 	clampModalSize,
+	defaultModalFloatPosition,
 	DEFAULT_MODAL_SIZE,
 	getModalMaxSize,
+	MODAL_FLOAT_VISIBLE_MARGIN_X,
+	MODAL_FLOAT_VISIBLE_MARGIN_Y,
+	MODAL_VIEWPORT_PADDING,
+	normalizeModalPosition,
 	normalizeModalSize,
 	resolveModalSize,
 	sanitizeModalSizes,
@@ -161,5 +167,40 @@ describe('modalSizing', () => {
 			width: 800,
 			height: 600,
 		});
+	});
+});
+
+describe('floating position helpers', () => {
+	it('rejects non-finite or malformed positions', () => {
+		expect(normalizeModalPosition(null)).toBeNull();
+		expect(normalizeModalPosition({ x: 10 })).toBeNull();
+		expect(normalizeModalPosition({ x: NaN, y: 10 })).toBeNull();
+		expect(normalizeModalPosition({ x: 10.6, y: -4.2 })).toEqual({ x: 11, y: -4 });
+	});
+
+	it('clamps a position on both ends so the title bar stays grabbable', () => {
+		const viewport = { width: 1000, height: 800 };
+		expect(clampModalPosition({ x: -50, y: -50 }, viewport)).toEqual({ x: 0, y: 0 });
+		// Far edge: leave MODAL_FLOAT_VISIBLE_MARGIN_X/Y of the window on screen.
+		expect(clampModalPosition({ x: 5000, y: 5000 }, viewport)).toEqual({
+			x: 1000 - MODAL_FLOAT_VISIBLE_MARGIN_X,
+			y: 800 - MODAL_FLOAT_VISIBLE_MARGIN_Y,
+		});
+		expect(clampModalPosition({ x: 200, y: 150 }, viewport)).toEqual({ x: 200, y: 150 });
+	});
+
+	it('parks a first pop-out against the right edge, on screen even when tiny', () => {
+		expect(
+			defaultModalFloatPosition({ width: 600, height: 400 }, { width: 1600, height: 900 })
+		).toEqual({ x: 1600 - 600 - MODAL_VIEWPORT_PADDING, y: MODAL_VIEWPORT_PADDING * 2 });
+
+		// A window wider than the display would otherwise be placed off the left
+		// edge; the padding floor plus the clamp keep it reachable.
+		const tight = defaultModalFloatPosition(
+			{ width: 1200, height: 800 },
+			{ width: 700, height: 500 }
+		);
+		expect(tight.x).toBeGreaterThanOrEqual(0);
+		expect(tight.x).toBeLessThanOrEqual(700 - MODAL_FLOAT_VISIBLE_MARGIN_X);
 	});
 });

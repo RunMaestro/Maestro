@@ -309,8 +309,16 @@ describe('gitUtils', () => {
 			expect(getImageMimeType('gif')).toBe('image/gif');
 			expect(getImageMimeType('svg')).toBe('image/svg+xml');
 			expect(getImageMimeType('webp')).toBe('image/webp');
-			expect(getImageMimeType('ico')).toBe('image/ico');
+			expect(getImageMimeType('ico')).toBe('image/x-icon');
 			expect(getImageMimeType('bmp')).toBe('image/bmp');
+		});
+
+		// A JPEG labeled `image/jpg` decodes to an empty NativeImage, which is what
+		// broke "Copy Image" on every .jpg in the app.
+		it('normalizes case and a leading dot', () => {
+			expect(getImageMimeType('.JPG')).toBe('image/jpeg');
+			expect(getImageMimeType('.PNG')).toBe('image/png');
+			expect(getImageMimeType('SVG')).toBe('image/svg+xml');
 		});
 	});
 

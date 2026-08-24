@@ -14,6 +14,7 @@ import {
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
 
@@ -222,6 +223,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			sessionId: string,
 			prompt: string,
 			cwdOverride?: string,
+			/**
+			 * `modelOverride` / `effortOverride` carry whatever the caller resolved for
+			 * this spawn: an Auto Run document's per-task model hint, else the run-scoped
+			 * override from the Auto Run config or `--model`. Absent on every other call
+			 * path, in which case the agent's own configured values are used.
+			 */
 			options?: SpawnAgentOptions
 		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
@@ -417,7 +424,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 													...(s.orphanedThinkingTabs && {
 														orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
 															tab.id === target.tabId
-																? markTabRunningQueuedItem(tab, nextItem)
+																? markTabRunningQueuedItem(tab, nextItem, s)
 																: tab
 														),
 													}),
@@ -435,7 +442,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											// markTabRunningQueuedItem with the other dispatch paths so the
 											// busy-state + log construction stays identical.
 											const updatedAiTabs = s.aiTabs.map((tab) =>
-												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
 											);
 
 											return {
@@ -607,16 +614,19 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomArgs: session.customArgs,
 							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
-							// A per-run override (Auto Run model picker, CLI --model) wins over the
-							// session's configured model. There is no active tab in this path, so
-							// the override sits directly above session.customModel and never
-							// touches the session itself - it dies when the run ends.
+							// A resolved override (document model hint, Auto Run model picker,
+							// CLI --model) wins over the session's configured model. There is no
+							// active tab in this path, so the override sits directly above
+							// session.customModel and never touches the session itself - it dies
+							// when the run ends.
 							sessionCustomModel: options?.modelOverride ?? session.customModel,
 							// Auto Run is session-level (no active tab), so the session's effort
 							// is the source. Interactive spawns pass this too; omitting it here
 							// dropped the user's configured reasoning effort in Auto Run, which for
 							// Codex meant no reasoning summary was streamed (Thought Stream stayed
 							// stuck on "Waiting for the agent to start thinking...") - see #1147.
+							// It also made the same playbook run at a different effort depending on
+							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
@@ -699,6 +709,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				if (!commandToUse) {
 					throw new Error(`${toolType} agent has no command configured`);
 				}
+
+				const cheapSynopsis = cheapTurnSettings(toolType);
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -800,8 +812,19 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomPath: sessionConfig?.customPath,
 							sessionCustomArgs: sessionConfig?.customArgs,
 							sessionCustomEnvVars: sessionConfig?.customEnvVars,
-							sessionCustomModel: sessionConfig?.customModel,
-							sessionCustomEffort: sessionConfig?.customEffort,
+							// A synopsis summarizes a conversation that already happened. It is
+							// pinned to the bottom of both ladders rather than inheriting the
+							// tab's model, because running a few sentences of prose on the model
+							// that just did the engineering is pure waste - one premium turn per
+							// completed turn, forever. Falls back to the tab's own model where
+							// the provider has no tier mapping.
+							//
+							// Safe only because the synopsis is a LEAF: every caller discards the
+							// agentSessionId it returns rather than adopting it, so the cheap
+							// model cannot follow the conversation into the next real turn. A
+							// future caller that adopts that id must revisit this.
+							sessionCustomModel: cheapSynopsis.model ?? sessionConfig?.customModel,
+							sessionCustomEffort: cheapSynopsis.effort ?? sessionConfig?.customEffort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the

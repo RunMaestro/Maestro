@@ -7,10 +7,12 @@ import React, {
 	useCallback,
 	memo,
 } from 'react';
+import { Loader2 } from 'lucide-react';
 import type { LogEntry } from '../../types';
 import type { TerminalOutputProps } from './types';
 import Convert from 'ansi-to-html';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { useTranscriptBackfill } from '../../hooks/agent/useTranscriptBackfill';
 import { useDebouncedValue, useProgressiveRenderWindow } from '../../hooks';
 import { jumpToMessageEdge, isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { QueuedItemsList } from '../QueuedItemsList';
@@ -197,11 +199,33 @@ export const TerminalOutput = memo(
 			}
 		}, []);
 
-		const { startIndex: logStartIndex, revealTo: revealLogIndex } = useProgressiveRenderWindow(
-			filteredLogs.length,
-			`${session.id}-${activeTabId ?? ''}`,
-			{ onBeforeExpand: handleBeforeBackfill }
-		);
+		const {
+			startIndex: logStartIndex,
+			revealTo: revealLogIndex,
+			absorbPrepend: absorbLogPrepend,
+		} = useProgressiveRenderWindow(filteredLogs.length, `${session.id}-${activeTabId ?? ''}`, {
+			onBeforeExpand: handleBeforeBackfill,
+		});
+
+		// ============================================================================
+		// Scroll-to-top history backfill (issue #1407)
+		// ============================================================================
+		// The tab only holds the newest slice of its conversation (500 messages on
+		// resume, 100 after a restart), so scrolling up used to hit a hard stop
+		// mid-conversation. Reaching the top now pages older history back in from
+		// the provider transcript on disk. Entries arrive at the HEAD, so hand the
+		// count to the render window: it shifts by exactly that many, keeping the
+		// visible slice stable and letting the idle loop mount the new history a
+		// chunk at a time instead of one page-sized commit.
+		const historyBackfill = useTranscriptBackfill(session, activeTab, {
+			onPrepend: useCallback(
+				(count: number) => {
+					handleBeforeBackfill();
+					absorbLogPrepend(count);
+				},
+				[handleBeforeBackfill, absorbLogPrepend]
+			),
+		});
 
 		useLayoutEffect(() => {
 			const container = scrollContainerRef.current;
@@ -297,6 +321,7 @@ export const TerminalOutput = memo(
 			filteredLogsLength: filteredLogs.length,
 			onScrollPositionChange,
 			onAtBottomChange,
+			onNearTop: historyBackfill.loadEarlier,
 		});
 
 		useEffect(() => {
@@ -528,6 +553,49 @@ export const TerminalOutput = memo(
 					    content exactly, giving the scroll hook's ResizeObserver something
 					    that grows when late content settles. */}
 					<div ref={contentRef}>
+						{/* Older-history status row (issue #1407). Only meaningful once the
+						    idle render window has reached the head of the list - above that
+						    point there is still local history left to mount, so "beginning of
+						    conversation" would be a lie. Nothing renders until the user has
+						    actually scrolled up far enough to trigger a read. */}
+						{logStartIndex === 0 && filteredLogs.length > 0 && (
+							<>
+								{historyBackfill.isLoading && (
+									<div
+										className="flex items-center justify-center gap-2 py-3 text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										<Loader2 className="w-3.5 h-3.5 animate-spin" />
+										Loading earlier messages...
+									</div>
+								)}
+								{!historyBackfill.isLoading && historyBackfill.error && (
+									<div
+										className="flex items-center justify-center gap-2 py-3 text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										{historyBackfill.error}
+										<button
+											onClick={historyBackfill.loadEarlier}
+											className="underline hover:opacity-80 transition-opacity"
+											style={{ color: theme.colors.textMain }}
+										>
+											Retry
+										</button>
+									</div>
+								)}
+								{!historyBackfill.isLoading &&
+									!historyBackfill.error &&
+									historyBackfill.reachedStart && (
+										<div
+											className="flex items-center justify-center py-3 text-xs"
+											style={{ color: theme.colors.textDim }}
+										>
+											Beginning of conversation
+										</div>
+									)}
+							</>
+						)}
 						{/* Log entries */}
 						{visibleLogs.map((log, visibleIndex) => {
 							// Absolute index into filteredLogs - sibling lookups (echo stripping)
@@ -619,12 +687,12 @@ export const TerminalOutput = memo(
 						)}
 					</div>
 
-					{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy.
+					{/* End ref for scrolling - always rendered so the jump works even when busy.
 					    LOAD-BEARING: this marker MUST stay a direct child of the scroll container
 					    (the overflow-y-auto element above), NOT nested inside the contentRef wrapper.
-					    useMainKeyboardHandler's Alt+J "Jump to Bottom" resolves the scroll target via
-					    logsEndRef.current.parentElement, so if you wrap this marker in another subtree
-					    parentElement lands on an unscrollable element and Alt+J silently no-ops. */}
+					    useMainKeyboardHandler's Opt+Cmd+Down "Jump to Bottom" resolves the scroll target
+					    via logsEndRef.current.parentElement, so if you wrap this marker in another
+					    subtree parentElement lands on an unscrollable element and it silently no-ops. */}
 					<div ref={logsEndRef} />
 				</div>
 

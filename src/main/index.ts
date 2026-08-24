@@ -1,7 +1,6 @@
 import {
 	app,
 	BrowserWindow,
-	Menu,
 	powerMonitor,
 	protocol,
 	safeStorage,
@@ -11,6 +10,7 @@ import {
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { installApplicationMenu } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -2840,90 +2840,10 @@ app
 		// plugins flag, so enabling the feature later begins firing without a restart.
 		pluginScheduler?.start();
 
-		// Set custom application menu to prevent macOS from injecting native
-		// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
-		// menu items into the default Window menu. Without this, those keyboard
-		// events are intercepted at the NSMenu level and never reach the renderer.
-		//
-		// IMPORTANT: Do NOT include { role: 'close' } in the Window submenu.
-		// The 'close' role registers Cmd+W as a native accelerator, which intercepts
-		// the keystroke at the NSMenu level before it reaches the renderer. This
-		// breaks Cmd+W tab-close shortcuts in both AI and terminal modes. Window
-		// closing is handled by the app lifecycle (Cmd+Q quits, red traffic light
-		// hides) so the native Close menu item is unnecessary.
-		if (isMacOS()) {
-			const template: Electron.MenuItemConstructorOptions[] = [
-				{
-					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
-					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
-					// quit role (as "Quit and Keep Windows"), and that keystroke sits
-					// one modifier away from Opt+Q (Maestro Cue), causing accidental
-					// quits. Click events from accelerators carry modifier flags, so
-					// we can detect Option held and ignore the keystroke entirely.
-					role: 'appMenu',
-					submenu: [
-						{ role: 'about' },
-						{ type: 'separator' },
-						{ role: 'services' },
-						{ type: 'separator' },
-						{ role: 'hide' },
-						{ role: 'hideOthers' },
-						{ role: 'unhide' },
-						{ type: 'separator' },
-						{
-							label: 'Quit Maestro',
-							accelerator: 'Cmd+Q',
-							click: (_item, _window, event) => {
-								if (event?.altKey) {
-									logger.info(
-										'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
-										'Menu'
-									);
-									return;
-								}
-								app.quit();
-							},
-						},
-					],
-				},
-				{
-					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
-					// `undo` / `redo`. Those built-in roles register Cmd+Z /
-					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
-					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W - see the note
-					// above the appMenu block). Removing them frees Cmd+Z for the
-					// image annotator's stroke-undo handler.
-					//
-					// Side effect: Chromium in Electron relies on the Edit > Undo
-					// menu role to deliver Cmd+Z to focused textareas/inputs on
-					// macOS, so without it native text-field undo silently does
-					// nothing. The renderer-side `useTextEditorUndo` hook
-					// (src/renderer/hooks/keyboard/useTextEditorUndo.ts) restores
-					// that behavior by calling `document.execCommand('undo')` on
-					// text targets. The annotator's own Cmd+Z listener bails out
-					// for text targets, so the two paths don't conflict.
-					label: 'Edit',
-					submenu: [
-						{ role: 'cut' },
-						{ role: 'copy' },
-						{ role: 'paste' },
-						{ role: 'pasteAndMatchStyle' },
-						{ role: 'delete' },
-						{ type: 'separator' },
-						{ role: 'selectAll' },
-					],
-				},
-				{
-					label: 'Window',
-					submenu: [{ role: 'minimize' }, { role: 'zoom' }],
-				},
-			];
-			Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-		} else {
-			// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
-			Menu.setApplicationMenu(null);
-		}
+		// Install the application menu (File / Edit / View / Window on macOS,
+		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
+		// menu is display-only and how clicks are routed back to the renderer.
+		installApplicationMenu();
 
 		// Restore the saved multi-window layout (or a single primary window when
 		// there is nothing saved - backward compatible).

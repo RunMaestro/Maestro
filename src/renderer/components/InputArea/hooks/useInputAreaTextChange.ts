@@ -1,10 +1,10 @@
 import { startTransition, useCallback } from 'react';
 import type React from 'react';
 import {
-	TEXTAREA_MAX_HEIGHT,
+	KEYSTROKE_TEXTAREA_MAX_HEIGHT,
 	resizeTextareaToContent,
 	scrollTextareaToCaretEnd,
-} from '../utils/textareaSizing';
+} from '../../../utils/textareaSizing';
 import { getAtMentionTrigger, shouldOpenSlashCommand } from '../utils/inputTriggers';
 import type { MentionCategory } from '../../../hooks/input/useMentionPicker';
 import {
@@ -134,7 +134,7 @@ export function useInputAreaTextChange({
 			const textarea = e.target;
 			keystrokeResizeScheduledRef.current = true;
 			requestAnimationFrame(() => {
-				resizeTextareaToContent(textarea, TEXTAREA_MAX_HEIGHT);
+				resizeTextareaToContent(textarea, KEYSTROKE_TEXTAREA_MAX_HEIGHT);
 				// resizeTextareaToContent resets scrollTop (via height:'auto'), so the
 				// keystroke path must re-scroll to the caret or newly typed text past the
 				// max height stays hidden until the user adds line breaks (issue #1169).

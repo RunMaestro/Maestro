@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
 	accumulateCrossAgentChunk,
 	buildCrossAgentLogEntry,
 	buildConsultTabName,
 	ensureConsultTab,
 	buildConsultHistoryEntry,
+	sendCrossAgentRequest,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
+import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
 	buildUnifiedTabs,
@@ -397,5 +399,48 @@ describe('buildConsultHistoryEntry', () => {
 
 	it('stamps the calling agent so the target remembers who consulted it', () => {
 		expect(entry().sourceAgentName).toBe('Pedsidian');
+	});
+});
+
+describe('sendCrossAgentRequest in-flight registration', () => {
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [] } as never);
+		useCrossAgentInFlightStore.setState({ requests: {} });
+	});
+
+	it('registers the consult tab so the responding-agent chip can deep-link to it', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'target', name: 'Pedsidian', toolType: 'claude-code' }),
+				createMockSession({ id: 'src', name: 'Scratch' }),
+			],
+		} as never);
+
+		const send = vi.fn().mockResolvedValue({ requestId: 'req-1' });
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			crossAgent: { send },
+		} as never;
+
+		sendCrossAgentRequest({
+			sourceSessionId: 'src',
+			sourceAgentName: 'Scratch',
+			sourceTabId: 'src-tab',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: '@Pedsidian what is the status?',
+			sourceCwd: '/tmp',
+		});
+
+		// Let the fire-and-forget .then() settle.
+		await vi.waitFor(() => {
+			expect(Object.keys(useCrossAgentInFlightStore.getState().requests)).toHaveLength(1);
+		});
+
+		const registered = useCrossAgentInFlightStore.getState().requests['req-1'];
+		expect(registered.targetSessionId).toBe('target');
+		expect(registered.targetAgentName).toBe('Pedsidian');
+		// The tab the consult actually runs in - same id handed to the main process.
+		expect(registered.targetTabId).toBe(send.mock.calls[0][0].targetTabId);
+		expect(registered.targetTabId).toBeTruthy();
 	});
 });

@@ -41,6 +41,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 - 💻 **[Command Line Interface](https://docs.runmaestro.ai/cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
 - 🚀 **Multi-Agent Management** - Run unlimited agents and terminal sessions in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **Message Queueing** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Never lose a thought.
+- 🛡️ **[Agent Resilience](https://docs.runmaestro.ai/agent-resilience)** - Providers fail; your turn does not have to. When a turn dies on `529 Overloaded` or a spent plan quota, Maestro resends the exact prompt on its own, backing off in seconds for a blip or waiting for the real reset time it reads out of the error. One live status card replaces the wall of error dialogs, Auto Run batches resume themselves, and an agent can optionally fail over to a backup endpoint instead of waiting out the window.
 
 ### Core Features
 
@@ -126,6 +127,7 @@ npm run dev
 | Toggle Sidebar      | `Cmd+B`           | `Ctrl+B`            |
 | New Tab             | `Cmd+T`           | `Ctrl+T`            |
 | Usage Dashboard     | `Opt+Cmd+U`       | `Alt+Ctrl+U`        |
+| Concerto Stage      | `Opt+C`           | `Alt+C`             |
 | All Shortcuts       | `Cmd+/`           | `Ctrl+/`            |
 
 [Full keyboard shortcut reference](https://docs.runmaestro.ai/keyboard-shortcuts)
@@ -191,10 +193,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture detai
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=runmaestro%2Fmaestro&type=date&legend=top-left">
+<a href="https://star-history.dera.page/#runmaestro/maestro&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=runmaestro/maestro&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=runmaestro/maestro&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=runmaestro/maestro&type=date&legend=top-left" />
  </picture>
 </a>

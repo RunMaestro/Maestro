@@ -11,9 +11,13 @@
  */
 
 import { useCallback } from 'react';
-import type { QueuedItem, SessionState } from '../../types';
+import type { QueuedItem } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { applyQueuedItemDispatch, getQueueBusyContext } from '../../utils/executionQueue';
+import {
+	applyQueuedItemDispatch,
+	applyQueuedItemRelease,
+	getQueueBusyContext,
+} from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { logger } from '../../utils/logger';
@@ -177,23 +181,9 @@ export function useQueueHandlers({
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						const aiTabs = s.aiTabs.map((tab) =>
-							tab.id === dispatchItem.tabId
-								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-								: tab
-						);
-						const stillWorking = aiTabs.some((tab) => tab.state === 'busy');
 						return {
-							...s,
+							...applyQueuedItemRelease(s, dispatchItem.tabId),
 							executionQueue: [dispatchItem, ...s.executionQueue],
-							aiTabs,
-							...(stillWorking
-								? {}
-								: {
-										state: 'idle' as SessionState,
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									}),
 						};
 					})
 				);

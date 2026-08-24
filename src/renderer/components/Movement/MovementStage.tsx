@@ -1,15 +1,18 @@
 /**
- * MovementOverlay - the agent-composed "living view" as an in-app floating layer.
+ * MovementStage - the agent-composed "living view", rendered inside the
+ * Concerto stage window (components/Concerto/ConcertoStageModal).
  *
- * This is the sweet spot between a cadenza (tiny floating card) and a full
- * window: panels float ABOVE the Maestro UI, in the same window, so the user
- * sees them while working - no OS window (no focus-steal / multi-monitor issues)
- * and no full-window mode switch. Rendered via a portal as a `pointer-events-none`
- * layer so it never blocks the app except where a panel actually is.
+ * This is the sweet spot between a cadenza (tiny floating card) and an OS
+ * window: panels float on one shared stage - free-placed (the agent sets x/y),
+ * draggable by the header, resizable from every edge and corner, minimizable to
+ * the stage taskbar - with no focus-steal and no multi-monitor problems. Each
+ * panel renders a BlockView tree or an isolated HTML document. The agent drives
+ * them over the `movement` bridge; the user drags, resizes, minimizes, or closes
+ * them.
  *
- * Panels are free-placed (agent sets x/y), draggable by the header, and
- * resizable from every edge and corner. Each renders a BlockView tree. The agent drives them
- * over the `movement` bridge; the user can drag, resize, close, or stash them all.
+ * The stage fills its container and reports that container's size as the
+ * viewport the agent lays out against, so panel coordinates and `movement state`
+ * agree with what is on screen at whatever size the user dragged the window to.
  */
 
 import {
@@ -19,10 +22,8 @@ import {
 	useRef,
 	useState,
 	type PointerEvent as ReactPointerEvent,
-	type RefObject,
 } from 'react';
-import { createPortal } from 'react-dom';
-import { X, Eye, EyeOff, LayoutGrid, Minus, Music2 } from 'lucide-react';
+import { LayoutGrid, Minus, Music2, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import {
 	MOVEMENT_ITEM_MIN_HEIGHT,
@@ -38,51 +39,10 @@ import { useDebouncedCallback } from '../../hooks/utils/useThrottle';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import type { ModalResizeDirection } from '../../hooks/ui/useResizableModal';
 
-interface MovementOverlayProps {
+interface MovementStageProps {
 	theme: Theme;
-	workspaceBoundaryRef?: RefObject<HTMLElement | null>;
-	workspaceLayout?: MovementWorkspaceLayout;
-	workspaceTopInset?: number;
 }
 
-export type MovementWorkspaceLayout = 'side' | 'stacked';
-
-interface MovementStageBounds {
-	left: number;
-	top: number;
-	width: number;
-	height: number;
-}
-
-export function resolveMovementStageBounds(
-	windowWidth: number,
-	windowHeight: number,
-	boundary: Pick<DOMRect, 'left' | 'right' | 'top'> | null,
-	layout: MovementWorkspaceLayout | undefined,
-	topInset = 0
-): MovementStageBounds {
-	if (!boundary || !layout) return { left: 0, top: 0, width: windowWidth, height: windowHeight };
-	if (layout === 'stacked') {
-		const top = Math.max(0, topInset);
-		return {
-			left: 0,
-			top,
-			width: windowWidth,
-			height: Math.max(0, boundary.top - top),
-		};
-	}
-	const left = Math.max(0, boundary.right);
-	const top = Math.max(0, boundary.top);
-	return {
-		left,
-		top,
-		width: Math.max(0, windowWidth - left),
-		height: Math.max(0, windowHeight - top),
-	};
-}
-
-/** Above app content; below momentary overlays (Center Flash) which sit at 100000. */
-const MOVEMENT_Z = 90000;
 /** Auto-height panels scroll internally past this; resized panels use their height. */
 const AUTO_MAX_HEIGHT = 560;
 /** Keep a hover-open taskbar available through small pointer slips. */
@@ -123,12 +83,10 @@ function resizedBounds(
 const MovementPanel = memo(function MovementPanel({
 	item,
 	theme,
-	globallyHidden,
 	z,
 }: {
 	item: MovementItem;
 	theme: Theme;
-	globallyHidden: boolean;
 	z: number;
 }) {
 	const moveItem = useMovementStore((s) => s.moveItem);
@@ -175,7 +133,12 @@ const MovementPanel = memo(function MovementPanel({
 	useEffect(() => {
 		const el = frameRef.current;
 		if (!el) return;
-		const report = () => setMeasuredHeight(item.id, el.offsetHeight);
+		// A stage that is closed (or a minimized panel) measures zero. Reporting
+		// that would tell `movement state` the panel has no footprint at all, so
+		// keep the last real measurement until the panel is on screen again.
+		const report = () => {
+			if (el.offsetHeight > 0) setMeasuredHeight(item.id, el.offsetHeight);
+		};
 		report();
 		const ro = new ResizeObserver(report);
 		ro.observe(el);
@@ -186,10 +149,10 @@ const MovementPanel = memo(function MovementPanel({
 		<div
 			ref={frameRef}
 			data-movement-id={item.id}
-			aria-hidden={item.minimized || globallyHidden || undefined}
-			className="pointer-events-auto absolute rounded-xl overflow-hidden select-none"
+			aria-hidden={item.minimized || undefined}
+			className="absolute rounded-xl overflow-hidden select-none"
 			style={{
-				visibility: item.minimized || globallyHidden ? 'hidden' : 'visible',
+				visibility: item.minimized ? 'hidden' : 'visible',
 				zIndex: z,
 				left: item.x,
 				top: item.y,
@@ -340,15 +303,8 @@ const MovementPanel = memo(function MovementPanel({
 	);
 });
 
-export const MovementOverlay = memo(function MovementOverlay({
-	theme,
-	workspaceBoundaryRef,
-	workspaceLayout,
-	workspaceTopInset = 0,
-}: MovementOverlayProps) {
+export const MovementStage = memo(function MovementStage({ theme }: MovementStageProps) {
 	const items = useMovementStore((s) => s.items);
-	const hidden = useMovementStore((s) => s.hidden);
-	const setHidden = useMovementStore((s) => s.setHidden);
 	const surfaceItem = useMovementStore((s) => s.surfaceItem);
 	const setItemMinimized = useMovementStore((s) => s.setItemMinimized);
 	const setViewport = useMovementStore((s) => s.setViewport);
@@ -359,195 +315,166 @@ export const MovementOverlay = memo(function MovementOverlay({
 		useDebouncedCallback(() => setTaskbarHovered(false), TASKBAR_COLLAPSE_DELAY_MS);
 	const taskbarExpanded = taskbarHovered || taskbarFocused || taskbarPinned;
 	const taskbarItems = [...items].sort((a, b) => a.taskbarOrder - b.taskbarOrder);
-	const [stageBounds, setStageBounds] = useState<MovementStageBounds>(() =>
-		resolveMovementStageBounds(window.innerWidth, window.innerHeight, null, undefined)
-	);
+	const stageRef = useRef<HTMLDivElement>(null);
 
-	// Report the actual stage, not the whole window, so both the agent and human
-	// use coordinates relative to the same designable surface beside the chat.
+	// The agent lays out against the stage, not the window, so report the
+	// container's own size. Zero-size reports are skipped: the stage measures 0
+	// while its window is closed, and publishing that would tell the agent it has
+	// nowhere to place a panel.
 	useLayoutEffect(() => {
-		const report = () => {
-			const boundary = workspaceBoundaryRef?.current?.getBoundingClientRect() ?? null;
-			const next = resolveMovementStageBounds(
-				window.innerWidth,
-				window.innerHeight,
-				boundary,
-				workspaceLayout,
-				workspaceTopInset
-			);
-			setStageBounds((current) =>
-				current.left === next.left &&
-				current.top === next.top &&
-				current.width === next.width &&
-				current.height === next.height
-					? current
-					: next
-			);
-			setViewport(next.width, next.height);
+		const el = stageRef.current;
+		if (!el) return;
+		const report = (width: number, height: number) => {
+			if (width > 0 && height > 0) setViewport(Math.round(width), Math.round(height));
 		};
-		report();
-		window.addEventListener('resize', report);
-		const boundary = workspaceBoundaryRef?.current;
-		const observer =
-			boundary && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(report) : null;
-		if (boundary && observer) observer.observe(boundary);
-		return () => {
-			window.removeEventListener('resize', report);
-			observer?.disconnect();
-		};
-	}, [setViewport, workspaceBoundaryRef, workspaceLayout, workspaceTopInset]);
+		const rect = el.getBoundingClientRect();
+		report(rect.width, rect.height);
+		if (typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver((entries) => {
+			const box = entries[entries.length - 1]?.contentRect;
+			if (box) report(box.width, box.height);
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [setViewport]);
 
-	if (items.length === 0) return null;
-
-	return createPortal(
+	return (
 		<div
+			ref={stageRef}
 			data-testid="movement-stage-root"
-			className="fixed pointer-events-none overflow-hidden"
-			style={{ zIndex: MOVEMENT_Z, ...stageBounds }}
+			className="relative w-full h-full overflow-hidden"
+			style={{
+				backgroundColor: theme.colors.bgMain,
+				backgroundImage: `radial-gradient(${theme.colors.border}55 1px, transparent 1px)`,
+				backgroundSize: '20px 20px',
+			}}
 		>
-			{workspaceLayout && (
+			{items.length === 0 && (
 				<div
-					data-testid="movement-stage-backdrop"
-					className="pointer-events-auto absolute inset-0"
-					style={{
-						backgroundColor: theme.colors.bgMain,
-						backgroundImage: `radial-gradient(${theme.colors.border}55 1px, transparent 1px)`,
-						backgroundSize: '20px 20px',
-					}}
-					aria-hidden
-				/>
-			)}
-			<div
-				data-testid="movement-panels"
-				aria-hidden={hidden || undefined}
-				style={{ visibility: hidden ? 'hidden' : 'visible' }}
-			>
-				{items.map((item, index) => (
-					<MovementPanel
-						key={item.id}
-						item={item}
-						theme={theme}
-						globallyHidden={hidden}
-						z={index + 1}
-					/>
-				))}
-			</div>
-			<div
-				data-testid="movement-taskbar-anchor"
-				className="pointer-events-auto absolute bottom-3 right-3"
-				style={{ zIndex: items.length + 1 }}
-				onMouseEnter={() => {
-					cancelTaskbarCollapse();
-					setTaskbarHovered(true);
-				}}
-				onMouseLeave={finishTaskbarHover}
-				onFocus={() => setTaskbarFocused(true)}
-				onBlur={(event) => {
-					if (!event.currentTarget.contains(event.relatedTarget)) setTaskbarFocused(false);
-				}}
-			>
-				<div
-					data-testid="movement-taskbar"
-					className="h-10 flex items-center gap-1 overflow-hidden rounded-full p-1 shadow-xl transition-[width,opacity] duration-200"
-					style={{
-						width: taskbarExpanded ? 'min(760px, calc(100% - 24px))' : 44,
-						backgroundColor: theme.colors.bgSidebar,
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-						opacity: taskbarExpanded ? 1 : 0.78,
-					}}
+					data-testid="movement-stage-empty"
+					className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center"
 				>
-					<button
-						type="button"
-						onClick={() => setTaskbarPinned((pinned) => !pinned)}
-						className="relative flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full transition-colors"
-						style={{
-							color: taskbarPinned ? theme.colors.accent : theme.colors.textDim,
-							backgroundColor: taskbarPinned ? `${theme.colors.accent}1f` : 'transparent',
-						}}
-						title={taskbarPinned ? 'Unpin Concerto taskbar' : 'Pin Concerto taskbar open'}
-						aria-label={taskbarPinned ? 'Unpin Concerto taskbar' : 'Pin Concerto taskbar open'}
-						aria-expanded={taskbarExpanded}
-						aria-pressed={taskbarPinned}
-					>
-						<LayoutGrid className="w-3.5 h-3.5" strokeWidth={2.5} />
-						<span
-							className="absolute -right-0.5 -top-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full text-[9px] leading-[14px] text-center font-semibold"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
-						>
-							{items.length}
-						</span>
-					</button>
-					<div
-						aria-hidden={!taskbarExpanded}
-						aria-label="Concerto taskbar"
-						className="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto transition-opacity duration-150"
-						style={{
-							opacity: taskbarExpanded ? 1 : 0,
-							pointerEvents: taskbarExpanded ? 'auto' : 'none',
-						}}
-					>
-						<div
-							className="h-5 w-px flex-shrink-0 mx-1"
-							style={{ backgroundColor: theme.colors.border }}
-						/>
-						<span
-							className="flex-shrink-0 px-1 text-[10px] font-semibold uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
-						>
-							Concertos
-						</span>
-						{taskbarItems.map((item) => {
-							const label = item.title ?? item.id;
-							const isFront = !hidden && !item.minimized && item.id === items[items.length - 1]?.id;
-							return (
-								<button
-									key={item.id}
-									type="button"
-									onClick={() => {
-										if (item.minimized || hidden) surfaceItem(item.id);
-										else setItemMinimized(item.id, true);
-									}}
-									tabIndex={taskbarExpanded ? 0 : -1}
-									className="min-w-0 max-w-36 flex-shrink flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] font-medium transition-colors"
-									style={{
-										backgroundColor: isFront ? `${theme.colors.accent}24` : theme.colors.bgActivity,
-										color: item.minimized || hidden ? theme.colors.textDim : theme.colors.textMain,
-									}}
-									title={item.minimized || hidden ? `Restore ${label}` : `Minimize ${label}`}
-									aria-label={item.minimized || hidden ? `Restore ${label}` : `Minimize ${label}`}
-								>
-									<span
-										className="w-1.5 h-1.5 flex-shrink-0 rounded-full"
-										style={{
-											backgroundColor:
-												item.minimized || hidden ? theme.colors.textDim : theme.colors.accent,
-										}}
-									/>
-									<span className="truncate">{label}</span>
-								</button>
-							);
-						})}
-						<button
-							type="button"
-							onClick={() => setHidden(!hidden)}
-							tabIndex={taskbarExpanded ? 0 : -1}
-							className="flex-shrink-0 flex items-center gap-1 rounded-full px-2 py-1.5 text-[11px] transition-colors"
-							style={{ color: theme.colors.textDim }}
-							title={hidden ? 'Show all Concerto windows' : 'Hide all Concerto windows'}
-							aria-label={hidden ? 'Show all Concerto windows' : 'Hide all Concerto windows'}
-						>
-							{hidden ? (
-								<Eye className="w-3 h-3" strokeWidth={2.5} />
-							) : (
-								<EyeOff className="w-3 h-3" strokeWidth={2.5} />
-							)}
-							{hidden ? 'Show all' : 'Hide all'}
-						</button>
+					<Music2 className="h-8 w-8" style={{ color: theme.colors.accent, opacity: 0.7 }} />
+					<div className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>
+						The stage is empty
+					</div>
+					<div className="text-xs max-w-md" style={{ color: theme.colors.textDim }}>
+						Ask an agent for something worth looking at - a board to play on, a dashboard, a mockup,
+						a simulator - and it composes the view here.
 					</div>
 				</div>
+			)}
+			<div data-testid="movement-panels">
+				{items.map((item, index) => (
+					<MovementPanel key={item.id} item={item} theme={theme} z={index + 1} />
+				))}
 			</div>
-		</div>,
-		document.body
+			{/* Nothing to launch and nothing to restore on an empty stage, so the
+			    taskbar stays out of the way until the first panel exists. */}
+			{items.length > 0 && (
+				<div
+					data-testid="movement-taskbar-anchor"
+					className="absolute bottom-3 right-3"
+					style={{ zIndex: items.length + 1 }}
+					onMouseEnter={() => {
+						cancelTaskbarCollapse();
+						setTaskbarHovered(true);
+					}}
+					onMouseLeave={finishTaskbarHover}
+					onFocus={() => setTaskbarFocused(true)}
+					onBlur={(event) => {
+						if (!event.currentTarget.contains(event.relatedTarget)) setTaskbarFocused(false);
+					}}
+				>
+					<div
+						data-testid="movement-taskbar"
+						className="h-10 flex items-center gap-1 overflow-hidden rounded-full p-1 shadow-xl transition-[width,opacity] duration-200"
+						style={{
+							width: taskbarExpanded ? 'min(760px, calc(100% - 24px))' : 44,
+							backgroundColor: theme.colors.bgSidebar,
+							color: theme.colors.textDim,
+							border: `1px solid ${theme.colors.border}`,
+							opacity: taskbarExpanded ? 1 : 0.78,
+						}}
+					>
+						<button
+							type="button"
+							onClick={() => setTaskbarPinned((pinned) => !pinned)}
+							className="relative flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+							style={{
+								color: taskbarPinned ? theme.colors.accent : theme.colors.textDim,
+								backgroundColor: taskbarPinned ? `${theme.colors.accent}1f` : 'transparent',
+							}}
+							title={taskbarPinned ? 'Unpin Concerto taskbar' : 'Pin Concerto taskbar open'}
+							aria-label={taskbarPinned ? 'Unpin Concerto taskbar' : 'Pin Concerto taskbar open'}
+							aria-expanded={taskbarExpanded}
+							aria-pressed={taskbarPinned}
+						>
+							<LayoutGrid className="w-3.5 h-3.5" strokeWidth={2.5} />
+							<span
+								className="absolute -right-0.5 -top-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full text-[9px] leading-[14px] text-center font-semibold"
+								style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
+							>
+								{items.length}
+							</span>
+						</button>
+						<div
+							aria-hidden={!taskbarExpanded}
+							aria-label="Concerto taskbar"
+							className="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto transition-opacity duration-150"
+							style={{
+								opacity: taskbarExpanded ? 1 : 0,
+								pointerEvents: taskbarExpanded ? 'auto' : 'none',
+							}}
+						>
+							<div
+								className="h-5 w-px flex-shrink-0 mx-1"
+								style={{ backgroundColor: theme.colors.border }}
+							/>
+							<span
+								className="flex-shrink-0 px-1 text-[10px] font-semibold uppercase tracking-wide"
+								style={{ color: theme.colors.textDim }}
+							>
+								Concertos
+							</span>
+							{taskbarItems.map((item) => {
+								const label = item.title ?? item.id;
+								const isFront = !item.minimized && item.id === items[items.length - 1]?.id;
+								return (
+									<button
+										key={item.id}
+										type="button"
+										onClick={() => {
+											if (item.minimized) surfaceItem(item.id);
+											else setItemMinimized(item.id, true);
+										}}
+										tabIndex={taskbarExpanded ? 0 : -1}
+										className="min-w-0 max-w-36 flex-shrink flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] font-medium transition-colors"
+										style={{
+											backgroundColor: isFront
+												? `${theme.colors.accent}24`
+												: theme.colors.bgActivity,
+											color: item.minimized ? theme.colors.textDim : theme.colors.textMain,
+										}}
+										title={item.minimized ? `Restore ${label}` : `Minimize ${label}`}
+										aria-label={item.minimized ? `Restore ${label}` : `Minimize ${label}`}
+									>
+										<span
+											className="w-1.5 h-1.5 flex-shrink-0 rounded-full"
+											style={{
+												backgroundColor: item.minimized
+													? theme.colors.textDim
+													: theme.colors.accent,
+											}}
+										/>
+										<span className="truncate">{label}</span>
+									</button>
+								);
+							})}
+						</div>
+					</div>
+				</div>
+			)}
+		</div>
 	);
 });

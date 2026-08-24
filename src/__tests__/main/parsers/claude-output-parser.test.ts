@@ -1134,4 +1134,151 @@ describe('ClaudeOutputParser', () => {
 			expect(error2?.message).toContain('exited with code -1');
 		});
 	});
+
+	describe('plan-limit notices in result events', () => {
+		it('reports the session-limit notice as a recoverable rate_limited error', () => {
+			const notice = "You've hit your session limit · resets 11:40am (America/Chicago)";
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'success',
+				result: notice,
+				session_id: 'sess-1',
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(true);
+			// The CLI's own wording is preserved so the reset time survives to the
+			// retry scheduler and to the user.
+			expect(error?.message).toBe(notice);
+			expect(error?.parsedJson).toMatchObject({ result: notice });
+		});
+
+		it('reports the legacy "usage limit reached|<epoch>" marker', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				result: 'Claude AI usage limit reached|1755500000',
+			});
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.message).toBe('Claude AI usage limit reached|1755500000');
+		});
+
+		it('recognizes weekly and 5-hour limit phrasing', () => {
+			for (const notice of [
+				"You've hit your weekly limit · resets Monday at 9am (America/Chicago)",
+				"You've hit your 5-hour limit · resets 3pm (Europe/London)",
+			]) {
+				expect(parser.detectErrorFromParsed({ type: 'result', result: notice })).not.toBeNull();
+			}
+		});
+
+		it('does NOT flag a normal answer that merely discusses limits', () => {
+			const chatty =
+				'Here is what happens when you hit your usage limit: the CLI prints a notice and ' +
+				'Maestro schedules a retry. Rate limit handling lives in retryClassification.ts.';
+			expect(parser.detectErrorFromParsed({ type: 'result', result: chatty })).toBeNull();
+			expect(
+				parser.detectErrorFromParsed({ type: 'result', result: 'All done - tests pass.' })
+			).toBeNull();
+		});
+
+		// THE SHAPE THAT ACTUALLY HAPPENS. Copied from a real captured transcript
+		// (2026-08-22), trimmed of identifiers. Claude Code does not emit an error
+		// event for a hit plan limit - it emits a SYNTHETIC ASSISTANT MESSAGE whose
+		// text is the banner, with the reset time in `quotaLimits.resetsAt`.
+		//
+		// Before this was handled, `detectErrorFromParsed` took the generic
+		// `obj.error` branch, classified the bare tag "rate_limit" as `unknown`,
+		// and `classifyRetryableError` returned null - so no retry was ever
+		// scheduled and the notice rendered as an ordinary reply.
+		it('reports the real synthetic-assistant limit message', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				error: 'rate_limit',
+				isApiErrorMessage: true,
+				apiErrorStatus: 429,
+				quotaLimits: {
+					status: 'rejected',
+					resetsAt: 1787416800,
+					rateLimitType: 'five_hour',
+					overageStatus: 'rejected',
+					overageDisabledReason: 'out_of_credits',
+				},
+				message: {
+					role: 'assistant',
+					model: '<synthetic>',
+					stop_reason: 'stop_sequence',
+					content: [
+						{
+							type: 'text',
+							text: "You've hit your session limit · resets 11:40am (America/Chicago)",
+						},
+					],
+				},
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.message).toBe(
+				"You've hit your session limit · resets 11:40am (America/Chicago)"
+			);
+			// quotaLimits must survive onto parsedJson - it is what lets the retry
+			// land on the exact reset second instead of a blind hourly poll.
+			expect(
+				(error?.parsedJson as { quotaLimits?: { resetsAt?: number } })?.quotaLimits?.resetsAt
+			).toBe(1787416800);
+		});
+
+		it('flags the notice even when only `message` survives the transport', () => {
+			// Plain `--output-format stream-json` may forward just the message
+			// envelope, dropping the top-level error/quotaLimits markers. The text
+			// alone still has to be enough, or API-mode agents never retry.
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [
+						{
+							type: 'text',
+							text: "You've hit your session limit · resets 11:40am (America/Chicago)",
+						},
+					],
+				},
+			});
+			expect(error?.type).toBe('rate_limited');
+		});
+
+		it('does NOT flag a real reply that merely discusses the banner', () => {
+			// Maestro's own agents write about this constantly. The banner has to BE
+			// the message, not appear inside it.
+			for (const text of [
+				'The CLI prints "You\'ve hit your session limit" and then just sits there.',
+				"When you've hit your session limit, Maestro schedules a retry for you.",
+				"Fixed. You've hit your session limit · resets 11:40am (America/Chicago) now classifies as rate_limited, so resilience picks it up.",
+			]) {
+				expect(
+					parser.detectErrorFromParsed({
+						type: 'assistant',
+						message: { role: 'assistant', content: [{ type: 'text', text }] },
+					})
+				).toBeNull();
+			}
+		});
+
+		it('does NOT flag an assistant turn that is doing tool work', () => {
+			// A message carrying tool_use blocks is a live turn, not a synthetic
+			// notice - even if some text block happens to lead with the wording.
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'text', text: "You've hit your session limit" },
+							{ type: 'tool_use', name: 'Bash', id: 't1', input: {} },
+						],
+					},
+				})
+			).toBeNull();
+		});
+	});
 });

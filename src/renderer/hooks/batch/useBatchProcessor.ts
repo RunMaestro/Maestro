@@ -4,7 +4,6 @@ import type {
 	BatchRunConfig,
 	Session,
 	HistoryEntry,
-	UsageStats,
 	Group,
 	AutoRunStats,
 	AgentError,
@@ -16,7 +15,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
-import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
+import type { AutoRunSpawnAgentFn } from './useDocumentProcessor';
 // Decomposed internal hooks (see ./internal/)
 import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
@@ -58,21 +57,7 @@ export interface PRResultInfo {
 export interface UseBatchProcessorProps {
 	groups: Group[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
-	onSpawnAgent: (
-		sessionId: string,
-		prompt: string,
-		cwdOverride?: string,
-		/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
-		options?: SpawnAgentRunOverrides
-	) => Promise<{
-		success: boolean;
-		response?: string;
-		agentSessionId?: string;
-		usageStats?: UsageStats;
-		contextUsage?: number;
-		error?: string;
-		errorKind?: AgentSpawnErrorKind;
-	}>;
+	onSpawnAgent: AutoRunSpawnAgentFn;
 	/**
 	 * Resume an existing provider session and run a prompt (used by the goal
 	 * runner to fetch a handoff note between iterations). Same primitive the

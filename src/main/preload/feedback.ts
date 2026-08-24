@@ -145,7 +145,7 @@ export interface FeedbackApi {
 	/**
 	 * Get the conversation system prompt for the feedback chat interface
 	 */
-	getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+	getConversationPrompt: () => Promise<{ prompt: string; environment: string; cwd: string }>;
 	/**
 	 * Submit feedback from the conversational interface
 	 */
@@ -206,7 +206,7 @@ export function createFeedbackApi(): FeedbackApi {
 		): Promise<{ prompt: string }> =>
 			ipcRenderer.invoke('feedback:compose-prompt', { feedbackText, attachments }),
 
-		getConversationPrompt: (): Promise<{ prompt: string; environment: string }> =>
+		getConversationPrompt: (): Promise<{ prompt: string; environment: string; cwd: string }> =>
 			ipcRenderer.invoke('feedback:get-conversation-prompt'),
 
 		submitConversation: (

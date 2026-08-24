@@ -93,21 +93,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('grok')).toBe(true);
 		});
 
-		it('should register exactly 9 parsers', () => {
+		it('should register Antigravity parser', () => {
+			expect(hasOutputParser('antigravity')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('antigravity')).toBe(true);
+		});
+
+		it('should register exactly 10 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(9);
+			expect(parsers.length).toBe(10);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(9);
+			expect(getAllOutputParsers().length).toBe(10);
 
-			// Second initialization should still have exactly 9
+			// Second initialization should still have exactly 10
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(9);
+			expect(getAllOutputParsers().length).toBe(10);
 		});
 	});
 

@@ -332,7 +332,6 @@ describe('ThinkingStatusPill', () => {
 		beforeEach(() => {
 			useThoughtStreamStore.setState({
 				panelSessionId: null,
-				minimized: false,
 				buffers: {},
 			});
 			useUIStore.setState({ rightPanelOpen: false });

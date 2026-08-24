@@ -105,7 +105,7 @@ Command mode ("bang commands"): running a `!command` typed in the AI composer an
 
 **Key exports:**
 
-- `dispatchShellCommand({ session, tabId, command })` - record the command in `aiCommandHistory` (bang-prefixed) and run it. **This is the entry point every command surface uses**: a typed `!` command and an accepted AI command mode suggestion both go through it, which is what makes an accepted suggestion indistinguishable from a typed command afterwards, in the transcript and in up-arrow recall alike
+- `dispatchShellCommand({ session, tabId, command, request? })` - record the command in `aiCommandHistory` (bang-prefixed) and run it. **This is the entry point every command surface uses**: a typed `!` command and an accepted AI command mode suggestion both go through it, so both run, record, and recall identically. It forwards its whole options object to `runShellCommand` rather than destructuring the fields it happens to name, so a field added later cannot be silently dropped here. The optional `request` is the only thing separating the two: present, it marks the command as generated rather than typed
 - `runShellCommand({ session, tabId, command })` - append a live output card to the tab and run the command; resolves on exit. Use `dispatchShellCommand` unless you deliberately want the run WITHOUT the history entry
 - `cancelShellCommand(logId)` - stop a running command by its card's log id (the card's Stop button)
 - `resolveCommandCwd(session)` - where a bang command runs (agent `cwd`, or the SSH remote's working dir). Deliberately NOT `shellCwd`, which only terminal mode's `cd` moves. The composer's `CommandModeBar` and Tab completion both call this so the advertised directory, the completion source, and the actual run directory can never disagree
@@ -122,6 +122,8 @@ Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellComman
 - It deletes as a **single entry**, not the span-to-the-next-user-message a chat message deletes as. The card owns both its command and its output.
 - It must **never** call `claude.deleteMessagePair` - the agent was bypassed entirely, so there is no pair in its session to delete.
 - Delete is hidden while the command is still **running**. Removing a live card would orphan the process: output keeps streaming into an entry that no longer exists, with no Stop button left to reach it. Stop first, then delete.
+
+Because that gate reads `shellCommand.status`, `LogItem`'s memo comparator in `TerminalOutput.tsx` must compare the `shellCommand` fields (`status`, `exitCode`, `durationMs`, `truncated`) and not just `log.text`. A command that prints NOTHING (`!true`, `!mkdir foo`) changes only those fields when it exits, so comparing text alone froze the card mid-run: spinner up, Stop still offered, delete still hidden.
 
 The recall-history rule lives in the pure reducer `hooks/tabs/internal/deleteShellCommandLog.ts`: the bang-prefixed `aiCommandHistory` entry is pruned **only when no card anywhere in the agent still shows that command**. The two lists have different scopes - cards are per tab, `aiCommandHistory` is per agent and deduplicated - so pruning unconditionally would strip `!ls` from up-arrow recall while two other `ls` cards sit on screen.
 
@@ -202,7 +204,29 @@ Turns a plain-English request into one shell command line, shows it, and runs it
 
 **The handler never executes anything.** The accepted command goes back through the ordinary command-mode path, so a suggested command and a typed one run in the same directory, on the same SSH remote, through the same code.
 
-`shared/aiCommand.ts` holds the two pure pieces, unit-testable without either process: `buildAiCommandPrompt()` (the request is substituted LAST, so a request containing `{{CWD}}` cannot rewrite the environment block above it) and `extractCommandLine()` (strips fences, `$`/`%` prompts, wrapping backticks, and lead-in lines; returns null rather than proposing an empty run).
+**Follow-ups carry history.** `requestAiCommand` mines the target tab's transcript with `collectRecentCommands()` and sends the last `AI_COMMAND_HISTORY_LIMIT` (8) command lines, oldest first, so "actually just give me a count" can refine the `find` command above it instead of composing a new one. Three things about that:
+
+- It reads the **transcript**, not `aiCommandHistory`. That list is per agent, deduplicated, and order-normalized (a repeat moves to the end), so it cannot answer "what did I just run in THIS tab" - which is the only question a follow-up is asking.
+- It reads the **target tab** (`tabId`), not the active one. A tab switch while a suggestion is in flight must not hand one tab's commands to another tab's request.
+- Failures are **labeled, not filtered**. "That didn't work, try something else" is a common follow-up, and a model that cannot see the failure proposes the same broken command again.
+
+Each entry carries the **request as well as the command**, rendered as an `Asked:` / `Ran:` pair. `LogEntry.shellCommand.request` is stamped by `runShellCommand` only when the caller supplies one, so the field's presence means exactly "this command was generated, not typed" - and `ShellCommandCard` shows it above the command as provenance. This matters because a follow-up refines the ASK at least as much as the command line: `find . -newermt '2 days ago' -type f` does not say it was requested as "files edited in the past two days", so without the request the model has to reverse-engineer intent from flags.
+
+`formatRecentCommands` collapses whitespace in both fields before emitting them. That is not cosmetic: the block is a list where one entry is one or two labeled lines, and a request is typed into a MULTILINE composer, so a newline in a request would inject what looks like another entry into the block above it.
+
+Commands and exit statuses are sent; output is not. The refinement cases are about the command's shape, and a `find` over a large tree would swamp the prompt with its own results.
+
+`shared/aiCommand.ts` holds the two pure pieces, unit-testable without either process: `buildAiCommandPrompt()` (substitution runs in ONE pass, so no substituted value is rescanned for further tokens - chained `.replace()` calls let a previously-run command like `echo {{USER_REQUEST}}` sitting in the history get filled in by the next replace in the chain) and `extractCommandLine()` (strips fences, `$`/`%` prompts, wrapping backticks, and lead-in lines; returns null rather than proposing an empty run).
+
+---
+
+### `probeSessionAiProcesses()` (in process.ts)
+
+`probeSessionAiProcesses(sessionId, targetTabId)` asks the MAIN process what is actually running for one agent's AI tabs, returning `{anyActive, targetTabActive, earliestStartTime, probeFailed}`.
+
+Reach for it anywhere the question is "is this agent mid-turn right now". The renderer store is NOT a safe answer: it can still read `idle` for a moment after a turn starts or before an exit reconciles, and both the queue decision and the cross-agent mention-only branch have been bitten by that window. Terminal tabs and Cue runs are filtered out (neither holds the agent's sequential AI turn), and a forced-parallel run (`-fp-<n>` suffix) counts as busy on its own tab.
+
+**It fails SAFE.** An IPC failure returns every flag `true` plus `probeFailed`, because unknown ownership must read as busy - treating it as idle re-spawns a live process id and loses its response. Do not "simplify" that to a `false` default.
 
 ---
 
@@ -214,9 +238,21 @@ Resolve and dispatch `@agent` mentions. Deliberately two steps, because WHEN a c
 - `dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId)` - fire the consults for an already-resolved plan.
 - `dispatchCrossAgentMentionsForMessage(message, sourceSession, sourceTabId)` - plan + dispatch, for callers holding only the raw text.
 
-**A queued message must not consult at submit time.** A message sent while the agent is busy goes to the execution queue; dispatching its mention immediately pulls the other agent into a question that is still several messages deep in the queue. So `useInputProcessing` PLANS at submit (it needs `suppressLocal` to decide whether to send locally at all), stamps `crossAgentMention: true` on the `QueuedItem`, and `agentStore.processQueuedItem` dispatches when the item becomes the agent's turn. `noteDispatch` strips the flag so an Agent Resilience retry cannot re-consult, and `handleEditQueueItem` recomputes it against the edited text.
+**A queued message must not consult at submit time - including one addressed only at the other agent.** A message sent while the agent is busy goes to the execution queue; dispatching its mention immediately pulls the other agent into a question that is still several messages deep in the queue. So `useInputProcessing` PLANS at submit (it needs `suppressLocal` to decide whether to send locally at all), stamps `crossAgentMention: true` on the `QueuedItem`, and `agentStore.processQueuedItem` dispatches when the item becomes the agent's turn. `noteDispatch` strips the flag so an Agent Resilience retry cannot re-consult, and `handleEditQueueItem` recomputes it against the edited text.
+
+A LEADING mention (`suppressLocal`) is the same story. The source agent does not answer it, but it still queues - as a `crossAgentOnly` item - whenever `hasWorkAheadOfNewMessage()` says the user lined work up first. Dispatching it fires the consult and returns before the spawn and before `noteDispatch`, then calls `applyQueuedItemRelease()` to hand back the busy state the dequeue took, since no process will arrive to close it out. It consults at submit time only when nothing is ahead of it - and that check goes through `probeSessionAiProcesses()`, not the store, so a turn main has already started still counts.
 
 Module-level functions, not a hook: the queue drain runs outside React. The send itself is `sendCrossAgentRequest` in `hooks/agent/useCrossAgentDispatch.ts`, also module-level, sharing one `pendingRequests` tracker with the hook that subscribes to the response chunks.
+
+### fileDeletion.ts - delete the previewed file
+
+One confirmation, one delete, behind every surface that offers to remove the file you are looking at: the File Preview toolbar's trash button and the command palette's `File: Delete` entry.
+
+**Key export:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })` - opens the shared `confirm` modal (destructive, titled "Delete File") and, only on confirm, runs `window.maestro.fs.delete` - the same IPC the Files panel context menu uses, so SSH remotes are honored. `sessionId` defaults to the active session, which is what both surfaces are scoped to.
+
+After a successful delete it force-closes every file preview tab in that session pointing at the path, then dispatches the `maestro:refreshFileTree` CustomEvent so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
+
+Do NOT add a second delete path. A new surface should call `requestFileDeletion` so the confirmation copy and the tab cleanup cannot drift.
 
 ---
 

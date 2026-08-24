@@ -7,6 +7,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import {
 	processService,
+	probeSessionAiProcesses,
 	ProcessConfig,
 	ProcessDataHandler,
 	ProcessExitHandler,
@@ -23,6 +24,7 @@ const mockProcess = {
 	onData: vi.fn(),
 	onExit: vi.fn(),
 	onSessionId: vi.fn(),
+	getActiveProcesses: vi.fn(),
 };
 
 // Setup mock before each test
@@ -503,5 +505,89 @@ describe('processService', () => {
 			};
 			handler('session', 'claude-id');
 		});
+	});
+});
+
+describe('probeSessionAiProcesses', () => {
+	const SESSION = 'sess-1';
+
+	function proc(sessionId: string, overrides: Record<string, unknown> = {}) {
+		return {
+			sessionId,
+			toolType: 'claude-code',
+			pid: 1,
+			cwd: '/x',
+			isTerminal: false,
+			startTime: 1000,
+			...overrides,
+		};
+	}
+
+	test('reports idle when nothing is running for this agent', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([proc('other-session-ai-tab-1')]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state).toEqual({
+			anyActive: false,
+			targetTabActive: false,
+			earliestStartTime: undefined,
+			probeFailed: false,
+		});
+		expect(mockProcess.getActiveProcesses).toHaveBeenCalledWith({ includeChildProcesses: false });
+	});
+
+	test('separates a turn on the asked-about tab from one on a sibling tab', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([proc(`${SESSION}-ai-tab-2`)]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		// The agent is busy, but not on this tab - the distinction the queue
+		// decision needs to allow read-only parallelism.
+		expect(state.anyActive).toBe(true);
+		expect(state.targetTabActive).toBe(false);
+	});
+
+	test('counts a forced-parallel turn as busy on its own tab', async () => {
+		// Forced-parallel runs get a `-fp-<n>` suffix on the same tab id.
+		mockProcess.getActiveProcesses.mockResolvedValue([proc(`${SESSION}-ai-tab-1-fp-2`)]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state.targetTabActive).toBe(true);
+	});
+
+	test('ignores terminal tabs and Cue runs, which hold no AI turn', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([
+			proc(`${SESSION}-ai-tab-1`, { isTerminal: true }),
+			proc(`${SESSION}-ai-tab-2`, { isCueRun: true }),
+		]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state.anyActive).toBe(false);
+		expect(state.targetTabActive).toBe(false);
+	});
+
+	test('returns the earliest start time across live turns', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([
+			proc(`${SESSION}-ai-tab-2`, { startTime: 5000 }),
+			proc(`${SESSION}-ai-tab-1`, { startTime: 2000 }),
+			proc(`${SESSION}-ai-tab-3`, { startTime: undefined }),
+		]);
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state.earliestStartTime).toBe(2000);
+	});
+
+	test('fails SAFE: an IPC failure reports busy, never idle', async () => {
+		// Unknown ownership must not read as idle - that is how a live process gets
+		// replaced and its response lost.
+		mockProcess.getActiveProcesses.mockRejectedValue(new Error('ipc down'));
+
+		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+		expect(state).toEqual({ anyActive: true, targetTabActive: true, probeFailed: true });
 	});
 });

@@ -15,7 +15,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { Check, Copy, Loader2, Square, Terminal, Trash2, X } from 'lucide-react';
+import { Check, Copy, Loader2, Sparkles, Square, Terminal, Trash2, X } from 'lucide-react';
 import type Convert from 'ansi-to-html';
 
 import type { LogEntry, Theme } from '../types';
@@ -104,6 +104,22 @@ export function ShellCommandCard({
 				borderColor: failed ? `${theme.colors.error}60` : theme.colors.border,
 			}}
 		>
+			{/* Provenance: what was asked, for a command AI command mode generated.
+			    Above the command because that is the order it happened, and because
+			    a transcript read weeks later needs the intent to make sense of the
+			    flags. Absent for a typed command, where the line already is the
+			    intent. */}
+			{shell.request && (
+				<div
+					className="flex items-start gap-1.5 px-3 pt-2 text-[11px] select-text"
+					style={{ color: theme.colors.textDim }}
+					data-testid="shell-command-request"
+				>
+					<Sparkles className="w-3 h-3 shrink-0 mt-px" style={{ color: theme.colors.accent }} />
+					<span className="min-w-0 break-words">{shell.request}</span>
+				</div>
+			)}
+
 			{/* Header: the command, where it ran, and its status */}
 			<div
 				className="flex items-center gap-2 px-3 py-2 border-b"

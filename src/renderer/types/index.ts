@@ -326,6 +326,17 @@ export interface LogEntry {
 	shellCommand?: {
 		/** The command as typed, without the leading `!`. */
 		command: string;
+		/**
+		 * The plain-English request this command was generated from, when it came
+		 * from AI command mode. Absent for a command the user typed themselves -
+		 * that command IS the intent, with nothing upstream of it.
+		 *
+		 * Kept because the command alone loses the "why": `find . -newermt '2 days
+		 * ago' -type f` does not say it was asked for as "files edited in the past
+		 * two days", and a follow-up ("actually just the count") is refining the
+		 * REQUEST at least as much as the command line.
+		 */
+		request?: string;
 		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
 		cwd: string;
 		/** SSH remote name when the agent runs remotely, else undefined. */
@@ -384,6 +395,12 @@ export interface QueuedItem {
 	// mentioned agent is pulled in at the moment the message becomes the agent's
 	// turn - not when the user typed it into a queue that was minutes deep.
 	crossAgentMention?: boolean;
+	// The message is addressed ONLY at the mentioned agent(s) - it leads with an
+	// `@agent` mention, so this agent does not answer it. Dispatching the item
+	// fires the consult and nothing else: no spawn, no turn. It still occupies a
+	// queue slot, because its POSITION is what the user is expressing ("finish
+	// that, then ask them"). Always paired with `crossAgentMention`.
+	crossAgentOnly?: boolean;
 }
 
 export interface WorkLogItem {
@@ -1027,14 +1044,80 @@ export interface SnoozeHistoryEntry {
 	resolution: SnoozeResolution;
 }
 
-export interface SnoozedTabEntry {
+/**
+ * Fields every snooze carries, whatever kind of tab it parked.
+ *
+ * Split out so the union below only has to say what differs - the `type` tag
+ * and the tab payload it discriminates.
+ */
+interface SnoozedTabEntryBase {
 	id: string; // Snooze ID (stable across edits, used for list keys and wake dedupe)
-	tab: AITab; // The full tab, restored verbatim on wake
 	unifiedIndex: number; // Position in unifiedTabOrder at snooze time (restore target)
 	snoozedAt: number; // When the user snoozed it
 	wakeAt: number; // When it should come back (ms epoch)
 	note?: string; // Optional note-to-self surfaced in the wake notification
 }
+
+/**
+ * A snoozed tab of any kind, held out of the tab bar until `wakeAt`.
+ *
+ * Shaped after {@link UnifiedTab} rather than {@link ClosedTabEntry}: the two
+ * are near-identical, but `UnifiedTab` is the one whose payload is guaranteed
+ * non-null, and a nullable tab here would force a null check at every restore
+ * site to describe a state that cannot happen.
+ *
+ * What survives a snooze differs by kind, and the difference is the point:
+ * - `ai` restores verbatim, transcript and provider session intact.
+ * - `file` / `browser` restore from persisted state (path, URL). The file's
+ *   contents may have changed underneath, and its path may be gone entirely -
+ *   the wake path re-validates.
+ * - `terminal` restores the tab and its position, NOT the shell. A PTY cannot
+ *   be parked; it comes back as a fresh shell at the same cwd. That is the
+ *   promise: the layout survives, the process does not.
+ * - `group` parks a whole tiled group. See {@link SnoozedGroupPayload}.
+ */
+export type SnoozedTabEntry =
+	| ({ type: 'ai'; tab: AITab } & SnoozedTabEntryBase)
+	| ({ type: 'file'; tab: FilePreviewTab } & SnoozedTabEntryBase)
+	| ({ type: 'terminal'; tab: TerminalTab } & SnoozedTabEntryBase)
+	| ({ type: 'browser'; tab: BrowserTab } & SnoozedTabEntryBase)
+	| (SnoozedGroupPayload & SnoozedTabEntryBase);
+
+/**
+ * One pane of a snoozed group - the same per-kind payload the single-tab
+ * variants carry, minus the snooze bookkeeping, which lives on the group.
+ * A group never nests, so `group` is not a member kind.
+ */
+export type SnoozedGroupMember =
+	| { type: 'ai'; tab: AITab }
+	| { type: 'file'; tab: FilePreviewTab }
+	| { type: 'terminal'; tab: TerminalTab }
+	| { type: 'browser'; tab: BrowserTab };
+
+/**
+ * A parked tiled group.
+ *
+ * `group` carries the whole {@link TabGroup} - crucially its `layout` tree and
+ * `focusedPaneId` - so the wake replays the arrangement verbatim rather than
+ * re-deriving it from a member list. Split direction, sizes and the focused
+ * pane are all inside `layout`, which is why nothing extra is stored for them.
+ *
+ * `members` holds each pane's tab, because the layout tree only references
+ * panes by `UnifiedTabRef` and those tabs are removed from the session while
+ * the group sleeps. Order is the tree's own leaf order, so a restore that has
+ * to drop a member (a file whose path is gone) can still rebuild the rest.
+ *
+ * Note the shape: this variant has `group`/`members` and NO `tab`. Anything
+ * reading `entry.tab` must narrow on `type` first - the compiler enforces it.
+ */
+export interface SnoozedGroupPayload {
+	type: 'group';
+	group: TabGroup;
+	members: SnoozedGroupMember[];
+}
+
+/** The group variant of {@link SnoozedTabEntry}, named so guards can return it. */
+export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
 export interface Session {
 	id: string;

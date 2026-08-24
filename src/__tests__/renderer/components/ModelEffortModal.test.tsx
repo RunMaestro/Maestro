@@ -1,14 +1,18 @@
 /**
  * Tests for ModelEffortModal - the keyboard-only per-tab model/effort picker.
  *
- * The whole point of this modal is that both axes are live at once and nothing
- * is written until Enter, so these tests pin exactly that: Up/Down moves the
- * model, Left/Right moves the effort, Enter commits both to the tab, and
- * Escape-equivalent (unmount without Enter) leaves the tab untouched.
+ * The whole point of this surface is that both axes are live at once and
+ * nothing is written until Enter, so these tests pin exactly that: Up/Down
+ * moves the model, Left/Right moves the effort, Enter commits both to the tab,
+ * and Escape-equivalent (unmount without Enter) leaves the tab untouched.
+ *
+ * The presentation is a wheel, not a list, so only the rows near the selection
+ * are in the DOM at any moment. Tests assert on what the wheel currently shows
+ * rather than on the whole catalog being present.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, createEvent } from '@testing-library/react';
 import { ModelEffortModal } from '../../../renderer/components/ModelEffortModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -40,9 +44,13 @@ function renderModal(onClose = vi.fn()) {
 	return { ...result, onClose };
 }
 
-/** The focusable container that owns the arrow-key handling. */
+/**
+ * The focusable container that owns the arrow-key handling. Addressed by test
+ * id rather than by label text: 'Model' now names both the wheel's axis label
+ * and its keycap hint, so a text lookup is ambiguous.
+ */
 function keyTarget(): HTMLElement {
-	return screen.getByText('Model').closest('[tabindex]') as HTMLElement;
+	return screen.getByTestId('model-effort-surface');
 }
 
 describe('ModelEffortModal', () => {
@@ -133,13 +141,44 @@ describe('ModelEffortModal', () => {
 		expect(setTabEffort).toHaveBeenCalledWith('tab-1', undefined);
 	});
 
-	it('groups a mixed-vendor catalog under family headers', async () => {
+	it('names the vendor of whichever model the wheel is on', async () => {
+		// A wheel has no room for group headers, so the family travels with the
+		// selection instead. Walking the catalog must re-label as it goes.
 		renderModal();
 		await screen.findByText('claude-sonnet-4.5');
 
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		expect(screen.getByText('Claude')).toBeInTheDocument();
+
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		expect(screen.getByText('OpenAI')).toBeInTheDocument();
+
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
 		expect(screen.getByText('Gemini')).toBeInTheDocument();
+	});
+
+	it('spells out what the (default) row resolves to', async () => {
+		// '(default)' alone says nothing about what will actually run; the caption
+		// is the only place the agent-level model is named.
+		(window.maestro.agents.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+			model: 'claude-sonnet-4.5',
+		});
+		renderModal();
+		// With an agent-level default set, the wheel opens on the resolved model,
+		// so reaching the '(default)' row takes one step up.
+		await screen.findByText('claude-sonnet-4.5');
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowUp' });
+
+		expect(screen.getByText('Agent default - claude-sonnet-4.5')).toBeInTheDocument();
+	});
+
+	it('keeps the wrapped-around neighbour on the wheel', async () => {
+		// The row above '(default)' is the LAST model, not empty space - that is
+		// what makes Up-from-the-top feel continuous rather than blocked.
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		expect(screen.getByText('gemini-2.5-pro')).toBeInTheDocument();
 	});
 
 	it('says so when the agent exposes neither knob, but not before the lookups settle', async () => {
@@ -183,5 +222,109 @@ describe('ModelEffortModal', () => {
 		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gpt-5');
 		releaseModels(MODELS);
 		await waitFor(() => expect(screen.getByText('gpt-5')).toBeInTheDocument());
+	});
+
+	it('jumps the wheel to the model matching a typed letter', async () => {
+		// The point of type-to-jump: a thirty-model catalog should not require
+		// arrowing through it.
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.keyDown(keyTarget(), { key: 'g' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gpt-5');
+	});
+
+	it('extends a typed prefix so a shared initial can be narrowed', async () => {
+		// 'g' alone lands on gpt-5; 'ge' has to reach past it to gemini.
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.keyDown(keyTarget(), { key: 'g' });
+		fireEvent.keyDown(keyTarget(), { key: 'e' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gemini-2.5-pro');
+	});
+
+	it('walks every match when the same letter is repeated', async () => {
+		(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue([
+			'opus',
+			'opus[1m]',
+		]);
+		renderModal();
+		await screen.findByText('opus[1m]');
+
+		// First 'o' takes the first match; the second must advance rather than
+		// re-matching the row it already sits on.
+		fireEvent.keyDown(keyTarget(), { key: 'o' });
+		fireEvent.keyDown(keyTarget(), { key: 'o' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'opus[1m]');
+	});
+
+	it("reaches the '(default)' row by typing its label", async () => {
+		// The row's model id is '', so it is matched on the word the wheel shows.
+		seedStore({ customModel: 'gpt-5' });
+		renderModal();
+		await screen.findByText('gpt-5');
+
+		fireEvent.keyDown(keyTarget(), { key: 'd' });
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', undefined);
+	});
+
+	it('lets a modified key through instead of treating it as a jump', async () => {
+		// Swallowing Cmd+W here would stop it reaching the window and trap the
+		// user inside the console.
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		const event = createEvent.keyDown(keyTarget(), { key: 'w', metaKey: true });
+		fireEvent(keyTarget(), event);
+
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it('applies by double-clicking a model row, for pointer-only users', async () => {
+		// There is no button row, so the double-click IS the pointer path to
+		// Apply. It commits the row that was double-clicked, not whatever the
+		// wheel was on: the dblclick handler is a closure built before the two
+		// clicks that preceded it, so reading the selection from state here would
+		// commit the previous model.
+		renderModal();
+		const row = await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.doubleClick(row);
+
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'claude-sonnet-4.5');
+	});
+
+	it('applies by double-clicking an effort stop', async () => {
+		renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.doubleClick(screen.getByText('high'));
+
+		expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'high');
+	});
+
+	it('closes when the scrim behind the composition is clicked', async () => {
+		const { onClose } = renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.mouseDown(screen.getByTestId('model-effort-modal'));
+		expect(onClose).toHaveBeenCalled();
+	});
+
+	it('does not close when the composition itself is clicked', async () => {
+		const { onClose } = renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		fireEvent.mouseDown(keyTarget());
+		expect(onClose).not.toHaveBeenCalled();
 	});
 });

@@ -27,6 +27,7 @@ import {
 	Copy,
 	Save,
 	Gauge,
+	Terminal,
 } from 'lucide-react';
 import { formatSize } from '../../shared/formatters';
 import { useUIStore } from '../stores/uiStore';
@@ -38,12 +39,15 @@ import type { Theme, Session, ToolType } from '../types';
 import {
 	FeedbackConversationManager,
 	getConfidenceColor,
+	type FeedbackDiagnostic,
 	type FeedbackMessage,
 	type FeedbackParsedResponse,
 } from '../services/feedbackConversation';
 import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
 import { useFeedbackDraftStore, type FeedbackDraft } from '../stores/feedbackDraftStore';
+import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
 // ============================================================================
 // Constants
@@ -194,6 +198,9 @@ export function FeedbackChatView({
 	// draft-save failures.
 	const activeDraftId = useFeedbackDraftStore((s) => s.activeDraftId);
 	const saveError = useFeedbackDraftStore((s) => s.saveError);
+	// Diagnostics the agent ran on this machine during the current turn. Cleared
+	// at the start of each send so the list always describes the turn in flight.
+	const [diagnostics, setDiagnostics] = useState<FeedbackDiagnostic[]>([]);
 	const lastSearchQueryRef = useRef<string | null>(null);
 	const searchAbortRef = useRef(0); // Monotonic counter to discard stale searches
 
@@ -272,13 +279,12 @@ export function FeedbackChatView({
 		};
 	}, []);
 
-	// --- Auto-resize textarea as content changes ---
-	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
-		}
-	}, [inputValue]);
+	// --- Auto-resize textarea as content changes, keeping the caret visible ---
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: inputValue,
+		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+	});
 
 	// --- Scroll to bottom on new messages ---
 	useEffect(() => {
@@ -317,17 +323,17 @@ export function FeedbackChatView({
 	}, [resumeDraft]);
 
 	// --- Publish draft state so the sidebar Feedback button + close handler
-	//     know whether the user has work worth keeping. Typed-but-unsent input
-	//     and staged attachments count too, so closing offers to save them. An
-	//     in-flight recording or a captured-but-unsubmitted trace also counts.
-	//     Once the issue is submitted (step === 'done') there's nothing left.
+	//     know whether the user has work worth keeping. Closing parks a draft
+	//     rather than discarding it, so this counts anything the user would be
+	//     annoyed to retype: a sent message, text still sitting in the composer,
+	//     or staged screenshots. An in-flight recording or a captured-but-
+	//     unsubmitted trace counts too. Once the issue is submitted
+	//     (step === 'done') there's nothing left to keep.
 	useEffect(() => {
-		const hasContent =
-			messages.some((m) => m.role === 'user') ||
-			attachments.length > 0 ||
-			inputValue.trim().length > 0;
+		const hasSentMessage = messages.some((m) => m.role === 'user');
+		const hasUnsentWork = inputValue.trim().length > 0 || attachments.length > 0;
 		const hasTraceWork = isTracing || tracePath !== null;
-		const hasDraft = (hasContent || hasTraceWork) && step !== 'done';
+		const hasDraft = (hasSentMessage || hasUnsentWork || hasTraceWork) && step !== 'done';
 		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
 	}, [messages, attachments, inputValue, step, isTracing, tracePath]);
 
@@ -379,10 +385,11 @@ export function FeedbackChatView({
 	// --- Start conversation ---
 	const startConversation = useCallback(async () => {
 		try {
-			const { prompt } = await window.maestro.feedback.getConversationPrompt();
+			const { prompt, cwd } = await window.maestro.feedback.getConversationPrompt();
 			managerRef.current.start({
 				agentType: selectedAgent,
 				systemPrompt: prompt,
+				cwd,
 			});
 			setStep('chat');
 			// Focus input immediately - no auto-greeting, user speaks first
@@ -421,9 +428,13 @@ export function FeedbackChatView({
 		setMessages(updatedMessages);
 		setInputValue('');
 		setIsLoading(true);
+		setDiagnostics([]);
 
 		try {
 			const response = await managerRef.current.sendMessage(text, updatedMessages, {
+				onDiagnostic: (diagnostic) => {
+					setDiagnostics((prev) => [...prev, diagnostic]);
+				},
 				onComplete: (r) => {
 					setConfidence(r.confidence);
 					setIsReady(r.ready);
@@ -1192,13 +1203,38 @@ export function FeedbackChatView({
 				{isLoading && (
 					<div className="flex justify-start">
 						<div
-							className="px-3 py-2 rounded-lg"
+							className="px-3 py-2 rounded-lg max-w-[85%]"
 							style={{
 								backgroundColor: theme.colors.bgMain,
 								border: `1px solid ${theme.colors.border}`,
 							}}
 						>
-							<Spinner size={16} color={theme.colors.accent} />
+							<div className="flex items-center gap-2">
+								<Spinner size={16} color={theme.colors.accent} />
+								{diagnostics.length > 0 && (
+									<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+										Checking your system...
+									</span>
+								)}
+							</div>
+							{/* Diagnostics run on the user's own machine are shown, never hidden.
+							    Read-only, but they still deserve to see what was inspected. */}
+							{diagnostics.length > 0 && (
+								<ul className="mt-1.5 space-y-1">
+									{diagnostics.map((diagnostic, i) => (
+										<li
+											key={`${diagnostic.timestamp}-${i}`}
+											className="flex items-start gap-1.5 text-[11px] font-mono"
+											style={{ color: theme.colors.textDim }}
+										>
+											<Terminal className="w-3 h-3 mt-0.5 shrink-0" />
+											<span className="truncate" title={diagnostic.command || diagnostic.toolName}>
+												{diagnostic.command || diagnostic.toolName}
+											</span>
+										</li>
+									))}
+								</ul>
+							)}
 						</div>
 					</div>
 				)}

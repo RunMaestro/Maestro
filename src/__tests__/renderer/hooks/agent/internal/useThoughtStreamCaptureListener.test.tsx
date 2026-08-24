@@ -37,7 +37,6 @@ beforeEach(() => {
 
 	useThoughtStreamStore.setState({
 		panelSessionId: null,
-		minimized: false,
 		buffers: {},
 	});
 });

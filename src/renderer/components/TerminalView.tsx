@@ -40,7 +40,9 @@ export interface TerminalViewHandle {
 	 * `activeTabId`, and only for AI panes), so `focusActiveTerminal` would land on
 	 * the wrong terminal - or none at all - when a group owns the panel.
 	 */
-	focusTerminal(tabId: string): void;
+	/** Returns false when that tab's xterm has not registered yet (still
+	 *  mounting), so a caller can retry rather than silently losing the caret. */
+	focusTerminal(tabId: string): boolean;
 	searchActiveTerminal(query: string): boolean;
 	searchNext(): boolean;
 	searchPrevious(): boolean;
@@ -250,8 +252,11 @@ export const TerminalView = memo(
 						terminalRefs.current.get(activeTab.id)?.focus();
 					}
 				},
-				focusTerminal(tabId: string) {
-					terminalRefs.current.get(tabId)?.focus();
+				focusTerminal(tabId: string): boolean {
+					const term = terminalRefs.current.get(tabId);
+					if (!term) return false;
+					term.focus();
+					return true;
 				},
 				searchActiveTerminal(query: string): boolean {
 					if (!activeTab) return false;
@@ -400,32 +405,30 @@ export const TerminalView = memo(
 			]
 		);
 
-		// Spawn PTY when active tab changes and has no PID yet
-		useEffect(() => {
-			if (!activeTab || activeTab.pid !== 0 || activeTab.state === 'exited') {
-				return;
-			}
-			spawnPtyForTab(activeTab);
-		}, [activeTab?.id, spawnPtyForTab]);
-
-		// Eagerly spawn any non-active terminal tab that has a startupCommand
-		// configured. Without this, a tab with `npm run dev` would silently sit
-		// dormant after an app restart until the user clicked it - defeating the
-		// whole point of a persistent startup command. spawnPtyForTab's in-flight
-		// guard + the pid===0 check make this safe to re-evaluate on every render.
+		// Spawn a PTY for every terminal that needs one. Three kinds qualify:
+		//
+		//   - the session's active terminal tab (the standalone, non-tiled view);
+		//   - every terminal that is a LEAF IN THE ACTIVE TAB GROUP, i.e. has a
+		//     published pane rect. A tiled terminal is on screen without ever being
+		//     `activeTerminalTabId`, so gating spawning on the active tab alone left
+		//     tiled terminals sitting on "Starting terminal..." forever - the one tab
+		//     kind that broke when tiled;
+		//   - any tab with a startupCommand, active or not. Without this a tab with
+		//     `npm run dev` would sit dormant after an app restart until the user
+		//     clicked it, defeating the point of a persistent startup command.
+		//
+		// spawnPtyForTab's in-flight guard plus the pid===0 check make this safe to
+		// re-evaluate on every render.
 		useEffect(() => {
 			const terminalTabs = session.terminalTabs || [];
 			for (const tab of terminalTabs) {
-				if (
-					tab.startupCommand &&
-					tab.pid === 0 &&
-					tab.state !== 'exited' &&
-					tab.id !== activeTab?.id
-				) {
+				if (tab.pid !== 0 || tab.state === 'exited') continue;
+				const onScreen = tab.id === activeTab?.id || paneRects?.has(tab.id) === true;
+				if (onScreen || tab.startupCommand) {
 					spawnPtyForTab(tab);
 				}
 			}
-		}, [session.terminalTabs, activeTab?.id, spawnPtyForTab]);
+		}, [session.terminalTabs, activeTab?.id, paneRects, spawnPtyForTab]);
 
 		// Focus and repaint the active terminal when the active tab changes.
 		// The refresh() call is necessary because switching tabs uses CSS visibility: hidden

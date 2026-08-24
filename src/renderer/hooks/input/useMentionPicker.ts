@@ -189,9 +189,24 @@ export interface MentionAcceptResult {
 }
 
 /**
+ * The literal a picker row splices into the textarea.
+ *
+ * Everything inserts its own `value`, except a GROUP, which expands into its
+ * members' `@name` tokens (`memberMentionValue`) exactly as Group Chat does. A
+ * group is shorthand for the agents inside it, never a target of its own, so
+ * expanding at accept time is what keeps a group from being confusable with an
+ * agent in the sent text.
+ */
+export function mentionInsertLiteral(item: MentionPickerItem): string {
+	if (item.kind === 'group' && item.memberMentionValue) return item.memberMentionValue;
+	return item.value;
+}
+
+/**
  * Compute the textarea update for accepting a picker item. Replaces the
- * `@<filter>` span at `startIndex` with the item's literal `value`. Directories
- * drill in (keep open, re-filter inside the folder); everything else closes.
+ * `@<filter>` span at `startIndex` with the item's inserted literal (see
+ * {@link mentionInsertLiteral}). Directories drill in (keep open, re-filter
+ * inside the folder); everything else closes.
  *
  * Quoted mentions (paths with spaces) add one wrinkle: while drilled into a
  * quoted directory the caret sits INSIDE the quotes, so the closing quote of the
@@ -209,7 +224,8 @@ export function buildMentionAccept(
 	const openQuote = mentionQuoteChar(filter);
 	if (openQuote && inputValue[afterIndex] === openQuote) afterIndex += 1;
 	const afterFilter = inputValue.substring(afterIndex);
-	const value = beforeAt + item.value + afterFilter;
+	const literal = mentionInsertLiteral(item);
+	const value = beforeAt + literal + afterFilter;
 
 	if (item.kind === 'directory') {
 		// A quoted directory (`@"my folder/"`) parks the caret before its closing
@@ -224,5 +240,5 @@ export function buildMentionAccept(
 		};
 	}
 	// Caret lands immediately after the spliced token, past its trailing space.
-	return { value, caretPos: startIndex + item.value.length, keepOpen: false, nextFilter: '' };
+	return { value, caretPos: startIndex + literal.length, keepOpen: false, nextFilter: '' };
 }

@@ -10,7 +10,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
+import { shortcutKeysEqual } from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
+import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 import type { Theme, Shortcut } from '../../../types';
 
 export interface ShortcutsTabProps {
@@ -26,6 +28,8 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	const [shortcutsFilter, setShortcutsFilter] = useState('');
 	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
 	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
+	const [showUnassignedOnly, setShowUnassignedOnly] = useState(false);
+	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
 	const shortcutsFilterRef = useRef<HTMLInputElement>(null);
 
 	// Notify parent of recording state changes (for escape handler coordination)
@@ -56,6 +60,31 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		const keys = buildKeysFromEvent(e);
 		if (!keys) return;
 
+		// Refuse a chord that is already spoken for. Scanning FIXED_SHORTCUTS too
+		// is the part that is easy to miss: those cannot be rebound, so a
+		// collision with one is unresolvable from this screen and silently
+		// shadowing it would be the worst outcome of the three.
+		//
+		// Reject rather than auto-steal. Taking the chord would leave the other
+		// action dead with no indication, and the user would find out weeks later
+		// when a key they have used for months stops working.
+		const conflict = [
+			...Object.values(shortcuts),
+			...Object.values(tabShortcuts),
+			...Object.values(FIXED_SHORTCUTS),
+		].find((sc) => sc.id !== actionId && shortcutKeysEqual(sc.keys, keys));
+
+		if (conflict) {
+			// Name the LABEL, not the id: the user picked this action from a list of
+			// labels, and 'closeOtherTabs' is not what they read.
+			setConflictMessage(
+				`${formatShortcutKeys(keys)} is already used by "${conflict.label}". Pick another combination, or clear that one first.`
+			);
+			setRecordingId(null);
+			return;
+		}
+		setConflictMessage(null);
+
 		if (isTabShortcut) {
 			setTabShortcuts({
 				...tabShortcuts,
@@ -75,11 +104,14 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		...Object.values(tabShortcuts).map((sc) => ({ ...sc, isTabShortcut: true })),
 	];
 	const totalShortcuts = allShortcuts.length;
+	const unassignedCount = allShortcuts.filter((sc) => !sc.keys?.length).length;
 	const filteredShortcuts = allShortcuts.filter((sc) => {
+		// The unassigned view is a mode, not another filter: someone asking "what
+		// can I still bind?" wants the whole list of them, not the intersection
+		// with whatever they last typed.
+		if (showUnassignedOnly) return !sc.keys?.length;
 		if (filterShortcutKeys.length > 0) {
-			const sortedFilter = [...filterShortcutKeys].sort().join('+');
-			const sortedKeys = [...sc.keys].sort().join('+');
-			return sortedKeys === sortedFilter;
+			return shortcutKeysEqual(sc.keys, filterShortcutKeys);
 		}
 		return sc.label.toLowerCase().includes(shortcutsFilter.toLowerCase());
 	});
@@ -117,11 +149,19 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						backgroundColor:
 							recordingId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
 						color: recordingId === sc.id ? theme.colors.accent : theme.colors.textDim,
+						opacity: recordingId !== sc.id && sc.keys.length === 0 ? 0.6 : 1,
 						'--tw-ring-color': theme.colors.accent,
 					} as React.CSSProperties
 				}
 			>
-				{recordingId === sc.id ? 'Press keys...' : formatShortcutKeys(sc.keys)}
+				{recordingId === sc.id
+					? 'Press keys...'
+					: sc.keys?.length
+						? formatShortcutKeys(sc.keys)
+						: // An action registered with no default chord (keys: []) formats to an
+							// empty string, which renders as a blank button the user cannot tell
+							// is clickable. Label it so it reads as "assign one here".
+							'Not set'}
 			</button>
 		</div>
 	);
@@ -147,6 +187,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					onChange={(e) => {
 						setShortcutsFilter(e.target.value);
 						setFilterShortcutKeys([]);
+						setShowUnassignedOnly(false);
 					}}
 					placeholder="Filter shortcuts..."
 					className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
@@ -159,6 +200,28 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					recording={recordingFilterShortcut}
 					onRecordingChange={setRecordingFilterShortcut}
 				/>
+				{unassignedCount > 0 && (
+					<button
+						type="button"
+						onClick={() => {
+							setShowUnassignedOnly((v) => !v);
+							setShortcutsFilter('');
+							setFilterShortcutKeys([]);
+						}}
+						aria-pressed={showUnassignedOnly}
+						title="Show only actions with no key assigned"
+						className="text-xs px-2 rounded font-medium whitespace-nowrap border"
+						style={{
+							backgroundColor: showUnassignedOnly
+								? theme.colors.accentDim
+								: theme.colors.bgActivity,
+							borderColor: showUnassignedOnly ? theme.colors.accent : theme.colors.border,
+							color: showUnassignedOnly ? theme.colors.accent : theme.colors.textDim,
+						}}
+					>
+						Unassigned {unassignedCount}
+					</button>
+				)}
 				<span
 					className="text-xs px-2 rounded font-medium flex items-center"
 					style={{
@@ -166,12 +229,24 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						color: theme.colors.textDim,
 					}}
 				>
-					{shortcutsFilter || filterShortcutKeys.length > 0
+					{shortcutsFilter || filterShortcutKeys.length > 0 || showUnassignedOnly
 						? `${filteredCount} / ${totalShortcuts}`
 						: totalShortcuts}
 				</span>
 			</div>
-			<p className="text-xs opacity-70 mb-3">
+			{conflictMessage && (
+				<p
+					role="alert"
+					className="text-xs mb-3 px-2 py-1.5 rounded"
+					style={{
+						backgroundColor: `${theme.colors.error}20`,
+						color: theme.colors.error,
+					}}
+				>
+					{conflictMessage}
+				</p>
+			)}
+			<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
 				Not all shortcuts can be modified. Press{' '}
 				<kbd
 					className="px-1.5 py-0.5 rounded font-mono"

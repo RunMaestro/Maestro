@@ -43,6 +43,41 @@ export type AgentErrorPatterns = {
 	[K in AgentErrorType]?: ErrorPattern[];
 };
 
+/**
+ * Claude Code's own plan-limit notice, as it appears in the `result` field of a
+ * `stream-json` result event when a turn is refused for quota:
+ *
+ *   "You've hit your session limit - resets 11:40am (America/Chicago)"
+ *   "You've hit your weekly limit - resets Monday at 9am (America/Chicago)"
+ *   "Claude AI usage limit reached|1755500000"   (legacy epoch form)
+ *
+ * ANCHORED at the start and length-capped on purpose. A result body is ordinary
+ * assistant prose, and Maestro's own agents discuss usage limits constantly, so
+ * anything looser turns a normal answer into a phantom failure.
+ *
+ * The limit KINDS are enumerated rather than wildcarded, and the list is the same
+ * one `LIMIT_REGEX` in `src/maestro-p/tui-driver.ts` uses. A wildcard matched
+ * "You've hit your disk limit" and would hand an ordinary answer to the retry
+ * scheduler as a quota outage; the two matchers reading the same banner must not
+ * disagree about what counts as one.
+ */
+const CLAUDE_LIMIT_NOTICE_RE =
+	/^\s*(?:you\s*(?:'|’)?\s*ve\s+hit\s+your\s+(?:session|weekly|5[\s-]?hour|opus|usage)\s+limit\b|claude\s+ai\s+usage\s+limit\s+reached\b)/i;
+
+/** Longest a standalone limit notice can plausibly be. */
+const CLAUDE_LIMIT_NOTICE_MAX_LENGTH = 300;
+
+/**
+ * True when `text` is Claude Code's standalone plan-limit notice rather than an
+ * assistant reply that merely mentions limits. See {@link CLAUDE_LIMIT_NOTICE_RE}.
+ */
+export function isClaudeLimitNotice(text: string): boolean {
+	if (typeof text !== 'string') return false;
+	const trimmed = text.trim();
+	if (!trimmed || trimmed.length > CLAUDE_LIMIT_NOTICE_MAX_LENGTH) return false;
+	return CLAUDE_LIMIT_NOTICE_RE.test(trimmed);
+}
+
 // ============================================================================
 // Claude Code Error Patterns
 // ============================================================================
@@ -1358,6 +1393,131 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 };
 
+/**
+ * Antigravity CLI (`agy`) error patterns.
+ *
+ * Antigravity authenticates against a Google account and shares the Gemini
+ * quota/credit system, so the auth and rate-limit wording below mirrors Google's
+ * API surface. The headless-specific entries cover the two failure modes unique
+ * to `-p` runs: the 5m default print timeout, and tool calls that get soft-denied
+ * because the run was started without --dangerously-skip-permissions.
+ */
+const ANTIGRAVITY_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not (?:signed in|authenticated)/i,
+			message: 'Not signed in. Run "agy" once interactively to complete the Google sign-in.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:authentication|auth) (?:failed|required|expired)/i,
+			message: 'Antigravity authentication failed. Run "agy" interactively to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /credentials.*(?:expired|invalid|not found)/i,
+			message:
+				'Cached Antigravity credentials are no longer valid. Sign in again from an interactive "agy" session.',
+			recoverable: true,
+		},
+		{
+			pattern: /\b401\b|unauthenticated/i,
+			message: 'Unauthorized. Check the Google account signed in to Antigravity.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /resource_exhausted/i,
+			message: 'Antigravity quota exhausted. Wait for the quota to reset and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /rate limit|too many requests|\b429\b/i,
+			message: 'Rate limited by Antigravity. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:quota|credits?).*(?:exceeded|exhausted|depleted)/i,
+			message: 'Out of AI credits. Resume when your Antigravity quota resets.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /print[- ]timeout|deadline exceeded/i,
+			message:
+				'The headless run exceeded its timeout. Raise the "Headless Timeout" option in the agent settings.',
+			recoverable: true,
+		},
+		{
+			pattern: /connection (?:refused|reset|failed)/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /network (?:error|unreachable)/i,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /\btimed? ?out\b/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /soft[- ]denied|permission (?:denied|required)|tool.*not allowed/i,
+			message:
+				'A tool call was denied. Headless runs deny shell commands unless permissions are skipped.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /conversation.*not found|unknown conversation/i,
+			message: 'Conversation not found. Starting a fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context (?:window|length|limit).*(?:exceeded|too long)/i,
+			message: 'Context window exceeded. Start a new conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /(?:input|prompt).*too (?:long|large)/i,
+			message: 'The prompt is too large for the context window. Try a shorter message.',
+			recoverable: true,
+		},
+		{
+			pattern: /token limit|maximum.*tokens/i,
+			message: 'Token limit reached. Start a new conversation to continue.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /internal (?:error|server error)|\b50[0234]\b/i,
+			message: 'Antigravity returned an internal error. Please try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /panic:|unexpected error/i,
+			message: 'The Antigravity CLI crashed unexpectedly.',
+			recoverable: true,
+		},
+	],
+};
+
 // ============================================================================
 // Pattern Registry
 // ============================================================================
@@ -1372,6 +1532,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['qwen3-coder', QWEN_ERROR_PATTERNS],
 	['omp', OMP_ERROR_PATTERNS],
 	['grok', GROK_ERROR_PATTERNS],
+	['antigravity', ANTIGRAVITY_ERROR_PATTERNS],
 ]);
 
 /**

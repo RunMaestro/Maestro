@@ -4,6 +4,12 @@
  */
 
 import type { TaskSelectionMode } from '../../types';
+import {
+	CHECKED_TASK_COUNT_REGEX,
+	CHECKED_TASK_REGEX,
+	UNCHECKED_TASK_REGEX,
+	forEachMarkdownLine,
+} from '../../../shared/markdownTaskScan';
 
 let cachedAutorunDefaultPrompt: string = '';
 let cachedAutorunPerTaskBlock: string = '';
@@ -54,62 +60,10 @@ export function getTaskSelectionBlock(mode: TaskSelectionMode | undefined): stri
 // Uses `let` so the binding can be updated after async IPC load completes
 export let DEFAULT_BATCH_PROMPT: string = getAutorunDefaultPrompt();
 
-// Regex to count unchecked markdown checkboxes: - [ ] task (also * [ ] or + [ ])
-const UNCHECKED_TASK_REGEX = /^[\s]*[-*+]\s*\[\s*\]\s*.+$/;
-
-// Regex to count checked markdown checkboxes: - [x] task (also * [x] or + [x])
-const CHECKED_TASK_COUNT_REGEX = /^[\s]*[-*+]\s*\[[xX✓✔]\]\s*.+$/;
-
 // Regex to match a HITL gate marker: <!-- MAESTRO:HITL reason="..." artifact="..." -->
 // The marker may span multiple lines in source, but we treat a single line as the unit
 // because playbook authors place it on its own line per the documented convention.
 const HITL_MARKER_REGEX = /<!--\s*MAESTRO:HITL\b([^]*?)-->/;
-
-// Regex to match checked markdown checkboxes for reset-on-completion
-// Matches both [x] and [X] with various checkbox formats (standard and GitHub-style)
-const CHECKED_TASK_REGEX = /^(\s*[-*+]\s*)\[[xX✓✔]\]/gm;
-
-/**
- * Walk markdown content line by line, skipping fenced code blocks so example
- * snippets inside a playbook never register as real tasks or markers.
- *
- * Every scanner in this module (task counting, HITL gates, human-step
- * detection) shares this walk - the fence bookkeeping is subtle enough that
- * hand-rolled copies drift apart. Return `false` from `visit` to stop early.
- */
-function forEachMarkdownLine(
-	content: string,
-	visit: (line: string, index: number) => boolean | void
-): void {
-	const lines = content.replace(/\r\n?/g, '\n').split('\n');
-	let inFencedCode = false;
-	let fenceChar: '`' | '~' | null = null;
-	let openFenceLength = 0;
-
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i];
-		const fenceMatch = line.trimStart().match(/^([`~]{3,})/);
-		if (fenceMatch) {
-			const currentFenceChar = fenceMatch[1][0] as '`' | '~';
-			if (!inFencedCode) {
-				inFencedCode = true;
-				fenceChar = currentFenceChar;
-				openFenceLength = fenceMatch[1].length;
-				continue;
-			}
-			if (fenceChar === currentFenceChar && fenceMatch[1].length >= openFenceLength) {
-				inFencedCode = false;
-				fenceChar = null;
-				openFenceLength = 0;
-				continue;
-			}
-		}
-
-		if (inFencedCode) continue;
-
-		if (visit(line, i) === false) return;
-	}
-}
 
 export interface MarkdownTaskCounts {
 	checked: number;

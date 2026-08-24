@@ -56,6 +56,33 @@ flag. Don't invent per-model effort lists without a data source for them.
 
 ---
 
+## Agent Environment (`src/shared/agentEnvironment.ts` - Both)
+
+An agent's environment is assembled from three layers, each edited in a different
+pane, so "which profile is this agent actually running as?" is a question no
+single settings screen can answer. This module does the same merge the spawner
+does and reports WHERE each surviving value came from.
+
+Precedence (later wins), mirroring `process:spawnTerminalTab`:
+
+1. `global` - Settings -> Environment, applies to every process Maestro spawns
+2. `agent` - Settings -> Agents, applies to every agent of one provider
+3. `session` - this agent's own overrides, from Edit Agent
+
+| Function                  | Signature                                              | Purpose                                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolveAgentEnvironment` | `(layers: AgentEnvironmentLayers) => ResolvedEnvVar[]` | Merge the three layers, key-sorted. Each entry carries the winning `source` plus `shadowedBy`, the layers it overrode. Empty-string values are kept: `FOO=` is a real override, not an absent one. |
+| `isSecretEnvKey`          | `(key: string) => boolean`                             | Whether a value should be masked until revealed. Matched loosely on purpose - a false positive costs one click, a false negative puts a live key on screen during a screen share.                  |
+| `maskEnvValue`            | `(value: string) => string`                            | Mask a secret, keeping the last four characters so one credential is still tellable from another. Values of 8 characters or fewer are masked whole.                                                |
+| `envSourceLabel`          | `(source: EnvVarSource) => string`                     | Human label for a layer: `Global`, `Provider`, `This agent`.                                                                                                                                       |
+
+**Do NOT re-derive this merge inline.** The precedence has to match the spawner's
+or the UI describes a process nobody is running. Render the result with
+[`<EnvVarList>`](UI-PATTERNS.md), which owns the masking and the source badges.
+This is distinct from `Settings/EnvVarsEditor`, which EDITS one layer.
+
+---
+
 ## Platform Detection
 
 ### Both Processes (`src/shared/platformDetection.ts`)
@@ -398,6 +425,64 @@ UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - d
 
 ---
 
+## Auto Run Document Scanning (`src/shared/markdownTaskScan.ts` - Both)
+
+Fence-aware primitives every Auto Run document scanner rides. Shared because the desktop engine (`src/renderer/hooks/batch/`) and the CLI engine (`src/cli/services/batch-processor.ts`, which cannot import from the renderer) must read a document identically.
+
+| Function / Constant                   | Signature                                            | Purpose                                                                             |
+| ------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `forEachMarkdownLine(content, visit)` | `(string, (line, index) => boolean \| void) => void` | Walk lines, skipping fenced code blocks. Return `false` from `visit` to stop early. |
+| `UNCHECKED_TASK_REGEX`                | `RegExp`                                             | An unchecked checkbox: `- [ ] task` (also `*`, `+`).                                |
+| `CHECKED_TASK_COUNT_REGEX`            | `RegExp`                                             | A checked checkbox: `- [x] task` (also `X`, `✓`, `✔`).                              |
+| `CHECKED_TASK_REGEX`                  | `RegExp` (global)                                    | Rewrite checked boxes back to unchecked (reset-on-completion).                      |
+
+Do NOT hand-roll another line loop. A scanner that forgets the fence bookkeeping fires on a playbook that merely DOCUMENTS the marker syntax, and hand-rolled copies drift on closing-fence length, tilde fences, and CRLF.
+
+---
+
+## Model Tiers & Effort (`src/shared/modelTiers.ts` - Both)
+
+One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's floor is `minimal`.
+
+| Function / Constant                   | Signature                                           | Purpose                                                                               |
+| ------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `TIER_LEVELS`                         | `readonly ['low', 'medium', 'high']`                | The vocabulary. Both axes use it.                                                     |
+| `asTierLevel(value)`                  | `(unknown) => ModelTier \| undefined`               | Narrow an untrusted value to a rung.                                                  |
+| `resolveTierModel(toolType, tier)`    | `(ToolType, ModelTier) => string \| undefined`      | Model for a tier. `undefined` = no mapping, inherit the agent's model **and say so**. |
+| `resolveEffortLevel(toolType, level)` | `(ToolType, EffortLevel) => string \| undefined`    | Provider effort string for a level. `undefined` = provider has no effort knob.        |
+| `supportsTierSelection(toolType)`     | `(ToolType) => boolean`                             | Whether this provider can act on a tier hint at all.                                  |
+| `supportsEffortSelection(toolType)`   | `(ToolType) => boolean`                             | Whether this provider can act on an effort hint at all.                               |
+| `cheapTurnSettings(toolType)`         | `(ToolType) => { model?: string; effort?: string }` | Bottom of both ladders. Used to pin throwaway synopsis turns.                         |
+
+Tier maps ship only where model IDs are stable (`claude-code` permanent aliases, `factory-droid`). Do NOT add one for a provider that discovers its catalogue at runtime (`codex`, `copilot-cli`, `opencode`): a shipped guess rots into naming a model the user cannot run. `undefined` must never become a silent substitution.
+
+`cheapTurnSettings` is safe only because a synopsis is a LEAF - every caller discards the `agentSessionId` it returns. A future caller that adopts that id has to revisit the pin first, or the tab silently continues on the cheap model.
+
+---
+
+## Auto Run Model Hints (`src/shared/autorunModelHints.ts`, `src/shared/autorunTurnSettings.ts` - Both)
+
+`<!-- MAESTRO:MODEL tier="high" effort="high" -->` sets the model and effort. **Placement is the scope**, and there is no third syntax: a marker on its OWN line applies from there down until the next standalone marker (above the first task that is the whole document, under a section heading it is that phase), while a marker at the END of a task line applies to that ONE task and the next task reverts. Resolution is recomputed before every dispatch rather than tracked as run state, so editing a document mid-run takes effect on the next task.
+
+| Function                                                         | File                     | Purpose                                                                                                                |
+| ---------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `findActiveModelHint(content)`                                   | `autorunModelHints.ts`   | The hint governing the next task, or `null`. Prevailing standalone marker with that task's inline marker layered over. |
+| `findAllModelHints(content)`                                     | `autorunModelHints.ts`   | Every marker in order, tagged with its scope, for authoring-time validation.                                           |
+| `parseModelMarker(inner, line, scope?)`                          | `autorunModelHints.ts`   | Parse one marker's attributes. Records invalid values instead of dropping them.                                        |
+| `resolveTurnSettings(toolType, hint, agentModel?, agentEffort?)` | `autorunTurnSettings.ts` | Join hint + provider capability into `{ model, effort, notes, warnings }`.                                             |
+| `describeTurnSettings(resolved)`                                 | `autorunTurnSettings.ts` | One-line summary for a log line or History entry. `null` when the document set no hint.                                |
+
+Precedence: the document's hint (if the provider can act on it), then the agent's configured value, then the provider default. A hint the provider cannot honor falls back **and warns** - the whole point is that an unresolvable hint is loud.
+
+Two rules the scopes turn on, both of which look like details and are not:
+
+- **The scopes layer PER AXIS.** An inline marker that names only `tier` keeps the prevailing `effort`. Merging wholesale would make `tier="high"` on a task inside a high-effort section quietly LOWER its effort to the agent default.
+- **`'default'` survives parsing rather than collapsing to `undefined`.** Both mean "use the agent's value" at resolution time, but they differ when scopes merge: a task saying `tier="default"` must override a document-wide `tier="high"`, while a task saying nothing about `tier` must inherit it. That is how one task opts out of a document-wide hint.
+
+A checked task is stepped over entirely, marker and all. That keeps a half-finished phase on the setting the rest of it needs, and stops a completed task's inline marker from leaking onto the tasks below it.
+
+---
+
 ## Tree Utilities (`src/shared/treeUtils.ts` - Both)
 
 | Function                                | Signature                                    | Purpose                                                       |
@@ -540,6 +625,29 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 | `execFileNoThrow(command, args?, cwd?, options?)` | `(string, string[], string?, ExecOptions \| NodeJS.ProcessEnv) => Promise<ExecResult>` | Safe command execution. No shell injection. Returns `{ stdout, stderr, exitCode }` - never throws. Handles Windows batch files, stdin input, and timeouts.                                                                                         |
 | `execFileStreaming(command, args, options)`       | `(string, string[], ExecStreamingOptions) => ExecStreamingHandle`                      | Streaming sibling of `execFileNoThrow`: calls `onChunk(chunk, 'stdout' \| 'stderr')` as output arrives, plus `{ result, cancel }`. Use for long commands the user watches live (`git pull`/`git push`). Cancel resolves with exitCode `'SIGTERM'`. |
 | `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                                                                                                                     |
+
+### Network Fetch (`src/main/utils/fetchWithTimeout.ts`)
+
+| Function                                      | Signature                                              | Purpose                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetchWithTimeout(url, options?, timeoutMs?)` | `(string, RequestInit?, number?) => Promise<Response>` | The ONLY way to make an HTTP request from the main process. Adds a request budget to `fetch()`, composes rather than clobbers a caller-supplied `signal`. |
+| `isFetchTimeoutError(error)`                  | `(unknown) => boolean`                                 | Distinguishes a budget timeout from a caller-initiated abort or a transport failure.                                                                      |
+| `DEFAULT_FETCH_TIMEOUT_MS`                    | `number` (30s)                                         | Backstop for callers with no opinion. Latency-sensitive callers pass their own.                                                                           |
+
+A bare `fetch()` has no timeout: a stalled socket hangs the caller forever,
+which in the main process means an IPC handler that never settles and a
+renderer spinner that never stops. Always use `fetchWithTimeout`.
+
+Do NOT hand-roll `new AbortController()` + `setTimeout` around a `fetch`, and do
+NOT add another local `fetchWithTimeout`. There were previously three separate
+functions by that exact name with three different signatures (`leaderboard.ts`,
+`cue-telemetry.ts`, `bmad-manager.ts`), three more inline copies, and eleven
+call sites with no timeout at all.
+
+If a caller needs extra behaviour, wrap this function locally rather than
+reimplementing it. `bmad-manager.ts`'s `fetchBmadResource()` is the reference
+example: it delegates to `fetchWithTimeout` and adds only its own Sentry
+reporting.
 
 ### Safe IPC Send (`src/main/utils/safe-send.ts`)
 
@@ -701,6 +809,16 @@ Single source of truth for the Left Bar "unread agents only" (a.k.a. "needs atte
 | `outageIdsFromSignature(signature)`                      | `(string) => Set<string>`                                                       | Parse the comma-joined outage signature (`useActiveOutageSessionSignature`) into a lookup set; guards the empty-string case.                    |
 
 For the event-time (non-reactive) path - `useCycleSession`'s `getState()` reads - build the outage set with `getActiveOutageSessionIds()` from `src/renderer/stores/retryStore.ts` and the batch set with `selectActiveBatchSessionIds(useBatchStore.getState())`.
+
+### Sidebar Session Visibility (`src/renderer/utils/sessionVisibility.ts`)
+
+Which agents the Left Bar may surface AT ALL - a different question from the unread filter above (what to show right now) and from `scopeSessionsToOwningWindow()` in `windowTargets.ts` (which window owns an agent). Today it answers exactly one case: the pinned Pianola manager agent PERSISTS in the session store after its Encore flag is switched off (so re-enabling restores the same agent and its chat), and `SessionList` just stops rendering its row. Any other surface that walks `sessions` - `Cmd+[` / `Cmd+]` cycling, arrow-key nav, `Opt+Cmd+NUMBER` jumps, the Starred section - would otherwise still land on a hidden agent and show "Pianola" for a disabled feature. Applied in `SidebarNavSync` (nav projections), `useStarredItems` (starred rows), and `cycleSession` (its own event-time visual order). A new agent that is conditionally hidden belongs in this predicate, not in a fourth open-coded check.
+
+| Function / Type                                  | Signature                                                          | Purpose                                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `SidebarVisibilityOptions`                       | `{ pianolaEnabled?: boolean }`                                     | Encore flags the predicate needs; omitted / false means Pianola is hidden.                                           |
+| `isSessionVisibleInSidebar(session, options)`    | `(VisibilityScopableSession, SidebarVisibilityOptions) => boolean` | True when the agent may appear in the Left Bar and its keyboard orders.                                              |
+| `filterSessionsVisibleInSidebar(sessions, opts)` | `<T>(T[], SidebarVisibilityOptions) => T[]`                        | Drop hidden agents. Returns the ORIGINAL array when nothing is filtered, so memoized consumers stay identity-stable. |
 
 ### Sentry (`src/renderer/utils/sentry.ts`)
 

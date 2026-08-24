@@ -149,19 +149,29 @@ This is especially powerful for Auto Run tasks - you can pick up exactly where t
 
 ### List View
 
-| Key                | Action                              |
-| ------------------ | ----------------------------------- |
-| `↑` / `↓`          | Navigate between entries            |
-| `Enter`            | Open detail view for selected entry |
-| `Cmd+F` / `Ctrl+F` | Open search filter                  |
-| `Esc`              | Clear selection or close search     |
+| Key                        | Action                                        |
+| -------------------------- | --------------------------------------------- |
+| `↑` / `↓`                  | Navigate between entries                      |
+| `Enter`                    | Open detail view for selected entry           |
+| `Cmd+Enter` / `Ctrl+Enter` | Jump to the agent session the entry came from |
+| `Cmd+F` / `Ctrl+F`         | Open search filter                            |
+| `Esc`                      | Clear selection or close search               |
+
+`Cmd+Enter` is the keyboard equivalent of clicking an entry's session pill: it
+switches to that agent and opens the session where the work happened, instead of
+opening the detail view to read about it. Entries with no recorded session say so
+rather than doing nothing.
 
 ### Detail View
 
-| Key       | Action                            |
-| --------- | --------------------------------- |
-| `←` / `→` | Navigate to previous/next entry   |
-| `Esc`     | Close detail view, return to list |
+| Key                        | Action                                 |
+| -------------------------- | -------------------------------------- |
+| `←` / `→`                  | Navigate to previous/next entry        |
+| `Cmd+Enter` / `Ctrl+Enter` | Jump to this entry's session and close |
+| `Esc`                      | Close detail view, return to list      |
+
+The jump shortcut keeps working after `Enter` opened the detail view, so the flow
+does not stop halfway.
 
 ## Cross-Host Shared History
 

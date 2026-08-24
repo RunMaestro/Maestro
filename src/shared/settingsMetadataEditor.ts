@@ -93,6 +93,20 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: {},
 		category: 'editor',
 	},
+	concertoStageFloating: {
+		description:
+			'Whether the Concerto stage is popped out into a floating window (true) or shown as a centered dialog (false).',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+	concertoStagePosition: {
+		description:
+			'Top-left corner of the popped-out Concerto stage in pixels, as {x, y}. Clamped to the current viewport when used.',
+		type: 'object',
+		default: null,
+		category: 'editor',
+	},
 	markdownEditMode: {
 		description: 'Show raw markdown source instead of rendered markdown in chat.',
 		type: 'boolean',

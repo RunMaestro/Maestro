@@ -285,6 +285,12 @@ export const MODAL_PRIORITIES = {
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
 	CUE_YAML_EDITOR: 463,
 
+	/** Fuzzy filter box in the Cue modal's Scheduled Tasks tab. Registered only
+	 *  while the box holds text, so Escape clears the filter before it closes
+	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal.
+	 *  461 is taken by PIANOLA_RULE_EDITOR, so this sits at 462. */
+	CUE_SCHEDULED_TASK_FILTER: 462,
+
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,
 
@@ -296,6 +302,12 @@ export const MODAL_PRIORITIES = {
 
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
+
+	/** Concerto stage - the agent-composed movement panels in one resizable
+	 * window. Sits below the plugin band and every settings-level modal, so a
+	 * modal opened on top of the stage takes Escape first and the stage stays up
+	 * behind it. */
+	CONCERTO_STAGE: 415,
 
 	/** Reserved band for community-plugin panels/modals. Plugin UI is allocated
 	 * sequentially from PLUGIN_PANEL_BASE up to (but not reaching) SSH_REMOTE/
@@ -353,6 +365,10 @@ export const MODAL_PRIORITIES = {
 	/** Edit-queued-item modal (below lightbox/annotator so those open on top of it
 	 * and Escape closes them first while editing a queued message's images). */
 	QUEUED_ITEM_EDIT: 145,
+
+	/** Staged-images organizer (drag-to-reorder at a readable size). Below the
+	 * lightbox and annotator, both of which open from inside it. */
+	STAGED_IMAGES_ORGANIZER: 143,
 
 	/** CSV row detail modal (above the file preview it opens from) */
 	CSV_ROW_DETAIL: 110,

@@ -4,9 +4,11 @@ import {
 	aiTabFocusFields,
 	moveActiveUnifiedTabToEdge,
 	toggleReadOnlyModeFields,
+	setActiveTab,
 } from '../../utils/tabHelpers';
 import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -15,6 +17,8 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
+import { tileNewTabInSession } from '../../services/tileNewTabAction';
+import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 
@@ -46,6 +50,21 @@ const FONT_SIZE_DEFAULT = 14;
 
 /** Delay (ms) to allow React re-render before focusing the input element. */
 const FOCUS_AFTER_RENDER_DELAY_MS = 50;
+
+/**
+ * The "Tile New ... Below" shortcut family, paired with the tab kind each one
+ * creates. Only `tileTerminalBelow` has a default binding (Cmd+Shift+J); the
+ * other three are registered with `keys: []` so they appear in Settings ->
+ * Shortcuts as "Not set" and do nothing until a user records a chord. Keeping
+ * them in one table means adding a tileable kind is a single line here rather
+ * than a fourth branch in the keydown chain.
+ */
+const TILE_SHORTCUTS: ReadonlyArray<{ shortcutId: string; kind: TileableTabKind }> = [
+	{ shortcutId: 'tileTerminalBelow', kind: 'terminal' },
+	{ shortcutId: 'tileAiBelow', kind: 'ai' },
+	{ shortcutId: 'tileBrowserBelow', kind: 'browser' },
+	{ shortcutId: 'tileFileBelow', kind: 'file' },
+];
 
 export type KeyboardHandlerContext = any;
 
@@ -233,11 +252,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
 					(e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}');
-				// Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) and next-unread (Alt+Cmd+ArrowDown) even when modals are open
+				// Allow sidebar toggle shortcuts (Alt+Cmd+Left/Right) even when modals are open
 				const isLayoutShortcut =
-					e.altKey &&
-					(e.metaKey || e.ctrlKey) &&
-					(e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowDown');
+					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+				// Next unread / draft tab is benign navigation, so it stays live behind a
+				// modal. Resolved by SHORTCUT ID rather than by key: it has already moved
+				// combos once, and the hard-coded arrow left behind by that move silently
+				// stopped matching it.
+				const isNextUnreadTabShortcut = ctx.isShortcut(e, 'nextUnreadTab');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();
 				const isRightPanelShortcut =
@@ -315,6 +337,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.activeFocus === 'right' &&
 					ctx.activeRightTab === 'files' &&
 					ctx.fileTreeFilterOpen;
+				// The Concerto keys stay live through the guard. The stage is a
+				// workspace surface, not a dialog, so its own toggle has to be able to
+				// close it - a toggle that only ever opens is a dead keypress. And
+				// cadenzas float ABOVE every modal, so the only way to stash a stack of
+				// them while something else is open is to let this key through.
+				const isConcertoToggleShortcut =
+					(ctx.isShortcut(e, 'toggleConcerto') || ctx.isShortcut(e, 'toggleCadenzas')) &&
+					ctx.encoreFeatures?.concerto === true;
 				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
 				const isFontSizeShortcut =
 					(e.metaKey || e.ctrlKey) &&
@@ -358,12 +388,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					// jumpToBottom, jumpToTerminal, markdown toggle, and font size to work (these are benign navigation/viewing preferences)
 					if (
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
 						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
 						!isFontSizeShortcut &&
+						!isConcertoToggleShortcut &&
 						!isPromptComposerCycleShortcut
 					) {
 						return;
@@ -378,6 +410,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (
 						!isCycleShortcut &&
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isRightPanelShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
@@ -393,6 +426,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isFileFilterRefocusShortcut &&
 						!isOutputSearchGlobalShortcut &&
 						!isOutputSearchRefocusShortcut &&
+						!isConcertoToggleShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
@@ -418,6 +452,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 
 			// Escape in main area focuses terminal output
 			if (ctx.handleEscapeInMain(e)) return;
+
+			// Which "Tile New ... Below" command this event matches, if any. Resolved
+			// once here rather than as four more links in the else-if chain below.
+			// Only the terminal entry ships with a default chord; the rest sit unbound
+			// until a user records one in Settings -> Shortcuts.
+			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isShortcut(e, t.shortcutId)) ?? null;
 
 			// Helper to track shortcut usage for keyboard mastery gamification
 			// AND for the daily-usage time series shown on the Usage Dashboard.
@@ -583,6 +623,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				}
 				trackShortcut('toggleMode');
+			} else if (matchedTile) {
+				// The tile-below family. Cmd+Shift+J is the tiled twin of Cmd+J: instead
+				// of a new terminal tab that takes over the panel, split the current view
+				// and put the terminal in the bottom half. The AI / browser / file
+				// entries ship UNBOUND and only reach here once a user records a binding
+				// in Settings (an empty `keys` never matches). tileNewTabInSession
+				// focuses the new pane; it flashes and no-ops when the agent has nothing
+				// on screen to tile with.
+				e.preventDefault();
+				if (ctx.activeSessionId) {
+					tileNewTabInSession(ctx.activeSessionId, matchedTile.kind);
+					trackShortcut(matchedTile.shortcutId);
+				}
 			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
 				e.preventDefault();
 				if (useSessionStore.getState().sessions.length > 0) {
@@ -806,6 +859,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
 				trackShortcut('openCue');
+			} else if (ctx.isShortcut(e, 'toggleConcerto') && ctx.encoreFeatures?.concerto) {
+				// Toggle, not open: the stage is a window the user parks and brings
+				// back, and its panels keep running either way.
+				e.preventDefault();
+				getModalActions().toggleConcertoStage();
+				trackShortcut('toggleConcerto');
+			} else if (ctx.isShortcut(e, 'toggleCadenzas') && ctx.encoreFeatures?.concerto) {
+				e.preventDefault();
+				toggleAllCadenzas();
+				trackShortcut('toggleCadenzas');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -860,29 +923,55 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
 			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
-				// Open the edit modal on the newest message queued for the active AI
-				// tab. Commands are skipped: they carry no editable prompt text.
+				// Open the edit modal on the newest queued message.
 				e.preventDefault();
-				const session = ctx.activeSession as Session | undefined;
-				const tabId = session?.activeTabId;
+				// Read the session at KEYPRESS time instead of trusting the snapshot
+				// `ctx` captured during the last render. The pencil on a queued row
+				// reads live props, so a stale snapshot here is the one way this
+				// shortcut can disagree with the queue the user is looking at and
+				// claim nothing is queued while a card sits on screen. Reuse the
+				// store's own selector so the fallback matches the rest of the app.
+				const session = selectActiveSession(useSessionStore.getState()) ?? undefined;
+				const queue = session?.executionQueue ?? [];
+				// Commands are the only thing skipped - they carry no editable prompt
+				// text. Nothing else is filtered OUT: the queue the user sees is not
+				// filtered by tab membership, so a filter here could only reject an
+				// item Maestro is actively displaying.
+				const editable = queue.filter((item) => item.type !== 'command');
+				// An item whose tab is gone has no transcript to open the modal in, so
+				// prefer items we can actually show. This RANKS rather than filters:
+				// falling back to the full list keeps a missing tab from turning into
+				// "nothing is queued".
+				const renderable = editable.filter((item) =>
+					session?.aiTabs?.some((tab) => tab.id === item.tabId)
+				);
+				const pool = renderable.length > 0 ? renderable : editable;
+				// Prefer the tab on screen, else this agent's newest queued message on
+				// any tab - the queue is agent-level and the status bar already
+				// advertises it across tabs ("1 item queued - <tab name> - Click to view").
 				const target =
-					session && tabId
-						? [...(session.executionQueue ?? [])]
-								.reverse()
-								.find((item) => item.tabId === tabId && item.type !== 'command')
-						: undefined;
-				if (!session || !target) {
-					notifyCenterFlash({ message: 'No queued message to edit', color: 'yellow' });
+					[...pool].reverse().find((item) => item.tabId === session?.activeTabId) ??
+					pool[pool.length - 1];
+				if (!session) {
+					notifyCenterFlash({ message: 'No agent selected', color: 'yellow' });
+				} else if (!target) {
+					// Say WHICH empty this is. "No queued message" on a screen showing a
+					// queued message is the least useful thing this can report.
+					notifyCenterFlash({
+						message: queue.length > 0 ? 'Only commands are queued' : 'Nothing queued to edit',
+						color: 'yellow',
+					});
 				} else {
-					// The modal renders with the transcript, so a file/terminal/browser
-					// tab on screen would swallow it. Land on the AI tab first.
-					if (
-						session.activeFileTabId ||
-						session.activeTerminalTabId ||
-						session.activeBrowserTabId ||
-						session.inputMode !== 'ai'
-					) {
-						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+					// The modal renders inside its OWN tab's transcript, so land there
+					// first - whether the message belongs to another AI tab, or a
+					// file/terminal/browser view is currently covering this one.
+					// setActiveTab returns the session unchanged when we are already in
+					// the right place, which is the check for whether to write at all;
+					// the patch itself is applied against fresh state so this cannot
+					// clobber a concurrent update with the snapshot read above.
+					const switched = setActiveTab(session, target.tabId);
+					if (switched && switched.session !== session) {
+						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(target.tabId) }));
 					}
 					useUIStore.getState().setEditingQueuedItemId(target.id);
 					trackShortcut('editLastQueuedMessage');

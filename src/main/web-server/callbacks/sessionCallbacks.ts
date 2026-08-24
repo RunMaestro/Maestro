@@ -2,13 +2,15 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import type { StoredSession } from '../../stores/types';
 import type { Group } from '../../../shared/types';
+import { asThinkingMode } from '../../../shared/types';
+import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-store';
 
 export function registerSessionCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'sessionsStore' | 'groupsStore'>
+	deps: Pick<WebServerFactoryDependencies, 'sessionsStore' | 'groupsStore' | 'getProcessManager'>
 ): void {
-	const { sessionsStore, groupsStore } = deps;
+	const { sessionsStore, groupsStore, getProcessManager } = deps;
 
 	// Set up callback for web server to fetch sessions list
 	server.setGetSessionsCallback(() => {
@@ -102,14 +104,31 @@ export function registerSessionCallbacks(
 	// entries. The CLI does not need group/cwd metadata; the structurally
 	// smaller payload keeps polling cheap. Reads straight from the persisted
 	// session store (same source the renderer pushes to via `sessions:save`),
-	// so the data is as fresh as the desktop's own state.
+	// then reconciles it with live managed-process and CLI-activity evidence.
 	server.setListDesktopSessionsCallback(() => {
 		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+		const processManager = getProcessManager();
+		// Resolved once: this used to be a per-agent call that re-read and
+		// re-parsed the CLI activity file on every iteration.
+		const cliBusySessionIds = getSessionIdsBusyWithCli();
 		const entries = [];
 		for (const s of sessions) {
 			const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+			const cliBusy = cliBusySessionIds.has(s.id);
 			for (const tab of aiTabs) {
 				if (!tab || typeof tab.id !== 'string') continue;
+				const isActiveTab = tab.id === s.activeTabId;
+				const managedProcessActive = Boolean(
+					processManager?.get(`${s.id}-ai-${tab.id}`) ||
+					(isActiveTab && processManager?.get(`${s.id}-ai`))
+				);
+				const processActive = managedProcessActive || (isActiveTab && cliBusy);
+				const state =
+					tab.state === 'busy' || processActive
+						? ('busy' as const)
+						: tab.state === 'idle'
+							? ('idle' as const)
+							: ('unknown' as const);
 				entries.push({
 					tabId: tab.id,
 					sessionId: tab.id,
@@ -118,9 +137,20 @@ export function registerSessionCallbacks(
 					toolType: s.toolType,
 					name: typeof tab.name === 'string' ? tab.name : null,
 					agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
-					state: tab.state === 'busy' ? ('busy' as const) : ('idle' as const),
+					state,
 					createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : 0,
 					starred: tab.starred === true,
+					active: isActiveTab,
+					hasUnread: tab.hasUnread === true,
+					saveToHistory: tab.saveToHistory === true,
+					readOnly: tab.readOnlyMode === true,
+					thinking: asThinkingMode(tab.showThinking) ?? 'off',
+					// `null` (not `false`) is the honest answer for the three
+					// inheriting fields: the tab has no override and follows the
+					// agent's model/effort or the global enter-to-send setting.
+					model: typeof tab.customModel === 'string' ? tab.customModel : null,
+					effort: typeof tab.customEffort === 'string' ? tab.customEffort : null,
+					enterToSend: typeof tab.enterToSend === 'boolean' ? tab.enterToSend : null,
 				});
 			}
 		}

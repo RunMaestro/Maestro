@@ -14,6 +14,8 @@ import {
 	SshConnectionErrorPanel,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components';
 import { AGENT_TILES } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
+import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
+import { AGENT_LOGO_FALLBACK_TESTID } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo';
 
 vi.mock('../../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 	AgentConfigPanel: (props: any) => (
@@ -53,6 +55,32 @@ describe('AgentSelectionScreen components', () => {
 		expect(container.querySelector('div')).toHaveClass('rounded-full');
 	});
 
+	it('draws a real mark for every provider a user can pick', () => {
+		// A provider that reaches a picker without a mark of its own renders as the
+		// blank fallback ring, which reads as a bug. Assert on the fallback's own
+		// marker rather than "some svg rendered": the fallback is a div today, but
+		// were it ever redrawn as an svg, a presence check would start passing for
+		// exactly the providers this test exists to catch.
+		for (const agentId of PICKABLE_AGENT_IDS) {
+			const { queryByTestId, unmount } = render(
+				<AgentLogo agentId={agentId} supported detected theme={mockTheme} />
+			);
+			expect(
+				queryByTestId(AGENT_LOGO_FALLBACK_TESTID),
+				`${agentId} has no logo of its own and fell through to the fallback`
+			).toBeNull();
+			unmount();
+		}
+	});
+
+	it('marks the fallback so the coverage test above cannot pass vacuously', () => {
+		const { queryByTestId } = render(
+			<AgentLogo agentId="not-a-real-provider" supported detected theme={mockTheme} />
+		);
+
+		expect(queryByTestId(AGENT_LOGO_FALLBACK_TESTID)).toBeInTheDocument();
+	});
+
 	it('renders tile states, beta badges, disabled unavailable agents, and customize actions', () => {
 		const onTileClick = vi.fn();
 		const onOpenConfig = vi.fn();
@@ -82,11 +110,14 @@ describe('AgentSelectionScreen components', () => {
 		expect(screen.getAllByText('Beta').length).toBeGreaterThan(0);
 		expect(screen.getAllByText('Not installed').length).toBeGreaterThan(0);
 
+		// One customize action per tile, so the strip's alphabetical order decides
+		// which one belongs to Codex.
+		const codexTileIndex = AGENT_TILES.findIndex((tile) => tile.id === 'codex');
 		const customizeActions = screen.getAllByTitle('Customize agent settings');
-		fireEvent.click(customizeActions[1]);
+		fireEvent.click(customizeActions[codexTileIndex]);
 		expect(onOpenConfig).toHaveBeenCalledWith('codex');
-		expect(customizeActions[1]).toHaveAttribute('tabindex', '0');
-		fireEvent.keyDown(customizeActions[1], { key: 'Enter' });
+		expect(customizeActions[codexTileIndex]).toHaveAttribute('tabindex', '0');
+		fireEvent.keyDown(customizeActions[codexTileIndex], { key: 'Enter' });
 		expect(onOpenConfig).toHaveBeenCalledTimes(2);
 	});
 
@@ -191,7 +222,7 @@ describe('AgentSelectionScreen components', () => {
 				isTransitioning={false}
 				isDetecting
 				configuringAgent={detectedAgent('codex')}
-				configuringTile={AGENT_TILES[1]}
+				configuringTile={AGENT_TILES.find((tile) => tile.id === 'codex')}
 				detectedConfigAgent={undefined}
 				sshRemotes={[{ id: 'remote-1', name: 'Server', host: 'host' } as any]}
 				sshRemoteConfig={undefined}

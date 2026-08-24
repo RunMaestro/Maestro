@@ -12,6 +12,8 @@ import { useListNavigation } from '../hooks';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { ModalSubtitle } from './ui/Modal';
+import { useSessionStore } from '../stores/sessionStore';
 import { gitService, type GitGraphNode } from '../services/git';
 import { GitGraphView } from './GitGraphView';
 import 'react-diff-view/style/index.css';
@@ -37,6 +39,12 @@ interface GitLogViewerProps {
 	onClose: () => void;
 	sshRemoteId?: string;
 	/**
+	 * Agent whose log is shown, named in the header. The cwd pill alone does not
+	 * identify it - worktrees of one repo share a path prefix, and two agents can
+	 * sit on the same directory.
+	 */
+	sessionId?: string;
+	/**
 	 * Open a file as a preview tab. Given an absolute path and the display name.
 	 * When provided, the per-file diff headers become clickable; the viewer
 	 * dismisses itself via `onClose` first, then calls this to open the file.
@@ -49,8 +57,14 @@ export const GitLogViewer = memo(function GitLogViewer({
 	theme,
 	onClose,
 	sshRemoteId,
+	sessionId,
 	onOpenFile,
 }: GitLogViewerProps) {
+	// Name the agent whose repo this is. Subscribe to the name alone, never the
+	// Session: these viewers stay open over a streaming agent and a whole-session
+	// subscription would re-render the diff list on every unrelated token update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
+
 	const [entries, setEntries] = useState<GitLogEntry[]>([]);
 	const [totalCommits, setTotalCommits] = useState<number | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -420,9 +434,13 @@ export const GitLogViewer = memo(function GitLogViewer({
 				>
 					<div className="flex items-center gap-3">
 						<GitCommit className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+						<span
+							className="text-lg font-semibold shrink-0"
+							style={{ color: theme.colors.textMain }}
+						>
 							Git Log
 						</span>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 						<span
 							className="text-xs px-2 py-1 rounded"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}

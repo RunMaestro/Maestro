@@ -45,6 +45,14 @@ reason.
 Every write should have a matching read. A verb an agent cannot verify is a verb
 an agent has to guess about.
 
+A tab-targeted verb takes its tab id through `resolveTabEntry()`
+(`src/cli/services/session-command.ts`), which accepts an exact id, a unique
+prefix, or the literal `active` - the tab that agent has selected, with
+`-a <agent-id>` naming whose. Use the helper rather than matching ids yourself:
+it returns the whole `DesktopTabEntry`, so a verb that needs the current value
+(`tab thinking cycle`) reads it from the same call that resolved the tab instead
+of taking a second round trip or trusting a value the caller guessed.
+
 ## Covered
 
 | Point-and-click action                       | CLI                                                               |
@@ -63,6 +71,10 @@ an agent has to guess about.
 | Star a tab (Cmd+Shift+S)                     | `tab star` / `tab unstar`                                         |
 | Mark a tab unread                            | `tab unread` / `tab read`                                         |
 | Toggle Save to History                       | `tab save-to-history`                                             |
+| Composer chips: thinking, read-only access   | `tab thinking` (off/on/sticky/cycle), `tab read-only`             |
+| Model / effort pills on one tab              | `tab model`, `tab effort` (`inherit` clears the override)         |
+| Enter-to-send chip                           | `tab enter-to-send`                                               |
+| Read one tab's settings back                 | `tab show`, or `session list --json`                              |
 | Move Tab to First / Last                     | `tab move <tab-id> first\|last\|<index>`                          |
 | Send a message, or run a shell command       | `send`, `dispatch`, `send-terminal`                               |
 | Open a file / URL / terminal tab             | `open-file`, `open-browser`, `open-terminal`                      |

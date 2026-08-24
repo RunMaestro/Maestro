@@ -66,6 +66,7 @@ const defaultProps = {
 	onNewAgentHere: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
+	onCompressFolder: vi.fn(),
 	onPreviewMulti: vi.fn(),
 	onQueueMedia: vi.fn(),
 	onOpenInDefaultAppMulti: vi.fn(),
@@ -95,6 +96,27 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Reveal in Finder')).toBeTruthy();
 		expect(screen.getByText('Rename')).toBeTruthy();
 		expect(screen.getByText('Delete')).toBeTruthy();
+	});
+
+	// Right-clicking a top-level file is the only way to create a sibling in the
+	// workspace root when the root has no folder to right-click.
+	it('offers New File and New Folder on a file, creating alongside it', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		fireEvent.click(screen.getByText('New Folder'));
+		expect(defaultProps.onOpenNewFolder).toHaveBeenCalled();
+	});
+
+	it('offers New File and New Folder on the empty-space root menu', () => {
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={{ x: 10, y: 20, node: null, path: '' }} />
+		);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		expect(screen.getByText('New Folder')).toBeTruthy();
+		// Root menu has no target row, so nothing to rename or delete.
+		expect(screen.queryByText('Rename')).toBeNull();
 	});
 
 	it('shows New File + Preview all + Copy Path + Reveal + Rename + Delete for a folder', () => {
@@ -144,6 +166,26 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.queryByText('New Agent Here')).toBeNull();
 		// The rest of the folder menu is unaffected.
 		expect(screen.getByText('New Folder')).toBeTruthy();
+	});
+
+	it('offers Compress on a folder, including one with nothing to preview', () => {
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />
+		);
+		fireEvent.click(screen.getByText('Compress'));
+		expect(defaultProps.onCompressFolder).toHaveBeenCalled();
+		unmount();
+
+		// An empty folder still zips - there is just nothing inside the archive.
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(emptyFolderNode)} />
+		);
+		expect(screen.getByText('Compress')).toBeTruthy();
+	});
+
+	it('does not offer Compress on a file', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		expect(screen.queryByText('Compress')).toBeNull();
 	});
 
 	it('pluralizes the preview-all label to singular for one previewable file', () => {

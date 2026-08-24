@@ -216,6 +216,68 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		expect(ack).toHaveBeenCalledWith('ch', { success: false, error: 'Tab not found' });
 	});
 
+	it('writes the composer-chip settings (thinking, read-only, model, effort)', async () => {
+		const sessions = [twoTabSession()];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', {
+			tabId: 'tab-2',
+			showThinking: 'sticky',
+			readOnlyMode: true,
+			customModel: 'opus',
+			customEffort: 'high',
+			enterToSend: false,
+		});
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.aiTabs[1].showThinking).toBe('sticky');
+		expect(updated.aiTabs[1].readOnlyMode).toBe(true);
+		expect(updated.aiTabs[1].customModel).toBe('opus');
+		expect(updated.aiTabs[1].customEffort).toBe('high');
+		expect(updated.aiTabs[1].enterToSend).toBe(false);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
+	});
+
+	it('clears an override on null so the tab inherits again', async () => {
+		const sessions = [twoTabSession()];
+		sessions[0].aiTabs[1] = { ...sessions[0].aiTabs[1], customModel: 'opus', enterToSend: false };
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { tabId: 'tab-2', customModel: null, enterToSend: null });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.aiTabs[1].customModel).toBeUndefined();
+		expect(updated.aiTabs[1].enterToSend).toBeUndefined();
+	});
+
+	it('rejects a wrongly-typed tab value instead of persisting it', async () => {
+		const { setSessions } = setup([twoTabSession()]);
+
+		dispatchPatch('session-1', { tabId: 'tab-1', readOnlyMode: 'yes' });
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: "Invalid value for tab field 'readOnlyMode'",
+		});
+	});
+
+	it('rejects an unknown thinking mode', async () => {
+		const { setSessions } = setup([twoTabSession()]);
+
+		dispatchPatch('session-1', { tabId: 'tab-1', showThinking: 'loud' });
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: "Invalid value for tab field 'showThinking'",
+		});
+	});
+
 	it('rejects a tab-targeted patch with no editable tab fields', async () => {
 		const { setSessions } = setup([twoTabSession()]);
 

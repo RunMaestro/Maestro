@@ -352,6 +352,8 @@ export interface MainPanelProps {
 	onWizardClearError?: () => void;
 	/** Called when user exits inline wizard mode (Escape or clicks pill) */
 	onExitWizard?: () => void;
+	/** Stop the wizard turn currently running on the active tab */
+	onStopWizardTurn?: (tabId?: string) => void;
 	/** Toggle showing wizard thinking instead of filler phrases */
 	onToggleWizardShowThinking?: () => void;
 	/** Called when user cancels document generation */

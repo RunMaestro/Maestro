@@ -429,6 +429,12 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			...localBin('omp'),
 		],
+		agy: [
+			// Official install.ps1 / install.cmd target
+			path.join(localAppData, 'agy', 'bin', 'agy.exe'),
+			// Some shells resolve the installer's shim from the user local bin
+			...localBin('agy'),
+		],
 		gh: [
 			// GitHub CLI official installer (MSI)
 			path.join(programFiles, 'GitHub CLI', 'gh.exe'),
@@ -594,6 +600,14 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			path.join(home, 'bin', 'omp'),
 			...nodeVersionManagers('omp'),
+		],
+		agy: [
+			// Official install.sh target on macOS/Linux
+			...localBin('agy'),
+			// User bin directory
+			path.join(home, 'bin', 'agy'),
+			// Homebrew, should a formula land later
+			...homebrew('agy'),
 		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)

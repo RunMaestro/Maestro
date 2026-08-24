@@ -34,12 +34,18 @@ import {
 import { QueuedItemsList } from './QueuedItemsList';
 import { NotificationPopover } from './NotificationPopover';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
-import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
+import {
+	normalizeMentionName,
+	getMentionNameForContext,
+	formatGroupMentionExpansion,
+} from '../utils/participantColors';
 import { logger } from '../utils/logger';
 import { useDebouncedCallback } from '../hooks/utils/useThrottle';
 import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
+import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -55,7 +61,8 @@ type MentionItem =
 			group: Group;
 			mentionName: string;
 			memberCount: number;
-			memberMentions: string[];
+			/** Insert-ready expansion: every member's `@name` token (see `formatGroupMentionExpansion`). */
+			memberMentions: string;
 	  };
 
 interface GroupChatInputProps {
@@ -193,8 +200,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						group,
 						mentionName: normalizeMentionName(group.name),
 						memberCount: members.length,
-						memberMentions: members.map(
-							(m) => `@${getMentionNameForContext(m.name, sessionNamesForMentions)}`
+						memberMentions: formatGroupMentionExpansion(
+							members.map((m) => m.name),
+							sessionNamesForMentions
 						),
 					});
 				}
@@ -415,7 +423,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			let insertion: string;
 			if (item.type === 'group') {
 				// Expand group into all member @mentions
-				insertion = item.memberMentions.join(' ') + ' ';
+				insertion = item.memberMentions;
 			} else {
 				insertion = `@${item.mentionName} `;
 			}
@@ -517,13 +525,13 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		setStagedImages((prev) => prev.filter((x) => x !== img));
 	}, []);
 
-	// Auto-resize textarea as content changes (matches InputArea behavior)
-	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
-		}
-	}, [message]);
+	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
+	// the caret visible once the composer is tall enough to scroll.
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: message,
+		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+	});
 
 	const isBusy = state !== 'idle';
 	const hasQueuedItems = executionQueue && executionQueue.length > 0;

@@ -74,6 +74,9 @@ export function releaseSnoozedTranscript(
 	session: Session | null | undefined,
 	entry: SnoozedTabEntry
 ): void {
+	// Only an AI snooze has a provider transcript mirrored on disk. The other
+	// kinds never took a copy, so there is nothing to release.
+	if (entry.type !== 'ai') return;
 	const target = mirrorTarget(session, entry.tab);
 	if (!target) return;
 	void window.maestro.agentSessions

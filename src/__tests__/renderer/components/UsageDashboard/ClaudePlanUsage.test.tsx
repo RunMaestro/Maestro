@@ -477,3 +477,193 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
 	});
 });
+
+describe('ClaudePlanUsage - agent count badge', () => {
+	const snapshotFor = (key: string) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('counts the agents pointed at each account', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work'),
+			'/Users/me/.claude-side': snapshotFor('/Users/me/.claude-side'),
+		});
+		seedSessions([
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-side',
+		]);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('3 agents');
+		// Singular when exactly one agent uses the account.
+		expect(screen.getByTestId('claude-plan-agents-side')).toHaveTextContent('1 agent');
+	});
+
+	it('ignores agents from other providers', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					id: 'b',
+					name: 'b',
+					toolType: 'codex',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('shows zero for a cached account no agent uses any more', () => {
+		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-stale')).toHaveTextContent('0 agents');
+	});
+
+	it('shows the count on an account that has no snapshot yet', () => {
+		seedSessions(['/Users/me/.claude-pending', '/Users/me/.claude-pending']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
+	});
+});
+
+describe('ClaudePlanUsage — account identity', () => {
+	const identifiedSnapshot = (key: string, identity: Record<string, string>) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+		...identity,
+	});
+
+	it('prints the login email beside the config-dir pill', () => {
+		// The pill names the DIRECTORY; only the email says which Anthropic
+		// account the numbers belong to.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'someone@smashlabs.com',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-email-gmail')).toHaveTextContent(
+			'someone@smashlabs.com'
+		);
+	});
+
+	it('omits the email chip for a snapshot cached before the field existed', () => {
+		seedSnapshots({
+			'/Users/me/.claude-legacy': identifiedSnapshot('/Users/me/.claude-legacy', {}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.queryByTestId('claude-plan-email-legacy')).toBeNull();
+	});
+
+	it('flags two config dirs that share one Anthropic account', () => {
+		// The bug this whole feature exists for: identical bars under two
+		// different directory names read as the sampler double-reporting one
+		// account, when in fact both dirs are logged into the same account.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-shared-gmail')).toHaveTextContent('shared with smash');
+		expect(screen.getByTestId('claude-plan-shared-smash')).toHaveTextContent('shared with gmail');
+	});
+
+	it('does not flag accounts that are genuinely distinct', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'a@example.com',
+				accountUuid: 'uuid-a',
+			}),
+			'/Users/me/.claude-banaco': identifiedSnapshot('/Users/me/.claude-banaco', {
+				accountEmail: 'b@example.com',
+				accountUuid: 'uuid-b',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.queryByTestId('claude-plan-shared-gmail')).toBeNull();
+		expect(screen.queryByTestId('claude-plan-shared-banaco')).toBeNull();
+	});
+
+	it('flags the shared account in the single-account tab view too', () => {
+		// The tab view renders one row at a time, so the badge has to come
+		// from the full snapshot map rather than from the visible row.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-shared-gmail')).toBeInTheDocument();
+		expect(screen.queryByTestId('claude-plan-shared-smash')).toBeNull();
+	});
+
+	it('names the account and its quota siblings in the tab hover text', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+
+		const title = screen.getByTestId('claude-plan-tab-gmail').getAttribute('title') ?? '';
+		expect(title).toContain('/Users/me/.claude-gmail');
+		expect(title).toContain('Logged in as p@smashlabs.com');
+		expect(title).toContain('Shares one quota with smash');
+	});
+});

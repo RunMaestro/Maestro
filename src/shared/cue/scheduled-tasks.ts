@@ -206,16 +206,105 @@ export function truncateTaskLabel(text: string): string {
 }
 
 /**
+ * Compact day abbreviations. `T` is Tuesday and `Th` is Thursday - the extra
+ * letter is what disambiguates them, so neither may be shortened further.
+ */
+export const SCHEDULE_DAY_ABBR: Record<CueScheduleDay, string> = {
+	mon: 'M',
+	tue: 'T',
+	wed: 'W',
+	thu: 'Th',
+	fri: 'F',
+	sat: 'Sa',
+	sun: 'Su',
+};
+
+const WEEKDAYS: CueScheduleDay[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
+const WEEKEND: CueScheduleDay[] = ['sat', 'sun'];
+
+/** Minimum run length worth collapsing. Two days read better spelled out
+ *  (`M, T` is shorter than `M-T` is clear). */
+const MIN_RUN_TO_COLLAPSE = 3;
+
+/**
+ * Render a day filter as compactly as it can be read.
+ *
+ * The full `mon, tue, wed, thu, fri, sat, sun` was 30 characters on almost
+ * every row of the Scheduled Tasks table, wrapping each one onto two lines and
+ * carrying almost no information (most schedules are simply "every day").
+ * Named sets win over abbreviations, and abbreviations collapse into runs:
+ *
+ *   all seven / none  -> `Every day`
+ *   mon-fri           -> `Weekdays`
+ *   sat+sun           -> `Weekends`
+ *   mon,tue,wed       -> `M-W`     (runs of 3+ collapse)
+ *   mon,wed,fri       -> `M, W, F` (isolated days stay listed)
+ */
+export function describeScheduleDays(days?: CueScheduleDay[]): string {
+	if (!days || days.length === 0 || days.length >= CUE_SCHEDULE_DAYS.length) return 'Every day';
+
+	// Canonical week order regardless of how the YAML listed them.
+	const ordered = CUE_SCHEDULE_DAYS.filter((day) => days.includes(day));
+	const has = (set: CueScheduleDay[]) =>
+		ordered.length === set.length && set.every((day) => ordered.includes(day));
+
+	if (has(WEEKDAYS)) return 'Weekdays';
+	if (has(WEEKEND)) return 'Weekends';
+
+	const parts: string[] = [];
+	let runStart = 0;
+	for (let i = 0; i <= ordered.length; i++) {
+		const index = i < ordered.length ? CUE_SCHEDULE_DAYS.indexOf(ordered[i]) : -1;
+		const prevIndex = CUE_SCHEDULE_DAYS.indexOf(ordered[i - 1]);
+		const continuesRun = i > 0 && index === prevIndex + 1;
+		if (continuesRun) continue;
+
+		if (i > 0) {
+			const run = ordered.slice(runStart, i);
+			if (run.length >= MIN_RUN_TO_COLLAPSE) {
+				parts.push(`${SCHEDULE_DAY_ABBR[run[0]]}-${SCHEDULE_DAY_ABBR[run[run.length - 1]]}`);
+			} else {
+				parts.push(...run.map((day) => SCHEDULE_DAY_ABBR[day]));
+			}
+		}
+		runStart = i;
+	}
+	return parts.join(', ');
+}
+
+/** `90` -> `1h 30m`, `120` -> `2h`, `1440` -> `1d`. */
+export function describeIntervalMinutes(minutes: number): string {
+	if (minutes < 60) return `${minutes}m`;
+	if (minutes % 1440 === 0) return `${minutes / 1440}d`;
+	if (minutes % 60 === 0) return `${minutes / 60}h`;
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * A one-shot's fire time in the reader's own locale and zone (`Aug 22, 4:00 PM`).
+ * The raw ISO string is what's on disk and what JSON consumers get, but it is
+ * unreadable in a table cell - and it is in UTC, so it silently disagrees with
+ * the wall clock the user typed. Falls back to the raw value when unparseable.
+ */
+export function describeFireAt(fireAt: string): string {
+	const ms = Date.parse(fireAt);
+	if (!Number.isFinite(ms)) return fireAt;
+	return new Date(ms).toLocaleString(undefined, {
+		month: 'short',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: '2-digit',
+	});
+}
+
+/**
  * One-line description of when a task fires, for a table cell or a CLI row.
  * Deliberately terse: the caller supplies its own "in 5m" relative column.
  */
 export function describeSchedule(task: ScheduledTask): string {
-	if (task.kind === 'once') return task.fireAt ?? 'unscheduled';
-	if (task.kind === 'interval') {
-		const minutes = task.intervalMinutes ?? 0;
-		return `every ${minutes} min`;
-	}
+	if (task.kind === 'once') return task.fireAt ? describeFireAt(task.fireAt) : 'unscheduled';
+	if (task.kind === 'interval')
+		return `Every ${describeIntervalMinutes(task.intervalMinutes ?? 0)}`;
 	const times = (task.scheduleTimes ?? []).join(', ');
-	const days = task.scheduleDays?.length ? task.scheduleDays.join(', ') : 'every day';
-	return `${times} (${days})`;
+	return `${times} · ${describeScheduleDays(task.scheduleDays)}`;
 }

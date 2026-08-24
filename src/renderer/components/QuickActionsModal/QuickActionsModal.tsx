@@ -10,7 +10,9 @@ import { notifyToast, useNotificationStore } from '../../stores/notificationStor
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
+import { buildConcertoCommands } from './commands/concertoCommands';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -231,6 +233,18 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const canRestoreFloatingPlayer = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
 	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
+	// Concerto's two surfaces are store-owned toggles, so read their live state
+	// here: the palette entries name what the keypress will actually do.
+	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
+	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
+	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
+	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
+	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const toggleConcertoStageFloating = useCallback(
+		() => setConcertoStageFloating(!concertoStageFloating),
+		[concertoStageFloating, setConcertoStageFloating]
+	);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -473,6 +487,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			restoreFloatingPlayer,
 			setQuickActionOpen,
 		}),
+		...buildConcertoCommands({
+			concertoEnabled,
+			stageOpen: concertoStageOpen,
+			cadenzasHidden,
+			stageFloating: concertoStageFloating,
+			toggleConcertoStage,
+			toggleStageFloating: toggleConcertoStageFloating,
+			toggleCadenzas: toggleAllCadenzas,
+			setQuickActionOpen,
+			shortcuts: {
+				toggleConcerto: shortcuts.toggleConcerto,
+				toggleCadenzas: shortcuts.toggleCadenzas,
+			},
+		}),
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
@@ -622,6 +650,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTileCommands({
 			activeSession,
 			setQuickActionOpen,
+			shortcuts: {
+				tileAiBelow: shortcuts.tileAiBelow,
+				tileBrowserBelow: shortcuts.tileBrowserBelow,
+				tileFileBelow: shortcuts.tileFileBelow,
+				tileTerminalBelow: shortcuts.tileTerminalBelow,
+			},
 		}),
 		...buildFeatureCommands({
 			activeSession,

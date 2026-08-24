@@ -25,6 +25,23 @@ describe('getModelFamily', () => {
 		expect(getModelFamily('openrouter/google/gemini-2.5-flash')).toBe('Gemini');
 	});
 
+	it("recognizes Claude Code's bare aliases as Claude", () => {
+		// Claude Code lists 'opus' and 'sonnet[1m]' alongside dated ids. They are
+		// Anthropic models however they are spelled, and the Model & Effort console
+		// names the vendor of whichever row the wheel is on - so a miss here reads
+		// as an unlabelled caption sitting over a Claude model.
+		expect(getModelFamily('opus')).toBe('Claude');
+		expect(getModelFamily('sonnet')).toBe('Claude');
+		expect(getModelFamily('haiku')).toBe('Claude');
+		expect(getModelFamily('fable')).toBe('Claude');
+		expect(getModelFamily('opus[1m]')).toBe('Claude');
+	});
+
+	it('does not claim ids that merely begin with those letters', () => {
+		expect(getModelFamily('opusgpt')).toBe('Other');
+		expect(getModelFamily('sonnetron-9')).toBe('Other');
+	});
+
 	it('falls back to Other rather than dropping an unknown id', () => {
 		expect(getModelFamily('some-unreleased-thing')).toBe('Other');
 	});

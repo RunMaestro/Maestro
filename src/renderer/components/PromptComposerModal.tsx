@@ -27,7 +27,11 @@ import {
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
-import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
+import {
+	normalizeMentionName,
+	getMentionNameForContext,
+	formatGroupMentionExpansion,
+} from '../utils/participantColors';
 import { formatFileMention } from '../../shared/mentionPatterns';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
@@ -43,7 +47,8 @@ type MentionItem =
 			group: Group;
 			mentionName: string;
 			memberCount: number;
-			memberMentions: string[];
+			/** Insert-ready expansion: every member's `@name` token (see `formatGroupMentionExpansion`). */
+			memberMentions: string;
 	  }
 	| {
 			type: 'file';
@@ -189,8 +194,9 @@ export function PromptComposerModal({
 						group,
 						mentionName: normalizeMentionName(group.name),
 						memberCount: members.length,
-						memberMentions: members.map(
-							(m) => `@${getMentionNameForContext(m.name, sessionNamesForMentions)}`
+						memberMentions: formatGroupMentionExpansion(
+							members.map((m) => m.name),
+							sessionNamesForMentions
 						),
 					});
 				}
@@ -266,7 +272,7 @@ export function PromptComposerModal({
 			const prefix = value.slice(0, lastAtIndex);
 			let insertion: string;
 			if (item.type === 'group') {
-				insertion = item.memberMentions.join(' ') + ' ';
+				insertion = item.memberMentions;
 			} else if (item.type === 'file') {
 				insertion = `${formatFileMention(item.fullPath)} `;
 			} else {

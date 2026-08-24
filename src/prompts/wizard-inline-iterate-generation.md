@@ -101,6 +101,20 @@ Each task should be:
 - **Verifiable**: You can tell when it's complete
 - **Autonomous**: Can be done without asking the user questions
 
+### Model Tier and Effort
+
+A marker sets the model tier and effort level for the work below it. The placement is the scope: on its own line it applies from there down (above the first task, that is the whole document); at the end of a task line it applies to that one task only.
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
+```
+
+Both attributes take `low`, `medium`, or `high` - ladder positions, never provider-specific values like `max` or a model name. Use `tier="high" effort="high"` for architecture, planning, and subtle debugging; `tier="low" effort="low"` for mechanical work; nothing at all for ordinary implementation, which is most tasks. Do not decorate every task - a marker on all of them says nothing about which ones matter.
+
 ### Grouping Rules
 
 **DO group together:**

@@ -50,8 +50,8 @@ import {
 	sanitizeSnoozeHistory,
 	SNOOZE_HISTORY_SETTINGS_KEY,
 } from './snoozeHistoryStore';
-import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
-import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { ModalPosition, ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { normalizeModalPosition, sanitizeModalSizes } from '../utils/modalSizing';
 import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice';
 import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
 import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
@@ -254,6 +254,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
+	'delete',
 ] as const;
 
 export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
@@ -361,6 +362,10 @@ export interface SettingsStoreState
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
+	/** Concerto stage presentation: true = popped out into a floating window. */
+	concertoStageFloating: boolean;
+	/** Where the popped-out Concerto stage was last dragged to, or null. */
+	concertoStagePosition: ModalPosition | null;
 	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
@@ -477,6 +482,8 @@ export interface SettingsStoreActions
 	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
 	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
+	setConcertoStageFloating: (value: boolean) => void;
+	setConcertoStagePosition: (value: ModalPosition | null) => void;
 	/** Remember the height a user dragged a resizable textarea to. */
 	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
@@ -704,6 +711,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
+		concertoStageFloating: false,
+		concertoStagePosition: null,
 		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
@@ -939,6 +948,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		resetModalSizes: () => {
 			set({ modalSizes: {} });
 			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setConcertoStageFloating: (value) => {
+			set({ concertoStageFloating: value });
+			window.maestro.settings.set('concertoStageFloating', value);
+		},
+
+		setConcertoStagePosition: (value) => {
+			const normalized = value ? normalizeModalPosition(value) : null;
+			set({ concertoStagePosition: normalized });
+			window.maestro.settings.set('concertoStagePosition', normalized);
 		},
 
 		setTextareaHeight: (key, value) => {
@@ -1915,6 +1935,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['modalSizes'] !== undefined)
 			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
 
+		if (allSettings['concertoStageFloating'] !== undefined)
+			patch.concertoStageFloating = allSettings['concertoStageFloating'] === true;
+
+		if (allSettings['concertoStagePosition'] !== undefined)
+			patch.concertoStagePosition = normalizeModalPosition(allSettings['concertoStagePosition']);
+
 		if (allSettings['textareaHeights'] !== undefined)
 			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
 
@@ -1996,6 +2022,31 @@ export async function loadAllSettings(): Promise<void> {
 			const commandsById = new Map<string, CustomAICommand>();
 			DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
 			(allSettings['customAICommands'] as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
+				// The persisted array is whatever is on disk, not necessarily CustomAICommand[]:
+				// electron-store hands back hand-edited / sync-mangled / legacy-schema entries
+				// unchanged. Every consumer keys off `id` (edit, save, reset, delete, React keys),
+				// so an entry without one is unusable and would otherwise be stored under the
+				// Map key `undefined` and rendered anyway. Skip it instead of crashing later.
+				// `id`, `command` and `prompt` are all load-bearing: consumers key off
+				// `id` (edit, save, reset, delete, React keys), and the panel calls
+				// `command.startsWith('/')` and `prompt.substring(...)` directly, so a
+				// missing one is a crash rather than a cosmetic gap. `description` is
+				// only rendered, so default it instead of discarding a command the
+				// user may still want.
+				if (
+					!cmd ||
+					typeof cmd !== 'object' ||
+					typeof cmd.id !== 'string' ||
+					!cmd.id ||
+					typeof cmd.command !== 'string' ||
+					typeof cmd.prompt !== 'string'
+				) {
+					logger.warn('Skipping malformed customAICommands entry (missing id, command or prompt)');
+					return;
+				}
+				if (typeof cmd.description !== 'string') {
+					cmd = { ...cmd, description: '' };
+				}
 				// Migration: Skip old /synopsis command
 				if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
 					return;
@@ -2534,6 +2585,8 @@ export function getSettingsActions() {
 		setModalSize: state.setModalSize,
 		resetModalSize: state.resetModalSize,
 		resetModalSizes: state.resetModalSizes,
+		setConcertoStageFloating: state.setConcertoStageFloating,
+		setConcertoStagePosition: state.setConcertoStagePosition,
 		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,

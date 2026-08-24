@@ -16,7 +16,12 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 5. Output Parsers    src/main/parsers/                 JSON output normalization per agent
 6. Error Patterns    src/main/parsers/error-patterns.ts  Regex patterns for error detection
 7. Session Storage   src/main/storage/                 Per-agent session file reading
+8. Picker Registry   src/shared/agentMetadata.ts       Whether and how the user can choose it
 ```
+
+Steps 1-7 make an agent work. Step 8 is what makes it reachable: an agent that
+is defined, capable, and detected is still invisible in the UI until it has a
+`AGENT_PICKER_META` entry.
 
 ---
 
@@ -45,13 +50,40 @@ export type AgentId = (typeof AGENT_IDS)[number];
 ### Related Metadata (`src/shared/agentMetadata.ts`)
 
 ```typescript
-AGENT_DISPLAY_NAMES: Record<AgentId, string>  // Human-readable names
-BETA_AGENTS: ReadonlySet<AgentId>              // Agents showing "(Beta)" badge
-getAgentDisplayName(agentId): string           // Get name with fallback
-isBetaAgent(agentId): boolean                  // Check beta status
-getAgentLoginCommand(agentId, customPath?)     // Re-auth command, or null
-formatAgentLoginCommand(login): string         // Render it as a shell line
+AGENT_DISPLAY_NAMES: Record<AgentId, string>       // Human-readable names
+BETA_AGENTS: ReadonlySet<AgentId>                  // Agents showing "(Beta)" badge
+AGENT_PICKER_META: Record<AgentId, Meta | null>    // Picker presentation, null = never offered
+PICKABLE_AGENT_IDS: readonly AgentId[]             // Picker order, sorted by display name
+AGENT_AUTOSELECT_ORDER: readonly AgentId[]         // Which provider a picker defaults to
+getAgentDisplayName(agentId): string               // Get name with fallback
+isBetaAgent(agentId): boolean                      // Check beta status
+getAgentPickerMeta(agentId): Meta | null           // Description + brand color, or null
+getAgentLoginCommand(agentId, customPath?)         // Re-auth command, or null
+formatAgentLoginCommand(login): string             // Render it as a shell line
 ```
+
+**Provider pickers** all read `AGENT_PICKER_META`. The New Agent modal's
+`SUPPORTED_AGENTS` re-exports `PICKABLE_AGENT_IDS`; the New Agent Wizard's
+`AGENT_TILES` is derived from the record (name from `getAgentDisplayName`, pitch
+and brand color from the entry); the Group Chat moderator dropdown renders those
+same tiles filtered by what detection found installed. `null` withholds an agent
+from all three - correct for `terminal` (internal) and `gemini-cli` (kept for
+type and back-compat only). Because the record is keyed by `AgentId`, a new id
+does not compile until that decision is made. Do NOT add a fourth hand-written
+list of agent ids for a new picker; the three used to be hand-written, and Grok
+and Qwen3 Coder shipped selectable in one of them and missing from the other two.
+
+`PICKABLE_AGENT_IDS` sorts the record by display name, so all three surfaces show
+the same alphabetical list and the record's key order carries no meaning - add a
+new entry wherever it reads best. A picker that has to choose for the user reads
+`AGENT_AUTOSELECT_ORDER` and takes the first entry that is installed; do NOT
+default to `PICKABLE_AGENT_IDS[0]`, which is only ever "whatever sorts first".
+
+Registering a provider also means drawing it: a `case` in `AgentLogo`
+(`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)
+and a glyph in `AGENT_ICONS` (`src/renderer/constants/agentIcons.ts`). Without
+the logo case the tile renders a blank fallback ring, and a test in
+`AgentSelectionScreen/components.test.tsx` fails.
 
 **Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
 
@@ -580,6 +612,30 @@ Some patterns use capture groups for rich error messages:
 	recoverable: true,
 }
 ```
+
+### Plan-limit notices arrive as a successful `result`, not an error
+
+Claude Code reports a hit plan limit in the `result` field of a `stream-json`
+result event ("You've hit your session limit - resets 11:40am (America/Chicago)",
+legacy "Claude AI usage limit reached|1755500000"). A result event is the CLI's
+own end-of-turn envelope, so it carries no `error` field: without special
+handling the notice renders as an ordinary assistant reply, the turn looks
+successful, and Agent Resilience never sees a failure to retry.
+
+`isClaudeLimitNotice(text)` is the gate for that branch in
+`ClaudeOutputParser.detectError()`. It is anchored at the start of the string and
+length-capped on purpose - a result body is normal assistant prose, and agents
+working on Maestro discuss rate limits constantly, so running the whole result
+through the pattern bank would turn a normal answer into a phantom failure. Keep
+the CLI's own wording as the error message rather than the generic pattern text:
+it names which limit was hit and when it resets, which is exactly what
+`tokenExhaustionResetAt()` in `src/shared/retryClassification.ts` parses to
+schedule the retry. That parser accepts a wall-clock reset only when the notice
+names its own IANA zone; a bare "resets at 3pm" stays unparseable and falls back
+to the hourly poll.
+
+`src/maestro-p/tui-driver.ts` matches the same banner from the TUI's painted
+output with `LIMIT_REGEX`, which is line-anchored for the same reason.
 
 ### Usage Functions
 

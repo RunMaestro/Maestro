@@ -249,6 +249,31 @@ If one item in a group is significantly more complex, give it its own task:
   - Permission decorator for controller methods
 ```
 
+### Model Tier and Effort
+
+You have just reasoned about which tasks are hard and which are mechanical - that same judgment selects the model. A marker sets the model tier and effort level, and the placement is the scope:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
+```
+
+- **On its own line**: applies from there down until the next standalone marker. Above the first task it covers the whole document; under a section heading it covers that phase.
+- **At the end of a task line**: applies to that one task only. "Apply the mechanical renames" above runs back at `low`/`low`.
+
+Both attributes take `low`, `medium`, or `high`. These are ladder positions, not provider-specific values - never write `max`, `xhigh`, or a model name. `tier` picks which model, `effort` picks how hard it thinks; they are independent, and an inline marker layers over a standalone one per axis.
+
+Emit hints when a phase or a task is genuinely mismatched with the rest of the document:
+
+- **`tier="high" effort="high"`** for architecture decisions, migration planning, subtle concurrency or security work, debugging something that has already resisted one attempt.
+- **`tier="low" effort="low"`** for mechanical renames, import updates, boilerplate scaffolding, applying a plan that another task already wrote.
+- **Nothing at all** for ordinary implementation work. This is most tasks.
+
+Do not decorate every task. A document with a marker on all ten tasks says nothing about which two actually matter, and the agent's configured default already handles the ordinary case. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs less than the default. When in doubt, omit the marker.
+
 ### Phase Sizing
 
 - Aim for **5-10 meaningful tasks per phase**, not 20+ granular ones

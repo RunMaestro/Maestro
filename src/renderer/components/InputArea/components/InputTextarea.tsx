@@ -18,7 +18,7 @@ import {
 } from '../../../utils/mentionChipResolve';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { buildKnownMentionNameSet } from '../../../hooks/input/useAgentMentionCompletion';
-import { TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../utils/textareaSizing';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 
 interface InputTextareaProps {
@@ -297,7 +297,7 @@ export const InputTextarea = memo(function InputTextarea({
 					caretColor: theme.colors.textMain,
 					// Single source of truth with the resize logic: the CSS cap and
 					// resizeTextareaToContent's clamp can never disagree.
-					maxHeight: `${TEXTAREA_MAX_HEIGHT}px`,
+					maxHeight: `${KEYSTROKE_TEXTAREA_MAX_HEIGHT}px`,
 					// Sit above the decorative overlay so the caret + native selection win.
 					zIndex: overlayRendered ? 1 : undefined,
 				}}

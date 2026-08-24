@@ -45,6 +45,10 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 	getErrorPatterns: vi.fn(() => ({})),
 	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
+	// The parser asks this of every assistant message. These tests feed ordinary
+	// tool and thinking events, none of which are plan-limit notices, so `false`
+	// is the answer that leaves the routing under test unchanged.
+	isClaudeLimitNotice: vi.fn(() => false),
 }));
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────

@@ -12,6 +12,8 @@ import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { ModalSubtitle } from './ui/Modal';
+import { useSessionStore } from '../stores/sessionStore';
 import 'react-diff-view/style/index.css';
 
 export type GitDiffViewType = 'unified' | 'split';
@@ -58,6 +60,11 @@ interface GitDiffViewerProps {
 	theme: Theme;
 	onClose: () => void;
 	/**
+	 * Agent whose diff is shown, named in the header. See GitLogViewer: the cwd
+	 * pill alone does not identify the agent.
+	 */
+	sessionId?: string;
+	/**
 	 * Default view type when the user has no persisted preference yet. Once the
 	 * user toggles the header button, the chosen value is saved to localStorage
 	 * and applied to all future GitDiffViewer instances regardless of this prop.
@@ -87,8 +94,14 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	initialViewType = 'unified',
 	title = 'Git Diff',
 	priority,
+	sessionId,
 	onOpenFile,
 }: GitDiffViewerProps) {
+	// Name the agent whose repo this is. Subscribe to the name alone, never the
+	// Session: these viewers stay open over a streaming agent and a whole-session
+	// subscription would re-render the diff list on every unrelated token update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
+
 	const [activeTab, setActiveTab] = useState(0);
 	const [viewType, setViewType] = useState<GitDiffViewType>(
 		() => readStoredViewType() ?? initialViewType
@@ -215,9 +228,15 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						className="flex items-center justify-between px-6 py-4 border-b"
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 					>
-						<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-							{title}
-						</span>
+						<div className="flex items-center gap-3 min-w-0">
+							<span
+								className="text-lg font-semibold shrink-0"
+								style={{ color: theme.colors.textMain }}
+							>
+								{title}
+							</span>
+							<ModalSubtitle theme={theme} subtitle={agentName} />
+						</div>
 						<button
 							onClick={onClose}
 							className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
@@ -280,6 +299,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						>
 							{title}
 						</span>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 						<span
 							className="text-xs px-2 py-1 rounded truncate min-w-0"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}

@@ -52,6 +52,7 @@ import {
 	registerPromptsHandlers,
 	registerMemoryHandlers,
 	registerTabsHandlers,
+	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
@@ -286,6 +287,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
+
+	// Register Context Timeline capture handlers (per-agent turn history backfill).
+	// The renderer calls these on every panel open and timeline clear, so leaving
+	// them out makes `contextTimeline:*` reject with "No handler registered"
+	// (MAESTRO-YV) and the panel silently starts empty after a reload.
+	registerContextTimelineHandlers();
 
 	// Register Pianola handlers (autonomous manager: rules, decisions, and the
 	// supervised daemon). The supervisor is constructed during core-service init

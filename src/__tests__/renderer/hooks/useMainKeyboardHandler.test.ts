@@ -6,6 +6,13 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
+// Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
+// wiring rather than re-running the layout transform (covered in tileNewTab.test).
+const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession: vi.fn() }));
+vi.mock('../../../renderer/services/tileNewTabAction', () => ({
+	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
+}));
+
 /**
  * Creates a minimal mock context with all required handler functions.
  * The keyboard handler requires these functions to be present to avoid
@@ -411,6 +418,52 @@ describe('useMainKeyboardHandler', () => {
 			// The event should NOT be prevented when Tab is pressed with layers open
 		});
 
+		it('keeps the Concerto keys live while a modal is open', () => {
+			// The stage is a modal itself, so a toggle blocked by the modal guard
+			// could only ever open it; cadenzas float above every modal, so stashing
+			// them has to work from anywhere too.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: true },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
+		it('still blocks the Concerto keys when the Encore Feature is off', () => {
+			useModalStore.getState().closeModal('concertoStage');
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: false },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+		});
+
 		it('should allow layout shortcuts (Alt+Cmd+Arrow) when modals are open', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
@@ -606,6 +659,51 @@ describe('useMainKeyboardHandler', () => {
 
 			// Cmd+J should open a new terminal tab even when file preview overlay is open
 			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
+		});
+
+		it('tiles a new terminal below on tileTerminalBelow (Cmd+Shift+J)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockHandleOpenTerminalTab = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileTerminalBelow',
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'j', metaKey: true, shiftKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', 'terminal');
+			// The tiled twin must not also run the plain "new terminal tab" path.
+			expect(mockHandleOpenTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['tileAiBelow', 'ai'],
+			['tileBrowserBelow', 'browser'],
+			['tileFileBelow', 'file'],
+		])('tiles a new %s tab once the user binds that shortcut', (shortcutId, kind) => {
+			// These three ship UNBOUND. They reach the handler only after a user
+			// records a chord in Settings, which is what the isShortcut stub models.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'k', metaKey: true, shiftKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', kind);
 		});
 
 		it('should allow tab cycle shortcut with brace characters when layers are open', () => {
@@ -3907,5 +4005,144 @@ describe('useMainKeyboardHandler', () => {
 			// Must not silently swallow the key when it cannot act.
 			expect(evt.defaultPrevented).toBe(false);
 		});
+	});
+});
+
+/**
+ * Cmd+Shift+E - "Edit Last Queued Message".
+ *
+ * The defect these cover: the handler used to read the session snapshot that
+ * `ctx` captured during the last App render. The pencil on a queued row reads
+ * live props, so whenever that snapshot lagged the store the shortcut reported
+ * "no queued message" while a queued card was on screen and clickable. The
+ * handler now reads the session store at keypress time.
+ */
+describe('useMainKeyboardHandler - editLastQueuedMessage', () => {
+	const TAB_A = 'tab-a';
+	const TAB_B = 'tab-b';
+
+	function session(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'agent-1',
+			name: 'Maestro',
+			activeTabId: TAB_A,
+			activeFileTabId: null,
+			activeTerminalTabId: null,
+			activeBrowserTabId: null,
+			inputMode: 'ai',
+			aiTabs: [{ id: TAB_A }, { id: TAB_B }],
+			executionQueue: [],
+			...overrides,
+		} as any;
+	}
+
+	function queued(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'q1',
+			timestamp: 1,
+			tabId: TAB_A,
+			type: 'message',
+			text: 'still not fixed',
+			...overrides,
+		} as any;
+	}
+
+	function press(ctxOverrides: Record<string, unknown>) {
+		// These tests turn on the ctx snapshot DISAGREEING with the store, which is
+		// the defect being covered. `createMockContext` mirrors whatever
+		// `activeSession` it is handed back into the session store, so capture what
+		// the test seeded and restore it after the context is built - otherwise the
+		// helper would quietly make the two agree again and the stale-snapshot case
+		// could never fail.
+		const seeded = useSessionStore.getState();
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'editLastQueuedMessage',
+			...ctxOverrides,
+		});
+		useSessionStore.setState({
+			sessions: seeded.sessions,
+			activeSessionId: seeded.activeSessionId,
+		} as never);
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'E', metaKey: true, shiftKey: true, bubbles: true })
+			);
+		});
+	}
+
+	beforeEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	afterEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as any);
+	});
+
+	it('opens the queued message even when the ctx snapshot is stale', () => {
+		const item = queued();
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		// The snapshot ctx captured still shows an EMPTY queue - exactly the state
+		// that used to make this report "No queued message to edit".
+		press({ activeSession: session({ executionQueue: [] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+	});
+
+	it('falls back to a message queued on another tab and switches to it', () => {
+		const item = queued({ id: 'q-other', tabId: TAB_B });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session({ executionQueue: [item] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-other');
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.activeTabId).toBe(TAB_B);
+	});
+
+	it('prefers the message on the tab already on screen', () => {
+		const onOther = queued({ id: 'q-other', tabId: TAB_B, timestamp: 2 });
+		const onActive = queued({ id: 'q-active', tabId: TAB_A, timestamp: 1 });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [onActive, onOther] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session() });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-active');
+	});
+
+	it('does not open anything when only commands are queued', () => {
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [queued({ id: 'c1', type: 'command', text: '' })] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session() });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+	});
+
+	it('still finds the message when its tab is no longer open', () => {
+		// A missing tab must not collapse the result set to nothing - that is how
+		// a filter turns into a false "nothing is queued".
+		const item = queued({ id: 'q-orphan', tabId: 'tab-gone' });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session({ executionQueue: [item] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-orphan');
 	});
 });

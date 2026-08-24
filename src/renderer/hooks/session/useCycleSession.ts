@@ -29,6 +29,7 @@ import {
 	sessionOrChildrenNeedAttention,
 	type AttentionContext,
 } from '../../utils/sessionAttention';
+import { isSessionVisibleInSidebar } from '../../utils/sessionVisibility';
 
 // ============================================================================
 // Dependencies
@@ -121,8 +122,18 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		setSidebarExtraSelection,
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
-	const { ungroupedCollapsed, groupChatsExpanded, starredSessionsCollapsed } =
+	const { ungroupedCollapsed, groupChatsExpanded, starredSessionsCollapsed, encoreFeatures } =
 		useSettingsStore.getState();
+
+	// Agents the Left Bar does not render. Pianola stays in the session store
+	// after its Encore flag is switched off (so re-enabling restores the same
+	// agent) and SessionList simply stops drawing its pinned row - without this
+	// the cycle would still walk onto it, and onto any starred row it owns.
+	const hiddenSessionIds = new Set(
+		sessions
+			.filter((s) => !isSessionVisibleInSidebar(s, { pianolaEnabled: encoreFeatures?.pianola }))
+			.map((s) => s.id)
+	);
 
 	// Build the visual order of items as they appear in the sidebar.
 	// This matches the actual rendering order in SessionList.tsx:
@@ -277,6 +288,18 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		});
 		visualOrder.length = 0;
 		visualOrder.push(...filteredOrder);
+	}
+
+	// Drop rows for agents the Left Bar hides (see hiddenSessionIds). Applied to
+	// the finished visual order so it covers agent rows, their worktree children,
+	// starred rows owned by a hidden agent, and the collapsed-sidebar branch
+	// alike. Group chats are not agents, so they always stay.
+	if (hiddenSessionIds.size > 0) {
+		const visibleOrder = visualOrder.filter(
+			(item) => item.type === 'groupChat' || !hiddenSessionIds.has(item.id)
+		);
+		visualOrder.length = 0;
+		visualOrder.push(...visibleOrder);
 	}
 
 	// Multi-window: drop agent rows this window does not own so Cmd+[/] cycles

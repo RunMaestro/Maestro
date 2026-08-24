@@ -4,6 +4,7 @@ import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
+import { parseCliBool } from '../utils/parse';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -25,14 +26,6 @@ interface CreateAgentOptions {
 	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
 	json?: boolean;
-}
-
-// Parse a CLI boolean flag value. Accepts true/false/1/0/yes/no (case-insensitive).
-function parseBool(value: string, flag: string): boolean {
-	const v = value.trim().toLowerCase();
-	if (v === 'true' || v === '1' || v === 'yes') return true;
-	if (v === 'false' || v === '0' || v === 'no') return false;
-	throw new Error(`${flag} expects true or false, got "${value}"`);
 }
 
 export async function createAgent(name: string, options: CreateAgentOptions): Promise<void> {
@@ -87,7 +80,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	let syncHistory: boolean | undefined;
 	if (options.syncHistoryToRemote !== undefined) {
 		try {
-			syncHistory = parseBool(options.syncHistoryToRemote, '--sync-history-to-remote');
+			syncHistory = parseCliBool(options.syncHistoryToRemote, '--sync-history-to-remote');
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			if (options.json) {

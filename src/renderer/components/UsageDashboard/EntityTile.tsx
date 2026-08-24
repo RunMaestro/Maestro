@@ -16,6 +16,17 @@ import { memo, useState } from 'react';
 import type { Theme } from '../../types';
 import { Sparkline } from './Sparkline';
 
+/** Per-tile delay of the staggered entrance, in ms. */
+const STAGGER_STEP_MS = 60;
+/**
+ * Cap on how many tiles the stagger walks before every later tile shares the
+ * final delay. Both grids can render far more tiles than the effect was
+ * designed around - an agent with a hundred entries would otherwise leave the
+ * last card blank for six seconds, and an unpaginated tab list was worse - so
+ * the ramp stops here and the tail animates together.
+ */
+const STAGGER_MAX_STEPS = 12;
+
 /** One labeled number in the tile's stat row. */
 export interface EntityTileStat {
 	/** Short uppercase label, e.g. "Queries". Also used as the React key. */
@@ -65,7 +76,8 @@ export interface EntityTileProps {
 	/** Sparkline series, oldest to newest. Omit to leave the corner empty. */
 	sparkline?: number[];
 	sparklineColor?: string;
-	/** 0-based index for the staggered card-enter animation. */
+	/** 0-based index for the staggered card-enter animation. The ramp is capped
+	 *  at `STAGGER_MAX_STEPS`, so a large grid does not leave late tiles blank. */
 	animationIndex: number;
 	/** Render with a 2px accent border to flag the active drill-down filter. */
 	isSelected?: boolean;
@@ -137,7 +149,7 @@ export const EntityTile = memo(function EntityTile({
 			style={{
 				backgroundColor,
 				border,
-				animationDelay: `${animationIndex * 60}ms`,
+				animationDelay: `${Math.min(animationIndex, STAGGER_MAX_STEPS) * STAGGER_STEP_MS}ms`,
 				transitionDuration: '120ms',
 				...(isClickable ? ({ '--tw-ring-color': theme.colors.accent } as React.CSSProperties) : {}),
 			}}

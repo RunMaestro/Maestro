@@ -8,6 +8,7 @@
  */
 
 import type { StateCreator } from 'zustand';
+import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import type { Shortcut } from '../types';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import type { SettingsStore } from './settingsStore';
@@ -98,15 +99,48 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 		fromKeys: [['Alt', 'Meta', 'f']],
 		toKeys: ['Alt', 'Meta', 'ArrowUp'],
 	},
+	// newGroupChat gave up Opt+Cmd+C so Concerto - toggled far more often - could
+	// take the mnemonic C. This remap is what stops the two from COLLIDING: a user
+	// who has ever opened the Shortcuts tab has the whole map persisted, so
+	// without it they would keep Opt+Cmd+C on New Group Chat while Concerto also
+	// claimed it, and whichever branch runs first in the keyboard handler would
+	// silently swallow the other.
+	newGroupChat: {
+		fromKeys: [['Alt', 'Meta', 'c']],
+		toKeys: ['Alt', 'Meta', 'g'],
+	},
+	// Concerto's stage started on a bare Opt+C, which types "ç" on macOS and so
+	// never fired from the composer, then briefly sat on Opt+Cmd+V before landing
+	// on the C freed above. Both old defaults are listed: a user who skipped a
+	// build still carries the older one.
+	toggleConcerto: {
+		fromKeys: [
+			['Alt', 'c'],
+			['Alt', 'Meta', 'v'],
+		],
+		toKeys: ['Alt', 'Meta', 'c'],
+	},
+	toggleCadenzas: {
+		fromKeys: [
+			['Alt', 'Shift', 'c'],
+			['Alt', 'Meta', 'Shift', 'v'],
+		],
+		toKeys: ['Alt', 'Meta', 'Shift', 'c'],
+	},
+	// jumpToBottom moved off Opt+J: the J key already carries Cmd+J (AI/Shell
+	// mode), Cmd+Shift+J (tile a new terminal) and Opt+Cmd+J (jump to nearest
+	// terminal), and a bare Opt+letter types a character in the composer. It now
+	// sits on Opt+Cmd+Down, the mirror of focusActiveTab's Opt+Cmd+Up.
+	jumpToBottom: {
+		fromKeys: [['Alt', 'j']],
+		toKeys: ['Alt', 'Meta', 'ArrowDown'],
+	},
+	// nextUnreadTab moved off Opt+Cmd+Down to hand that combo to jumpToBottom.
+	nextUnreadTab: {
+		fromKeys: [['Alt', 'Meta', 'ArrowDown']],
+		toKeys: ['Meta', 'Shift', 'ArrowDown'],
+	},
 };
-
-function keysEqual(a: string[], b: string[]): boolean {
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) return false;
-	}
-	return true;
-}
 
 /**
  * Migrate shortcuts: fix macOS Alt+key special characters, apply one-time
@@ -144,7 +178,7 @@ function migrateShortcuts(
 	// for a remapped shortcut, bump them to the NEW default. Preserve custom bindings.
 	for (const [id, remap] of Object.entries(SHORTCUT_DEFAULT_REMAPS)) {
 		const current = migrated[id];
-		if (current && remap.fromKeys.some((from) => keysEqual(current.keys, from))) {
+		if (current && remap.fromKeys.some((from) => shortcutKeysEqual(current.keys, from))) {
 			migrated[id] = { ...current, keys: remap.toKeys };
 			needsMigration = true;
 		}

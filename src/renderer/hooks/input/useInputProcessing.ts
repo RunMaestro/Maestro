@@ -23,6 +23,8 @@ import { requestAiCommand } from '../../services/aiCommand';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
+import { hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
+import { probeSessionAiProcesses } from '../../services/process';
 import { resolveForceParallel } from '../../stores/settingsStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
@@ -613,6 +615,193 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
+			// Trigger automatic tab naming. Retries on every send until the tab has a name,
+			// so a failed/timed-out first attempt doesn't leave the tab permanently unnamed.
+			// Skip while a previous attempt is still in flight to avoid duplicate spawns.
+			//
+			// MUST stay ahead of the execution-queue branch below. Naming needs only the
+			// user's text and the target tab, never the spawn, but the queue branch ends in
+			// an early `return` and the dequeue path (agentStore.processQueuedItem) does no
+			// naming of its own. Sitting after it meant a first message sent while any other
+			// tab was busy got queued and the tab stayed permanently unnamed - the retry
+			// never fires because there is no second send.
+			const activeTabForNaming = resolveTargetTab(activeSession);
+			const isAiTab = currentMode === 'ai' && !!activeTabForNaming;
+			const hasTextMessage = effectiveInputValue.trim().length > 0;
+			const hasNoCustomName = !activeTabForNaming?.name;
+			const namingNotInFlight = !activeTabForNaming?.isGeneratingName;
+
+			if (
+				automaticTabNamingEnabled &&
+				isAiTab &&
+				hasTextMessage &&
+				hasNoCustomName &&
+				namingNotInFlight
+			) {
+				// Build the naming prompt from accumulated user messages plus the current one,
+				// capped at 2000 chars. Mirrors the manual Auto handler - richer context produces
+				// more reliable LLM output that survives extractTabName's filters.
+				const MAX_PROMPT_CHARS = 2000;
+				const priorUserMessages: string[] = [];
+				let totalLength = 0;
+				for (const entry of activeTabForNaming.logs) {
+					if (entry.source !== 'user') continue;
+					const text = entry.text.trim();
+					if (!text) continue;
+					if (totalLength + text.length > MAX_PROMPT_CHARS) {
+						priorUserMessages.push(text.substring(0, MAX_PROMPT_CHARS - totalLength));
+						totalLength = MAX_PROMPT_CHARS;
+						break;
+					}
+					priorUserMessages.push(text);
+					totalLength += text.length;
+				}
+				let namingPrompt = effectiveInputValue;
+				if (priorUserMessages.length > 0 && totalLength < MAX_PROMPT_CHARS) {
+					const remaining = MAX_PROMPT_CHARS - totalLength;
+					const currentTrimmed = effectiveInputValue.trim().substring(0, remaining);
+					namingPrompt = [...priorUserMessages, currentTrimmed].join('\n\n');
+				} else if (priorUserMessages.length > 0) {
+					namingPrompt = priorUserMessages.join('\n\n');
+				}
+
+				// Fast-path: extract tab name from known patterns (GitHub URLs, PR/issue refs, Jira tickets)
+				// This avoids spawning an ephemeral agent for messages with obvious identifiers
+				const quickName = extractQuickTabName(namingPrompt);
+				if (quickName) {
+					window.maestro.logger.log('info', `Quick tab named: "${quickName}"`, 'TabNaming', {
+						tabId: activeTabForNaming.id,
+						sessionId: activeSessionId,
+						quickName,
+					});
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== resolvedSessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) =>
+									t.id === activeTabForNaming.id ? { ...t, name: quickName } : t
+								),
+							};
+						})
+					);
+				} else {
+					// Set isGeneratingName to show spinner in tab
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== resolvedSessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) =>
+									t.id === activeTabForNaming.id ? { ...t, isGeneratingName: true } : t
+								),
+							};
+						})
+					);
+
+					window.maestro.logger.log('info', 'Auto tab naming started', 'TabNaming', {
+						tabId: activeTabForNaming.id,
+						sessionId: activeSessionId,
+						agentType: activeSession.toolType,
+						messageLength: namingPrompt.length,
+						priorMessageCount: priorUserMessages.length,
+					});
+
+					// Call the tab naming API (async, fire and forget)
+					window.maestro.tabNaming
+						.generateTabName({
+							userMessage: namingPrompt,
+							agentType: activeSession.toolType,
+							cwd: activeSession.cwd,
+							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+							// Forward session env so naming uses the same provider auth as the chat.
+							sessionCustomEnvVars: activeSession.customEnvVars,
+							// Honor the agent's Claude token source for the naming spawn.
+							// Shared extractor guarantees the SAME complete triple the chat
+							// spawn forwards - no partial/drifting forward possible.
+							...getClaudeTokenSourceFields(activeSession),
+						})
+						.then((generatedName) => {
+							// Clear the generating indicator
+							setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== resolvedSessionId) return s;
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((t) =>
+											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
+										),
+									};
+								})
+							);
+
+							if (!generatedName) {
+								window.maestro.logger.log('warn', 'Auto tab naming returned null', 'TabNaming', {
+									tabId: activeTabForNaming.id,
+									sessionId: activeSessionId,
+								});
+								return;
+							}
+
+							// Update the tab name only if it's still null (user hasn't manually renamed it)
+							setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== resolvedSessionId) return s;
+									const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
+									if (!tab || tab.name !== null) {
+										window.maestro.logger.log(
+											'info',
+											'Auto tab naming skipped (tab already named)',
+											'TabNaming',
+											{
+												tabId: activeTabForNaming.id,
+												generatedName,
+												existingName: tab?.name,
+											}
+										);
+										return s;
+									}
+									window.maestro.logger.log(
+										'info',
+										`Auto tab named: "${generatedName}"`,
+										'TabNaming',
+										{
+											tabId: activeTabForNaming.id,
+											sessionId: activeSessionId,
+											generatedName,
+										}
+									);
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((t) =>
+											t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
+										),
+									};
+								})
+							);
+						})
+						.catch((error) => {
+							window.maestro.logger.log('error', 'Auto tab naming failed', 'TabNaming', {
+								tabId: activeTabForNaming.id,
+								sessionId: activeSessionId,
+								error: String(error),
+							});
+							// Clear the generating indicator on error
+							setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== resolvedSessionId) return s;
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((t) =>
+											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
+										),
+									};
+								})
+							);
+						});
+				}
+			}
+
 			// Cross-agent @mentions (Phase 03). RESOLVE ONLY - nothing is consulted
 			// here. Which agents this message pings is needed now (a leading mention
 			// suppresses the local send), but the consult itself must not fire until
@@ -635,11 +824,71 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const sourceTab = resolveTargetTab(activeSession);
 
 				// The message leads with an `@agent` mention, so it is addressed only at
-				// the consulted agent(s) - there is no local turn for it to queue behind,
-				// so consult now. Record the user's bubble (so the streamed cross-agent
-				// replies have an anchor and the user sees what they asked), then STOP:
-				// do not queue or dispatch to the source agent, do not mark it busy.
+				// the consulted agent(s): this agent does not answer it.
 				if (crossAgentMentionPlan.suppressLocal) {
+					// ...but "this agent doesn't answer it" is NOT the same as "it has
+					// nothing to wait for". When the user has already put work in front
+					// of it - a turn in flight, an item in the queue - the POSITION of
+					// the message is the instruction ("finish the commit, THEN have them
+					// sync"). Queue it as a mention-only item and let the drain fire the
+					// consult when its turn comes, exactly like any other queued message.
+					//
+					// Main-process ownership is authoritative for "is a turn live": the
+					// store can still read idle for a moment after a turn starts, and a
+					// consult fired in that window is exactly the premature ping this
+					// whole path exists to prevent.
+					const mentionProbe = await probeSessionAiProcesses(activeSession.id, mentionSourceTabId);
+					if (
+						mentionProbe.anyActive ||
+						hasWorkAheadOfNewMessage(activeSession, {
+							autoRunActive: getBatchState(activeSession.id).isRunning,
+						})
+					) {
+						const activeTab = resolveTargetTab(activeSession);
+						const mentionQueuedItem: QueuedItem = {
+							id: generateId(),
+							timestamp: Date.now(),
+							tabId: activeTab?.id || activeSession.activeTabId,
+							type: 'message',
+							text: effectiveInputValue,
+							images: [...effectiveImages],
+							tabName:
+								activeTab?.name ||
+								(activeTab?.agentSessionId
+									? activeTab.agentSessionId.split('-')[0].toUpperCase()
+									: 'New'),
+							readOnlyMode: activeTab?.readOnlyMode === true,
+							crossAgentMention: true,
+							crossAgentOnly: true,
+						};
+
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== resolvedSessionId) return s;
+								const trimmed = effectiveInputValue.trim();
+								const priorHistory = s.aiCommandHistory || [];
+								return {
+									...s,
+									aiCommandHistory:
+										trimmed && priorHistory[priorHistory.length - 1] !== trimmed
+											? [...priorHistory, trimmed].slice(-50)
+											: priorHistory,
+									executionQueue: [...s.executionQueue, mentionQueuedItem],
+								};
+							})
+						);
+
+						setInputValue('');
+						if (!usingOverrideImages) setStagedImages([]);
+						syncAiInputToSession('', syncTarget);
+						if (inputRef.current) inputRef.current.style.height = 'auto';
+						return;
+					}
+
+					// Nothing ahead of it, so consult now. Record the user's bubble (the
+					// streamed cross-agent replies need an anchor, and the user should see
+					// what they asked), then STOP: do not queue or dispatch to the source
+					// agent, do not mark it busy.
 					onDispatchCrossAgentMentions?.(
 						crossAgentMentionPlan,
 						effectiveInputValue,
@@ -710,52 +959,20 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (currentMode === 'ai') {
 				const activeTab = resolveTargetTab(activeSession);
 				const isReadOnlyMode = activeTab?.readOnlyMode === true;
-				const targetProcessSessionId = `${activeSession.id}-ai-${activeTab?.id || 'default'}`;
-				const sessionProcessPrefix = `${activeSession.id}-ai-`;
-				let sameTabProcessActive = false;
-				let anySessionAiProcessActive = false;
-				let activeProcessStartTime: number | undefined;
 
-				// The renderer can briefly say "idle" before the process exit event has
-				// reconciled into session state. Main-process ownership is authoritative:
-				// spawning another turn with the same id would otherwise replace the live
-				// process and discard its eventual response.
-				try {
-					const activeProcesses = await window.maestro.process.getActiveProcesses({
-						includeChildProcesses: false,
-					});
-					const sessionAiProcesses = activeProcesses.filter(
-						(process) =>
-							!process.isTerminal &&
-							!process.isCueRun &&
-							process.sessionId.startsWith(sessionProcessPrefix)
-					);
-					anySessionAiProcessActive = sessionAiProcesses.length > 0;
-					sameTabProcessActive = sessionAiProcesses.some(
-						(process) =>
-							process.sessionId === targetProcessSessionId ||
-							process.sessionId.startsWith(`${targetProcessSessionId}-fp-`)
-					);
-					activeProcessStartTime = sessionAiProcesses.reduce<number | undefined>(
-						(earliest, process) => {
-							if (process.startTime === undefined) return earliest;
-							return earliest === undefined
-								? process.startTime
-								: Math.min(earliest, process.startTime);
-						},
-						undefined
-					);
-				} catch (error) {
+				// Main-process ownership is authoritative: the renderer can briefly say
+				// "idle" before the process-exit event has reconciled into session state,
+				// and spawning another turn with the same id would replace the live
+				// process and discard its eventual response. A failed probe reports busy.
+				const processState = await probeSessionAiProcesses(activeSession.id, activeTab?.id);
+				if (processState.probeFailed) {
 					logger.warn(
-						'[processInput] Failed to reconcile active processes before queue decision:',
-						undefined,
-						error
+						'[processInput] Failed to reconcile active processes before queue decision; treating the agent as busy'
 					);
-					// Preserve the input when process ownership is unknown. Treating an IPC
-					// failure as idle can retry the same process id and lose the live response.
-					sameTabProcessActive = true;
-					anySessionAiProcessActive = true;
 				}
+				const sameTabProcessActive = processState.targetTabActive;
+				const anySessionAiProcessActive = processState.anyActive;
+				const activeProcessStartTime = processState.earliestStartTime;
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
@@ -1123,186 +1340,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					};
 				})
 			);
-
-			// Trigger automatic tab naming. Retries on every send until the tab has a name,
-			// so a failed/timed-out first attempt doesn't leave the tab permanently unnamed.
-			// Skip while a previous attempt is still in flight to avoid duplicate spawns.
-			const activeTabForNaming = resolveTargetTab(activeSession);
-			const isAiTab = currentMode === 'ai' && !!activeTabForNaming;
-			const hasTextMessage = effectiveInputValue.trim().length > 0;
-			const hasNoCustomName = !activeTabForNaming?.name;
-			const namingNotInFlight = !activeTabForNaming?.isGeneratingName;
-
-			if (
-				automaticTabNamingEnabled &&
-				isAiTab &&
-				hasTextMessage &&
-				hasNoCustomName &&
-				namingNotInFlight
-			) {
-				// Build the naming prompt from accumulated user messages plus the current one,
-				// capped at 2000 chars. Mirrors the manual Auto handler - richer context produces
-				// more reliable LLM output that survives extractTabName's filters.
-				const MAX_PROMPT_CHARS = 2000;
-				const priorUserMessages: string[] = [];
-				let totalLength = 0;
-				for (const entry of activeTabForNaming.logs) {
-					if (entry.source !== 'user') continue;
-					const text = entry.text.trim();
-					if (!text) continue;
-					if (totalLength + text.length > MAX_PROMPT_CHARS) {
-						priorUserMessages.push(text.substring(0, MAX_PROMPT_CHARS - totalLength));
-						totalLength = MAX_PROMPT_CHARS;
-						break;
-					}
-					priorUserMessages.push(text);
-					totalLength += text.length;
-				}
-				let namingPrompt = effectiveInputValue;
-				if (priorUserMessages.length > 0 && totalLength < MAX_PROMPT_CHARS) {
-					const remaining = MAX_PROMPT_CHARS - totalLength;
-					const currentTrimmed = effectiveInputValue.trim().substring(0, remaining);
-					namingPrompt = [...priorUserMessages, currentTrimmed].join('\n\n');
-				} else if (priorUserMessages.length > 0) {
-					namingPrompt = priorUserMessages.join('\n\n');
-				}
-
-				// Fast-path: extract tab name from known patterns (GitHub URLs, PR/issue refs, Jira tickets)
-				// This avoids spawning an ephemeral agent for messages with obvious identifiers
-				const quickName = extractQuickTabName(namingPrompt);
-				if (quickName) {
-					window.maestro.logger.log('info', `Quick tab named: "${quickName}"`, 'TabNaming', {
-						tabId: activeTabForNaming.id,
-						sessionId: activeSessionId,
-						quickName,
-					});
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) =>
-									t.id === activeTabForNaming.id ? { ...t, name: quickName } : t
-								),
-							};
-						})
-					);
-				} else {
-					// Set isGeneratingName to show spinner in tab
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) =>
-									t.id === activeTabForNaming.id ? { ...t, isGeneratingName: true } : t
-								),
-							};
-						})
-					);
-
-					window.maestro.logger.log('info', 'Auto tab naming started', 'TabNaming', {
-						tabId: activeTabForNaming.id,
-						sessionId: activeSessionId,
-						agentType: activeSession.toolType,
-						messageLength: namingPrompt.length,
-						priorMessageCount: priorUserMessages.length,
-					});
-
-					// Call the tab naming API (async, fire and forget)
-					window.maestro.tabNaming
-						.generateTabName({
-							userMessage: namingPrompt,
-							agentType: activeSession.toolType,
-							cwd: activeSession.cwd,
-							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-							// Forward session env so naming uses the same provider auth as the chat.
-							sessionCustomEnvVars: activeSession.customEnvVars,
-							// Honor the agent's Claude token source for the naming spawn.
-							// Shared extractor guarantees the SAME complete triple the chat
-							// spawn forwards - no partial/drifting forward possible.
-							...getClaudeTokenSourceFields(activeSession),
-						})
-						.then((generatedName) => {
-							// Clear the generating indicator
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== resolvedSessionId) return s;
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((t) =>
-											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
-										),
-									};
-								})
-							);
-
-							if (!generatedName) {
-								window.maestro.logger.log('warn', 'Auto tab naming returned null', 'TabNaming', {
-									tabId: activeTabForNaming.id,
-									sessionId: activeSessionId,
-								});
-								return;
-							}
-
-							// Update the tab name only if it's still null (user hasn't manually renamed it)
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== resolvedSessionId) return s;
-									const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
-									if (!tab || tab.name !== null) {
-										window.maestro.logger.log(
-											'info',
-											'Auto tab naming skipped (tab already named)',
-											'TabNaming',
-											{
-												tabId: activeTabForNaming.id,
-												generatedName,
-												existingName: tab?.name,
-											}
-										);
-										return s;
-									}
-									window.maestro.logger.log(
-										'info',
-										`Auto tab named: "${generatedName}"`,
-										'TabNaming',
-										{
-											tabId: activeTabForNaming.id,
-											sessionId: activeSessionId,
-											generatedName,
-										}
-									);
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((t) =>
-											t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
-										),
-									};
-								})
-							);
-						})
-						.catch((error) => {
-							window.maestro.logger.log('error', 'Auto tab naming failed', 'TabNaming', {
-								tabId: activeTabForNaming.id,
-								sessionId: activeSessionId,
-								error: String(error),
-							});
-							// Clear the generating indicator on error
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== resolvedSessionId) return s;
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((t) =>
-											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
-										),
-									};
-								})
-							);
-						});
-				}
-			}
 
 			// If directory changed, check if new directory is a Git repository
 			// For remote sessions, check remoteCwd; for local sessions, check shellCwd

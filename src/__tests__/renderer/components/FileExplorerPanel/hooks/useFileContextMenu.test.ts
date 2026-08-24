@@ -29,6 +29,11 @@ vi.mock('../../../../../renderer/utils/flashCopiedToClipboard', () => ({
 	flashCopiedToClipboard: vi.fn(),
 }));
 
+const notifyToast = vi.fn();
+vi.mock('../../../../../renderer/stores/notificationStore', () => ({
+	notifyToast: (...args: unknown[]) => notifyToast(...args),
+}));
+
 vi.mock('../../../../../renderer/components/FileExplorerPanel/utils/pathHelpers', () => ({
 	collectPreviewableFiles: vi.fn(() => [
 		{ node: { name: 'a.md', type: 'file' }, path: 'docs/a.md' },
@@ -64,6 +69,14 @@ const session = {
 } as any;
 const theme = {} as any;
 
+const makeEvent = () =>
+	({
+		clientX: 100,
+		clientY: 200,
+		preventDefault: vi.fn(),
+		stopPropagation: vi.fn(),
+	}) as unknown as React.MouseEvent;
+
 const defaultArgs = {
 	session,
 	theme,
@@ -87,6 +100,9 @@ const mockMaestro = {
 	fs: {
 		delete: vi.fn().mockResolvedValue({ success: true }),
 		downloadRemoteFile: vi.fn().mockResolvedValue({ success: true, path: '/local/App.tsx' }),
+		compressFolder: vi
+			.fn()
+			.mockResolvedValue({ success: true, path: '/project/docs.zip', name: 'docs.zip' }),
 	},
 	dialog: { saveFile: vi.fn().mockResolvedValue('/local/App.tsx') },
 };
@@ -724,5 +740,56 @@ describe('useFileContextMenu', () => {
 		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
 		expect(setSelectedPaths).toHaveBeenCalledWith(expect.any(Set));
 		expect(result.current.multiDeleteModal).toBeNull();
+	});
+	it('handleCompressFolder zips the folder, toasts the archive name, and refreshes', async () => {
+		const refreshFileTree = vi.fn().mockResolvedValue(undefined);
+		const { result } = renderHook(() => useFileContextMenu({ ...defaultArgs, refreshFileTree }));
+
+		act(() => {
+			result.current.openContextMenu(makeEvent(), folderNode, 'docs', 3);
+		});
+		await act(async () => {
+			await result.current.handleCompressFolder();
+		});
+
+		expect(mockMaestro.fs.compressFolder).toHaveBeenCalledWith('/project/docs', {
+			sshRemoteId: undefined,
+		});
+		// The main process owns the collision suffix, so the toast reports the name
+		// it actually wrote rather than the one we guessed.
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'green', message: expect.stringContaining('docs.zip') })
+		);
+		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
+		expect(result.current.contextMenu).toBeNull();
+	});
+
+	it('handleCompressFolder toasts the failure instead of throwing', async () => {
+		mockMaestro.fs.compressFolder.mockRejectedValueOnce(new Error('disk full'));
+		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
+
+		act(() => {
+			result.current.openContextMenu(makeEvent(), folderNode, 'docs', 3);
+		});
+		await act(async () => {
+			await result.current.handleCompressFolder();
+		});
+
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', message: expect.stringContaining('disk full') })
+		);
+	});
+
+	it('handleCompressFolder is a no-op on a file row', async () => {
+		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
+
+		act(() => {
+			result.current.openContextMenu(makeEvent(), fileNode, 'App.tsx', 0);
+		});
+		await act(async () => {
+			await result.current.handleCompressFolder();
+		});
+
+		expect(mockMaestro.fs.compressFolder).not.toHaveBeenCalled();
 	});
 });

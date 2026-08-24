@@ -41,6 +41,7 @@ import {
 	updateGroupInSession,
 	updateSplitSizes,
 } from '../../utils/panelLayout';
+import { filePaneAttrs } from '../../utils/paneFocus';
 import { usePaneDrag } from '../../hooks/tabs/usePaneDrag';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
@@ -355,7 +356,9 @@ function TiledFilePane({
 	if (!fileTab || !memoizedFilePreviewFile) return <PaneMissingTab theme={theme} />;
 
 	return (
-		<div className="flex-1 overflow-hidden select-text">
+		// Tagged with the tab id so the pane focus router can land the caret in THIS
+		// pane's editor when several file panes are tiled at once (see utils/paneFocus).
+		<div className="flex-1 overflow-hidden select-text" {...filePaneAttrs(fileTabId)}>
 			<React.Suspense fallback={null}>
 				<FilePreview
 					file={memoizedFilePreviewFile}

@@ -208,7 +208,24 @@ export interface CueModalData {
 	/** Tab the modal opens on. Values match `CueModalTab` in
 	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
 	 *  `shared/uiSurfaces.ts`. */
-	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'activity' | 'backup';
+	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
+	/**
+	 * Agent to highlight and scroll to in the dashboard's session table.
+	 *
+	 * The Left Bar's per-agent "Configure Maestro Cue" opens a table of EVERY
+	 * Cue-enabled agent, so without this the menu item promises one agent and
+	 * delivers a list with nothing marking which row you asked for.
+	 *
+	 * Deliberately NOT a filter: cue.yaml is a per-PROJECT file and several
+	 * agents can share one projectRoot, so narrowing the table to one agent
+	 * would hide the sibling that actually owns the config - which is exactly
+	 * the row that explains why this agent shows zero subscriptions.
+	 *
+	 * Optional: the keyboard shortcut, command palette and Settings entry
+	 * points open the dashboard with no agent in hand and nothing to
+	 * disambiguate.
+	 */
+	focusSessionId?: string;
 }
 
 /** Cue YAML editor data */
@@ -243,6 +260,12 @@ export interface GitDiffModalData {
 	 * it so it can diff an agent that isn't active.
 	 */
 	cwd?: string;
+	/**
+	 * Agent the diff was taken for, used to name it in the header. Optional for
+	 * the same reason as `cwd`: the keyboard shortcut and command palette follow
+	 * the active agent, so there is nothing to disambiguate.
+	 */
+	sessionId?: string;
 }
 
 /**
@@ -253,6 +276,8 @@ export interface GitDiffModalData {
 export interface GitLogModalData {
 	cwd: string;
 	sshRemoteId?: string;
+	/** Agent the log belongs to, used to name it in the header. */
+	sessionId?: string;
 }
 
 /** Git command runner data - which streaming operation the console modal runs */
@@ -390,7 +415,9 @@ export type ModalId =
 	| 'cueModal'
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
-	| 'pianolaModal';
+	| 'pianolaModal'
+	// Concerto (agent-composed views)
+	| 'concertoStage';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -414,6 +441,12 @@ export interface ModalDataMap {
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
+	/**
+	 * Present when opened from the Left Bar's right-click menu, naming the agent
+	 * to configure. Absent when opened from the header or Settings, where the
+	 * modal follows the active agent.
+	 */
+	worktreeConfig: WorktreeModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
 	deleteWorktree: WorktreeModalData;
@@ -659,7 +692,7 @@ export const selectModalData =
  * Use this for event handlers and callbacks.
  */
 export function getModalActions() {
-	const { openModal, closeModal, updateModalData } = useModalStore.getState();
+	const { openModal, closeModal, toggleModal, updateModalData } = useModalStore.getState();
 
 	return {
 		// Settings Modal
@@ -957,8 +990,15 @@ export function getModalActions() {
 		closeReauthModal: () => closeModal('reauth'),
 
 		// Worktree Modals
+		// Opened WITHOUT a target (header pill, Settings): follows the active agent.
 		setWorktreeConfigModalOpen: (open: boolean) =>
 			open ? openModal('worktreeConfig') : closeModal('worktreeConfig'),
+		// Opened WITH a target (Left Bar right-click): configures that agent
+		// wherever the selection happens to be. This used to be done by
+		// force-activating the right-clicked agent first, which silently moved
+		// the user's selection as a side effect of opening a dialog.
+		setWorktreeConfigSession: (session: Session | null) =>
+			session ? openModal('worktreeConfig', { session }) : closeModal('worktreeConfig'),
 		setCreateWorktreeModalOpen: (open: boolean) =>
 			open ? openModal('createWorktree') : closeModal('createWorktree'),
 		setCreateWorktreeSession: (session: Session | null) =>
@@ -1042,8 +1082,8 @@ export function getModalActions() {
 
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
-		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>) =>
-			openModal('cueModal', { initialTab: tab }),
+		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>, focusSessionId?: string) =>
+			openModal('cueModal', { initialTab: tab, focusSessionId }),
 
 		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)
 		openCueYamlEditor: (sessionId: string, projectRoot: string) =>
@@ -1053,6 +1093,14 @@ export function getModalActions() {
 		// Pianola Modal (autonomous manager: rules + decision log)
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
+
+		// Concerto stage. This one flag is the whole truth about whether the stage
+		// is up: the movement store reads it back rather than keeping its own
+		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
+		// panel cannot disagree about it.
+		setConcertoStageOpen: (open: boolean) =>
+			open ? openModal('concertoStage') : closeModal('concertoStage'),
+		toggleConcertoStage: () => toggleModal('concertoStage'),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),

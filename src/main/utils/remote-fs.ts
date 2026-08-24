@@ -1160,6 +1160,56 @@ export async function deleteRemote(
 }
 
 /**
+ * Zip a directory on a remote host via SSH.
+ *
+ * Runs `zip -r` from the folder's parent so the archive contains the folder
+ * itself as its single top-level entry (matching the local archiver path).
+ * Symlinks are stored rather than followed, so a self-referencing link cannot
+ * make the archive grow without bound.
+ *
+ * @param folderPath Absolute path of the folder to compress
+ * @param destZipPath Absolute path the .zip should be written to
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ * @returns Success/failure result
+ */
+export async function compressFolderRemote(
+	folderPath: string,
+	destZipPath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>> {
+	const trimmed = folderPath.replace(/\/+$/, '');
+	const lastSlash = trimmed.lastIndexOf('/');
+	const parentPath = lastSlash > 0 ? trimmed.slice(0, lastSlash) : lastSlash === 0 ? '/' : '.';
+	const folderName = trimmed.slice(lastSlash + 1);
+
+	const escapedParent = shellEscapeRemotePath(parentPath);
+	const escapedDest = shellEscapeRemotePath(destZipPath);
+	const escapedName = shellEscape(folderName);
+	const remoteCommand = `cd ${escapedParent} && zip -r -q -y ${escapedDest} ${escapedName}`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to compress: ${folderPath}`;
+		// 127 is the shell's "command not found" - the remote host has no `zip`.
+		if (result.exitCode === 127 || /zip: (command )?not found/i.test(error)) {
+			return {
+				success: false,
+				error: 'The remote host does not have the `zip` command installed',
+			};
+		}
+		return {
+			success: false,
+			error: error.includes('Permission denied') ? `Permission denied: ${destZipPath}` : error,
+		};
+	}
+
+	return { success: true };
+}
+
+/**
  * Count files and folders in a directory on a remote host via SSH.
  *
  * @param dirPath Directory path to count items in

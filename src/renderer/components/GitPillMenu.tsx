@@ -36,6 +36,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { GitChangeCounts } from './ui/GitChangeCounts';
+import { GitRunningBadge } from './ui/GitRunningBadge';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { remoteUrlToBrowserUrl, type GitChangeTotals } from '../../shared/gitUtils';
@@ -69,6 +70,13 @@ export interface GitPillMenuProps {
 	behind: number;
 	/** Uncommitted-change totals - badged on View Git Diff. */
 	changes: GitChangeTotals;
+	/**
+	 * Whether a pull / push for this repo is still running, including one whose
+	 * console was dismissed with Run in Background. Badged on the matching row so
+	 * the menu that started the command also reports it is still working.
+	 */
+	pullRunning?: boolean;
+	pushRunning?: boolean;
 	onViewLog: () => void;
 	onViewDiff: () => void;
 	onPull: () => void;
@@ -117,6 +125,8 @@ export const GitPillMenu = memo(function GitPillMenu({
 	ahead,
 	behind,
 	changes,
+	pullRunning = false,
+	pushRunning = false,
 	onViewLog,
 	onViewDiff,
 	onPull,
@@ -263,7 +273,15 @@ export const GitPillMenu = memo(function GitPillMenu({
 					icon={<ArrowDownToLine className="w-3.5 h-3.5" style={iconStyle} />}
 					label="Git Pull"
 					badge={
-						behind > 0 ? (
+						// A run in flight outranks the behind count, which is stale until
+						// it finishes anyway.
+						pullRunning ? (
+							<GitRunningBadge
+								theme={theme}
+								className="ml-auto flex items-center gap-1 text-[10px]"
+								testId="git-pill-menu-pull-running"
+							/>
+						) : behind > 0 ? (
 							<span className="ml-auto flex items-center gap-0.5 text-[10px] text-red-500">
 								<ArrowDown className="w-3 h-3" />
 								{behind}
@@ -278,7 +296,13 @@ export const GitPillMenu = memo(function GitPillMenu({
 					icon={<ArrowUpFromLine className="w-3.5 h-3.5" style={iconStyle} />}
 					label="Git Push"
 					badge={
-						ahead > 0 ? (
+						pushRunning ? (
+							<GitRunningBadge
+								theme={theme}
+								className="ml-auto flex items-center gap-1 text-[10px]"
+								testId="git-pill-menu-push-running"
+							/>
+						) : ahead > 0 ? (
 							<span className="ml-auto flex items-center gap-0.5 text-[10px] text-green-500">
 								<ArrowUp className="w-3 h-3" />
 								{ahead}

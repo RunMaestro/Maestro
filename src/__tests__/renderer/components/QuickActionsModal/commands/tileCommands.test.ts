@@ -50,9 +50,15 @@ function session(extra?: Partial<Session>): Session {
 	} as unknown as Session;
 }
 
-function build(activeSession: Session | undefined) {
+function build(
+	activeSession: Session | undefined,
+	shortcuts?: Parameters<typeof buildTileCommands>[0]['shortcuts']
+) {
 	const setQuickActionOpen = vi.fn();
-	return { actions: buildTileCommands({ activeSession, setQuickActionOpen }), setQuickActionOpen };
+	return {
+		actions: buildTileCommands({ activeSession, setQuickActionOpen, shortcuts }),
+		setQuickActionOpen,
+	};
 }
 
 beforeEach(() => {
@@ -87,6 +93,28 @@ describe('buildTileCommands', () => {
 		const matched = filterAndSortQuickActions(actions, 'tile', 'main');
 		expect(matched).toHaveLength(4);
 		expect(matched.every((a) => a.label.startsWith('Tile'))).toBe(true);
+	});
+
+	it('badges a row only once its shortcut is actually bound', () => {
+		// Three of the four ship unbound (keys: []). Rendering an empty pill next to
+		// the label reads as a broken badge, so those rows carry no shortcut at all
+		// until the user records one in Settings.
+		const { actions } = build(session(), {
+			tileTerminalBelow: { id: 'tileTerminalBelow', label: 'T', keys: ['Meta', 'Shift', 'j'] },
+			tileAiBelow: { id: 'tileAiBelow', label: 'A', keys: [] },
+		});
+		const byId = Object.fromEntries(actions.map((a) => [a.id, a]));
+		expect(byId['tileBelow:terminal'].shortcut?.keys).toEqual(['Meta', 'Shift', 'j']);
+		expect(byId['tileBelow:ai'].shortcut).toBeUndefined();
+		expect(byId['tileBelow:file'].shortcut).toBeUndefined();
+	});
+
+	it('shows a user-assigned binding on a previously unbound row', () => {
+		const { actions } = build(session(), {
+			tileFileBelow: { id: 'tileFileBelow', label: 'F', keys: ['Meta', 'Shift', 'y'] },
+		});
+		const file = actions.find((a) => a.id === 'tileBelow:file');
+		expect(file?.shortcut?.keys).toEqual(['Meta', 'Shift', 'y']);
 	});
 
 	it('closes the palette and commits one session update', () => {

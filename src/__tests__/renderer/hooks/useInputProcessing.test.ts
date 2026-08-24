@@ -2515,6 +2515,127 @@ describe('useInputProcessing', () => {
 			expect(queued.crossAgentMention).toBe(true);
 		});
 
+		// The reported bug: the user queued /commit, then sent "@rc sync up" meaning
+		// "after the commit". Because the message LEADS with the mention, the source
+		// agent does not answer it - but that does not mean it has nothing to wait
+		// for. Its POSITION in the queue is the instruction.
+		it('queues a mention-only message behind work the user already lined up', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			session.executionQueue = [
+				{
+					id: 'queued-commit',
+					timestamp: 1,
+					tabId: session.aiTabs[0].id,
+					type: 'command',
+					command: '/commit',
+				},
+			];
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Resolved, but nobody consulted: /commit is still ahead of it.
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			// Queued AFTER the commit, flagged as consult-only so the drain fires the
+			// mention without spawning a local turn.
+			expect(updated.executionQueue.map((i: { id: string }) => i.id)).toEqual([
+				'queued-commit',
+				expect.any(String),
+			]);
+			const queued = updated.executionQueue[1];
+			expect(queued.text).toBe('@rc pull in the latest changes');
+			expect(queued.crossAgentMention).toBe(true);
+			expect(queued.crossAgentOnly).toBe(true);
+			// No user bubble yet - it is appended when the item actually dispatches.
+			expect(updated.aiTabs[0].logs).toEqual([]);
+		});
+
+		it('queues a mention-only message while the agent is mid-turn', async () => {
+			// Same rule with nothing in the queue: a turn in flight is still work
+			// ahead, and the consulted agent should see the transcript after it lands.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'busy' });
+			session.aiTabs[0].state = 'busy';
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
+		it('queues a mention-only message when only MAIN knows a turn is live', async () => {
+			// The store can read idle for a moment after a turn starts. Trusting it
+			// here fires the consult into a gap the user never saw - the same
+			// premature ping this path exists to prevent - so the mention branch asks
+			// main, exactly like the ordinary queue decision does.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([
+				{
+					sessionId: `${session.id}-ai-${session.activeTabId}`,
+					toolType: session.toolType,
+					pid: 4242,
+					cwd: session.cwd,
+					isTerminal: false,
+					isBatchMode: true,
+					startTime: 1700000000000,
+				},
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
 		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {
 			// Cross-agent resolution is gated on a real input-box submit
 			// (`overrideInputValue === undefined`) so a queued replay never re-consults.
@@ -2540,6 +2661,104 @@ describe('useInputProcessing', () => {
 			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
 			// The override message dispatches normally (not suppressed).
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+	});
+
+	describe('automatic tab naming', () => {
+		// Naming spawns an ephemeral agent through this bridge; the tests assert
+		// that it is asked at all, not what it answers.
+		const mockGenerateTabName = vi.fn().mockResolvedValue('Generated Name');
+
+		beforeEach(() => {
+			mockGenerateTabName.mockClear();
+			window.maestro = {
+				...window.maestro,
+				tabNaming: { generateTabName: mockGenerateTabName },
+				logger: { ...window.maestro?.logger, log: vi.fn().mockResolvedValue(undefined) },
+			} as typeof window.maestro;
+		});
+
+		it('names the tab even when the message is queued behind another busy tab', async () => {
+			// The regression: naming used to sit AFTER the execution-queue early
+			// return, and the dequeue path never names. A first message sent while
+			// any other tab was busy therefore left the tab permanently unnamed -
+			// the per-send retry never fires because there is no second send.
+			const busyOtherTab = createMockTab({ id: 'tab-busy', name: 'Other Work', state: 'busy' });
+			const unnamedTab = createMockTab({ id: 'tab-new', name: null, state: 'idle' });
+			const session = createMockSession({
+				state: 'busy',
+				aiTabs: [busyOtherTab, unnamedTab],
+				activeTabId: unnamedTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'alphabetize the groups in this menu',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// The send really did queue - otherwise this test proves nothing.
+			const queued = mockSetSessions.mock.calls
+				.map((call) => call[0]([session])[0].executionQueue)
+				.find((queue) => queue.length > 0);
+			expect(queued?.[0]?.text).toBe('alphabetize the groups in this menu');
+
+			// ...and naming still ran against the unnamed target tab.
+			expect(mockGenerateTabName).toHaveBeenCalledTimes(1);
+			expect(mockGenerateTabName.mock.calls[0][0].userMessage).toBe(
+				'alphabetize the groups in this menu'
+			);
+		});
+
+		it('names the tab on a direct (unqueued) send', async () => {
+			const unnamedTab = createMockTab({ id: 'tab-new', name: null, state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiPid: null,
+				aiTabs: [unnamedTab],
+				activeTabId: unnamedTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'add compress to folder right click',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockGenerateTabName).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not name a tab that already has one', async () => {
+			const namedTab = createMockTab({ id: 'tab-named', name: 'Already Named', state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiPid: null,
+				aiTabs: [namedTab],
+				activeTabId: namedTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'another message',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockGenerateTabName).not.toHaveBeenCalled();
 		});
 	});
 });

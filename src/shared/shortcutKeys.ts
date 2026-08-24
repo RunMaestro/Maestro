@@ -71,3 +71,32 @@ export function formatShortcutKeysFor(keys: string[], isMac: boolean, separator?
 	const sep = separator ?? (isMac ? ' ' : '+');
 	return keys.map((key) => formatKeyFor(key, isMac)).join(sep);
 }
+
+/**
+ * A key combination reduced to a canonical, order-independent string.
+ *
+ * `['Meta', 'Shift', 'k']` and `['Shift', 'Meta', 'k']` are the SAME chord -
+ * the user held three keys down, and the order the recorder happened to read
+ * them in is an implementation detail. Sorting is what makes them compare
+ * equal.
+ *
+ * Case is preserved deliberately: the maps store `'k'`, and a shortcut is
+ * matched against `event.key`, where `'k'` and `'K'` mean different things
+ * (the second implies Shift).
+ */
+export function normalizeShortcutKeys(keys: readonly string[]): string {
+	return [...keys].sort().join('+');
+}
+
+/**
+ * Whether two key combinations are the same chord, regardless of order.
+ *
+ * This is the ONLY correct comparison for "is this combination already taken".
+ * An ordered compare (`a.every((k, i) => k === b[i])`) reports no conflict for
+ * a reordered duplicate, so a collision check built on one passes while looking
+ * validated - worse than having no check at all, because the user then trusts
+ * it.
+ */
+export function shortcutKeysEqual(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && normalizeShortcutKeys(a) === normalizeShortcutKeys(b);
+}

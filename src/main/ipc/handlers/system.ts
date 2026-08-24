@@ -28,6 +28,7 @@ import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
+import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { createSafeSend } from '../../utils/safe-send';
@@ -46,6 +47,32 @@ export interface SystemHandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	getWebServer: () => WebServer | null;
 	bootstrapStore?: Store<BootstrapSettings>;
+}
+
+/**
+ * Decode a data URL into a NativeImage for the clipboard.
+ *
+ * `nativeImage.createFromDataURL()` trusts the DECLARED media type and accepts
+ * only `image/png` and `image/jpeg`, so a JPEG announced as `image/jpg` decodes
+ * to an empty image and the copy silently degrades to pasting the data URL as
+ * text. Every producer here should emit a canonical type (see
+ * `getImageMimeType`), but the clipboard follows the BYTES rather than the
+ * label: on an empty decode the base64 payload is handed to
+ * `createFromBuffer`, which sniffs the PNG/JPEG magic itself.
+ *
+ * Formats Chromium's image decoder does not expose to nativeImage (webp, gif)
+ * still come back empty - the renderer rasterizes those to PNG before it gets
+ * here.
+ */
+function decodeClipboardImage(dataUrl: string): Electron.NativeImage {
+	const direct = nativeImage.createFromDataURL(dataUrl);
+	if (!direct.isEmpty()) return direct;
+
+	const comma = dataUrl.indexOf(',');
+	if (comma < 0 || !/^data:[^,]*;base64$/i.test(dataUrl.slice(0, comma))) {
+		return direct;
+	}
+	return nativeImage.createFromBuffer(Buffer.from(dataUrl.slice(comma + 1), 'base64'));
 }
 
 /**
@@ -189,7 +216,16 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	});
 
 	// Shell operations - open external URLs
-	const ALLOWED_PROTOCOLS = ['http:', 'https:', 'mailto:'];
+	//
+	// `clickup:` lets a ClickUp task link open the native desktop app instead of a browser tab. ClickUp
+	// registers the scheme (CFBundleURLSchemes) but declares no associated-domains, so macOS universal links
+	// never redirect app.clickup.com on their own - the scheme is the only route to the app, and this
+	// allowlist was the one thing standing in the way.
+	//
+	// Safe on the same grounds that already admit `mailto:`: the OS hands the URL to whichever app claims the
+	// scheme, with no code execution here, and unlike `file:` (handled above) it cannot reach the filesystem.
+	// The vectors this list exists to stop, `javascript:` and `data:`, remain blocked.
+	const ALLOWED_PROTOCOLS = ['http:', 'https:', 'mailto:', 'clickup:'];
 	ipcMain.handle('shell:openExternal', async (_event, url: string) => {
 		// Validate URL before opening - Fixes MAESTRO-1S
 		if (!url || typeof url !== 'string') {
@@ -321,7 +357,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		if (!dataUrl || typeof dataUrl !== 'string') {
 			throw new Error('Invalid data URL: must be a non-empty string');
 		}
-		const img = nativeImage.createFromDataURL(dataUrl);
+		const img = decodeClipboardImage(dataUrl);
 		if (img.isEmpty()) {
 			throw new Error('Failed to create image from data URL');
 		}
@@ -419,6 +455,16 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 				mainWindow.webContents.openDevTools();
 			}
 		}
+	});
+
+	// ============ Application Menu Handlers ============
+
+	// The renderer owns the shortcut map (bundled defaults merged with the
+	// user's remaps), so it pushes the merged bindings here on mount and on
+	// every change. The menu is rebuilt so the accelerators it displays match
+	// what is actually bound. Display only - see src/main/app-menu.ts.
+	ipcMain.on('menu:setShortcutKeys', (_event, keys: Record<string, string[]>) => {
+		setMenuShortcutKeys(keys);
 	});
 
 	// ============ Update Check Handler ============

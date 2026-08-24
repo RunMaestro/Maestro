@@ -166,6 +166,29 @@ export function getMentionNameForContext(name: string, peerNames: readonly strin
 	return normalizeMentionName(name);
 }
 
+/**
+ * The literal a group row inserts when it is accepted in an `@` picker: every
+ * member's own `@name` token, space-separated, with a trailing space.
+ *
+ * A group is shorthand for the agents inside it, never a message target of its
+ * own, so accepting one EXPANDS it instead of leaving a `@group` token in the
+ * composer. That is what keeps "is this a group or an agent?" from ever
+ * mattering downstream - the sent text only ever names agents. Group Chat, the
+ * Prompt Composer, and the standard AI chat picker all insert through here so
+ * the three cannot drift on the expansion.
+ *
+ * @param memberNames - Names of the group's mentionable members.
+ * @param peerNames - Every mentionable name in the same context, so each member
+ *   gets the alias that resolves uniquely back to it.
+ */
+export function formatGroupMentionExpansion(
+	memberNames: readonly string[],
+	peerNames: readonly string[]
+): string {
+	if (memberNames.length === 0) return '';
+	return memberNames.map((name) => `@${getMentionNameForContext(name, peerNames)}`).join(' ') + ' ';
+}
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================

@@ -34,6 +34,7 @@ import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboa
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { requestFileDeletion } from '../../services/fileDeletion';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
@@ -96,6 +97,7 @@ import {
 	domScrollToLineByAttr,
 } from './lineSync';
 import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
+import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 
@@ -761,6 +763,12 @@ export const FilePreview = React.memo(
 			[file, onSave, hasChanges, sshRemoteId]
 		);
 
+		// Pinned to one identity before it reaches the component map below. The
+		// handler closes over `file`, so it is reborn every time the content
+		// changes - and rebuilding that map remounts the whole rendered document,
+		// which throws away the reader's scroll position mid-click.
+		const stableToggleTask = useStableCallback(handleToggleTask);
+
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
@@ -778,7 +786,7 @@ export const FilePreview = React.memo(
 				bionifyAlgorithm,
 				// Clickable task checkboxes, paired with `rehypeSourceLine` above.
 				// A preview with nowhere to save to stays read-only.
-				onTaskToggle: onSave ? handleToggleTask : undefined,
+				onTaskToggle: onSave ? stableToggleTask : undefined,
 			});
 			return {
 				...components,
@@ -819,16 +827,18 @@ export const FilePreview = React.memo(
 				// Fixes MAESTRO-8Q
 				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
+			// `file.path` only: depending on the whole object would rebuild this map
+			// (and remount the rendered document) on every content change.
 		}, [
 			onFileClick,
 			handleExternalLinkClick,
 			theme,
 			cwd,
-			file,
+			file?.path,
 			showRemoteImages,
 			sshRemoteId,
 			onSave,
-			handleToggleTask,
+			stableToggleTask,
 			effectiveBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
@@ -841,6 +851,13 @@ export const FilePreview = React.memo(
 		const headerIconClass = 'w-4 h-4';
 		const headerBtnClass =
 			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
+
+		// Delete the previewed file. Shared with the command palette's
+		// "File: Delete" entry, so both raise the same confirmation.
+		const handleDeleteFile = useCallback(() => {
+			if (!file?.path) return;
+			requestFileDeletion({ path: file.path, sshRemoteId });
+		}, [file?.path, sshRemoteId]);
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1699,6 +1716,7 @@ export const FilePreview = React.memo(
 					wordWrap={fileEditWordWrap}
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
+					onDelete={handleDeleteFile}
 				/>
 
 				{/* File changed on disk banner */}
@@ -1788,7 +1806,7 @@ export const FilePreview = React.memo(
 					    find bar when that is open so the two never overlap. */}
 					{canScaleFont && (
 						<div
-							className={`sticky z-20 h-0 flex justify-end pointer-events-none ${
+							className={`sticky z-20 h-0 flex items-start justify-end pointer-events-none ${
 								searchOpen ? 'top-14' : 'top-0'
 							}`}
 						>

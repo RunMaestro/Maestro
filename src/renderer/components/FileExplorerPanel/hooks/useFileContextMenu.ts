@@ -7,6 +7,7 @@ import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../../../hooks/ui/useContextMenuPosition';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { useModalStore } from '../../../stores/modalStore';
+import { notifyToast } from '../../../stores/notificationStore';
 import { safeClipboardWrite } from '../../../utils/clipboard';
 import { captureException } from '../../../utils/sentry';
 import { shouldOpenExternally } from '../../../utils/fileExplorer';
@@ -62,6 +63,7 @@ interface UseFileContextMenuResult {
 	handleOpenNewFile: () => void;
 	handleOpenNewFolder: () => void;
 	handleNewAgentHere: () => void;
+	handleCompressFolder: () => Promise<void>;
 	handleOpenRename: () => void;
 	handleOpenDelete: () => Promise<void>;
 	handleFocusInGraph: () => void;
@@ -614,6 +616,44 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [resolveCreateParent, openNewFolderModal]);
 
+	// Zip a folder into `<name>.zip` beside it in the parent directory. The main
+	// process picks the archive name (auto-suffixing `-1`, `-2`, ... when taken)
+	// and reports back what it wrote, so the toast names the real file.
+	const handleCompressFolder = useCallback(async () => {
+		const menu = contextMenu;
+		setContextMenu(null);
+		if (!menu || !menu.node || menu.node.type !== 'folder') return;
+
+		const folderName = menu.node.name;
+		const absolutePath = `${session.fullPath}/${menu.path}`;
+		try {
+			const result = await window.maestro.fs.compressFolder(absolutePath, { sshRemoteId });
+			notifyToast({
+				color: 'green',
+				title: 'Folder compressed',
+				message: `"${folderName}" -> ${result.name}`,
+			});
+			// The archive lands in the parent directory, which is usually on screen -
+			// refresh so it shows up without the auto-refresh interval's delay.
+			await refreshFileTree(session.id);
+		} catch (error) {
+			captureException(error, {
+				extra: {
+					action: 'compress-folder',
+					path: menu.path,
+					nodeName: folderName,
+					sessionId: session.id,
+					sshRemoteId,
+				},
+			});
+			notifyToast({
+				color: 'red',
+				title: 'Compress failed',
+				message: `Could not compress "${folderName}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+			});
+		}
+	}, [contextMenu, session.fullPath, session.id, sshRemoteId, refreshFileTree]);
+
 	const handleOpenRename = useCallback(() => {
 		if (contextMenu && contextMenu.node) {
 			openRenameModal(contextMenu.node, contextMenu.path);
@@ -647,6 +687,7 @@ export function useFileContextMenu({
 		handleOpenNewFile,
 		handleOpenNewFolder,
 		handleNewAgentHere,
+		handleCompressFolder,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,

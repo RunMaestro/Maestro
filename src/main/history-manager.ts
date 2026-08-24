@@ -41,6 +41,34 @@ import {
 const LOG_CONTEXT = '[HistoryManager]';
 
 /**
+ * Error codes that mean "this machine cannot watch right now", not "Maestro is
+ * broken". ENOENT/EPERM/UNKNOWN are the directory going away or turning
+ * unreadable; EMFILE/ENFILE/ENOSPC are OS resource ceilings (fd limit, and on
+ * Linux the inotify `max_user_watches` cap, which surfaces as ENOSPC rather
+ * than a disk-space error).
+ *
+ * Watching only powers live refresh when another process edits history on disk;
+ * the caller already degrades to a null watcher and history keeps working, so
+ * these are best-effort failures and reporting them to Sentry is pure noise.
+ *
+ * Deliberately NOT shared with `isExpectedSessionReadError` in
+ * ipc/handlers/agentSessions.ts, which excludes EMFILE on purpose: an EMFILE
+ * while *reading* a session file can mean a real fd leak worth reporting.
+ */
+const EXPECTED_WATCH_ERROR_CODES = new Set([
+	'ENOENT',
+	'EPERM',
+	'UNKNOWN',
+	'EMFILE',
+	'ENFILE',
+	'ENOSPC',
+]);
+
+function isExpectedWatchError(code: string | undefined): boolean {
+	return typeof code === 'string' && EXPECTED_WATCH_ERROR_CODES.has(code);
+}
+
+/**
  * Best-effort fs.access: resolves true if the path is readable, false on
  * ENOENT. Other errors propagate to the caller (or are caught at the
  * outer try in the public method).
@@ -737,11 +765,16 @@ export class HistoryManager {
 	startWatching(onExternalChange: (sessionId: string) => void): void {
 		if (this.watcher) return; // Already watching
 
-		// Ensure directory exists before watching. mkdirSync with recursive
-		// is idempotent and only runs once per app lifetime.
-		fs.mkdirSync(this.historyDir, { recursive: true });
-
 		try {
+			// Ensure directory exists before watching. mkdirSync with recursive
+			// is idempotent and only runs once per app lifetime. It is INSIDE the
+			// try because it fails with the same OS-ceiling codes fs.watch does
+			// (EMFILE, ENOSPC, EACCES); left outside, one of those would bypass
+			// isExpectedWatchError entirely, propagate to the caller in
+			// main/index.ts, and report as a history initialization failure - the
+			// exact Sentry noise this guard exists to stop.
+			fs.mkdirSync(this.historyDir, { recursive: true });
+
 			this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {
 				if (filename?.endsWith('.json')) {
 					const sessionId = filename.replace('.json', '');
@@ -755,9 +788,19 @@ export class HistoryManager {
 			// the EventEmitter throws as an unhandled exception and crashes the main process.
 			// Expected/recoverable codes get a quiet warn; everything else goes to Sentry
 			// so we keep visibility into novel failure modes in production.
-			this.watcher.on('error', (err) => {
+			const watcher = this.watcher;
+			watcher.on('error', (err) => {
+				// Node documents an FSWatcher as unusable once it emits 'error', and
+				// says not to call methods on it from the handler - so drop the
+				// reference rather than close() it. Without this the dead watcher
+				// keeps failing the `if (this.watcher) return` guard above and live
+				// refresh never comes back for the rest of the session. Compare
+				// identity so a late error from a previous watcher cannot clear a
+				// replacement that has already been installed.
+				if (this.watcher === watcher) this.watcher = null;
+
 				const code = (err as NodeJS.ErrnoException | undefined)?.code;
-				if (code === 'ENOENT' || code === 'EPERM' || code === 'UNKNOWN') {
+				if (isExpectedWatchError(code)) {
 					logger.warn(`History watcher error (${code}): ${String(err)}`, LOG_CONTEXT);
 					return;
 				}
@@ -771,10 +814,13 @@ export class HistoryManager {
 			logger.info('Started watching history directory', LOG_CONTEXT);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			void captureException(error, {
-				operation: 'history:watch:start',
-				historyDir: this.historyDir,
-			});
+			const code = (error as NodeJS.ErrnoException | undefined)?.code;
+			if (!isExpectedWatchError(code)) {
+				void captureException(error, {
+					operation: 'history:watch:start',
+					historyDir: this.historyDir,
+				});
+			}
 			logger.warn(`Failed to start history watcher: ${message}`, LOG_CONTEXT);
 			this.watcher = null;
 		}

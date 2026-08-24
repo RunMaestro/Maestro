@@ -143,7 +143,7 @@ describe('cue schedule (recurring + edit)', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0].name).toBe('daily-task');
 		expect(rows[0].kind).toBe('daily');
-		expect(rows[0].schedule).toBe('09:00 (every day)');
+		expect(rows[0].schedule).toBe('09:00 · Every day');
 		expect(rows[0].next_fire_at).not.toBe('');
 	});
 

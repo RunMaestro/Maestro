@@ -36,6 +36,25 @@ const resolve = (next: Updater, prev: string): string =>
 interface ComposerInputState {
 	/** Live AI prompt draft for the active tab. */
 	aiValue: string;
+	/**
+	 * Which tab `aiValue` belongs to, or `null` when the text is not (yet) owned
+	 * by any tab.
+	 *
+	 * WHY THIS EXISTS - draft bleed: attribution used to be inferred from a
+	 * ref-mirror of "whatever tab is active right now", which is a different
+	 * question. An agent is allowed to have zero AI tabs (a file tab open, every
+	 * AI tab closed) and `activeSessionId` can name an agent whose session object
+	 * has not landed yet - in both windows the composer is still on screen and
+	 * typeable, and the inferred attribution pointed at the LAST AI tab of the
+	 * PREVIOUS agent. Text typed there was flushed onto a stranger's tab.
+	 *
+	 * Stamping the owner beside the text makes the answer travel with the text:
+	 * a flush goes to the tab the draft was loaded for (or adopted by), never to
+	 * whatever is active when the write lands. `null` means "typed with no tab to
+	 * put it in" - it is parked, not attributed, and the next tab to become
+	 * active adopts it rather than the text being lost or misfiled.
+	 */
+	aiValueTabId: string | null;
 	/** Live terminal command draft for the active session. */
 	terminalValue: string;
 	/**
@@ -54,19 +73,40 @@ interface ComposerInputState {
 	setAiValue: (value: Updater) => void;
 	setTerminalValue: (value: Updater) => void;
 	setAiCommandMode: (commandMode: ComposerCommandMode) => void;
+	/**
+	 * Put a tab's draft in the composer and stamp that tab as its owner, in one
+	 * write. Text, mode and owner are a triple: the same string is a message, a
+	 * shell command or a request for one depending on the mode, and it belongs to
+	 * exactly one tab - so nothing may observe a state where they disagree.
+	 *
+	 * Pass `tabId: null` to park text that no tab owns yet.
+	 */
+	loadAiDraft: (tabId: string | null, value: string, commandMode: ComposerCommandMode) => void;
+	/**
+	 * Claim unowned composer text for a tab, leaving the text untouched. Used
+	 * when a tab materializes under text the user already typed.
+	 */
+	adoptAiDraft: (tabId: string) => void;
 }
 
 export const useComposerInputStore = create<ComposerInputState>()((set) => ({
 	aiValue: '',
+	aiValueTabId: null,
 	terminalValue: '',
 	aiCommandMode: 'off',
 	setAiValue: (value) => set((s) => ({ aiValue: resolve(value, s.aiValue) })),
 	setTerminalValue: (value) => set((s) => ({ terminalValue: resolve(value, s.terminalValue) })),
 	setAiCommandMode: (commandMode) => set({ aiCommandMode: commandMode }),
+	loadAiDraft: (tabId, value, commandMode) =>
+		set({ aiValue: value, aiValueTabId: tabId, aiCommandMode: commandMode }),
+	adoptAiDraft: (tabId) => set({ aiValueTabId: tabId }),
 }));
 
 /** Selector: the live AI draft. */
 export const selectAiComposerValue = (s: ComposerInputState): string => s.aiValue;
+
+/** Selector: the tab the live AI draft belongs to, if any. */
+export const selectAiComposerTabId = (s: ComposerInputState): string | null => s.aiValueTabId;
 
 /** Selector: the live terminal draft. */
 export const selectTerminalComposerValue = (s: ComposerInputState): string => s.terminalValue;

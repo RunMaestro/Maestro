@@ -183,6 +183,43 @@ The Inline Wizard creates Auto Run Playbook documents from within an existing ag
 - On completion, tab renamed to "Project: {SubfolderName}"
 - Final AI message summarizes generated docs and next steps
 - Same `agentSessionId` preserved for context continuity
+- **Escape is a ladder, not a single action.** Mid-turn it stops the running turn
+  and stays in the wizard (same as a regular AI tab); idle with user messages it
+  opens the exit confirmation; idle with none it leaves wizard mode. The mid-turn
+  branch must return early: during the first turn the conversation still looks
+  untouched, which is how one Escape used to destroy the whole wizard tab while
+  the agent was running. The composer shows a Stop button in place of Send for
+  the same reason - a keyboard-only exit strands anyone on a tablet or remote
+  desktop.
+- **`/wizard` runs in place**, so the untouched-wizard branch only closes the tab
+  when the host tab has no non-`system` log entries. Otherwise a wizard started
+  in a tab with a real conversation would throw that conversation away.
+
+### Which wizard is running: one source of truth
+
+`useInlineWizard`'s internal `tabStates` map is the authority on what is running.
+`AITab.wizardState` is a **render mirror** of it, and the sync effect in
+`useWizardHandlers` only writes the ACTIVE tab, so the mirror drifts both ways: a
+wizard started on a background tab has none, and a wizard that ends while its tab
+is in the background keeps a stale one. Read activity from
+`useInlineWizardContext().wizardActiveTabs` (or `useWizardActiveTabs()`, the
+non-throwing variant for leaf surfaces rendered outside the provider); read
+`wizardState` only for the conversation content the mirror exists to render.
+
+Two rules follow:
+
+1. **Always name the tab.** `endWizard`, `sendMessage`, `cancelTurn`, and
+   `generateDocuments` all fall back to the hook's `currentTabId`, which tracks the
+   LAST-TOUCHED wizard, not the visible one. Ending the wrong tab leaves the visible
+   wizard registered on a tab that has already dropped its state, with nothing left
+   that can clear it. Watch for `onClick={onCancel}` in particular: it type-checks
+   against a `() => void` prop and then hands React's click event in as the tab id.
+2. **An agent-level indicator must be rolled up through
+   `rollUpWizardActivityToSessions()`** (`src/renderer/utils/wizardActivity.ts`),
+   which drops any tab that is no longer open. Every path that removes a tab (close,
+   close-all, snooze, agent delete) has to remember to evict its wizard entry; the
+   liveness filter is what stops one that forgets from burning a wand into the Left
+   Bar for an agent with no wizard tab to switch to.
 
 ### Architecture
 
@@ -193,8 +230,9 @@ src/renderer/components/InlineWizard/
 ├── DocumentGenerationView.tsx  # Generation phase with Austin Facts
 └── ... (see index.ts for full documentation)
 
-src/renderer/hooks/useInlineWizard.ts    # Main hook
+src/renderer/hooks/batch/useInlineWizard.ts    # Main hook
 src/renderer/contexts/InlineWizardContext.tsx  # State provider
+src/renderer/utils/wizardActivity.ts           # Live per-tab activity + agent roll-up
 ```
 
 ### Customization Points

@@ -1,4 +1,10 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import {
+	useCallback,
+	useRef,
+	type Dispatch,
+	type MutableRefObject,
+	type SetStateAction,
+} from 'react';
 import { parseWizardIntent } from '../../../services/wizardIntentParser';
 import {
 	startInlineWizardConversation,
@@ -47,6 +53,12 @@ export function useInlineWizardConversationActions({
 	setTabState,
 	getEffectiveTabId,
 }: UseInlineWizardConversationActionsParams) {
+	// In-flight turn tracking for cancelTurn. The id is the user message that started the turn,
+	// so a cancel can only ever silence the turn it was aimed at - if the user stops a turn and
+	// immediately sends another, the new turn's errors still surface.
+	const activeTurnIdsRef = useRef<Map<string, string>>(new Map());
+	const canceledTurnIdsRef = useRef<Set<string>>(new Set());
+
 	const startWizard = useCallback(
 		async (
 			naturalLanguageInput?: string,
@@ -237,6 +249,9 @@ export function useInlineWizardConversationActions({
 				...(images && images.length > 0 ? { images } : {}),
 			};
 
+			// Track the in-flight turn so cancelTurn knows what it is stopping
+			activeTurnIdsRef.current.set(tabId, userMessage.id);
+
 			setTabState(tabId, (prev) => ({
 				...prev,
 				conversationHistory: [...prev.conversationHistory, userMessage],
@@ -306,6 +321,15 @@ export function useInlineWizardConversationActions({
 
 				const result = await sendWizardMessage(session, content, currentHistory, callbacks);
 
+				// The user stopped this turn while it was running. cancelTurn already cleared
+				// isWaiting and wrote the "stopped" note, and the agent was killed - so the
+				// non-zero exit that lands here is the cancel itself, not a failure to report.
+				if (canceledTurnIdsRef.current.delete(userMessage.id)) {
+					activeTurnIdsRef.current.delete(tabId);
+					return;
+				}
+				activeTurnIdsRef.current.delete(tabId);
+
 				if (result.success && result.response) {
 					const assistantMessage = {
 						id: generateMessageId(),
@@ -347,6 +371,10 @@ export function useInlineWizardConversationActions({
 					}));
 				}
 			} catch (error) {
+				const wasCanceled = canceledTurnIdsRef.current.delete(userMessage.id);
+				activeTurnIdsRef.current.delete(tabId);
+				if (wasCanceled) return;
+
 				const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
 				logger.error('[useInlineWizard] sendMessage error:', undefined, error);
 
@@ -360,6 +388,58 @@ export function useInlineWizardConversationActions({
 			}
 		},
 		[conversationSessionsMap, currentTabId, setCurrentTabId, setTabState, tabStatesRef]
+	);
+
+	/**
+	 * Stop the turn that is currently running on a tab without leaving the wizard.
+	 *
+	 * The wizard spawns a fresh agent process per message under its own conversation
+	 * session id, so the regular AI tab interrupt (which targets `{sessionId}-ai-{tabId}`)
+	 * never reaches it. Kill the wizard's process directly, drop the pending response,
+	 * and leave the conversation open so the user can redirect it.
+	 */
+	const cancelTurn = useCallback(
+		async (explicitTabId?: string): Promise<boolean> => {
+			const tabId = explicitTabId || currentTabId || 'default';
+			const currentState = tabStatesRef.current.get(tabId);
+			if (!currentState?.isWaiting) return false;
+
+			// Mark the in-flight turn as canceled BEFORE killing, so the non-zero exit
+			// the kill produces is recognized as the cancel instead of an agent failure.
+			const turnId = activeTurnIdsRef.current.get(tabId);
+			if (turnId) canceledTurnIdsRef.current.add(turnId);
+
+			const stoppedMessage = {
+				id: generateMessageId(),
+				role: 'system' as const,
+				content: 'Turn stopped. Send another message to change direction.',
+				timestamp: Date.now(),
+			};
+
+			// Free the composer immediately - the kill below is best effort.
+			setTabState(tabId, (prev) => ({
+				...prev,
+				isWaiting: false,
+				error: null,
+				conversationHistory: [...prev.conversationHistory, stoppedMessage],
+			}));
+
+			const session = conversationSessionsMap.current.get(tabId);
+			if (session) {
+				try {
+					await window.maestro.process.kill(session.sessionId);
+				} catch (error) {
+					logger.warn('[useInlineWizard] Failed to kill wizard process on cancel', undefined, {
+						sessionId: session.sessionId,
+						error: (error as Error)?.message || 'Unknown error',
+					});
+				}
+			}
+
+			logger.info('Wizard turn stopped by user', '[InlineWizard]', { tabId });
+			return true;
+		},
+		[currentTabId, setTabState, tabStatesRef, conversationSessionsMap]
 	);
 
 	const addAssistantMessage = useCallback(
@@ -482,6 +562,7 @@ export function useInlineWizardConversationActions({
 	return {
 		startWizard,
 		sendMessage,
+		cancelTurn,
 		addAssistantMessage,
 		setMode,
 		retryLastMessage,

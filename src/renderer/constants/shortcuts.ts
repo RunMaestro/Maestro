@@ -19,7 +19,9 @@ export const DEFAULT_SHORTCUTS = {
 	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
 	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
-	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'c'] },
+	// G for Group chat. Moved off Opt+Cmd+C so Concerto - a far more frequently
+	// toggled surface - can have the mnemonic C. Migrated in settingsShortcutsSlice.
+	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'g'] },
 	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
 	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
 	openMemoryViewer: {
@@ -93,7 +95,10 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Edit Last Queued Message',
 		keys: ['Meta', 'Shift', 'e'],
 	},
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
+	// Opt+Cmd+Down, not Opt+J: the J key is crowded (Cmd+J switches AI/Shell mode,
+	// Cmd+Shift+J tiles a new terminal, Opt+Cmd+J jumps to the nearest terminal),
+	// and a bare Opt+letter types a character while the composer has focus.
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'Meta', 'ArrowDown'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
@@ -122,6 +127,24 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Maestro Cue',
 		keys: ['Alt', 'q'],
 	},
+	// Opt+Cmd, not a bare Opt: on macOS a plain Opt+letter is a TEXT-ENTRY combo
+	// (Opt+C types "ç", Opt+U starts a dead-key umlaut), so it lands as a
+	// character whenever the composer has focus - which is Maestro's usual state.
+	// Adding Cmd suppresses the character, and it matches the Opt+Cmd family the
+	// other feature surfaces already use (Usage Dashboard, System Logs).
+	// C for Concerto; newGroupChat gave up this combo for it and moved to Opt+Cmd+G.
+	toggleConcerto: {
+		id: 'toggleConcerto',
+		label: 'Show/Hide Concerto Stage',
+		keys: ['Alt', 'Meta', 'c'],
+	},
+	// Shift+ the stage key: the same surface family, the broader "put it all
+	// away" action.
+	toggleCadenzas: {
+		id: 'toggleCadenzas',
+		label: 'Show/Hide All Cadenzas',
+		keys: ['Alt', 'Meta', 'Shift', 'c'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',
@@ -130,7 +153,7 @@ export const DEFAULT_SHORTCUTS = {
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
 		label: 'Next Unread / Draft Tab',
-		keys: ['Alt', 'Meta', 'ArrowDown'],
+		keys: ['Meta', 'Shift', 'ArrowDown'],
 	},
 	jumpToTerminal: {
 		id: 'jumpToTerminal',
@@ -244,6 +267,37 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
+	// The "tile a NEW tab" family. Only the terminal ships with a binding: it sits
+	// on Cmd+Shift+J, one modifier away from Cmd+J (open a new terminal tab),
+	// because a terminal beside your work is the common case. The other three are
+	// registered UNBOUND (`keys: []`) rather than left out - that keeps them in
+	// Settings -> Shortcuts where a user can record their own binding, without
+	// Maestro claiming three more default chords nobody asked for. An empty `keys`
+	// never matches an event (see isShortcut) and renders as "Not set".
+	tileTerminalBelow: {
+		id: 'tileTerminalBelow',
+		label: 'Tile New Terminal Below',
+		keys: ['Meta', 'Shift', 'j'],
+		windowScoped: true,
+	},
+	tileAiBelow: {
+		id: 'tileAiBelow',
+		label: 'Tile New AI Chat Below',
+		keys: [],
+		windowScoped: true,
+	},
+	tileBrowserBelow: {
+		id: 'tileBrowserBelow',
+		label: 'Tile New Browser Below',
+		keys: [],
+		windowScoped: true,
+	},
+	tileFileBelow: {
+		id: 'tileFileBelow',
+		label: 'Tile New File Below',
+		keys: [],
+		windowScoped: true,
+	},
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)
@@ -263,6 +317,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'filterHistory',
 		label: 'Filter History (in History tab)',
 		keys: ['Meta', 'f'],
+	},
+	historyJumpToSession: {
+		id: 'historyJumpToSession',
+		label: 'Jump to Entry Session (in History tab)',
+		keys: ['Meta', 'Enter'],
 	},
 	searchLogs: { id: 'searchLogs', label: 'Search System Logs', keys: ['Meta', 'f'] },
 	searchOutput: {
@@ -312,6 +371,11 @@ export const TAB_SHORTCUTS = {
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },
 	snoozeTab: { id: 'snoozeTab', label: 'Snooze Tab', keys: ['Alt', 'Meta', 's'] },
+	// Registered unassigned: the snoozed-tab list is reachable by click today and
+	// there is no spare chord near Opt+Cmd+S worth spending by default. Listing
+	// it here is what makes it appear in Settings -> Shortcuts so a user can bind
+	// it, which is the whole point of allowing an empty `keys`.
+	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
 	closeTabsLeft: {
 		id: 'closeTabsLeft',
 		label: 'Close Tabs to Left',

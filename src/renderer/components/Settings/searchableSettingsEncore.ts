@@ -209,11 +209,12 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Concerto',
 		description:
-			'Agent-composed native views. Agents build rich, app-styled data panels (Movements) and small always-on-top cards (Cadenzas) from a fixed block vocabulary, instead of plain chat text',
+			'Agents answer with something you can look at and click. Ask for a chessboard, a dashboard, a mockup, or a simulator and it opens as a real interactive view on the Concerto stage - a window you can center or float beside the chat. Cadenzas add small cards that stay on top of every app. Open it with its hotkey, the command palette, or the Left Bar menu',
 		keywords: [
 			'concerto',
 			'movement',
 			'cadenza',
+			'stage',
 			'agent views',
 			'views',
 			'panel',
@@ -222,6 +223,12 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'blockview',
 			'data view',
 			'visualize',
+			'interactive',
+			'game',
+			'mockup',
+			'simulator',
+			'floating',
+			'pop out',
 		],
 	},
 	{

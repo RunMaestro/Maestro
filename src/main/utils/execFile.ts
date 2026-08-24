@@ -2,6 +2,9 @@ import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { isWindows } from '../../shared/platformDetection';
+// Cycle-safe: processTree only reaches back into this module from inside its
+// own function bodies, so neither module's top level depends on the other.
+import { killProcessTreeNow } from './processTree';
 
 const execFileAsync = promisify(execFile);
 
@@ -270,7 +273,8 @@ export function execFileStreaming(
 	const result = new Promise<ExecResult>((resolve) => {
 		// Spawn failures emit both 'error' and 'close'. Prefer the errno from
 		// 'error' (ENOENT, EACCES, ...) over close's platform-specific sentinel
-		// (null / -2 / 1), which would otherwise win the Promise race.
+		// (null / -2 / 1), which would otherwise win the Promise race. That is why
+		// 'close' is registered LAST in this block - do not hoist it.
 		let spawnErr: NodeJS.ErrnoException | undefined;
 		let settled = false;
 
@@ -279,6 +283,16 @@ export function execFileStreaming(
 			settled = true;
 			resolve(payload);
 		};
+
+		// A cancelled run resolves on `exit`, not `close`. `close` waits for every
+		// copy of the stdio pipes to be released, and a grandchild that inherited
+		// them (a pre-push hook, say) can hold them open past the kill. The tree
+		// kill takes those grandchildren too, but this makes Cancel independent of
+		// whether the OS finished tearing the pipes down.
+		child.on('exit', () => {
+			if (!cancelled) return;
+			settle({ stdout, stderr, exitCode: 'SIGTERM' });
+		});
 
 		child.on('error', (err) => {
 			spawnErr = err as NodeJS.ErrnoException;
@@ -303,7 +317,11 @@ export function execFileStreaming(
 		result,
 		cancel: () => {
 			cancelled = true;
-			child.kill();
+			// SIGTERM to the direct child is not enough: `git push` runs its hooks
+			// as children, so signalling git alone leaves a pre-push test suite
+			// running and the transfer neither dead nor finished. Kill the tree.
+			if (child.pid) killProcessTreeNow(child.pid, { label: `exec:${command}` });
+			else child.kill();
 		},
 	};
 }

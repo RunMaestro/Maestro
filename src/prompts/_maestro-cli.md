@@ -23,13 +23,14 @@ Run `<group> --help` for the exact subcommands and flags.
 - **settings** - read/write any global or per-agent setting (`settings list -v`, `settings get/set/reset`, `settings agent ...`). Applies live, no restart.
 - **send / dispatch** - hand a prompt to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated.
 - **list / show** - inspect agents, groups, playbooks, sessions, ssh-remotes.
+- **session list / session show** - enumerate every open AI tab across the fleet (ids, agent, state, and each tab's settings), and print one tab's transcript. This is the read side of `tab`.
 - **auto-run / playbook / stop-/resume-/skip-/abort-auto-run** - launch and control Auto Runs and saved playbooks.
 - **cue** - list and trigger Cue subscriptions, and manage Scheduled Tasks with `cue schedule` (event model + YAML schema live in `_maestro-cue`).
 - **open** - bring up a Maestro modal or dashboard, optionally on a tab (`open --list`, `open cue --tab scheduled`, `open settings --tab shortcuts`). Judgment note below.
 - **open-file / open-browser / close-browser / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately.
 - **open-terminal / send-terminal / list terminals** - open a native terminal tab (optionally starting a command in it), type into one that already exists, and see what is open. Judgment note below.
 - **notify toast|flash** - surface in-app notifications (see the judgment below).
-- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. For `tab close|rename|star`, your own tab is the `Tab ID` in your system prompt's Session Information - never guess one out of `session list`, since every other row there is a different live conversation.
+- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. `tab` also owns the per-tab settings the composer chips toggle (see below). For `tab close|rename|star`, your own tab is the `Tab ID` in your system prompt's Session Information - never guess one out of `session list`, since every other row there is a different live conversation.
 - **stats / stats-query** - read the Usage Dashboard's SQLite store directly (discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"`).
 - **director-notes / gist / prompts / status / doctor** - cross-agent history synopses, transcript export, prompt self-reference, diagnostics.
 
@@ -77,6 +78,21 @@ Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal
 The user sees and edits the same tasks in the app under **Maestro Cue → Scheduled Tasks** - offer `open cue --tab scheduled` after scheduling something so they know where it lives. A `--pause` is almost always the right answer to "stop doing that for now"; reach for `--cancel` only when they want it gone.
 
 **Opening a surface is a teaching move, not just navigation.** When the user asks where something lives ("where do I see my scheduled tasks / my token usage / the shortcut list?"), offer to open it and then relay the access line the command prints: `open` reports the hotkey, the command-palette entry, and the click target for that surface. Showing them the pane and the hotkey in one breath beats describing a menu path. Use `open --list` when you are unsure of the surface id; use `--tab` whenever the answer lives on a specific tab. Do not use it to yank the user's screen around mid-task - it changes what is in front of them, so open a surface because they asked about it or agreed to it.
+
+**Per-tab settings are scriptable - the composer chips have CLI equivalents.** An AI tab carries its own model, effort, thinking display, access mode, History behavior, and send key, each overriding the agent's default for that tab alone. `tab <verb> <tab-id> <value>` writes one; `tab show <tab-id>` reads them all back; `session list --json` reads them across the fleet.
+
+- `tab thinking <tab-id> off|on|sticky|cycle` - the thinking display. `on` shows reasoning and tool cells while the agent is busy and clears them when the reply lands; `sticky` pins them so they stay readable afterwards; `cycle` advances one step exactly as clicking the chip does. **Turn this on before you need to watch a stream, not after** - `off` means the entries are never created, so it cannot recover reasoning that already happened.
+- `tab read-only <tab-id> true|false` - read-only / plan mode, the access switch. The agent in that tab cannot modify files.
+- `tab model <tab-id> <model>` and `tab effort <tab-id> <level>` - per-tab overrides. Agent-wide defaults still live on `update-agent --model` / `--effort`; reach for the tab form when only this conversation should differ.
+- `tab enter-to-send <tab-id> true|false` - the send key for that tab.
+- `tab save-to-history <tab-id> true|false`, `tab star`/`unstar`, `tab read`/`unread`, `tab rename`, `tab move`, `tab close`.
+
+Two conventions that are easy to get wrong:
+
+- **`inherit` is not `false`.** `tab model <id> inherit` (also `default`, `none`, `clear`) drops the override so the tab follows the agent again. `tab enter-to-send <id> false` **pins** the tab to Cmd+Enter even when the global default is Enter; `inherit` is what returns it to the setting.
+- **`active` is a valid tab id on every `tab` verb.** It means the tab that agent currently has selected: `tab thinking active sticky -a {{AGENT_ID}}`. Without `-a` it resolves to the agent the desktop has focused, which is rarely what you want from a background task - name the agent.
+
+Everything here is an explicit set, not a toggle (the one exception is `thinking ... cycle`), so re-running a script lands on the same state. Get tab ids from `session list`, and remember these are per-tab: setting a model on one tab says nothing about the agent's other tabs.
 
 **Cue routing.** Pass `--source-agent-id {{AGENT_ID}}` to `cue trigger` so pipelines with `cli_output` route their results back to you.
 

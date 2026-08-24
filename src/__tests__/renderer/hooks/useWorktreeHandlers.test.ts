@@ -210,16 +210,37 @@ describe('Quick-access handlers', () => {
 		expect(data?.session).toBe(mockParentSession);
 	});
 
-	it('handleOpenWorktreeConfigSession sets activeSessionId and opens worktreeConfig modal', () => {
-		useSessionStore.setState({ sessions: [mockParentSession], activeSessionId: '' } as any);
+	it('handleOpenWorktreeConfigSession pins the target without moving the selection', () => {
+		useSessionStore.setState({
+			sessions: [mockParentSession, { ...mockParentSession, id: 'other-1', name: 'Other' }],
+			activeSessionId: 'other-1',
+		} as any);
 		const { result } = renderHook(() => useWorktreeHandlers());
 
 		act(() => {
 			result.current.handleOpenWorktreeConfigSession(mockParentSession);
 		});
 
-		expect(useSessionStore.getState().activeSessionId).toBe('parent-1');
 		expect(useModalStore.getState().isOpen('worktreeConfig')).toBe(true);
+		// The agent to configure travels in the payload...
+		expect(useModalStore.getState().getData('worktreeConfig')?.session?.id).toBe('parent-1');
+		// ...and the user's selection is left exactly where they left it.
+		expect(useSessionStore.getState().activeSessionId).toBe('other-1');
+	});
+
+	it('handleOpenWorktreeConfig (no target) pins nothing and follows the active agent', () => {
+		useSessionStore.setState({
+			sessions: [mockParentSession],
+			activeSessionId: 'parent-1',
+		} as any);
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		act(() => {
+			result.current.handleOpenWorktreeConfig();
+		});
+
+		expect(useModalStore.getState().isOpen('worktreeConfig')).toBe(true);
+		expect(useModalStore.getState().getData('worktreeConfig')?.session).toBeUndefined();
 	});
 
 	it('handleDeleteWorktreeSession sets deleteWorktree session in modalStore', () => {
@@ -336,6 +357,38 @@ describe('handleSaveWorktreeConfig', () => {
 			basePath: '/projects/worktrees',
 			watchEnabled: true,
 		});
+	});
+
+	// The whole point of dropping the force-activation: Save has to follow the
+	// agent the dialog was opened FOR, not whichever one happens to be selected.
+	// Without this, removing the activation would silently write the config onto
+	// the wrong agent.
+	it('saves to the pinned agent rather than the active one', async () => {
+		useSessionStore.setState({
+			sessions: [
+				{ ...mockParentSession, worktreeConfig: undefined },
+				{ ...mockParentSession, id: 'other-1', name: 'Other', worktreeConfig: undefined },
+			],
+			activeSessionId: 'other-1',
+		} as any);
+		useModalStore.getState().openModal('worktreeConfig', { session: mockParentSession } as any);
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleSaveWorktreeConfig({
+				basePath: '/projects/worktrees',
+				watchEnabled: true,
+			});
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		expect(sessions.find((s) => s.id === 'parent-1')?.worktreeConfig).toEqual({
+			basePath: '/projects/worktrees',
+			watchEnabled: true,
+		});
+		// The selected agent is untouched.
+		expect(sessions.find((s) => s.id === 'other-1')?.worktreeConfig).toBeUndefined();
 	});
 
 	it('scans worktrees and creates new sub-agent sessions for discovered subdirs', async () => {

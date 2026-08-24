@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => id),
+	readActiveAgentId: vi.fn(() => null),
 }));
 vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((msg) => `Error: ${msg}`),
@@ -22,18 +23,48 @@ import {
 	tabMove,
 	tabUnread,
 	tabSaveToHistory,
+	tabThinking,
+	tabReadOnly,
+	tabModel,
+	tabEffort,
+	tabEnterToSend,
+	tabShow,
 } from '../../../cli/commands/tab';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { resolveAgentId } from '../../../cli/services/storage';
+import { resolveAgentId, readActiveAgentId } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
 
 // agent-1 owns three tabs in tab-bar order so reordering has something to move
 // against; agent-2's single tab guards against cross-agent index leakage.
+function entry(tabId: string, agentId: string, over: Record<string, unknown> = {}) {
+	return {
+		tabId,
+		sessionId: tabId,
+		agentId,
+		agentName: agentId,
+		toolType: 'claude-code',
+		name: null,
+		agentSessionId: null,
+		state: 'idle' as const,
+		createdAt: 0,
+		starred: false,
+		active: false,
+		hasUnread: false,
+		saveToHistory: true,
+		readOnly: false,
+		thinking: 'off' as const,
+		model: null,
+		effort: null,
+		enterToSend: null,
+		...over,
+	};
+}
+
 const SESSIONS = [
-	{ tabId: 'tab-aaaa', agentId: 'agent-1' },
-	{ tabId: 'tab-cccc', agentId: 'agent-1' },
-	{ tabId: 'tab-dddd', agentId: 'agent-1' },
-	{ tabId: 'tab-bbbb', agentId: 'agent-2' },
+	entry('tab-aaaa', 'agent-1', { active: true, thinking: 'on' }),
+	entry('tab-cccc', 'agent-1'),
+	entry('tab-dddd', 'agent-1'),
+	entry('tab-bbbb', 'agent-2', { active: true, model: 'opus', effort: 'high' }),
 ];
 
 /**
@@ -64,6 +95,7 @@ describe('tab commands', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.mocked(resolveAgentId).mockImplementation((id: string) => id);
+		vi.mocked(readActiveAgentId).mockReturnValue(null);
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
@@ -195,5 +227,77 @@ describe('tab commands', () => {
 		mockTab({ success: true });
 		await expect(tabUnread('nope', true, {})).rejects.toThrow('__exit__');
 		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Tab not found'));
+	});
+
+	it('tab thinking sets an explicit mode', async () => {
+		const getPayload = mockTab({ success: true });
+		await tabThinking('tab-cccc', 'sticky', {});
+		expect(getPayload().configPatch).toEqual({ tabId: 'tab-cccc', showThinking: 'sticky' });
+	});
+
+	it("tab thinking cycle advances from the tab's live mode, not from off", async () => {
+		// tab-aaaa is already on 'on', so one cycle must land on 'sticky'.
+		const getPayload = mockTab({ success: true });
+		await tabThinking('tab-aaaa', 'cycle', {});
+		expect(getPayload().configPatch).toEqual({ tabId: 'tab-aaaa', showThinking: 'sticky' });
+	});
+
+	it('tab read-only, model, effort and enter-to-send write their own field', async () => {
+		const getReadOnly = mockTab({ success: true });
+		await tabReadOnly('tab-cccc', true, {});
+		expect(getReadOnly().configPatch).toEqual({ tabId: 'tab-cccc', readOnlyMode: true });
+
+		const getModel = mockTab({ success: true });
+		await tabModel('tab-cccc', 'opus', {});
+		expect(getModel().configPatch).toEqual({ tabId: 'tab-cccc', customModel: 'opus' });
+
+		const getEffort = mockTab({ success: true });
+		await tabEffort('tab-cccc', 'high', {});
+		expect(getEffort().configPatch).toEqual({ tabId: 'tab-cccc', customEffort: 'high' });
+
+		const getEnter = mockTab({ success: true });
+		await tabEnterToSend('tab-cccc', false, {});
+		expect(getEnter().configPatch).toEqual({ tabId: 'tab-cccc', enterToSend: false });
+	});
+
+	it('clearing an override sends null so the renderer drops the field', async () => {
+		const getModel = mockTab({ success: true });
+		await tabModel('tab-bbbb', null, {});
+		expect(getModel().configPatch).toEqual({ tabId: 'tab-bbbb', customModel: null });
+
+		const getEnter = mockTab({ success: true });
+		await tabEnterToSend('tab-bbbb', null, {});
+		expect(getEnter().configPatch).toEqual({ tabId: 'tab-bbbb', enterToSend: null });
+	});
+
+	it('"active" targets the agent named by --agent', async () => {
+		const getPayload = mockTab({ success: true });
+		await tabThinking('active', 'off', { agent: 'agent-2' });
+		const p = getPayload();
+		expect(p.sessionId).toBe('agent-2');
+		expect(p.configPatch).toEqual({ tabId: 'tab-bbbb', showThinking: 'off' });
+	});
+
+	it('"active" falls back to the desktop\'s focused agent', async () => {
+		vi.mocked(readActiveAgentId).mockReturnValue('agent-1');
+		const getPayload = mockTab({ success: true });
+		await tabReadOnly('active', true, {});
+		expect(getPayload().configPatch).toEqual({ tabId: 'tab-aaaa', readOnlyMode: true });
+	});
+
+	it('"active" fails loudly when no agent is focused and none was named', async () => {
+		mockTab({ success: true });
+		await expect(tabShow('active', {})).rejects.toThrow('__exit__');
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('No active agent'));
+	});
+
+	it('tab show --json returns the whole entry without writing anything', async () => {
+		const getPayload = mockTab({ success: true });
+		await tabShow('tab-bbbb', { json: true });
+		// No mutation was sent: the list call is the only traffic.
+		expect(getPayload()).toEqual({});
+		const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+		expect(printed.tab.tabId).toBe('tab-bbbb');
+		expect(printed.tab.model).toBe('opus');
 	});
 });

@@ -159,6 +159,18 @@ describe('GitPillMenu', () => {
 		expect(screen.getByTestId('git-pill-menu-push')).toHaveTextContent('3');
 	});
 
+	// The run outlives its console, so the row that started it reports it.
+	it('badges a row whose command is still running in the background', () => {
+		renderMenu({ ahead: 3, behind: 2, pushRunning: true });
+
+		expect(screen.getByTestId('git-pill-menu-push-running')).toBeInTheDocument();
+		// The running badge takes the slot from the ahead count, stale mid-push.
+		expect(screen.getByTestId('git-pill-menu-push')).not.toHaveTextContent('3');
+		// Pull keeps its own badge: the two operations run independently.
+		expect(screen.queryByTestId('git-pill-menu-pull-running')).not.toBeInTheDocument();
+		expect(screen.getByTestId('git-pill-menu-pull')).toHaveTextContent('2');
+	});
+
 	it('omits the counts when in sync with upstream', () => {
 		renderMenu();
 		expect(screen.getByTestId('git-pill-menu-pull')).toHaveTextContent(/^Git Pull$/);

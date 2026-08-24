@@ -2,10 +2,11 @@
  * Tests for imageExport utility (serialize, save, and clipboard export of the
  * images rendered in chat).
  *
- * The canvas/Image rasterization path (svgToPngDataUrl / the PNG branch of
- * copyImageElementToClipboard) is intentionally not covered here: jsdom does not
- * render <canvas> or fire Image.onload, so it can't be exercised meaningfully.
- * We cover the deterministic DOM-string, routing, and dialog logic instead.
+ * Actual rasterization (svgToPngDataUrl, which needs Image.onload) is not
+ * covered here: jsdom neither renders <canvas> nor fires Image.onload, so it
+ * can't be exercised meaningfully. We cover the deterministic DOM-string,
+ * routing, and dialog logic instead - including which clipboard route
+ * copyImageElementToClipboard takes, with the canvas stubbed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -15,6 +16,7 @@ import {
 	dataUrlExtension,
 	isSvgElement,
 	imgToDataUrl,
+	copyImageElementToClipboard,
 	saveImageElementToDisk,
 	saveImageToProject,
 	suggestImageFileName,
@@ -154,6 +156,64 @@ describe('imgToDataUrl', () => {
 		} finally {
 			bridge.images = previous;
 		}
+	});
+});
+
+describe('copyImageElementToClipboard', () => {
+	let previousShell: unknown;
+	const bridge = () => window.maestro as unknown as Record<string, any>;
+
+	beforeEach(() => {
+		previousShell = bridge().shell;
+	});
+
+	afterEach(() => {
+		bridge().shell = previousShell;
+		vi.restoreAllMocks();
+	});
+
+	/** Make the jsdom canvas answer, so the PNG fallback is exercisable. */
+	function stubCanvas(pngDataUrl = 'data:image/png;base64,ZmFrZQ==') {
+		vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+			drawImage: vi.fn(),
+		} as unknown as CanvasRenderingContext2D);
+		vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(pngDataUrl);
+	}
+
+	it('copies the source bytes when the native clipboard accepts them', async () => {
+		const copy = vi.fn().mockResolvedValue(undefined);
+		bridge().shell = { copyImageToClipboard: copy };
+
+		await expect(copyImageElementToClipboard(makeImg(PNG_DATA_URL))).resolves.toBe('image');
+		expect(copy).toHaveBeenCalledWith(PNG_DATA_URL);
+	});
+
+	// The native clipboard decodes only PNG and JPEG, so a webp source has to be
+	// repainted rather than degrading to a text copy of the data URL.
+	it('repaints to PNG when the native clipboard rejects the source format', async () => {
+		const copy = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('Failed to create image from data URL'))
+			.mockResolvedValueOnce(undefined);
+		bridge().shell = { copyImageToClipboard: copy };
+		stubCanvas();
+
+		const img = makeImg('data:image/webp;base64,UklGRg==');
+		Object.defineProperty(img, 'naturalWidth', { value: 8 });
+		Object.defineProperty(img, 'naturalHeight', { value: 8 });
+
+		await expect(copyImageElementToClipboard(img)).resolves.toBe('image');
+		expect(copy).toHaveBeenNthCalledWith(2, 'data:image/png;base64,ZmFrZQ==');
+	});
+
+	it('reports a text copy rather than claiming an image when nothing decodes', async () => {
+		bridge().shell = { copyImageToClipboard: vi.fn().mockRejectedValue(new Error('nope')) };
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		Object.assign(navigator, { clipboard: { writeText } });
+
+		const img = makeImg('data:image/webp;base64,UklGRg==');
+		await expect(copyImageElementToClipboard(img)).resolves.toBe('text');
+		expect(writeText).toHaveBeenCalledWith('data:image/webp;base64,UklGRg==');
 	});
 });
 

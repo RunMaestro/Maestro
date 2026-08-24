@@ -4,6 +4,15 @@
  * Encapsulates the common "p-X rounded hover:bg-white/10 transition-colors" pattern
  * used throughout the app for toolbar-style icon buttons.
  *
+ * The button is a centering flex container, and must stay one. Without it the
+ * icon is inline content sitting on the line box's BASELINE, so the button's
+ * height comes from the inherited line-height rather than the icon: a 16px icon
+ * with `p-1` produced a 27.5px-tall button with the icon riding 1.75px above its
+ * own center, which is where the hover pill and the focus ring are drawn. It
+ * also made the row fragile - anything that changed a button's inherited
+ * font-size moved that icon relative to its neighbours, since baseline position
+ * depends on font metrics but icon size does not.
+ *
  * Usage:
  * ```tsx
  * <GhostIconButton
@@ -100,7 +109,7 @@ export const GhostIconButton = forwardRef<HTMLButtonElement, GhostIconButtonProp
 				aria-label={ariaLabel}
 				tabIndex={tabIndex}
 				data-testid={testId}
-				className={`${padding} rounded hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`.trim()}
+				className={`inline-flex items-center justify-center ${padding} rounded hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`.trim()}
 				style={{ color, ...style }}
 			>
 				{children}

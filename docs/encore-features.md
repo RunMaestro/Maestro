@@ -16,13 +16,13 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** t
 
 ## Available Features
 
-| Feature                              | Shortcut                       | Description                                                                                      |
-| ------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| [Director's Notes](./director-notes) | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-powered synopses                                  |
-| [Usage Dashboard](./usage-dashboard) | `Opt+Cmd+U` / `Alt+Ctrl+U`     | Comprehensive analytics for tracking AI usage patterns                                           |
-| [Maestro Symphony](./symphony)       | `Cmd+Shift+Y` / `Ctrl+Shift+Y` | Contribute to open source by donating AI tokens                                                  |
-| [Concerto](./concerto)               | Agent-driven                   | Agents compose live native views: in-app Movement panels and always-on-top Cadenza HUD cards     |
-| [Maestro Cue](./maestro-cue)         | `Opt+Q` / `Alt+Q`              | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking |
+| Feature                              | Shortcut                       | Description                                                                                                                           |
+| ------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| [Director's Notes](./director-notes) | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-powered synopses                                                                       |
+| [Usage Dashboard](./usage-dashboard) | `Opt+Cmd+U` / `Alt+Ctrl+U`     | Comprehensive analytics for tracking AI usage patterns                                                                                |
+| [Maestro Symphony](./symphony)       | `Cmd+Shift+Y` / `Ctrl+Shift+Y` | Contribute to open source by donating AI tokens                                                                                       |
+| [Concerto](./concerto)               | `Opt+Cmd+C` / `Alt+Ctrl+C`     | Agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top Cadenza HUD cards |
+| [Maestro Cue](./maestro-cue)         | `Opt+Q` / `Alt+Q`              | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking                                      |
 
 ## For Developers
 

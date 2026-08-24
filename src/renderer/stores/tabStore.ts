@@ -25,6 +25,7 @@
  */
 
 import { create } from 'zustand';
+import { nextThinkingMode } from '../../shared/types';
 import type { AITab, FilePreviewTab, Session, LogEntry, SnoozedTabEntry } from '../types';
 import type { GistInfo } from '../components/GistPublishModal';
 import {
@@ -64,6 +65,9 @@ import {
 } from '../utils/panelLayout';
 import {
 	snoozeTab as snoozeTabHelper,
+	snoozeTabGroup as snoozeTabGroupHelper,
+	wakeSnoozedTabGroup as wakeSnoozedTabGroupHelper,
+	isSnoozedGroup as isSnoozedGroupHelper,
 	wakeSnoozedTab as wakeSnoozedTabHelper,
 	removeSnoozedTab as removeSnoozedTabHelper,
 	updateSnoozedTab as updateSnoozedTabHelper,
@@ -461,9 +465,6 @@ function updateFileTab(tabId: string, updates: Partial<FilePreviewTab>): void {
 	);
 }
 
-// Thinking mode cycle: off → on → sticky → off
-const THINKING_CYCLE: Array<'off' | 'on' | 'sticky'> = ['off', 'on', 'sticky'];
-
 // ============================================================================
 // Store Implementation
 // ============================================================================
@@ -621,7 +622,13 @@ export const useTabStore = create<TabStore>()((set) => ({
 	snoozeTab: (tabId, wakeAt, note, showUnreadOnly = false) => {
 		const session = getActiveSession();
 		if (!session) return null;
-		const result = snoozeTabHelper(session, tabId, wakeAt, note, showUnreadOnly);
+		// One id, two shapes: the tab strip hands this the id of whatever the user
+		// right-clicked, and a tiled group is not a tab. Resolve which it is here
+		// rather than making every caller (chip menu, tab menu, palette) ask.
+		const isGroup = (session.tabGroups || []).some((g) => g.id === tabId);
+		const result = isGroup
+			? snoozeTabGroupHelper(session, tabId, wakeAt, note)
+			: snoozeTabHelper(session, tabId, wakeAt, note, showUnreadOnly);
 		if (!result) return null;
 		updateActiveSession(result.session);
 		return result.entry;
@@ -630,6 +637,21 @@ export const useTabStore = create<TabStore>()((set) => ({
 	unsnoozeTab: (sessionId, snoozeId) => {
 		const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 		if (!session) return null;
+		// A group rebuilds a layout, so it takes the group entry point. Pulled back
+		// by hand, every member is restored: the user is watching, and dropping a
+		// pane silently here would be a worse surprise than a preview that errors.
+		const entry = (session.snoozedTabs || []).find((sn) => sn.id === snoozeId);
+		if (entry && isSnoozedGroupHelper(entry)) {
+			const grouped = wakeSnoozedTabGroupHelper(session, snoozeId);
+			if (!grouped) return null;
+			updateSessionWith(sessionId, () => grouped.session);
+			return {
+				session: grouped.session,
+				entry,
+				tabId: grouped.groupId,
+				wasDuplicate: grouped.wasDuplicate,
+			};
+		}
 		// 'unsnoozed': the user pulled this back early rather than it coming due.
 		const result = wakeSnoozedTabHelper(session, snoozeId, 'unsnoozed');
 		if (!result) return null;
@@ -668,10 +690,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!session) return;
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return;
-		const currentMode = tab.showThinking ?? 'off';
-		const currentIndex = THINKING_CYCLE.indexOf(currentMode);
-		const nextMode = THINKING_CYCLE[(currentIndex + 1) % THINKING_CYCLE.length];
-		updateAiTab(tabId, { showThinking: nextMode });
+		updateAiTab(tabId, { showThinking: nextThinkingMode(tab.showThinking) });
 	},
 
 	setTabModel: (tabId, model) => {

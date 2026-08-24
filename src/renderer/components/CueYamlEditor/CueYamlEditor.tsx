@@ -51,7 +51,7 @@ export function CueYamlEditor({
 	const session = useSessionStore(selectSessionById(sessionId));
 
 	// If the CueModal dashboard is NOT open, we were opened directly (e.g., from agent context menu).
-	// In that case, show nav buttons to jump to Dashboard or Pipeline Editor.
+	// In that case, show nav buttons to jump to Dashboard or Pipeline Graph.
 	const cueModalOpen = useModalStore(selectModalOpen('cueModal'));
 	const openedDirectly = !cueModalOpen;
 
@@ -287,7 +287,7 @@ export function CueYamlEditor({
 						style={{ color: theme.colors.textDim }}
 					>
 						<GitFork className="w-3.5 h-3.5" />
-						Pipeline Editor
+						Pipeline Graph
 					</button>
 				</div>
 			</div>

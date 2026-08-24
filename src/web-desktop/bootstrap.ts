@@ -11,6 +11,12 @@
  */
 
 import { registerServiceWorker } from '../web/utils/serviceWorker';
+import { installLoadFailureHandler, markBooted } from './loadFailure';
+
+// Take over the failure policy from index.html's inline listeners as early as
+// possible, so a stale hashed chunk auto-reloads instead of tearing down the
+// page with a network-isolation message. Must run before the renderer mounts.
+installLoadFailureHandler();
 
 declare global {
 	interface Window {
@@ -81,6 +87,10 @@ void bootWebDesktop(window, {
 	renderer: () => import('../renderer/main'),
 })
 	.then(() => {
+		// The renderer is mounted. From here on a load failure must not wipe
+		// #root - React's error boundary reports app-level errors in context,
+		// and a stale-chunk failure recovers by reloading instead.
+		markBooted();
 		// Register the PWA service worker once the app is mounted. The server
 		// injects window.__MAESTRO_CONFIG__ inline before any module runs, so the
 		// security token is already available; registerServiceWorker() reads it to

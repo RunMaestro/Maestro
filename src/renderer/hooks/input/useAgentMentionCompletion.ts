@@ -1,6 +1,10 @@
 import { useCallback, useMemo } from 'react';
 import type { Session, Group, ToolType } from '../../types';
-import { normalizeMentionName, getMentionNameForContext } from '../../utils/participantColors';
+import {
+	normalizeMentionName,
+	getMentionNameForContext,
+	formatGroupMentionExpansion,
+} from '../../utils/participantColors';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { parseAgentMentions } from '../../../shared/crossAgentContext';
 
@@ -15,7 +19,12 @@ import { parseAgentMentions } from '../../../shared/crossAgentContext';
  * trailing space).
  */
 export interface AgentMentionSuggestion {
-	/** The `@name ` token to insert (single-at prefix, trailing space). */
+	/**
+	 * The `@name ` token this row is identified by (single-at prefix, trailing
+	 * space). For agents it is also what gets inserted; for GROUPS the inserted
+	 * literal is {@link memberMentionValue} instead - the group token only names
+	 * the row and keeps a hand-typed `@group` resolvable.
+	 */
 	value: string;
 	/** Visible name for the row. */
 	displayText: string;
@@ -27,6 +36,13 @@ export interface AgentMentionSuggestion {
 	groupId?: string;
 	/** For groups: the non-terminal member session ids (used by later routing). */
 	memberSessionIds?: string[];
+	/**
+	 * For groups: the literal accepting the row inserts - every member's own
+	 * `@name` token, space-separated (see `formatGroupMentionExpansion`). A group
+	 * is shorthand for its members, not a target, so the picker expands it the
+	 * same way Group Chat does and the composer never carries a group token.
+	 */
+	memberMentionValue?: string;
 	/** For agents: the tool type, used to pick the row icon. */
 	toolType?: ToolType;
 	/**
@@ -89,6 +105,12 @@ export function buildAgentMentionSuggestions(
 				kind: 'group',
 				groupId: group.id,
 				memberSessionIds: members.map((m) => m.id),
+				// Built from the same peer roster the agent rows below use, so an
+				// expanded member token is byte-identical to picking that agent.
+				memberMentionValue: formatGroupMentionExpansion(
+					members.map((m) => m.name),
+					peerNames
+				),
 				score: 0,
 			});
 		}

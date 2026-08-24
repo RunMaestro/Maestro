@@ -356,7 +356,9 @@ export function handleUpdateSessionSsh(
  * agent process is alive.
  *
  * A `configPatch.tabId` retargets the patch at one AI tab inside the agent
- * (starred / hasUnread / saveToHistory). The renderer owns both allowlists.
+ * (starred / hasUnread / saveToHistory / readOnlyMode / showThinking /
+ * customModel / customEffort / enterToSend - the composer chips). The
+ * renderer owns both allowlists and type-checks the tab values.
  */
 export function handleUpdateSessionConfig(
 	ctx: MessageHandlerContext,

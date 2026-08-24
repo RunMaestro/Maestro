@@ -191,6 +191,18 @@ export function createFsApi() {
 		): Promise<{ success: boolean }> => ipcRenderer.invoke('fs:delete', targetPath, options),
 
 		/**
+		 * Zip a folder into a `.zip` written beside it in its parent directory.
+		 * The archive is named after the folder, falling back to `name-1.zip`,
+		 * `name-2.zip`, ... when that name is taken. Resolves with the absolute
+		 * path and the file name of the archive that was created.
+		 */
+		compressFolder: (
+			folderPath: string,
+			options?: { sshRemoteId?: string }
+		): Promise<{ success: boolean; path: string; name: string }> =>
+			ipcRenderer.invoke('fs:compressFolder', folderPath, options),
+
+		/**
 		 * Count files and folders in a directory
 		 */
 		countItems: (dirPath: string, sshRemoteId?: string): Promise<ItemCountInfo> =>

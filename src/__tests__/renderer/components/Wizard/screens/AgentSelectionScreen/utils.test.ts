@@ -22,12 +22,9 @@ import {
 	AGENT_TILES,
 	type AgentTile,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
-import {
-	getAgentTileColSpanClass,
-	getNextAgentTileIndex,
-	LAST_ROW_COL_START_CLASS,
-	LAST_ROW_START_INDEX,
-} from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGrid';
+import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
+import { SUPPORTED_AGENTS } from '../../../../../../renderer/components/NewInstanceModal/types';
+import { getNextAgentTileIndex } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGrid';
 import {
 	getInitialSshRemoteConfig,
 	getSshRemoteIdForDetection,
@@ -64,7 +61,9 @@ describe('AgentSelectionScreen utils', () => {
 		];
 
 		expect(countSelectableAgentTiles(AGENT_TILES, detected)).toBe(2);
-		expect(findFirstSelectableTileIndex(AGENT_TILES, detected)).toBe(0);
+		// The strip is alphabetical, so assert on the tile found rather than a
+		// fixed index that moves whenever a provider is added.
+		expect(AGENT_TILES[findFirstSelectableTileIndex(AGENT_TILES, detected)].id).toBe('claude-code');
 		expect(findFirstSelectableTileIndex(AGENT_TILES, [])).toBe(-1);
 	});
 
@@ -106,15 +105,26 @@ describe('AgentSelectionScreen utils', () => {
 		).toBe('Agent detection complete on remote host. 2 of 3 agents available.');
 	});
 
-	it('computes grid movement boundaries and last-row centering classes', () => {
-		// Grid is GRID_COLS (4) wide: ArrowDown moves +4, ArrowUp moves -4.
+	it('steps along the single-row strip and clamps at both ends', () => {
 		expect(getNextAgentTileIndex(0, 'ArrowLeft')).toBe(0);
 		expect(getNextAgentTileIndex(0, 'ArrowRight')).toBe(1);
-		expect(getNextAgentTileIndex(0, 'ArrowDown')).toBe(4);
-		expect(getNextAgentTileIndex(4, 'ArrowDown')).toBe(4);
-		expect(getNextAgentTileIndex(4, 'ArrowUp')).toBe(0);
-		expect(getAgentTileColSpanClass(0)).toBe('col-span-2');
-		expect(getAgentTileColSpanClass(LAST_ROW_START_INDEX)).toContain(LAST_ROW_COL_START_CLASS);
+		expect(getNextAgentTileIndex(1, 'ArrowLeft')).toBe(0);
+		expect(getNextAgentTileIndex(AGENT_TILES.length - 1, 'ArrowRight')).toBe(
+			AGENT_TILES.length - 1
+		);
+		// The strip is one row, so vertical movement has nowhere to go.
+		expect(getNextAgentTileIndex(0, 'ArrowDown')).toBe(0);
+		expect(getNextAgentTileIndex(1, 'ArrowUp')).toBe(1);
+	});
+
+	it('offers every pickable provider, in the shared registry order', () => {
+		expect(AGENT_TILES.map((tile) => tile.id)).toEqual([...PICKABLE_AGENT_IDS]);
+		expect(AGENT_TILES.every((tile) => tile.supported)).toBe(true);
+		// Regression: Grok and Qwen3 Coder were selectable in the New Agent modal
+		// yet absent from the wizard and un-pickable as a group chat moderator.
+		expect(AGENT_TILES.map((tile) => tile.id)).toEqual(
+			expect.arrayContaining([...SUPPORTED_AGENTS])
+		);
 	});
 
 	it('normalizes wizard config fields and env var edits', () => {

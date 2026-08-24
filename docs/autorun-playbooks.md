@@ -194,12 +194,15 @@ It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flo
 
 The button highlights once there are buffered thoughts waiting to be read, and its tooltip gives the count.
 
-**Open, minimize, close, clear:**
+**Open, close, clear:**
 
 - **Open** shows the panel, already backfilled with everything the agent has thought so far.
-- **Minimize** collapses the panel and keeps recording.
-- **Close** hides the panel and keeps recording, so reopening it later still has the run's history.
+- **Close** (the X, or Escape) hides the panel and keeps recording, so reopening it later still has the run's history.
 - **Clear** (the trash icon) is the only thing that discards a buffer.
+
+There is no minimize. It used to mean "hide the panel but keep capturing," which is what closing does now. The panel takes no keyboard focus, so your shortcuts keep working while it is open.
+
+Once a run finishes, the Right Panel's run card goes away and takes its **View Thoughts** button with it. The buffer outlives the run, so a **Thoughts** button appears at the bottom of the Auto Run panel for as long as there is something buffered to read.
 
 Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: thoughts per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 
@@ -283,6 +286,94 @@ Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the *
 ## Image Support
 
 Paste images directly into your documents. Images are saved to an `images/` subfolder with relative paths for portability.
+
+## Model Tier and Effort
+
+Most playbooks change gears partway through. Surveying an existing codebase is cheap, mechanical work; designing the migration that follows is not. Rather than running everything at one setting, a marker sets the model tier and effort level:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Summarize the current request flow
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
+```
+
+That document runs three tasks cheaply, one expensively, and the fourth back at the cheap setting. Both attributes take `low`, `medium`, or `high`, and both are optional:
+
+| Attribute | Controls                   | Values                             |
+| --------- | -------------------------- | ---------------------------------- |
+| `tier`    | Which model runs the task  | `low`, `medium`, `high`, `default` |
+| `effort`  | How hard that model thinks | `low`, `medium`, `high`, `default` |
+
+### Placement is the scope
+
+| Where you put the marker  | What it covers                                        |
+| ------------------------- | ----------------------------------------------------- |
+| On its own line           | Everything below it, until the next standalone marker |
+| At the end of a task line | That one task; the next task reverts                  |
+
+So there are three useful scopes from two placements:
+
+- **Whole document** - one standalone marker above the first task.
+- **A phase** - a standalone marker under each section heading. Each one takes over where the previous left off.
+- **A single task** - an inline marker on that task's line. When the task finishes, whatever was in effect before takes back over.
+
+Markers render as nothing in the Auto Run panel (they are HTML comments), so a task with an inline hint still reads as plain task text.
+
+### The two layer per axis
+
+An inline marker only overrides the axes it names. Given a document-wide `tier="low" effort="high"`, a task marked `<!-- MAESTRO:MODEL tier="high" -->` runs at high tier **and** high effort - it inherits the effort rather than resetting it. Use `default` to push one axis explicitly back to the agent's own configuration:
+
+```markdown
+<!-- MAESTRO:MODEL tier="high" effort="high" -->
+
+- [ ] Design the caching layer
+- [ ] Rename the config keys <!-- MAESTRO:MODEL tier="default" effort="default" -->
+```
+
+### `low`, `medium`, and `high` are positions, not literal values
+
+The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's effort ladder runs `low, medium, high, xhigh, max`, so:
+
+| You write         | Claude Code sends | Codex sends |
+| ----------------- | ----------------- | ----------- |
+| `effort="low"`    | `low`             | `minimal`   |
+| `effort="medium"` | `high`            | `medium`    |
+| `effort="high"`   | `max`             | `xhigh`     |
+
+Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
+
+### Provider support
+
+| Provider      | Model tier              | Effort |
+| ------------- | ----------------------- | ------ |
+| Claude Code   | Yes (haiku/sonnet/opus) | Yes    |
+| Factory Droid | Yes                     | Yes    |
+| Codex         | Agent default           | Yes    |
+| Copilot-CLI   | Agent default           | Yes    |
+| OpenCode      | Agent default           | None   |
+
+Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
+
+### When to reach for it
+
+Use a hint when a task's cost and its difficulty are genuinely mismatched. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs **less** than running the whole playbook at the default.
+
+Do not decorate every task. A document with a marker on all ten says nothing about which two actually matter, and omitting markers entirely is the right default - every task then uses the agent's own configured model and effort.
+
+Hints are re-read before every task, so editing a marker while a playbook is running takes effect on the next task. There is no cached state to reset. Markers inside fenced code blocks are ignored, so a playbook can document this syntax without changing its own behavior.
+
+### Synopses always run cheap
+
+The per-task synopsis is pinned to the cheapest model and lowest effort regardless of what the task itself ran at, and the same applies to the synopsis after a regular AI chat turn. A synopsis summarizes work that already happened, so paying premium rates for a few sentences of prose is waste - on a long playbook that is one expensive turn per task. There is nothing to configure.
+
+## Provider Outages During a Run
+
+A run does not die because the provider had a bad minute. If a task fails on `529 Overloaded` or a spent plan quota, [Agent Resilience](/agent-resilience) parks the loop, waits out the backoff (for a quota failure, until the real reset time), and resumes the run from where it stopped. You get a **Auto Run: retrying** toast and a History entry recording the outage, rather than a run that quietly stalled overnight.
+
+Cancel the auto-retry from the status card in the transcript and the usual resume, skip, and abort controls come back. Resilience is on by default per agent; batches launched from `maestro-cli` do not auto-retry.
 
 ## Stopping the Runner
 

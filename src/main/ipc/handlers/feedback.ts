@@ -24,6 +24,7 @@ import { execFileNoThrow } from '../../utils/execFile';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import { captureException } from '../../utils/sentry';
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
+import type { MaestroCliManager } from '../../maestro-cli-manager';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
@@ -80,6 +81,13 @@ const handlerOpts = (
 export interface FeedbackHandlerDependencies {
 	getProcessManager: () => unknown;
 	debugPackageDeps?: DebugPackageDependencies;
+	/**
+	 * Resolves the maestro-cli install status so the conversation prompt can tell
+	 * the feedback agent whether live diagnostics are actually available. Optional:
+	 * without it the prompt simply omits the CLI from the environment block and the
+	 * agent falls back to reading logs directly.
+	 */
+	getMaestroCliManager?: () => MaestroCliManager;
 }
 
 export interface FeedbackAttachmentInput {
@@ -752,6 +760,40 @@ function buildIssueTitle(category: FeedbackCategory, summary: string): string {
 	return `${FEEDBACK_CATEGORY_PREFIX[category]}: ${trimmed}`;
 }
 
+/**
+ * Describe the debug log for the feedback agent's environment block.
+ *
+ * File logging is off by default everywhere except Windows, so today's dated log
+ * usually does not exist. Naming it unconditionally sends the agent to a missing
+ * file and burns one of the few diagnostics it should be spending on the user's
+ * actual problem, so report what is really on disk: today's log, else the most
+ * recent one, else the fact that logging is disabled.
+ */
+async function describeDebugLog(): Promise<string> {
+	const logFilePath = logger.getLogFilePath();
+	const logsDir = path.dirname(logFilePath);
+
+	try {
+		await fs.access(logFilePath);
+		return `- Debug log (today, live): ${logFilePath}`;
+	} catch {
+		// Today's log is absent - fall through and look for older ones.
+	}
+
+	try {
+		const entries = await fs.readdir(logsDir);
+		const logs = entries.filter((name) => name.endsWith('.log')).sort();
+		const mostRecent = logs[logs.length - 1];
+		if (mostRecent) {
+			return `- Debug log: file logging is currently OFF, so there is no log for today. The most recent one is ${path.join(logsDir, mostRecent)} (stale - only useful if the problem is old).`;
+		}
+	} catch {
+		// No logs directory at all.
+	}
+
+	return '- Debug log: file logging is OFF and no logs exist. Do not try to read one; rely on maestro-cli instead.';
+}
+
 function buildEnvironmentSection(environment: FeedbackEnvironmentSummary): string {
 	return [
 		'## Environment',
@@ -1180,7 +1222,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 		'feedback:get-conversation-prompt',
 		withIpcErrorLogging(
 			handlerOpts('get-conversation-prompt'),
-			async (): Promise<{ prompt: string; environment: string }> => {
+			async (): Promise<{ prompt: string; environment: string; cwd: string }> => {
 				const promptTemplate = getPrompt('feedback-conversation');
 
 				const platformLabel = getPlatformLabel(process.platform);
@@ -1190,15 +1232,42 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					? `${platformLabel} (${osVersion}, ${release})`
 					: `${platformLabel} (${release})`;
 
-				const environment = [
+				const environmentLines = [
 					`- Maestro version: ${app.getVersion()}`,
 					`- Operating system: ${operatingSystem}`,
 					`- Install source: ${inferInstallSource()}`,
-				].join('\n');
+					`- Maestro user data: ${app.getPath('userData')}`,
+					await describeDebugLog(),
+				];
 
+				// Tell the agent whether maestro-cli is actually reachable. Advertising
+				// verbs it cannot run wastes a diagnostic budget on ENOENT.
+				const cliManager = _deps.getMaestroCliManager?.();
+				if (cliManager) {
+					try {
+						const status = await cliManager.checkStatus();
+						environmentLines.push(
+							status.installed && status.commandPath
+								? `- maestro-cli: available at ${status.commandPath}`
+								: '- maestro-cli: NOT installed - skip the maestro-cli diagnostics below and read the log file instead'
+						);
+					} catch (error) {
+						// A status probe failure is not a feedback failure. Note it and move on.
+						logger.warn('Failed to probe maestro-cli status for feedback prompt', LOG_CONTEXT, {
+							error: String(error),
+						});
+					}
+				}
+
+				const environment = environmentLines.join('\n');
 				const prompt = promptTemplate.replace('{{ENVIRONMENT}}', environment);
 
-				return { prompt, environment };
+				// Diagnostics run from the user's home directory rather than the app's
+				// cwd (which is `/` for a Finder-launched .app, where nothing useful
+				// resolves). Home also keeps the agent out of whatever project the user
+				// happens to have open - the prompt scopes it to Maestro's own logs and
+				// config, and starting it away from their source reinforces that.
+				return { prompt, environment, cwd: os.homedir() };
 			}
 		)
 	);

@@ -14,6 +14,16 @@ import { LOG_CONTEXT, handlerOpts } from './shared';
 const streamingGitRuns = new Map<string, () => void>();
 
 /**
+ * runIds cancelled before their process existed.
+ *
+ * Startup is not instant - resolving the shell PATH, building the SSH command
+ * and reading the branch for `--set-upstream` all await first - and Cancel is
+ * clickable that whole time. Without this, an early Cancel found no handle,
+ * silently did nothing, and the command then ran to completion anyway.
+ */
+const pendingGitCancels = new Set<string>();
+
+/**
  * Build the argv for a streaming git operation.
  *
  * `--progress` is required because git suppresses transfer progress when stdout
@@ -127,6 +137,8 @@ async function runStreamingGitCommand(
 		onChunk: send,
 	});
 	streamingGitRuns.set(runId, handle.cancel);
+	// Cancel may have arrived while we were still setting up.
+	if (pendingGitCancels.delete(runId)) handle.cancel();
 
 	try {
 		const result = await handle.result;
@@ -142,6 +154,7 @@ async function runStreamingGitCommand(
 		};
 	} finally {
 		streamingGitRuns.delete(runId);
+		pendingGitCancels.delete(runId);
 	}
 }
 
@@ -199,7 +212,13 @@ export function registerStreamingHandlers(): void {
 		'git:cancelCommand',
 		withIpcErrorLogging(handlerOpts('cancelCommand'), async (runId: string) => {
 			const cancel = streamingGitRuns.get(runId);
-			if (!cancel) return { success: false };
+			if (!cancel) {
+				// The run has not spawned yet, so remember the cancel and apply it
+				// the moment it does. (A runId is single-use, so at worst this
+				// records a cancel for a run that already finished.)
+				pendingGitCancels.add(runId);
+				return { success: true };
+			}
 			cancel();
 			return { success: true };
 		})

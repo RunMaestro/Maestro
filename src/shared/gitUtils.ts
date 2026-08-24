@@ -473,13 +473,20 @@ export function isImageFile(filePath: string): boolean {
 }
 
 /**
- * Get MIME type for an image extension
+ * Get MIME type for an image extension.
  *
- * @param ext - File extension (without dot)
+ * The mapping has to be exact, not `image/${ext}`: `image/jpg` and `image/ico`
+ * are not real MIME types, and Electron's `nativeImage.createFromDataURL()`
+ * matches the declared type literally, so a JPEG labeled `image/jpg` decodes to
+ * an empty image and cannot be copied to the clipboard.
+ *
+ * @param ext - File extension, with or without a leading dot
  * @returns MIME type string
  */
 export function getImageMimeType(ext: string): string {
-	if (ext === 'svg') return 'image/svg+xml';
-	if (ext === 'jpg') return 'image/jpeg';
-	return `image/${ext}`;
+	const normalized = ext.replace(/^\./, '').toLowerCase();
+	if (normalized === 'svg') return 'image/svg+xml';
+	if (normalized === 'jpg' || normalized === 'jpeg') return 'image/jpeg';
+	if (normalized === 'ico') return 'image/x-icon';
+	return `image/${normalized}`;
 }

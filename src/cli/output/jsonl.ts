@@ -119,6 +119,26 @@ export interface PlaybookEvent extends JsonlEvent {
 	maxLoops?: number | null;
 }
 
+/**
+ * Emitted before a task spawns when the Auto Run document carried a
+ * `<!-- MAESTRO:MODEL -->` hint. Deliberately NOT gated on --verbose: a hint
+ * the provider could not honor (`warnings` non-empty) is the case this whole
+ * feature exists to make visible, and an operator who does not see it concludes
+ * the tier hint is broken rather than unmapped.
+ */
+export interface ModelResolutionEvent extends JsonlEvent {
+	type: 'model_resolution';
+	document: string;
+	taskIndex: number;
+	/** Model actually spawned with; null means the agent's own default. */
+	model: string | null;
+	/** Effort actually spawned with; null means the agent's own default. */
+	effort: string | null;
+	notes: string[];
+	warnings: string[];
+	message: string;
+}
+
 // Settings command events
 export interface SettingEvent extends JsonlEvent {
 	type: 'setting';

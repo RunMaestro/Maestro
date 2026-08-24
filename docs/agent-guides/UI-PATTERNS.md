@@ -6,6 +6,57 @@ Shared UI patterns, component library, and design system conventions for the Mae
 
 ---
 
+## Every Surface Needs Three Ways In and Two Ways Out
+
+A dashboard, modal, or panel the user is meant to open is not finished until all
+of these exist. This is not a style preference: a surface with one entry point is
+a surface most users never find, and one with no visible exit strands anyone on a
+tablet or a remote desktop. Ship them together, in the same change.
+
+**Three ways in:**
+
+| Way                 | Where it goes                                                                                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hotkey**          | `DEFAULT_SHORTCUTS` in `src/renderer/constants/shortcuts.ts`, handled in `useMainKeyboardHandler`                                                                                                                                   |
+| **Command palette** | A `build*Commands()` module under `src/renderer/components/QuickActionsModal/commands/`, wired in `QuickActionsModal.tsx`                                                                                                           |
+| **Menu**            | `HamburgerMenuContent.tsx` for a destination the user navigates to. Skip this one for an in-the-moment toggle (show/hide something already on screen), which belongs on a key and in the palette but not in a menu of places to go. |
+
+Register the surface in `UI_SURFACES` (`src/shared/uiSurfaces.ts`) at the same
+time. One entry gives you `maestro-cli open <surface>`, the `open_modal` bridge
+validation, and the discovery hint that teaches the user the hotkey - and it is
+the list a reviewer checks against.
+
+**Two ways out:** Escape (free via `useModalLayer` / the shared `Modal`) **and** a
+visible control - `<EscCloseButton>` or the `Modal` header's X. Never Escape alone.
+
+**And it should be resizable.** Any surface bigger than a confirm dialog takes a
+`resizeKey` so `useResizableModal` remembers the size the user dragged it to. A
+fixed-size dashboard is wrong on somebody's display.
+
+**Closing must park, never destroy.** If the content owns live state (an iframe,
+a media element, a running view), keep it mounted and pass `hidden` to `Modal`
+instead of unmounting it - see `ConcertoStageModal`. Reopening must return the
+user to exactly what they left.
+
+### Docked or floating (`Modal`'s `floating` prop)
+
+A surface the user watches while they keep working - rather than one that owns
+their attention - can offer a pop-out. Pass `floating={{ position, onMovePointerDown }}`
+and the same `Modal` renders as a free-positioned, non-blocking window: no
+backdrop, a click-through layer, a passive layer registration (Escape still
+closes it, but it neither traps focus nor blanks the app's shortcuts), a header
+that doubles as the drag handle, and resize handles on the bottom/right only
+(a top-left-pinned frame cannot honor a north or west drag without also moving).
+
+Drive the drag with `usePointerDrag` and `ignoreButtons: true` so the header's own
+buttons still click, clamp with `clampModalPosition()` from `utils/modalSizing.ts`
+so the title bar can never be dragged off screen, and persist on `onEnd` rather
+than per pointer-move.
+
+**Do NOT branch between a `<Modal>` and a hand-rolled floating `<div>`.** They
+must be the same element with different props, or React unmounts the subtree on
+every toggle - which restarts whatever the pop-out existed to keep running.
+
 ## Modal System (LayerStack)
 
 Maestro uses a centralized **LayerStack** to manage all modals, overlays, and search interfaces. Every dismissable UI surface registers with the stack so that Escape always closes the topmost layer first.
@@ -132,6 +183,27 @@ Guidance:
 
 The expanded Prompt Composer (`src/renderer/components/PromptComposerModal.tsx`) is the reference implementation of the compact-vs-`90vw x 90vh` toggle.
 
+### Naming the Subject in a Modal Header (`subtitle`)
+
+A modal opened from a **right-click menu** frequently acts on something other than the highlighted agent. `git push` as a header names the operation but not the target, so a user who right-clicked an arbitrary Left Bar row has no way to tell which agent is about to push.
+
+Pass `<Modal subtitle={...}>` for the subject: which agent, which repo, which file. It renders dimmed after the title (`git push · Sonoma-Fix`) and is skipped entirely when empty, so a modal with nothing to name looks exactly as it did before. `GitCommandRunnerModal.tsx` is the reference use.
+
+**Do not concatenate the subject into `title`.** `title` is the `aria-label` and the modal-layer label, and it seeds the fallback resize key via `getDefaultResizeKey()` - a per-agent title mints a different persisted window size for every agent, so the modal would forget its size each time you targeted a different one. That is also why any test asserting on the bare title keeps passing after a `subtitle` is added.
+
+Most openers already carry what they need: `useGitAgentActions.ts` has been putting `sessionId` in the `gitCommandRunner` payload since it was written, the modal just ignored it. Check the payload before plumbing a new prop.
+
+**Two shapes `subtitle` cannot reach**, both of which own their header instead of letting `<Modal>` draw it:
+
+- A modal passing `customHeader` - that replaces `<Modal>`'s header wholesale, so the prop silently never renders (`BranchSwitcherModal`).
+- A bespoke shell with its own `<h2>` and no `<Modal>` at all (`CreatePRModal`, `CreateWorktreeModal`, `WorktreeConfigModal`, `GitLogViewer`, `GitDiffViewer`).
+
+Both render `<ModalSubtitle theme={theme} subtitle={name} />` directly, exported from `ui/Modal.tsx`. `<Modal>` renders the same component from its own `subtitle` prop, so every surface shares one dim, one separator, and one `data-testid="modal-subtitle"`. Do NOT hand-roll the dimmed span. When you add the name to a bespoke header, give the heading `shrink-0` and the wrapper `min-w-0`, or the name pushes the close button instead of ellipsising.
+
+**Check for a second header.** `GitDiffViewer` draws a separate one in its empty-diff branch, which needs the name more than the populated one does - "No changes to display" is exactly the message a user misreads as belonging to the agent they meant to right-click.
+
+**Do not force-activate the agent to make a modal find it.** `Configure Worktrees` used to call `setActiveSessionId()` before opening so the modal's `activeSession` read would land on the right agent. That silently moved the user's selection and retargeted every other surface bound to the active agent. Put the target in the modal payload instead, and give the modal AND its callbacks one shared resolver (pinned agent, else active) so the dialog and its Save button cannot target different agents - see `resolveWorktreeConfigTarget()` in `useWorktreeHandlers.ts`.
+
 ### Resizable Modals
 
 Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
@@ -229,6 +301,22 @@ How it works:
 - Spread `resize.style` LAST in the `style` prop, after the caller's own `minHeight`, or the inline height gets overwritten.
 - Pass `externalRef` when the component already owns a ref on the textarea (autocomplete, focus-on-open). Do NOT add a second ref or a second `ResizeObserver`.
 
+### Auto-Growing Composers
+
+A composer textarea that grows with its content (AI composer, both wizard composers, group chat, feedback chat) uses `useAutosizeTextarea` (`src/renderer/hooks/ui/useAutosizeTextarea.ts`). Do NOT hand-roll the two-line `height = 'auto'` / `height = scrollHeight` pair again.
+
+```tsx
+useAutosizeTextarea({ textareaRef: inputRef, value: inputValue, maxHeight: 112 });
+```
+
+Why the hand-rolled version is wrong: setting `height = 'auto'` momentarily removes the overflow, which collapses the internal scroll to the top. Once the composer is full and scrolling, every keystroke therefore scrolled the line being typed back out of sight - the text was there, but the last line was clipped until the user scrolled by hand, and the next key hid it again. `resizeTextareaToContent` (`src/renderer/utils/textareaSizing.ts`) restores `scrollTop` across the toggle, and the hook re-pins the view to the bottom when the edit happened at the end of the text (`shouldScrollTextareaToEnd`), so typing, dictation, and paste all keep the caret visible.
+
+Run it on the committed `value`, not inside `onChange`. An `onChange`/`onInput` resize never fires for programmatic edits - voice dictation, draft restore, template insertion - so those grow the text without growing the box.
+
+- `resetKey` forces a re-measure when the value did not change but the content did (switching AI tabs restores a different draft).
+- `deferredResizeRef` is for the one caller that owns its own rAF resize on the keystroke path (`useInputAreaTextChange`); while it is true the hook skips both the resize and the scroll so the two cannot race. Everything else omits it.
+- `useInputAreaAutosize` is just the AI composer's binding over this hook. Distinct from `useResizableTextarea` above, which remembers a height the USER dragged; pick by who decides the height.
+
 ### Escape Key Flow
 
 1. `LayerStackProvider` attaches a **capture-phase** `keydown` listener on `window`.
@@ -309,6 +397,89 @@ It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `ro
 
 **This is not `<RadioGroup>`.** That primitive renders the same semantics as stacked, description-carrying list rows for settings panes. `SegmentedControl` is the compact toolbar form for short labels where vertical space is scarce. Pick by layout, and do not add a `variant` prop to either one to cover the other.
 
+### Sortable Table Headers (`<SortableTh>` + `useTableSort`)
+
+A table whose column headers sort it needs two pieces, and both live in shared code: `useTableSort()` (`src/renderer/hooks/ui/useTableSort.ts`) for the state, `<SortableTh>` (`src/renderer/components/ui/SortableTh.tsx`) for the header cell.
+
+```tsx
+const { sortKey, direction, isDescending, toggleSort } = useTableSort<TaskSortKey>('next', {
+	// Text columns read best A-Z, magnitude columns biggest-first.
+	defaultDirectionFor: (key) => (key === 'occurrences' ? 'desc' : 'asc'),
+});
+
+<SortableTh
+	columnKey="next"
+	label="Next"
+	sortKey={sortKey}
+	direction={direction}
+	onSort={toggleSort}
+	theme={theme}
+	align="right"
+	title="Sort by time until the next fire"
+	className="pb-2 font-medium text-right"
+	testId="scheduled-tasks-sort-next"
+/>;
+```
+
+The hook owns the one rule every hand-rolled copy gets subtly different: clicking the **active** column flips its direction, clicking a **different** column jumps to that column's own default direction. Inheriting the previous column's direction is the bug worth avoiding - going from "Next ascending" to "Occurrences ascending" silently shows the least-used rows first, which reads as broken data rather than as a sort.
+
+The component owns three things:
+
+- **A real `<button>` as the click target.** A `<th role="button" onClick>` announces as a button but has no tab stop and no Enter/Space handling, so it is unreachable by keyboard. `role` grants the semantics without granting the behavior.
+- **`aria-sort` on the `<th>`**, never on the inner control, and only the active column carries a direction.
+- **A stable indicator slot.** The caret is always laid out and merely transparent when inactive, so switching columns doesn't reflow the header row.
+
+Callers keep their own comparator and own padding/border classes via `className` / `style`. One nuance worth copying: rows whose sort value is genuinely unknown (a Cue interval task has no projected next fire) should be pinned last in **both** directions rather than flowing through the comparator - "unknown" is not "the largest value", and flipping the sort must not promote rows that have nothing to compare.
+
+### Paginating an In-Memory List (`usePagination` + `<Pager>`)
+
+Two unrelated pagination systems live in this codebase; picking the wrong one is the mistake to avoid.
+
+- `useHistoryPagination` (`hooks/history/`) is an **async, IPC-backed windowing engine**. Use it when the data arrives page by page over IPC and the total lives in a database.
+- `usePagination` (`hooks/ui/usePagination.ts`) is for a list you **already hold in memory** and simply cannot render all at once. Pure page arithmetic lives in `utils/pagination.ts` so it can be tested without a DOM.
+
+```tsx
+const pager = usePagination(sortedRows, 32, `${filterMode}:${sortMode}`);
+...
+{pager.isPaginated && (
+	<Pager
+		theme={theme} page={pager.page} totalPages={pager.totalPages}
+		onPrev={pager.prevPage} onNext={pager.nextPage}
+		canGoPrev={pager.canGoPrev} canGoNext={pager.canGoNext}
+	/>
+)}
+{pager.pageItems.map(renderRow)}
+```
+
+Two rules the hook exists to enforce:
+
+**The current page is clamped on read, not in an effect.** A list can shrink underneath an active page - narrowing the tab breakdown from "All" (1236 rows, page 30) to "Open" (18 rows) is the canonical case. Clamping in an effect renders one frame of the out-of-range page first, which flashes an empty grid; clamping on read means the out-of-range state is never visible. `page`, `pageItems`, and `range` are all derived from the clamped value.
+
+**Pass a `resetKey`.** Build it from everything the user can change that reorders or refilters the list (sort mode, filter mode, search text). Without it, re-sorting leaves the user on page 7 of a brand-new ordering, which is an arbitrary slice of data they did not ask for.
+
+**Put `<Pager>` in the toolbar row, not under the list.** A pager below a long grid inside a scrolling modal forces the user to scroll to the bottom, click, and then scroll back to the top to see the page they asked for. Beside the filter and sort controls, everything that changes what you see sits in one place and stays on screen. Gate it on `pager.isPaginated` so the control is absent entirely when everything fits - and choose a page size that keeps the bounded filters on one page, so the pager appears exactly when it is needed.
+
+### Measuring an Element's Width (`useElementWidth`)
+
+`useElementWidth(ref, enabled?)` (`hooks/ui/useElementWidth.ts`) wraps the ResizeObserver boilerplate that was previously inline in `UsageDashboardModal`. Reach for it **only when the number has to exist in JavaScript**: an inline SVG chart needs real pixels for its viewBox, and a responsive breakpoint that switches column counts needs a value to compare. Anything expressible in CSS stays in CSS.
+
+It returns `0` until the first measurement lands, so gate width-dependent children on `width > 0` (or supply a sensible fallback) rather than painting a zero-width chart on the first frame. It also no-ops when `ResizeObserver` is undefined, so jsdom component tests render without a polyfill.
+
+This matters for any resizable modal that draws a chart: a hard-coded SVG width silently stops matching the frame the moment the user drags it.
+
+### Horizontally Scrolling Strips (`useHorizontalScroll`)
+
+`useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
+
+Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
+
+- **Silence at the edge.** Nothing tells the user more content exists past the right edge. Use the flags to render an honest affordance - a gradient fade plus an arrow button. Do not render the arrows unconditionally: an arrow that cannot move is worse than no arrow.
+- **A swallowed wheel gesture.** A strip has no vertical overflow of its own, so a mouse wheel or trackpad flick over it scrolls an ancestor or does nothing. The hook maps vertical deltas onto the horizontal axis.
+
+Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path. Focusing an item scrolls it into view for free, so keyboard navigation needs no extra scrolling code.
+
+It no-ops without `ResizeObserver`, so jsdom component tests render without a polyfill (and both flags read `false`, since jsdom reports zero for every measurement).
+
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
 The Usage Dashboard's card grids (the agent grid in `AgentOverviewCards`, the per-tab grid in `TabBreakdown`) all render the same tile: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
@@ -327,6 +498,32 @@ Two traps when touching this row:
 
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
 - `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
+
+### Keycaps (`<Keycap>` / `<KeycapHint>`)
+
+`src/renderer/components/ui/Keycap.tsx` draws a keyboard key as a physical key - a face, a border, and a lip along the bottom edge - rather than as a glyph in a dim caption. `Keycap` is the cap alone; `KeycapHint` is one or more caps beside the action they perform (`[↑][↓] Model`).
+
+Two props are the reason it exists rather than another hand-rolled `<kbd>`:
+
+- **`pressed`** collapses the lip and sinks the cap by exactly the lip's height, so a surface that already listens for the key can echo the real keypress on screen. Drive it from a short timer, not from `keyup`: a held key repeats without ever sending `keyup`, so a cap released on `keyup` stays stuck down.
+- **`onClick`** turns the hint into the control. A surface showing `↵ Apply` and `esc Cancel` needs no separate button row, and the pointer-only user (remote desktop, tablet) clicks the same key the keyboard user presses - which is how it satisfies [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton).
+
+The hover wash is drawn from `theme.colors.border`, not a fixed white overlay, so it stays visible on light themes. Glyph choice is the caller's: pass `'↑'`, `'↵'`, `'esc'`, or `formatShortcutKeys()` output.
+
+### The Two-Axis Console (`ModelEffortModal`)
+
+`src/renderer/components/ModelEffortModal.tsx` is the reference for a surface where **the shape of the control is the explanation of the control**. Both axes are live at once - Up/Down walks the model, Left/Right walks the effort - so it is deliberately NOT a `<Modal>`: dialog chrome would add a focus ring and invite tabbing between panes, which is the interaction the design is trying to remove. It portals a blurred scrim and floats the composition on it, registering with `useModalLayer` for Escape and priority.
+
+Ideas worth reusing:
+
+- **A wheel, not a list.** Rows are absolutely positioned by `transform` and keyed by model id, so a row that survives a step animates to its new slot instead of being repainted in place. The wrap radius is capped at `floor((count - 1) / 2)`, which is what lets a short catalog wrap without the same model appearing in two slots at once.
+- **The end-fade and the depth falloff are one decision.** A `maskImage` fades the wheel's ends; the outermost `WHEEL_DEPTH` entry has to survive that fade with something still legible. Deepening the wheel past what the mask lets through buys dead air, not rows - that is why the radius is 2.
+- **Ordered scales get a level meter; unordered sets do not.** Effort bars ramp with the level and fill up to the selection, so the scale reads without reading a word. Model has no order, so it gets none. The `(default)` stop sits off the scale behind a hairline and carries no bar - which is also why the row aligns `items-start` with a fixed-height bar slot, rather than `items-end` on a baseline the default stop does not have.
+- **Type-to-jump beats a scrollbar.** A printable key jumps the wheel to the matching model; repeating a letter walks every model starting with it. Gate it on `isTypeaheadKey` (no `metaKey` / `ctrlKey` / `altKey`) - swallowing modified keys would stop `Cmd+W` reaching the window and trap the user inside the surface.
+
+**No legend, but still a graphical exit.** The surface shows no shortcut caption: the axes are self-describing, and the caption was the only thing on screen that had to be read rather than seen. [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton) is still satisfied without a button row - clicking the scrim cancels and double-clicking a row applies, both routed through the same handlers Escape and Enter use, so pointer and keyboard cannot drift.
+
+Anything with an inline `transition` must carry a class the reduced-motion block can name (`.maestro-wheel-row`, `.maestro-effort-stop`, `.maestro-keycap`); the blanket `.transition-*` reset in `index.css` only matches Tailwind's utility classes.
 
 ### Text Selection in Modals
 
@@ -511,9 +708,15 @@ tab switcher, git log, history). Do NOT hand-roll another
 `selectedIndex` + keydown switch.
 
 Pass `columns` to navigate a 2-D **grid** instead: left/right step one tile,
-up/down jump a full row. `columns` of 1 (the default) is exactly the old list
-behavior, and left/right stay inert there because other things own those keys
-(text carets, tree expand/collapse).
+up/down jump a full row. Omitting it is exactly the old list behavior, where
+left/right stay inert because other things own those keys (text carets, tree
+expand/collapse).
+
+Grid mode keys on the option's **presence**, not on `columns > 1`. A grid that
+has reflowed down to a single column still answers all four arrows - there,
+left/right simply mean previous/next. Gating the horizontal arrows on the
+measured value makes them die exactly when the window gets narrow, which reads
+as broken rather than as a narrow grid.
 
 For a responsive grid, feed it the MEASURED column count from
 `useGridColumnCount(ref, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
@@ -541,9 +744,13 @@ the button's own activation so the item opens exactly once.
 Two things the Extensions grid (`Settings/Extensions/`) gets right and a new
 grid should copy:
 
+- **Take focus on mount.** A grid the user navigated to is the thing they came
+  to use, so claim focus rather than making them click or Tab into it first.
+  Consume that with a ref so it happens once per mount; re-focusing on every
+  index change yanks the caret back from wherever the user moved it.
 - **Own the active index ABOVE the grid** when the grid unmounts for a detail
-  view, and restore focus to that item on the way back. Otherwise Escape drops
-  the user on the first tile and they lose their place.
+  view, and let the remount restore focus. Otherwise Escape drops the user on
+  the first tile and they lose their place.
 - **Move DOM focus only when focus is already inside the grid.** An effect that
   focuses on every index change steals the caret out of the search box the
   moment filtering changes the list.
@@ -1098,6 +1305,17 @@ drifts the moment a `- [ ]` appears inside a code fence. The file preview and
 the Auto Run panel both ride this path; Auto Run drops the callback while a
 document is locked by a running Auto Run, matching its disabled editor.
 
+**The toggle handler MUST have a stable identity.** `createMarkdownComponents()`
+returns a map of freshly-created component functions, so anything that rebuilds
+that map hands React a NEW component TYPE for every element and it unmounts and
+remounts the whole rendered document - throwing away the reader's scroll
+position, restarting images, and re-running Mermaid. A toggle handler naturally
+closes over the document content, so an ordinary `useCallback` is reborn on
+every edit and does exactly that. Wrap it in `useStableCallback()`
+(`hooks/utils/useStableCallback.ts`) and keep the component memo's dependencies
+off the content (depend on `file.path`, not `file`). `useAutoRunMarkdown` does
+the wrapping internally, so its callers cannot get this wrong.
+
 #### Alert callouts
 
 `[!NOTE]`-style callouts need a plugin AND a blockquote renderer. `remarkAlert`
@@ -1171,6 +1389,33 @@ Full reference (all output + input widget props, the input-family contract, the
 presentational-only/Encore-flag-independent rules, and the Widget Gallery dev
 command): [WIDGET-LIBRARY.md](WIDGET-LIBRARY.md). Reuse a widget from there
 before hand-rolling a stat card, chart, sparkline, or input control.
+
+### `<EnvVarList>` (`src/renderer/components/ui/EnvVarList.tsx`)
+
+Read-only view of an agent's **effective** environment: the merged result of all
+three layers, each row badged with the layer whose value won.
+
+```tsx
+<EnvVarList
+	theme={theme}
+	vars={resolveAgentEnvironment({ global, agent, session })}
+	emptyMessage={`No environment variables are set for ${session.name}.`}
+	testId="reauth-env"
+/>
+```
+
+Feed it from `resolveAgentEnvironment()` in `src/shared/agentEnvironment.ts` (see
+[SHARED-UTILS.md](SHARED-UTILS.md)) rather than merging the layers at the call
+site, or the panel drifts from what the spawner actually built.
+
+**Not the same component as `Settings/EnvVarsEditor`**, which edits ONE layer.
+Pick by question: "change a value" is the editor, "which profile am I running
+as?" is this. Do not add an edit mode to this one to cover both.
+
+Credential-shaped keys are masked behind a per-row reveal, decided by
+`isSecretEnvKey()`. This is deliberately loose - the surfaces that show an
+environment are diagnostic ones people open while screen-sharing for help, so a
+false positive costs one click and a false negative leaks a live key.
 
 ---
 

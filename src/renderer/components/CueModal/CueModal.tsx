@@ -32,9 +32,22 @@ import { useCueToggle } from '../../hooks/cue/useCueToggle';
 import { CueModalHeader, type CueModalTab } from './CueModalHeader';
 import { CueDashboard } from './CueDashboard';
 import { ActivityLog } from './ActivityLog';
+import { PipelineListTab } from './PipelineListTab';
 import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
+
+// In-memory only - last tab the user was on. Reopening the modal lands here
+// instead of snapping back to Dashboard, matching how the Settings modal
+// behaves. Resets on app restart by design, and an explicit `initialTab`
+// (a deep link, `maestro-cli open cue --tab ...`) always wins over it.
+let lastOpenCueTab: CueModalTab | null = null;
+
+/** Test-only: clear the remembered tab so suites that assume a fresh open
+ *  aren't polluted by a prior test in the same file. */
+export function __resetLastOpenCueTabForTests(): void {
+	lastOpenCueTab = null;
+}
 
 export interface CueModalProps {
 	theme: Theme;
@@ -139,8 +152,18 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	});
 
 	// Read initial tab from modal data (e.g., when navigating from YAML editor)
+	// Resolved once in the lazy initializer rather than via a restore effect:
+	// under StrictMode a restore-via-effect double-fires and clobbers the
+	// remembered value with the default before it lands.
 	const cueModalData = useModalStore(selectModalData('cueModal'));
-	const [activeTab, setActiveTab] = useState<CueModalTab>(cueModalData?.initialTab ?? 'dashboard');
+	const [activeTab, setActiveTab] = useState<CueModalTab>(
+		() => cueModalData?.initialTab ?? lastOpenCueTab ?? 'dashboard'
+	);
+
+	// Remember the tab for the next open.
+	useEffect(() => {
+		lastOpenCueTab = activeTab;
+	}, [activeTab]);
 
 	// Graph data (owned by hook: fetch on mount + tab change, cancellation race guard, refreshGraphData)
 	const {
@@ -168,6 +191,13 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		nonce: string;
 	} | null>(null);
 
+	// Jump to the graph tab with a specific pipeline pre-selected. The nonce is
+	// what lets the editor re-apply the same target on a repeat click.
+	const handleViewInGraph = useCallback((pipelineId: string | null) => {
+		setPendingPipelineId({ id: pipelineId, nonce: generateId() });
+		setActiveTab('pipeline');
+	}, []);
+
 	const handleViewInPipeline = useCallback(
 		(session: CueSessionStatus) => {
 			// Find the pipeline by session-membership, not by color. Multiple
@@ -182,10 +212,9 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						node.data.sessionId === session.sessionId
 				)
 			);
-			setPendingPipelineId({ id: pipeline?.id ?? null, nonce: generateId() });
-			setActiveTab('pipeline');
+			handleViewInGraph(pipeline?.id ?? null);
 		},
-		[dashboardPipelines]
+		[dashboardPipelines, handleViewInGraph]
 	);
 
 	const handleRemoveCue = useCallback(
@@ -255,6 +284,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		'dashboard',
 		'scheduled',
 		'pipeline',
+		'pipeline-list',
 		'activity',
 		'backup',
 	]);
@@ -359,6 +389,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									onTriggerSubscription={triggerSubscription}
 									onStopRun={stopRun}
 									onStopAll={stopAll}
+									focusSessionId={cueModalData?.focusSessionId}
 								/>
 							</div>
 						) : activeTab === 'scheduled' ? (
@@ -367,6 +398,19 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								active
 								agents={scheduledTaskAgents}
 								defaultAgentId={activeSessionId ?? undefined}
+							/>
+						) : activeTab === 'pipeline-list' ? (
+							<PipelineListTab
+								theme={theme}
+								pipelines={dashboardPipelines}
+								graphSessions={graphSessions}
+								activeRuns={activeRuns}
+								activityLog={activityLog}
+								loading={loading || graphInitialLoading}
+								error={error || graphError}
+								onRetry={handleRetry}
+								onViewInGraph={handleViewInGraph}
+								onTriggerSubscription={triggerSubscription}
 							/>
 						) : activeTab === 'activity' ? (
 							<div className="flex-1 min-h-0 px-5 py-4 select-text">

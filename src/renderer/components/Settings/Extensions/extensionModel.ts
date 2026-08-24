@@ -68,6 +68,8 @@ export interface UnifiedExtension {
 	firstParty?: boolean;
 	pluginId?: string;
 	permissions?: FirstPartyPluginDefinition['permissions'];
+	/** How to actually use the feature, rendered under the description. */
+	usage?: FirstPartyPluginDefinition['usage'];
 	settingsNamespace?: string;
 	backgroundServiceId?: string;
 	// --- plugin-only ---
@@ -142,6 +144,7 @@ export function builtinExtension(
 		firstParty: backing.firstParty,
 		pluginId: backing.id,
 		permissions: backing.permissions,
+		usage: backing.usage,
 		settingsNamespace: backing.settingsNamespace,
 		backgroundServiceId: backing.backgroundServices[0]?.id,
 		flag: def.flag,

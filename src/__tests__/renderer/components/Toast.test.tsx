@@ -124,6 +124,64 @@ describe('Toast', () => {
 		});
 	});
 
+	describe('timestamp', () => {
+		// Fixed local wall-clock instant so the assertions below are locale-safe:
+		// they compare against Intl output computed the same way, and assert the
+		// today-vs-earlier behavior rather than a hard-coded string.
+		const NOW = new Date(2026, 0, 15, 14, 30, 0).getTime();
+		const DAY_MS = 24 * 60 * 60 * 1000;
+
+		const timeEl = () => document.body.querySelector('time');
+
+		beforeEach(() => {
+			vi.setSystemTime(NOW);
+		});
+
+		it('stamps every toast, even one with no group/project/tab', () => {
+			setStoreToasts([createMockToast({ timestamp: NOW })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(timeEl()).not.toBeNull();
+			expect(timeEl()).toHaveAttribute('dateTime', new Date(NOW).toISOString());
+		});
+
+		it('shows only the clock time for a toast from today', () => {
+			setStoreToasts([createMockToast({ timestamp: NOW })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const expectedTime = new Date(NOW).toLocaleTimeString([], {
+				hour: 'numeric',
+				minute: '2-digit',
+			});
+			const expectedDate = new Date(NOW).toLocaleDateString([], {
+				month: 'short',
+				day: 'numeric',
+			});
+			expect(timeEl()?.textContent).toBe(expectedTime);
+			// The point of 'smart': today needs no date, so it must not appear.
+			expect(timeEl()?.textContent).not.toContain(expectedDate);
+		});
+
+		it('adds the date once a sticky toast is older than today', () => {
+			const yesterday = NOW - DAY_MS;
+			setStoreToasts([createMockToast({ timestamp: yesterday, dismissible: true })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const expectedDate = new Date(yesterday).toLocaleDateString([], {
+				month: 'short',
+				day: 'numeric',
+			});
+			expect(timeEl()?.textContent).toContain(expectedDate);
+		});
+
+		it('exposes the full date and time as a hover title', () => {
+			setStoreToasts([createMockToast({ timestamp: NOW })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(timeEl()).toHaveAttribute('title', new Date(NOW).toLocaleString());
+		});
+	});
+
 	describe('duration badge', () => {
 		it('formats duration correctly', () => {
 			const testCases = [
@@ -313,6 +371,43 @@ describe('Toast', () => {
 			render(<ToastContainer theme={mockTheme} />);
 			expect(document.body.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
 		});
+
+		// Regression: these guards used to read `toast.duration && toast.duration > 0`.
+		// With a duration of 0 the leading truthiness check evaluates to the NUMBER
+		// 0 rather than a boolean, and React renders a bare `0` text node where the
+		// element should have been. The "never auto-dismiss" setting makes
+		// `duration` 0 without setting `dismissible`, so the combination is
+		// reachable. Asserting on whole-element text would not catch it (the stray
+		// node sits among real content, and the arrival timestamp legitimately
+		// contains digits), so look for a text node that is literally "0".
+		const strayZeroCount = (): number => {
+			const root = document.body.querySelector('.fixed.bottom-0.right-4');
+			if (!root) return 0;
+			const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+			let count = 0;
+			while (walker.nextNode()) {
+				if (walker.currentNode.textContent?.trim() === '0') count++;
+			}
+			return count;
+		};
+
+		it('renders no stray zero when duration is 0 and the toast is not dismissible', () => {
+			setStoreToasts([createMockToast({ duration: 0, dismissible: false })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(document.body.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
+			expect(strayZeroCount()).toBe(0);
+		});
+
+		// Same shape on the duration badge: a task that rounds to 0ms printed a
+		// bare "0" instead of rendering nothing.
+		it('renders no stray zero when taskDuration is 0', () => {
+			setStoreToasts([createMockToast({ taskDuration: 0, duration: 5000 })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.queryByText(/Completed in/)).not.toBeInTheDocument();
+			expect(strayZeroCount()).toBe(0);
+		});
 	});
 
 	describe('action URL link', () => {
@@ -435,11 +530,12 @@ describe('Toast', () => {
 	});
 
 	describe('no metadata row', () => {
-		it('does not render metadata section when no group/project/tabName', () => {
+		it('renders no context badges when no group/project/tabName', () => {
 			setStoreToasts([createMockToast()]);
 
 			render(<ToastContainer theme={mockTheme} />);
-			// The metadata row has accentDim styled spans - should not exist
+			// The row itself still renders - it carries the timestamp - but the
+			// accentDim styled badges for group/tab should not exist.
 			const accentSpans = document.body.querySelectorAll('.px-1\\.5.py-0\\.5.rounded');
 			expect(accentSpans).toHaveLength(0);
 		});

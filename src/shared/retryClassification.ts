@@ -62,9 +62,14 @@ const TOKEN_EXHAUSTION_RE =
 /**
  * Transient upstream availability / throttling phrasing. HTTP status codes use
  * word boundaries so we don't match ports or version numbers.
+ *
+ * `rate[\s_-]?limit` rather than `rate\s+limit`: providers send the machine tag
+ * `rate_limit` (Claude Code puts exactly that in the `error` field of its
+ * plan-limit message), and a whitespace-only pattern classified it as `unknown`,
+ * which is not retryable - so a real 429 got no retry at all.
  */
 const AVAILABILITY_RE =
-	/overloaded|\b529\b|\b503\b|\b502\b|\b500\b|service\s+(?:unavailable|overloaded)|temporarily\s+(?:unavailable|overloaded)|too\s+many\s+requests|rate\s+limit|\b429\b|try\s+again/i;
+	/overloaded|\b529\b|\b503\b|\b502\b|\b500\b|service\s+(?:unavailable|overloaded)|temporarily\s+(?:unavailable|overloaded)|too\s+many\s+requests|rate[\s_-]?limit|\b429\b|try\s+again/i;
 
 /** The minimal shape {@link classifyRetryableError} needs from an AgentError. */
 export interface ClassifiableError {
@@ -107,11 +112,16 @@ export function availabilityDelayMs(attempt: number): number {
 /**
  * Absolute epoch-ms timestamp to wait until for a token-exhaustion retry.
  *
- * Best-effort: reads a structured retry/reset hint from `parsedJson`, then falls
- * back to a `retry after N seconds/minutes` phrase in the message. When nothing
- * parseable is found returns `now + 1h` (the hourly fallback). We deliberately
- * do NOT parse wall-clock phrases like "resets at 3pm" - timezone/locale
- * ambiguity makes a wrong guess worse than the reliable hourly poll.
+ * Best-effort, in descending order of confidence: a structured retry/reset hint
+ * on `parsedJson`, a `retry after N seconds/minutes` phrase, the legacy
+ * `usage limit reached|<epoch>` marker, then a wall-clock reset that names its
+ * own IANA timezone ("resets 11:40am (America/Chicago)"). When nothing
+ * parseable is found returns `now + 1h` (the hourly fallback).
+ *
+ * A bare wall-clock phrase like "resets at 3pm" is still ignored: without a
+ * zone the guess can be hours off. Claude Code's own notice carries the zone in
+ * parentheses, which removes the ambiguity that made this unsafe. Guessing
+ * early is cheap anyway - a premature retry just re-fails and reschedules.
  *
  * @param error the failing error
  * @param now   current epoch ms (injectable for tests)
@@ -120,8 +130,16 @@ export function tokenExhaustionResetAt(error: ClassifiableError, now: number): n
 	const fromJson = parseResetFromJson(error.parsedJson, now);
 	if (fromJson !== undefined) return fromJson + RESET_TIME_BUFFER_MS;
 
-	const fromMessage = parseRetryAfterFromMessage(error.message ?? '', now);
+	const message = error.message ?? '';
+
+	const fromMessage = parseRetryAfterFromMessage(message, now);
 	if (fromMessage !== undefined) return fromMessage + RESET_TIME_BUFFER_MS;
+
+	const fromEpochMarker = parseEpochMarkerFromMessage(message, now);
+	if (fromEpochMarker !== undefined) return fromEpochMarker + RESET_TIME_BUFFER_MS;
+
+	const fromClock = parseZonedResetFromMessage(message, now);
+	if (fromClock !== undefined) return fromClock + RESET_TIME_BUFFER_MS;
 
 	return now + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS;
 }
@@ -154,9 +172,16 @@ function coerceResetNumber(value: number, now: number): number | undefined {
 	return now + value * 1000; // relative seconds
 }
 
-function parseResetFromJson(parsedJson: unknown, now: number): number | undefined {
-	if (!parsedJson || typeof parsedJson !== 'object') return undefined;
-	const record = parsedJson as Record<string, unknown>;
+/**
+ * Nested objects that carry a reset hint. Claude Code puts the authoritative
+ * value at `quotaLimits.resetsAt` (epoch seconds) on its plan-limit message, so
+ * a top-level-only scan misses the one field that makes the retry land on the
+ * exact reset second rather than an hourly poll.
+ */
+const RESET_JSON_CONTAINERS = ['quotaLimits', 'quota_limits', 'rateLimit', 'rate_limit'] as const;
+
+/** Scan one flat object for any recognized reset key. */
+function scanResetKeys(record: Record<string, unknown>, now: number): number | undefined {
 	for (const key of RESET_JSON_KEYS) {
 		const raw = record[key];
 		if (typeof raw === 'number') {
@@ -173,6 +198,24 @@ function parseResetFromJson(parsedJson: unknown, now: number): number | undefine
 	return undefined;
 }
 
+function parseResetFromJson(parsedJson: unknown, now: number): number | undefined {
+	if (!parsedJson || typeof parsedJson !== 'object') return undefined;
+	const record = parsedJson as Record<string, unknown>;
+
+	// Prefer a nested quota container: when a provider sends both, the specific
+	// one is the quota's real reset and any top-level value is a generic retry
+	// hint for the request.
+	for (const container of RESET_JSON_CONTAINERS) {
+		const nested = record[container];
+		if (nested && typeof nested === 'object') {
+			const found = scanResetKeys(nested as Record<string, unknown>, now);
+			if (found !== undefined) return found;
+		}
+	}
+
+	return scanResetKeys(record, now);
+}
+
 /** Parse "retry after 30 seconds" / "try again in 5 minutes" style hints. */
 function parseRetryAfterFromMessage(message: string, now: number): number | undefined {
 	const seconds = /(?:retry after|try again in|wait)\s+(\d+)\s*(?:s|sec|secs|seconds?)\b/i.exec(
@@ -187,6 +230,119 @@ function parseRetryAfterFromMessage(message: string, now: number): number | unde
 
 	const hours = /(?:retry after|try again in|wait)\s+(\d+)\s*(?:h|hr|hrs|hours?)\b/i.exec(message);
 	if (hours) return now + Number(hours[1]) * 60 * 60 * 1000;
+
+	return undefined;
+}
+
+/**
+ * Parse Claude Code's legacy limit marker, which appends the reset epoch after a
+ * pipe: "Claude AI usage limit reached|1755500000".
+ */
+function parseEpochMarkerFromMessage(message: string, now: number): number | undefined {
+	const marker = /limit\s+reached\s*\|\s*(\d{9,13})\b/i.exec(message);
+	if (!marker) return undefined;
+	return coerceResetNumber(Number(marker[1]), now);
+}
+
+/**
+ * Parse a reset time that names its own IANA zone, as Claude Code's notice does:
+ * "You've hit your session limit - resets 11:40am (America/Chicago)".
+ *
+ * Resolves to the NEXT occurrence of that wall-clock time in that zone, which is
+ * what every Claude plan window means (session/5-hour limits reset within the
+ * day; a same-day time already past belongs to tomorrow).
+ */
+function parseZonedResetFromMessage(message: string, now: number): number | undefined {
+	const match =
+		/resets?\b[^()\n]*?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?[^()\n]*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)\)/i.exec(
+			message
+		);
+	if (!match) return undefined;
+
+	const meridiem = match[3]?.toLowerCase();
+	let hour = Number(match[1]);
+	const minute = match[2] ? Number(match[2]) : 0;
+	if (minute > 59) return undefined;
+	if (meridiem) {
+		if (hour < 1 || hour > 12) return undefined;
+		if (meridiem === 'pm' && hour !== 12) hour += 12;
+		if (meridiem === 'am' && hour === 12) hour = 0;
+	} else if (hour > 23) {
+		return undefined;
+	}
+
+	const timeZone = match[4];
+	const target = nextZonedOccurrence(hour, minute, timeZone, now);
+	// An unknown zone throws inside Intl; treat it as unparseable rather than
+	// letting a typo'd notice take down the retry scheduler.
+	return target;
+}
+
+/**
+ * Epoch ms of the next moment at which the wall clock in `timeZone` reads
+ * `hour:minute`, strictly after `now`. Returns undefined for an unusable zone.
+ */
+function nextZonedOccurrence(
+	hour: number,
+	minute: number,
+	timeZone: string,
+	now: number
+): number | undefined {
+	let formatter: Intl.DateTimeFormat;
+	try {
+		formatter = new Intl.DateTimeFormat('en-US', {
+			timeZone,
+			hour12: false,
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+		});
+	} catch {
+		return undefined;
+	}
+
+	/** How far the zone's wall clock runs ahead of UTC at instant `utcMs`. */
+	const offsetAt = (utcMs: number): number => {
+		const parts = formatter.formatToParts(new Date(utcMs));
+		const field = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+		// Some ICU builds render midnight as hour 24 under hour12:false.
+		const h = field('hour') % 24;
+		const asUtc = Date.UTC(
+			field('year'),
+			field('month') - 1,
+			field('day'),
+			h,
+			field('minute'),
+			field('second')
+		);
+		return asUtc - utcMs;
+	};
+
+	const firstOffset = offsetAt(now);
+	if (!Number.isFinite(firstOffset)) return undefined;
+
+	// "Today" as the zone sees it, then the requested wall time on that date.
+	const localNow = new Date(now + firstOffset);
+	const wallUtc = Date.UTC(
+		localNow.getUTCFullYear(),
+		localNow.getUTCMonth(),
+		localNow.getUTCDate(),
+		hour,
+		minute
+	);
+
+	const DAY_MS = 24 * 60 * 60 * 1000;
+	for (let dayOffset = 0; dayOffset <= 1; dayOffset++) {
+		const guess = wallUtc + dayOffset * DAY_MS;
+		// Two passes: the first offset may belong to the wrong side of a DST
+		// transition, so re-resolve using the offset at the candidate instant.
+		let candidate = guess - firstOffset;
+		candidate = guess - offsetAt(candidate);
+		if (candidate > now) return candidate;
+	}
 
 	return undefined;
 }

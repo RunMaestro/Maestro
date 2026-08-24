@@ -57,7 +57,18 @@ export function useKeyboardShortcutHelpers(
 		(e: KeyboardEvent, actionId: string): boolean => {
 			const sc = shortcuts[actionId];
 			if (!sc) return false;
+			// An action with no binding can never fire. Without this an empty
+			// `keys` would make every modifier check compare against 'none' and a
+			// bare keypress would trigger an unassigned action.
+			if (!sc.keys?.length) return false;
+			// Unassigned actions never match - see isShortcut.
+			if (!sc.keys?.length) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
+			// An UNBOUND shortcut (keys: []) must never fire. Some actions ship with no
+			// default chord so users can assign their own in Settings; without this
+			// guard `mainKey` is undefined and the modifier checks alone decide, which
+			// would let an unrelated bare keypress trigger them.
+			if (keys.length === 0) return false;
 
 			const metaPressed = e.metaKey || e.ctrlKey;
 			const shiftPressed = e.shiftKey;
@@ -139,6 +150,11 @@ export function useKeyboardShortcutHelpers(
 			const sc = tabShortcuts[actionId] || shortcuts[actionId];
 			if (!sc) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
+			// An UNBOUND shortcut (keys: []) must never fire. Some actions ship with no
+			// default chord so users can assign their own in Settings; without this
+			// guard `mainKey` is undefined and the modifier checks alone decide, which
+			// would let an unrelated bare keypress trigger them.
+			if (keys.length === 0) return false;
 
 			const metaPressed = e.metaKey || e.ctrlKey;
 			const shiftPressed = e.shiftKey;
@@ -200,6 +216,11 @@ export function useKeyboardShortcutHelpers(
 			const sc = shortcuts[actionId];
 			if (!sc) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
+			// An UNBOUND shortcut (keys: []) must never fire. Some actions ship with no
+			// default chord so users can assign their own in Settings; without this
+			// guard `mainKey` is undefined and the modifier checks alone decide, which
+			// would let an unrelated bare keypress trigger them.
+			if (keys.length === 0) return false;
 
 			// Both Ctrl and Cmd must be down. On macOS these are distinct physical
 			// modifiers; on Windows/Linux users press Ctrl and the Windows/Meta key.

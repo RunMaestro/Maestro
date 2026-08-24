@@ -17,6 +17,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGitBranch, useGitDetail, useGitFileStatus } from '../../contexts/GitStatusContext';
 import { gitService } from '../../services/git';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useGitRunActive } from '../../stores/gitCommandRunStore';
 import type { GitChangeTotals, GitStreamingOperation } from '../../../shared/gitUtils';
 import type { Session } from '../../types';
 
@@ -46,6 +47,14 @@ export interface GitAgentActions {
 	viewDiff: () => Promise<void>;
 	pull: () => void;
 	push: () => void;
+	/**
+	 * True while a `git pull` / `git push` started from this agent's repo is
+	 * still running, including after its console was dismissed with Run in
+	 * Background. Menus badge the row with it; clicking the row re-opens the
+	 * console attached to that same run.
+	 */
+	pullRunning: boolean;
+	pushRunning: boolean;
 	switchBranch: () => void;
 	createPR: () => void;
 	/**
@@ -131,6 +140,10 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		useModalStore.getState().openModal('gitLog', {
 			cwd: target.cwd,
 			sshRemoteId: target.sshRemoteId,
+			// Names the agent in the viewer header. The path alone does not
+			// identify it: worktrees of one repo share a prefix, and two agents
+			// can sit on the same directory.
+			sessionId: target.sessionId,
 		});
 	}, [target]);
 
@@ -140,7 +153,9 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		if (diff) {
 			// Pass the repo path so the viewer opens clicked files against THIS
 			// agent's tree, not whichever agent happens to be active.
-			useModalStore.getState().openModal('gitDiff', { diff, cwd: target.cwd });
+			useModalStore
+				.getState()
+				.openModal('gitDiff', { diff, cwd: target.cwd, sessionId: target.sessionId });
 			return;
 		}
 		// Same wording as the Cmd+Shift+D path and the command palette.
@@ -166,6 +181,12 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 
 	const pull = useCallback(() => runCommand('pull'), [runCommand]);
 	const push = useCallback(() => runCommand('push'), [runCommand]);
+
+	// Keyed on the same repo + operation the run store uses, so a run started
+	// from any surface (or from a different agent on the same worktree) shows up
+	// here too.
+	const pullRunning = useGitRunActive(target ? { ...target, operation: 'pull' } : null);
+	const pushRunning = useGitRunActive(target ? { ...target, operation: 'push' } : null);
 
 	const switchBranch = useCallback(() => {
 		if (!target) return;
@@ -205,6 +226,8 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		viewDiff,
 		pull,
 		push,
+		pullRunning,
+		pushRunning,
 		switchBranch,
 		createPR,
 		configureWorktrees,

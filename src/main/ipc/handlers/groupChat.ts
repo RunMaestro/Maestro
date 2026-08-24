@@ -36,7 +36,7 @@ import {
 } from '../../group-chat/group-chat-storage';
 
 // Group chat history type
-import type { GroupChatHistoryEntry } from '../../../shared/group-chat-types';
+import { mentionMatches, type GroupChatHistoryEntry } from '../../../shared/group-chat-types';
 
 // Group chat log imports
 import { appendToLog, readLog, saveImage, GroupChatMessage } from '../../group-chat/group-chat-log';
@@ -75,8 +75,12 @@ import {
 // Agent detector import
 import { AgentDetector } from '../../agents';
 import { groomContext } from '../../utils/context-groomer';
+import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { getSessionsStore, getSettingsStore } from '../../stores';
 import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 
 const LOG_CONTEXT = '[GroupChat]';
 
@@ -130,6 +134,36 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	context: LOG_CONTEXT,
 	operation,
 });
+
+/**
+ * Resolve the SSH remote config for a participant by looking up the agent it was
+ * added from. Participant records store only the remote's display name, while
+ * spawning needs the full `{ enabled, remoteId }` config, so we read it off the
+ * agent whose name matches the participant.
+ *
+ * The match deliberately uses the SAME predicate the router uses when it picks
+ * the session for a participant's turn (`group-chat-router`, cwd / sshRemoteConfig
+ * / tokenMode resolution). Name matching is the only association a participant
+ * record carries, so grooming on a different rule than the turn dispatch would
+ * be strictly worse: the summary would resume on a host the turns never ran on.
+ *
+ * Persisted sessions store this as `sessionSshRemoteConfig`; the flat
+ * `sshRemoteConfig` field only exists on the mapped view the router consumes
+ * (see `setGetSessionsCallback` in `src/main/index.ts`).
+ *
+ * Returns undefined for local participants (and for participants whose source
+ * agent has since been renamed or deleted, which keeps the summary local rather
+ * than failing the reset).
+ */
+export function resolveParticipantSshRemoteConfig(
+	participantName: string
+): { enabled: boolean; remoteId: string | null; workingDirOverride?: string } | undefined {
+	const sessions = getSessionsStore().get('sessions', []);
+	const match = sessions.find(
+		(session) => mentionMatches(session.name, participantName) || session.name === participantName
+	);
+	return match?.sessionSshRemoteConfig;
+}
 
 /**
  * Group chat state type
@@ -804,6 +838,17 @@ This summary will be used to initialize your fresh session so you can continue s
 
 Respond with ONLY the summary text, no additional commentary.`;
 
+				// A participant record only carries `sshRemoteName`, not the remote's
+				// id, so resolve the SSH config off the agent this participant was
+				// added from. Participants are always named after that agent (see
+				// the auto-add path in group-chat-router), so an exact name match is
+				// the same association the router uses when it dispatches a turn.
+				// Without this the summary would resume a remote agent session on the
+				// local machine, where that session does not exist (issue #1416).
+				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participantName);
+
+				const cheapSummary = cheapTurnSettings(participant.agentId as ToolType);
+
 				// Use the shared groomContext utility to get the summary
 				// This spawns a batch process, collects the response, and handles cleanup
 				let summaryResponse = '';
@@ -816,6 +861,18 @@ Respond with ONLY the summary text, no additional commentary.`;
 							agentSessionId: participant.agentSessionId, // Resume existing session for context
 							readOnlyMode: true, // Summary is read-only
 							timeoutMs: 60000, // 60 second timeout for summary
+							// Pinned to the bottom of both ladders, same as a history
+							// synopsis. Safe because this is a LEAF turn: it resumes the
+							// participant's finished session and the caller keeps only
+							// `response` and `durationMs`, discarding any session id - so
+							// the cheap model cannot follow the conversation forward into
+							// the participant's next real turn.
+							sessionCustomModel: cheapSummary.model,
+							sessionCustomEffort: cheapSummary.effort,
+							sessionSshRemoteConfig: participantSshRemoteConfig,
+							sshStore: participantSshRemoteConfig?.enabled
+								? createSshRemoteStoreAdapter(getSettingsStore())
+								: undefined,
 						},
 						processManager,
 						agentDetector

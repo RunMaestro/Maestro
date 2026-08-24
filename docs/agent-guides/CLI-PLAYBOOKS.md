@@ -60,6 +60,8 @@ src/cli/
 │   ├── session-command.ts   # Shared helpers for desktop-driving commands (see below)
 │   ├── playbooks.ts         # Playbook file management
 │   └── storage.ts           # Electron Store file reader + SSH remote helpers
+├── utils/                  # Argument parsing shared by commands
+│   └── parse.ts             # parseCliBool / isInheritValue (one vocabulary for every verb)
 └── output/                 # Output formatting
     ├── formatter.ts         # Human-readable terminal output (incl. SSH remote tables)
     └── jsonl.ts             # Machine-parseable JSON Lines
@@ -72,9 +74,12 @@ Note: `run-playbook.ts` is the file name, but the command is registered under th
 - `runAgentCommand(agentId, options, build)` - the one-liner path: resolves the agent (partial IDs), sends the message `build()` describes, reports the result. Used by `rename-agent`, `auto-run-control` (stop/resume/skip/abort/reset), `remove-playbook`, `agent-control` (focus/switch-mode).
 - `sendSimpleCommand(payload, responseType)` + `reportResult(result, opts)` + `failCommand(msg, json)` - the building blocks, for commands that don't key off an agent ID (e.g. `rename-group` uses `resolveGroupId`; `set-theme`/`encore` send `set_setting`).
 - `resolveAgentOrFail(agentId, json)` - resolve-or-exit helper.
-- `resolveTabOwner(tabId)` - resolve the agent that owns a desktop tab (exact ID or unique prefix) via `list_desktop_sessions`; used by the `tab` verbs so the user only supplies a tab ID.
+- `resolveTabEntry(tabId, agentHint?)` - resolve one desktop tab via `list_desktop_sessions` and return its whole `DesktopTabEntry` (`src/shared/desktopTabs.ts`). Accepts an exact ID, a unique prefix, or the literal `active` - the tab that `agentHint`'s agent has selected, or the desktop's focused agent (`readActiveAgentId()`) when no hint is given. Use it rather than matching IDs yourself: a verb that has to read before it writes (`tab show`, `tab thinking cycle`) gets the current settings from the same call that resolved the tab, instead of a second round trip or a value the caller guessed.
+- `resolveTabOwner(tabId, agentHint?)` - thin wrapper over `resolveTabEntry` for the verbs that only need `{ agentId, tabId }`.
 
 Do NOT re-implement the withMaestroClient + sendCommand + JSON/text + `process.exit(1)` boilerplate in a new command file; extend `session-command.ts` if your case needs a new shape.
+
+**Parsing an argument? Use `utils/parse.ts`.** `parseCliBool(value, flag)` is the one boolean vocabulary (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive) - three near-identical copies had already drifted on whether they accepted `on`/`off`. `isInheritValue(value)` recognizes the words that clear an override (`inherit`, `default`, `none`, `clear`, `unset`, empty) so a per-tab or per-agent value falls back to what it inherits. Clearing is not the same as `false`: `tab enter-to-send <id> false` pins the tab to Cmd+Enter, while `inherit` returns it to the global `enterToSendAI` setting.
 
 ### Shared Code with Desktop
 
@@ -605,24 +610,29 @@ Prompts support template variables substituted at runtime via `src/shared/templa
 
 The batch processor outputs machine-parseable JSON Lines events (defined in `src/cli/output/jsonl.ts`):
 
-| Event               | Fields                                                                   | Description                 |
-| ------------------- | ------------------------------------------------------------------------ | --------------------------- |
-| `start`             | `playbook`, `session`                                                    | Batch run started           |
-| `document_start`    | `document`, `index`, `taskCount`                                         | Starting a document         |
-| `task_start`        | `document`, `taskIndex`                                                  | Starting a task             |
-| `task_complete`     | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats` | Task finished               |
-| `document_complete` | `document`, `tasksCompleted`                                             | All tasks in document done  |
-| `loop_complete`     | `iteration`                                                              | One loop iteration finished |
-| `synopsis`          | `text`, `sessionId`                                                      | AI-generated summary        |
-| `history`           | `entry`                                                                  | History entry written       |
-| `complete`          | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost`    | Batch run finished          |
-| `error`             | `message`, `document?`, `taskIndex?`                                     | Error occurred              |
-| `skipped`           | `reason`                                                                 | Task or document skipped    |
-| `waiting`           | `reason`                                                                 | Waiting for agent           |
+| Event               | Fields                                                                     | Description                                          |
+| ------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `start`             | `playbook`, `session`                                                      | Batch run started                                    |
+| `document_start`    | `document`, `index`, `taskCount`                                           | Starting a document                                  |
+| `task_start`        | `document`, `taskIndex`                                                    | Starting a task                                      |
+| `task_complete`     | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats`   | Task finished                                        |
+| `document_complete` | `document`, `tasksCompleted`                                               | All tasks in document done                           |
+| `loop_complete`     | `iteration`                                                                | One loop iteration finished                          |
+| `synopsis`          | `text`, `sessionId`                                                        | AI-generated summary                                 |
+| `history`           | `entry`                                                                    | History entry written                                |
+| `complete`          | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost`      | Batch run finished                                   |
+| `error`             | `message`, `document?`, `taskIndex?`                                       | Error occurred                                       |
+| `skipped`           | `reason`                                                                   | Task or document skipped                             |
+| `waiting`           | `reason`                                                                   | Waiting for agent                                    |
+| `model_resolution`  | `document`, `taskIndex`, `model`, `effort`, `notes`, `warnings`, `message` | A `MAESTRO:MODEL` hint was applied (or could not be) |
+
+`model_resolution` is deliberately NOT gated on `--verbose`. A hint the provider could not honor (non-empty `warnings`) is exactly the case the feature exists to make visible, and an operator who never sees it concludes tier hints are broken rather than unmapped. `model`/`effort` are `null` when the agent's own default was used.
 
 ### Synopsis Generation
 
 After all tasks complete, the batch processor spawns the agent one more time to generate a synopsis (summary of work done). This uses a special prompt from `src/prompts/` and the same agent session for context continuity. The synopsis is parsed for structured data (title, description, files changed).
+
+The synopsis turn is pinned to the bottom of both ladders via `cheapTurnSettings()` (`src/shared/modelTiers.ts`) regardless of what the tasks ran at - it summarizes work that already happened, so paying premium rates for it is one wasted turn per task. Safe only because the synopsis is a leaf: its returned `agentSessionId` is discarded, so the downgrade cannot follow the conversation into a later real turn.
 
 ### CLI Activity Registration
 

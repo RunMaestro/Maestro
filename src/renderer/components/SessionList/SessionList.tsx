@@ -48,6 +48,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
@@ -257,7 +258,16 @@ function SessionListInner(props: SessionListProps) {
 	// Inline wizard activity per agent (Session.id). Used by the Left Bar to
 	// render the wand glyph on agent rows AND on the group header / Bookmarks
 	// header for the group(s) those agents live in.
-	const { wizardActiveSessions } = useInlineWizardContext();
+	const { wizardActiveTabs } = useInlineWizardContext();
+
+	// Roll live wizard tabs up to their owning agent, dropping any whose tab is no
+	// longer open. Without that liveness check a single missed eviction (a close
+	// path that forgot to end the wizard, a cancel that ended the wrong tab) leaves
+	// a wand burning on an agent that has no wizard tab to switch to.
+	const wizardActiveSessions = useMemo(
+		() => rollUpWizardActivityToSessions(wizardActiveTabs, sessions),
+		[wizardActiveTabs, sessions]
+	);
 
 	// Multi-window awareness. `windowCtx` is declared above (next to the scoped
 	// session list it drives). It is optional so the Left Bar still renders
@@ -373,6 +383,15 @@ function SessionListInner(props: SessionListProps) {
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
 	const unreadGroupChatIds = useGroupChatStore((s) => s.unreadGroupChatIds);
 
+	// Previous nav-cursor snapshot, so the reveal effect below can tell a real
+	// move apart from the active group chat simply going away.
+	const prevNavTargetRef = useRef({
+		selectedSidebarIndex,
+		sidebarExtraSelection,
+		activeGroupChatId,
+		activeSessionId,
+	});
+
 	// Shared with the group chat rows' status dots and the agent jumper's LIVE
 	// bucket, so all three agree on what "running" means.
 	const isAnyGroupChatBusy = useMemo(
@@ -400,6 +419,25 @@ function SessionListInner(props: SessionListProps) {
 	// group chat, then the agent index) and scroll it into the list viewport.
 	// Fires for both arrow-key navigation and the global Cmd+[ / Cmd+] cycle.
 	useEffect(() => {
+		const prev = prevNavTargetRef.current;
+		prevNavTargetRef.current = {
+			selectedSidebarIndex,
+			sidebarExtraSelection,
+			activeGroupChatId,
+			activeSessionId,
+		};
+		// Closing the active group chat (archive, close, delete of the last chat)
+		// clears activeGroupChatId without moving the cursor. Nothing new became
+		// active, so there is nothing to reveal - falling through to the agent row
+		// under `selectedSidebarIndex` would scroll the list to a row the user
+		// never navigated to, most visibly to the very top, since that cursor
+		// defaults to index 0.
+		const closedGroupChat = prev.activeGroupChatId !== null && activeGroupChatId === null;
+		const cursorMoved =
+			prev.selectedSidebarIndex !== selectedSidebarIndex ||
+			prev.sidebarExtraSelection !== sidebarExtraSelection ||
+			prev.activeSessionId !== activeSessionId;
+		if (closedGroupChat && !cursorMoved) return;
 		const container = listScrollRef.current;
 		if (!container) return;
 		let navKey: string | null = null;

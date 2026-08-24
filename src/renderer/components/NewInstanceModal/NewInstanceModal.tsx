@@ -720,11 +720,14 @@ export function NewInstanceModal({
 		return () => window.removeEventListener('keydown', handler, true);
 	}, [isOpen, handleSelectFolder, handleCreate, isFormValid, isSshEnabled]);
 
-	// Sort agents: supported first, then coming soon at the bottom
+	// Sort agents: supported first, then coming soon at the bottom. Each bucket is
+	// alphabetical by the name the row renders, matching the wizard's tile strip
+	// and the Group Chat moderator dropdown.
 	const sortedAgents = useMemo(() => {
+		const byName = (a: AgentConfig, b: AgentConfig) => a.name.localeCompare(b.name);
 		const visible = agents.filter((a) => !a.hidden);
-		const supported = visible.filter((a) => SUPPORTED_AGENTS.includes(a.id));
-		const comingSoon = visible.filter((a) => !SUPPORTED_AGENTS.includes(a.id));
+		const supported = visible.filter((a) => SUPPORTED_AGENTS.includes(a.id)).sort(byName);
+		const comingSoon = visible.filter((a) => !SUPPORTED_AGENTS.includes(a.id)).sort(byName);
 		return [...supported, ...comingSoon];
 	}, [agents]);
 

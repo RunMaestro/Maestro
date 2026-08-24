@@ -15,7 +15,9 @@ import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexU
 import { useUIStore } from '../../stores/uiStore';
 import { makeAccountKeyHelpers } from './quota/quotaFormatting';
 import {
+	QuotaAccountEmail,
 	QuotaAccountPill,
+	QuotaAgentCountBadge,
 	QuotaAccountTabs,
 	QuotaBarRow,
 	QuotaPendingRow,
@@ -30,6 +32,8 @@ import { useQuotaRefresh } from './quota/useQuotaRefresh';
 const TEST_ID_PREFIX = 'codex-plan';
 /** Provider id used to key this panel's hidden-account set in uiStore. */
 const PROVIDER_ID = 'codex';
+/** Human-readable provider name used in the agent-count badge tooltip. */
+const PROVIDER_LABEL = 'Codex';
 const { deriveShortName, deriveDisplayName, normalizeKey } = makeAccountKeyHelpers('.codex');
 
 interface CodexPlanUsageProps {
@@ -43,10 +47,17 @@ interface CodexPlanUsageProps {
 interface AccountRowProps {
 	codexHomeKey: string;
 	snapshot: CodexUsageSnapshot;
+	/** Agents pointed at this CODEX_HOME. */
+	agentCount: number;
 	theme: Theme;
 }
 
-const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: AccountRowProps) {
+const AccountRow = memo(function AccountRow({
+	codexHomeKey,
+	snapshot,
+	agentCount,
+	theme,
+}: AccountRowProps) {
 	const shortName = deriveShortName(codexHomeKey);
 	const hasBars =
 		snapshot.session || snapshot.weekly || (snapshot.additionalLimits?.length ?? 0) > 0;
@@ -59,10 +70,18 @@ const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: A
 					displayName={deriveDisplayName(codexHomeKey)}
 					theme={theme}
 				/>
+				<QuotaAgentCountBadge
+					count={agentCount}
+					providerLabel={PROVIDER_LABEL}
+					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
+					theme={theme}
+				/>
 				{snapshot.email && (
-					<div className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
-						{snapshot.email}
-					</div>
+					<QuotaAccountEmail
+						email={snapshot.email}
+						testId={`${TEST_ID_PREFIX}-email-${shortName}`}
+						theme={theme}
+					/>
 				)}
 				{snapshot.planType && (
 					<div
@@ -145,20 +164,21 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 	const snapshots = useCodexUsageStore((s) => s.snapshots);
 	const refreshing = useCodexUsageStore((s) => s.refreshing);
 
-	const { configuredAccountKeys, setSelectedKey, effectiveSelectedKey } = useQuotaAccounts({
-		toolType: 'codex',
-		envVarName: 'CODEX_HOME',
-		defaultSubdir: '.codex',
-		accountKeys,
-		snapshots,
-		normalizeKey,
-		deriveShortName,
-		fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
-		fetchAccountKeys: () => {
-			const fn = window.maestro.agents.getCodexUsageAccountKeys;
-			return typeof fn === 'function' ? fn() : undefined;
-		},
-	});
+	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
+		useQuotaAccounts({
+			toolType: 'codex',
+			envVarName: 'CODEX_HOME',
+			defaultSubdir: '.codex',
+			accountKeys,
+			snapshots,
+			normalizeKey,
+			deriveShortName,
+			fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
+			fetchAccountKeys: () => {
+				const fn = window.maestro.agents.getCodexUsageAccountKeys;
+				return typeof fn === 'function' ? fn() : undefined;
+			},
+		});
 
 	const selectedSnapshot: CodexUsageSnapshot | null = effectiveSelectedKey
 		? (snapshots[effectiveSelectedKey] ?? null)
@@ -203,14 +223,22 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 			const shortName = deriveShortName(codexHomeKey);
 			const snapshot = snapshots[codexHomeKey];
 			const isHidden = hiddenSet.has(codexHomeKey);
+			const agentCount = agentCountsByAccount[codexHomeKey] ?? 0;
 			const body = snapshot ? (
-				<AccountRow codexHomeKey={codexHomeKey} snapshot={snapshot} theme={theme} />
+				<AccountRow
+					codexHomeKey={codexHomeKey}
+					snapshot={snapshot}
+					agentCount={agentCount}
+					theme={theme}
+				/>
 			) : (
 				<QuotaPendingRow
 					accountKey={codexHomeKey}
 					shortName={shortName}
 					displayName={deriveDisplayName(codexHomeKey)}
 					testIdPrefix={TEST_ID_PREFIX}
+					agentCount={agentCount}
+					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>
 			);
@@ -239,7 +267,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden]
+		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount]
 	);
 
 	return (
@@ -330,6 +358,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					key={effectiveSelectedKey}
 					codexHomeKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
+					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
 					theme={theme}
 				/>
 			) : effectiveSelectedKey ? (
@@ -338,6 +367,8 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					shortName={deriveShortName(effectiveSelectedKey)}
 					displayName={deriveDisplayName(effectiveSelectedKey)}
 					testIdPrefix={TEST_ID_PREFIX}
+					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>
 			) : null}

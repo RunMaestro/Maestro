@@ -29,6 +29,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { isWindowsPlatform } from './platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersistence';
 import { getLiveDraft } from './liveDraftStore';
+import { codifyTurnSettings } from './providerTabSessions';
 
 /**
  * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
@@ -872,10 +873,22 @@ export function resolveQueuedItemTarget(
  * items, append the user-visible log entry. Shared by every dispatch path so the
  * busy-state + log construction stays identical (and lands on the resolved target tab,
  * which may be an orphan - see {@link resolveQueuedItemTarget}).
+ *
+ * `session` is required because a dequeued turn is a SEND: it codifies the same
+ * provider/model/effort stamp the direct composer path freezes, so the transcript
+ * can attribute the response to the configuration it ran under. Without it, every
+ * message typed while the agent was busy (the common case on a multi-tab agent,
+ * where session-level busy sends the message to the queue) answered with no model
+ * or effort pills at all.
  */
-export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem): AITab {
+export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const now = Date.now();
-	const next: AITab = { ...tab, state: 'busy', thinkingStartTime: now };
+	const next: AITab = {
+		...tab,
+		state: 'busy',
+		thinkingStartTime: now,
+		...codifyTurnSettings(tab, session),
+	};
 	if (item.type === 'message' && item.text) {
 		const logEntry: LogEntry = {
 			id: generateId(),
@@ -2229,6 +2242,44 @@ export function fileTabFocusFields(tabId: string): Partial<Session> {
 		activeTerminalTabId: null,
 		activeBrowserTabId: null,
 		inputMode: 'ai',
+	};
+}
+
+/**
+ * Session patch that lands on a specific browser tab.
+ *
+ * Same contract as {@link fileTabFocusFields}: clear every selection that
+ * outranks a browser tab in the render precedence, or the previous view stays
+ * on screen and the focus silently does nothing. A browser tab renders in AI
+ * mode, so `inputMode` goes to `'ai'` and the terminal selection is cleared.
+ *
+ * @param tabId - The browser tab to activate.
+ */
+export function browserTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeBrowserTabId: tabId,
+		activeFileTabId: null,
+		activeTerminalTabId: null,
+		inputMode: 'ai',
+	};
+}
+
+/**
+ * Session patch that lands on a specific terminal tab.
+ *
+ * The one focus helper that sets `inputMode: 'terminal'` - a terminal tab is
+ * only rendered in terminal mode, so leaving the mode alone would activate a
+ * tab the user cannot see. File and browser selections are cleared for the same
+ * precedence reason as the other helpers.
+ *
+ * @param tabId - The terminal tab to activate.
+ */
+export function terminalTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeTerminalTabId: tabId,
+		activeFileTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'terminal',
 	};
 }
 

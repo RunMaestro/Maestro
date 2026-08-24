@@ -1036,6 +1036,34 @@ describe('HistoryPanel', () => {
 			});
 		});
 
+		it('should jump to the entry session with Cmd+Enter instead of opening the modal', async () => {
+			const onOpenSessionAsTab = vi.fn();
+			const entry = createMockEntry({
+				summary: 'Jump entry',
+				agentSessionId: 'abc12345-def-789',
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container } = render(
+				<HistoryPanel
+					session={createMockSession()}
+					theme={mockTheme}
+					onOpenSessionAsTab={onOpenSessionAsTab}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Jump entry')).toBeInTheDocument();
+			});
+
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
+			fireEvent.keyDown(listContainer!, { key: 'Enter', metaKey: true });
+
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+		});
+
 		it('should clear selection with Escape when modal is closed', async () => {
 			const entry = createMockEntry({ summary: 'Test entry' });
 			mockHistoryGetAll.mockResolvedValue([entry]);

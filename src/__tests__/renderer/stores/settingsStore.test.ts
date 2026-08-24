@@ -2156,6 +2156,75 @@ describe('settingsStore', () => {
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
 		});
 
+		it('moves New Group Chat off Opt+Cmd+C and hands the combo to Concerto', async () => {
+			// Without this remap the two COLLIDE: anyone who has ever opened the
+			// Shortcuts tab has the whole map persisted, so New Group Chat would keep
+			// Opt+Cmd+C while Concerto's new default also claimed it, and whichever
+			// branch runs first in the keyboard handler would swallow the other.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					newGroupChat: {
+						id: 'newGroupChat',
+						label: 'New Group Chat',
+						keys: ['Alt', 'Meta', 'c'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.newGroupChat.keys).toEqual(['Alt', 'Meta', 'g']);
+			expect(shortcuts.toggleConcerto.keys).toEqual(['Alt', 'Meta', 'c']);
+		});
+
+		it('carries both retired Concerto bindings forward, including a skipped build', async () => {
+			// The stage went bare Opt+C -> Opt+Cmd+V -> Opt+Cmd+C. A user who skipped
+			// the middle build still carries the oldest default, so both are listed.
+			for (const oldKeys of [
+				['Alt', 'c'],
+				['Alt', 'Meta', 'v'],
+			]) {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						toggleConcerto: {
+							id: 'toggleConcerto',
+							label: 'Show/Hide Concerto Stage',
+							keys: oldKeys,
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.toggleConcerto.keys).toEqual([
+					'Alt',
+					'Meta',
+					'c',
+				]);
+			}
+		});
+
+		it('leaves a user-customized New Group Chat binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					newGroupChat: {
+						id: 'newGroupChat',
+						label: 'New Group Chat',
+						keys: ['Meta', 'Shift', 'q'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.newGroupChat.keys).toEqual([
+				'Meta',
+				'Shift',
+				'q',
+			]);
+		});
+
 		it('leaves a user-customized focusActiveTab binding alone', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {
@@ -2278,6 +2347,75 @@ describe('settingsStore', () => {
 			const commitCmd = commands.find((c) => c.id === 'commit');
 			expect(commitCmd).toBeDefined();
 			expect(commitCmd!.isBuiltIn).toBe(true);
+		});
+
+		// MAESTRO-YP/YQ/YR: settings.json is user/sync/legacy editable, so the
+		// persisted array is not guaranteed to be CustomAICommand[]. An entry with
+		// no id cannot be edited, saved, reset or deleted (all keyed by id) and was
+		// stored under the Map key `undefined`, then rendered anyway - which crashed
+		// the Settings modal. Drop it during hydration instead.
+		it('skips malformed customAICommands entries that have no id', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				customAICommands: [
+					{
+						command: '/legacy',
+						description: 'Persisted before ids existed',
+						prompt: 'legacy',
+					},
+					{ id: '', command: '/blank', description: 'Blank id', prompt: 'blank' },
+					null,
+					'not-an-object',
+					{
+						id: 'custom-cmd',
+						command: '/custom',
+						description: 'My custom command',
+						prompt: 'do something',
+						isBuiltIn: false,
+					},
+				],
+			});
+
+			await loadAllSettings();
+
+			const commands = useSettingsStore.getState().customAICommands;
+			// Every surviving entry is usable.
+			expect(commands.every((c) => c && typeof c.id === 'string' && c.id)).toBe(true);
+			expect(commands.find((c) => c?.command === '/legacy')).toBeUndefined();
+			expect(commands.find((c) => c?.command === '/blank')).toBeUndefined();
+			// Well-formed entries still come through, alongside the defaults.
+			expect(commands.find((c) => c.id === 'custom-cmd')).toBeDefined();
+			expect(commands.find((c) => c.id === 'commit')).toBeDefined();
+		});
+
+		// An id alone is not enough. The panel calls command.startsWith('/') and
+		// prompt.substring(...) directly, so an entry carrying an id but missing
+		// either one still crashes the Settings modal (MAESTRO-YP/YQ/YR).
+		it('skips customAICommands entries whose command or prompt is unusable', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				customAICommands: [
+					{ id: 'no-command', description: 'Lost its command', prompt: 'x' },
+					{ id: 'no-prompt', command: '/nope', description: 'Lost its prompt' },
+					{ id: 'wrong-types', command: 42, description: 'Not strings', prompt: [] },
+					{
+						id: 'no-description',
+						command: '/keep',
+						prompt: 'description is only rendered',
+					},
+				],
+			});
+
+			await loadAllSettings();
+
+			const commands = useSettingsStore.getState().customAICommands;
+			expect(commands.find((c) => c.id === 'no-command')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'no-prompt')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'wrong-types')).toBeUndefined();
+			// A missing description is cosmetic, so the command survives with ''.
+			expect(commands.find((c) => c.id === 'no-description')?.description).toBe('');
+			// Nothing that survives can crash the panel's string calls.
+			expect(
+				commands.every((c) => typeof c.command === 'string' && typeof c.prompt === 'string')
+			).toBe(true);
 		});
 
 		it('applies auto-run time migration for concurrent tallying bug', async () => {

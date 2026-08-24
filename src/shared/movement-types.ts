@@ -121,6 +121,8 @@ export interface MovementStateSnapshot {
 	/** Maestro renderer viewport size in px, so the agent can place within bounds. */
 	width: number;
 	height: number;
-	/** Whether the user has temporarily hidden the whole Concerto layer. */
+	/** Whether the Concerto stage window is currently closed. Panels survive a
+	 *  close, so an agent can keep updating them and the user sees the result
+	 *  when they reopen the stage. */
 	hidden: boolean;
 }

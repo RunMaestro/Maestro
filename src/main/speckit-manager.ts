@@ -14,6 +14,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from './utils/logger';
+import { fetchWithTimeout } from './utils/fetchWithTimeout';
 import {
 	createSpecCommandManager,
 	SpecCommand,
@@ -22,6 +23,9 @@ import {
 } from './spec-command-manager';
 
 const LOG_CONTEXT = '[SpecKit]';
+
+/** Request budget for spec-kit prompt refreshes from GitHub. */
+const SPECKIT_FETCH_TIMEOUT_MS = 15_000;
 
 // All bundled spec-kit commands with their metadata
 const SPECKIT_COMMANDS: readonly SpecCommandDefinition[] = [
@@ -253,7 +257,11 @@ function processSpeckitTemplate(content: string): string {
  * Fetch a raw text file from GitHub.
  */
 async function fetchRaw(url: string): Promise<string> {
-	const res = await fetch(url, { headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } });
+	const res = await fetchWithTimeout(
+		url,
+		{ headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } },
+		SPECKIT_FETCH_TIMEOUT_MS
+	);
 	if (!res.ok) {
 		throw new Error(`HTTP ${res.status} fetching ${url}`);
 	}
@@ -273,9 +281,10 @@ export async function refreshSpeckitPrompts(): Promise<SpecKitMetadata> {
 	logger.info('Refreshing spec-kit prompts from GitHub...', LOG_CONTEXT);
 
 	// Get the latest release tag for versioning and as the fetch ref.
-	const releaseResponse = await fetch(
+	const releaseResponse = await fetchWithTimeout(
 		'https://api.github.com/repos/github/spec-kit/releases/latest',
-		{ headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } }
+		{ headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } },
+		SPECKIT_FETCH_TIMEOUT_MS
 	);
 	if (!releaseResponse.ok) {
 		throw new Error(`Failed to fetch release info: ${releaseResponse.statusText}`);

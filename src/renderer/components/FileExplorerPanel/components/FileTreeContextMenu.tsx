@@ -16,6 +16,7 @@ import {
 	Bot,
 	ListPlus,
 	Play,
+	FileArchive,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
 import { isMediaFile } from '../../../../shared/mediaTypes';
@@ -46,6 +47,7 @@ interface FileTreeContextMenuProps {
 	onNewAgentHere: () => void;
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
+	onCompressFolder: () => void;
 	onPreviewMulti: () => void;
 	onQueueMedia: () => void;
 	onOpenInDefaultAppMulti: () => void;
@@ -77,6 +79,7 @@ export function FileTreeContextMenu({
 	onNewAgentHere,
 	onPreviewFile,
 	onPreviewAllInFolder,
+	onCompressFolder,
 	onPreviewMulti,
 	onQueueMedia,
 	onOpenInDefaultAppMulti,
@@ -123,14 +126,24 @@ export function FileTreeContextMenu({
 		>
 			<div className="p-1">
 				{isRoot ? (
-					<button
-						onClick={onOpenNewFolder}
-						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-					>
-						<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						<span>New Folder</span>
-					</button>
+					<>
+						<button
+							onClick={onOpenNewFile}
+							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+						>
+							<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<span>New File</span>
+						</button>
+						<button
+							onClick={onOpenNewFolder}
+							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+						>
+							<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<span>New Folder</span>
+						</button>
+					</>
 				) : isMultiSelectionContext && selectedCount > 1 ? (
 					<>
 						<button
@@ -223,15 +236,33 @@ export function FileTreeContextMenu({
 										</span>
 									</button>
 								)}
+								<button
+									onClick={onCompressFolder}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<FileArchive className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<span>Compress</span>
+								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 							</>
 						)}
 
-						{/* New Folder - for files too, so a folder can be created alongside
-						    the file (in its parent dir, i.e. the workspace root for
-						    top-level files). Mirrors the folder menu's creation actions. */}
+						{/* New File / New Folder - for files too, so a sibling can be
+						    created alongside the file (in its parent dir, i.e. the
+						    workspace root for top-level files). Without this there is no
+						    way to create a top-level file when the root has no folder to
+						    right-click. Mirrors the folder menu's creation actions. */}
 						{isFile && (
 							<>
+								<button
+									onClick={onOpenNewFile}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<span>New File</span>
+								</button>
 								<button
 									onClick={onOpenNewFolder}
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

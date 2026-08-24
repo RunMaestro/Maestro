@@ -227,8 +227,28 @@ export function noteDispatch(
 	const active = useRetryStore.getState().retries[key];
 	if (active && active.status === 'scheduled') {
 		logger.info('[retry] New dispatch supersedes pending retry', undefined, { key });
+		// Resolve the outage BEFORE dropping the entry. `removeEntry` alone only
+		// clears the timer, leaving the outage record `active` with a nextRetryAt
+		// in the past - the transcript card then ticks "Failing for" upward
+		// forever, reads "Next attempt: now…", and its Stop button is inert
+		// (cancelRetry early-returns on the missing entry). Superseding is a real
+		// end to the outage, so it freezes the card like a user cancel does.
+		resolveOutage(active.outageId, 'stopped');
 		removeEntry(key);
 	}
+}
+
+/**
+ * Whether this tab has a retry timer still counting down. Distinct from "has an
+ * entry": an `'in-flight'` entry is a resend already dispatched and awaiting its
+ * outcome, which must NOT block anything.
+ *
+ * Callers use this to keep a scheduled retry from being trampled - most
+ * importantly the exit listener, which would otherwise drain the execution queue
+ * into the same provider that just refused the turn.
+ */
+export function hasPendingRetry(sessionId: string, tabId: string): boolean {
+	return useRetryStore.getState().retries[keyFor(sessionId, tabId)]?.status === 'scheduled';
 }
 
 /**

@@ -123,7 +123,7 @@ vi.mock('../../../renderer/services/git', () => ({
 // Mock InlineWizardContext to avoid Provider requirement
 vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
 	useInlineWizardContext: () => ({
-		wizardActiveSessions: new Map(),
+		wizardActiveTabs: new Map(),
 	}),
 }));
 
@@ -4067,6 +4067,85 @@ describe('SessionList', () => {
 			});
 
 			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Keyboard-reveal auto-scroll
+	// -----------------------------------------------------------------------
+	describe('Left Bar auto-scroll', () => {
+		let scrollSpy: ReturnType<typeof vi.fn>;
+
+		const makeChat = (overrides: Record<string, unknown> = {}) =>
+			({
+				id: 'gc-1',
+				name: 'Squad',
+				createdAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: 'group-chat-gc-1-moderator',
+				participants: [],
+				logPath: '/tmp/gc-1.log',
+				imagesDir: '/tmp/gc-1-images',
+				...overrides,
+			}) as never;
+
+		beforeEach(() => {
+			scrollSpy = vi.fn();
+			Element.prototype.scrollIntoView = scrollSpy as unknown as () => void;
+		});
+
+		it('does not scroll the list when the active group chat is archived', () => {
+			// The group chat section only renders with at least two AI agents.
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			// Cursor sits on the first agent row, which is where the list would
+			// wrongly scroll to once the group chat stops being active.
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({
+				groupChats: [makeChat()],
+				activeGroupChatId: 'gc-1',
+			});
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// Archiving the open chat closes it: the row leaves the list and
+			// activeGroupChatId clears, but the cursor never moved.
+			act(() => {
+				useGroupChatStore.setState({
+					groupChats: [makeChat({ archived: true })],
+					activeGroupChatId: null,
+				});
+			});
+
+			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		it('still scrolls a group chat into view when it is opened', () => {
+			// The group chat section only renders with at least two AI agents.
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({
+				groupChats: [makeChat()],
+				activeGroupChatId: null,
+			});
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			});
+			expect(scrollSpy).toHaveBeenCalled();
 		});
 	});
 });

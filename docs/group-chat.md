@@ -26,7 +26,7 @@ Group Chat lets you coordinate multiple AI agents in a single conversation. A mo
 
 ## How It Works
 
-1. **Create a Group Chat** - Use keyboard shortcut `Opt+Cmd+C` / `Alt+Ctrl+C`, click "+ New Chat" in the Group Chats section of the sidebar, or use Quick Actions (`Cmd+K` / `Ctrl+K`)
+1. **Create a Group Chat** - Use keyboard shortcut `Opt+Cmd+G` / `Alt+Ctrl+G`, click "+ New Chat" in the Group Chats section of the sidebar, or use Quick Actions (`Cmd+K` / `Ctrl+K`)
 2. **Select a moderator** - Choose which AI agent (Claude Code, OpenCode, or Codex) will coordinate the conversation
 3. **@mention agents** - In your message, @mention any Maestro session (e.g., `@Frontend`, `@Backend`). Agents are automatically added as participants when mentioned.
 4. **Send your question** - The moderator receives it first and decides how to proceed
