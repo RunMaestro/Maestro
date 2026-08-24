@@ -7,12 +7,21 @@
  */
 
 import { createPortal } from 'react-dom';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { useScalePreference, type ScaleRange } from '../../../hooks/ui/useScalePreference';
 import { EscCloseButton } from '../../ui/EscCloseButton';
+import { ScaleControl } from '../../ui/ScaleControl';
 import { StagedImageTile } from './StagedImageTile';
 import { useStagedImageDnd } from './stagedImageDrag';
+
+// Around the 11rem preset: small enough to fit a dozen shots on screen at once,
+// large enough to read a line of code in one. Persisted, because how big you
+// want the thumbnails follows your display, not the message you are writing.
+const THUMBNAIL_SCALE_RANGE: ScaleRange = { min: 0.6, max: 2.2, step: 0.2, initial: 1 };
+const THUMBNAIL_SCALE_KEY = 'stagedImages.thumbnailScale';
 
 interface StagedImagesOrganizerModalProps {
 	theme: Theme;
@@ -39,6 +48,7 @@ export function StagedImagesOrganizerModal({
 }: StagedImagesOrganizerModalProps) {
 	useModalLayer(MODAL_PRIORITIES.STAGED_IMAGES_ORGANIZER, 'Staged Images', onClose);
 	const dnd = useStagedImageDnd(stagedImages.length, onReorder);
+	const thumbnailScale = useScalePreference(THUMBNAIL_SCALE_KEY, THUMBNAIL_SCALE_RANGE);
 
 	return createPortal(
 		<div
@@ -68,7 +78,17 @@ export function StagedImagesOrganizerModal({
 							Drag to reorder. The numbers are what you can call them in your message.
 						</span>
 					</div>
-					<EscCloseButton theme={theme} onClose={onClose} />
+					<div className="flex items-center gap-3">
+						<ScaleControl
+							theme={theme}
+							control={thumbnailScale}
+							decreaseIcon={ZoomOut}
+							increaseIcon={ZoomIn}
+							subject="thumbnail size"
+							testId="staged-images-zoom"
+						/>
+						<EscCloseButton theme={theme} onClose={onClose} />
+					</div>
 				</div>
 
 				<div className="p-4 overflow-auto">
@@ -88,6 +108,7 @@ export function StagedImagesOrganizerModal({
 									// Always numbered here: reading the slot off a big
 									// thumbnail is the reason this view exists.
 									showSlotNumber
+									scale={thumbnailScale.scale}
 									isDragging={dnd.dragIndex === idx}
 									isDimmed={dnd.isDragging && dnd.dragIndex !== idx}
 									dropBefore={dnd.dropGap === idx}

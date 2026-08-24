@@ -2,14 +2,9 @@
  * FontScaleControl - decrease / reset / increase font zoom for a reading pane.
  *
  * Pair it with `useFontScale(storageKey)`; the hook owns the value and the
- * persistence, this component only draws it. Two looks:
- *
- *   - `inline`   bordered square buttons for a toolbar or stats bar
- *   - `floating` frosted pill for overlaying a scrolling pane, matching the
- *                floating Table of Contents button in the file preview
- *
- * The percentage in the middle only appears once the user has zoomed, and
- * clicking it snaps back to 100%.
+ * persistence, this component only draws it. It is the font preset over
+ * `ScaleControl`, which owns the layout shared with the staged-image
+ * thumbnail zoom.
  *
  * Usage:
  * ```tsx
@@ -18,10 +13,11 @@
  * ```
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { AArrowDown, AArrowUp } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { UseFontScaleReturn } from '../../hooks/ui/useFontScale';
+import { ScaleControl } from './ScaleControl';
 
 export interface FontScaleControlProps {
 	theme: Theme;
@@ -47,74 +43,30 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 	className = '',
 	testId,
 }: FontScaleControlProps) {
-	const { fontScale, adjustFontScale, resetFontScale, canDecrease, canIncrease } = control;
-	const floating = variant === 'floating';
-	const suffix = target ? ` ${target} font size` : ' font size';
-	const percent = Math.round(fontScale * 100);
-
-	const buttonClass = floating
-		? 'focus-ring flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors'
-		: 'focus-ring flex items-center justify-center w-7 h-7 shrink-0 rounded transition-colors';
-
-	const buttonStyle = (enabled: boolean): React.CSSProperties => ({
-		color: theme.colors.textDim,
-		border: floating ? 'none' : `1px solid ${theme.colors.border}`,
-		opacity: enabled ? 0.8 : 0.4,
-		cursor: enabled ? 'pointer' : 'default',
-	});
+	// The font hook names its fields after fonts; ScaleControl speaks the
+	// generic vocabulary. Adapt rather than making either side compromise.
+	const scaleControl = useMemo(
+		() => ({
+			scale: control.fontScale,
+			adjustScale: control.adjustFontScale,
+			resetScale: control.resetFontScale,
+			canDecrease: control.canDecrease,
+			canIncrease: control.canIncrease,
+		}),
+		[control]
+	);
 
 	return (
-		<div
-			data-testid={testId}
-			className={`flex items-center gap-1 ${
-				floating
-					? 'self-start shrink-0 px-1 py-1 rounded-full shadow-lg opacity-70 hover:opacity-100 transition-opacity'
-					: ''
-			} ${className}`.trim()}
-			style={
-				floating
-					? {
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
-						}
-					: undefined
-			}
-		>
-			<button
-				type="button"
-				onClick={() => adjustFontScale(-1)}
-				disabled={!canDecrease}
-				aria-label={`Decrease${suffix}`}
-				title={`Decrease${suffix}`}
-				className={`${buttonClass} hover:opacity-100`}
-				style={buttonStyle(canDecrease)}
-			>
-				<AArrowDown className="w-4 h-4" />
-			</button>
-			{fontScale !== 1 && (
-				<button
-					type="button"
-					onClick={resetFontScale}
-					aria-label={`Reset${suffix}`}
-					title={`Reset${suffix} to 100%`}
-					className="focus-ring px-1 text-[10px] font-medium tabular-nums rounded transition-colors hover:opacity-100"
-					style={{ color: theme.colors.textDim, opacity: 0.8 }}
-				>
-					{percent}%
-				</button>
-			)}
-			<button
-				type="button"
-				onClick={() => adjustFontScale(1)}
-				disabled={!canIncrease}
-				aria-label={`Increase${suffix}`}
-				title={`Increase${suffix}`}
-				className={`${buttonClass} hover:opacity-100`}
-				style={buttonStyle(canIncrease)}
-			>
-				<AArrowUp className="w-4 h-4" />
-			</button>
-		</div>
+		<ScaleControl
+			theme={theme}
+			control={scaleControl}
+			decreaseIcon={AArrowDown}
+			increaseIcon={AArrowUp}
+			subject={target ? `${target} font size` : 'font size'}
+			variant={variant}
+			className={className}
+			testId={testId}
+		/>
 	);
 });
 

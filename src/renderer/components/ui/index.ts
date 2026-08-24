@@ -62,6 +62,8 @@ export type { CopyIconButtonProps } from './CopyIconButton';
 
 export { FontScaleControl } from './FontScaleControl';
 export type { FontScaleControlProps } from './FontScaleControl';
+export { ScaleControl } from './ScaleControl';
+export type { ScaleControlProps } from './ScaleControl';
 
 export { GitChangeCounts } from './GitChangeCounts';
 export type { GitChangeCountsProps } from './GitChangeCounts';

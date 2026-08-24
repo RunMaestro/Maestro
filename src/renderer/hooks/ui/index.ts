@@ -72,6 +72,8 @@ export {
 	FONT_SCALE_DEFAULT,
 } from './useFontScale';
 export type { UseFontScaleReturn } from './useFontScale';
+export { useScalePreference, clampScale } from './useScalePreference';
+export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference';
 
 // Client-side pagination for lists already held in memory
 export { usePagination } from './usePagination';
