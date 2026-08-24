@@ -626,6 +626,29 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 | `execFileStreaming(command, args, options)`       | `(string, string[], ExecStreamingOptions) => ExecStreamingHandle`                      | Streaming sibling of `execFileNoThrow`: calls `onChunk(chunk, 'stdout' \| 'stderr')` as output arrives, plus `{ result, cancel }`. Use for long commands the user watches live (`git pull`/`git push`). Cancel resolves with exitCode `'SIGTERM'`. |
 | `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                                                                                                                     |
 
+### Network Fetch (`src/main/utils/fetchWithTimeout.ts`)
+
+| Function                                      | Signature                                              | Purpose                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetchWithTimeout(url, options?, timeoutMs?)` | `(string, RequestInit?, number?) => Promise<Response>` | The ONLY way to make an HTTP request from the main process. Adds a request budget to `fetch()`, composes rather than clobbers a caller-supplied `signal`. |
+| `isFetchTimeoutError(error)`                  | `(unknown) => boolean`                                 | Distinguishes a budget timeout from a caller-initiated abort or a transport failure.                                                                      |
+| `DEFAULT_FETCH_TIMEOUT_MS`                    | `number` (30s)                                         | Backstop for callers with no opinion. Latency-sensitive callers pass their own.                                                                           |
+
+A bare `fetch()` has no timeout: a stalled socket hangs the caller forever,
+which in the main process means an IPC handler that never settles and a
+renderer spinner that never stops. Always use `fetchWithTimeout`.
+
+Do NOT hand-roll `new AbortController()` + `setTimeout` around a `fetch`, and do
+NOT add another local `fetchWithTimeout`. There were previously three separate
+functions by that exact name with three different signatures (`leaderboard.ts`,
+`cue-telemetry.ts`, `bmad-manager.ts`), three more inline copies, and eleven
+call sites with no timeout at all.
+
+If a caller needs extra behaviour, wrap this function locally rather than
+reimplementing it. `bmad-manager.ts`'s `fetchBmadResource()` is the reference
+example: it delegates to `fetchWithTimeout` and adds only its own Sentry
+reporting.
+
 ### Safe IPC Send (`src/main/utils/safe-send.ts`)
 
 | Function                        | Signature                       | Purpose                                                                                      |
