@@ -29,6 +29,7 @@ import {
 	QuotaAccountPill,
 	QuotaAccountTabs,
 	QuotaAgentCountBadge,
+	QuotaBarAligned,
 	QuotaBarRow,
 	QuotaPendingRow,
 	QuotaRefreshControls,
@@ -84,6 +85,11 @@ const AccountRow = memo(function AccountRow({
 
 	return (
 		<div className="space-y-2" data-testid={`${TEST_ID_PREFIX}-row-${shortName}`}>
+			{/* Chips first, then the plain-text identity indented to the bars.
+			    Splitting the header this way keeps the pill at the row's left
+			    edge (it titles the row) while the metadata forms a column that
+			    starts on the same x as the bars under it, instead of a single
+			    long line whose tail floats over empty bar track. */}
 			<div className="flex items-center gap-2">
 				<QuotaAccountPill
 					accountKey={configDirKey}
@@ -96,6 +102,16 @@ const AccountRow = memo(function AccountRow({
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
 					theme={theme}
 				/>
+				{/* The row is one ACCOUNT; these are the other directories that
+				    reach it. Naming them is what stops a collapsed row from
+				    looking like a directory that silently went missing. */}
+				<QuotaSharedAccountBadge
+					siblingNames={alsoKnownAs}
+					testId={`${TEST_ID_PREFIX}-shared-${shortName}`}
+					theme={theme}
+				/>
+			</div>
+			<QuotaBarAligned>
 				{/* The pill above is the config dir the user named; this is who
 				    that dir is actually logged in as. They drift apart whenever
 				    `/login` is re-run inside an existing dir. */}
@@ -106,18 +122,10 @@ const AccountRow = memo(function AccountRow({
 						theme={theme}
 					/>
 				)}
-				{/* The row is one ACCOUNT; these are the other directories that
-				    reach it. Naming them is what stops a collapsed row from
-				    looking like a directory that silently went missing. */}
-				<QuotaSharedAccountBadge
-					siblingNames={alsoKnownAs}
-					testId={`${TEST_ID_PREFIX}-shared-${shortName}`}
-					theme={theme}
-				/>
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 					{configDirKey}
 				</div>
-			</div>
+			</QuotaBarAligned>
 			{isUnauthenticated ? (
 				// Claude's /usage panel for this CLAUDE_CONFIG_DIR rendered
 				// "Not logged in · Run /login". Surface that as a CTA instead

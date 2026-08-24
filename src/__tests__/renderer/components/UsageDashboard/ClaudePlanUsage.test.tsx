@@ -707,3 +707,47 @@ describe('ClaudePlanUsage — account identity', () => {
 		expect(title).toContain('Same account as smash');
 	});
 });
+
+describe('ClaudePlanUsage — header layout', () => {
+	const snapshotWithEmail = (key: string) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		configDirKey: key,
+		authState: 'authenticated',
+		accountEmail: 'p@smashlabs.com',
+		session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('indents the email and config dir to where the bars start', () => {
+		// The metadata line reserves the SAME label column the bars do, so the
+		// two line up by construction. A hand-computed margin here would drift
+		// the moment the bar label column changed width, and a near-alignment
+		// reads worse than none.
+		seedSnapshots({ '/Users/me/.claude-gmail': snapshotWithEmail('/Users/me/.claude-gmail') });
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		const metaLine = screen.getByTestId('claude-plan-email-gmail').parentElement?.parentElement;
+		const barLabel = screen.getByText('Session window');
+		const barRow = barLabel.parentElement;
+
+		// Same container geometry, and a spacer as wide as the bar's label.
+		expect(metaLine?.className).toContain('gap-4');
+		expect(barRow?.className).toContain('gap-4');
+		expect(barLabel.className).toContain('w-44');
+		expect(metaLine?.firstElementChild?.className).toContain('w-44');
+	});
+
+	it('keeps the account pill at the row edge rather than indenting it too', () => {
+		// The pill titles the row; indenting it with the metadata would leave
+		// the row with no visible left edge.
+		seedSnapshots({ '/Users/me/.claude-gmail': snapshotWithEmail('/Users/me/.claude-gmail') });
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		const pillRow = screen.getByText('gmail').parentElement;
+		expect(pillRow?.className).not.toContain('gap-4');
+		expect(pillRow?.firstElementChild?.className).not.toContain('w-44');
+	});
+});

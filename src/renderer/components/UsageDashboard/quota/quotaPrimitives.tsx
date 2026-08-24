@@ -5,11 +5,38 @@
  * stay pixel-identical without copy-pasting markup.
  */
 
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime } from '../../../../shared/formatters';
 import { QUOTA_REFRESH_OPTIONS, resolveQuotaFillColor } from './quotaFormatting';
+
+/**
+ * Width of a bar row's label column ("Session window", "Week (all models)").
+ * `QuotaBarAligned` reserves the identical column, so the two cannot drift
+ * into a near-alignment - which reads worse than no alignment at all.
+ */
+const BAR_LABEL_WIDTH = 'w-44';
+
+/** Gap between the label column and the bar. Shared for the same reason. */
+const BAR_COLUMN_GAP = 'gap-4';
+
+/**
+ * Indents its children to start exactly where the bars below them start.
+ *
+ * Alignment is STRUCTURAL, not a hand-computed margin: this renders the same
+ * flex geometry as `QuotaBarRow` with an empty spacer in the label column, so
+ * changing the label width moves both together. A `ml-48` literal here would
+ * silently misalign the moment that width changed.
+ */
+export function QuotaBarAligned({ children }: { children: ReactNode }) {
+	return (
+		<div className={`flex items-center ${BAR_COLUMN_GAP}`}>
+			<div className={`${BAR_LABEL_WIDTH} flex-shrink-0`} aria-hidden="true" />
+			<div className="flex-1 min-w-0 flex items-center gap-2">{children}</div>
+		</div>
+	);
+}
 
 interface QuotaBarRowProps {
 	label: string;
@@ -35,9 +62,9 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 	const displayPercent = Math.round(clampedPercent);
 
 	return (
-		<div className="flex items-center gap-4">
+		<div className={`flex items-center ${BAR_COLUMN_GAP}`}>
 			<div
-				className="w-44 text-sm whitespace-nowrap flex-shrink-0"
+				className={`${BAR_LABEL_WIDTH} text-sm whitespace-nowrap flex-shrink-0`}
 				style={{ color: theme.colors.textMain }}
 			>
 				{label}

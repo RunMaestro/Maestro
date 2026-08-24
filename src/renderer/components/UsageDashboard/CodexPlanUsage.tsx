@@ -19,6 +19,7 @@ import {
 	QuotaAccountPill,
 	QuotaAgentCountBadge,
 	QuotaAccountTabs,
+	QuotaBarAligned,
 	QuotaBarRow,
 	QuotaPendingRow,
 	QuotaRefreshControls,
@@ -64,6 +65,9 @@ const AccountRow = memo(function AccountRow({
 
 	return (
 		<div className="space-y-2" data-testid={`${TEST_ID_PREFIX}-row-${shortName}`}>
+			{/* Chips on the pill line, plain-text identity indented to the bars -
+			    same split as ClaudePlanUsage, so the two panels keep reading as
+			    one component when the dashboard tabs switch between them. */}
 			<div className="flex items-center gap-2">
 				<QuotaAccountPill
 					accountKey={codexHomeKey}
@@ -76,13 +80,6 @@ const AccountRow = memo(function AccountRow({
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
 					theme={theme}
 				/>
-				{snapshot.email && (
-					<QuotaAccountEmail
-						email={snapshot.email}
-						testId={`${TEST_ID_PREFIX}-email-${shortName}`}
-						theme={theme}
-					/>
-				)}
 				{snapshot.planType && (
 					<div
 						className="text-xs px-1.5 py-0.5 rounded"
@@ -95,6 +92,15 @@ const AccountRow = memo(function AccountRow({
 					</div>
 				)}
 			</div>
+			{snapshot.email && (
+				<QuotaBarAligned>
+					<QuotaAccountEmail
+						email={snapshot.email}
+						testId={`${TEST_ID_PREFIX}-email-${shortName}`}
+						theme={theme}
+					/>
+				</QuotaBarAligned>
+			)}
 
 			{snapshot.authState !== 'authenticated' ? (
 				<div
