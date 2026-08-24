@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Session, Theme } from '../../../types';
 import type { FileNode } from '../../../types/fileTree';
 import type { FileClickOptions } from '../../../hooks/ui/useAppHandlers';
@@ -6,9 +6,14 @@ import { isMediaFile } from '../../../../shared/mediaTypes';
 import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../../../hooks/ui/useContextMenuPosition';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
-import { useModalStore } from '../../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../../stores/modalStore';
+import { useBatchStore } from '../../../stores/batchStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { safeClipboardWrite } from '../../../utils/clipboard';
+import {
+	collectAutoRunDocsInFolder,
+	relativeAutoRunFolderPath,
+} from '../../../utils/autoRunStaging';
 import { captureException } from '../../../utils/sentry';
 import { shouldOpenExternally } from '../../../utils/fileExplorer';
 import type { ContextMenuState, MultiDeleteModalState } from '../types';
@@ -58,6 +63,9 @@ interface UseFileContextMenuResult {
 	handleOpenRename: () => void;
 	handleOpenDelete: () => Promise<void>;
 	handleFocusInGraph: () => void;
+	/** Auto Run documents under the right-clicked folder ([] when it isn't one). */
+	autoRunStagedDocs: string[];
+	handleStageForAutoRun: () => void;
 	handlePreviewFile: () => Promise<void>;
 	handlePreviewAllInFolder: () => void;
 	handlePreviewMulti: () => Promise<void>;
@@ -158,6 +166,27 @@ export function useFileContextMenu({
 		}
 		setContextMenu(null);
 	}, [contextMenu, onFocusFileInGraph]);
+
+	// Auto Run staging. Only a folder inside the agent's Auto Run folder can be
+	// staged, and only the documents the Auto Run loader already knows about are
+	// offered - the run list can't resolve anything else.
+	const autoRunDocumentList = useBatchStore((s) => s.documentList);
+	const autoRunStagedDocs = useMemo(() => {
+		if (!contextMenu?.node || contextMenu.node.type !== 'folder') return [];
+		const relativeFolder = relativeAutoRunFolderPath(
+			`${session.fullPath}/${contextMenu.path}`,
+			session.autoRunFolderPath
+		);
+		if (relativeFolder === null) return [];
+		return collectAutoRunDocsInFolder(relativeFolder, autoRunDocumentList);
+	}, [contextMenu, session.fullPath, session.autoRunFolderPath, autoRunDocumentList]);
+
+	const handleStageForAutoRun = useCallback(() => {
+		const docs = autoRunStagedDocs;
+		setContextMenu(null);
+		if (docs.length === 0) return;
+		getModalActions().openBatchRunnerWithPresets(docs);
+	}, [autoRunStagedDocs]);
 
 	/**
 	 * Open a run of files, playing the first media file and queueing the rest.
@@ -659,6 +688,8 @@ export function useFileContextMenu({
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
+		autoRunStagedDocs,
+		handleStageForAutoRun,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
 		handlePreviewMulti,

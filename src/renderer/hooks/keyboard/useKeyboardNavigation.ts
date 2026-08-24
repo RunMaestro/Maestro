@@ -353,10 +353,12 @@ export function useKeyboardNavigation(
 				return false;
 			}
 
-			// Skip if Alt+Cmd+Arrow is pressed (layout toggle shortcut)
-			const isToggleLayoutShortcut =
-				e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
-			if (isToggleLayoutShortcut) return false;
+			// Sidebar navigation owns BARE arrow keys only. A modified arrow is an app
+			// shortcut (Opt+Cmd+Left/Right panel toggles, Opt+Cmd+Down next-unread,
+			// Opt+Cmd+Up focus-active-tab) and has to reach the shortcut chain, which
+			// runs after this handler. Claiming every ArrowDown/ArrowUp made those
+			// combos dead whenever the Left Bar held focus.
+			if (e.metaKey || e.ctrlKey || e.altKey) return false;
 
 			// Only handle arrow keys and space
 			if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {

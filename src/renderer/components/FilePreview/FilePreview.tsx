@@ -85,6 +85,7 @@ import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
 import { FontScaleControl } from '../ui/FontScaleControl';
 import { useFontScale } from '../../hooks/ui/useFontScale';
+import { isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
 import {
@@ -1506,6 +1507,25 @@ export const FilePreview = React.memo(
 					return !v;
 				});
 				onShortcutUsed?.('toggleFilePreviewToc');
+			} else if (
+				canScaleFont &&
+				(e.key === '-' || e.key === '_' || e.key === '+' || e.key === '=' || e.key === '0') &&
+				!e.metaKey &&
+				!e.ctrlKey &&
+				!e.altKey &&
+				!isTextInputTarget(e.target)
+			) {
+				// Bare -/+ zoom the pane, 0 snaps back to 100%. '=' and '_' are the
+				// unshifted and shifted twins of those keys on US layouts, so the
+				// user never has to think about Shift. Guarded on canScaleFont, so
+				// views the zoom doesn't move (images, editor, CSV) still type
+				// normally, and on the event target so the find bar keeps its keys.
+				if (useUIStore.getState().activeFocus !== 'main') return;
+				e.preventDefault();
+				e.stopPropagation();
+				if (e.key === '0') fontScaleControl.resetFontScale();
+				else if (e.key === '-' || e.key === '_') fontScaleControl.adjustFontScale(-1);
+				else fontScaleControl.adjustFontScale(1);
 			} else if (e.key === 'ArrowUp') {
 				// In edit mode, let the textarea handle arrow keys for cursor movement
 				// Only intercept when NOT in edit mode (preview/code view)
@@ -1760,7 +1780,8 @@ export const FilePreview = React.memo(
 					}
 				>
 					{/* Floating font zoom - pinned to the top-right of the pane, the
-					    mirror of the Table of Contents button at the bottom-right.
+					    mirror of the Table of Contents button at the bottom-right:
+					    same circle at rest, expanding to the full control on hover.
 					    Sticky (not absolute) so it stays put while the pane scrolls
 					    without depending on a positioned ancestor. Drops below the
 					    find bar when that is open so the two never overlap. */}
@@ -1774,6 +1795,7 @@ export const FilePreview = React.memo(
 								theme={theme}
 								control={fontScaleControl}
 								variant="floating"
+								collapsible
 								target={markdownEditMode ? 'editor' : 'preview'}
 								className="pointer-events-auto"
 								testId="file-preview-font-scale"

@@ -104,6 +104,7 @@ vi.mock('../../../renderer/components/AutoRun/AutoRun', () => ({
 				<span data-testid="autorun-mode">{props.mode}</span>
 				<span data-testid="autorun-content">{props.content}</span>
 				<span data-testid="autorun-hidetopcontrols">{String(props.hideTopControls)}</span>
+				<span data-testid="autorun-showlinenumbers">{String(props.showLineNumbers)}</span>
 				<textarea
 					data-testid="autorun-textarea"
 					value={props.content}
@@ -192,6 +193,13 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByTestId('autorun-hidetopcontrols')).toHaveTextContent('true');
+		});
+
+		it('should pass showLineNumbers=true to AutoRun (the expanded view has room for a gutter)', () => {
+			const props = createDefaultProps();
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			expect(screen.getByTestId('autorun-showlinenumbers')).toHaveTextContent('true');
 		});
 
 		it('should render Edit button', () => {

@@ -65,6 +65,7 @@ const defaultProps = {
 	onOpenNewFolder: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
+	onStageForAutoRun: vi.fn(),
 	onCompressFolder: vi.fn(),
 	onPreviewMulti: vi.fn(),
 	onQueueMedia: vi.fn(),
@@ -401,5 +402,40 @@ describe('FileTreeContextMenu', () => {
 		);
 		const menu = document.body.querySelector('.fixed') as HTMLElement;
 		expect(menu.style.opacity).toBe('0');
+	});
+
+	describe('Auto Run staging', () => {
+		it('offers staging when the folder holds Auto Run documents', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					autoRunStagedCount={11}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage 11 Documents for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('uses the singular label for one document', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					autoRunStagedCount={1}
+				/>
+			);
+
+			expect(screen.getByText('Stage Document for Auto Run')).toBeInTheDocument();
+		});
+
+		it('hides staging for a folder with no Auto Run documents', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
 	});
 });

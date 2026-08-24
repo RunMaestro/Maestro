@@ -354,6 +354,36 @@ describe('useMainKeyboardHandler', () => {
 			expect(mockSetLeftSidebar).toHaveBeenCalled();
 		});
 
+		it('should allow next-unread when modals are open, at whatever key it is bound to', () => {
+			// Resolved through the BINDING, not a hard-coded Alt+Cmd+ArrowDown: a
+			// user who rebound next-unread got a shortcut that silently died the
+			// moment any modal was open, including the Shortcuts pane itself.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockGoToNextUnreadTab = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'nextUnreadTab' && e.shiftKey && e.metaKey && e.key === 'u',
+				sessions: [{ id: 'test' }],
+				goToNextUnreadTab: mockGoToNextUnreadTab,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'u',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockGoToNextUnreadTab).toHaveBeenCalled();
+		});
+
 		it('should allow tab management shortcuts (Cmd+T) when only overlays are open', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 

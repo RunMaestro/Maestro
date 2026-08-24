@@ -347,6 +347,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
+		autoRunStagedDocs,
+		handleStageForAutoRun,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
 		handleCompressFolder,
@@ -1016,6 +1018,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenNewFolder={handleOpenNewFolder}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
+					autoRunStagedCount={autoRunStagedDocs.length}
+					onStageForAutoRun={handleStageForAutoRun}
 					onCompressFolder={handleCompressFolder}
 					onPreviewMulti={handlePreviewMulti}
 					onQueueMedia={handleQueueMedia}

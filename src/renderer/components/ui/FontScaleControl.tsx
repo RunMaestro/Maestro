@@ -9,12 +9,12 @@
  * Usage:
  * ```tsx
  * const fontScale = useFontScale('filePreview.fontScale');
- * <FontScaleControl theme={theme} control={fontScale} variant="floating" target="preview" />
+ * <FontScaleControl theme={theme} control={fontScale} variant="floating" collapsible target="preview" />
  * ```
  */
 
 import React, { useMemo } from 'react';
-import { AArrowDown, AArrowUp } from 'lucide-react';
+import { AArrowDown, AArrowUp, ALargeSmall } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { UseFontScaleReturn } from '../../hooks/ui/useFontScale';
 import { ScaleControl } from './ScaleControl';
@@ -25,6 +25,11 @@ export interface FontScaleControlProps {
 	control: UseFontScaleReturn;
 	/** Visual treatment. Defaults to `inline`. */
 	variant?: 'inline' | 'floating';
+	/**
+	 * Rest as a circle and expand on hover/focus, so the control stays out of
+	 * the way of the text it zooms. `floating` only.
+	 */
+	collapsible?: boolean;
 	/**
 	 * What the zoom applies to, appended to each tooltip
 	 * (e.g. `preview` -> "Increase preview font size").
@@ -39,6 +44,7 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 	theme,
 	control,
 	variant = 'inline',
+	collapsible = false,
 	target,
 	className = '',
 	testId,
@@ -62,6 +68,8 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 			control={scaleControl}
 			decreaseIcon={AArrowDown}
 			increaseIcon={AArrowUp}
+			collapsible={collapsible}
+			collapsedIcon={ALargeSmall}
 			subject={target ? `${target} font size` : 'font size'}
 			variant={variant}
 			className={className}

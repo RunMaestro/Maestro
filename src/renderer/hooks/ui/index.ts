@@ -75,6 +75,10 @@ export type { UseFontScaleReturn } from './useFontScale';
 export { useScalePreference, clampScale } from './useScalePreference';
 export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference';
 
+// Persisted view toggle (collapsed banners, folded sections)
+export { usePersistedToggle } from './usePersistedToggle';
+export type { UsePersistedToggleReturn } from './usePersistedToggle';
+
 // Client-side pagination for lists already held in memory
 export { usePagination } from './usePagination';
 export type { UsePaginationResult } from './usePagination';

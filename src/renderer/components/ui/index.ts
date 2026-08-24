@@ -71,5 +71,8 @@ export type { GitChangeCountsProps } from './GitChangeCounts';
 export { GitRunningBadge } from './GitRunningBadge';
 export type { GitRunningBadgeProps } from './GitRunningBadge';
 
+export { TextareaLineNumbers, lineNumberGutterMetrics } from './TextareaLineNumbers';
+export type { TextareaLineNumbersProps, LineNumberGutterMetrics } from './TextareaLineNumbers';
+
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';

@@ -21,6 +21,23 @@ describe('GhostIconButton', () => {
 		expect(screen.getByTestId('icon')).toBeInTheDocument();
 	});
 
+	it('centers its icon rather than baseline-aligning it', () => {
+		render(
+			<GhostIconButton ariaLabel="Centered">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		// jsdom has no layout engine, so this guards the mechanism rather than the
+		// pixels: without these the icon becomes inline content on the line box's
+		// baseline, the button's height is driven by the inherited line-height
+		// instead of the icon, and the icon rides above the center of its own
+		// hover pill.
+		const btn = screen.getByRole('button', { name: 'Centered' });
+		expect(btn).toHaveClass('inline-flex');
+		expect(btn).toHaveClass('items-center');
+		expect(btn).toHaveClass('justify-center');
+	});
+
 	it('calls onClick when clicked', () => {
 		const onClick = vi.fn();
 		render(

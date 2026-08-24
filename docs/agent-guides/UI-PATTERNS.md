@@ -430,6 +430,18 @@ src/shared/themes.ts        - Canonical theme objects (THEMES record)
 src/renderer/constants/themes.ts - Re-exports for renderer imports
 ```
 
+### `src/shared/themes.ts` Is Public API
+
+The RunMaestro.ai website generates its theme picker from this file. It checks
+out RunMaestro/Maestro in CI (and on a daily cron) and fails its build when its
+generated palette drifts from ours. Renaming the file, moving the `THEMES`
+export, or changing its shape turns that repo red with no signal here, so treat
+the export surface as public and change it deliberately.
+
+The website layers on one extra token, `accentSecondary`, that has no
+counterpart in `ThemeColors`. It is deliberately website-only - do NOT add it
+here to "fix" the mismatch.
+
 ### Theme Structure
 
 Each theme has:
@@ -929,13 +941,27 @@ persistence. Do NOT hand-roll another pair of `AArrowUp` / `AArrowDown` buttons.
 
 ```tsx
 const fontScale = useFontScale('filePreview.fontScale');
-<FontScaleControl theme={theme} control={fontScale} variant="floating" target="preview" />;
+<FontScaleControl
+	theme={theme}
+	control={fontScale}
+	variant="floating"
+	collapsible
+	target="preview"
+/>;
 ```
 
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+- `collapsible` (floating only) - rests as a circle the size of that Table of Contents
+  button and expands to the full pill on hover or keyboard focus. The buttons are
+  CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
+  control the user cannot see. The resting circle tints itself with the theme accent
+  while the scale is not 100%, so the collapsed state still says the pane is zoomed.
 - The percentage in the middle appears only once zoomed and doubles as the reset.
+- The file preview also binds bare `-` / `+` (and `=` / `_`) to the two steps and `0`
+  to the reset, guarded on `canScaleFontForView()` and on `isTextInputTarget(e.target)`
+  so the find bar and the CM6 editor keep their keys.
 
 **Only render it where the zoom moves type.** A control that changes nothing reads
 as broken: Director's Notes hides it in Rich Mode (fixed-size widget chrome), and
@@ -1170,6 +1196,71 @@ Credential-shaped keys are masked behind a per-row reveal, decided by
 `isSecretEnvKey()`. This is deliberately loose - the surfaces that show an
 environment are diagnostic ones people open while screen-sharing for help, so a
 false positive costs one click and a false negative leaks a live key.
+
+---
+
+## Line Numbers on a `<textarea>` (`TextareaLineNumbers`)
+
+`src/renderer/components/ui/TextareaLineNumbers.tsx` is the one gutter. A
+textarea has none of its own, so the numbers live in an overlay, and the naive
+"one `<div>` per line" version gets two things wrong that this component owns:
+
+- **Scroll.** The textarea scrolls its own content, so the gutter is translated
+  by the same `scrollTop`. It is written straight to the DOM in a `scroll`
+  listener rather than through state, so a fast scroll cannot lag a frame behind
+  the text it labels.
+- **Soft wrap.** A prose line that wraps onto three visual rows is three rows
+  tall in the textarea but one entry in the gutter. Each logical line is measured
+  against a hidden mirror that copies the textarea's font, wrap width, and
+  wrapping rules, so number N always sits on the first visual row of line N.
+
+Render it inside a `position: relative` wrapper that also holds the textarea, and
+push the text clear of the digits with `lineNumberGutterMetrics(value)`:
+
+```tsx
+const metrics = lineNumberGutterMetrics(value);
+<div className="relative w-full h-full">
+	<TextareaLineNumbers textareaRef={ref} value={value} theme={theme} />
+	<textarea ref={ref} value={value} style={{ paddingLeft: metrics.textPaddingLeft }} />
+</div>;
+```
+
+The metrics are in `ch` units and reserve a minimum of two digits, so the editor
+does not reflow the first time the document reaches line 10, and the gutter
+scales with the monospace font instead of a hard-coded pixel guess. Both callers
+ride it: the Cue YAML editor and the Auto Run expanded modal (`showLineNumbers`,
+which the docked Auto Run panel leaves off because it has no room for a gutter).
+
+Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
+gutter. That is what the YAML editor had, and it drifted out of alignment the
+moment the file was taller than the box or any line wrapped.
+
+jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
+renders with natural row heights rather than measured ones. That is deliberate,
+not a polyfill gap - assert on the numbers and the transform, not on pixel
+heights.
+
+---
+
+## Collapsible Advisories (`AutoRunNoticeBanner`, `usePersistedToggle`)
+
+A banner that recurs on every qualifying document is an advisory, not an event:
+the author reads it once, then wants the space back. `AutoRunNoticeBanner`
+takes an optional `collapseKey`, which turns its heading into a disclosure
+button (chevron + title, `aria-expanded`/`aria-controls`) and folds the body and
+actions away. The Auto Run human-step warning uses it; the paused-run error
+banner deliberately does not, because that one describes a one-off event the
+user must act on.
+
+`usePersistedToggle(storageKey, defaultValue)` in
+`src/renderer/hooks/ui/usePersistedToggle.ts` is the state behind it: one
+boolean in localStorage, storage failures degrade to in-memory only. Reach for
+it for any view preference a user sets by clicking that must survive the
+surface unmounting (a Right Bar tab switch, a re-render from new data) but is
+not worth a Settings row. Do NOT hand-roll another
+`useState(() => localStorage.getItem(...) === 'true')` pair - the collapse would
+reset every time the panel re-rendered, which reads as the banner refusing to
+stay closed.
 
 ---
 

@@ -72,6 +72,20 @@ Auto Run supports running multiple documents in sequence:
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
 
+### Staging a Folder of Documents from the Files Tab
+
+The Auto Run folder shows up in the **Files** tab like any other directory, so a
+folder of task documents is one right-click away from being a run list.
+Right-click a folder that sits inside the agent's Auto Run folder and choose
+**Stage Documents for Auto Run**. The run configuration modal opens with every
+document under that folder already queued, including the ones in nested
+subfolders, in the same order the Auto Run dropdown lists them. From there it is
+the ordinary modal: reorder, duplicate, set per-document options, then **Go**.
+
+The entry only appears on folders inside the Auto Run folder, and it counts what
+it will stage ("Stage 6 Documents for Auto Run"), so an empty folder offers
+nothing.
+
 ## Fresh Context: Task vs Document
 
 The run configuration modal has a **Fresh context per** toggle that controls how context is scoped as the runner works through a document. This is distinct from [task granularity](#task-granularity-two-approaches) above - granularity is how you _structure_ a document, while this is how Maestro _executes_ it.
