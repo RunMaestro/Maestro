@@ -8,7 +8,7 @@ import React, {
 	Suspense,
 	type ReactNode,
 } from 'react';
-import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
+import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfterRender';
 // SettingsModal is now lazy-loaded inside AppStandaloneModals
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
@@ -1159,6 +1159,16 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		prevInputModeRef.current = activeSession?.inputMode;
 	}, [activeSession?.inputMode]);
+
+	// Return the caret to the AI composer when the queued-message editor closes.
+	// Nothing restores focus when a layer unregisters, so Escape otherwise left
+	// focus on the document body: the composer looked ready but swallowed the
+	// next keystroke, and the shortcut that opened the editor could not reopen it.
+	// Keyed on the uiStore id, so this covers the Cmd+Shift+E path and the pencil
+	// on a queued row, but NOT the copy inside the Execution Queue browser - that
+	// one owns local state and must hand focus back to the browser behind it.
+	const editingQueuedItemId = useUIStore((s) => s.editingQueuedItemId);
+	useFocusOnClose(inputRef, editingQueuedItemId !== null);
 
 	// PERF: Memoize sessions for NewInstanceModal validation (only recompute when modal is open)
 	// This prevents re-renders of the modal's validation logic on every session state change
