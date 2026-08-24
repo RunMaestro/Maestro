@@ -104,7 +104,8 @@ export function BrowserSection({
 					)}
 				</div>
 				<p className="text-xs opacity-70 mt-2">
-					The URL loaded when opening a new browser tab (Cmd+B).
+					The URL loaded when opening a new browser tab (Cmd+B). Blank by default, so a new tab
+					opens ready for you to type an address instead of loading a page first.
 				</p>
 			</div>
 			<div

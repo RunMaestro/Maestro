@@ -39,9 +39,10 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'editor',
 	},
 	browserHomeUrl: {
-		description: 'The default URL loaded when opening a new browser tab.',
+		description:
+			'The URL loaded when opening a new browser tab. Blank (about:blank) by default, so a new tab is ready for you to type an address rather than loading a page first.',
 		type: 'string',
-		default: 'https://runmaestro.ai/#leaderboard',
+		default: 'about:blank',
 		category: 'editor',
 	},
 	htmlDoubleClickOpensInBrowser: {

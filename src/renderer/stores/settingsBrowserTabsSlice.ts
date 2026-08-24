@@ -9,6 +9,7 @@
 
 import type { StateCreator } from 'zustand';
 import type { SettingsStore } from './settingsStore';
+import { DEFAULT_BROWSER_TAB_URL } from '../utils/browserTabPersistence';
 
 export interface BrowserTabsState {
 	showBrowserTabDomain: boolean;
@@ -50,7 +51,11 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 	showBrowserTabDomain: true,
 	tabBarWheelScroll: true,
 	useSystemBrowser: false,
-	browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
+	// Blank by default: a new browser tab is opened to go SOMEWHERE, and the caret
+	// lands in the address bar ready for it. Loading a page first means waiting for
+	// something you did not ask for and then typing over it. Users who do want a
+	// landing page set one in Settings.
+	browserHomeUrl: DEFAULT_BROWSER_TAB_URL,
 	htmlDoubleClickOpensInBrowser: false,
 	browserTabKeepAlive: 'off',
 	browserTabKeepAliveLimit: 10,

@@ -10,11 +10,12 @@
  *   browser  -> the address bar, selected, so the next keystroke is a URL
  *   file     -> the editor, so the next keystroke is the note you opened it for
  *
- * That mapping used to live inline in MainPanelContent's paneFocusRequest
- * effect, and it only covered the first two - a tiled browser or file pane took
- * the ring but left the caret in the pane you came from, so you started typing
- * into the wrong tab. Keeping it here means the routing is one testable
- * function rather than a growing `else if` chain inside an effect.
+ * That mapping used to live inline in MainPanelContent's focus-request effect,
+ * and it only covered the first two - a tiled browser or file pane took the ring
+ * but left the caret in the pane you came from, so you started typing into the
+ * wrong tab. Keeping it here means the routing is one testable function rather
+ * than a growing `else if` chain inside an effect, and it is why a plain new
+ * file / browser tab gets the same treatment as a tiled one for free.
  *
  * Terminal and AI go through handles the caller owns. Browser and file are
  * resolved from the DOM by tab id, because neither element is reachable by ref

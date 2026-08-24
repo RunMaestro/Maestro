@@ -11,7 +11,7 @@
  */
 
 import { create } from 'zustand';
-import type { FocusArea, RightPanelTab, UsageDashboardViewMode } from '../types';
+import type { FocusArea, RightPanelTab, UnifiedTabRef, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
 
 /**
@@ -75,16 +75,22 @@ export interface UIStoreState {
 		hover: { leafId: string; zone: import('../utils/panelLayout').DropZone } | null;
 	} | null;
 
-	// Tab tiling: one-shot request to move DOM FOCUS into the pane with this leaf
-	// id (the caret into its terminal / chat input), consumed and cleared by
-	// MainPanelContent. Fired ONLY by the keyboard pane commands - moving the focus
-	// ring alone leaves the user typing into whatever had focus before.
+	// One-shot request to move DOM FOCUS into a tab's real input (the caret into
+	// its terminal / editor / address bar / chat box), consumed and cleared by
+	// MainPanelContent. Addressed EITHER by tiled pane leaf id or by tab ref, since
+	// both routes end at the same place: a keyboard pane command knows the leaf it
+	// moved to, while a plain "new tab" handler only ever knows the tab it minted.
+	// One request slot rather than two so there is a single focus owner and a
+	// single cancel chain - a later request always supersedes an earlier one.
+	//
+	// Fired ONLY by explicit create/move commands - moving the focus ring alone
+	// leaves the user typing into whatever had focus before.
 	//
 	// Deliberately a request rather than an effect keyed on `focusedPaneId`: a mouse
 	// press anywhere in a pane also moves `focusedPaneId`, so a derived effect would
 	// yank the caret into the AI input mid-drag and break text selection in the
-	// conversation. Keyboard-only keeps the steal tied to explicit user intent.
-	paneFocusRequest: string | null;
+	// conversation. Keeping it explicit ties the steal to user intent.
+	focusRequest: { leafId: string } | { tab: UnifiedTabRef } | null;
 
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
@@ -198,10 +204,11 @@ export interface UIStoreActions {
 	// Tab tiling: set/clear the transient pane-rearrange drag state.
 	setPaneDrag: (drag: UIStore['paneDrag']) => void;
 
-	// Tab tiling: ask the panel to put DOM focus inside the pane with this leaf id,
-	// and clear that request once it has been acted on.
+	// Ask the panel to put DOM focus inside a pane (by tiled leaf id) or a tab (by
+	// ref), and clear that request once it has been acted on.
 	requestPaneFocus: (leafId: string) => void;
-	clearPaneFocusRequest: () => void;
+	requestTabFocus: (tab: UnifiedTabRef) => void;
+	clearFocusRequest: () => void;
 
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -367,7 +374,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	activeRightTab: 'files',
 	zoomedPaneId: null,
 	paneDrag: null,
-	paneFocusRequest: null,
+	focusRequest: null,
 	bookmarksCollapsed: false,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
@@ -414,8 +421,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
 	setPaneDrag: (drag) => set({ paneDrag: drag }),
 
-	requestPaneFocus: (leafId) => set({ paneFocusRequest: leafId }),
-	clearPaneFocusRequest: () => set({ paneFocusRequest: null }),
+	requestPaneFocus: (leafId) => set({ focusRequest: { leafId } }),
+	requestTabFocus: (tab) => set({ focusRequest: { tab } }),
+	clearFocusRequest: () => set({ focusRequest: null }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {
