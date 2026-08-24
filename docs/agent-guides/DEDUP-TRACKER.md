@@ -250,7 +250,7 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **Evidence:** SCAN-FORMATTERS.md, "formatNumber / formatSize / formatFileSize definitions"
 - **Count:** 5 local `formatNumber` definitions; canonical exists at `shared/formatters.ts:41`
 - **KEEP:** `src/shared/formatters.ts:41`
-- **REMOVE:** `symphony.ts:928`, `AgentComparisonChart.tsx:93`, `AutoRunStats.tsx:70`, `LocationDistributionChart.tsx:40`, `SourceDistributionChart.tsx:62`, `SummaryCards.tsx:72`
+- **REMOVE:** ~~`symphony.ts:928`~~ (resolved via decomposition into `symphony/` directory), `AgentComparisonChart.tsx:93`, `AutoRunStats.tsx:70`, `LocationDistributionChart.tsx:40`, `SourceDistributionChart.tsx:62`, `SummaryCards.tsx:72`
 - **Estimated savings:** ~40 lines
 
 ### 25. Catch-Console.error Without Sentry (252 blocks, 118 files)

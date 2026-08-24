@@ -158,6 +158,33 @@ describe('Symphony Runner Service', () => {
 			]);
 		});
 
+		it('writes two references sharing a basename to separate files', async () => {
+			// docs/architecture.md and spec/architecture.md both reduce to
+			// architecture.md. Both must survive rather than the second
+			// overwriting the first.
+			mockSuccessfulWorkflow();
+
+			await startContribution({
+				contributionId: 'test-id',
+				repoSlug: 'owner/repo',
+				repoUrl: 'https://github.com/owner/repo',
+				issueNumber: 123,
+				issueTitle: 'Test Issue',
+				documentPaths: [
+					{ name: 'docs/architecture.md', path: 'docs/architecture.md', isExternal: false },
+					{ name: 'spec/architecture.md', path: 'spec/architecture.md', isExternal: false },
+				],
+				localPath: '/tmp/test-repo',
+				branchName: 'symphony/test-branch',
+			});
+
+			const destinations = vi.mocked(fs.copyFile).mock.calls.map((c) => c[1]);
+			expect(destinations).toHaveLength(2);
+			expect(new Set(destinations).size).toBe(2);
+			expect(destinations.some((d) => String(d).endsWith('architecture.md'))).toBe(true);
+			expect(destinations.some((d) => String(d).endsWith('architecture-2.md'))).toBe(true);
+		});
+
 		it('returns true on successful clone (exitCode 0)', async () => {
 			mockSuccessfulWorkflow();
 
