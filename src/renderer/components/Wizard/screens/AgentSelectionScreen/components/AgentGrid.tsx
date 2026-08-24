@@ -54,10 +54,17 @@ export function AgentGrid({
 				Select the provider that will power your agent.
 			</p>
 
+			{/*
+				The strip deliberately carries no `scroll-smooth`: that class applies to
+				EVERY programmatic scroll, including the browser's own scroll-into-view
+				when arrow-key focus lands on an off-screen tile and the per-tick writes
+				a wheel gesture makes, turning each one into a fresh eased animation that
+				trails the input. The arrow buttons ask for smooth explicitly instead.
+			*/}
 			<div className="relative w-full max-w-5xl min-w-0">
 				<div
 					ref={stripRef}
-					className="flex gap-4 overflow-x-auto no-scrollbar scroll-smooth px-1 py-1"
+					className="flex gap-4 overflow-x-auto no-scrollbar px-1 py-1"
 					role="group"
 					aria-label="Available providers"
 				>

@@ -474,7 +474,17 @@ This matters for any resizable modal that draws a chart: a hard-coded SVG width 
 Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
 
 - **Silence at the edge.** Nothing tells the user more content exists past the right edge. Use the flags to render an honest affordance - a gradient fade plus an arrow button. Do not render the arrows unconditionally: an arrow that cannot move is worse than no arrow.
-- **A swallowed wheel gesture.** A strip has no vertical overflow of its own, so a mouse wheel or trackpad flick over it scrolls an ancestor or does nothing. The hook maps vertical deltas onto the horizontal axis.
+- **A swallowed wheel gesture.** A strip has no vertical overflow of its own, so a mouse wheel or trackpad flick over it scrolls an ancestor or does nothing. The hook maps VERTICAL deltas onto the horizontal axis.
+
+Three rules the wheel handler follows, each of them a bug someone felt before it was written:
+
+- **A gesture that is already horizontal is handed back to the browser.** A trackpad two-finger swipe or a tilt wheel already targets this strip's axis, and the native path carries the platform's own momentum and interruption behaviour. Taking it over replaces a fling with a stepped, dead-feeling drag, so the handler returns without calling `preventDefault()` whenever `|deltaX| > |deltaY|`.
+- **Wheel deltas are not always pixels.** `deltaMode` says whether the number counts pixels (0), lines (1), or pages (2). Using the raw value makes a line-reporting mouse crawl three pixels per notch, so scale it before it becomes a scroll offset.
+- **The gesture is only claimed when it actually moves the strip.** At an end stop, a further scroll in that direction belongs to the surrounding page; swallowing it there traps the pointer over a strip that no longer responds while the page behind it refuses to scroll.
+
+**Do NOT put `scroll-smooth` on the strip element.** That class applies to EVERY programmatic scroll, including the browser's own scroll-into-view when arrow-key focus lands on an off-screen tile and the per-tick write a wheel gesture makes - each one becomes a fresh ~300ms eased animation started from wherever the previous one had reached, so a flick queues dozens of them and the strip drifts along behind the gesture instead of tracking it. The hook scrolls with an explicit `behavior`: `'instant'` for wheel ticks, `'smooth'` for `scrollByPage`, so the arrow buttons stay eased without the strip opting in globally. Both go through one helper that falls back to a `scrollLeft` write, because jsdom implements `scrollLeft` but not `scrollTo`.
+
+Scroll events also fire far faster than the screen repaints, and measuring reads `scrollWidth`/`clientWidth`, so the hook coalesces measurement to one `requestAnimationFrame` per frame rather than forcing a synchronous layout for every event in a flick.
 
 Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path. Focusing an item scrolls it into view for free, so keyboard navigation needs no extra scrolling code.
 
