@@ -122,6 +122,15 @@ export function registerContributionFinishHandlers({
 					localPath
 				);
 
+				if (commitCheckResult.exitCode !== 0) {
+					logger.error('Failed to count commits ahead of base branch', LOG_CONTEXT, {
+						contributionId,
+						baseBranch,
+						error: commitCheckResult.stderr,
+					});
+					return { success: false, error: `Failed to check commits: ${commitCheckResult.stderr}` };
+				}
+
 				const commitCount = parseInt(commitCheckResult.stdout.trim(), 10) || 0;
 				if (commitCount === 0) {
 					// No commits yet - return success but indicate no PR created
@@ -312,6 +321,12 @@ This PR will be updated automatically when the Auto Run completes.`;
 					return {
 						error: 'Missing required fields: repoSlug, repoName, issueNumber, prNumber, prUrl',
 					};
+				}
+				if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+					return { error: 'Invalid issue number' };
+				}
+				if (!Number.isInteger(prNumber) || prNumber <= 0) {
+					return { error: 'Invalid PR number' };
 				}
 
 				const state = await readState(app);

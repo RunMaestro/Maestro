@@ -1151,6 +1151,46 @@ describe('Symphony IPC handlers', () => {
 		});
 	});
 
+	describe('symphony:getIssueCounts cache operations', () => {
+		it('should not serve a stale-fallback cache built for a different repo set', async () => {
+			const cacheData = {
+				issues: {},
+				issueCounts: {
+					data: { 'owner/other-repo': 7 },
+					fetchedAt: Date.now() - 60 * 60 * 1000, // 1 hour ago, past the 30-minute TTL
+					repoSlugs: ['owner/other-repo'],
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
+			mockFetch.mockRejectedValue(new Error('Network error'));
+
+			const handler = handlers.get('symphony:getIssueCounts');
+			const result = await handler!({} as any, ['owner/repo'], false);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Network error');
+		});
+
+		it('should serve the stale-fallback cache when the repo set matches', async () => {
+			const cacheData = {
+				issues: {},
+				issueCounts: {
+					data: { 'owner/repo': 3 },
+					fetchedAt: Date.now() - 60 * 60 * 1000, // 1 hour ago, past the 30-minute TTL
+					repoSlugs: ['owner/repo'],
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
+			mockFetch.mockRejectedValue(new Error('Network error'));
+
+			const handler = handlers.get('symphony:getIssueCounts');
+			const result = await handler!({} as any, ['owner/repo'], false);
+
+			expect(result.fromCache).toBe(true);
+			expect(result.counts).toEqual({ 'owner/repo': 3 });
+		});
+	});
+
 	describe('symphony:getIssues cache operations', () => {
 		it('should return cached issues when cache is valid', async () => {
 			const cachedIssues = [{ number: 1, title: 'Cached Issue' }];
@@ -1570,6 +1610,7 @@ describe('Symphony IPC handlers', () => {
 				active: [
 					{
 						id: 'contrib_1',
+						sessionId: 'session_1',
 						tokenUsage: { inputTokens: 1000, outputTokens: 500, estimatedCost: 0.1 },
 						timeSpent: 60000,
 						progress: {
@@ -1597,6 +1638,7 @@ describe('Symphony IPC handlers', () => {
 				},
 			};
 			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(stateWithActive));
+			mockSessionsStore.get.mockReturnValue([{ id: 'session_1', name: 'Session 1' }]);
 
 			const handler = handlers.get('symphony:getStats');
 			const result = await handler!({} as any);
@@ -1614,6 +1656,7 @@ describe('Symphony IPC handlers', () => {
 				active: [
 					{
 						id: 'contrib_1',
+						sessionId: 'session_1',
 						tokenUsage: { inputTokens: 1000, outputTokens: 500, estimatedCost: 0.1 },
 						timeSpent: 60000,
 						progress: {
@@ -1625,6 +1668,7 @@ describe('Symphony IPC handlers', () => {
 					},
 					{
 						id: 'contrib_2',
+						sessionId: 'session_2',
 						tokenUsage: { inputTokens: 2000, outputTokens: 1000, estimatedCost: 0.2 },
 						timeSpent: 120000,
 						progress: {
@@ -1636,6 +1680,7 @@ describe('Symphony IPC handlers', () => {
 					},
 					{
 						id: 'contrib_3',
+						sessionId: 'session_3',
 						tokenUsage: { inputTokens: 500, outputTokens: 250, estimatedCost: 0.05 },
 						timeSpent: 30000,
 						progress: {
@@ -1663,6 +1708,11 @@ describe('Symphony IPC handlers', () => {
 				},
 			};
 			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(stateWithMultipleActive));
+			mockSessionsStore.get.mockReturnValue([
+				{ id: 'session_1', name: 'Session 1' },
+				{ id: 'session_2', name: 'Session 2' },
+				{ id: 'session_3', name: 'Session 3' },
+			]);
 
 			const handler = handlers.get('symphony:getStats');
 			const result = await handler!({} as any);
@@ -1678,6 +1728,65 @@ describe('Symphony IPC handlers', () => {
 			expect(result.stats.totalDocumentsProcessed).toBe(4);
 			// Tasks: 2 + 7 + 1 = 10
 			expect(result.stats.totalTasksCompleted).toBe(10);
+		});
+
+		it('should exclude orphaned active contributions whose sessions are gone', async () => {
+			const stateWithOrphan = {
+				active: [
+					{
+						id: 'contrib_alive',
+						sessionId: 'session_exists',
+						tokenUsage: { inputTokens: 1000, outputTokens: 500, estimatedCost: 0.1 },
+						timeSpent: 60000,
+						progress: {
+							completedDocuments: 1,
+							completedTasks: 2,
+							totalDocuments: 2,
+							totalTasks: 5,
+						},
+					},
+					{
+						id: 'contrib_orphan',
+						sessionId: 'session_gone',
+						tokenUsage: { inputTokens: 9000, outputTokens: 9000, estimatedCost: 9 },
+						timeSpent: 900000,
+						progress: {
+							completedDocuments: 9,
+							completedTasks: 9,
+							totalDocuments: 9,
+							totalTasks: 9,
+						},
+					},
+				],
+				history: [],
+				stats: {
+					totalContributions: 0,
+					totalMerged: 0,
+					totalIssuesResolved: 0,
+					totalDocumentsProcessed: 0,
+					totalTasksCompleted: 0,
+					totalTokensUsed: 0,
+					totalTimeSpent: 0,
+					estimatedCostDonated: 0,
+					repositoriesContributed: [],
+					uniqueMaintainersHelped: 0,
+					currentStreak: 0,
+					longestStreak: 0,
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(stateWithOrphan));
+			// Only session_exists is a live session; session_gone's contribution is orphaned
+			mockSessionsStore.get.mockReturnValue([{ id: 'session_exists', name: 'Existing Session' }]);
+
+			const handler = handlers.get('symphony:getStats');
+			const result = await handler!({} as any);
+
+			// Only contrib_alive's stats should be aggregated
+			expect(result.stats.totalTokensUsed).toBe(1500);
+			expect(result.stats.totalTimeSpent).toBe(60000);
+			expect(result.stats.estimatedCostDonated).toBeCloseTo(0.1, 5);
+			expect(result.stats.totalDocumentsProcessed).toBe(1);
+			expect(result.stats.totalTasksCompleted).toBe(2);
 		});
 	});
 
@@ -5063,6 +5172,36 @@ describe('Symphony IPC handlers', () => {
 					.mock.calls.filter((call) => call[0] === 'git' && call[1]?.[0] === 'push');
 				expect(pushCalls).toHaveLength(0);
 			});
+
+			it('should return an error instead of skipping PR creation when rev-list fails', async () => {
+				const metadata = createValidMetadata();
+				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
+					if ((filePath as string).includes('metadata.json')) {
+						return JSON.stringify(metadata);
+					}
+					throw new Error('ENOENT');
+				});
+				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
+					if (cmd === 'gh' && args?.[0] === 'auth')
+						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
+					if (cmd === 'git' && args?.[0] === 'symbolic-ref')
+						return { stdout: 'refs/remotes/origin/main', stderr: '', exitCode: 0 };
+					if (cmd === 'git' && args?.[0] === 'rev-list')
+						return { stdout: '', stderr: 'fatal: bad revision', exitCode: 128 };
+					return { stdout: '', stderr: '', exitCode: 0 };
+				});
+
+				const handler = getCreateDraftPRHandler();
+				const result = await handler!({} as any, { contributionId: 'contrib_draft_test' });
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Failed to check commits');
+				// git push should not have been called
+				const pushCalls = vi
+					.mocked(execFileNoThrow)
+					.mock.calls.filter((call) => call[0] === 'git' && call[1]?.[0] === 'push');
+				expect(pushCalls).toHaveLength(0);
+			});
 		});
 
 		describe('PR creation', () => {
@@ -5968,6 +6107,36 @@ This is a Symphony task document.
 				});
 
 				expect(result.error).toContain('Missing required fields');
+				expect(result.contributionId).toBeUndefined();
+			});
+
+			it('should reject a negative issue number', async () => {
+				const handler = getManualCreditHandler();
+				const result = await handler!({} as any, {
+					repoSlug: 'owner/repo',
+					repoName: 'Test Repo',
+					issueNumber: -5,
+					issueTitle: 'Test Issue',
+					prNumber: 456,
+					prUrl: 'https://github.com/owner/repo/pull/456',
+				});
+
+				expect(result.error).toContain('Invalid issue number');
+				expect(result.contributionId).toBeUndefined();
+			});
+
+			it('should reject a non-integer PR number', async () => {
+				const handler = getManualCreditHandler();
+				const result = await handler!({} as any, {
+					repoSlug: 'owner/repo',
+					repoName: 'Test Repo',
+					issueNumber: 123,
+					issueTitle: 'Test Issue',
+					prNumber: 456.5,
+					prUrl: 'https://github.com/owner/repo/pull/456',
+				});
+
+				expect(result.error).toContain('Invalid PR number');
 				expect(result.contributionId).toBeUndefined();
 			});
 

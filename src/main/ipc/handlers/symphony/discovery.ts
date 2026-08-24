@@ -661,15 +661,17 @@ export function registerDiscoveryHandlers({
 			): Promise<Omit<GetIssueCountsResponse, 'success'>> => {
 				const cache = await readCache(app);
 				const requestedSlugs = [...new Set(repoSlugs)].sort();
+				const cachedSlugsMatch = (cachedSlugs?: string[]): boolean =>
+					!!cachedSlugs &&
+					requestedSlugs.length === cachedSlugs.length &&
+					requestedSlugs.every((s) => cachedSlugs.includes(s));
 
 				// Check cache (must match requested slugs AND be within TTL)
 				if (
 					!forceRefresh &&
 					cache?.issueCounts &&
 					isCacheValid(cache.issueCounts.fetchedAt, ISSUE_COUNTS_CACHE_TTL_MS) &&
-					cache.issueCounts.repoSlugs &&
-					requestedSlugs.length === cache.issueCounts.repoSlugs.length &&
-					requestedSlugs.every((s) => cache.issueCounts!.repoSlugs.includes(s))
+					cachedSlugsMatch(cache.issueCounts.repoSlugs)
 				) {
 					return {
 						counts: cache.issueCounts.data,
@@ -704,8 +706,8 @@ export function registerDiscoveryHandlers({
 						error,
 					});
 
-					// Fallback to expired cache if available
-					if (cache?.issueCounts?.data) {
+					// Fallback to expired cache if available for the same repo set
+					if (cache?.issueCounts?.data && cachedSlugsMatch(cache.issueCounts.repoSlugs)) {
 						const cacheAge = Date.now() - cache.issueCounts.fetchedAt;
 						return {
 							counts: cache.issueCounts.data,

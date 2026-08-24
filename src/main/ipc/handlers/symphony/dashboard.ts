@@ -14,10 +14,15 @@ import { LOG_CONTEXT, handlerOpts, readState, SymphonyHandlerDependencies } from
 /**
  * Filter out orphaned contributions whose sessions no longer exist.
  * Returns only contributions that have a corresponding session in the sessions store.
+ *
+ * Pass logOrphans: false for callers that run on a poll timer. getStats is
+ * polled every 5 seconds, and the orphaned ids it would report are already
+ * logged by the getState / getActive paths, so logging there is pure duplication.
  */
 function filterOrphanedContributions(
 	contributions: ActiveContribution[],
-	sessionsStore: Store<SessionsData>
+	sessionsStore: Store<SessionsData>,
+	logOrphans = true
 ): ActiveContribution[] {
 	const sessions = sessionsStore.get('sessions', []) as StoredSession[];
 	const sessionIds = new Set(sessions.map((s) => s.id));
@@ -33,7 +38,7 @@ function filterOrphanedContributions(
 		}
 	}
 
-	if (orphanedIds.length > 0) {
+	if (logOrphans && orphanedIds.length > 0) {
 		logger.info(
 			`Filtering ${orphanedIds.length} orphaned contribution(s) with missing sessions`,
 			LOG_CONTEXT,
@@ -124,7 +129,8 @@ export function registerDashboardHandlers({
 				let activeDocs = 0;
 				let activeTasks = 0;
 
-				for (const contribution of state.active) {
+				const validActive = filterOrphanedContributions(state.active, sessionsStore, false);
+				for (const contribution of validActive) {
 					activeTokens +=
 						contribution.tokenUsage.inputTokens + contribution.tokenUsage.outputTokens;
 					activeTime += contribution.timeSpent;
