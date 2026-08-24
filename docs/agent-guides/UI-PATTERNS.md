@@ -1705,32 +1705,48 @@ Each tab has an `AITab` type with:
 
 The hook also returns selectors: `activeTab`, `unifiedTabs`, `activeFileTab`, `activeBrowserTab`, and the file-tab history state (`fileTabBackHistory`, `fileTabForwardHistory`, `fileTabCanGoBack`, `fileTabCanGoForward`).
 
-### Tiled pane focus - move the caret, not just the ring
+### New pane / new tab focus - move the caret, not just the ring
 
 A tab group's `focusedPaneId` drives the focus RING and input routing. It does **not**
 move DOM focus, so a keyboard pane switch alone leaves the caret in the previous
-pane and the user's next keystroke goes to the wrong place.
+pane and the user's next keystroke goes to the wrong place. The same is true of a
+plain new tab: activating it does not put a caret anywhere.
 
-The keyboard pane commands in `useTilingShortcuts` therefore publish a one-shot
-`paneFocusRequest` (the destination leaf id) on `uiStore` whenever they move pane
-focus - `focusPane`, `cyclePane`, `splitFocusedPane`, and `closeFocusedPane` when
-the group survives. `MainPanelContent` consumes it (clearing it immediately so a
-stale request can't re-steal focus on a later remount) and routes focus by pane
-kind: terminal panes go to that tab's xterm via `TerminalViewHandle.focusTerminal(tabId)`,
-AI panes to the shared chat textarea. Browser panes are skipped - the webview already
-takes Chromium input off `groupFocusedBrowserTabId` - and file panes have no text
-input to land in. It also resets `activeFocus` to `'main'`, because the pane
-shortcuts are not gated on it and can fire while the Left/Right Bar owns it.
+Every path that wants the caret publishes a one-shot `focusRequest` on `uiStore`,
+addressed **either** by tiled pane leaf id (`requestPaneFocus`) **or** by tab ref
+(`requestTabFocus`) - one slot, so there is a single focus owner and a single
+cancel chain, and a later request always supersedes an earlier one:
 
-Two things to preserve when touching this:
+- `useTilingShortcuts` - `focusPane`, `cyclePane`, `splitFocusedPane`, and
+  `closeFocusedPane` when the group survives.
+- `tileNewTabAction` - the tile-below family.
+- `useFilePreviewTabHandlers.handleNewFileTab` / `useBrowserTabHandlers.handleNewBrowserTab` -
+  a blank file opens with the caret in the editor, a new browser tab with the caret
+  in the address bar.
 
+`MainPanelContent` consumes it (clearing immediately so a stale request can't
+re-steal focus on a later remount) and routes by tab kind through
+`focusPaneInputWhenReady` in `utils/paneFocus.ts`. It also resets `activeFocus` to
+`'main'`, because the pane shortcuts are not gated on it and can fire while the
+Left/Right Bar owns it.
+
+Three things to preserve when touching this:
+
+- **The retry belongs to a ref, not to the effect's cleanup.** Consuming the request
+  nulls the store field the effect subscribes to, so the consume re-renders the
+  component. Returning the canceller from the effect made it tear its own retry down
+  a few ms in - always before the first 50ms attempt - and NO pane ever took focus.
+  A superseded request still cancels the one before it, which is all the cleanup was
+  for. The regression test is `still focuses after the re-render its own consume
+causes`; its mocked `clearFocusRequest` really nulls the value, because a bare
+  `vi.fn()` never triggers the re-render that breaks it.
 - **Use `focusTerminal(tabId)`, never `focusActiveTerminal()`.** A tiled terminal pane
   does not set `activeTerminalTabId` (`focusPaneInSession` only syncs `activeTabId`,
   and only for AI panes), so the "active" variant lands on the wrong terminal or none.
 - **Keep it a request, not an effect keyed on `focusedPaneId`.** A mouse press anywhere
   in a pane also moves `focusedPaneId`, so a derived effect would yank the caret into
-  the AI input mid-drag and break text selection in the conversation. Keyboard-only
-  keeps the focus steal tied to explicit user intent.
+  the AI input mid-drag and break text selection in the conversation. Keeping it
+  explicit ties the focus steal to user intent.
 
 ### Creating a tab straight into a tile - `tileNewTab`
 
