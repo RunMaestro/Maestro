@@ -231,6 +231,27 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		expect(config.readOnlyMode).toBe(false);
 	});
 
+	it('spawns the binary the agent is configured with, not the auto-detected one', async () => {
+		// Detection probes known install dirs before PATH, so a stale nvm stub can
+		// win over the codex the user pointed the agent at. The tab honors
+		// customPath; the consult must too, or the two run different binaries.
+		const { dispatch } = harness({
+			getTargetSession: () => ({ ...targetSession(), customPath: '/opt/custom/claude' }),
+		});
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.command).toBe('/opt/custom/claude');
+	});
+
+	it('falls back to the detected binary when the agent has no customPath', async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.command).toBe('claude');
+	});
+
 	it('does not kill a target that keeps streaming past the idle budget', async () => {
 		const { chunks, dispatch, emitData } = harness();
 		await dispatch();
