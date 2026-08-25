@@ -32,6 +32,11 @@ import { getBmadCommands } from '../../services/bmad';
 import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
 import type { GistInfo } from '../../components/GistPublishModal';
+import {
+	flushLeaderboardOutbox,
+	recoverUncommittedAutoRunCredit,
+	reportLeaderboardDrift,
+} from '../../services/leaderboard';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -221,11 +226,26 @@ export function useAppInitialization(): AppInitializationReturn {
 
 		const timer = setTimeout(async () => {
 			try {
+				// Ship everything owed BEFORE reading the server total, so the
+				// comparison below describes real drift and not a queue that simply
+				// had not been drained yet.
+				await recoverUncommittedAutoRunCredit();
+				await flushLeaderboardOutbox();
+
 				const result = await window.maestro.leaderboard.sync({ email, authToken });
 
 				if (result.success && result.found && result.data) {
 					// Read fresh autoRunStats at call time
 					const currentStats = useSettingsStore.getState().autoRunStats;
+					if (result.data.cumulativeTimeMs < currentStats.cumulativeTimeMs) {
+						// The server aggregates every device, so it can only be BELOW
+						// this machine's total when deltas were dropped. Silently
+						// skipping here is what latched the sync off for good.
+						void reportLeaderboardDrift(
+							currentStats.cumulativeTimeMs,
+							result.data.cumulativeTimeMs
+						);
+					}
 					if (result.data.cumulativeTimeMs > currentStats.cumulativeTimeMs) {
 						const longestRunTimestamp = result.data.longestRunDate
 							? new Date(result.data.longestRunDate).getTime()

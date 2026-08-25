@@ -17,6 +17,7 @@ import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import type { AchievementTimeSource } from '../../types';
 import { cueService } from '../../services/cue';
+import { submitLeaderboardTimeDelta, noteAutoRunCreditAccrued } from '../../services/leaderboard';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import type { SleepAwareSpan } from '../../services/systemSleep';
 
@@ -100,6 +101,12 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 
 			// Update achievement stats with the delta (raises ovation on badge unlock)
 			creditAchievementTime(deltaMs, 'autoRun');
+
+			// Record the same delta as locally-credited-but-unshipped. Auto Run
+			// submits its whole elapsed time once at completion (useBatchHandlers),
+			// which retires this counter - so whatever is left at the next launch
+			// is time from a run that quit or crashed before it could submit.
+			void noteAutoRunCreditAccrued(deltaMs);
 		}, 60000); // Every 60 seconds
 
 		return () => {
@@ -116,6 +123,16 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
 			if (payload?.type === 'conductorTimeCredit') {
 				creditAchievementTime(payload.creditMs, 'cue');
+				// Ship the same delta to the leaderboard. The server accumulates
+				// from deltaMs, so time credited only locally would drift below
+				// the server total forever. deltaRuns is 0 because a Cue run is
+				// not an Auto Run and must not inflate totalRuns.
+				//
+				// This lives here rather than in creditAchievementTime because
+				// the Auto Run timer above shares that helper, and Auto Run
+				// already submits its full elapsed time once on completion
+				// (useBatchHandlers) - submitting per tick too would double-count.
+				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs, source: 'cue' });
 			}
 		});
 		return unsubscribe;
