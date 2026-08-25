@@ -300,14 +300,25 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			if (isGitHubRateLimitError(err)) {
 				throw err;
 			}
+			// A stale token fails here first, before `doPoll` ever gets a repo to
+			// poll, so the auth guidance has to be repeated at this call site -
+			// otherwise an auto-detect trigger only ever says "could not auto-detect
+			// repo", which reads like a project problem rather than a login one.
+			if (isGitHubAuthError(err)) {
+				const message = err instanceof Error ? err.message : String(err);
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
+				);
+				return null;
+			}
 			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" - skipping poll`);
 			// GitHub being unreachable or degraded is the same expected operational
 			// condition the doPoll catch below suppresses. Repo auto-detection runs
 			// first, so without this a `gh repo view` 5xx during an outage would
 			// still page Sentry once per tick for every auto-detect trigger
 			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
-			// A stale `gh` token is the same story with a different cause.
-			if (!isGitHubConnectivityError(err) && !isGitHubAuthError(err)) {
+			if (!isGitHubConnectivityError(err)) {
 				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			}
 			return null;

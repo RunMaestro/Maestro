@@ -125,11 +125,17 @@ export function flushQueryEventsSync(): void {
 
 	const events = buffer;
 	buffer = [];
-
-	const stmt = stmtCache.get(lastDb, INSERT_SQL);
+	const db = lastDb;
 
 	try {
-		const tx = lastDb.transaction(() => {
+		// Statement preparation is inside the try on purpose. This runs from
+		// `StatsDB.close()` during quit cleanup, and a prepare can still fail on a
+		// handle that reports `open` (a damaged schema, a disk fault). Outside the
+		// try that exception escapes the flush, aborts the close, and leaves the
+		// connection and the singleton's `initialized` flag alive for the rest of
+		// shutdown.
+		const stmt = stmtCache.get(db, INSERT_SQL);
+		const tx = db.transaction(() => {
 			for (const { id, event } of events) {
 				stmt.run(
 					id,

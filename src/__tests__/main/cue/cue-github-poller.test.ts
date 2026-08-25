@@ -1141,6 +1141,16 @@ describe('cue-github-poller', () => {
 			);
 			expect(sentryCalls).toHaveLength(0);
 
+			// Auto-detection fails before doPoll ever has a repo, so the actionable
+			// guidance has to come from resolveRepo itself. Without it the only
+			// message the user sees is "could not auto-detect repo", which points
+			// at the project instead of at the login.
+			const authLog = (config.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
+				(c) => typeof c[1] === 'string' && (c[1] as string).includes('gh auth login')
+			);
+			expect(authLog).toBeDefined();
+			expect(authLog?.[0]).toBe('warn');
+
 			cleanup();
 		});
 

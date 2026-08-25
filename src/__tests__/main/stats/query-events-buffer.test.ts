@@ -332,5 +332,22 @@ describe('query-events-buffer', () => {
 
 			expect(captureException).toHaveBeenCalledTimes(1);
 		});
+
+		it('swallows a statement-preparation failure instead of aborting the caller', () => {
+			// `StatsDB.close()` calls this during quit cleanup, so an exception that
+			// escapes the flush skips the `db.close()` and the `initialized = false`
+			// that follow it. A prepare can still fail on a handle that reports
+			// `open` (damaged schema, disk fault), so it has to sit inside the same
+			// error boundary as the transaction.
+			const { db } = makeMockDb();
+			enqueueQueryEvent(db as never, sampleEvent);
+			db.prepare.mockImplementationOnce(() => {
+				throw new Error('no such table: query_events');
+			});
+
+			expect(() => flushQueryEventsSync()).not.toThrow();
+			expect(getQueryEventBufferSize()).toBe(0);
+			expect(captureException).toHaveBeenCalledTimes(1);
+		});
 	});
 });
