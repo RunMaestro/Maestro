@@ -88,6 +88,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 			name: s.name,
 			toolType: s.toolType as ToolType,
 			cwd: s.cwd || s.fullPath || os.homedir(),
+			customPath: s.customPath,
 			customArgs: s.customArgs,
 			customEnvVars: s.customEnvVars,
 			customModel: s.customModel,

@@ -10,6 +10,15 @@
  *   {"type":"end","stopReason":"EndTurn","sessionId":"<uuid>","requestId":"<uuid>"}
  *   {"type":"error","message":"<text>"}
  *
+ * stopReason semantics (verified against grok 1.0.5): a completed turn ends
+ * with "end_turn" ("EndTurn" on 0.x). Anything else means the turn DIED EARLY
+ * with the streamed text unfinished - most commonly "cancelled", which is what
+ * headless grok answers every permission prompt with (there is no TTY to ask),
+ * and a cancelled prompt kills the whole turn rather than feeding a denial
+ * back to the model. Such an end must surface as an error, not a result:
+ * recording it as success is how a consult once delivered its preamble as the
+ * "answer" with no hint that the actual work never ran.
+ *
  * Schema notes (verified against grok v0.2.93):
  * - There is NO init/session-start event. The session ID (camelCase
  *   `sessionId`, UUIDv7) arrives only on the final `end` event, so it is
@@ -35,7 +44,8 @@ interface GrokRawMessage {
 	type?: string;
 	/** Delta payload for `thought` and `text` events */
 	data?: string;
-	/** Present on `end` events (only `"EndTurn"` observed) */
+	/** Present on `end` events: "end_turn" ("EndTurn" on 0.x) when the turn
+	 *  completed, "cancelled" (or another non-end_turn value) when it died early */
 	stopReason?: string;
 	/** Present on `end` events - the only place the session ID appears */
 	sessionId?: string;
@@ -48,6 +58,24 @@ interface GrokRawMessage {
 function truncateErrorText(text: string): string {
 	if (text.length <= MAX_ERROR_MESSAGE_CHARS) return text;
 	return `${text.slice(0, MAX_ERROR_MESSAGE_CHARS)}...`;
+}
+
+/** The stopReason of an `end` event that died early, or null if the turn
+ *  completed. A missing stopReason is treated as completed (schema drift must
+ *  not turn every turn into an error). */
+function incompleteStopReason(msg: GrokRawMessage): string | null {
+	const reason = typeof msg.stopReason === 'string' ? msg.stopReason : '';
+	if (!reason || reason === 'end_turn' || reason === 'EndTurn') return null;
+	return reason;
+}
+
+/** User-facing message for a turn that ended without completing. */
+function incompleteTurnMessage(stopReason: string): string {
+	const hint =
+		stopReason === 'cancelled'
+			? ' In a non-interactive run this usually means a tool call needed a permission approval that headless Grok cannot grant, which cancels the whole turn.'
+			: '';
+	return `Grok ended the turn without completing (stopReason: ${stopReason}). Any streamed response is incomplete.${hint}`;
 }
 
 /**
@@ -89,15 +117,33 @@ export class GrokOutputParser implements AgentOutputParser {
 				return this.deltaEvent(msg, true);
 			case 'text':
 				return this.deltaEvent(msg, false);
-			case 'end':
+			case 'end': {
+				const sessionId =
+					typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : undefined;
+				// A non-end_turn stop means the turn died early (headless
+				// permission cancel, token limit, ...). Reclassify as an error so
+				// the unfinished streamed text is not recorded as a successful
+				// result - same pattern as the Antigravity parser's failed
+				// terminal envelope. sessionId stays attached so resume capture
+				// still works.
+				const stopReason = incompleteStopReason(msg);
+				if (stopReason) {
+					return {
+						type: 'error',
+						sessionId,
+						text: incompleteTurnMessage(stopReason),
+						raw: msg,
+					};
+				}
 				// Sole result-style event. The full answer text was already
 				// streamed via `text` deltas, so no text is attached here.
 				// No usage object exists anywhere in the stream.
 				return {
 					type: 'result',
-					sessionId: typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : undefined,
+					sessionId,
 					raw: msg,
 				};
+			}
 			case 'error': {
 				// Align with detectErrorFromParsed: empty/non-string messages are
 				// not errors (avoid synthetic "Unknown error" on the CLI path).
@@ -191,13 +237,26 @@ export class GrokOutputParser implements AgentOutputParser {
 
 	/** Detect agent errors from an already-parsed JSON object.
 	 *  Grok surfaces runtime failures as `{"type":"error","message":...}` on
-	 *  stdout; every other event type is never an error. */
+	 *  stdout, and an `end` event with a non-end_turn stopReason is a turn that
+	 *  died early (see incompleteStopReason). parseJsonObject reclassifies that
+	 *  end as an error EVENT (blocking the bogus result); this detection is what
+	 *  actually emits the agent-error, mirroring the Antigravity parser's dual
+	 *  handling of its failed terminal envelope. */
 	detectErrorFromParsed(parsed: unknown): AgentError | null {
 		if (!parsed || typeof parsed !== 'object') {
 			return null;
 		}
 
 		const msg = parsed as GrokRawMessage;
+		if (msg.type === 'end') {
+			const stopReason = incompleteStopReason(msg);
+			if (!stopReason) {
+				return null;
+			}
+			return this.toAgentError('unknown', incompleteTurnMessage(stopReason), true, {
+				parsedJson: parsed,
+			});
+		}
 		if (msg.type !== 'error') {
 			return null;
 		}
