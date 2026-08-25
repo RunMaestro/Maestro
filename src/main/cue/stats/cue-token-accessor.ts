@@ -73,7 +73,7 @@ export interface SessionTokenSummary {
  * Per-agent base coverage label, applied when the storage returned data.
  *
  * - `full` → all 4 token fields populated; `costUsd` present when the agent
- *   tracks cost (claude-code, opencode), otherwise absent (factory-droid).
+ *   tracks cost (claude-code, opencode, kilo), otherwise absent (factory-droid).
  * - `partial` → at least one structural gap:
  *     - `codex`: `cacheCreationTokens` always 0; no `costUsd`.
  *     - `copilot-cli`: tokens only emitted at `session.shutdown`; in-flight
@@ -84,6 +84,7 @@ export interface SessionTokenSummary {
 const COVERAGE_BY_AGENT: Record<string, 'full' | 'partial'> = {
 	'claude-code': 'full',
 	opencode: 'full',
+	kilo: 'full', // Fork of OpenCode: same storage schema, same token fields
 	'factory-droid': 'full',
 	codex: 'partial',
 	'copilot-cli': 'partial',

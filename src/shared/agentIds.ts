@@ -21,6 +21,7 @@ export const AGENT_IDS = [
 	'antigravity',
 	'qwen3-coder',
 	'opencode',
+	'kilo',
 	'factory-droid',
 	'hermes',
 	'pi',
