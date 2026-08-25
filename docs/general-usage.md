@@ -702,7 +702,7 @@ Rearrange agents by dragging them:
 
 ### Context Menu
 
-Right-click any agent for quick actions:
+Right-click any agent for quick actions. The menu is headed by the name of the agent you right-clicked, so you can tell at a glance which agent an action will hit - the menu often pops away from the row it was opened on.
 
 - **Rename** - Change the agent's display name
 - **Edit Agent...** - Open configuration modal
