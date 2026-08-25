@@ -46,6 +46,7 @@ import type {
 	RemoveQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	LaunchGoalRunCallback,
 	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
@@ -174,6 +175,7 @@ export interface WebServerCallbacks {
 	removeQueueItem: RemoveQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
+	launchGoalRun: LaunchGoalRunCallback | null;
 	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
 	getHistory: GetHistoryCallback | null;
 	getAutoRunDocs: GetAutoRunDocsCallback | null;
@@ -270,6 +272,7 @@ export class CallbackRegistry {
 		removeQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
+		launchGoalRun: null,
 		setSessionAutoRunFolder: null,
 		getHistory: null,
 		getAutoRunDocs: null,
@@ -541,6 +544,16 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
 		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
 		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
+	async launchGoalRun(
+		sessionId: string,
+		config: Parameters<LaunchGoalRunCallback>[1]
+	): ReturnType<LaunchGoalRunCallback> {
+		if (!this.callbacks.launchGoalRun) {
+			return { success: false, code: 'NOT_CONFIGURED', error: 'Not configured' };
+		}
+		return this.callbacks.launchGoalRun(sessionId, config);
 	}
 
 	async setSessionAutoRunFolder(
@@ -1094,6 +1107,10 @@ export class CallbackRegistry {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbacks.configureAutoRun = callback;
+	}
+
+	setLaunchGoalRunCallback(callback: LaunchGoalRunCallback): void {
+		this.callbacks.launchGoalRun = callback;
 	}
 
 	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {

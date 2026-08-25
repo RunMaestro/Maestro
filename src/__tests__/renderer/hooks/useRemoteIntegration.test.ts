@@ -215,6 +215,10 @@ describe('useRemoteIntegration', () => {
 		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteLaunchGoalRun: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteLaunchGoalRunResponse: vi.fn(),
 		onRemoteSetAutoRunFolder: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
