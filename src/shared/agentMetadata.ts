@@ -22,6 +22,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	antigravity: 'Antigravity CLI',
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
+	kilo: 'Kilo',
 	'factory-droid': 'Factory Droid',
 	hermes: 'Hermes',
 	pi: 'Pi',
@@ -43,11 +44,15 @@ export function getAgentDisplayName(agentId: AgentId | string): string {
 
 /**
  * Agents that use "plan mode" rather than true read-only mode.
- * Claude Code uses --permission-mode plan, OpenCode uses --agent plan.
+ * Claude Code uses --permission-mode plan, OpenCode and Kilo use --agent plan.
  * These agents can still read files but the CLI calls it "plan mode".
  * Other agents (Codex, Factory Droid) have true read-only enforcement.
  */
-const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['claude-code', 'opencode']);
+const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'claude-code',
+	'opencode',
+	'kilo',
+]);
 
 /**
  * Get the UI label for the read-only mode pill based on the agent.
@@ -134,6 +139,7 @@ export function resolveTabPermissionMode(
  */
 export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'opencode',
+	'kilo',
 	'factory-droid',
 	'hermes',
 	'pi',
@@ -187,6 +193,7 @@ export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
 	'factory-droid': { description: "Factory's AI coding assistant", brandColor: '#3B82F6' },
 	grok: { description: "xAI's AI coding assistant", brandColor: '#B4B8C0' },
 	hermes: { description: "Nous Research's AI coding assistant", brandColor: '#2323FF' },
+	kilo: { description: 'Open-source AI coding assistant', brandColor: '#EAB308' },
 	omp: { description: 'Multi-model coding agent', brandColor: '#9B4DFF' },
 	opencode: { description: 'Open-source AI coding assistant', brandColor: '#F97316' },
 	pi: { description: 'Your own agent harness', brandColor: '#E4E4E7' },
@@ -264,6 +271,7 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	'gemini-cli': { binary: 'gemini', args: '', followUp: '/auth' },
 	'qwen3-coder': { binary: 'qwen3-coder', args: '', followUp: '/auth' },
 	opencode: { binary: 'opencode', args: 'auth login' },
+	kilo: { binary: 'kilo', args: 'auth login' },
 	'factory-droid': { binary: 'droid', args: '', followUp: '/login' },
 	'copilot-cli': { binary: 'copilot', args: 'login' },
 	// Antigravity has no login subcommand: headless runs reuse the credentials

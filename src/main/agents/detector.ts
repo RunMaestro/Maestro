@@ -386,10 +386,11 @@ export class AgentDetector {
 		// Run agent-specific model discovery command
 		const models = await this.runModelDiscovery(agentId, agent);
 
-		// A transient `omp models --json` failure returns an empty list. Don't cache
-		// that, or the picker stays empty for the whole TTL even after the CLI
-		// recovers; let the next call retry. (omp always has a non-empty catalog.)
-		if (agentId === 'omp' && models.length === 0) {
+		// A transient `omp models --json` / `kilo models` failure returns an empty
+		// list. Don't cache that, or the picker stays empty for the whole TTL even
+		// after the CLI recovers; let the next call retry. (Both always have a
+		// non-empty catalog on a working install, so empty means failure.)
+		if ((agentId === 'omp' || agentId === 'kilo') && models.length === 0) {
 			return models;
 		}
 
@@ -512,6 +513,33 @@ export class AgentDetector {
 							models.push(m);
 						}
 					}
+
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, {
+						models,
+					});
+					return models;
+				}
+
+				case 'kilo': {
+					// Kilo: `kilo models` prints one model per line, same as OpenCode.
+					// Unlike OpenCode this does not also read kilo.json - config-file
+					// discovery is OpenCode-only for now, so a provider defined purely in
+					// config still has to be typed into the Model field by hand.
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+
+					if (result.exitCode !== 0) {
+						logger.warn(
+							`Model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+						return [];
+					}
+
+					const models = result.stdout
+						.split('\n')
+						.map((line) => line.trim())
+						.filter((line) => line.length > 0);
 
 					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, {
 						models,

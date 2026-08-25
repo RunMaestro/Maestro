@@ -354,6 +354,7 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			// Scoop package manager
 			path.join(home, 'scoop', 'shims'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current'),
+			path.join(home, 'scoop', 'apps', 'kilo', 'current'),
 			// Chocolatey
 			path.join(process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey', 'bin'),
 			// Go binaries
@@ -380,6 +381,7 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
+			`${home}/.kilo/bin`, // Kilo installer default location
 			'/home/linuxbrew/.linuxbrew/bin', // Linuxbrew
 			'/usr/bin',
 			'/bin',
