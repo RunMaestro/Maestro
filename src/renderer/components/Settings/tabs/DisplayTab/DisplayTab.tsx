@@ -2,6 +2,7 @@ import { useSettings } from '../../../../hooks';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import {
 	AccessibilitySection,
+	AgentTaskListSection,
 	BionifyInfoModal,
 	ContextWarningsSection,
 	DocumentGraphSection,
@@ -88,6 +89,13 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				groupChatAutoScroll={settings.groupChatAutoScroll}
 				setGroupChatAutoScroll={settings.setGroupChatAutoScroll}
+			/>
+			<AgentTaskListSection
+				theme={theme}
+				showAgentTaskListBar={settings.showAgentTaskListBar}
+				setShowAgentTaskListBar={settings.setShowAgentTaskListBar}
+				autoExpandAgentTaskListBar={settings.autoExpandAgentTaskListBar}
+				setAutoExpandAgentTaskListBar={settings.setAutoExpandAgentTaskListBar}
 			/>
 			<IconThemeSection
 				theme={theme}

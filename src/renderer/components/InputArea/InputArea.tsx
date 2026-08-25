@@ -13,6 +13,7 @@ import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
 import { ExecutionQueueIndicator } from '../ExecutionQueueIndicator';
+import { AgentTaskListBar } from '../AgentTaskListBar';
 import { ContextWarningSash } from '../ContextWarningSash';
 import { SummarizeProgressOverlay } from '../SummarizeProgressOverlay';
 import { WizardInputPanel } from '../InlineWizard';
@@ -498,6 +499,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					onSwitchTab={onSessionClick}
 				/>
 			)}
+
+			{/* AgentTaskListBar - the agent's current checklist, pinned above the
+			    composer so it doesn't scroll away with the conversation. */}
+			{session.inputMode === 'ai' && <AgentTaskListBar theme={theme} logs={activeTab?.logs} />}
 
 			<StagedImagesStrip
 				isVisible={session.inputMode === 'ai'}
