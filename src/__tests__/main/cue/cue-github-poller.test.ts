@@ -83,6 +83,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 import {
 	createCueGitHubPoller,
 	isGitHubConnectivityError,
+	isGitHubAuthError,
 	isGitHubRateLimitError,
 	GITHUB_RATE_LIMIT_MAX_BACKOFF_MS,
 	type CueGitHubPollerConfig,
@@ -925,8 +926,73 @@ describe('cue-github-poller', () => {
 			expect(isGitHubConnectivityError(new Error('ENOTFOUND api.github.com'))).toBe(true);
 		});
 
+		it('matches Go transport failures (gh is a Go binary, not libuv)', () => {
+			// `Post "https://api.github.com/graphql": net/http: TLS handshake timeout`
+			// is the same unreachable-right-now condition as ETIMEDOUT, spelled the
+			// way Go's http client spells it.
+			expect(
+				isGitHubConnectivityError(
+					new Error('Post "https://api.github.com/graphql": net/http: TLS handshake timeout')
+				)
+			).toBe(true);
+			expect(isGitHubConnectivityError(new Error('dial tcp 140.82.121.6:443: i/o timeout'))).toBe(
+				true
+			);
+			expect(
+				isGitHubConnectivityError(new Error('dial tcp: lookup api.github.com: no such host'))
+			).toBe(true);
+		});
+
 		it('does not match auth/configuration failures', () => {
+			// Auth stays outside this predicate on purpose - it is a different
+			// condition with different user guidance. isGitHubAuthError owns it.
 			expect(isGitHubConnectivityError(new Error('gh auth login required'))).toBe(false);
+			expect(isGitHubConnectivityError(new Error('HTTP 401: Bad credentials'))).toBe(false);
+		});
+	});
+
+	// MAESTRO-KE: a single install whose `gh` token had gone stale filed 924
+	// events - one per poll tick - because no predicate claimed HTTP 401.
+	describe('auth detection (isGitHubAuthError)', () => {
+		it('matches the field message verbatim', () => {
+			expect(
+				isGitHubAuthError(
+					new Error(
+						'Command failed: /usr/bin/gh issue list --repo acme/widgets --json number\n' +
+							'HTTP 401: Bad credentials (https://api.github.com/graphql)\n' +
+							'Try authenticating with:  gh auth login\n'
+					)
+				)
+			).toBe(true);
+		});
+
+		it('matches an unauthenticated gh CLI', () => {
+			expect(
+				isGitHubAuthError(
+					new Error('You are not logged into any GitHub hosts. Run gh auth login to authenticate.')
+				)
+			).toBe(true);
+			expect(isGitHubAuthError(new Error('HTTP 401: Requires authentication'))).toBe(true);
+		});
+
+		it('reads stderr as well as message', () => {
+			const err = Object.assign(new Error('Command failed: gh pr list'), {
+				stderr: 'HTTP 401: Bad credentials (https://api.github.com/graphql)',
+			});
+			expect(isGitHubAuthError(err)).toBe(true);
+		});
+
+		it('does not match rate limits, connectivity failures, or real faults', () => {
+			// 403/429 belong to isGitHubRateLimitError and get exponential backoff;
+			// misrouting them here would drop that behaviour on the floor.
+			expect(isGitHubAuthError(new Error('HTTP 403: API rate limit exceeded'))).toBe(false);
+			expect(isGitHubAuthError(new Error('ENOTFOUND api.github.com'))).toBe(false);
+			expect(isGitHubAuthError(new Error('HTTP 422: Validation Failed'))).toBe(false);
+		});
+
+		it('handles null/undefined safely', () => {
+			expect(isGitHubAuthError(null)).toBe(false);
+			expect(isGitHubAuthError(undefined)).toBe(false);
 		});
 	});
 
@@ -1016,9 +1082,88 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 
-		it('reports non-rate-limit/non-connectivity errors to Sentry with cue:github:doPoll tag', async () => {
+		it('does not report an unauthenticated gh CLI to Sentry (MAESTRO-KE)', async () => {
+			// A stale/revoked `gh` token is only fixable by the user, and the poller
+			// keeps ticking - so without a carve-out one install files an event
+			// every poll interval, indefinitely.
 			const config = makeConfig();
-			setupExecFileReject('pr list', 'gh auth login required');
+			setupExecFileReject(
+				'pr list',
+				'HTTP 401: Bad credentials (https://api.github.com/graphql)\nTry authenticating with:  gh auth login'
+			);
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			// Prove the injected failure actually ran - a zero-Sentry assertion
+			// also passes if polling never reached `pr list`.
+			expect(
+				mockExecFile.mock.calls.some((c) => (c[1] as string[]).join(' ').includes('pr list'))
+			).toBe(true);
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
+		it('tells the user to run gh auth login instead of failing silently', async () => {
+			const config = makeConfig();
+			setupExecFileReject('pr list', 'HTTP 401: Bad credentials (https://api.github.com/graphql)');
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const authLog = (config.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
+				(c) => typeof c[1] === 'string' && (c[1] as string).includes('gh auth login')
+			);
+			expect(authLog).toBeDefined();
+			expect(authLog?.[0]).toBe('warn');
+
+			cleanup();
+		});
+
+		it('does not report an unauthenticated gh CLI during repo auto-detection (MAESTRO-KE)', async () => {
+			const config = makeConfig({ repo: undefined });
+			mockExecFile.mockImplementation((_c, args, _o, cb) => {
+				if ((args as string[]).includes('--version')) return cb(null, '2.0.0', '');
+				return cb(new Error('HTTP 401: Bad credentials (https://api.github.com)'), '', '');
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:resolveRepo'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			// Auto-detection fails before doPoll ever has a repo, so the actionable
+			// guidance has to come from resolveRepo itself. Without it the only
+			// message the user sees is "could not auto-detect repo", which points
+			// at the project instead of at the login.
+			const authLog = (config.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
+				(c) => typeof c[1] === 'string' && (c[1] as string).includes('gh auth login')
+			);
+			expect(authLog).toBeDefined();
+			expect(authLog?.[0]).toBe('warn');
+
+			cleanup();
+		});
+
+		it('reports non-rate-limit/non-connectivity/non-auth errors to Sentry with cue:github:doPoll tag', async () => {
+			// Fixture is a 422: GitHub rejected a query *we* built, which is a real
+			// bug on our side and must keep paging. (This case used to use
+			// `gh auth login required`, which is now classified as an expected auth
+			// failure - see isGitHubAuthError / MAESTRO-KE.)
+			const config = makeConfig();
+			setupExecFileReject(
+				'pr list',
+				'HTTP 422: Validation Failed (https://api.github.com/graphql)'
+			);
 			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
 
 			const cleanup = createCueGitHubPoller(config);
