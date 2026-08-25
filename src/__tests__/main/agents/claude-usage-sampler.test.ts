@@ -195,7 +195,7 @@ describe('claude-usage-sampler', () => {
 				configDir: '/Users/test/.claude-smash',
 			});
 
-			expect(readAccountIdentityMock).toHaveBeenCalledWith('/Users/test/.claude-smash');
+			expect(readAccountIdentityMock).toHaveBeenCalledWith(canonKey('/Users/test/.claude-smash'));
 		});
 
 		it('omits the identity fields entirely when the account is unknown', async () => {

@@ -2618,7 +2618,7 @@ function MaestroConsoleInner() {
 	);
 
 	const handleOpenOutputSearch = useCallback(() => {
-		// Output search is scoped per agent+AI-tab; open the active window's slot.
+		// Find is scoped per chat window (agent+AI-tab, or active group chat).
 		const key = getActiveOutputSearchKey();
 		if (key) useUIStore.getState().setOutputSearchOpen(key, true);
 	}, []);
