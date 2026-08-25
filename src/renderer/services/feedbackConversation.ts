@@ -116,7 +116,7 @@ const DEFAULT_FEEDBACK_RESPONSE: FeedbackParsedResponse = {
 // Parse Helpers
 // ============================================================================
 
-function extractJsonFromOutput(output: string): FeedbackParsedResponse | null {
+export function extractJsonFromOutput(output: string): FeedbackParsedResponse | null {
 	// Strategy 1: Direct JSON parse
 	try {
 		const parsed = JSON.parse(output.trim());
@@ -168,6 +168,36 @@ function extractJsonFromOutput(output: string): FeedbackParsedResponse | null {
 	if (streamJsonParts.length > 0) {
 		const combined = streamJsonParts.join('');
 		return extractJsonFromOutput(combined);
+	}
+
+	// Strategy 5: Extract from OpenCode-style JSONL text events.
+	//
+	// OpenCode and its forks (Kilo) emit `{ type: 'text', part: { text } }` lines,
+	// so the answer sits inside a JSON *string* with its quotes escaped. None of
+	// the strategies above can reach it: the balanced scan finds the envelope
+	// object rather than the payload, and Strategy 4 only matches Claude's
+	// `{"type":"assistant","content":...}` shape. Without this the feedback flow
+	// falls back to DEFAULT_FEEDBACK_RESPONSE after a perfectly good run.
+	const textParts: string[] = [];
+	for (const line of output.split('\n')) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith('{')) continue;
+		try {
+			const event = JSON.parse(trimmed) as { type?: string; part?: { text?: string } };
+			if (event.type === 'text' && typeof event.part?.text === 'string') {
+				textParts.push(event.part.text);
+			}
+		} catch {
+			// Not a JSONL event line - ignore.
+		}
+	}
+	if (textParts.length > 0) {
+		const combined = textParts.join('');
+		// Guard the recursion: an event whose text is itself the whole output
+		// would otherwise loop forever.
+		if (combined !== output) {
+			return extractJsonFromOutput(combined);
+		}
 	}
 
 	return null;
