@@ -1,5 +1,3 @@
-import { AGENT_TILES } from './agentTiles';
-
 /**
  * Keyboard movement across the provider strip.
  *
@@ -10,14 +8,22 @@ import { AGENT_TILES } from './agentTiles';
  *
  * Movement is clamped rather than wrapped: running off the end should stop, not
  * teleport the focus ring back to the far side of a row the user can't see.
+ *
+ * `tileCount` is the count of tiles CURRENTLY RENDERED, not the provider total.
+ * The strip hides unavailable providers by default, so an index into the full
+ * registry names a different tile than the one under the focus ring.
  */
-export function getNextAgentTileIndex(currentIndex: number, key: string): number {
+export function getNextAgentTileIndex(
+	currentIndex: number,
+	key: string,
+	tileCount: number
+): number {
 	switch (key) {
 		case 'ArrowLeft':
 			return currentIndex > 0 ? currentIndex - 1 : currentIndex;
 
 		case 'ArrowRight':
-			return currentIndex + 1 < AGENT_TILES.length ? currentIndex + 1 : currentIndex;
+			return currentIndex + 1 < tileCount ? currentIndex + 1 : currentIndex;
 
 		default:
 			return currentIndex;

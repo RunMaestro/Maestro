@@ -49,7 +49,6 @@ function renderBuiltin(flag: keyof EncoreFeatureFlags, enabled: boolean): void {
 			ext={builtinExtension(def, flags({ [flag]: enabled }))}
 			contributions={null}
 			busy={false}
-			onBack={vi.fn()}
 			onTogglePlugin={vi.fn()}
 			onToggleBuiltin={vi.fn()}
 			onUninstall={vi.fn()}
@@ -114,7 +113,6 @@ describe('ExtensionDetails first-party permission disclosure', () => {
 				ext={builtinExtension(def, flags({ maestroCue: true }))}
 				contributions={null}
 				busy={false}
-				onBack={vi.fn()}
 				onTogglePlugin={vi.fn()}
 				onToggleBuiltin={vi.fn()}
 				onUninstall={vi.fn()}

@@ -61,14 +61,7 @@ export function useKeyboardShortcutHelpers(
 			// `keys` would make every modifier check compare against 'none' and a
 			// bare keypress would trigger an unassigned action.
 			if (!sc.keys?.length) return false;
-			// Unassigned actions never match - see isShortcut.
-			if (!sc.keys?.length) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
-			// An UNBOUND shortcut (keys: []) must never fire. Some actions ship with no
-			// default chord so users can assign their own in Settings; without this
-			// guard `mainKey` is undefined and the modifier checks alone decide, which
-			// would let an unrelated bare keypress trigger them.
-			if (keys.length === 0) return false;
 
 			const metaPressed = e.metaKey || e.ctrlKey;
 			const shiftPressed = e.shiftKey;
@@ -149,12 +142,11 @@ export function useKeyboardShortcutHelpers(
 		(e: KeyboardEvent, actionId: string): boolean => {
 			const sc = tabShortcuts[actionId] || shortcuts[actionId];
 			if (!sc) return false;
+			// Unassigned actions never match - same reason as isShortcut: an empty
+			// combination reads as "no modifiers, no main key", so a bare keypress
+			// would fire an action the user never bound.
+			if (!sc.keys?.length) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
-			// An UNBOUND shortcut (keys: []) must never fire. Some actions ship with no
-			// default chord so users can assign their own in Settings; without this
-			// guard `mainKey` is undefined and the modifier checks alone decide, which
-			// would let an unrelated bare keypress trigger them.
-			if (keys.length === 0) return false;
 
 			const metaPressed = e.metaKey || e.ctrlKey;
 			const shiftPressed = e.shiftKey;
@@ -215,12 +207,11 @@ export function useKeyboardShortcutHelpers(
 		(e: KeyboardEvent, actionId: string): boolean => {
 			const sc = shortcuts[actionId];
 			if (!sc) return false;
+			// Same guard as isShortcut/isTabShortcut: an action with no binding must
+			// never match. An empty `keys` reads as "no modifiers, no main key", and
+			// the checks below would then let an unrelated keypress fire it.
+			if (!sc.keys?.length) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
-			// An UNBOUND shortcut (keys: []) must never fire. Some actions ship with no
-			// default chord so users can assign their own in Settings; without this
-			// guard `mainKey` is undefined and the modifier checks alone decide, which
-			// would let an unrelated bare keypress trigger them.
-			if (keys.length === 0) return false;
 
 			// Both Ctrl and Cmd must be down. On macOS these are distinct physical
 			// modifiers; on Windows/Linux users press Ctrl and the Windows/Meta key.

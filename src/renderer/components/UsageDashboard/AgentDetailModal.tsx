@@ -332,14 +332,6 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 					)}
 				</section>
 
-				{/* Per-tab breakdown - the same query events, grouped by the tab that
-				    issued them. Sits above Auto Run because "which tab was this" is
-				    the more common follow-up question than batch-run totals. */}
-				<section>
-					<SectionHeading theme={theme}>Tabs</SectionHeading>
-					<TabBreakdown session={session} theme={theme} events={events} />
-				</section>
-
 				{/* Auto Run summary */}
 				<section>
 					<SectionHeading theme={theme}>Auto Run</SectionHeading>
@@ -405,6 +397,16 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 						</div>
 					</section>
 				)}
+
+				{/* Per-tab breakdown - the same query events, grouped by the tab that
+				    issued them. Last of the sections because it is the only
+				    open-ended one: it paginates, and its own filter and sort
+				    controls would otherwise push the fixed summaries below the
+				    fold. */}
+				<section>
+					<SectionHeading theme={theme}>Tabs</SectionHeading>
+					<TabBreakdown session={session} theme={theme} events={events} />
+				</section>
 
 				{/* Footer note: when the most recent activity was, formatted relative */}
 				{aggregates.lastActive && (

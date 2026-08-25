@@ -44,6 +44,12 @@ export interface UseQuotaAccountsResult {
 	 * the same pass that builds `configuredAccountKeys` so the badge can never
 	 * disagree with the tab/row list about which account an agent belongs to.
 	 * Accounts with no agent (a cached snapshot, a discovered dir) are absent.
+	 *
+	 * SSH-remote agents ARE counted. The count answers "how many agents draw on
+	 * this plan?", and an agent configured against a profile spends that plan's
+	 * quota wherever the process happens to run. Do NOT filter them out to match
+	 * the main-process sampler, which skips SSH sessions for an unrelated reason
+	 * - see the note on the counting loop below.
 	 */
 	agentCountsByAccount: Record<string, number>;
 	selectedKey: string | null;
@@ -125,6 +131,14 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		const counts: Record<string, number> = {};
 		for (const key of accountKeys) keys.add(normalizeKey(key));
 		for (const key of discoveredAccountKeys) keys.add(normalizeKey(key));
+		// Deliberately NOT filtered by `sessionSshRemoteConfig.enabled`. The
+		// main-process sampler (`buildTarget` in claude-usage-startup.ts) DOES skip
+		// SSH sessions, and the mismatch looks like a bug until you ask what each
+		// side is for: the sampler asks "can I probe this directory on THIS
+		// machine?" (no - the path names a remote host's disk), while this count
+		// asks "how many agents draw on this plan?" (yes - a remote agent burns the
+		// same account's quota). Making either one match the other reports a number
+		// nobody wants, so if you came here to reconcile them, don't.
 		for (const s of sessions) {
 			if (s.toolType !== toolType) continue;
 			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;

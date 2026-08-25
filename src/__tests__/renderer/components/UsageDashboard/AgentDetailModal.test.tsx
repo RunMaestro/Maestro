@@ -25,6 +25,9 @@ vi.mock('lucide-react', () => ({
 	X: () => <span data-testid="x-icon" />,
 	ChevronLeft: () => <span data-testid="chevron-left" />,
 	ChevronRight: () => <span data-testid="chevron-right" />,
+	// The tab breakdown's sortable column headers draw a direction caret.
+	ChevronDown: () => <span data-testid="chevron-down" />,
+	ChevronUp: () => <span data-testid="chevron-up" />,
 }));
 
 const TestWrapper = ({ children }: { children: React.ReactNode }) => (
@@ -127,5 +130,30 @@ describe('AgentDetailModal frame', () => {
 	it('renders the per-tab breakdown once the query events resolve', async () => {
 		renderModal();
 		await waitFor(() => expect(screen.getByTestId('tab-breakdown')).toBeInTheDocument());
+	});
+
+	it('puts the fixed summaries above the open-ended tab list', async () => {
+		// A worktree child so the Worktree section actually renders; without one
+		// the section is absent and the ordering assertion would pass vacuously.
+		const child = createMockSession({ id: 'session-2', parentSessionId: 'session-1' });
+		render(
+			<AgentDetailModal
+				session={session}
+				data={buildData()}
+				theme={mockTheme}
+				allSessions={[session, child]}
+				onClose={vi.fn()}
+			/>,
+			{ wrapper: TestWrapper }
+		);
+		await waitFor(() => expect(screen.getByTestId('tab-breakdown')).toBeInTheDocument());
+
+		// The tab list paginates and carries its own filter and sort controls, so
+		// it goes last: above it, the Auto Run and Worktree summaries are a fixed
+		// height and stay reachable without scrolling past a hundred rows.
+		const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+		expect(headings).toContain('Worktree');
+		expect(headings.indexOf('Auto Run')).toBeLessThan(headings.indexOf('Tabs'));
+		expect(headings.indexOf('Worktree')).toBeLessThan(headings.indexOf('Tabs'));
 	});
 });

@@ -60,6 +60,14 @@ export interface HorizontalScrollState {
 	canScrollRight: boolean;
 	/** Scroll roughly one visible width in the given direction. */
 	scrollByPage: (direction: 'left' | 'right') => void;
+	/**
+	 * Bring a child fully into view, scrolling the least amount that does it.
+	 *
+	 * `edgePaddingPx` is dead space to keep clear at each end - pass the width of
+	 * whatever the strip floats over its own edges (fades, arrow buttons) so a
+	 * child does not come to rest underneath them.
+	 */
+	scrollIntoView: (child: HTMLElement | null | undefined, edgePaddingPx?: number) => void;
 }
 
 export function useHorizontalScroll(
@@ -172,5 +180,34 @@ export function useHorizontalScroll(
 		[element]
 	);
 
-	return { canScrollLeft, canScrollRight, scrollByPage };
+	const scrollIntoView = useCallback(
+		(child: HTMLElement | null | undefined, edgePaddingPx = 0) => {
+			if (!element || !child) return;
+			const maxScrollLeft = element.scrollWidth - element.clientWidth;
+			if (maxScrollLeft <= 0) return;
+
+			// Measured from rects rather than `offsetLeft`, which is relative to the
+			// nearest positioned ancestor - that is the strip's wrapper here, not the
+			// strip, so an offset-based version silently drifts by the wrapper's padding.
+			const childRect = child.getBoundingClientRect();
+			const stripRect = element.getBoundingClientRect();
+			const pastLeftEdge = stripRect.left + edgePaddingPx - childRect.left;
+			const pastRightEdge = childRect.right - (stripRect.right - edgePaddingPx);
+
+			// Scroll the minimum that reveals the child, and only for the edge it is
+			// actually past. A child wider than the viewport overflows BOTH edges, so
+			// the left case wins: leading edge visible beats trailing edge visible.
+			let delta = 0;
+			if (pastLeftEdge > 0) delta = -pastLeftEdge;
+			else if (pastRightEdge > 0) delta = pastRightEdge;
+			if (delta === 0) return;
+
+			const target = Math.max(0, Math.min(maxScrollLeft, element.scrollLeft + delta));
+			if (target === element.scrollLeft) return;
+			scrollElementTo(element, target, 'smooth');
+		},
+		[element]
+	);
+
+	return { canScrollLeft, canScrollRight, scrollByPage, scrollIntoView };
 }

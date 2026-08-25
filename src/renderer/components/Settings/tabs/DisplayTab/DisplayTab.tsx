@@ -153,6 +153,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setUseCmd0AsLastTab={settings.setUseCmd0AsLastTab}
 				showBrowserTabDomain={settings.showBrowserTabDomain}
 				setShowBrowserTabDomain={settings.setShowBrowserTabDomain}
+				showTabCountBadge={settings.showTabCountBadge}
+				setShowTabCountBadge={settings.setShowTabCountBadge}
 				tabBarWheelScroll={settings.tabBarWheelScroll}
 				setTabBarWheelScroll={settings.setTabBarWheelScroll}
 			/>

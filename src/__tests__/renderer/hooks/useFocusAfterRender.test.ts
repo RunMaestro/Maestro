@@ -10,6 +10,7 @@ import { createRef } from 'react';
 import {
 	useFocusAfterRender,
 	useFocusOnMount,
+	useFocusOnClose,
 	MOUNT_FOCUS_DELAY_MS,
 } from '../../../renderer/hooks/utils/useFocusAfterRender';
 
@@ -157,5 +158,109 @@ describe('useFocusOnMount', () => {
 			renderHook(() => useFocusOnMount(ref));
 			vi.advanceTimersByTime(MOUNT_FOCUS_DELAY_MS);
 		}).not.toThrow();
+	});
+});
+
+/**
+ * useFocusOnClose - hand the caret back when a transient surface closes.
+ *
+ * The defect this exists for: the layer stack does not restore focus when a
+ * modal unregisters, so dismissing the queued-message editor with Escape left
+ * focus on document.body. The composer looked ready but swallowed the next
+ * keystroke.
+ */
+describe('useFocusOnClose', () => {
+	function makeRef() {
+		const el = document.createElement('textarea');
+		const focusSpy = vi.spyOn(el, 'focus');
+		const ref = createRef<HTMLElement>() as { current: HTMLElement | null };
+		ref.current = el;
+		return { ref, focusSpy };
+	}
+
+	it('focuses the ref when the surface goes from open to closed', () => {
+		const { ref, focusSpy } = makeRef();
+		const { rerender } = renderHook(({ open }) => useFocusOnClose(ref, open), {
+			initialProps: { open: true },
+		});
+
+		expect(focusSpy).not.toHaveBeenCalled();
+
+		rerender({ open: false });
+
+		expect(focusSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not focus while the surface stays open', () => {
+		const { ref, focusSpy } = makeRef();
+		const { rerender } = renderHook(({ open }) => useFocusOnClose(ref, open), {
+			initialProps: { open: true },
+		});
+
+		rerender({ open: true });
+		rerender({ open: true });
+
+		expect(focusSpy).not.toHaveBeenCalled();
+	});
+
+	// Mounting closed must not steal focus from whatever the user is using.
+	it('does not focus on mount when the surface starts closed', () => {
+		const { ref, focusSpy } = makeRef();
+		renderHook(() => useFocusOnClose(ref, false));
+
+		expect(focusSpy).not.toHaveBeenCalled();
+	});
+
+	// Only the closing edge focuses - later re-renders must not yank the caret
+	// back out of something the user clicked afterwards.
+	it('focuses once per close, not on every later render', () => {
+		const { ref, focusSpy } = makeRef();
+		const { rerender } = renderHook(({ open }) => useFocusOnClose(ref, open), {
+			initialProps: { open: true },
+		});
+
+		rerender({ open: false });
+		rerender({ open: false });
+		rerender({ open: false });
+
+		expect(focusSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('focuses again when the surface is reopened and closed a second time', () => {
+		const { ref, focusSpy } = makeRef();
+		const { rerender } = renderHook(({ open }) => useFocusOnClose(ref, open), {
+			initialProps: { open: true },
+		});
+
+		rerender({ open: false });
+		rerender({ open: true });
+		rerender({ open: false });
+
+		expect(focusSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it('defers the focus when a delay is given', () => {
+		const { ref, focusSpy } = makeRef();
+		const { rerender } = renderHook(
+			({ open }) => useFocusOnClose(ref, open, MOUNT_FOCUS_DELAY_MS),
+			{
+				initialProps: { open: true },
+			}
+		);
+
+		rerender({ open: false });
+		expect(focusSpy).not.toHaveBeenCalled();
+
+		vi.advanceTimersByTime(MOUNT_FOCUS_DELAY_MS);
+		expect(focusSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not throw when the ref is empty', () => {
+		const ref = createRef<HTMLElement>() as { current: HTMLElement | null };
+		const { rerender } = renderHook(({ open }) => useFocusOnClose(ref, open), {
+			initialProps: { open: true },
+		});
+
+		expect(() => rerender({ open: false })).not.toThrow();
 	});
 });

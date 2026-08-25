@@ -19,6 +19,8 @@ interface TabOptionsSectionProps {
 	setUseCmd0AsLastTab: (enabled: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (enabled: boolean) => void;
+	showTabCountBadge: boolean;
+	setShowTabCountBadge: (enabled: boolean) => void;
 	tabBarWheelScroll: boolean;
 	setTabBarWheelScroll: (enabled: boolean) => void;
 }
@@ -37,6 +39,8 @@ export function TabOptionsSection({
 	setUseCmd0AsLastTab,
 	showBrowserTabDomain,
 	setShowBrowserTabDomain,
+	showTabCountBadge,
+	setShowTabCountBadge,
 	tabBarWheelScroll,
 	setTabBarWheelScroll,
 }: TabOptionsSectionProps) {
@@ -106,6 +110,17 @@ export function TabOptionsSection({
 					checked={showBrowserTabDomain}
 					onChange={setShowBrowserTabDomain}
 					ariaLabel="Show domain on browser tabs"
+					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Show tab count on the search icon"
+					description={
+						'Display the number of open tabs as a small badge on the tab bar search (magnifier) icon. When off, the count is still shown next to "Search Tabs" in the popover that opens when you click the icon.'
+					}
+					checked={showTabCountBadge}
+					onChange={setShowTabCountBadge}
+					ariaLabel="Show tab count on the search icon"
 					borderTop
 				/>
 				<ToggleSettingRow

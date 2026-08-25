@@ -46,7 +46,7 @@ vi.mock('../../../renderer/components/CueYamlEditor', () => ({
 
 // `vi.hoisted` so the captured ref exists before vi.mock evaluates the factory.
 // Tests assert against `capturedEditorProps.initialPipelineId` to verify that
-// the parent (CueModal) propagates / clears the "View in Pipeline" token.
+// the parent (CueModal) propagates / clears the "View in Graph" token.
 const capturedEditorProps = vi.hoisted(() => ({
 	initialPipelineId: undefined as { id: string | null; nonce: string } | undefined,
 	renderCount: 0,
@@ -487,7 +487,7 @@ describe('CueModal', () => {
 	// when navigating away from the pipeline tab. Without this, a stale nonce
 	// would survive the unmount/remount cycle, and a fresh CuePipelineEditor's
 	// initial-pre-select effect (appliedNonce.current === null on the new
-	// instance) would re-snap the user back to the "View in Pipeline" target
+	// instance) would re-snap the user back to the "View in Graph" target
 	// they just navigated away from.
 	describe('pending pipeline token (regression: tab switch must clear it)', () => {
 		it('clears initialPipelineId when navigating away from the pipeline tab', () => {
@@ -501,11 +501,11 @@ describe('CueModal', () => {
 			// Default tab is 'pipeline' - editor renders with no pending token.
 			expect(capturedEditorProps.initialPipelineId).toBeUndefined();
 
-			// Navigate to Dashboard and click "View in Pipeline" - handler sets
+			// Navigate to Dashboard and click "View in Graph" - handler sets
 			// pendingPipelineId AND switches activeTab to 'pipeline', so the
 			// editor remounts and now sees the token in its initialPipelineId prop.
 			fireEvent.click(screen.getByText('Dashboard'));
-			fireEvent.click(screen.getByText('View in Pipeline'));
+			fireEvent.click(screen.getByText('View in Graph'));
 
 			expect(capturedEditorProps.initialPipelineId).toBeDefined();
 			const tokenAfterView = capturedEditorProps.initialPipelineId!;
@@ -530,7 +530,7 @@ describe('CueModal', () => {
 			// Defensive: handleSetActiveTab is idempotent for `tab === 'pipeline'`.
 			// Calling it with the already-active value must NOT clear the token -
 			// otherwise rapid re-clicks of the Pipeline Graph tab would race
-			// against a still-pending "View in Pipeline" navigation.
+			// against a still-pending "View in Graph" navigation.
 			mockUseCueReturn = {
 				...defaultUseCueReturn,
 				sessions: [mockSession],
@@ -539,7 +539,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			fireEvent.click(screen.getByText('Dashboard'));
-			fireEvent.click(screen.getByText('View in Pipeline'));
+			fireEvent.click(screen.getByText('View in Graph'));
 			expect(capturedEditorProps.initialPipelineId).toBeDefined();
 			const tokenAfterView = capturedEditorProps.initialPipelineId!;
 

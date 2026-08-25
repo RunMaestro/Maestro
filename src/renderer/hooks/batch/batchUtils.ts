@@ -11,6 +11,11 @@ import {
 	forEachMarkdownLine,
 } from '../../../shared/markdownTaskScan';
 
+// HITL gate detection moved to `shared/autorunMarkers` so the CLI engine and the
+// markdown renderer can read gates the same way this engine does. Re-exported
+// here because the batch hooks import it from this module.
+export { findPendingHitlGate, type HitlGate } from '../../../shared/autorunMarkers';
+
 let cachedAutorunDefaultPrompt: string = '';
 let cachedAutorunPerTaskBlock: string = '';
 let cachedAutorunPerDocumentBlock: string = '';
@@ -59,11 +64,6 @@ export function getTaskSelectionBlock(mode: TaskSelectionMode | undefined): stri
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)
 // Uses `let` so the binding can be updated after async IPC load completes
 export let DEFAULT_BATCH_PROMPT: string = getAutorunDefaultPrompt();
-
-// Regex to match a HITL gate marker: <!-- MAESTRO:HITL reason="..." artifact="..." -->
-// The marker may span multiple lines in source, but we treat a single line as the unit
-// because playbook authors place it on its own line per the documented convention.
-const HITL_MARKER_REGEX = /<!--\s*MAESTRO:HITL\b([^]*?)-->/;
 
 export interface MarkdownTaskCounts {
 	checked: number;
@@ -116,64 +116,6 @@ export function countCheckedTasks(content: string): number {
  */
 export function uncheckAllTasks(content: string): string {
 	return content.replace(CHECKED_TASK_REGEX, '$1[ ]');
-}
-
-export interface HitlGate {
-	reason: string;
-	artifact?: string;
-	/** 0-indexed line number of the marker within the document */
-	line: number;
-}
-
-/**
- * Detect a pending HITL (human-in-the-loop) gate in playbook content.
- *
- * A gate is "pending" when an unchecked task appears below a HITL marker
- * with no checked task between them - the human hasn't acknowledged the
- * gate yet by ticking the approval checkbox. Once the user checks the box
- * (or any task between the marker and the next unchecked task), the marker
- * is considered "consumed" and the next call returns null.
- *
- * Markers inside fenced code blocks are ignored so playbook authors can
- * document the syntax without triggering pauses.
- *
- * Returns the first marker in a pending chain (when multiple markers
- * appear before a single unchecked task), and null otherwise.
- */
-export function findPendingHitlGate(content: string): HitlGate | null {
-	let firstMarkerInPendingChain: HitlGate | null = null;
-	let pendingGate: HitlGate | null = null;
-
-	forEachMarkdownLine(content, (line, i) => {
-		// Checked tasks consume any pending marker - the user already approved
-		// (or someone other than the user; either way the gate has been passed).
-		if (CHECKED_TASK_COUNT_REGEX.test(line)) {
-			firstMarkerInPendingChain = null;
-			return;
-		}
-
-		// Unchecked task closes the pending chain: if we have a marker, it's
-		// the gate the run should pause at. Otherwise there's no gate above
-		// this task.
-		if (UNCHECKED_TASK_REGEX.test(line)) {
-			pendingGate = firstMarkerInPendingChain;
-			return false;
-		}
-
-		const markerMatch = line.match(HITL_MARKER_REGEX);
-		if (markerMatch && firstMarkerInPendingChain === null) {
-			const inner = markerMatch[1] || '';
-			const reasonMatch = inner.match(/reason\s*=\s*"([^"]*)"/);
-			const artifactMatch = inner.match(/artifact\s*=\s*"([^"]*)"/);
-			firstMarkerInPendingChain = {
-				reason: reasonMatch?.[1]?.trim() || 'Human review requested',
-				artifact: artifactMatch?.[1]?.trim() || undefined,
-				line: i,
-			};
-		}
-	});
-
-	return pendingGate;
 }
 
 /**

@@ -22,6 +22,7 @@ import { logger } from '../utils/logger';
 import { isPidAlive } from './utils/childProcessInfo';
 import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
+import { agentAlreadyRunningMessage } from '../../shared/processErrors';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
@@ -154,7 +155,7 @@ export class ProcessManager extends EventEmitter {
 							requestedToolType: config.toolType,
 						}
 					);
-					throw new Error(`Agent process already running for session ${config.sessionId}`);
+					throw new Error(agentAlreadyRunningMessage(config.sessionId));
 				}
 
 				logger.warn(

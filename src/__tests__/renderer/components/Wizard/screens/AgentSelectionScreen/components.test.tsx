@@ -94,9 +94,14 @@ describe('AgentSelectionScreen components', () => {
 				selectedAgent="claude-code"
 				focusedTileIndex={0}
 				isNameFieldFocused={false}
+				totalProviderCount={AGENT_TILES.length}
+				availableProviderCount={1}
+				providerLocationLabel="locally"
+				showAllProviders
 				tileRefs={tileRefs}
 				onTileClick={onTileClick}
 				onOpenConfig={onOpenConfig}
+				onShowAllProvidersChange={vi.fn()}
 				setFocusedTileIndex={vi.fn()}
 				setIsNameFieldFocused={vi.fn()}
 			/>
@@ -119,6 +124,44 @@ describe('AgentSelectionScreen components', () => {
 		expect(customizeActions[codexTileIndex]).toHaveAttribute('tabindex', '0');
 		fireEvent.keyDown(customizeActions[codexTileIndex], { key: 'Enter' });
 		expect(onOpenConfig).toHaveBeenCalledTimes(2);
+	});
+
+	it('reports the provider count and toggles the unavailable ones', () => {
+		const onShowAllProvidersChange = vi.fn();
+		const tileRefs: React.MutableRefObject<(HTMLButtonElement | null)[]> = { current: [] };
+		const available = [detectedAgent('claude-code'), detectedAgent('codex')];
+
+		render(
+			<AgentGrid
+				theme={mockTheme}
+				tiles={AGENT_TILES.slice(0, 2)}
+				detectedAgents={available}
+				selectedAgent="claude-code"
+				focusedTileIndex={0}
+				isNameFieldFocused={false}
+				totalProviderCount={15}
+				availableProviderCount={5}
+				providerLocationLabel="locally"
+				showAllProviders={false}
+				tileRefs={tileRefs}
+				onTileClick={vi.fn()}
+				onOpenConfig={vi.fn()}
+				onShowAllProvidersChange={onShowAllProvidersChange}
+				setFocusedTileIndex={vi.fn()}
+				setIsNameFieldFocused={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText('5 providers available locally of 15 supported')).toBeInTheDocument();
+
+		const toggle = screen.getByRole('switch', { name: 'Show all supported providers' });
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		// The screen-wide keydown handler must not eat this control's own keys.
+		expect(toggle.closest('[data-provider-bar-nav-exempt]')).not.toBeNull();
+
+		fireEvent.click(toggle);
+		expect(onShowAllProvidersChange).toHaveBeenCalledWith(true);
 	});
 
 	it('renders location select only when remotes exist and forwards selection', () => {

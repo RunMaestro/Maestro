@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
+import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { PermissionList, RISK_COLOR } from './PermissionList';
@@ -37,7 +37,6 @@ interface ExtensionDetailsProps {
 	ext: UnifiedExtension;
 	contributions: AggregatedContributions | null;
 	busy: boolean;
-	onBack: () => void;
 	onTogglePlugin: (record: PluginRecord) => void;
 	onToggleBuiltin: (flag: NonNullable<UnifiedExtension['flag']>) => void;
 	onUninstall: (record: PluginRecord) => void;
@@ -72,7 +71,6 @@ export function ExtensionDetails({
 	ext,
 	contributions,
 	busy,
-	onBack,
 	onTogglePlugin,
 	onToggleBuiltin,
 	onUninstall,
@@ -192,16 +190,8 @@ export function ExtensionDetails({
 
 	return (
 		<div data-testid="extension-details" className="select-text">
-			<button
-				type="button"
-				data-testid="extension-details-back"
-				onClick={onBack}
-				className="flex items-center gap-1 text-sm mb-4 opacity-70 hover:opacity-100"
-				style={{ color: theme.colors.textMain }}
-			>
-				<ChevronLeft className="w-4 h-4" /> All extensions
-			</button>
-
+			{/* The way back lives in the view's header row, where the grid's
+			    "Install plugin…" button sits - see ExtensionsView. */}
 			{/* Title + meta */}
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">

@@ -8,6 +8,14 @@
  *
  * IMPORTANT: This is the single source of truth for theme colors.
  * Do NOT duplicate theme definitions elsewhere.
+ *
+ * DOWNSTREAM CONTRACT: RunMaestro.ai generates its theme picker from this file.
+ * The website checks out RunMaestro/Maestro in CI (and on a daily cron) and fails
+ * its build if its generated palette drifts from this one. Renaming this file,
+ * moving the THEMES export, or changing its shape will turn that repo red without
+ * any signal here, so treat the export surface as public API. The website layers
+ * on one extra token (accentSecondary) that has no counterpart in ThemeColors;
+ * it is deliberately website-only and must NOT be added here.
  */
 
 import type { Theme, ThemeId, ThemeColors } from './theme-types';

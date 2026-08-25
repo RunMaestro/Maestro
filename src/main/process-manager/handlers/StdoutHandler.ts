@@ -458,7 +458,14 @@ export class StdoutHandler {
 		}
 
 		// ── Error detection from parser ──
-		if (outputParser && !managedProcess.errorEmitted) {
+		// `interrupted` means the USER pressed Stop, and `interrupt()` sets it
+		// before signalling. Anything a CLI reports after that is a consequence of
+		// the stop, not a failure of the turn: several agents flush a terminal
+		// envelope on their way out (grok emits `stopReason: "cancelled"`, which
+		// the parser correctly classifies as a turn that died early). Raising it
+		// would show a red error and arm recovery for a turn the user deliberately
+		// abandoned, so drop it - the turn is over either way.
+		if (outputParser && !managedProcess.errorEmitted && !managedProcess.interrupted) {
 			// Use pre-parsed object when available; fall back to line-based detection
 			// for non-JSON lines (e.g., Claude embedded JSON in stderr)
 			const agentError =
@@ -466,6 +473,25 @@ export class StdoutHandler {
 					? outputParser.detectErrorFromParsed(parsed)
 					: outputParser.detectErrorFromLine(line);
 			if (agentError) {
+				// Capture the PROVIDER's session id off this line before anything else:
+				// the branch returns without reaching `handleParsedEvent`, so this is the
+				// only chance, and `agentError.sessionId` below is Maestro's own
+				// composite id, not the agent's. A failing terminal envelope is exactly
+				// where an id can arrive for the first and last time - grok reports one
+				// only on `end`, and an `end` that died early now leaves through here.
+				// Losing it means recovery from a *recoverable* error silently opens a
+				// fresh conversation and drops the context the retry was supposed to
+				// continue. ExitHandler does the same for the flushed no-newline case.
+				if (parsed !== null) {
+					const event = outputParser.parseJsonObject(parsed);
+					if (event) {
+						this.emitSessionIdIfNeeded(
+							sessionId,
+							managedProcess,
+							outputParser.extractSessionId(event)
+						);
+					}
+				}
 				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
 				// Tag the error with the remote UUID so downstream listeners

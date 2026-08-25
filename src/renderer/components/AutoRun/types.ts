@@ -84,6 +84,9 @@ export interface AutoRunProps {
 	// Hide top controls (when rendered in expanded modal with controls in header)
 	hideTopControls?: boolean;
 
+	// Show a line-number gutter in edit mode (the expanded modal has the room for it)
+	showLineNumbers?: boolean;
+
 	// Flash notification callback (for showing center-screen messages)
 	onShowFlash?: (message: string) => void;
 }

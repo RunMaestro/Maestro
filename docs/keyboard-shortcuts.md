@@ -47,7 +47,7 @@ Tips and gotchas:
 | Navigate Back               | `Cmd+Shift+,`         | `Ctrl+Shift+,`         |
 | Navigate Forward            | `Cmd+Shift+.`         | `Ctrl+Shift+.`         |
 | Jump to Agent (1-9, 0=10th) | `Opt+Cmd+NUMBER`      | `Alt+Ctrl+NUMBER`      |
-| Switch AI/Shell Mode        | `Cmd+J`               | `Ctrl+J`               |
+| New Terminal Tab            | `Cmd+J`               | `Ctrl+J`               |
 | Toggle Input/Output Focus   | `Cmd+.`               | `Ctrl+.`               |
 | Focus Left Panel            | `Cmd+Shift+A`         | `Ctrl+Shift+A`         |
 | Show Shortcuts Help         | `Cmd+/`               | `Ctrl+/`               |
@@ -57,6 +57,7 @@ Tips and gotchas:
 | System Log Viewer           | `Opt+Cmd+L`           | `Alt+Ctrl+L`           |
 | System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
 | Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
+| View Execution Queue        | `Cmd+Shift+X`         | `Ctrl+Shift+X`         |
 | Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
 | Jump to Bottom              | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`        |
 | Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
@@ -117,6 +118,9 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
 | Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
+| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
 | Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
@@ -319,7 +323,17 @@ the full walkthrough.
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
 | Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
+| Zoom Preview Text In                | `+` or `=`      | `+` or `=`      |
+| Zoom Preview Text Out               | `-` or `_`      | `-` or `_`      |
+| Reset Preview Zoom                  | `0`             | `0`             |
 | Close                               | `Esc`           | `Esc`           |
+
+The three zoom keys are bare - no modifier - and are distinct from the app-wide
+`Cmd+=` / `Cmd+-` in [Font Size](#font-size), which resizes the whole interface.
+They apply only where the zoom moves type (markdown, code, and text views), and
+they never fire while you are typing, so the find bar and the markdown editor
+keep those keys. The same steps are available from the zoom pill that rests in
+the top-right corner of the preview.
 
 ### CSV Row Detail
 

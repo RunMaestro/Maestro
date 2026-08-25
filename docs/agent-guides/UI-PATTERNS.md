@@ -469,7 +469,7 @@ This matters for any resizable modal that draws a chart: a hard-coded SVG width 
 
 ### Horizontally Scrolling Strips (`useHorizontalScroll`)
 
-`useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
+`useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage, scrollIntoView }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
 
 Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
 
@@ -486,15 +486,32 @@ Three rules the wheel handler follows, each of them a bug someone felt before it
 
 Scroll events also fire far faster than the screen repaints, and measuring reads `scrollWidth`/`clientWidth`, so the hook coalesces measurement to one `requestAnimationFrame` per frame rather than forcing a synchronous layout for every event in a flick.
 
-Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path. Focusing an item scrolls it into view for free, so keyboard navigation needs no extra scrolling code.
+Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path.
+
+**Do not lean on the browser's own scroll-into-view to keep the focus ring visible.** It gets two things wrong on a strip like this. It scrolls the item flush against the edge, where the gradient fade and the arrow button float over the strip's own ends, so the item it just revealed sits underneath one and still reads as off-screen. And a DISABLED item never takes DOM focus at all - the focus ring still moves onto it, so arrowing across an uninstalled provider looks like the strip froze. Focus with `focus({ preventScroll: true })` and drive the strip yourself:
+
+```tsx
+const { scrollIntoView } = useHorizontalScroll(stripRef, tiles.length);
+
+// Tracks the ring's INDEX, not DOM focus, so a disabled tile still moves the strip.
+useEffect(() => {
+	// Read the ref inside the effect: ref callbacks run at commit, so a render-time
+	// read on the first mount captures null with no re-render to correct it.
+	scrollIntoView(tileRefs.current?.[focusedIndex], STRIP_EDGE_PADDING_PX);
+}, [focusedIndex, scrollIntoView, tileRefs, tiles]);
+```
+
+`scrollIntoView(child, edgePaddingPx?)` scrolls the minimum that reveals the child, and only for the edge it is actually past. Pass the width of whatever floats over the strip's ends as `edgePaddingPx` - share one constant with the fade's own `width` so the two cannot drift. It measures from `getBoundingClientRect()` rather than `offsetLeft`, which is relative to the nearest positioned ancestor (the wrapper, not the strip) and would silently drift by the wrapper's padding. An item wider than the viewport overflows both edges at once; the left edge wins, since a visible leading edge beats a visible trailing one.
 
 It no-ops without `ResizeObserver`, so jsdom component tests render without a polyfill (and both flags read `false`, since jsdom reports zero for every measurement).
 
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
-The Usage Dashboard's card grids (the agent grid in `AgentOverviewCards`, the per-tab grid in `TabBreakdown`) all render the same tile: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
+The Usage Dashboard's card grid (the agent grid in `AgentOverviewCards`) renders one tile shape: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
 
 Adding a new dashboard grid means shaping data into `EntityTileStat[]` and passing it, not re-deriving 150 lines of tile styling. `EntityTile` is presentational: it takes formatted strings and colors and reports clicks, so callers keep their own sort/filter state and their own number formatting.
+
+**A tile grid is not the default for every dashboard collection.** `TabBreakdown` (the per-tab list inside the agent detail modal) used to render tiles and now renders a `<SortableTh>` table: a tab row carries a name and four small numbers, which is little enough that rows scan faster than cards, and it keeps the view visually distinct from the agent tiles the reader just clicked through to reach it. Pick tiles when a row's worth of data needs the space; pick a table when it does not.
 
 It deliberately lives under `UsageDashboard/` rather than in `renderer/widgets/`: widgets are barred from importing from `UsageDashboard/`, and this tile is an entity summary (many stats, one subject) rather than the widget library's `StatCard` (one headline metric).
 
@@ -503,6 +520,10 @@ It deliberately lives under `UsageDashboard/` rather than in `renderer/widgets/`
 Each assistant message in the AI transcript carries a centered footer row naming the configuration that produced it: the Claude token-source pill (`claude -p` / `TUI Wrapper`, from `getTokenSourcePill()`), then the model and effort the turn was SENT with. `src/renderer/components/ui/TurnSettingPills.tsx` renders the model/effort half - static badges that mirror the composer's interactive `ModelEffortPills` (Sparkles + accent for model, Gauge + warning for effort), because a finished turn's configuration is a fact, not a control.
 
 The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedSessionUpdates` from the tab's send-time stamp (`AITab.turnModel` / `turnEffort`, written by `codifyTurnSettings()` in `utils/providerTabSessions.ts`). Read the stamp, never the live tab or agent value: settings are codified at send, so a model change made while a turn streams applies to the next message and must not relabel the response already running. An unset value means the agent's own default applied, and that pill is omitted rather than labeled with a guess.
+
+**A queued message freezes its settings when it is QUEUED, not when it dispatches.** Queuing is the send from the user's point of view - they picked a model, typed, hit Enter - but the turn may not spawn until several model changes later. So every path that builds a `QueuedItem` spreads `captureQueuedTurnSettings(tab, session)` into `item.turnSettings`, and both consumers read it back through `codifyQueuedTurnSettings(item, tab, session)`: `markTabRunningQueuedItem()` for the pills, and `agentStore.processQueuedItem()` for the actual `sessionCustomModel` / `sessionCustomEffort` it spawns with. The queued-item rows in the inline list and the Execution Queue browser render the same `<TurnSettingPills>`, so the user can see which pending message is on the big model before it runs.
+
+The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
 
 Two traps when touching this row:
 
@@ -534,6 +555,18 @@ Ideas worth reusing:
 **No legend, but still a graphical exit.** The surface shows no shortcut caption: the axes are self-describing, and the caption was the only thing on screen that had to be read rather than seen. [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton) is still satisfied without a button row - clicking the scrim cancels and double-clicking a row applies, both routed through the same handlers Escape and Enter use, so pointer and keyboard cannot drift.
 
 Anything with an inline `transition` must carry a class the reduced-motion block can name (`.maestro-wheel-row`, `.maestro-effort-stop`, `.maestro-keycap`); the blanket `.transition-*` reset in `index.css` only matches Tailwind's utility classes.
+
+### Following Streaming Output (`useStickToBottom`)
+
+`useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts` keeps a scrolling box pinned to its newest content while it grows, and lets go the moment the user scrolls up to read something. Returns a callback ref to put on the scrolling element; pass whatever value changes on every append as `contentKey`.
+
+Reach for it whenever a box has BOTH a capped height and content that arrives over time - streaming command output, a live log tail. The failure it prevents is specific: the box stops growing once it hits its cap, so the outer transcript's auto-scroll has nothing left to follow, and the user is left staring at the FIRST screen of output while the live tail piles up out of sight. `ShellCommandCard`'s 480px output box is the first caller.
+
+**Pinning is derived from geometry, never remembered.** The hook recomputes "are we at the bottom" from `scrollHeight - scrollTop - clientHeight` on every scroll event rather than tracking whether a scroll was the user's or its own. A remembered flag needs to tell those apart, which means a guard flag, which means a race the moment a scroll event does not arrive - scrolling to where you already are fires nothing. Geometry has no such ambiguity: after the hook scrolls to the bottom it IS at the bottom, so the event its own scroll produces recomputes to exactly the state it just set. Do NOT "optimize" this into a boolean the hook sets and trusts.
+
+It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same frame as the new content, or the box paints once at the old position and the output visibly jumps afterwards. The 50px bottom threshold matches the transcript's own in `TerminalOutput`, so a card follows its output on the same terms the conversation around it does.
+
+Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
 
 ### Text Selection in Modals
 
@@ -568,6 +601,18 @@ src/shared/theme-types.ts   - Type definitions (ThemeId, ThemeColors, Theme)
 src/shared/themes.ts        - Canonical theme objects (THEMES record)
 src/renderer/constants/themes.ts - Re-exports for renderer imports
 ```
+
+### `src/shared/themes.ts` Is Public API
+
+The RunMaestro.ai website generates its theme picker from this file. It checks
+out RunMaestro/Maestro in CI (and on a daily cron) and fails its build when its
+generated palette drifts from ours. Renaming the file, moving the `THEMES`
+export, or changing its shape turns that repo red with no signal here, so treat
+the export surface as public and change it deliberately.
+
+The website layers on one extra token, `accentSecondary`, that has no
+counterpart in `ThemeColors`. It is deliberately website-only - do NOT add it
+here to "fix" the mismatch.
 
 ### Theme Structure
 
@@ -729,20 +774,34 @@ measured value makes them die exactly when the window gets narrow, which reads
 as broken rather than as a narrow grid.
 
 For a responsive grid, feed it the MEASURED column count from
-`useGridColumnCount(ref, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
+`useGridColumnCount(el, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
 which reads the resolved `grid-template-columns` and re-measures on reflow. A
 hard-coded row width silently walks to the wrong tile the moment an `auto-fill`
 grid drops to two columns.
 
+It takes the ELEMENT, not a ref object, and the caller holds that element in
+**state** via a callback ref:
+
 ```tsx
-const gridRef = useRef<HTMLDivElement>(null);
-const columns = useGridColumnCount(gridRef, items.length);
+const [gridEl, setGridEl] = useState<HTMLDivElement | null>(null);
+const columns = useGridColumnCount(gridEl, items.length);
 const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
 	listLength: items.length,
 	columns,
 	onSelect: (i) => open(items[i]),
 });
+// ...
+<Grid onGridElement={setGridEl} ... />
 ```
+
+A ref's `.current` changing is invisible to React, so a version keyed on a ref
+object keeps observing a grid that has since unmounted. That is not theoretical:
+removing an observed element from the document resizes it to 0 and fires its
+ResizeObserver, a detached node resolves `grid-template-columns` to the empty
+string, and the count collapses to 1. Symptom: arrow navigation works, the user
+opens a detail pane, comes back, and up/down have quietly degraded to
+single-item steps for the rest of the visit. The hook also refuses to measure a
+detached node for the same reason.
 
 Wire the result up as a **roving tabindex**: the active item gets `tabIndex={0}`
 and every other item `tabIndex={-1}`, with `onKeyDown` on the container. Tab then
@@ -1142,6 +1201,61 @@ four copies and they had already drifted on size and offset.
   since it usually just repeats what its parent already says. The dot is deliberately NOT
   `pointer-events-none` (that kills the tooltip); clicks bubble to the parent.
 
+### `<MiniBadge>` (`src/renderer/components/ui/MiniBadge.tsx`)
+
+The tiny uppercase text chip that tags an item's state: "WT" beside a worktree
+agent, "Active" / "Snoozed" beside a tab. It is the generic text counterpart to
+`<CountBadge>`, which says a number and nothing else, and to the domain pills
+beside it (`WorktreePill`, `GitRunningBadge`) that say one fixed word in their
+own colors. Do NOT hand-roll another `text-[9px] px-1 rounded uppercase` span -
+the Usage Dashboard's tiles carried one copy and the per-tab list needed the
+identical chip, which is exactly where two copies start drifting on padding and
+weight.
+
+```tsx
+<MiniBadge label="Snoozed" theme={theme} color={theme.colors.warning} testId="tab-snoozed" />
+```
+
+- `color` defaults to the theme accent and tints both the text and its translucent fill.
+- The label is its own accessible name, so pass a real word rather than an abbreviation
+  the reader has to decode - unless the abbreviation is the established UI term, in which
+  case pass `title` with the long form.
+
+### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
+
+"4 providers available locally of 11 supported", plus the toggle that brings the
+other 7 back. Most of the providers Maestro supports are not installed on any
+given machine, so listing all of them buries the two or three a user can pick
+behind a wall of dimmed rows. Both provider pickers - the wizard's tile strip
+and the New Agent modal's list - hide the rest by default and show this one bar,
+so the count and the toggle cannot disagree about what is being filtered.
+
+The filtering rules themselves live in `src/renderer/utils/providerAvailability.ts`
+(`filterToAvailableProviders`, `providerLocationLabel`) rather than in either
+picker. Three rules, each of them a dead end if broken:
+
+- **The count always describes ALL supported providers, never the filtered list.**
+  A count that shrank along with the rows would report "4 of 4" and answer nothing.
+- **Filtering down to nothing falls back to the full list.** An empty picker has no
+  row to reach per-provider settings through, so a user whose binary sits in a
+  non-standard place would have no way to point Maestro at it and no way to proceed.
+- **The selected provider survives the filter regardless.** Duplicating an agent whose
+  provider is missing from this machine would otherwise hide the very row that shows
+  what is selected, and the picker would look like it has no selection.
+
+`variant="compact"` drops to the counts alone for a bar that rides a section
+heading (the New Agent modal); `full` is the standalone row (the wizard). The
+location phrase comes from `providerLocationLabel(remoteHost)` - both pickers can
+point at an SSH remote, and "locally" is a claim about the wrong machine whenever
+one is selected.
+
+Two things a container has to respect. If the surface runs one keydown handler
+across the whole screen (the wizard does, to drive the strip), exempt the bar's
+subtree with `PROVIDER_BAR_NAV_EXEMPT_ATTR` or the toggle loses its own Tab and
+arrow keys the moment it takes focus. And when the filter flips, **carry the
+focus ring by PROVIDER, not by index** - the list renumbers, so keeping the raw
+index slides the ring onto whichever unrelated provider inherited that slot.
+
 ### `<FontScaleControl>` (`src/renderer/components/ui/FontScaleControl.tsx`)
 
 Decrease / reset / increase font zoom for a reading pane. Pair it with
@@ -1152,13 +1266,27 @@ persistence. Do NOT hand-roll another pair of `AArrowUp` / `AArrowDown` buttons.
 
 ```tsx
 const fontScale = useFontScale('filePreview.fontScale');
-<FontScaleControl theme={theme} control={fontScale} variant="floating" target="preview" />;
+<FontScaleControl
+	theme={theme}
+	control={fontScale}
+	variant="floating"
+	collapsible
+	target="preview"
+/>;
 ```
 
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+- `collapsible` (floating only) - rests as a circle the size of that Table of Contents
+  button and expands to the full pill on hover or keyboard focus. The buttons are
+  CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
+  control the user cannot see. The resting circle tints itself with the theme accent
+  while the scale is not 100%, so the collapsed state still says the pane is zoomed.
 - The percentage in the middle appears only once zoomed and doubles as the reset.
+- The file preview also binds bare `-` / `+` (and `=` / `_`) to the two steps and `0`
+  to the reset, guarded on `canScaleFontForView()` and on `isTextInputTarget(e.target)`
+  so the find bar and the CM6 editor keep their keys.
 
 **Only render it where the zoom moves type.** A control that changes nothing reads
 as broken: Director's Notes hides it in Rich Mode (fixed-size widget chrome), and
@@ -1277,6 +1405,8 @@ Presets:
   (`#`) links, pluggable `imageRenderer`, `customLanguageRenderers` (mermaid),
   `extraRemark/RehypePlugins`. Renders bare so callers keep their own scoped prose
   container. Pass `frontmatter={false}` for GFM-only surfaces.
+  Also draws Auto Run marker pills (`autorunMarkers`, on for this preset only) -
+  see [Auto Run Marker Pills](#auto-run-marker-pills) below.
 - **`wizard-bubble`** / **`release-notes`** - minimal, tightly-styled presets.
 
 Shared internals (do NOT re-implement): plugin selection lives in
@@ -1289,6 +1419,36 @@ component map is `createMarkdownComponents()` in `utils/markdownConfig.ts`, whic
 keystroke-memoized preview, FilePreview's tier selection + from-tree image
 resolution, the Wizard DocumentEditor) consume `createMarkdownComponents()`
 directly rather than the shell, but share the same leaf implementation.
+
+#### Auto Run marker pills
+
+`MAESTRO:HITL`, `maestro:halt`, and `MAESTRO:MODEL` are HTML comments, so they
+render as NOTHING - and two of them silently block the next run (a live gate
+pauses it, a halt makes Auto Run refuse to start). That presents to the user as
+"I pressed Run and nothing happened", with the cause in text no surface draws.
+`remarkMaestroMarkers` (`components/Markdown/remarkMaestroMarkers.ts`) rewrites
+each marker node into a tagged element that `createMarkdownComponents()` renders
+as `<MarkerPill>`.
+
+Two things to know before touching it:
+
+- **It is opt-in per surface, and deliberately off for chat.** `<Markdown>` sets
+  `autorunMarkers` from `preset === 'document'`. A chat message that explains the
+  syntax is DESCRIBING a marker, not configuring one, so a pill there would
+  assert a setting that does not exist. Chat also builds its own component map,
+  which is the second half of that guarantee.
+- **The three surfaces that consume `createMarkdownComponents()` directly must
+  add the plugin themselves** - `FilePreview`, AutoRun's `useAutoRunMarkdown`,
+  and the Wizard `DocumentEditor` all do, because they assemble their own remark
+  list rather than going through the shell. Miss it on a new direct consumer and
+  the markers silently go back to rendering as nothing on that surface only.
+
+The pill shows STATUS (`live` / `spent` / `invalid`), not presence: a gate above
+an unchecked task and one above a checked task differ by a character in the
+source, and only the first stops the run. Status resolution lives in
+`scanMaestroMarkers()` (`src/shared/autorunMarkers.ts`) alongside the engines'
+own `findPendingHitlGate()` / `detectHaltMarker()`, so the pill and the engine
+cannot disagree about what is live.
 
 #### Clickable task checkboxes
 
@@ -1426,6 +1586,71 @@ Credential-shaped keys are masked behind a per-row reveal, decided by
 `isSecretEnvKey()`. This is deliberately loose - the surfaces that show an
 environment are diagnostic ones people open while screen-sharing for help, so a
 false positive costs one click and a false negative leaks a live key.
+
+---
+
+## Line Numbers on a `<textarea>` (`TextareaLineNumbers`)
+
+`src/renderer/components/ui/TextareaLineNumbers.tsx` is the one gutter. A
+textarea has none of its own, so the numbers live in an overlay, and the naive
+"one `<div>` per line" version gets two things wrong that this component owns:
+
+- **Scroll.** The textarea scrolls its own content, so the gutter is translated
+  by the same `scrollTop`. It is written straight to the DOM in a `scroll`
+  listener rather than through state, so a fast scroll cannot lag a frame behind
+  the text it labels.
+- **Soft wrap.** A prose line that wraps onto three visual rows is three rows
+  tall in the textarea but one entry in the gutter. Each logical line is measured
+  against a hidden mirror that copies the textarea's font, wrap width, and
+  wrapping rules, so number N always sits on the first visual row of line N.
+
+Render it inside a `position: relative` wrapper that also holds the textarea, and
+push the text clear of the digits with `lineNumberGutterMetrics(value)`:
+
+```tsx
+const metrics = lineNumberGutterMetrics(value);
+<div className="relative w-full h-full">
+	<TextareaLineNumbers textareaRef={ref} value={value} theme={theme} />
+	<textarea ref={ref} value={value} style={{ paddingLeft: metrics.textPaddingLeft }} />
+</div>;
+```
+
+The metrics are in `ch` units and reserve a minimum of two digits, so the editor
+does not reflow the first time the document reaches line 10, and the gutter
+scales with the monospace font instead of a hard-coded pixel guess. Both callers
+ride it: the Cue YAML editor and the Auto Run expanded modal (`showLineNumbers`,
+which the docked Auto Run panel leaves off because it has no room for a gutter).
+
+Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
+gutter. That is what the YAML editor had, and it drifted out of alignment the
+moment the file was taller than the box or any line wrapped.
+
+jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
+renders with natural row heights rather than measured ones. That is deliberate,
+not a polyfill gap - assert on the numbers and the transform, not on pixel
+heights.
+
+---
+
+## Collapsible Advisories (`AutoRunNoticeBanner`, `usePersistedToggle`)
+
+A banner that recurs on every qualifying document is an advisory, not an event:
+the author reads it once, then wants the space back. `AutoRunNoticeBanner`
+takes an optional `collapseKey`, which turns its heading into a disclosure
+button (chevron + title, `aria-expanded`/`aria-controls`) and folds the body and
+actions away. The Auto Run human-step warning uses it; the paused-run error
+banner deliberately does not, because that one describes a one-off event the
+user must act on.
+
+`usePersistedToggle(storageKey, defaultValue)` in
+`src/renderer/hooks/ui/usePersistedToggle.ts` is the state behind it: one
+boolean in localStorage, storage failures degrade to in-memory only. Reach for
+it for any view preference a user sets by clicking that must survive the
+surface unmounting (a Right Bar tab switch, a re-render from new data) but is
+not worth a Settings row. Do NOT hand-roll another
+`useState(() => localStorage.getItem(...) === 'true')` pair - the collapse would
+reset every time the panel re-rendered, which reads as the banner refusing to
+stay closed.
 
 ---
 

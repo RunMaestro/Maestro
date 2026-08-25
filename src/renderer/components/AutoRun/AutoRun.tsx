@@ -59,6 +59,7 @@ import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
+import { TextareaLineNumbers, lineNumberGutterMetrics } from '../ui/TextareaLineNumbers';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
@@ -116,6 +117,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onLaunchWizard,
 		shortcuts,
 		hideTopControls = false,
+		showLineNumbers = false,
 		onShowFlash,
 	},
 	ref
@@ -777,6 +779,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						/>
 					) : mode === 'edit' ? (
 						<div className="relative w-full h-full">
+							{showLineNumbers && (
+								<TextareaLineNumbers textareaRef={textareaRef} value={localContent} theme={theme} />
+							)}
 							<textarea
 								ref={textareaRef}
 								value={localContent}
@@ -802,6 +807,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 									borderColor: isLocked ? theme.colors.warning : theme.colors.border,
 									color: theme.colors.textMain,
 									backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
+									...(showLineNumbers
+										? { paddingLeft: lineNumberGutterMetrics(localContent).textPaddingLeft }
+										: {}),
 								}}
 							/>
 							{/* Template Variable Autocomplete Dropdown */}

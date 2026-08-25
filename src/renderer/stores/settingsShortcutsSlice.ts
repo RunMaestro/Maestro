@@ -131,8 +131,16 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 	// mode), Cmd+Shift+J (tile a new terminal) and Opt+Cmd+J (jump to nearest
 	// terminal), and a bare Opt+letter types a character in the composer. It now
 	// sits on Opt+Cmd+Down, the mirror of focusActiveTab's Opt+Cmd+Up.
+	// Cmd+Shift+J is the ORIGINAL default this action shipped with (b37423abf).
+	// Only Opt+J was covered here, so any install predating the Opt+J era kept
+	// Cmd+Shift+J forever - and tileTerminalBelow later claimed that chord as a
+	// new default, putting two live actions on one key. Covering both eras moves
+	// those installs onto Opt+Cmd+Down with everyone else.
 	jumpToBottom: {
-		fromKeys: [['Alt', 'j']],
+		fromKeys: [
+			['Alt', 'j'],
+			['Meta', 'Shift', 'j'],
+		],
 		toKeys: ['Alt', 'Meta', 'ArrowDown'],
 	},
 	// nextUnreadTab moved off Opt+Cmd+Down to hand that combo to jumpToBottom.

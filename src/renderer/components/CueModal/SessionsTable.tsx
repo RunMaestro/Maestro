@@ -52,7 +52,7 @@ interface SessionsTableProps {
 	 */
 	focusSessionId?: string;
 	theme: Theme;
-	onViewInPipeline: (session: CueSessionStatus) => void;
+	onViewInGraph: (session: CueSessionStatus) => void;
 	onEditYaml: (session: CueSessionStatus) => void;
 	onRemoveCue: (session: CueSessionStatus) => void;
 	onTriggerSubscription: (subscriptionName: string) => void;
@@ -65,7 +65,7 @@ export function SessionsTable({
 	sessions,
 	focusSessionId,
 	theme,
-	onViewInPipeline,
+	onViewInGraph,
 	onEditYaml,
 	onRemoveCue,
 	onTriggerSubscription,
@@ -217,7 +217,7 @@ export function SessionsTable({
 													const seenGroups = new Set<string>();
 													for (const sub of subs) {
 														if (sub.pipeline_name) {
-															const key = `${sub.pipeline_name} ${triggerGroupKey(sub)}`;
+															const key = `${sub.pipeline_name}\u0000${triggerGroupKey(sub)}`;
 															if (seenGroups.has(key)) continue;
 															seenGroups.add(key);
 														}
@@ -243,13 +243,13 @@ export function SessionsTable({
 										Edit YAML
 									</button>
 									<button
-										onClick={() => onViewInPipeline(s)}
+										onClick={() => onViewInGraph(s)}
 										className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
 										style={{ color: CUE_COLOR }}
-										title="View in Pipeline Editor"
+										title="View on the Pipeline Graph tab"
 									>
 										<GitFork className="w-3.5 h-3.5" />
-										View in Pipeline
+										View in Graph
 									</button>
 									<button
 										onClick={() => onRemoveCue(s)}

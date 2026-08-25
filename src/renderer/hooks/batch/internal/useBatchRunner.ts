@@ -16,7 +16,7 @@ import { useBatchStore } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
-import { detectHaltMarker } from '../../../../shared/autorun/haltMarker';
+import { detectHaltMarker } from '../../../../shared/autorunMarkers';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import {

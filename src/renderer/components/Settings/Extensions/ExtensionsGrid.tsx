@@ -12,7 +12,7 @@
  * unmounting while the details pane is open.
  */
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
 	Puzzle,
 	Database,
@@ -39,8 +39,10 @@ interface ExtensionsGridProps {
 	onActiveIndexChange: (index: number) => void;
 	/** Arrow/Home/End handling, from the parent's `useListNavigation`. */
 	onKeyDown: (e: React.KeyboardEvent) => void;
-	/** Measured by the parent, which owns the navigation math. */
-	gridRef: React.RefObject<HTMLDivElement>;
+	/** Hands the grid element up to the parent, which measures its column count
+	 * and needs it to move focus. A callback rather than a ref object so the
+	 * parent re-runs when the grid unmounts and mounts again. */
+	onGridElement: (el: HTMLDivElement | null) => void;
 }
 
 /** Finds the one tabbable tile. Shared so callers outside this file (the search
@@ -72,8 +74,20 @@ export function ExtensionsGrid({
 	activeIndex,
 	onActiveIndexChange,
 	onKeyDown,
-	gridRef,
+	onGridElement,
 }: ExtensionsGridProps) {
+	const gridRef = useRef<HTMLDivElement | null>(null);
+
+	// Publishes the node to the parent AND keeps a local handle for the focus
+	// work below. Stable, so React does not detach and reattach on every render.
+	const attachGrid = useCallback(
+		(el: HTMLDivElement | null) => {
+			gridRef.current = el;
+			onGridElement(el);
+		},
+		[onGridElement]
+	);
+
 	// The grid claims focus on mount, so the arrows work the moment the pane is
 	// on screen - no click or Tab needed to "get into" it first. The grid mounts
 	// exactly twice per visit: when the pane opens, and when the details pane
@@ -94,7 +108,7 @@ export function ExtensionsGrid({
 		pendingAutoFocus.current = false;
 		if (!restoring && !grid.contains(document.activeElement)) return;
 		grid.querySelector<HTMLButtonElement>(ACTIVE_EXTENSION_TILE_SELECTOR)?.focus();
-	}, [activeIndex, gridRef]);
+	}, [activeIndex]);
 
 	const stateTone = (ext: UnifiedExtension): string => {
 		if (ext.state === 'enabled') return theme.colors.success;
@@ -116,7 +130,7 @@ export function ExtensionsGrid({
 
 	return (
 		<div
-			ref={gridRef}
+			ref={attachGrid}
 			data-testid="extensions-grid"
 			className="grid gap-3"
 			onKeyDown={onKeyDown}
