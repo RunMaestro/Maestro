@@ -86,11 +86,14 @@ export function useFocusOnMount(
  * transient surface closes, hand the caret back to whatever the user was using
  * before it opened.
  *
- * The layer stack does NOT restore focus when a modal unregisters, so a modal
- * dismissed with Escape leaves focus on `document.body`. The surface behind it
- * then looks ready but swallows the next keystroke, which in a keyboard-first
- * app reads as the UI having locked up. Pair this with the state that drives
- * the surface (`useFocusOnClose(inputRef, editorIsOpen)`).
+ * The layer stack now restores focus generically when a layer unregisters, so
+ * most modals need nothing. Reach for this hook when the surface is NOT a
+ * registered layer (an inline editor, a popover), or when the caret should land
+ * somewhere OTHER than where it was when the surface opened. Pair it with the
+ * state that drives the surface (`useFocusOnClose(inputRef, editorIsOpen)`).
+ *
+ * Whichever runs first wins: the layer stack only restores when focus landed
+ * nowhere, so this hook silently takes precedence rather than fighting it.
  *
  * Only the true -> false edge focuses, so re-renders while the surface is open
  * (or long after it closed) never steal focus from something else the user

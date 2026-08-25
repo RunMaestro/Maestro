@@ -194,7 +194,7 @@ export interface QuickActionsModalProps {
 	onGoToNextUnread?: () => void;
 	/**
 	 * Shared session/tab history navigation - same callbacks bound to the
-	 * Alt+, / Alt+. keyboard shortcuts in App.tsx so the palette and
+	 * Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts in App.tsx so the palette and
 	 * keyboard walk the same navigation history.
 	 */
 	onNavBack?: () => void;

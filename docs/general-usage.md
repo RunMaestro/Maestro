@@ -415,6 +415,8 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 
 When [Forced Parallel Execution](./features) is enabled and another tab in the same agent is already working, a queued item gains a **Force Send** button. This dispatches that message immediately, running it in parallel instead of waiting its turn in the cross-tab queue. A confirmation lists which other tabs are currently busy before it sends.
 
+`Cmd+Shift+Enter` / `Ctrl+Shift+Enter` does the same thing from the keyboard, and it works wherever you are in the app - you do not have to click into the input box first. With text in the input, it sends what you typed in parallel; with the input empty, it force-sends the newest eligible queued item.
+
 ### Execution Queue view
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.

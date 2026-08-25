@@ -164,10 +164,11 @@ describe('useFocusOnMount', () => {
 /**
  * useFocusOnClose - hand the caret back when a transient surface closes.
  *
- * The defect this exists for: the layer stack does not restore focus when a
- * modal unregisters, so dismissing the queued-message editor with Escape left
- * focus on document.body. The composer looked ready but swallowed the next
- * keystroke.
+ * The defect this exists for: dismissing the queued-message editor with Escape
+ * left focus on document.body, so the composer looked ready but swallowed the
+ * next keystroke. The layer stack now restores focus generically for registered
+ * layers; this hook covers surfaces that are not layers, and wins where both
+ * apply (the stack only restores when focus landed nowhere).
  */
 describe('useFocusOnClose', () => {
 	function makeRef() {

@@ -15,6 +15,7 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
+import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 
 // Font size keyboard shortcut constants
 const FONT_SIZE_STEP = 2;
@@ -741,6 +742,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.toggleShowUnreadAgentsOnly();
 				trackShortcut('filterUnreadAgents');
+			} else if (ctx.isShortcut(e, 'forcedParallelSend')) {
+				// The composer owns this chord while the caret is inside it - only it
+				// can read the live draft it may need to send. Everywhere else the
+				// chord still has to work: with an empty draft it force-sends the
+				// newest eligible QUEUED item, and the queue is drawn in the
+				// transcript, so requiring focus in a textarea made the shortcut look
+				// broken from the one place the user was actually looking at the thing
+				// it acts on. The composer decides what to do with it (see
+				// runForcedParallelSend); this branch only says the chord fired.
+				const composerRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
+				const cameFromComposer = !!composerRef?.current && e.target === composerRef.current;
+				if (!cameFromComposer && useSettingsStore.getState().forcedParallelExecution) {
+					e.preventDefault();
+					window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+				}
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)
@@ -1417,7 +1433,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 					return;
 				}
-				// Alt+, / Alt+. forwarded from the webview guest →
+				// Cmd+Shift+, / Cmd+Shift+. forwarded from the webview guest →
 				// breadcrumb back/forward through visited tabs. Handled directly
 				// because a synthetic window event from a focused webview doesn't
 				// reliably reach the navBack/navForward branch of the window handler.

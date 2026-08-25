@@ -114,6 +114,10 @@ export function useLayerStack(): LayerStackAPI {
 	// Key: layer id, Value: current Escape handler
 	const handlerRefs = useRef<Map<string, () => void>>(new Map());
 
+	// What had keyboard focus when each layer opened.
+	// Key: layer id, Value: the element to hand the caret back to on close.
+	const focusOriginRefs = useRef<Map<string, HTMLElement>>(new Map());
+
 	/**
 	 * Register a new layer in the stack
 	 */
@@ -123,6 +127,15 @@ export function useLayerStack(): LayerStackAPI {
 
 		// Store the initial handler in the ref map
 		handlerRefs.current.set(id, newLayer.onEscape);
+
+		// Remember what the user was typing in before this layer took the
+		// keyboard, so closing it can hand the caret back (see unregisterLayer).
+		if (newLayer.capturesFocus !== false) {
+			const origin = document.activeElement;
+			if (origin instanceof HTMLElement && origin !== document.body) {
+				focusOriginRefs.current.set(id, origin);
+			}
+		}
 
 		// Add layer and sort by priority (ascending order - lowest priority first)
 		setLayers((prev: Layer[]) => {
@@ -141,8 +154,30 @@ export function useLayerStack(): LayerStackAPI {
 		// Remove from handler refs
 		handlerRefs.current.delete(id);
 
+		const focusOrigin = focusOriginRefs.current.get(id);
+		focusOriginRefs.current.delete(id);
+
 		// Remove from layers state
 		setLayers((prev: Layer[]) => prev.filter((layer: Layer) => layer.id !== id));
+
+		// Hand the caret back to whatever had it before this layer opened. Nothing
+		// used to do this, so dismissing a modal left focus on `document.body`:
+		// the pane behind it looked ready and then swallowed the next keystroke,
+		// which in a keyboard-first app reads as the app locking up.
+		//
+		// Deferred a tick because the layer's DOM is still mounted at this point -
+		// focusing now would be undone by its own teardown. Restored ONLY when
+		// focus landed nowhere, which is the signal that no one else claimed it:
+		// a modal that deliberately moves focus on its way out (opening a tab,
+		// focusing a result) has already set an active element, and a surface that
+		// restores focus itself via `useFocusOnClose` gets there first.
+		if (!focusOrigin) return;
+		setTimeout(() => {
+			if (!focusOrigin.isConnected) return;
+			const current = document.activeElement;
+			if (current && current !== document.body && current.isConnected) return;
+			focusOrigin.focus();
+		}, 0);
 	}, []);
 
 	/**

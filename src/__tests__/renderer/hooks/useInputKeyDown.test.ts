@@ -48,7 +48,10 @@ vi.mock('../../../renderer/contexts/InputContext', () => ({
 	useInputContext: () => mockInputContext,
 }));
 
-import { useInputKeyDown } from '../../../renderer/hooks/input/useInputKeyDown';
+import {
+	useInputKeyDown,
+	FORCED_PARALLEL_SEND_EVENT,
+} from '../../../renderer/hooks/input/useInputKeyDown';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -1093,6 +1096,60 @@ describe('Forced parallel send shortcut', () => {
 
 		// Should NOT call processInput with forceParallel when feature is disabled
 		expect(deps.processInput).not.toHaveBeenCalledWith(undefined, { forceParallel: true });
+	});
+
+	it('runs from the window event when focus is outside the composer', () => {
+		// The chord acts on the tab's queue, which is drawn in the transcript -
+		// requiring focus in the textarea made it look broken from the one place
+		// the user was looking at the thing it force-sends.
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({ forcedParallelExecution: true } as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { forceParallel: true });
+	});
+
+	it('force-sends the newest queued item from the window event on an empty draft', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({ forcedParallelExecution: true } as any);
+		const deps = createMockDeps({ inputValue: '' });
+		renderHook(() => useInputKeyDown(deps));
+
+		const queued = vi.fn();
+		window.addEventListener('maestro:triggerForceSendQueued', queued);
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+		window.removeEventListener('maestro:triggerForceSendQueued', queued);
+
+		expect(queued).toHaveBeenCalledTimes(1);
+		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
+	it('ignores the window event when the feature is disabled or not in AI mode', () => {
+		// Same gates as the keydown path - one runner, so they cannot drift.
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({ forcedParallelExecution: false } as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+		expect(deps.processInput).not.toHaveBeenCalled();
+
+		setActiveSession({ inputMode: 'terminal' });
+		useSettingsStore.setState({ forcedParallelExecution: true } as any);
+		const termDeps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(termDeps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+		expect(termDeps.processInput).not.toHaveBeenCalled();
 	});
 
 	it('respects custom shortcut configuration', () => {

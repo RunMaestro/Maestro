@@ -560,7 +560,7 @@ Three categories defined in `src/renderer/constants/shortcuts.ts`:
 
 **DEFAULT_SHORTCUTS** - Editable by the user:
 
-- Navigation: `Cmd+[`/`]` (cycle agents), `Opt+,`/`Opt+.` (nav back/forward)
+- Navigation: `Cmd+[`/`]` (cycle agents), `Cmd+Shift+,`/`.` (nav back/forward)
 - Panels: `Alt+Cmd+ArrowLeft/Right` (toggle sidebars)
 - Actions: `Cmd+K` (quick actions), `Cmd+,` (settings), `Cmd+N` (new agent)
 - Views: `Cmd+Shift+D` (git diff), `Cmd+Shift+G` (git log), `Cmd+Shift+E` (auto run expanded)
