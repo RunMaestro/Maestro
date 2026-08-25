@@ -280,6 +280,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteRenameGroupResponse: vi.fn(),
+		onRemoteUpdateGroup: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteUpdateGroupResponse: vi.fn(),
 		onRemoteDeleteGroup: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),

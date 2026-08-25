@@ -301,6 +301,32 @@ span so a platform that DID fire a hide/show pair can't subtract the same sleep 
 
 ---
 
+## Group Appearance (`src/shared/groupAppearance.ts` - Both)
+
+The one catalog of Left Bar group icon IDs and label colors, plus the
+normalization and validation over them. Three consumers read it: the renderer's
+picker (`renderer/components/ui/groupAppearanceOptions.ts`, which adds the only
+renderer-owned piece, the icon-ID -> Lucide mapping), the WebSocket
+`create_group` / `update_group` handlers, and the `create-group` /
+`update-group` CLI commands. Do NOT write a second icon-ID list: the CLI would
+happily accept an icon the picker cannot draw.
+
+Values are normalized, not merely checked, so `#ef4444` and `#EF4444` persist
+identically and a readback comparison is a plain string equal.
+
+| Export                           | Signature                                             | Purpose                                                                             |
+| -------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GROUP_ICON_CATALOG`             | `readonly { id, label }[]`                            | Built-in icons, in picker order.                                                    |
+| `GROUP_ICON_IDS`                 | `readonly string[]`                                   | Just the IDs, for validation and error text.                                        |
+| `GROUP_LABEL_COLORS`             | `readonly { value, label }[]`                         | Built-in label colors; `value` is the persisted uppercase `#RRGGBB`.                |
+| `normalizeGroupIconId(raw)`      | `(string) => string \| null`                          | Canonical icon ID (built-in or `plugin/pack/local`), or `null` if unrecognized.     |
+| `normalizeGroupColor(raw)`       | `(string) => string \| null`                          | Uppercased `#RRGGBB` or a namespaced plugin color ID, or `null`.                    |
+| `validateGroupAppearance(input)` | `(GroupAppearanceInput) => GroupAppearanceValidation` | Enforces emoji/icon exclusivity and normalizes. Run BEFORE mutating any state.      |
+| `validateGroupUpdate(request)`   | `(GroupUpdateRequest) => GroupUpdateValidation`       | The above plus the clear-list rules and "an update must change something".          |
+| `GROUP_CLEARABLE_FIELDS`         | `readonly ['emoji','icon','color','parent']`          | What an update may clear. Clearing is explicit, never a `null` value over the wire. |
+
+---
+
 ## Git Utilities (`src/shared/gitUtils.ts` - Both)
 
 | Function                           | Signature                      | Purpose                                                                                                                    |

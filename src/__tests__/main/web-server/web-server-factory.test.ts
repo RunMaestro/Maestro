@@ -85,6 +85,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			broadcastSettingsChanged = vi.fn();
 			setCreateGroupCallback = vi.fn();
 			setRenameGroupCallback = vi.fn();
+			setUpdateGroupCallback = vi.fn();
 			setDeleteGroupCallback = vi.fn();
 			setMoveSessionToGroupCallback = vi.fn();
 			setCreateSessionCallback = vi.fn();
@@ -2104,13 +2105,46 @@ describe('web-server/web-server-factory', () => {
 			const server = createWebServer() as any;
 			const callback = server.setCreateGroupCallback.mock.calls[0][0];
 
-			void callback('My Group', '🚀', null);
+			void callback('My Group', '🚀', null, { emoji: '🚀', color: '#EF4444' });
 
 			expect(mockWebContents.send).toHaveBeenCalledWith(
 				'remote:createGroup',
 				'My Group',
 				'🚀',
 				null,
+				{ emoji: '🚀', color: '#EF4444' },
+				expect.any(String)
+			);
+		});
+
+		it('setCreateGroupCallback sends an empty appearance when none was requested', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateGroupCallback.mock.calls[0][0];
+
+			void callback('My Group', undefined, undefined);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createGroup',
+				'My Group',
+				undefined,
+				undefined,
+				{},
+				expect.any(String)
+			);
+		});
+
+		it('setUpdateGroupCallback forwards the update to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setUpdateGroupCallback.mock.calls[0][0];
+
+			void callback('group-1', { icon: 'rocket', clear: ['color'] });
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:updateGroup',
+				'group-1',
+				{ icon: 'rocket', clear: ['color'] },
 				expect.any(String)
 			);
 		});

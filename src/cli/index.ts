@@ -83,6 +83,7 @@ import {
 import { stats, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
+import { updateGroup } from './commands/update-group';
 import {
 	stopAutoRun,
 	resumeAutoRun,
@@ -848,6 +849,11 @@ program
 	.command('create-group <name>')
 	.description('Create a new group in the Maestro desktop app')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group')
+	.option(
+		'--icon <icon-id>',
+		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	)
+	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
 	.option('--parent <group-id>', 'Create inside this root group')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createGroup);
@@ -869,6 +875,27 @@ program
 	.description('Rename a group in the Maestro desktop app')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, newName, options) => renameGroup(groupId, newName, options));
+
+// Update group command - change a group's name, appearance, or parent. Covers
+// everything the Left Bar's group editor does; rename-group stays for
+// backward compatibility.
+program
+	.command('update-group <group-id>')
+	.description("Update a group's name, icon, color, or parent in the Maestro desktop app")
+	.option('-n, --name <name>', 'New group name')
+	.option('-e, --emoji <emoji>', 'Emoji icon for the group. Mutually exclusive with --icon')
+	.option(
+		'--icon <icon-id>',
+		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	)
+	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
+	.option('--parent <group-id>', 'Move the group inside this root group')
+	.option('--clear-emoji', 'Reset the emoji to the default folder')
+	.option('--clear-icon', 'Remove the icon')
+	.option('--clear-color', 'Remove the label color')
+	.option('--clear-parent', 'Promote the group to the top level')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, options) => updateGroup(groupId, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
 // agent, without an Auto Run playbook. The parent agent must already exist in

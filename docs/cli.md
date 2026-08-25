@@ -491,9 +491,9 @@ The flag table below covers `create-agent`:
 | `--auto-run-folder <path>`        | Auto Run / playbooks folder for this agent               | `<cwd>/.maestro/playbooks` |
 | `--json`                          | Machine-readable JSON output                             | -                          |
 
-### Creating and Removing Groups
+### Creating, Updating, and Removing Groups
 
-Manage Left Bar groups from the command line. Requires the Maestro desktop app to be running. Use a group ID with `create-agent -g` or `update-agent --group` to place agents into it, and `update-agent --group none` to move an agent back out.
+Manage Left Bar groups from the command line, including their appearance and nesting, so a bootstrap script or CI job can reproduce a whole workspace layout without anyone clicking through the desktop UI. Requires the Maestro desktop app to be running. Use a group ID with `create-agent -g` or `update-agent --group` to place agents into it, and `update-agent --group none` to move an agent back out.
 
 ```bash
 # Create a group
@@ -502,8 +502,24 @@ maestro-cli create-group "Backend"
 # Create a group with an emoji icon
 maestro-cli create-group "Backend" -e 🔧
 
-# Machine-readable output (returns the new group ID)
+# Create a group with a built-in icon and a label color
+maestro-cli create-group "Backend" --icon rocket --color '#EF4444'
+
+# Create a group nested inside a root group
+maestro-cli create-group "API" --parent <root-group-id>
+
+# Machine-readable output (returns the new group ID and its stored appearance)
 maestro-cli create-group "Backend" --json
+
+# Change a group's name, icon, and color
+maestro-cli update-group <group-id> --name "Frontend" --icon layers --color '#3B82F6'
+
+# Move a group inside a root group, or promote it back to the top level
+maestro-cli update-group <group-id> --parent <root-group-id>
+maestro-cli update-group <group-id> --clear-parent
+
+# Remove appearance you set earlier
+maestro-cli update-group <group-id> --clear-icon --clear-color
 
 # Remove an (empty) group
 maestro-cli remove-group <group-id>
@@ -511,18 +527,54 @@ maestro-cli remove-group <group-id>
 # Remove a group that still has agents (ungroups them first)
 maestro-cli remove-group <group-id> --force
 
-# Rename a group
+# Rename a group (kept for backward compatibility; update-group --name does the same)
 maestro-cli rename-group <group-id> "Frontend"
 ```
 
 Removing a group never deletes the agents inside it: the desktop ungroups any members (moves them to no group) and then removes the group. `remove-group` refuses a non-empty group unless you pass `--force`, so you don't accidentally scatter a populated group. Group IDs support partial-ID resolution.
 
+#### Group appearance
+
+`--emoji` and `--icon` are mutually exclusive: a group shows one or the other. `--color` combines with either, and it is also fine on its own.
+
+Built-in icon IDs: `folder`, `briefcase`, `rocket`, `code`, `star`, `heart`, `lightbulb`, `target`, `calendar`, `book`, `layers`, `shield`, `wrench`, `palette`, `archive`, `zap`. Icons contributed by a plugin use their namespaced ID (`my-plugin/my-pack/my-icon`) and round-trip unchanged.
+
+Colors are `#RRGGBB` hex values, normalized to uppercase before they are stored, or a plugin's namespaced color ID.
+
+Notes on behavior:
+
+- **Nothing half-applies.** Every flag is validated before the command talks to the desktop, so an invalid icon or color leaves the group exactly as it was.
+- **Clearing is explicit.** Passing `--icon` never silently drops an emoji you set earlier, and vice versa; use the `--clear-*` flags to remove a value. `--clear-emoji` restores the default folder emoji. `--clear-parent` promotes a nested group to the top level.
+- **Writes are verified.** After the desktop reports success, the CLI reads the group back from storage and confirms it matches what you asked for. If a desktop app older than your CLI accepted the command and ignored the icon or color, the command fails with a version-mismatch message instead of reporting a success that did not happen.
+- **Icon and color survive the Groups+ feature gate.** Turning Groups+ off falls back to the legacy emoji presentation but does not discard stored icon and color; turning it back on restores them.
+- Group nesting is one level deep: a root group can hold child groups, but a child group cannot hold its own children.
+
+`maestro-cli list groups --json` reports `icon`, `color`, and `parentGroupId` alongside the existing fields, so a script can read back exactly what it set.
+
 `create-group` flags:
 
-| Flag                  | Description                  | Default |
-| --------------------- | ---------------------------- | ------- |
-| `-e, --emoji <emoji>` | Emoji icon for the group     | -       |
-| `--json`              | Machine-readable JSON output | -       |
+| Flag                  | Description                                                             | Default |
+| --------------------- | ----------------------------------------------------------------------- | ------- |
+| `-e, --emoji <emoji>` | Emoji icon for the group. Mutually exclusive with `--icon`              | -       |
+| `--icon <icon-id>`    | Built-in icon ID or a plugin icon ID. Mutually exclusive with `--emoji` | -       |
+| `--color <color>`     | Label color as `#RRGGBB`, or a plugin color ID                          | -       |
+| `--parent <group-id>` | Create inside this root group                                           | -       |
+| `--json`              | Machine-readable JSON output                                            | -       |
+
+`update-group` flags:
+
+| Flag                  | Description                                                             | Default |
+| --------------------- | ----------------------------------------------------------------------- | ------- |
+| `-n, --name <name>`   | New group name                                                          | -       |
+| `-e, --emoji <emoji>` | Emoji icon for the group. Mutually exclusive with `--icon`              | -       |
+| `--icon <icon-id>`    | Built-in icon ID or a plugin icon ID. Mutually exclusive with `--emoji` | -       |
+| `--color <color>`     | Label color as `#RRGGBB`, or a plugin color ID                          | -       |
+| `--parent <group-id>` | Move the group inside this root group                                   | -       |
+| `--clear-emoji`       | Reset the emoji to the default folder                                   | -       |
+| `--clear-icon`        | Remove the icon                                                         | -       |
+| `--clear-color`       | Remove the label color                                                  | -       |
+| `--clear-parent`      | Promote the group to the top level                                      | -       |
+| `--json`              | Machine-readable JSON output                                            | -       |
 
 `remove-group` flags:
 

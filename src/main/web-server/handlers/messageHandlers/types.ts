@@ -33,6 +33,7 @@ import type {
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
 } from '../../types';
+import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
 import type {
@@ -232,9 +233,11 @@ export interface MessageHandlerCallbacks {
 	createGroup: (
 		name: string,
 		emoji?: string,
-		parentGroupId?: string
+		parentGroupId?: string,
+		appearance?: GroupAppearance
 	) => Promise<{ id: string } | null>;
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
+	updateGroup: (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
 	deleteGroup: (groupId: string) => Promise<boolean>;
 	moveSessionToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
 	createSession: (
