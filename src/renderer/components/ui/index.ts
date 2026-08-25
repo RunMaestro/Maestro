@@ -21,6 +21,9 @@ export type {
 export { ToggleSwitch } from './ToggleSwitch';
 export type { ToggleSwitchProps } from './ToggleSwitch';
 
+export { ProviderAvailabilityBar, PROVIDER_BAR_NAV_EXEMPT_ATTR } from './ProviderAvailabilityBar';
+export type { ProviderAvailabilityBarProps } from './ProviderAvailabilityBar';
+
 export { CollapsedCommandsNotice } from './CollapsedCommandsNotice';
 export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';
 
@@ -83,3 +86,6 @@ export type { CornerDotProps } from './CornerDot';
 
 export { CountBadge } from './CountBadge';
 export type { CountBadgeProps } from './CountBadge';
+
+export { MiniBadge } from './MiniBadge';
+export type { MiniBadgeProps } from './MiniBadge';

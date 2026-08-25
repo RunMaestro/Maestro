@@ -1,10 +1,20 @@
-import { useRef, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useHorizontalScroll } from '../../../../../hooks/ui';
+import { ProviderAvailabilityBar } from '../../../../ui/ProviderAvailabilityBar';
 import type { AgentConfig, Theme } from '../../../../../types';
 import type { AgentTile } from '../types';
 import { isAgentAvailable } from '../utils/agentAvailability';
 import { AgentTileButton } from './AgentTileButton';
+
+/**
+ * Width of the fade-plus-arrow overlay at each end of the strip.
+ *
+ * The overlays float over the strip's own edges, so a tile scrolled flush to an
+ * edge comes to rest underneath one and reads as still off-screen. Keeping this
+ * much clear on both sides is what makes arrow-key movement look like it landed.
+ */
+const STRIP_EDGE_PADDING_PX = 64;
 
 interface AgentGridProps {
 	theme: Theme;
@@ -13,9 +23,15 @@ interface AgentGridProps {
 	selectedAgent: string | null;
 	focusedTileIndex: number;
 	isNameFieldFocused: boolean;
+	totalProviderCount: number;
+	availableProviderCount: number;
+	/** Follows "available" in the summary line - "locally" or "on <host>". */
+	providerLocationLabel: string;
+	showAllProviders: boolean;
 	tileRefs: RefObject<(HTMLButtonElement | null)[]>;
 	onTileClick: (tile: AgentTile, index: number) => void;
 	onOpenConfig: (agentId: string) => void;
+	onShowAllProvidersChange: (showAll: boolean) => void;
 	setFocusedTileIndex: (index: number) => void;
 	setIsNameFieldFocused: (focused: boolean) => void;
 }
@@ -27,7 +43,7 @@ interface AgentGridProps {
  * third row pushed the Continue button below the fold. A single row keeps the
  * screen's shape fixed no matter how many providers ship, at the cost of
  * needing to say out loud that there is more past the right edge, which is what
- * the edge fades and the arrow buttons are for.
+ * the edge fades, the arrow buttons, and the provider count are for.
  */
 export function AgentGrid({
 	theme,
@@ -36,23 +52,49 @@ export function AgentGrid({
 	selectedAgent,
 	focusedTileIndex,
 	isNameFieldFocused,
+	totalProviderCount,
+	availableProviderCount,
+	providerLocationLabel,
+	showAllProviders,
 	tileRefs,
 	onTileClick,
 	onOpenConfig,
+	onShowAllProvidersChange,
 	setFocusedTileIndex,
 	setIsNameFieldFocused,
 }: AgentGridProps): JSX.Element {
 	const stripRef = useRef<HTMLDivElement>(null);
-	const { canScrollLeft, canScrollRight, scrollByPage } = useHorizontalScroll(
+	const { canScrollLeft, canScrollRight, scrollByPage, scrollIntoView } = useHorizontalScroll(
 		stripRef,
 		tiles.length
 	);
 
+	// Keep the focus ring on screen. This tracks `focusedTileIndex` rather than
+	// DOM focus because a disabled tile (an uninstalled provider, visible when the
+	// filter is off) never takes focus - the ring still moves onto it, so the
+	// strip has to move with the ring or arrowing across one looks like a freeze.
+	useEffect(() => {
+		if (isNameFieldFocused) return;
+		// Read the ref inside the effect, not during render: ref callbacks run at
+		// commit, so on the render that first mounts a tile the array is still empty
+		// and a render-time read would capture null with no re-render to correct it.
+		scrollIntoView(tileRefs.current?.[focusedTileIndex], STRIP_EDGE_PADDING_PX);
+	}, [focusedTileIndex, isNameFieldFocused, scrollIntoView, tileRefs, tiles]);
+
 	return (
-		<div className="flex flex-col items-center gap-4 w-full min-w-0">
+		<div className="flex flex-col items-center gap-3 w-full min-w-0">
 			<p className="text-sm" style={{ color: theme.colors.textDim }}>
 				Select the provider that will power your agent.
 			</p>
+
+			<ProviderAvailabilityBar
+				theme={theme}
+				availableCount={availableProviderCount}
+				totalCount={totalProviderCount}
+				locationLabel={providerLocationLabel}
+				showAll={showAllProviders}
+				onShowAllChange={onShowAllProvidersChange}
+			/>
 
 			{/*
 				The strip deliberately carries no `scroll-smooth`: that class applies to
@@ -139,7 +181,7 @@ function StripEdge({
 				isLeft ? 'left-0 pl-1 justify-start' : 'right-0 pr-1 justify-end'
 			} ${visible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
 			style={{
-				width: '4rem',
+				width: `${STRIP_EDGE_PADDING_PX}px`,
 				background: `linear-gradient(to ${isLeft ? 'right' : 'left'}, ${theme.colors.bgMain}, ${theme.colors.bgMain}00)`,
 			}}
 			aria-hidden="true"

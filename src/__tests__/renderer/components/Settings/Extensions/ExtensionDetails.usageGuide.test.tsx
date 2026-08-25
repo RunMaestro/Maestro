@@ -43,7 +43,6 @@ function renderDetails(ext: UnifiedExtension): void {
 			ext={ext}
 			contributions={null}
 			busy={false}
-			onBack={vi.fn()}
 			onTogglePlugin={vi.fn()}
 			onToggleBuiltin={vi.fn()}
 			onUninstall={vi.fn()}

@@ -73,6 +73,26 @@ function dispatchWheel(
 	return event;
 }
 
+/**
+ * jsdom lays nothing out, so every rect is zero. Give the strip a viewport and
+ * the child a position within the scrolled content, then derive the child's
+ * on-screen rect the way a real layout would: content position minus scroll.
+ */
+function placeChild(
+	element: HTMLDivElement,
+	child: HTMLElement,
+	{ left, width }: { left: number; width: number }
+): void {
+	element.getBoundingClientRect = () =>
+		({ left: 0, right: CLIENT_WIDTH, width: CLIENT_WIDTH }) as DOMRect;
+	child.getBoundingClientRect = () =>
+		({
+			left: left - element.scrollLeft,
+			right: left - element.scrollLeft + width,
+			width,
+		}) as DOMRect;
+}
+
 describe('useHorizontalScroll', () => {
 	it('maps a vertical wheel gesture onto the horizontal axis', () => {
 		const element = makeStrip();
@@ -183,6 +203,76 @@ describe('useHorizontalScroll', () => {
 		state?.scrollByPage('right');
 		state?.scrollByPage('right');
 		state?.scrollByPage('right');
+		expect(element.scrollLeft).toBe(MAX_SCROLL_LEFT);
+	});
+
+	it('reveals a child past the right edge, clear of the edge overlay', () => {
+		const element = makeStrip();
+		const child = document.createElement('button');
+		placeChild(element, child, { left: 600, width: 220 });
+		let state: HorizontalScrollState | undefined;
+		render(<Harness element={element} onState={(next) => (state = next)} />);
+
+		state?.scrollIntoView(child, 64);
+
+		// Trailing edge at 820, viewport ends at 500, 64px of that is overlay:
+		// scroll the 384px that puts the child clear of it and no further.
+		expect(element.scrollLeft).toBe(384);
+	});
+
+	it('reveals a child past the left edge, clear of the edge overlay', () => {
+		const element = makeStrip({ scrollLeft: 700 });
+		const child = document.createElement('button');
+		placeChild(element, child, { left: 600, width: 220 });
+		let state: HorizontalScrollState | undefined;
+		render(<Harness element={element} onState={(next) => (state = next)} />);
+
+		state?.scrollIntoView(child, 64);
+
+		expect(element.scrollLeft).toBe(536);
+	});
+
+	it('leaves a child that is already fully visible alone', () => {
+		// Arrowing between two tiles that both fit must not nudge the strip - a
+		// scroll on every keypress reads as drift the user did not ask for.
+		const element = makeStrip({ scrollLeft: 100 });
+		const child = document.createElement('button');
+		placeChild(element, child, { left: 200, width: 220 });
+		let state: HorizontalScrollState | undefined;
+		render(<Harness element={element} onState={(next) => (state = next)} />);
+
+		state?.scrollIntoView(child, 64);
+
+		expect(element.scrollTo).not.toHaveBeenCalled();
+		expect(element.scrollLeft).toBe(100);
+	});
+
+	it('shows the leading edge of a child too wide to fit', () => {
+		// Such a child overflows BOTH edges. Revealing the trailing edge would put
+		// the start of it off-screen, which is the worse of the two.
+		const element = makeStrip({ scrollLeft: 400 });
+		const child = document.createElement('button');
+		placeChild(element, child, { left: 300, width: 900 });
+		let state: HorizontalScrollState | undefined;
+		render(<Harness element={element} onState={(next) => (state = next)} />);
+
+		state?.scrollIntoView(child, 0);
+
+		expect(element.scrollLeft).toBe(300);
+	});
+
+	it('clamps a reveal to the scrollable range and ignores a missing child', () => {
+		const element = makeStrip({ scrollLeft: MAX_SCROLL_LEFT - 10 });
+		const child = document.createElement('button');
+		placeChild(element, child, { left: SCROLL_WIDTH - 100, width: 220 });
+		let state: HorizontalScrollState | undefined;
+		render(<Harness element={element} onState={(next) => (state = next)} />);
+
+		state?.scrollIntoView(child, 64);
+		expect(element.scrollLeft).toBe(MAX_SCROLL_LEFT);
+
+		state?.scrollIntoView(null, 64);
+		state?.scrollIntoView(undefined, 64);
 		expect(element.scrollLeft).toBe(MAX_SCROLL_LEFT);
 	});
 

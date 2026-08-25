@@ -469,7 +469,7 @@ This matters for any resizable modal that draws a chart: a hard-coded SVG width 
 
 ### Horizontally Scrolling Strips (`useHorizontalScroll`)
 
-`useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
+`useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage, scrollIntoView }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
 
 Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
 
@@ -486,15 +486,32 @@ Three rules the wheel handler follows, each of them a bug someone felt before it
 
 Scroll events also fire far faster than the screen repaints, and measuring reads `scrollWidth`/`clientWidth`, so the hook coalesces measurement to one `requestAnimationFrame` per frame rather than forcing a synchronous layout for every event in a flick.
 
-Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path. Focusing an item scrolls it into view for free, so keyboard navigation needs no extra scrolling code.
+Keep the arrow buttons out of the tab order (`tabIndex={-1}`) when the strip's items are already reachable with the arrow keys - otherwise they become dead ends in the middle of the keyboard path.
+
+**Do not lean on the browser's own scroll-into-view to keep the focus ring visible.** It gets two things wrong on a strip like this. It scrolls the item flush against the edge, where the gradient fade and the arrow button float over the strip's own ends, so the item it just revealed sits underneath one and still reads as off-screen. And a DISABLED item never takes DOM focus at all - the focus ring still moves onto it, so arrowing across an uninstalled provider looks like the strip froze. Focus with `focus({ preventScroll: true })` and drive the strip yourself:
+
+```tsx
+const { scrollIntoView } = useHorizontalScroll(stripRef, tiles.length);
+
+// Tracks the ring's INDEX, not DOM focus, so a disabled tile still moves the strip.
+useEffect(() => {
+	// Read the ref inside the effect: ref callbacks run at commit, so a render-time
+	// read on the first mount captures null with no re-render to correct it.
+	scrollIntoView(tileRefs.current?.[focusedIndex], STRIP_EDGE_PADDING_PX);
+}, [focusedIndex, scrollIntoView, tileRefs, tiles]);
+```
+
+`scrollIntoView(child, edgePaddingPx?)` scrolls the minimum that reveals the child, and only for the edge it is actually past. Pass the width of whatever floats over the strip's ends as `edgePaddingPx` - share one constant with the fade's own `width` so the two cannot drift. It measures from `getBoundingClientRect()` rather than `offsetLeft`, which is relative to the nearest positioned ancestor (the wrapper, not the strip) and would silently drift by the wrapper's padding. An item wider than the viewport overflows both edges at once; the left edge wins, since a visible leading edge beats a visible trailing one.
 
 It no-ops without `ResizeObserver`, so jsdom component tests render without a polyfill (and both flags read `false`, since jsdom reports zero for every measurement).
 
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
-The Usage Dashboard's card grids (the agent grid in `AgentOverviewCards`, the per-tab grid in `TabBreakdown`) all render the same tile: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
+The Usage Dashboard's card grid (the agent grid in `AgentOverviewCards`) renders one tile shape: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
 
 Adding a new dashboard grid means shaping data into `EntityTileStat[]` and passing it, not re-deriving 150 lines of tile styling. `EntityTile` is presentational: it takes formatted strings and colors and reports clicks, so callers keep their own sort/filter state and their own number formatting.
+
+**A tile grid is not the default for every dashboard collection.** `TabBreakdown` (the per-tab list inside the agent detail modal) used to render tiles and now renders a `<SortableTh>` table: a tab row carries a name and four small numbers, which is little enough that rows scan faster than cards, and it keeps the view visually distinct from the agent tiles the reader just clicked through to reach it. Pick tiles when a row's worth of data needs the space; pick a table when it does not.
 
 It deliberately lives under `UsageDashboard/` rather than in `renderer/widgets/`: widgets are barred from importing from `UsageDashboard/`, and this tile is an entity summary (many stats, one subject) rather than the widget library's `StatCard` (one headline metric).
 
@@ -729,20 +746,34 @@ measured value makes them die exactly when the window gets narrow, which reads
 as broken rather than as a narrow grid.
 
 For a responsive grid, feed it the MEASURED column count from
-`useGridColumnCount(ref, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
+`useGridColumnCount(el, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
 which reads the resolved `grid-template-columns` and re-measures on reflow. A
 hard-coded row width silently walks to the wrong tile the moment an `auto-fill`
 grid drops to two columns.
 
+It takes the ELEMENT, not a ref object, and the caller holds that element in
+**state** via a callback ref:
+
 ```tsx
-const gridRef = useRef<HTMLDivElement>(null);
-const columns = useGridColumnCount(gridRef, items.length);
+const [gridEl, setGridEl] = useState<HTMLDivElement | null>(null);
+const columns = useGridColumnCount(gridEl, items.length);
 const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
 	listLength: items.length,
 	columns,
 	onSelect: (i) => open(items[i]),
 });
+// ...
+<Grid onGridElement={setGridEl} ... />
 ```
+
+A ref's `.current` changing is invisible to React, so a version keyed on a ref
+object keeps observing a grid that has since unmounted. That is not theoretical:
+removing an observed element from the document resizes it to 0 and fires its
+ResizeObserver, a detached node resolves `grid-template-columns` to the empty
+string, and the count collapses to 1. Symptom: arrow navigation works, the user
+opens a detail pane, comes back, and up/down have quietly degraded to
+single-item steps for the rest of the visit. The hook also refuses to measure a
+detached node for the same reason.
 
 Wire the result up as a **roving tabindex**: the active item gets `tabIndex={0}`
 and every other item `tabIndex={-1}`, with `onKeyDown` on the container. Tab then
@@ -1141,6 +1172,61 @@ four copies and they had already drifted on size and offset.
 - `title` - gives both a hover tooltip and an accessible name. Without one the dot is `aria-hidden`,
   since it usually just repeats what its parent already says. The dot is deliberately NOT
   `pointer-events-none` (that kills the tooltip); clicks bubble to the parent.
+
+### `<MiniBadge>` (`src/renderer/components/ui/MiniBadge.tsx`)
+
+The tiny uppercase text chip that tags an item's state: "WT" beside a worktree
+agent, "Active" / "Snoozed" beside a tab. It is the generic text counterpart to
+`<CountBadge>`, which says a number and nothing else, and to the domain pills
+beside it (`WorktreePill`, `GitRunningBadge`) that say one fixed word in their
+own colors. Do NOT hand-roll another `text-[9px] px-1 rounded uppercase` span -
+the Usage Dashboard's tiles carried one copy and the per-tab list needed the
+identical chip, which is exactly where two copies start drifting on padding and
+weight.
+
+```tsx
+<MiniBadge label="Snoozed" theme={theme} color={theme.colors.warning} testId="tab-snoozed" />
+```
+
+- `color` defaults to the theme accent and tints both the text and its translucent fill.
+- The label is its own accessible name, so pass a real word rather than an abbreviation
+  the reader has to decode - unless the abbreviation is the established UI term, in which
+  case pass `title` with the long form.
+
+### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
+
+"4 providers available locally of 11 supported", plus the toggle that brings the
+other 7 back. Most of the providers Maestro supports are not installed on any
+given machine, so listing all of them buries the two or three a user can pick
+behind a wall of dimmed rows. Both provider pickers - the wizard's tile strip
+and the New Agent modal's list - hide the rest by default and show this one bar,
+so the count and the toggle cannot disagree about what is being filtered.
+
+The filtering rules themselves live in `src/renderer/utils/providerAvailability.ts`
+(`filterToAvailableProviders`, `providerLocationLabel`) rather than in either
+picker. Three rules, each of them a dead end if broken:
+
+- **The count always describes ALL supported providers, never the filtered list.**
+  A count that shrank along with the rows would report "4 of 4" and answer nothing.
+- **Filtering down to nothing falls back to the full list.** An empty picker has no
+  row to reach per-provider settings through, so a user whose binary sits in a
+  non-standard place would have no way to point Maestro at it and no way to proceed.
+- **The selected provider survives the filter regardless.** Duplicating an agent whose
+  provider is missing from this machine would otherwise hide the very row that shows
+  what is selected, and the picker would look like it has no selection.
+
+`variant="compact"` drops to the counts alone for a bar that rides a section
+heading (the New Agent modal); `full` is the standalone row (the wizard). The
+location phrase comes from `providerLocationLabel(remoteHost)` - both pickers can
+point at an SSH remote, and "locally" is a claim about the wrong machine whenever
+one is selected.
+
+Two things a container has to respect. If the surface runs one keydown handler
+across the whole screen (the wizard does, to drive the strip), exempt the bar's
+subtree with `PROVIDER_BAR_NAV_EXEMPT_ATTR` or the toggle loses its own Tab and
+arrow keys the moment it takes focus. And when the filter flips, **carry the
+focus ring by PROVIDER, not by index** - the list renumbers, so keeping the raw
+index slides the ring onto whichever unrelated provider inherited that slot.
 
 ### `<FontScaleControl>` (`src/renderer/components/ui/FontScaleControl.tsx`)
 

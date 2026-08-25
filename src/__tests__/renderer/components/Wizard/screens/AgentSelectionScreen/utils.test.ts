@@ -9,6 +9,7 @@ import {
 	getVisibleAgents,
 	hasSshConnectionFailure,
 	isAgentAvailable,
+	selectVisibleAgentTiles,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentAvailability';
 import {
 	addEnvVar,
@@ -106,15 +107,57 @@ describe('AgentSelectionScreen utils', () => {
 	});
 
 	it('steps along the single-row strip and clamps at both ends', () => {
-		expect(getNextAgentTileIndex(0, 'ArrowLeft')).toBe(0);
-		expect(getNextAgentTileIndex(0, 'ArrowRight')).toBe(1);
-		expect(getNextAgentTileIndex(1, 'ArrowLeft')).toBe(0);
-		expect(getNextAgentTileIndex(AGENT_TILES.length - 1, 'ArrowRight')).toBe(
-			AGENT_TILES.length - 1
-		);
+		const count = AGENT_TILES.length;
+
+		expect(getNextAgentTileIndex(0, 'ArrowLeft', count)).toBe(0);
+		expect(getNextAgentTileIndex(0, 'ArrowRight', count)).toBe(1);
+		expect(getNextAgentTileIndex(1, 'ArrowLeft', count)).toBe(0);
+		expect(getNextAgentTileIndex(count - 1, 'ArrowRight', count)).toBe(count - 1);
 		// The strip is one row, so vertical movement has nowhere to go.
-		expect(getNextAgentTileIndex(0, 'ArrowDown')).toBe(0);
-		expect(getNextAgentTileIndex(1, 'ArrowUp')).toBe(1);
+		expect(getNextAgentTileIndex(0, 'ArrowDown', count)).toBe(0);
+		expect(getNextAgentTileIndex(1, 'ArrowUp', count)).toBe(1);
+	});
+
+	it('clamps against the RENDERED tile count, not the provider total', () => {
+		// Filtering to the available providers shortens the strip. Clamping on the
+		// full registry would walk the focus ring off the end of what is drawn.
+		expect(getNextAgentTileIndex(2, 'ArrowRight', 3)).toBe(2);
+		expect(getNextAgentTileIndex(1, 'ArrowRight', 3)).toBe(2);
+		expect(getNextAgentTileIndex(0, 'ArrowRight', 1)).toBe(0);
+		expect(getNextAgentTileIndex(0, 'ArrowRight', 0)).toBe(0);
+	});
+
+	it('hides unavailable providers unless asked, and never renders an empty strip', () => {
+		const detected = [
+			agent({ id: 'claude-code', available: true }),
+			agent({ id: 'codex', available: false }),
+			agent({ id: 'opencode', available: true }),
+		];
+
+		expect(selectVisibleAgentTiles(AGENT_TILES, detected, false).map((tile) => tile.id)).toEqual([
+			'claude-code',
+			'opencode',
+		]);
+		expect(selectVisibleAgentTiles(AGENT_TILES, detected, true)).toEqual(AGENT_TILES);
+
+		// Nothing detected: filtering would leave a strip with no tiles, no way to
+		// reach Customize, and no way to proceed, so the full list stands in.
+		expect(selectVisibleAgentTiles(AGENT_TILES, [], false)).toEqual(AGENT_TILES);
+	});
+
+	it('keeps the selected provider visible even when it is not installed', () => {
+		// Otherwise the strip hides the very tile that shows what is selected.
+		const detected = [
+			agent({ id: 'claude-code', available: true }),
+			agent({ id: 'codex', available: false }),
+		];
+
+		expect(
+			selectVisibleAgentTiles(AGENT_TILES, detected, false, 'codex').map((tile) => tile.id)
+		).toEqual(['claude-code', 'codex']);
+		expect(
+			selectVisibleAgentTiles(AGENT_TILES, detected, false, null).map((tile) => tile.id)
+		).toEqual(['claude-code']);
 	});
 
 	it('offers every pickable provider, in the shared registry order', () => {
