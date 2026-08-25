@@ -359,6 +359,118 @@ describe('PipelineListTab', () => {
 		});
 	});
 
+	// The real complaint this answers: a fan-out pipeline renders "ODIN Market"
+	// six times and nothing on screen says which is which. The prompt does.
+	describe('prompt introspection', () => {
+		function makeFanOut(): CuePipeline {
+			return {
+				id: 'fanout',
+				name: 'ODIN Weekly',
+				color: '#06b6d4',
+				nodes: [
+					trigger('t1', 'ODIN Weekly'),
+					agent('a1', 'ODIN Market'),
+					agent('a2', 'ODIN Market'),
+				],
+				edges: [
+					{
+						id: 'e1',
+						source: 't1',
+						target: 'a1',
+						mode: 'pass',
+						prompt: 'Review the options flow for unusual volume.',
+					},
+					{
+						id: 'e2',
+						source: 't1',
+						target: 'a2',
+						mode: 'pass',
+						prompt: 'Summarize this week ticker sentiment.',
+					},
+				],
+			};
+		}
+
+		it('shows each step prompt so identically-named agents can be told apart', () => {
+			renderList({ pipelines: [makeFanOut()] });
+			fireEvent.click(screen.getByRole('button', { name: 'ODIN Weekly details' }));
+			const detail = screen.getByTestId('pipeline-list-detail-fanout');
+
+			// Both steps carry the same agent name...
+			expect(within(detail).getAllByText('ODIN Market')).toHaveLength(2);
+			// ...and the prompts are what distinguish them.
+			expect(
+				within(detail).getByText('Review the options flow for unusual volume.')
+			).toBeInTheDocument();
+			expect(within(detail).getByText('Summarize this week ticker sentiment.')).toBeInTheDocument();
+		});
+
+		it('renders the prompt as a single collapsed line', () => {
+			renderList({
+				pipelines: [
+					{
+						...makeFanOut(),
+						edges: [
+							{
+								id: 'e1',
+								source: 't1',
+								target: 'a1',
+								mode: 'pass',
+								prompt: 'First line.\n\n   Second line.',
+							},
+						],
+					},
+				],
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'ODIN Weekly details' }));
+			const detail = screen.getByTestId('pipeline-list-detail-fanout');
+			expect(within(detail).getByText('First line. Second line.')).toBeInTheDocument();
+		});
+
+		it('marks a step fed by several distinct prompts', () => {
+			renderList({
+				pipelines: [
+					{
+						id: 'multi',
+						name: 'Multi',
+						color: '#06b6d4',
+						nodes: [
+							trigger('t1', 'Multi'),
+							trigger('t2', 'Multi-chain-2', { eventType: 'app.startup', config: {} }),
+							agent('a1', 'rc'),
+						],
+						edges: [
+							{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'morning run' },
+							{ id: 'e2', source: 't2', target: 'a1', mode: 'pass', prompt: 'boot run' },
+						],
+					},
+				],
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Multi details' }));
+			const detail = screen.getByTestId('pipeline-list-detail-multi');
+			// The badge is what says "this preview is one of several".
+			expect(within(detail).getByText('×2')).toBeInTheDocument();
+		});
+
+		it('renders nothing extra when a step has no prompt', () => {
+			renderList();
+			fireEvent.click(screen.getByRole('button', { name: 'Daily Digest details' }));
+			const detail = screen.getByTestId('pipeline-list-detail-Daily Digest');
+			expect(within(detail).queryByText('×2')).not.toBeInTheDocument();
+		});
+
+		// Agent names repeat in a fan-out, so the prompt is the only text that can
+		// narrow the list to the pipeline you actually mean.
+		it('search matches prompt text', () => {
+			renderList({ pipelines: [makeFanOut(), makePipeline('Daily Digest')] });
+			fireEvent.change(screen.getByPlaceholderText('Search pipelines...'), {
+				target: { value: 'unusual volume' },
+			});
+			expect(screen.getByText('ODIN Weekly')).toBeInTheDocument();
+			expect(screen.queryByText('Daily Digest')).not.toBeInTheDocument();
+		});
+	});
+
 	it('renders an empty state that points at the graph tab', () => {
 		renderList({ pipelines: [] });
 		expect(screen.getByText(/No pipelines yet/)).toBeInTheDocument();

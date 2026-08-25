@@ -25,28 +25,11 @@ import { findActiveModelHint } from '../../shared/autorunModelHints';
 import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
 import { cheapTurnSettings } from '../../shared/modelTiers';
 
-/**
- * Detect the `<!-- maestro:halt -->` early-exit marker in a document.
- *
- * Agents write this marker into the current Auto Run document to abort the
- * entire playbook (skipping all remaining tasks in the current document and
- * all subsequent documents). The optional reason after the colon is surfaced
- * in the History panel and JSONL `halt` event.
- *
- * Accepts:
- *   <!-- maestro:halt -->
- *   <!-- maestro:halt: brief reason here -->
- *
- * Match is case-insensitive on the keyword to tolerate agent variations,
- * but the literal token `maestro:halt` is required to keep false positives
- * effectively zero.
- */
-export function detectHaltMarker(content: string): { halted: boolean; reason?: string } {
-	const match = content.match(/<!--\s*maestro:halt\s*(?::\s*([^>]*?))?\s*-->/i);
-	if (!match) return { halted: false };
-	const reason = match[1]?.trim();
-	return { halted: true, reason: reason || undefined };
-}
+// Halt detection moved to `shared/autorunMarkers` so the desktop renderer can
+// draw a pill for a marker that would block the next run. Re-exported because
+// this module is where the CLI engine and its tests reach for it.
+import { detectHaltMarker } from '../../shared/autorunMarkers';
+export { detectHaltMarker };
 
 /**
  * Process a playbook and yield JSONL events

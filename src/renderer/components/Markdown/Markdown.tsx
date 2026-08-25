@@ -168,6 +168,10 @@ export const Markdown = memo(function Markdown({
 			frontmatter,
 			chatLineBreaks: isChat ? chatLineBreaks : false,
 			chatMath: isChat ? chatMath : false,
+			// Auto Run marker pills are a DOCUMENT affordance: the document directs a
+			// run, so a marker in it is live configuration worth showing. A chat
+			// message only ever describes one.
+			autorunMarkers: preset === 'document',
 			allowRawHtml: effectiveAllowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
 			extraRemarkPlugins,

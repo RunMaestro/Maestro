@@ -69,6 +69,33 @@ export function summarizeCommandNode(data: CommandNodeData): string {
 
 // ─── Pipeline description ────────────────────────────────────────────────────
 
+/**
+ * The prompt(s) attached to one node, plus a one-line preview.
+ *
+ * A node can carry more than one prompt: a fan-out trigger has a distinct
+ * `fan_out_prompts` entry per target, and an agent fed by several triggers has
+ * a distinct prompt per incoming edge. `count` is what tells a reader the
+ * preview is one of several rather than the whole story, so never collapse
+ * this to a bare string.
+ */
+export interface CueNodePrompts {
+	/** Distinct prompt texts, in edge order, de-duplicated. */
+	prompts: string[];
+	/** `prompts.length`. 0 when the node has no prompt at all. */
+	count: number;
+	/**
+	 * The first prompt collapsed to a single line (newlines and runs of
+	 * whitespace become single spaces) so it can sit in a one-line slot and be
+	 * clipped by CSS. Empty when there is no prompt.
+	 *
+	 * Deliberately NOT truncated to a word count here: the list clips it with
+	 * `text-overflow: ellipsis`, which fits exactly as many words as the actual
+	 * column width allows. A hard-coded character cap would either waste space
+	 * on a wide window or still overflow on a narrow one.
+	 */
+	preview: string;
+}
+
 export interface CuePipelineTriggerSummary {
 	/** User-facing trigger name (custom label, else the event-type label). */
 	label: string;
@@ -77,6 +104,8 @@ export interface CuePipelineTriggerSummary {
 	eventType: CueEventType;
 	/** Underlying subscription name. Absent on never-saved pipelines. */
 	subscriptionName?: string;
+	/** Prompts this trigger sends, taken from its OUTGOING edges. */
+	prompts: CueNodePrompts;
 }
 
 export interface CuePipelineStepSummary {
@@ -87,6 +116,32 @@ export interface CuePipelineStepSummary {
 	detail: string;
 	/** Bound Maestro agent id, when the step has one. */
 	sessionId?: string;
+	/**
+	 * Prompts this step receives, taken from its INCOMING edges (falling back to
+	 * the node's own `inputPrompt` for chain agents). This is frequently the
+	 * ONLY thing distinguishing two steps: a fan-out pipeline renders the same
+	 * agent name N times, and the prompt is what makes each row a different job.
+	 */
+	prompts: CueNodePrompts;
+}
+
+/** Collapse a prompt to one line: no newlines, no runs of whitespace. */
+function collapsePrompt(text: string): string {
+	return text.replace(/\s+/g, ' ').trim();
+}
+
+function buildNodePrompts(texts: Array<string | undefined>): CueNodePrompts {
+	const prompts: string[] = [];
+	for (const text of texts) {
+		const trimmed = text?.trim();
+		if (!trimmed || prompts.includes(trimmed)) continue;
+		prompts.push(trimmed);
+	}
+	return {
+		prompts,
+		count: prompts.length,
+		preview: prompts.length > 0 ? collapsePrompt(prompts[0]) : '',
+	};
 }
 
 export interface CuePipelineDescription {
@@ -176,7 +231,31 @@ function orderStepNodes(pipeline: CuePipeline): PipelineNode[] {
 		.map((entry) => entry.node);
 }
 
-function stepLabel(node: PipelineNode): CuePipelineStepSummary {
+/**
+ * Prompts flowing INTO a node.
+ *
+ * `edge.prompt` is the single source of truth for trigger→agent edges - the
+ * loader deliberately clears `AgentNodeData.inputPrompt` on those, because
+ * mirroring the two caused stale saves (see yamlToPipeline). `inputPrompt` is
+ * reserved for chain agents, which have no incoming trigger edge, so it is
+ * consulted only when no incoming edge carried a prompt.
+ */
+function incomingPrompts(pipeline: CuePipeline, node: PipelineNode): CueNodePrompts {
+	const fromEdges = pipeline.edges.filter((e) => e.target === node.id).map((e) => e.prompt);
+	const resolved = buildNodePrompts(fromEdges);
+	if (resolved.count > 0) return resolved;
+	if (node.type === 'agent') {
+		return buildNodePrompts([(node.data as AgentNodeData).inputPrompt]);
+	}
+	return resolved;
+}
+
+/** Prompts a trigger sends, one per outgoing edge (fan-out gives several). */
+function outgoingPrompts(pipeline: CuePipeline, nodeId: string): CueNodePrompts {
+	return buildNodePrompts(pipeline.edges.filter((e) => e.source === nodeId).map((e) => e.prompt));
+}
+
+function stepLabel(node: PipelineNode, prompts: CueNodePrompts): CuePipelineStepSummary {
 	if (node.type === 'agent') {
 		const data = node.data as AgentNodeData;
 		return {
@@ -184,6 +263,7 @@ function stepLabel(node: PipelineNode): CuePipelineStepSummary {
 			label: data.sessionName || 'Unnamed agent',
 			detail: '',
 			sessionId: data.sessionId,
+			prompts,
 		};
 	}
 	if (node.type === 'command') {
@@ -193,11 +273,12 @@ function stepLabel(node: PipelineNode): CuePipelineStepSummary {
 			label: data.name || 'Command',
 			detail: summarizeCommandNode(data),
 			sessionId: data.owningSessionId,
+			prompts,
 		};
 	}
 	// Error node: the loader could not resolve this reference to a live agent.
 	const data = node.data as { message?: string };
-	return { kind: 'error', label: 'Unresolved agent', detail: data.message ?? '' };
+	return { kind: 'error', label: 'Unresolved agent', detail: data.message ?? '', prompts };
 }
 
 /** Describe what a pipeline does: its triggers, its steps, and a flow line. */
@@ -211,10 +292,13 @@ export function describePipeline(pipeline: CuePipeline): CuePipelineDescription 
 				summary: getTriggerConfigSummary(data),
 				eventType: data.eventType,
 				subscriptionName: data.subscriptionName,
+				prompts: outgoingPrompts(pipeline, node.id),
 			};
 		});
 
-	const steps = orderStepNodes(pipeline).map(stepLabel);
+	const steps = orderStepNodes(pipeline).map((node) =>
+		stepLabel(node, incomingPrompts(pipeline, node))
+	);
 	const agentIds: string[] = [];
 	for (const step of steps) {
 		if (step.kind === 'agent' && step.sessionId && !agentIds.includes(step.sessionId)) {

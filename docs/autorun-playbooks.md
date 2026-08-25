@@ -320,6 +320,31 @@ Click the **Stop** button at any time. The runner will:
 - Preserve all completed work
 - Allow you to resume later by clicking Run again
 
+## Marker Pills
+
+Every Maestro marker is an HTML comment, which means it renders as nothing. That is right for the file - other markdown tools ignore it, and an agent editing the document leaves it alone - but it is wrong for you. Two of the three markers do not merely change how a run behaves, they stop it:
+
+- A leftover **HITL gate** pauses every re-run until the box below it is ticked.
+- A leftover **halt marker** makes Auto Run refuse to start at all.
+
+Both present the same way: you press **Run** and nothing happens, with the cause sitting in text the panel does not draw.
+
+So Maestro renders each marker as a small pill wherever the document is previewed - the Auto Run panel, the file preview, the wizard's document editor, and the Playbook Exchange preview. The pill says what the marker **does**, not what it is called:
+
+| Pill                          | Meaning                                                           |
+| ----------------------------- | ----------------------------------------------------------------- |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.      |
+| ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                   |
+| ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it. |
+| ◆ **high model, high effort** | A live model hint governing the next task.                        |
+| ◆ **Unknown setting**         | A misspelled value. It will be ignored at run time.               |
+
+A pill carries the marker's reason text alongside it, so a gate reads as "Pauses here - Add STRIPE_SECRET_KEY to .env" rather than making you go find out why.
+
+Pills reflect **state, not just presence**. A gate above an unchecked task and a gate above a checked one are nearly identical in the source, but only the first will stop your run, so only the first is drawn as live. Markers inside fenced code blocks draw no pill at all, which is why the examples throughout this page render as plain text.
+
+Marker pills appear only on document surfaces. An agent that mentions the marker syntax in a chat message is describing a marker, not configuring one, so that text keeps rendering as ordinary prose.
+
 ## Halt Marker (Agent Early Exit)
 
 Sometimes the agent itself discovers that the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec it cannot resolve, or a destructive change it refuses to make. In that case the agent can abort the entire run by writing a halt marker into the current document:

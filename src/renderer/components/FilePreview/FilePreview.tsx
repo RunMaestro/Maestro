@@ -48,6 +48,7 @@ import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../Markdown/remarkAlert';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
+import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
@@ -648,6 +649,9 @@ export const FilePreview = React.memo(
 				remarkFrontmatter,
 				remarkFrontmatterTable,
 				remarkHighlight,
+				// An Auto Run document is often read and edited here rather than in the
+				// panel, so the markers have to be visible on this surface too.
+				remarkMaestroMarkers,
 				...(fileTree && fileTree.length > 0 && cwd !== undefined
 					? [[remarkFileLinks, { indices: fileTreeIndices || undefined, cwd, homeDir }] as any]
 					: homeDir

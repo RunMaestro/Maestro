@@ -1096,6 +1096,8 @@ Presets:
   (`#`) links, pluggable `imageRenderer`, `customLanguageRenderers` (mermaid),
   `extraRemark/RehypePlugins`. Renders bare so callers keep their own scoped prose
   container. Pass `frontmatter={false}` for GFM-only surfaces.
+  Also draws Auto Run marker pills (`autorunMarkers`, on for this preset only) -
+  see [Auto Run Marker Pills](#auto-run-marker-pills) below.
 - **`wizard-bubble`** / **`release-notes`** - minimal, tightly-styled presets.
 
 Shared internals (do NOT re-implement): plugin selection lives in
@@ -1108,6 +1110,36 @@ component map is `createMarkdownComponents()` in `utils/markdownConfig.ts`, whic
 keystroke-memoized preview, FilePreview's tier selection + from-tree image
 resolution, the Wizard DocumentEditor) consume `createMarkdownComponents()`
 directly rather than the shell, but share the same leaf implementation.
+
+#### Auto Run marker pills
+
+`MAESTRO:HITL`, `maestro:halt`, and `MAESTRO:MODEL` are HTML comments, so they
+render as NOTHING - and two of them silently block the next run (a live gate
+pauses it, a halt makes Auto Run refuse to start). That presents to the user as
+"I pressed Run and nothing happened", with the cause in text no surface draws.
+`remarkMaestroMarkers` (`components/Markdown/remarkMaestroMarkers.ts`) rewrites
+each marker node into a tagged element that `createMarkdownComponents()` renders
+as `<MarkerPill>`.
+
+Two things to know before touching it:
+
+- **It is opt-in per surface, and deliberately off for chat.** `<Markdown>` sets
+  `autorunMarkers` from `preset === 'document'`. A chat message that explains the
+  syntax is DESCRIBING a marker, not configuring one, so a pill there would
+  assert a setting that does not exist. Chat also builds its own component map,
+  which is the second half of that guarantee.
+- **The three surfaces that consume `createMarkdownComponents()` directly must
+  add the plugin themselves** - `FilePreview`, AutoRun's `useAutoRunMarkdown`,
+  and the Wizard `DocumentEditor` all do, because they assemble their own remark
+  list rather than going through the shell. Miss it on a new direct consumer and
+  the markers silently go back to rendering as nothing on that surface only.
+
+The pill shows STATUS (`live` / `spent` / `invalid`), not presence: a gate above
+an unchecked task and one above a checked task differ by a character in the
+source, and only the first stops the run. Status resolution lives in
+`scanMaestroMarkers()` (`src/shared/autorunMarkers.ts`) alongside the engines'
+own `findPendingHitlGate()` / `detectHaltMarker()`, so the pill and the engine
+cannot disagree about what is live.
 
 #### Clickable task checkboxes
 

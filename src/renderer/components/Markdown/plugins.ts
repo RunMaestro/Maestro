@@ -23,6 +23,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import rehypeKatex from 'rehype-katex';
 import { svgSanitizeSchema } from './sanitizeSchema';
 import { remarkAlert } from './remarkAlert';
+import { remarkMaestroMarkers } from './remarkMaestroMarkers';
 import { REMARK_GFM_PLUGINS } from '../../../shared/markdownPlugins';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
@@ -53,6 +54,12 @@ export interface BuildMarkdownPluginsOptions {
 	allowRawHtml?: boolean;
 	/** Transform GitHub `[!NOTE]`-style blockquotes into styled callouts. Default true. */
 	alerts?: boolean;
+	/**
+	 * Render Auto Run markers (`MAESTRO:HITL`, `maestro:halt`, `MAESTRO:MODEL`)
+	 * as status pills. Document surfaces only - see `remarkMaestroMarkers` for
+	 * why a chat message must keep rendering them as prose. Default false.
+	 */
+	autorunMarkers?: boolean;
 	/** When provided and active, adds the remarkFileLinks transform. */
 	fileLinks?: MarkdownFileLinkOptions;
 	/** Extra remark plugins appended after the standard stack (e.g. FilePreview's remarkHighlight). */
@@ -87,6 +94,7 @@ export function buildMarkdownPlugins(
 		chatMath = false,
 		allowRawHtml = false,
 		alerts = true,
+		autorunMarkers = false,
 		fileLinks,
 		extraRemarkPlugins,
 		extraRehypePlugins,
@@ -103,6 +111,12 @@ export function buildMarkdownPlugins(
 
 	if (frontmatter) {
 		remarkPlugins.push(remarkFrontmatter, remarkFrontmatterTable);
+	}
+
+	// Runs before remark-breaks so a marker is still its own `html` node rather
+	// than something a `<br>` has been spliced into.
+	if (autorunMarkers) {
+		remarkPlugins.push(remarkMaestroMarkers);
 	}
 
 	// Chat surfaces need single-newline-as-<br> semantics (#622); file/doc preview
