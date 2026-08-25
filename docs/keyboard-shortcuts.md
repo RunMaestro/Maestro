@@ -47,7 +47,7 @@ Tips and gotchas:
 | Navigate Back               | `Cmd+Shift+,`         | `Ctrl+Shift+,`         |
 | Navigate Forward            | `Cmd+Shift+.`         | `Ctrl+Shift+.`         |
 | Jump to Agent (1-9, 0=10th) | `Opt+Cmd+NUMBER`      | `Alt+Ctrl+NUMBER`      |
-| Switch AI/Shell Mode        | `Cmd+J`               | `Ctrl+J`               |
+| New Terminal Tab            | `Cmd+J`               | `Ctrl+J`               |
 | Toggle Input/Output Focus   | `Cmd+.`               | `Ctrl+.`               |
 | Focus Left Panel            | `Cmd+Shift+A`         | `Ctrl+Shift+A`         |
 | Show Shortcuts Help         | `Cmd+/`               | `Ctrl+/`               |
