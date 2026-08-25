@@ -20,6 +20,14 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 // Mock modules BEFORE importing the hook
 // ============================================================================
 
+// Cross-agent mention planning is exercised through its seam: the planner
+// decides, the hook must act on the decision (consult, and skip the spawn for
+// a leading mention).
+vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+	planCrossAgentMentions: vi.fn(() => null),
+	dispatchCrossAgentMentions: vi.fn(),
+}));
+
 vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => 'mock-id-' + Math.random().toString(36).slice(2, 8)),
 }));
@@ -57,6 +65,10 @@ import {
 	useRemoteHandlers,
 	type UseRemoteHandlersDeps,
 } from '../../../renderer/hooks/remote/useRemoteHandlers';
+import {
+	planCrossAgentMentions,
+	dispatchCrossAgentMentions,
+} from '../../../renderer/services/crossAgentMentions';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -457,6 +469,88 @@ describe('useRemoteHandlers', () => {
 				expect.objectContaining({
 					prompt: 'explain this code',
 				})
+			);
+		});
+
+		it('consults the mentioned agent instead of spawning when the prompt leads with @mention', async () => {
+			// A CLI-dispatched "@Reviewer look at this" is addressed at Reviewer
+			// only: no local turn, but the consult MUST fire (it used to be inert -
+			// the remote path never planned mentions, so the target was never asked).
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal: true };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: '@Reviewer look at this',
+							inputMode: 'ai',
+							receiptChannel: 'receipt-1',
+						},
+					})
+				);
+			});
+
+			expect(planCrossAgentMentions).toHaveBeenCalledWith('@Reviewer look at this', 'session-1');
+			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
+				plan,
+				'@Reviewer look at this',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1'
+			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			// Delivery is acked: the consult IS the dispatch.
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-1',
+				true,
+				undefined
+			);
+			// The user's bubble still lands in the tab so the consult reply has context.
+			const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tab.logs).toEqual([
+				expect.objectContaining({ source: 'user', text: '@Reviewer look at this' }),
+			]);
+		});
+
+		it('spawns AND consults when the @mention is not leading', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal: false };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'fix it, then ask @Reviewer',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ prompt: 'fix it, then ask @Reviewer' })
+			);
+			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
+				plan,
+				'fix it, then ask @Reviewer',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1'
 			);
 		});
 
