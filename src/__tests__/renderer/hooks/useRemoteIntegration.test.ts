@@ -61,6 +61,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
 	let onRemoteSelectTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
+	let onRemoteFocusAiTabHandler:
+		| ((sessionId: string, tabId: string, responseChannel: string) => void)
+		| undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
 		| ((sessionId: string, tabId: string, newName: string) => void)
@@ -143,6 +146,11 @@ describe('useRemoteIntegration', () => {
 			onRemoteNewTabHandler = handler;
 			return () => {};
 		}),
+		onRemoteFocusAiTab: vi.fn().mockImplementation((handler) => {
+			onRemoteFocusAiTabHandler = handler;
+			return () => {};
+		}),
+		sendRemoteFocusAiTabResponse: vi.fn(),
 		onRemoteCloseTab: vi.fn().mockImplementation((handler) => {
 			onRemoteCloseTabHandler = handler;
 			return () => {};
@@ -381,6 +389,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteSelectSessionHandler = undefined;
 		onRemoteSelectTabHandler = undefined;
 		onRemoteNewTabHandler = undefined;
+		onRemoteFocusAiTabHandler = undefined;
 		onRemoteCloseTabHandler = undefined;
 		onRemoteRenameTabHandler = undefined;
 		onRemoteStarTabHandler = undefined;
@@ -925,6 +934,86 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setSessions).toHaveBeenCalled();
 			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalled();
+		});
+	});
+
+	describe('remote focus AI tab', () => {
+		// A Cappella's spoken recall lands here. It answers on a response channel
+		// because the caller narrates the result out loud, and main cannot see
+		// whether the tab was focused, woken out of a snooze, or reopened.
+		it('focuses an open tab and reports what that took', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteFocusAiTabHandler?.('session-1', 'tab-1', 'chan-1');
+			});
+
+			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(mockProcess.sendRemoteFocusAiTabResponse).toHaveBeenCalledWith('chan-1', {
+				ok: true,
+				tabId: 'tab-1',
+				action: 'focused',
+			});
+		});
+
+		it('wakes a snoozed tab rather than landing on a tab that is not on screen', () => {
+			const snoozedTab = createMockAITab({ id: 'tab-snoozed' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				snoozedTabs: [
+					{
+						// `type` is the discriminant on the snooze union - a snooze can
+						// now hold a file, browser, terminal, or whole group, and the
+						// wake path switches on it. Omitting it leaves the entry
+						// matching no branch, so the tab reads as simply not there.
+						type: 'ai',
+						id: 'snooze-1',
+						tab: snoozedTab,
+						unifiedIndex: 0,
+						snoozedAt: 1,
+						wakeAt: Date.now() + 100_000,
+					},
+				],
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteFocusAiTabHandler?.('session-1', 'tab-snoozed', 'chan-1');
+			});
+
+			expect(mockProcess.sendRemoteFocusAiTabResponse).toHaveBeenCalledWith('chan-1', {
+				ok: true,
+				tabId: 'tab-snoozed',
+				action: 'woke',
+			});
+		});
+
+		it('says so rather than silently landing somewhere else when the tab is gone', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteFocusAiTabHandler?.('session-1', 'tab-gone', 'chan-1');
+			});
+
+			expect(mockProcess.sendRemoteFocusAiTabResponse).toHaveBeenCalledWith('chan-1', {
+				ok: false,
+				reason: 'tab-not-found',
+			});
 		});
 	});
 

@@ -16,6 +16,7 @@ import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
+import { AgentVoiceIndicator } from './SessionList/AgentVoiceIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -399,6 +400,10 @@ export const SessionItem = memo(function SessionItem({
 						/>
 						{/* Inline wizard indicator: shown while /wizard is in dialog or doc-gen phase. */}
 						<WizardIndicator active={wizardActive} generatingDocs={wizardGeneratingDocs} />
+						{/* A Cappella: holds the voice floor, is being spoken, or has a wake
+						    phrase. Reads the voice stores itself and renders null when the
+						    Encore Feature is off, so nothing needs threading through here. */}
+						<AgentVoiceIndicator sessionId={session.id} theme={theme} />
 						{/* Worktree badge to visually mark worktree children */}
 						{variant === 'worktree' && showWorktreePill && <WorktreePill theme={theme} />}
 					</div>

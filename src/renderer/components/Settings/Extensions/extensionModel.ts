@@ -97,7 +97,8 @@ export const BUILTIN_FEATURES: readonly BuiltinFeatureDef[] = FIRST_PARTY_PLUGIN
 			def.encoreFlag === 'coworking' ||
 			def.encoreFlag === 'opencodeServer' ||
 			def.encoreFlag === 'concerto' ||
-			def.encoreFlag === 'groupsPlus',
+			def.encoreFlag === 'groupsPlus' ||
+			def.encoreFlag === 'aCappella',
 		pluginBacking: def,
 	})
 );

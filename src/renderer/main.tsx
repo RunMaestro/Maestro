@@ -5,6 +5,7 @@ import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/electron/renderer';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import MaestroConsole from './App';
+import { AudioHostRoot } from './acappella-audio';
 import { CadenzaHudRoot } from './cadenzaHud';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
@@ -108,7 +109,25 @@ window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => 
 // cadenza cards - no app chrome, no providers the cards don't need.
 const isCadenzaHud = new URLSearchParams(window.location.search).has('cadenzaHud');
 
-if (isCadenzaHud) {
+// Audio host mode: A Cappella's hidden window (src/main/acappella/audio-host-window.ts)
+// loads this bundle with `?acappellaAudio` purely to own an AudioContext, the
+// mic capture graph, and TTS playback. It renders nothing and must never mount
+// the app - a second full renderer would duplicate every store and listener.
+const isAcappellaAudioHost = new URLSearchParams(window.location.search).has('acappellaAudio');
+
+if (isAcappellaAudioHost) {
+	// The window is never painted, but drop the static splash anyway so anything
+	// that does force it visible (devtools, a stray show()) shows an empty page.
+	document.getElementById('initial-splash')?.remove();
+	// Renders null and owns the mic/AudioContext; no chrome, no providers.
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<AudioHostRoot />
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
+} else if (isCadenzaHud) {
 	document.documentElement.classList.add('cadenza-hud');
 	document.body.classList.add('cadenza-hud');
 	// The static loading splash (index.html) is hidden by the full App on ready,

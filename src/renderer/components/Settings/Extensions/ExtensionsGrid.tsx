@@ -20,6 +20,7 @@ import {
 	Zap,
 	Clapperboard,
 	Bot,
+	Mic,
 	ShieldCheck,
 	ShieldAlert,
 	ShieldX,
@@ -55,6 +56,7 @@ const BUILTIN_ICONS: Record<string, LucideIcon> = {
 	maestroCue: Zap,
 	directorNotes: Clapperboard,
 	pianola: Bot,
+	aCappella: Mic,
 };
 
 const TRUST_META: Record<

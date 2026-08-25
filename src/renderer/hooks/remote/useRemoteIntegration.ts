@@ -3,7 +3,14 @@ import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields, createTab, closeTab, getActiveTab } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	createTab,
+	closeTab,
+	focusAiTabInSession,
+	getActiveTab,
+} from '../../utils/tabHelpers';
+import { focusAiTabWithSnooze, type FocusAiTabOutcome } from '../../utils/snoozeHelpers';
 import { logger } from '../../utils/logger';
 import { generateId } from '../../utils/ids';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
@@ -395,14 +402,46 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== sessionId) return s;
-							// Check if tab exists
-							if (!s.aiTabs.some((t) => t.id === tabId)) {
-								return s;
-							}
-							return { ...s, ...aiTabFocusFields(tabId) };
+							// The shared jump, not a hand-rolled focus: it reveals a hidden
+							// consult tab, reopens one from the closed-tab history, and
+							// activates a tab that lives inside a tiled group as a pane.
+							return focusAiTabInSession(s, tabId);
 						})
 					);
 				}
+			}
+		);
+
+		// A Cappella's spoken recall: land on one AI tab and say what that took.
+		// Answers on a response channel because the caller has to know whether the
+		// tab was focused, woken out of a snooze, or reopened - it narrates the
+		// result out loud, and main cannot see any of those three states.
+		const unsubscribeFocusAiTab = window.maestro.process.onRemoteFocusAiTab(
+			(sessionId: string, tabId: string, responseChannel: string) => {
+				let outcome: FocusAiTabOutcome | null = null;
+
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						outcome = focusAiTabWithSnooze(s, tabId);
+						return outcome.session;
+					})
+				);
+
+				const result = outcome as FocusAiTabOutcome | null;
+				if (result && result.action !== 'missing' && result.tabId) {
+					setActiveSessionId(sessionId);
+					window.maestro.process.sendRemoteFocusAiTabResponse(responseChannel, {
+						ok: true,
+						tabId: result.tabId,
+						action: result.action,
+					});
+					return;
+				}
+				window.maestro.process.sendRemoteFocusAiTabResponse(responseChannel, {
+					ok: false,
+					reason: result ? 'tab-not-found' : 'agent-not-found',
+				});
 			}
 		);
 
@@ -851,6 +890,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		return () => {
 			unsubscribeSelectSession();
+			unsubscribeFocusAiTab();
 			unsubscribeSelectTab();
 			unsubscribeNewTab();
 			unsubscribeNewTabWithPrompt();

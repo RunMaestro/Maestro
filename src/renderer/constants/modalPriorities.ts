@@ -326,12 +326,23 @@ export const MODAL_PRIORITIES = {
 	/** Settings modal */
 	SETTINGS: 450,
 
+	/** A Cappella Voice HUD - floating, non-blocking. Above the other floating
+	 * panels because it is the surface of a live conversation: Escape has to end
+	 * the voice session before it touches a git overlay or the thought stream.
+	 * Still below real modals, which keep Escape when one is open. */
+	VOICE_HUD: 230,
+
 	/** Thought Stream introspection panel - floating, non-blocking; sits below
 	 * real modals so they take Escape/focus first, above git overlays. */
 	THOUGHT_STREAM: 210,
 	/** Header git pill dropdown - above the modals it launches so Escape closes
 	 * the menu first. */
 	GIT_PILL_MENU: 220,
+
+	/** Header voice pill dropdown. Above the HUD, so Escape closes the menu the
+	 * user just opened rather than ending the conversation underneath it - the
+	 * one Escape in this feature that must NOT reach for the microphone. */
+	VOICE_PILL_MENU: 232,
 
 	/** Branch switcher (fuzzy branch picker from the header git pill) - above the
 	 * git viewers so it layers on top when opened while one is showing. 205, not

@@ -147,6 +147,7 @@ describe('first-party plugin registry', () => {
 			['opencodeServer', 'com.maestro.opencode-server'],
 			['concerto', 'com.maestro.concerto'],
 			['groupsPlus', 'com.maestro.groups-plus'],
+			['aCappella', 'com.maestro.acappella'],
 		]);
 	});
 

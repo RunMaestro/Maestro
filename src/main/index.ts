@@ -27,9 +27,10 @@ import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import {
+	disposeAllGlobalHotkeys,
+	getGlobalHotkeyRegistry,
 	initGlobalHotkey,
 	setGlobalShowHotkey,
-	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
@@ -159,6 +160,10 @@ import {
 	closeCadenzaHudWindow,
 	type QuitHandler,
 } from './app-lifecycle';
+// A Cappella's hidden audio host window (created lazily on the first voice
+// session, closed here when the Encore Feature is switched off).
+import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
+import { shutdownACappellaForDisable } from './ipc/handlers/acappella';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
@@ -525,6 +530,17 @@ const cadenzaHudDeps = {
 	windowRegistry,
 };
 
+// Same shape, different boot query: A Cappella's hidden audio host loads the
+// renderer bundle with `?acappellaAudio`. Nothing is created here - the window
+// is built on the first voice session start.
+const acappellaAudioHostDeps = {
+	isDevelopment,
+	preloadPath,
+	rendererProductionUrl,
+	devServerUrl,
+	windowRegistry,
+};
+
 // See src/main/cadenza-bridge/ and src/main/plugin-host-view-bridge/ for what
 // each of these does (Phase 5 refactoring).
 const { deliverCadenza } = createCadenzaDelivery({
@@ -546,6 +562,17 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // read path to refresh plugin discovery.
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
+	// Switching A Cappella off releases the microphone immediately rather than at
+	// quit: a hidden window holding an open capture device is exactly the thing a
+	// user turning the feature off is asking to be rid of.
+	if (encoreFeatures?.aCappella !== true) {
+		// The full stand-down: session, audio bridge, inference pipeline, Bonjour
+		// advert, and every connected device. Awaited only for its own ordering -
+		// the window is closed after it, because the bridge stops capture through
+		// the window it is about to lose, and closing first would leave the pipeline
+		// counting frames from a device nobody owns any more.
+		void shutdownACappellaForDisable().finally(() => closeAcappellaAudioHostWindow());
+	}
 	if (encoreFeatures?.plugins !== true) {
 		pluginSandboxHost?.stopAll();
 		pluginGroupingRegistry?.clearAll();
@@ -2729,6 +2756,7 @@ app
 			bootstrapStore,
 			safeSend,
 			windowRegistry,
+			acappellaAudioHostDeps,
 			windowManager,
 			createWebServer,
 			wakatimeManager,
@@ -2854,25 +2882,24 @@ app
 		// any) and re-register live when the setting changes from any source
 		// (settings UI, CLI, external file edit).
 		initGlobalHotkey(() => mainWindow);
+		// One failure path for every id, so a voice hotkey the OS refused reports
+		// itself the same way the "show Maestro" one always has.
+		getGlobalHotkeyRegistry().onFailure((status) => {
+			// intentionally not bridged: window-specific
+			if (mainWindow && isWebContentsAvailable(mainWindow)) {
+				mainWindow.webContents.send('globalHotkey:registrationFailed', status);
+			}
+		});
 		const initialHotkey = store.get('globalShowHotkey', []) as string[];
 		if (Array.isArray(initialHotkey) && initialHotkey.length > 0) {
-			const ok = setGlobalShowHotkey(initialHotkey);
-			// intentionally not bridged: window-specific
-			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('globalHotkey:registrationFailed', initialHotkey);
-			}
+			setGlobalShowHotkey(initialHotkey);
 		}
 		store.onDidChange('globalShowHotkey', (value) => {
-			const keys = Array.isArray(value) ? (value as string[]) : [];
-			const ok = setGlobalShowHotkey(keys);
-			// intentionally not bridged: window-specific
-			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('globalHotkey:registrationFailed', keys);
-			}
+			setGlobalShowHotkey(Array.isArray(value) ? (value as string[]) : []);
 		});
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
-		app.on('will-quit', disposeGlobalHotkey);
+		app.on('will-quit', disposeAllGlobalHotkeys);
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);

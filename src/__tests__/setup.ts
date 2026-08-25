@@ -601,6 +601,86 @@ const mockMaestro = {
 		onTtsCompleted: vi.fn().mockReturnValue(() => {}), // Legacy alias
 		show: vi.fn().mockResolvedValue(undefined),
 	},
+	voice: {
+		start: vi.fn().mockResolvedValue({
+			snapshot: {
+				sessionId: 'voice-1',
+				state: 'listening',
+				scope: { kind: 'conductor' },
+				seq: 2,
+				startedAt: 0,
+				providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+			},
+			substitutions: [],
+		}),
+		stop: vi.fn().mockResolvedValue(undefined),
+		submitUtterance: vi.fn().mockResolvedValue(true),
+		interrupt: vi.fn().mockResolvedValue(true),
+		stopWord: vi.fn().mockResolvedValue(undefined),
+		// The microphone picker. `system-default` is the shipped state: no explicit
+		// choice, follow the OS.
+		inputDevices: vi.fn().mockResolvedValue({ devices: [], selectedId: 'system-default' }),
+		setInputDevice: vi.fn().mockResolvedValue(true),
+		onInputDevices: vi.fn().mockReturnValue(() => {}),
+		submitAgentReply: vi.fn().mockResolvedValue(true),
+		getRoster: vi.fn().mockResolvedValue([]),
+		getState: vi.fn().mockResolvedValue(null),
+		openMicSettings: vi.fn().mockResolvedValue(true),
+		onEvent: vi.fn().mockReturnValue(() => {}),
+		applyProviders: vi.fn().mockResolvedValue({ status: 'swapped' }),
+		lastTurn: vi.fn().mockResolvedValue(null),
+		listVoices: vi.fn().mockResolvedValue([]),
+		previewVoice: vi.fn().mockResolvedValue(true),
+		setVolume: vi.fn().mockResolvedValue(true),
+		// Bound by default, because that is what a fresh install really does: main
+		// falls back to `defaultGlobalHotkeyKeys(id)` whenever the stored shortcuts
+		// map has no entry. A mock that reported nothing registered would let the
+		// settings row drift back to claiming an unbound hotkey.
+		hotkeyStatus: vi.fn().mockResolvedValue({
+			statuses: [
+				{
+					id: 'voiceConductor',
+					keys: ['Meta', 'Alt', 'v'],
+					accelerator: 'Command+Alt+V',
+					registered: true,
+				},
+				{
+					id: 'voiceCurrentAgent',
+					keys: ['Meta', 'Alt', 'a'],
+					accelerator: 'Command+Alt+A',
+					registered: true,
+				},
+			],
+			capability: 'tap-only',
+			note: 'Tap to toggle the microphone.',
+		}),
+		wakeTest: vi.fn().mockResolvedValue(true),
+		wakeTestStop: vi.fn().mockResolvedValue(undefined),
+		onWakeTest: vi.fn().mockReturnValue(() => {}),
+		credentials: {
+			list: vi.fn().mockResolvedValue([]),
+			set: vi.fn().mockResolvedValue({ ok: true }),
+			validate: vi.fn().mockResolvedValue({ service: 'openai', status: 'valid', message: 'ok' }),
+		},
+		models: {
+			list: vi.fn().mockResolvedValue([]),
+			download: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+			pause: vi.fn().mockResolvedValue(true),
+			resume: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+			cancel: vi.fn().mockResolvedValue(true),
+			verify: vi.fn().mockResolvedValue({ modelId: '', ok: true, status: 'installed' }),
+			remove: vi.fn().mockResolvedValue(0),
+			removeAll: vi.fn().mockResolvedValue(0),
+			footprint: vi.fn().mockResolvedValue({ bytes: 0, models: [] }),
+			readiness: vi.fn().mockResolvedValue({
+				canStartSession: true,
+				canRunHandsFree: true,
+				slots: [],
+				blocking: [],
+			}),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
+	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
