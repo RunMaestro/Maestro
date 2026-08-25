@@ -258,25 +258,24 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Base args for interactive mode (no flags that are exec-only)
 		args: [],
 		// Codex CLI argument builders
-		// Batch mode: codex [-C dir] exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check [--sandbox read-only] [resume <id>] -- "prompt"
+		// Batch mode: codex [-C dir] exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check [resume <id>] -- "prompt"
+		// Read-only mode: codex [-C dir] exec --json --sandbox read-only --skip-git-repo-check [resume <id>] -- "prompt"
 		// `-C` is a root-level global flag and MUST appear before the `exec` subcommand
 		// or Codex silently ignores it (see #959). buildAgentArgs prepends workingDirArgs accordingly.
 		// Sandbox modes:
 		//   - Default (YOLO): --dangerously-bypass-approvals-and-sandbox (full system access, required by Maestro)
-		//   - Read-only: --sandbox read-only (can only read files, overrides YOLO permissions)
-		// NOTE: --dangerously-bypass-approvals-and-sandbox is needed for ALL non-interactive exec
-		// invocations (including read-only) to bypass the interactive approval UI. The --sandbox
-		// flag independently controls what permissions the agent has.
+		//   - Read-only: --sandbox read-only (can only read files)
 		batchModePrefix: ['exec'], // Codex uses 'exec' subcommand for batch mode
 		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'], // Args only valid on 'exec' subcommand
 		jsonOutputArgs: ['--json'], // JSON output format (must come before resume subcommand)
 		resumeArgs: (sessionId: string) => ['resume', sessionId], // Resume with session/thread ID
-		readOnlyArgs: [
-			'--sandbox',
-			'read-only',
-			'--dangerously-bypass-approvals-and-sandbox',
-			'--skip-git-repo-check',
-		], // Read-only/plan mode - includes bypass flags for non-interactive execution (sandbox read-only overrides YOLO permissions)
+		// Read-only/plan mode. Do NOT add --dangerously-bypass-approvals-and-sandbox
+		// here: it does what its name says and NULLIFIES --sandbox read-only, so
+		// read-only consults were writing files (verified live on codex 0.149.0:
+		// with the bypass flag a `touch` succeeded; with --sandbox read-only alone
+		// the OS sandbox denied it, the model got the error, and the run continued
+		// non-interactively - `exec` has no approval prompt to bypass).
+		readOnlyArgs: ['--sandbox', 'read-only', '--skip-git-repo-check'],
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
 		// Codex's `--add-dir` is narrower than Claude's: it adds a WRITABLE root to
 		// the sandbox ("Additional directories that should be writable alongside the
@@ -847,8 +846,18 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		jsonOutputArgs: ['--output-format', 'streaming-json'], // JSONL event stream on stdout
 		promptArgs: (prompt: string) => ['-p', prompt], // Single-turn headless prompt
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume by session UUID
-		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
-		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+		// Plan mode alone is not enough for non-interactive read-only runs:
+		// headless grok answers every permission prompt with "cancelled" (there
+		// is no TTY to ask) and a cancelled prompt KILLS THE WHOLE TURN, so a
+		// consult whose shell command was classified non-read-only died
+		// mid-answer with its preamble delivered as the "result". A --deny RULE
+		// resolves by policy without ever prompting: the tool call fails, the
+		// denial feeds back to the model, and the turn continues on read_file/
+		// grep/list_dir. Deny rules take precedence over plan mode's read-only
+		// auto-allow, so read-only shell commands are lost too - the cost of a
+		// turn that always survives (verified live on grok 1.0.5).
+		readOnlyArgs: ['--permission-mode', 'plan', '--deny', 'Bash(*)'],
+		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan + --deny
 		// No noToolsArgs (tab naming falls back to the same graceful path as
 		// Codex/Copilot: batch mode + readOnlyArgs). Verified live on v0.2.93:
 		// grok has no reliable "disable ALL tools" switch. `--tools ""` is

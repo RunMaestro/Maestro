@@ -12,6 +12,12 @@ const SIMPLE_TURN_END_LINE =
 const RESUME_END_LINE =
 	'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fb-2316-7f21-98db-55907d4ddb60","requestId":"1194fbc9-a074-4819-a625-d087cee7226c"}';
 
+// Verbatim (sessionId included) from the on-disk updates.jsonl of a real
+// grok 1.0.5 headless consult whose run_terminal_command permission prompt was
+// auto-cancelled, killing the turn (stopReason "cancelled", 1.x spelling).
+const CANCELLED_END_LINE =
+	'{"type":"end","stopReason":"cancelled","sessionId":"019f0000-aaaa-7000-8000-00000000c0de","requestId":"019f0000-bbbb-7000-8000-00000000c0de"}';
+
 const BAD_MODEL_ERROR_LINE =
 	'{"type":"error","message":"Couldn\'t set model \'nonexistent-model-xyz\': Invalid params: \\"unknown model id\\". Run \'grok models\' to see available models."}';
 
@@ -97,6 +103,41 @@ describe('GrokOutputParser', () => {
 			})
 		);
 		expect(event && parser.isResultMessage(event)).toBe(true);
+	});
+
+	it('accepts the 1.x "end_turn" stopReason spelling as a completed turn', () => {
+		const parser = new GrokOutputParser();
+
+		const event = parser.parseJsonLine(CANCELLED_END_LINE.replace('"cancelled"', '"end_turn"'));
+
+		expect(event?.type).toBe('result');
+		expect(event && parser.isResultMessage(event)).toBe(true);
+	});
+
+	it('reclassifies a cancelled end event as an error, keeping the session ID', () => {
+		// A headless run answers every permission prompt with "cancelled", which
+		// kills the whole turn: the end event then carries stopReason "cancelled"
+		// and the streamed text is an unfinished answer. It must NOT become a
+		// successful result - and the session ID must survive for resume.
+		const parser = new GrokOutputParser();
+
+		const event = parser.parseJsonLine(CANCELLED_END_LINE);
+
+		expect(event?.type).toBe('error');
+		expect(event?.sessionId).toBe('019f0000-aaaa-7000-8000-00000000c0de');
+		expect(event?.text).toContain('cancelled');
+		expect(event && parser.isResultMessage(event)).toBe(false);
+	});
+
+	it('detects the cancelled end event as an agent error (dual surfacing)', () => {
+		const parser = new GrokOutputParser();
+
+		const error = parser.detectErrorFromLine(CANCELLED_END_LINE);
+
+		expect(error).not.toBeNull();
+		expect(error?.type).toBe('unknown');
+		expect(error?.recoverable).toBe(true);
+		expect(error?.message).toContain('cancelled');
 	});
 
 	it('extracts the session ID from the result event (grok has no init event)', () => {
