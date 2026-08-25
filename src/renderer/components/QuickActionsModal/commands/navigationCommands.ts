@@ -16,7 +16,7 @@ interface BuildNavigationCommandsArgs {
 	// Shared with the Alt+Cmd+Down keyboard shortcut so both invocation paths
 	// use the same sidebar-visible ordering and current-session clear semantics.
 	onGoToNextUnread?: () => void;
-	// Shared with the Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts so both paths
+	// Shared with the Alt+, / Alt+. keyboard shortcuts so both paths
 	// walk the same session/tab navigation history.
 	onNavBack?: () => void;
 	onNavForward?: () => void;

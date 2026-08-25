@@ -1417,7 +1417,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 					return;
 				}
-				// Cmd+Shift+, / Cmd+Shift+. forwarded from the webview guest →
+				// Alt+, / Alt+. forwarded from the webview guest →
 				// breadcrumb back/forward through visited tabs. Handled directly
 				// because a synthetic window event from a focused webview doesn't
 				// reliably reach the navBack/navForward branch of the window handler.

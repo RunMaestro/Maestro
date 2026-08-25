@@ -127,8 +127,8 @@ const mockShortcuts: Record<string, Shortcut> = {
 	toggleMarkdownMode: { id: 'toggleMarkdownMode', keys: ['Cmd', 'M'], enabled: true },
 	createDebugPackage: { id: 'createDebugPackage', keys: ['Alt', 'Cmd', 'D'], enabled: true },
 	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Alt', 'Meta', 'ArrowDown'], enabled: true },
-	navBack: { id: 'navBack', keys: ['Meta', 'Shift', ','], enabled: true },
-	navForward: { id: 'navForward', keys: ['Meta', 'Shift', '.'], enabled: true },
+	navBack: { id: 'navBack', keys: ['Alt', ','], enabled: true },
+	navForward: { id: 'navForward', keys: ['Alt', '.'], enabled: true },
 };
 
 // Thin wrapper: pre-populates an AI tab so the quick actions modal has

@@ -44,8 +44,8 @@ Tips and gotchas:
 | Open Memory Viewer          | `Cmd+Shift+M`         | `Ctrl+Shift+M`         |
 | Previous Agent              | `Cmd+[`               | `Ctrl+[`               |
 | Next Agent                  | `Cmd+]`               | `Ctrl+]`               |
-| Navigate Back               | `Cmd+Shift+,`         | `Ctrl+Shift+,`         |
-| Navigate Forward            | `Cmd+Shift+.`         | `Ctrl+Shift+.`         |
+| Navigate Back               | `Opt+,`               | `Alt+,`                |
+| Navigate Forward            | `Opt+.`               | `Alt+.`                |
 | Jump to Agent (1-9, 0=10th) | `Opt+Cmd+NUMBER`      | `Alt+Ctrl+NUMBER`      |
 | New Terminal Tab            | `Cmd+J`               | `Ctrl+J`               |
 | Toggle Input/Output Focus   | `Cmd+.`               | `Ctrl+.`               |
@@ -59,7 +59,7 @@ Tips and gotchas:
 | Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
 | View Execution Queue        | `Cmd+Shift+X`         | `Ctrl+Shift+X`         |
 | Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
-| Jump to Bottom              | `Opt+J`               | `Alt+J`                |
+| Jump to Bottom              | `Cmd+Shift+.`         | `Ctrl+Shift+.`         |
 | Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |

@@ -3282,7 +3282,7 @@ describe('useMainKeyboardHandler', () => {
 			expect(dispatched.find((e) => e.key === 'f' && e.metaKey)).toBeUndefined();
 		});
 
-		it('routes forwarded Cmd+Shift+, to handleNavBack without re-dispatching', () => {
+		it('routes forwarded Alt+, to handleNavBack without re-dispatching', () => {
 			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
 			(window as any).maestro = {
 				...(window as any).maestro,
@@ -3314,12 +3314,12 @@ describe('useMainKeyboardHandler', () => {
 
 			act(() => {
 				ipcCallback!({
-					key: '<',
+					key: '≤',
 					code: 'Comma',
-					meta: true,
+					meta: false,
 					control: false,
-					alt: false,
-					shift: true,
+					alt: true,
+					shift: false,
 				});
 			});
 
@@ -3327,10 +3327,10 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(handleNavBack).toHaveBeenCalledTimes(1);
 			expect(handleNavForward).not.toHaveBeenCalled();
-			expect(dispatched.find((e) => (e.key === '<' || e.key === ',') && e.metaKey)).toBeUndefined();
+			expect(dispatched.find((e) => (e.key === '≤' || e.key === ',') && e.altKey)).toBeUndefined();
 		});
 
-		it('routes forwarded Cmd+Shift+. to handleNavForward without re-dispatching', () => {
+		it('routes forwarded Alt+. to handleNavForward without re-dispatching', () => {
 			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
 			(window as any).maestro = {
 				...(window as any).maestro,
@@ -3358,12 +3358,12 @@ describe('useMainKeyboardHandler', () => {
 
 			act(() => {
 				ipcCallback!({
-					key: '>',
+					key: '≥',
 					code: 'Period',
-					meta: true,
+					meta: false,
 					control: false,
-					alt: false,
-					shift: true,
+					alt: true,
+					shift: false,
 				});
 			});
 

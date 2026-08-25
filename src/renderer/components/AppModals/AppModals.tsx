@@ -372,7 +372,7 @@ export interface AppModalsProps {
 	onQuickActionsNewTerminalTab?: () => void;
 	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
 	onGoToNextUnread?: () => void;
-	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
+	// Session/tab history navigation (shared with Alt+, / Alt+.)
 	onNavBack?: () => void;
 	onNavForward?: () => void;
 

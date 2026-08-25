@@ -16,8 +16,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	},
 	cyclePrev: { id: 'cyclePrev', label: 'Previous Agent', keys: ['Meta', '['] },
 	cycleNext: { id: 'cycleNext', label: 'Next Agent', keys: ['Meta', ']'] },
-	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
-	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
+	// Alt+, / Alt+. rather than the Cmd+Shift pair these used to hold: Cmd+Shift+.
+	// now belongs to jumpToBottom, which pairs it with Cmd+. (focus the composer).
+	// The , / . mnemonic survives the move, so back is still left of forward.
+	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Alt', ','] },
+	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Alt', '.'] },
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
 	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'c'] },
 	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
@@ -88,7 +91,9 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Edit Last Queued Message',
 		keys: ['Meta', 'Shift', 'e'],
 	},
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
+	// Cmd+Shift+. is the deliberate sibling of Cmd+. (focusInput): one sends the
+	// caret to the composer, the other sends the transcript to the newest output.
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Meta', 'Shift', '.'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
