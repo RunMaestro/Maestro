@@ -180,6 +180,17 @@ describe('Toast', () => {
 			render(<ToastContainer theme={mockTheme} />);
 			expect(timeEl()).toHaveAttribute('title', new Date(NOW).toLocaleString());
 		});
+
+		it('sits on the title line, not on the agent-context row', () => {
+			setStoreToasts([
+				createMockToast({ timestamp: NOW, title: 'Synopsis', group: 'OBSIDIAN', tabName: 'Tab 1' }),
+			]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const row = timeEl()?.parentElement;
+			expect(row?.textContent).toContain('Synopsis');
+			expect(row?.textContent).not.toContain('OBSIDIAN');
+		});
 	});
 
 	describe('duration badge', () => {
@@ -534,8 +545,8 @@ describe('Toast', () => {
 			setStoreToasts([createMockToast()]);
 
 			render(<ToastContainer theme={mockTheme} />);
-			// The row itself still renders - it carries the timestamp - but the
-			// accentDim styled badges for group/tab should not exist.
+			// The accentDim styled badges for group/tab should not exist. The
+			// timestamp lives on the title line, so nothing keeps this row alive.
 			const accentSpans = document.body.querySelectorAll('.px-1\\.5.py-0\\.5.rounded');
 			expect(accentSpans).toHaveLength(0);
 		});
