@@ -158,6 +158,20 @@ describe('GitCommandRunnerModal', () => {
 		expect(console.textContent).toBe('Receiving objects: 100%');
 	});
 
+	it('renders ANSI color as markup instead of showing the escape codes', async () => {
+		renderModal('push');
+		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());
+
+		stream('\u001b[31mfatal: rejected\u001b[0m\n', 'stderr');
+
+		const console = screen.getByTestId('git-command-output');
+		// The text reads clean...
+		expect(console.textContent).toContain('fatal: rejected');
+		expect(console.textContent).not.toContain('[31m');
+		// ...and the color survived as a real span rather than being stripped.
+		expect(console.querySelector('span[style*="color"]')).not.toBeNull();
+	});
+
 	it('reports success when the command finishes', async () => {
 		renderModal();
 		await waitFor(() => expect(gitService.runCommand).toHaveBeenCalled());

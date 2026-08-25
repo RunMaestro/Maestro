@@ -30,6 +30,10 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { resolveAuthOutage, type AuthOutage } from '../stores/authOutageStore';
+import {
+	classifyCredentialKind,
+	credentialKindBlocksLogin,
+} from '../../shared/providerAuthIdentity';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import {
@@ -97,7 +101,6 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		() => getAgentLoginCommand(session.toolType, session.customPath),
 		[session.toolType, session.customPath]
 	);
-	const commandLine = login ? formatAgentLoginCommand(login) : null;
 	const agentName = getAgentDisplayName(outage.toolType);
 
 	// Names of the blocked agents, resolved live: more of them can fail while
@@ -141,6 +144,30 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			}),
 		[shellEnvVars, providerEnv, session.customEnvVars]
 	);
+
+	/**
+	 * Why this agent cannot be signed in from here, or null when it can.
+	 *
+	 * An API-key, gateway, or Bedrock/Vertex agent rejects its credentials with
+	 * the same `auth_expired` output an expired login produces, and it would sit
+	 * through the whole login flow without its situation changing - the flow
+	 * succeeds, the user believes it is fixed, and the next prompt burns on the
+	 * same rejection. So the terminal only opens for a credential a login repairs.
+	 *
+	 * Held at null until the provider env resolves. Classifying against a partial
+	 * environment would miss exactly the override that makes the answer "no", and
+	 * this runs once per modal open rather than per keystroke.
+	 */
+	const loginBlockedReason = useMemo(() => {
+		if (providerEnv === null) return null;
+		const env = Object.fromEntries(effectiveEnv.map((entry) => [entry.key, entry.value]));
+		return credentialKindBlocksLogin(classifyCredentialKind(session.toolType, env), agentName);
+	}, [providerEnv, effectiveEnv, session.toolType, agentName]);
+
+	// Null until the environment has been read, so the spawn effect below waits
+	// rather than starting a login the classification is about to rule out.
+	const commandLine =
+		providerEnv !== null && !loginBlockedReason && login ? formatAgentLoginCommand(login) : null;
 
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
@@ -308,8 +335,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		onClose();
 	}, [outage.providerKey, onClose]);
 
-	const statusLine =
-		status === 'failed'
+	const statusLine = loginBlockedReason
+		? 'Fix the credential this agent presents, then resume.'
+		: status === 'failed'
 			? spawnError
 			: status === 'exited'
 				? 'The login session ended. Resume to re-run everything that failed.'
@@ -317,8 +345,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					? 'Complete the provider login above, then resume.'
 					: 'Starting the login shell...';
 
-	const statusColor =
-		status === 'failed'
+	const statusColor = loginBlockedReason
+		? theme.colors.warning
+		: status === 'failed'
 			? theme.colors.error
 			: status === 'exited'
 				? theme.colors.success
@@ -467,6 +496,14 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 							</span>
 						)}
 					</div>
+				) : loginBlockedReason ? (
+					<p className="text-sm select-text" style={{ color: theme.colors.warning }}>
+						{loginBlockedReason}
+					</p>
+				) : providerEnv === null ? (
+					<p className="text-sm" style={{ color: theme.colors.textDim }}>
+						Reading this agent's environment to work out how it signs in...
+					</p>
 				) : (
 					<p className="text-sm" style={{ color: theme.colors.error }}>
 						{agentName} has no login command Maestro can run. Re-authenticate it from a terminal,

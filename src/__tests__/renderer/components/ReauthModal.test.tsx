@@ -11,6 +11,12 @@
  * The second block covers the environment disclosure: that the three env layers
  * are merged in the spawner's own precedence order, and that failing to read one
  * layer degrades instead of blocking the login.
+ *
+ * The third block covers the credential-kind gate: the environment does not just
+ * get disclosed, it decides whether a login is the right remedy at all. An
+ * API-key, gateway, or Bedrock agent fails with the same output an expired login
+ * produces, so the shell must not open for one - the flow would succeed and fix
+ * nothing.
  */
 
 import React from 'react';
@@ -162,9 +168,12 @@ describe('ReauthModal', () => {
 			<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />
 		);
 
-		// Mount, tear down, and mount again without letting the spawn settle in
-		// between - exactly what StrictMode does on a slow (SSH) spawn.
+		// Let the first mount get as far as its own shell (the environment read
+		// gates the spawn, so it has to settle first), then tear down and mount
+		// again without letting the second spawn settle - exactly what StrictMode
+		// does on a slow (SSH) spawn.
 		const first = render(ui);
+		await flushSpawn();
 		first.unmount();
 		render(ui);
 		await flushSpawn();
@@ -188,6 +197,7 @@ describe('ReauthModal', () => {
 		);
 
 		const first = render(ui);
+		await flushSpawn();
 		first.unmount();
 		render(ui);
 		await flushSpawn();
@@ -448,6 +458,85 @@ describe('ReauthModal environment disclosure', () => {
 		await waitFor(() => expect(screen.getByTestId('reauth-env')).toBeInTheDocument());
 		// Falls back to the layers it does have.
 		expect(screen.getByText('GLOBAL_ONLY')).toBeInTheDocument();
+		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
+	});
+});
+
+/**
+ * Not every credential is an OAuth login, and the ones that are not fail with
+ * the same `auth_expired` output. Running the provider's login command for them
+ * produces a successful-looking flow that changes nothing the agent presents, so
+ * the shell must never open.
+ */
+describe('ReauthModal credential kinds', () => {
+	/** Render with `vars` as the agent's own environment layer. */
+	async function renderWithEnv(vars: Record<string, string>, toolType = 'claude-code') {
+		mockGetCustomEnvVars.mockResolvedValue(vars);
+		const session = createMockSession({ id: 'sess-1', toolType });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage({ toolType })}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+	}
+
+	it('opens the login shell for a plain OAuth agent', async () => {
+		await renderWithEnv({});
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not offer a login to an agent authenticating with an API key', async () => {
+		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/ANTHROPIC_API_KEY/)).toBeInTheDocument();
+	});
+
+	// The token belongs to the gateway operator, so it outranks a token check:
+	// even with a key set, no provider login can repair it.
+	it('names the gateway an agent is pointed at instead of offering a login', async () => {
+		await renderWithEnv({
+			ANTHROPIC_BASE_URL: 'https://api.z.ai/v1',
+			ANTHROPIC_AUTH_TOKEN: 'gw-token',
+		});
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/api\.z\.ai/)).toBeInTheDocument();
+	});
+
+	it('sends a Bedrock agent to its cloud credentials rather than a provider login', async () => {
+		await renderWithEnv({ CLAUDE_CODE_USE_BEDROCK: '1' });
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/AWS Bedrock/)).toBeInTheDocument();
+	});
+
+	// A flag the user turned off must not be read as a Bedrock agent.
+	it('treats a disabled cloud flag as the OAuth default', async () => {
+		await renderWithEnv({ CLAUDE_CODE_USE_BEDROCK: 'false' });
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
+	// An emptied row is how a user turns an inherited variable off.
+	it('treats a blank API key as unset', async () => {
+		await renderWithEnv({ ANTHROPIC_API_KEY: '   ' });
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
+	it('classifies per provider rather than assuming Anthropic vars', async () => {
+		await renderWithEnv({ OPENAI_API_KEY: 'sk-openai' }, 'codex');
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/OPENAI_API_KEY/)).toBeInTheDocument();
+	});
+
+	// Blocked or not, the agents are still stopped and their queues still held.
+	it('still offers to resume the blocked agents', async () => {
+		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
 		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
 	});
 });

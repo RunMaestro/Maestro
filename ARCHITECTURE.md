@@ -1199,6 +1199,7 @@ interface QueuedItem {
 - Queue visible via indicator in tab bar
 - Users can cancel pending items via queue browser
 - A queued message that `@mentions` another agent (`crossAgentMention: true`) consults that agent when the item is DISPATCHED, not when it was queued (`src/renderer/services/crossAgentMentions.ts`)
+- Tab labels in the indicator and browser are resolved from the LIVE tab via `resolveQueuedItemTabName()`; `QueuedItem.tabName` is only a fallback for a tab that no longer exists
 
 ### Session Fields
 

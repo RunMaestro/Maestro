@@ -255,6 +255,18 @@ export function SessionContextMenu({
 				minWidth: '10rem',
 			}}
 		>
+			{/* Names the agent this menu acts on. Right-clicking a row in a long
+			    Left Bar pops the menu away from that row, so without it the
+			    destructive items at the bottom are unattributed. */}
+			<div
+				className="px-3 py-1 text-[10px] uppercase tracking-wider opacity-60"
+				style={{ color: theme.colors.textDim }}
+				title={session.name}
+			>
+				<span className="block truncate max-w-[12rem]">{session.name}</span>
+			</div>
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
 			{!session.isPianola && (
 				<button
 					type="button"

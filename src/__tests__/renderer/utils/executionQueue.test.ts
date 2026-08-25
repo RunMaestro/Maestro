@@ -5,10 +5,11 @@ import {
 	hasRunnableQueueItem,
 	takeNextRunnableQueueItem,
 	reorderQueueItem,
+	resolveQueuedItemTabName,
 	hasWorkAheadOfNewMessage,
 	applyQueuedItemRelease,
 } from '../../../renderer/utils/executionQueue';
-import type { QueuedItem } from '../../../renderer/types';
+import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
@@ -202,5 +203,34 @@ describe('applyQueuedItemRelease', () => {
 			'a',
 			'b',
 		]);
+	});
+});
+
+describe('resolveQueuedItemTabName', () => {
+	const tab = (id: string, name?: string) => ({ id, name, state: 'idle' }) as unknown as AITab;
+	const session = (tabs: AITab[], orphans: AITab[] = []) =>
+		({ aiTabs: tabs, orphanedThinkingTabs: orphans }) as unknown as Session;
+
+	it('prefers the live tab name over the snapshot taken when the item was queued', () => {
+		const queued = { tabId: 'tab-1', tabName: 'New' };
+		expect(resolveQueuedItemTabName(session([tab('tab-1', 'PR #1427')]), queued)).toBe('PR #1427');
+	});
+
+	it('gives two items on the same tab the same label once that tab is named', () => {
+		const s = session([tab('tab-1', 'PR #1427')]);
+		const first = { tabId: 'tab-1', tabName: 'New' };
+		const second = { tabId: 'tab-1', tabName: 'PR #1427' };
+		expect(resolveQueuedItemTabName(s, first)).toBe(resolveQueuedItemTabName(s, second));
+	});
+
+	it('falls back to an orphaned (closed but draining) tab before the snapshot', () => {
+		const s = session([], [tab('tab-9', 'Draining Tab')]);
+		expect(resolveQueuedItemTabName(s, { tabId: 'tab-9', tabName: 'Stale' })).toBe('Draining Tab');
+	});
+
+	it('falls back to the snapshot when the tab is gone entirely', () => {
+		expect(resolveQueuedItemTabName(session([]), { tabId: 'gone', tabName: 'Old Name' })).toBe(
+			'Old Name'
+		);
 	});
 });

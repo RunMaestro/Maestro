@@ -404,7 +404,11 @@ export interface QueuedItem {
 	commandArgs?: string; // Arguments passed after the command (e.g., 'Blah blah' from '/speckit.plan Blah blah')
 	commandDescription?: string; // Command description for display
 	// Display metadata
-	tabName?: string; // Tab name at time of queuing (for display)
+	// Last-known tab label, snapshotted when the item was queued. This is a
+	// FALLBACK only: the queue UI resolves the live tab name first (see
+	// resolveQueuedItemTabName in utils/executionQueue.ts), so an item queued
+	// into an unnamed tab does not keep reading "New" after auto-naming.
+	tabName?: string;
 	// Read-only mode tracking (for parallel execution bypass)
 	readOnlyMode?: boolean; // True if queued from a read-only tab
 	// Force parallel: dispatches immediately when this tab finishes, skipping cross-tab wait

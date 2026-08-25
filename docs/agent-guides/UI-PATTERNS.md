@@ -556,6 +556,16 @@ Ideas worth reusing:
 
 Anything with an inline `transition` must carry a class the reduced-motion block can name (`.maestro-wheel-row`, `.maestro-effort-stop`, `.maestro-keycap`); the blanket `.transition-*` reset in `index.css` only matches Tailwind's utility classes.
 
+### Queued Item Tab Labels (`resolveQueuedItemTabName`)
+
+A `QueuedItem`'s `turnSettings` is frozen at queue time on purpose. Its `tabName` is NOT: that field is a last-known label, and the queue UI must resolve the tab's name as it is NOW.
+
+`resolveQueuedItemTabName(session, item)` in `src/renderer/utils/executionQueue.ts` is the one resolver, and both surfaces ride it - the tab pills in `ExecutionQueueIndicator` and the tab button on each row of `ExecutionQueueBrowser`. It mirrors `resolveQueuedItemTarget`: the live tab in `session.aiTabs` first, then a closed-but-still-draining tab in `session.orphanedThinkingTabs`, and only then `item.tabName`, which by that point is the last thing we ever knew about a tab that is gone.
+
+Reading `item.tabName` directly is what this replaced. A message queued into a brand-new tab snapshots the label `New`, and it keeps that label forever - including after auto-naming gives the tab a real title, and including next to a LATER message on the SAME tab that snapshotted the real name. The indicator groups by `tabId`, so one tab rendered under whichever name its first item happened to carry, and the browser listed two rows pointing at the same tab under two different names. The queue is exactly where the user decides what to reorder or drop, so two entries for one tab must never read as two tabs.
+
+The producer side still writes the snapshot, via `getTabDisplayName(activeTab)` in `useInputProcessing` - one display-name rule for the fallback and for the live path, rather than a second inline `name || sessionId.split('-')[0] || 'New'` ladder that disagreed with the tab bar.
+
 ### Following Streaming Output (`useStickToBottom`)
 
 `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts` keeps a scrolling box pinned to its newest content while it grows, and lets go the moment the user scrolls up to read something. Returns a callback ref to put on the scrolling element; pass whatever value changes on every append as `contentKey`.
@@ -567,6 +577,16 @@ Reach for it whenever a box has BOTH a capped height and content that arrives ov
 It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same frame as the new content, or the box paints once at the old position and the output visibly jumps afterwards. The 50px bottom threshold matches the transcript's own in `TerminalOutput`, so a card follows its output on the same terms the conversation around it does.
 
 Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
+
+### Rendering Raw Terminal Output (`useAnsiConverter`)
+
+`useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts` returns the theme-aware `ansi-to-html` converter every raw-output surface shares; `createAnsiConverter(theme)` is the non-React form. Feed its result to `getCachedAnsiHtml(text, theme.id, converter)` from `utils/textProcessing`, which converts, sanitizes with DOMPurify, and caches per theme. Callers today: `TerminalOutput` (transcript + terminal pane), `ShellCommandCard` (command mode), `GitCommandRunnerModal` (the Pull / Push console).
+
+The 16 ANSI slots map onto the ACTIVE theme, not the xterm palette, with a semantic fallback (`error` / `success` / `warning` / `accent`) for any slot a theme does not declare. Do NOT hand-roll another `new Convert({...})`: a second palette drifts the first time a theme adds a color, and the two surfaces then disagree about what "bright green" means.
+
+Two things have to be true for color to reach the screen, and the renderer only owns one of them. **Nothing Maestro spawns is a TTY**, so the producer suppresses color by default: git needs `-c color.ui=always` and anything its hooks run (a test suite, a linter) needs `FORCE_COLOR=1` / `CLICOLOR_FORCE=1` in the spawn env. A surface that renders ANSI perfectly still shows a wall of gray if its spawn site forgot that half.
+
+**Collapse carriage returns BEFORE converting.** `processCarriageReturns()` turns `Writing objects: 42%\r...100%` back into the single line a terminal would have shown; converting first emits a screen of dead progress rows instead. And any regex run against output that may now carry color (the "no upstream branch" probe, for one) must go through `stripAnsiCodes()` first, or a code landing mid-phrase hides the match.
 
 ### Text Selection in Modals
 

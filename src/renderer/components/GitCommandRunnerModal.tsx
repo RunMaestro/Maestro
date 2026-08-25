@@ -18,7 +18,8 @@ import { ArrowDownToLine, ArrowUpFromLine, Check, RefreshCw, X } from 'lucide-re
 import { Modal } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { processCarriageReturns } from '../utils/textProcessing';
+import { processCarriageReturns, getCachedAnsiHtml } from '../utils/textProcessing';
+import { useAnsiConverter } from '../hooks/ui/useAnsiConverter';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { useGitCommandRunStore, gitRunKey, selectGitRun } from '../stores/gitCommandRunStore';
 import { useSessionStore } from '../stores/sessionStore';
@@ -44,7 +45,9 @@ const OPERATION_ICONS: Record<GitStreamingOperation, typeof ArrowDownToLine> = {
  * instead of making the user drop to a terminal.
  */
 function needsUpstream(output: string): boolean {
-	return /no upstream branch|--set-upstream/i.test(output);
+	// Strip first: git colors its hints, and a color code landing mid-phrase
+	// would hide the one failure we can offer a one-click fix for.
+	return /no upstream branch|--set-upstream/i.test(stripAnsiCodes(output));
 }
 
 export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunnerModalProps) {
@@ -109,9 +112,15 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 		useGitCommandRunStore.getState().retryWithUpstream(runKey);
 	}, [runKey]);
 
-	const rendered = useMemo(
-		() => processCarriageReturns(stripAnsiCodes(output)).trimEnd(),
-		[output]
+	// git, its hooks, and whatever those hooks run (a test suite, a linter) all
+	// emit color, so the console renders ANSI rather than stripping it - the
+	// colors are the fastest read of a failing push. Carriage returns collapse
+	// FIRST: `Writing objects: 42%\r...100%` is one line the terminal overwrote,
+	// and converting before collapsing would emit a screen of dead progress rows.
+	const ansiConverter = useAnsiConverter(theme);
+	const renderedHtml = useMemo(
+		() => getCachedAnsiHtml(processCarriageReturns(output).trimEnd(), theme.id, ansiConverter),
+		[output, theme.id, ansiConverter]
 	);
 
 	const commandLine = `git ${operation}${setUpstream ? ` --set-upstream origin ${branch ?? 'HEAD'}` : ''}`;
@@ -215,15 +224,22 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 				</div>
 			}
 		>
+			{/* The converted HTML is DOMPurify-sanitized inside getCachedAnsiHtml,
+			    and `escapeXML` means the command's own output can only ever become
+			    text - the only tags in there are the converter's color spans. */}
 			<pre
 				ref={scrollRef}
 				onScroll={handleScroll}
 				className="flex-1 min-h-0 overflow-auto scrollbar-thin p-4 m-0 text-xs font-mono whitespace-pre-wrap break-words select-text"
-				style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textMain }}
+				style={{
+					backgroundColor: theme.colors.bgMain,
+					color: renderedHtml ? theme.colors.textMain : theme.colors.textDim,
+				}}
 				data-testid="git-command-output"
-			>
-				{rendered || (status === 'running' ? 'Starting...' : 'No output')}
-			</pre>
+				{...(renderedHtml
+					? { dangerouslySetInnerHTML: { __html: renderedHtml } }
+					: { children: status === 'running' ? 'Starting...' : 'No output' })}
+			/>
 		</Modal>
 	);
 }

@@ -53,7 +53,10 @@ describe('detectCueAuthFailure', () => {
 			'claude-code'
 		);
 		expect(message).toBeTruthy();
-		expect(message).toMatch(/re-authenticate|login/i);
+		// The bank names the problem and stops there - the remedy belongs to the
+		// surface that shows it, which is the only place that knows whether this
+		// agent signs in at all.
+		expect(message).toMatch(/sign in|log in|authenticat/i);
 	});
 
 	it('detects an auth failure that only appears on stdout', () => {

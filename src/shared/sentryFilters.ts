@@ -101,6 +101,15 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	if (ipcMethod === 'shell:trashItem' || ipcMethod === 'shell:showItemInFolder') {
 		if (/Path does not exist:/i.test(haystack)) return true;
 	}
+	// Electron's catch-all when the platform refuses to move a path to the trash:
+	// the file is open in another process, the volume has no recycle bin (network
+	// share, removable media), or the user lacks permission. Nothing we can do in
+	// code, and the delete is user-initiated - the caller already shows a
+	// "Failed to Erase Directory" toast carrying this message, so the user knows
+	// and can retry. The crash report on top of that is pure noise (MAESTRO-9V).
+	if (ipcMethod === 'shell:trashItem' && /Failed to perform delete operation/i.test(haystack)) {
+		return true;
+	}
 
 	// ENOSPC / EPERM / EACCES bubbling up through settings / sessions writes (same as
 	// rule 1 but the IPC wrapper changes the message prefix). EACCES means the userData

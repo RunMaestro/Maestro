@@ -43,6 +43,9 @@ export { useStickToBottom } from './useStickToBottom';
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
 
+// Theme-aware ANSI -> HTML converter for raw terminal output
+export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
+
 // Theme styling utilities
 export { useThemeStyles } from './useThemeStyles';
 export type { UseThemeStylesDeps, UseThemeStylesReturn, ThemeColors } from './useThemeStyles';

@@ -10,7 +10,7 @@ import React, {
 import { Loader2 } from 'lucide-react';
 import type { LogEntry } from '../../types';
 import type { TerminalOutputProps } from './types';
-import Convert from 'ansi-to-html';
+import { useAnsiConverter } from '../../hooks/ui/useAnsiConverter';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useTranscriptBackfill } from '../../hooks/agent/useTranscriptBackfill';
 import { useDebouncedValue, useProgressiveRenderWindow } from '../../hooks';
@@ -126,34 +126,8 @@ export const TerminalOutput = memo(
 			}
 		}, []);
 
-		const ansiConverter = useMemo(() => {
-			const c = theme.colors;
-			return new Convert({
-				fg: c.textMain,
-				bg: c.bgMain,
-				newline: false,
-				escapeXML: true,
-				stream: false,
-				colors: {
-					0: c.ansiBlack ?? c.textMain,
-					1: c.ansiRed ?? c.error,
-					2: c.ansiGreen ?? c.success,
-					3: c.ansiYellow ?? c.warning,
-					4: c.ansiBlue ?? c.accent,
-					5: c.ansiMagenta ?? c.accentDim,
-					6: c.ansiCyan ?? c.accent,
-					7: c.ansiWhite ?? c.textDim,
-					8: c.ansiBrightBlack ?? c.textDim,
-					9: c.ansiBrightRed ?? c.error,
-					10: c.ansiBrightGreen ?? c.success,
-					11: c.ansiBrightYellow ?? c.warning,
-					12: c.ansiBrightBlue ?? c.accent,
-					13: c.ansiBrightMagenta ?? c.accentText,
-					14: c.ansiBrightCyan ?? c.accentText,
-					15: c.ansiBrightWhite ?? c.textMain,
-				},
-			});
-		}, [theme]);
+		// Theme-aware ANSI palette, shared with every other raw-output surface.
+		const ansiConverter = useAnsiConverter(theme);
 
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);

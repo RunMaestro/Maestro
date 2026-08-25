@@ -345,6 +345,26 @@ describe('ExecutionQueueIndicator', () => {
 			expect(hasTabB || hasOverflowIndicator).toBe(true);
 		});
 
+		it("labels a pill from the live tab, not from each item's queue-time snapshot", () => {
+			// Both items target tab-1, but the first was queued before auto-naming
+			// ran, so its snapshot still reads "New". Grouping keys on tabId, so a
+			// snapshot-derived label made one tab render as two different names
+			// depending on which item happened to arrive first.
+			const session = createSession({
+				aiTabs: [{ id: 'tab-1', name: 'PR1427', state: 'idle' }] as unknown as Session['aiTabs'],
+				executionQueue: [
+					createQueuedItem({ tabId: 'tab-1', tabName: 'New' }),
+					createQueuedItem({ tabId: 'tab-1', tabName: 'PR1427' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
+			expect(root).toHaveTextContent('PR1427 (2)');
+			expect(root.textContent).not.toContain('New');
+		});
+
 		it('should use "Unknown" for items without tabName', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem({ tabName: undefined })],

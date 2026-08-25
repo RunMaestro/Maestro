@@ -129,6 +129,45 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		// MAESTRO-9V: Electron's catch-all when the OS refuses to trash a path
+		// (file open elsewhere, no recycle bin on the volume, permissions). The
+		// delete is user-initiated and the caller already toasts this exact
+		// message, so the crash report on top of it is noise.
+		it('drops the generic trash failure through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Failed to perform delete operation"
+					)
+				)
+			).toBe(true);
+		});
+
+		it('keeps a generic delete failure that did NOT come from shell:trashItem', () => {
+			// The rule is scoped to the one IPC channel we know shows a toast -
+			// the same words arriving from anywhere else are still signal.
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'fs:deleteFile': Error: Failed to perform delete operation"
+					)
+				)
+			).toBe(false);
+		});
+
+		it('keeps unrelated shell:trashItem failures', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: EBUSY: resource busy or locked"
+					)
+				)
+			).toBe(false);
+		});
+
 		it('drops EACCES on the sessions file bubbling up through sessions:setMany', () => {
 			expect(
 				shouldDropSentryEvent(

@@ -30,6 +30,18 @@ import {
 } from '../../utils/shellCommandInput';
 import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { useEventListener } from '../utils/useEventListener';
+
+/**
+ * Window event that runs Forced Parallel Send from outside the composer.
+ *
+ * The composer owns the behavior (it holds the draft and `processInput`), so
+ * the window-level keyboard handler asks for it by name rather than
+ * reimplementing the decision. Exported here, next to its only listener, so the
+ * two ends of the bridge stay in one place.
+ */
+export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
 
 // ============================================================================
 // Dependencies interface
@@ -126,6 +138,37 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		setCommandHistoryFilter,
 		setCommandHistorySelectedIndex,
 	} = useInputContext();
+
+	/**
+	 * Forced Parallel Send, from wherever the user pressed it.
+	 *
+	 * What the chord acts on - the tab's draft and its execution queue - belongs
+	 * to the TAB, not to the textarea, so gating it on composer focus made it
+	 * look broken from the transcript, which is exactly where the queued items
+	 * the user wants to force through are drawn. `useMainKeyboardHandler`
+	 * dispatches {@link FORCED_PARALLEL_SEND_EVENT} when the chord reaches the
+	 * window unhandled; both paths land here so the two can never drift on what
+	 * an empty draft means.
+	 */
+	const runForcedParallelSend = useCallback(() => {
+		if (!useSettingsStore.getState().forcedParallelExecution) return;
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (activeSession?.inputMode !== 'ai') return;
+
+		trackShortcutUsage('forcedParallelSend');
+		// Empty draft: open the Force Send confirmation for the most recent
+		// eligible queued item - the keyboard equivalent of clicking that item's
+		// Force Send button. With text in the draft, send the draft in parallel.
+		if (getInputValue().trim().length === 0) {
+			logger.info('[ForcedParallel] Empty input, dispatching triggerForceSendQueued');
+			window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
+			return;
+		}
+		logger.info('[ForcedParallel] Draft present, calling processInput');
+		processInput(undefined, { forceParallel: true });
+	}, [getInputValue, processInput]);
+
+	useEventListener(FORCED_PARALLEL_SEND_EVENT, runForcedParallelSend);
 
 	const handleInputKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -427,55 +470,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// Note: This check is inside the `e.key === 'Enter'` guard, so the shortcut's
 				// main key must be Enter. Non-Enter shortcuts are not supported by design.
 				if (settings.forcedParallelExecution && activeSession?.inputMode === 'ai') {
-					const shortcuts = settings.shortcuts;
-					const fpShortcut = shortcuts.forcedParallelSend;
-					if (fpShortcut) {
-						const fpKeys = fpShortcut.keys.map((k: string) => k.toLowerCase());
-						const fpNeedsMeta =
-							fpKeys.includes('meta') || fpKeys.includes('ctrl') || fpKeys.includes('command');
-						const fpNeedsShift = fpKeys.includes('shift');
-						const fpNeedsAlt = fpKeys.includes('alt');
-						const fpMainKey = fpKeys[fpKeys.length - 1];
-						const metaPressed = e.metaKey || e.ctrlKey;
-
-						logger.info('[ForcedParallel] Shortcut check:', undefined, {
-							metaPressed,
-							fpNeedsMeta,
-							shiftKey: e.shiftKey,
-							fpNeedsShift,
-							altKey: e.altKey,
-							fpNeedsAlt,
-							key: e.key.toLowerCase(),
-							fpMainKey,
-							match:
-								metaPressed === fpNeedsMeta &&
-								e.shiftKey === fpNeedsShift &&
-								e.altKey === fpNeedsAlt &&
-								e.key.toLowerCase() === fpMainKey,
-						});
-
-						if (
-							metaPressed === fpNeedsMeta &&
-							e.shiftKey === fpNeedsShift &&
-							e.altKey === fpNeedsAlt &&
-							e.key.toLowerCase() === fpMainKey
-						) {
-							e.preventDefault();
-							trackShortcutUsage('forcedParallelSend');
-							// Empty input + shortcut: open the Force Send confirmation modal for
-							// the most recent eligible queued item (keyboard equivalent of
-							// clicking the per-item Force Send button).
-							if (inputValue.trim().length === 0) {
-								logger.info(
-									'[ForcedParallel] Shortcut matched on empty input, dispatching triggerForceSendQueued'
-								);
-								window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
-								return;
-							}
-							logger.info('[ForcedParallel] Shortcut matched, calling processInput');
-							processInput(undefined, { forceParallel: true });
-							return;
-						}
+					const fpShortcut = settings.shortcuts.forcedParallelSend;
+					if (fpShortcut && eventMatchesShortcutKeys(e, fpShortcut.keys)) {
+						e.preventDefault();
+						runForcedParallelSend();
+						return;
 					}
 				}
 
