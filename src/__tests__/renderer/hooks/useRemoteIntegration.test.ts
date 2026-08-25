@@ -973,6 +973,11 @@ describe('useRemoteIntegration', () => {
 				aiTabs: [createMockAITab({ id: 'tab-1' })],
 				snoozedTabs: [
 					{
+						// `type` is the discriminant on the snooze union - a snooze can
+						// now hold a file, browser, terminal, or whole group, and the
+						// wake path switches on it. Omitting it leaves the entry
+						// matching no branch, so the tab reads as simply not there.
+						type: 'ai',
 						id: 'snooze-1',
 						tab: snoozedTab,
 						unifiedIndex: 0,
