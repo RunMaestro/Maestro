@@ -272,18 +272,24 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
-	// The "tile a NEW tab" family. Only the terminal ships with a binding: it sits
-	// on Cmd+Shift+J, one modifier away from Cmd+J (open a new terminal tab),
-	// because a terminal beside your work is the common case. The other three are
-	// registered UNBOUND (`keys: []`) rather
+	// The "tile a NEW tab" family, all four registered UNBOUND (`keys: []`) rather
 	// than left out - that keeps them in Settings -> Shortcuts where a user can
-	// record their own binding, without Maestro claiming three more default chords
-	// nobody asked for. An empty `keys` never matches an event (see isShortcut) and
-	// renders as "Not set".
+	// record their own binding, without Maestro claiming four default chords
+	// nobody asked for. An empty `keys` never matches an event (see isShortcut)
+	// and renders as "Not set".
+	//
+	// The terminal one used to ship on Cmd+Shift+J, reasoned as "one modifier away
+	// from Cmd+J". That reasoning held against the defaults table and not against
+	// real installs: Cmd+Shift+J was jumpToBottom's ORIGINAL default (b37423abf),
+	// and the migration that later moved it only covered the Opt+J era, so every
+	// install predating that still holds Cmd+Shift+J for Jump to Bottom. Shipping
+	// a new default onto an occupied chord put two live actions on one key. The
+	// migration below now covers it, and this ships unbound like its siblings -
+	// claiming a fourth chord was the same act the comment argues against.
 	tileTerminalBelow: {
 		id: 'tileTerminalBelow',
 		label: 'Tile New Terminal Below',
-		keys: ['Meta', 'Shift', 'j'],
+		keys: [],
 		windowScoped: true,
 	},
 	tileAiBelow: {
