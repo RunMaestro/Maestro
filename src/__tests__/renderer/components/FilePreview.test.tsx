@@ -8,6 +8,7 @@ import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnota
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
@@ -1951,6 +1952,16 @@ print("world")
 	});
 
 	describe('bare font-zoom keys', () => {
+		// The scale is a persisted reading preference (`useScalePreference` writes
+		// it to localStorage), so a case that zooms leaves the next one starting
+		// at its value instead of at 100%. Install a fresh in-memory Storage per
+		// case: it resets the key AND makes the environment deterministic, which
+		// is why this only ever went red on CI - a local `vitest run` gets a
+		// Storage-less jsdom where the writes silently no-op and nothing leaks.
+		beforeEach(() => {
+			installLocalStorageMock();
+		});
+
 		// The floating zoom control also answers bare -/+ and 0, so a reader can
 		// resize the pane without reaching for the pill. Guarded on the view
 		// being zoomable and on the event target not being a text input.

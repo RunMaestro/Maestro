@@ -28,6 +28,7 @@ import { codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
+import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
@@ -680,9 +681,22 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
 				}
 			} catch (error: unknown) {
-				captureException(error, {
-					extra: { sessionId, toolType: session.toolType, mode: 'ai', operation: 'remote-spawn' },
-				});
+				// A remote command that lands while the agent is mid-turn is refused
+				// by ProcessManager, on purpose - the session already owns a live
+				// process. That is an ordinary race, not a fault: the caller gets an
+				// honest `accepted: false` receipt below and the tab gets the error
+				// log, so the user is told either way. Reporting it paged Sentry for
+				// nothing (MAESTRO-ZS). Every other spawn failure still reports.
+				if (!isAgentAlreadyRunningError(error)) {
+					captureException(error, {
+						extra: {
+							sessionId,
+							toolType: session.toolType,
+							mode: 'ai',
+							operation: 'remote-spawn',
+						},
+					});
+				}
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				// Reports the failure honestly for everything that fails before the
 				// grace timer fires - the pre-handover failures (agent config
