@@ -399,6 +399,44 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * Kilo (KiloCode) - https://github.com/Kilo-Org/kilocode
+	 *
+	 * Kilo is a fork of OpenCode with the same CLI flags, the same JSONL event
+	 * shape, and the same session storage layout, so its capabilities mirror
+	 * OpenCode's entry above verbatim. Changing one of them almost always means
+	 * changing the other.
+	 */
+	kilo: {
+		supportsResume: true, // --session flag (sessionID in output) - Verified
+		supportsReadOnlyMode: true, // --agent plan (plan mode) - Verified
+		supportsJsonOutput: true, // --format json - Verified
+		supportsSessionId: true, // sessionID in JSON output (camelCase) - Verified
+		supportsImageInput: true, // -f, --file flag documented - Documented
+		supportsImageInputOnResume: true, // -f flag works with --session flag - Documented
+		supportsSlashCommands: true, // Built-in + custom commands via .kilo/commands/ and kilo.json
+		supportsSessionStorage: true, // ~/.local/share/kilo/storage/ (JSON files) or kilo.db
+		supportsCostTracking: true, // part.cost in step_finish events - Verified
+		supportsUsageStats: true, // part.tokens in step_finish events - Verified
+		supportsBatchMode: true, // run subcommand (auto-approves all permissions) - Verified
+		requiresPromptToStart: true, // Kilo requires 'run' subcommand with prompt, no interactive mode via PTY
+		supportsStreaming: true, // Streams JSONL events - Verified
+		supportsResultMessages: true, // step_finish with part.reason:"stop" - Verified
+		supportsModelSelection: true, // --model provider/model (e.g., 'ollama/qwen3:8b') - Verified
+		supportsStreamJsonInput: false, // Uses positional arguments for prompt
+		supportsPromptViaStdin: true, // `kilo run` reads the prompt from stdin
+		supportsThinkingDisplay: true, // Emits streaming text chunks
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Supports inline wizard structured output
+		supportsGroupChatModeration: true, // Can serve as group chat moderator
+		usesJsonLineOutput: true, // Uses JSONL output format
+		usesCombinedContextWindow: false, // Depends on model provider
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // No directory-grant flag (--dir only relocates the cwd)
+	},
+
+	/**
 	 * Factory Droid - Enterprise AI coding assistant from Factory
 	 * https://docs.factory.ai/cli
 	 *

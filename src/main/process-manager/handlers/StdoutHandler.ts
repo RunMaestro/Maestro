@@ -550,7 +550,11 @@ export class StdoutHandler {
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
 		// Reset resultEmitted on each new step so the last text event wins instead of the first.
-		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
+		// Kilo is a fork of OpenCode and emits the same step sequence.
+		if (
+			event.type === 'init' &&
+			(managedProcess.toolType === 'opencode' || managedProcess.toolType === 'kilo')
+		) {
 			managedProcess.resultEmitted = false;
 			managedProcess.streamedText = '';
 		}
@@ -586,12 +590,12 @@ export class StdoutHandler {
 			this.emitter.emit('slash-commands', sessionId, slashCommands);
 		}
 
-		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
+		// Handle streaming text events (OpenCode/Kilo, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
 			// Thinking panel routing:
 			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
 			//   and flush once at exit).
-			// - Grok / Codex / OpenCode: only isReasoning deltas → thinking-chunk.
+			// - Grok / Codex / OpenCode / Kilo: only isReasoning deltas → thinking-chunk.
 			//   These stream the final answer as partial `text` WITHOUT isReasoning;
 			//   dumping those into the thinking panel makes the wizard look finished
 			//   while tools still run (Grok emits no tool events on the stream).
@@ -605,7 +609,10 @@ export class StdoutHandler {
 			const toolType = managedProcess.toolType;
 			if (toolType !== 'copilot-cli') {
 				const requiresReasoningTag =
-					toolType === 'grok' || toolType === 'codex' || toolType === 'opencode';
+					toolType === 'grok' ||
+					toolType === 'codex' ||
+					toolType === 'opencode' ||
+					toolType === 'kilo';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}

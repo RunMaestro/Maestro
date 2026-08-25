@@ -152,6 +152,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			// Scoop package manager (OpenCode, other tools)
 			path.join(home, 'scoop', 'shims'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current'),
+			path.join(home, 'scoop', 'apps', 'kilo', 'current'),
 			// Chocolatey (OpenCode, other tools)
 			path.join(process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey', 'bin'),
 			// Go binaries (some tools installed via 'go install')
@@ -175,6 +176,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
+			`${home}/.kilo/bin`, // Kilo installer default location
 			'/usr/bin',
 			'/bin',
 			'/usr/sbin',
@@ -388,6 +390,18 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm (has known issues on Windows, but check anyway)
 			...npmGlobal('opencode'),
 		],
+		kilo: [
+			// npm global installation (@kilocode/cli)
+			...npmGlobal('kilo'),
+			// Scoop installation
+			path.join(home, 'scoop', 'shims', 'kilo.exe'),
+			path.join(home, 'scoop', 'apps', 'kilo', 'current', 'kilo.exe'),
+			// Volta - Node version manager
+			path.join(home, '.volta', 'bin', 'kilo'),
+			path.join(home, '.volta', 'bin', 'kilo.cmd'),
+			// Go install
+			...goBin('kilo'),
+		],
 		'copilot-cli': [
 			// WinGet installation (primary method on Windows)
 			path.join(programFiles, 'GitHub Copilot CLI', 'copilot.exe'),
@@ -556,6 +570,18 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...homebrew('opencode'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('opencode'),
+		],
+		kilo: [
+			// Kilo installer default location
+			path.join(home, '.kilo', 'bin', 'kilo'),
+			// Go install location
+			path.join(home, 'go', 'bin', 'kilo'),
+			// User local bin
+			...localBin('kilo'),
+			// Homebrew paths
+			...homebrew('kilo'),
+			// Node version managers (nvm, fnm, volta, etc.)
+			...nodeVersionManagers('kilo'),
 		],
 		'copilot-cli': [
 			// Homebrew installation (primary method on macOS)

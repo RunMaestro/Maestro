@@ -654,6 +654,63 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'kilo',
+		name: 'Kilo',
+		binaryName: 'kilo',
+		command: 'kilo',
+		args: [], // Base args (none for Kilo - batch mode uses 'run' subcommand)
+		// Kilo (KiloCode) is a fork of OpenCode and shares its whole CLI surface:
+		// batch mode: kilo run --format json [--model provider/model] [--session <id>] [--agent plan] "prompt"
+		// Anything changed here almost certainly needs the same change on 'opencode'.
+		batchModePrefix: ['run'],
+		jsonOutputArgs: ['--format', 'json'],
+		resumeArgs: (sessionId: string) => ['--session', sessionId],
+		readOnlyArgs: ['--agent', 'plan'], // Read-only/plan mode
+		readOnlyCliEnforced: true, // CLI enforces read-only via --agent plan
+		modelArgs: (modelId: string) => ['--model', modelId],
+		imageArgs: (imagePath: string) => ['-f', imagePath],
+		// YOLO mode (allow all permissions including external_directory) plus the
+		// question tool disabled via both the permission and tools blocks - the
+		// question tool waits on stdin, which hangs batch mode.
+		// Users can override by setting customEnvVars in agent config.
+		defaultEnvVars: {
+			KILO_CONFIG_CONTENT:
+				'{"permission":{"*":"allow","external_directory":"allow","question":"deny"},"tools":{"question":false}}',
+		},
+		// In read-only mode, keep blanket permission grants to prevent stdin prompts
+		// that hang batch mode. Read-only enforcement comes from --agent plan
+		// (readOnlyArgs), not env config.
+		readOnlyEnvOverrides: {
+			KILO_CONFIG_CONTENT:
+				'{"permission":{"*":"allow","external_directory":"allow","question":"deny"},"tools":{"question":false}}',
+		},
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model to use (e.g., "ollama/qwen3:8b", "anthropic/claude-sonnet-4-20250514"). Leave empty for default.',
+				default: '', // Empty string means use Kilo's default model
+				argBuilder: (value: string) => {
+					// Only add --model arg if a model is specified
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model (e.g., 400000 for Claude/GPT-5.2, 128000 for GPT-4o).',
+				default: 128000,
+			},
+		],
+	},
+	{
 		id: 'factory-droid',
 		name: 'Factory Droid',
 		binaryName: 'droid',

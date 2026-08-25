@@ -126,6 +126,8 @@ export const COPILOT_BUILTIN_COMMANDS: Record<string, string> = {
 const AGENT_BUILTIN_COMMANDS: Record<string, Record<string, string>> = {
 	'claude-code': CLAUDE_BUILTIN_COMMANDS,
 	opencode: OPENCODE_BUILTIN_COMMANDS,
+	// Kilo is a fork of OpenCode and ships the same built-in command set.
+	kilo: OPENCODE_BUILTIN_COMMANDS,
 	copilot: COPILOT_BUILTIN_COMMANDS,
 };
 

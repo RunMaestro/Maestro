@@ -24,6 +24,7 @@ import {
 	type ClaudeTokenMode,
 } from '../../../shared/claudeTokenMode';
 import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/opencodeAgentArg';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
@@ -755,11 +756,11 @@ export function AgentConfigPanel({
 				</div>
 			)}
 
-			{/* OpenCode primary-agent selection.
+			{/* OpenCode primary-agent selection, shared with its forks (Kilo).
 			    Backed by Custom Arguments (`--agent <name>`) rather than a config
 			    option, because Custom Arguments are per-agent while config options
 			    are shared by every agent on the provider. */}
-			{agent.id === 'opencode' && (
+			{(agent.id === 'opencode' || agent.id === 'kilo') && (
 				<div
 					className={`${padding} rounded border`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -767,12 +768,12 @@ export function AgentConfigPanel({
 					<label
 						className="block text-xs font-medium mb-2"
 						style={{ color: theme.colors.textDim }}
-						htmlFor="opencode-agent-input"
+						htmlFor={`${agent.id}-agent-input`}
 					>
-						OpenCode Agent (optional)
+						{getAgentDisplayName(agent.id)} Agent (optional)
 					</label>
 					<input
-						id="opencode-agent-input"
+						id={`${agent.id}-agent-input`}
 						type="text"
 						value={readOpenCodeAgentArg(customArgs)}
 						onChange={(e) => onCustomArgsChange(writeOpenCodeAgentArg(customArgs, e.target.value))}
@@ -783,10 +784,11 @@ export function AgentConfigPanel({
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					/>
 					<p className="text-xs opacity-50 mt-2">
-						Runs as <span className="font-mono">opencode run --agent &lt;name&gt;</span> so this
-						Maestro agent keeps that OpenCode agent&apos;s persona, model, and instructions. Accepts
-						plugin-provided agents (oh-my-opencode and friends), which OpenCode resolves at run time
-						even when <span className="font-mono">opencode agent list</span> does not show them. The
+						Runs as <span className="font-mono">{agent.command} run --agent &lt;name&gt;</span> so
+						this Maestro agent keeps that {getAgentDisplayName(agent.id)} agent&apos;s persona,
+						model, and instructions. Accepts plugin-provided agents (oh-my-opencode and friends),
+						which are resolved at run time even when{' '}
+						<span className="font-mono">{agent.command} agent list</span> does not show them. The
 						value is stored in Custom Arguments below. Plan mode still forces{' '}
 						<span className="font-mono">--agent plan</span>.
 					</p>

@@ -59,6 +59,7 @@ const LOG_CONTEXT = '[TokenUsageAccessor]';
 const COVERAGE_BY_AGENT: Record<string, TokenCoverage> = {
 	'claude-code': 'full',
 	opencode: 'full',
+	kilo: 'full', // Fork of OpenCode: same storage schema, same token fields
 	'factory-droid': 'full',
 	codex: 'partial',
 	'copilot-cli': 'partial',

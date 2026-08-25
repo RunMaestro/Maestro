@@ -9,6 +9,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 | `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                     |
 | `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                          |
 | `opencode`      | OpenCode        | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                   |
+| `kilo`          | Kilo            | **Beta**   | Fork of OpenCode: same `run --format json` CLI, JSONL events, and storage layout under `~/.local/share/kilo` / `kilo.db`                           |
 | `factory-droid` | Factory Droid   | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
 | `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
 | `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |

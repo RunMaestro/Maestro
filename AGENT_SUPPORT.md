@@ -511,6 +511,7 @@ Current support:
 | `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root     |
 | `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write) |
 | `opencode`      | none (`--dir` only moves the cwd) | Prompt-only               |
+| `kilo`          | none (`--dir` only moves the cwd) | Prompt-only               |
 | `factory-droid` | unverified                        | Prompt-only               |
 | `gemini-cli`    | unverified                        | Prompt-only               |
 
@@ -1008,6 +1009,58 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 - [OpenCode Config Docs](https://opencode.ai/docs/config/)
 - [OpenCode Providers Docs](https://opencode.ai/docs/providers/)
 - [OpenCode Models Docs](https://opencode.ai/docs/models/)
+
+---
+
+### Kilo (KiloCode) 🔄 Fork of OpenCode
+
+| Aspect           | Value                                                 |
+| ---------------- | ----------------------------------------------------- |
+| Binary           | `kilo`                                                |
+| npm package      | `@kilocode/cli`                                       |
+| JSON Output      | `--format json`                                       |
+| Resume           | `--session <session-id>`                              |
+| Read-only        | `--agent plan`                                        |
+| Session ID Field | `sessionID` (camelCase)                               |
+| Session Storage  | ✅ `~/.local/share/kilo/storage/` or `kilo.db`        |
+| YOLO Mode        | ✅ Auto-enabled in batch mode (`KILO_CONFIG_CONTENT`) |
+| Model Selection  | `--model provider/model`                              |
+| Config File      | `~/.config/kilo/kilo.json` or project `kilo.json`     |
+
+[Kilo](https://github.com/Kilo-Org/kilocode) is a fork of OpenCode. The `run`
+subcommand, the CLI flags, the JSONL event stream, and the on-disk session
+layout are all identical - only the binary name, the data directory, the
+database filename, and the config environment variable are rebranded. Maestro
+therefore implements Kilo as a thin layer over the OpenCode integration rather
+than as a parallel copy:
+
+- **Parser:** `KiloOutputParser` (`src/main/parsers/kilo-output-parser.ts`)
+  subclasses `OpenCodeOutputParser` and overrides only `agentId`.
+- **Session storage:** `KiloSessionStorage`
+  (`src/main/storage/kilo-session-storage.ts`) subclasses
+  `OpenCodeSessionStorage` and supplies an `OpenCodeStorageBrand` of
+  `{ dirName: 'kilo', dbFileName: 'kilo.db' }`. Every local, remote, and SQLite
+  path is derived from that one value.
+- **Error patterns:** Kilo reuses `OPENCODE_ERROR_PATTERNS` verbatim - the
+  messages are brand-neutral, so sharing the set is what stops the two from
+  drifting apart.
+- **Capabilities:** mirror OpenCode's entry exactly.
+
+**Read the OpenCode section above for event types, storage layout, and provider
+configuration** - all of it applies, with `opencode` swapped for `kilo`.
+
+**Known gaps** (OpenCode-only for now, tracked as follow-ups):
+
+- Model discovery reads `kilo models` but does not additionally parse
+  `kilo.json`, so a provider defined purely in config must be typed into the
+  Model field by hand.
+- No custom slash-command discovery from `.kilo/commands/` (the built-in
+  command set is wired up).
+- No Coworking MCP installer and no `MCP_CONFIG_BY_AGENT` entry.
+
+**Unverified against a live binary:** the `KILO_CONFIG_CONTENT` environment
+variable name and the `kilo.db` filename are taken from the fork's rebranding
+pattern and have not been confirmed against a shipping install.
 
 ---
 

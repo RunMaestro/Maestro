@@ -108,10 +108,12 @@ export class StderrHandler {
 			}
 
 			// For JSONL agents with output parsers (copilot-cli, codex, opencode,
-			// factory-droid), suppress stderr display. These agents emit MCP server
-			// startup messages, shell profile banners, and other initialization noise
-			// to stderr that should not be shown to the user. Error detection has
-			// already happened above, so real errors are already captured.
+			// kilo, factory-droid), suppress stderr display. These agents emit MCP
+			// server startup messages, shell profile banners, and other initialization
+			// noise to stderr that should not be shown to the user (Kilo's
+			// "Unable to check client-server compatibility" warning lands here too).
+			// Error detection has already happened above, so real errors are already
+			// captured.
 			if (outputParser && toolType !== 'codex') {
 				// Codex is excluded because it has its own special stderr handling below
 				// that re-emits actual response content from stderr as data.

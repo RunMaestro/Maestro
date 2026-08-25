@@ -588,7 +588,8 @@ export class FeedbackConversationManager {
 				if (agent.jsonOutputArgs) args.push(...agent.jsonOutputArgs);
 				return args;
 			}
-			case 'opencode': {
+			case 'opencode':
+			case 'kilo': {
 				const args = [...baseArgs];
 				if (agent.jsonOutputArgs) args.push(...agent.jsonOutputArgs);
 				return args;

@@ -241,6 +241,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `factory-droid` | Factory Droid   | **Beta**   |
 | `grok`          | Grok CLI        | **Beta**   |
 | `hermes`        | Hermes          | **Beta**   |
+| `kilo`          | Kilo            | **Beta**   |
 | `omp`           | Oh My Pi        | **Beta**   |
 | `opencode`      | OpenCode        | **Beta**   |
 | `pi`            | Pi              | **Beta**   |

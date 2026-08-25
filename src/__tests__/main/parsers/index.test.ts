@@ -101,21 +101,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('antigravity')).toBe(true);
 		});
 
-		it('should register exactly 10 parsers', () => {
+		it('should register Kilo parser', () => {
+			expect(hasOutputParser('kilo')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('kilo')).toBe(true);
+		});
+
+		it('should register exactly 11 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(10);
+			expect(parsers.length).toBe(11);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(10);
+			expect(getAllOutputParsers().length).toBe(11);
 
-			// Second initialization should still have exactly 10
+			// Second initialization should still have exactly 11
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(10);
+			expect(getAllOutputParsers().length).toBe(11);
 		});
 	});
 

@@ -44,25 +44,44 @@ const LOG_CONTEXT = '[OpenCodeSessionStorage]';
 const TRAILING_SEP_RE = new RegExp(`${path.sep.replace('\\', '\\\\')}+$`);
 
 /**
- * Candidate OpenCode data base directories, in preference order.
+ * On-disk brand of an OpenCode-compatible CLI.
+ *
+ * OpenCode forks keep the whole storage layout and only rename the directory
+ * and the database file, so every path below is derived from this one string.
+ * Kilo (KiloCode) is such a fork - see {@link KiloSessionStorage}.
+ */
+export interface OpenCodeStorageBrand {
+	/** Data directory name, e.g. `opencode` in `~/.local/share/opencode`. */
+	readonly dirName: string;
+	/** SQLite file name inside the data directory, e.g. `opencode.db`. */
+	readonly dbFileName: string;
+}
+
+export const OPENCODE_BRAND: OpenCodeStorageBrand = {
+	dirName: 'opencode',
+	dbFileName: 'opencode.db',
+};
+
+/**
+ * Candidate data base directories for a brand, in preference order.
  *
  * OpenCode (Go binary) uses XDG-style paths on all platforms - including
  * Windows, where `opencode db path` resolves to `%USERPROFILE%\.local\share\opencode`
  * rather than `%APPDATA%`. We keep `%APPDATA%\opencode` as a Windows-only
  * fallback for any legacy/alternate installs.
  */
-function getOpenCodeDataDirCandidates(): string[] {
+function getDataDirCandidates(brand: OpenCodeStorageBrand): string[] {
 	const candidates: string[] = [];
 	const home = os.homedir();
 
 	if (process.env.XDG_DATA_HOME) {
-		candidates.push(path.join(process.env.XDG_DATA_HOME, 'opencode'));
+		candidates.push(path.join(process.env.XDG_DATA_HOME, brand.dirName));
 	}
-	candidates.push(path.join(home, '.local', 'share', 'opencode'));
+	candidates.push(path.join(home, '.local', 'share', brand.dirName));
 
 	if (isWindows()) {
 		const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-		candidates.push(path.join(appData, 'opencode'));
+		candidates.push(path.join(appData, brand.dirName));
 	}
 
 	return candidates;
@@ -72,8 +91,8 @@ function getOpenCodeDataDirCandidates(): string[] {
  * Pick the first candidate that exists on disk. If none exist, return the
  * preferred candidate so callers still get a sensible default path to log.
  */
-function getOpenCodeDataDir(): string {
-	const candidates = getOpenCodeDataDirCandidates();
+function getDataDir(brand: OpenCodeStorageBrand): string {
+	const candidates = getDataDirCandidates(brand);
 	for (const candidate of candidates) {
 		if (fsSync.existsSync(candidate)) {
 			return candidate;
@@ -83,31 +102,45 @@ function getOpenCodeDataDir(): string {
 }
 
 /**
- * Get OpenCode JSON storage directory (pre-v1.2)
- */
-function getOpenCodeStorageDir(): string {
-	return path.join(getOpenCodeDataDir(), 'storage');
-}
-
-/**
- * Get OpenCode SQLite database path (v1.2+).
+ * Get the SQLite database path (v1.2+).
  *
- * Checks each candidate data dir for an existing `opencode.db` and returns
- * the first hit. Falls back to the preferred candidate's path when none exist,
- * so callers still get a deterministic value (existence is re-checked at use).
+ * Checks each candidate data dir for an existing db file and returns the first
+ * hit. Falls back to the preferred candidate's path when none exist, so callers
+ * still get a deterministic value (existence is re-checked at use).
  */
-function getOpenCodeDbPath(): string {
-	for (const candidate of getOpenCodeDataDirCandidates()) {
-		const dbPath = path.join(candidate, 'opencode.db');
+function getDbPath(brand: OpenCodeStorageBrand): string {
+	const candidates = getDataDirCandidates(brand);
+	for (const candidate of candidates) {
+		const dbPath = path.join(candidate, brand.dbFileName);
 		if (fsSync.existsSync(dbPath)) {
 			return dbPath;
 		}
 	}
-	return path.join(getOpenCodeDataDirCandidates()[0], 'opencode.db');
+	return path.join(candidates[0], brand.dbFileName);
 }
 
-const OPENCODE_STORAGE_DIR = getOpenCodeStorageDir();
-const OPENCODE_DB_PATH = getOpenCodeDbPath();
+/**
+ * Resolved paths per brand.
+ *
+ * These probe the filesystem, and the pre-fork code resolved them exactly once
+ * at module load. Memoizing per brand keeps that cost while letting a second
+ * brand (Kilo) resolve its own paths - `getMessageDir()` and friends are called
+ * once per session in listing loops, so re-probing on every call would turn a
+ * one-time stat into thousands.
+ */
+const brandPathCache = new Map<string, { storageDir: string; dbPath: string }>();
+
+function getBrandPaths(brand: OpenCodeStorageBrand): { storageDir: string; dbPath: string } {
+	const cached = brandPathCache.get(brand.dirName);
+	if (cached) return cached;
+
+	const resolved = {
+		storageDir: path.join(getDataDir(brand), 'storage'),
+		dbPath: getDbPath(brand),
+	};
+	brandPathCache.set(brand.dirName, resolved);
+	return resolved;
+}
 
 /**
  * OpenCode project metadata structure
@@ -260,7 +293,7 @@ interface SqlitePartData {
  * Open the OpenCode SQLite database in read-only mode.
  * Returns null if the database file doesn't exist.
  */
-function openOpenCodeDb(dbPath: string = OPENCODE_DB_PATH): Database.Database | null {
+function openOpenCodeDb(dbPath: string): Database.Database | null {
 	if (!fsSync.existsSync(dbPath)) {
 		return null;
 	}
@@ -280,8 +313,8 @@ function openOpenCodeDb(dbPath: string = OPENCODE_DB_PATH): Database.Database | 
  * Open the DB, run a callback, close the DB.
  * Returns null if the database file doesn't exist.
  */
-function withOpenCodeDb<T>(fn: (db: Database.Database) => T): T | null {
-	const db = openOpenCodeDb();
+function withOpenCodeDb<T>(dbPath: string, fn: (db: Database.Database) => T): T | null {
+	const db = openOpenCodeDb(dbPath);
 	if (!db) return null;
 	try {
 		return fn(db);
@@ -293,9 +326,9 @@ function withOpenCodeDb<T>(fn: (db: Database.Database) => T): T | null {
 /**
  * Check if a session exists in the SQLite database (lightweight check).
  */
-function sessionExistsInSqlite(sessionId: string): boolean {
+function sessionExistsInSqlite(sessionId: string, dbPath: string): boolean {
 	return (
-		withOpenCodeDb((db) => {
+		withOpenCodeDb(dbPath, (db) => {
 			if (!tableExists(db, 'session')) return false;
 			return !!db.prepare('SELECT 1 FROM session WHERE id = ? LIMIT 1').get(sessionId);
 		}) ?? false
@@ -410,32 +443,54 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'opencode';
 
 	/**
+	 * The on-disk brand this instance reads. Subclasses for OpenCode forks
+	 * override this and inherit every path below.
+	 */
+	protected get brand(): OpenCodeStorageBrand {
+		return OPENCODE_BRAND;
+	}
+
+	/**
+	 * Get the JSON storage directory (pre-v1.2)
+	 */
+	protected getStorageDir(): string {
+		return getBrandPaths(this.brand).storageDir;
+	}
+
+	/**
+	 * Get the SQLite database path (v1.2+)
+	 */
+	protected getDbPath(): string {
+		return getBrandPaths(this.brand).dbPath;
+	}
+
+	/**
 	 * Get the session directory for a project (local)
 	 */
 	private getSessionDir(projectId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'session', projectId);
+		return path.join(this.getStorageDir(), 'session', projectId);
 	}
 
 	/**
 	 * Get the message directory for a session (local)
 	 */
 	private getMessageDir(sessionId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'message', sessionId);
+		return path.join(this.getStorageDir(), 'message', sessionId);
 	}
 
 	/**
 	 * Get the part directory for a message (local)
 	 */
 	private getPartDir(messageId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'part', messageId);
+		return path.join(this.getStorageDir(), 'part', messageId);
 	}
 
 	/**
-	 * Get the OpenCode storage base directory (remote)
+	 * Get the storage base directory (remote)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteStorageDir(): string {
-		return '~/.local/share/opencode/storage';
+	protected getRemoteStorageDir(): string {
+		return `~/.local/share/${this.brand.dirName}/storage`;
 	}
 
 	/**
@@ -463,7 +518,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Find the project ID for a given path by checking existing projects
 	 */
 	private async findProjectId(projectPath: string): Promise<string | null> {
-		const projectDir = path.join(OPENCODE_STORAGE_DIR, 'project');
+		const projectDir = path.join(this.getStorageDir(), 'project');
 
 		try {
 			await fs.access(projectDir);
@@ -834,7 +889,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Returns null if the database doesn't exist or lacks the expected schema.
 	 */
 	private listSessionsSqlite(projectPath: string): AgentSessionInfo[] | null {
-		const db = openOpenCodeDb();
+		const db = openOpenCodeDb(this.getDbPath());
 		if (!db) return null;
 
 		try {
@@ -1141,7 +1196,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCost: number;
 	} | null {
 		const ownsDb = !existingDb;
-		const db = existingDb ?? openOpenCodeDb();
+		const db = existingDb ?? openOpenCodeDb(this.getDbPath());
 		if (!db) return null;
 
 		try {
@@ -1628,8 +1683,8 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		if (sshConfig) {
 			return this.getRemoteMessageDir(sessionId);
 		}
-		if (sessionExistsInSqlite(sessionId)) {
-			return OPENCODE_DB_PATH;
+		if (sessionExistsInSqlite(sessionId, this.getDbPath())) {
+			return this.getDbPath();
 		}
 		return this.getMessageDir(sessionId);
 	}
@@ -1649,7 +1704,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 		try {
 			// Deletion not supported for SQLite sessions (DB opened read-only)
-			if (sessionExistsInSqlite(sessionId)) {
+			if (sessionExistsInSqlite(sessionId, this.getDbPath())) {
 				logger.warn(
 					'Delete message pair not supported for SQLite-backed OpenCode sessions',
 					LOG_CONTEXT

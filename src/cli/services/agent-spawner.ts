@@ -370,6 +370,7 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 export const detectClaude = () => detectAgent('claude-code');
 export const detectCodex = () => detectAgent('codex');
 export const detectOpenCode = () => detectAgent('opencode');
+export const detectKilo = () => detectAgent('kilo');
 export const detectDroid = () => detectAgent('factory-droid');
 
 /**
@@ -387,6 +388,7 @@ export function getAgentCommand(toolType: ToolType): string {
 export const getClaudeCommand = () => getAgentCommand('claude-code');
 export const getCodexCommand = () => getAgentCommand('codex');
 export const getOpenCodeCommand = () => getAgentCommand('opencode');
+export const getKiloCommand = () => getAgentCommand('kilo');
 export const getDroidCommand = () => getAgentCommand('factory-droid');
 
 /**
