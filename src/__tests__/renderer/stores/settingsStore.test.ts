@@ -2418,26 +2418,24 @@ describe('settingsStore', () => {
 			).toBe(true);
 		});
 
-		it('applies auto-run time migration for concurrent tallying bug', async () => {
-			const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+		it('never grows cumulative auto-run time on load', async () => {
+			// The removed concurrent-tallying migration added 3 hours here. Loading
+			// settings must not invent time: any local growth that does not also
+			// submit a leaderboard delta pushes the local total above the server's,
+			// which the server can never reconcile.
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				autoRunStats: {
 					...DEFAULT_AUTO_RUN_STATS,
 					cumulativeTimeMs: 100000,
 				},
-				// Migration not yet applied
+				// Migration flag absent - the pre-fix code treated this as "apply it"
 			});
 
 			await loadAllSettings();
 
 			const stats = useSettingsStore.getState().autoRunStats;
-			expect(stats.cumulativeTimeMs).toBe(100000 + THREE_HOURS_MS);
-			// Should persist the migrated stats and the flag
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'autoRunStats',
-				expect.objectContaining({ cumulativeTimeMs: 100000 + THREE_HOURS_MS })
-			);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+			expect(stats.cumulativeTimeMs).toBe(100000);
+			expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
 				'concurrentAutoRunTimeMigrationApplied',
 				true
 			);

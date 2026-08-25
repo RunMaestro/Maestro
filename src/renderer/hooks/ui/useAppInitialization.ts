@@ -32,6 +32,12 @@ import { getBmadCommands } from '../../services/bmad';
 import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
 import type { GistInfo } from '../../components/GistPublishModal';
+import {
+	flushLeaderboardOutbox,
+	recoverUncommittedAutoRunCredit,
+	reportLeaderboardDrift,
+} from '../../services/leaderboard';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -75,6 +81,10 @@ export function useAppInitialization(): AppInitializationReturn {
 	const speckitEnabled = useSettingsStore((s) => s.speckitEnabled);
 	const openspecEnabled = useSettingsStore((s) => s.openspecEnabled);
 	const bmadEnabled = useSettingsStore((s) => s.bmadEnabled);
+
+	// Outside a WindowProvider (web build) there is only one renderer, so treat
+	// it as the main window.
+	const isMainWindow = useWindowContextOptional()?.isMainWindow ?? true;
 
 	// --- Local state ---
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -219,13 +229,32 @@ export function useAppInitialization(): AppInitializationReturn {
 		const email = leaderboardRegistration?.email;
 		if (!authToken || !email) return;
 
+		// Only the main window syncs. Every window runs this hook, and a flush
+		// from two of them would submit the same queued deltas twice.
+		if (!isMainWindow) return;
+
 		const timer = setTimeout(async () => {
 			try {
+				// Ship everything owed BEFORE reading the server total, so the
+				// comparison below describes real drift and not a queue that simply
+				// had not been drained yet.
+				await recoverUncommittedAutoRunCredit();
+				await flushLeaderboardOutbox();
+
 				const result = await window.maestro.leaderboard.sync({ email, authToken });
 
 				if (result.success && result.found && result.data) {
 					// Read fresh autoRunStats at call time
 					const currentStats = useSettingsStore.getState().autoRunStats;
+					if (result.data.cumulativeTimeMs < currentStats.cumulativeTimeMs) {
+						// The server aggregates every device, so it can only be BELOW
+						// this machine's total when deltas were dropped. Silently
+						// skipping here is what latched the sync off for good.
+						void reportLeaderboardDrift(
+							currentStats.cumulativeTimeMs,
+							result.data.cumulativeTimeMs
+						);
+					}
 					if (result.data.cumulativeTimeMs > currentStats.cumulativeTimeMs) {
 						const longestRunTimestamp = result.data.longestRunDate
 							? new Date(result.data.longestRunDate).getTime()
@@ -249,7 +278,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		}, 3000);
 
 		return () => clearTimeout(timer);
-	}, [settingsLoaded, leaderboardAuthToken]);
+	}, [settingsLoaded, leaderboardAuthToken, isMainWindow]);
 
 	// --- SpecKit commands loading ---
 	// Wait for settings so we know whether the user has disabled this bundle.
