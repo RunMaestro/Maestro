@@ -521,6 +521,10 @@ Each assistant message in the AI transcript carries a centered footer row naming
 
 The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedSessionUpdates` from the tab's send-time stamp (`AITab.turnModel` / `turnEffort`, written by `codifyTurnSettings()` in `utils/providerTabSessions.ts`). Read the stamp, never the live tab or agent value: settings are codified at send, so a model change made while a turn streams applies to the next message and must not relabel the response already running. An unset value means the agent's own default applied, and that pill is omitted rather than labeled with a guess.
 
+**A queued message freezes its settings when it is QUEUED, not when it dispatches.** Queuing is the send from the user's point of view - they picked a model, typed, hit Enter - but the turn may not spawn until several model changes later. So every path that builds a `QueuedItem` spreads `captureQueuedTurnSettings(tab, session)` into `item.turnSettings`, and both consumers read it back through `codifyQueuedTurnSettings(item, tab, session)`: `markTabRunningQueuedItem()` for the pills, and `agentStore.processQueuedItem()` for the actual `sessionCustomModel` / `sessionCustomEffort` it spawns with. The queued-item rows in the inline list and the Execution Queue browser render the same `<TurnSettingPills>`, so the user can see which pending message is on the big model before it runs.
+
+The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
+
 Two traps when touching this row:
 
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
@@ -551,6 +555,18 @@ Ideas worth reusing:
 **No legend, but still a graphical exit.** The surface shows no shortcut caption: the axes are self-describing, and the caption was the only thing on screen that had to be read rather than seen. [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton) is still satisfied without a button row - clicking the scrim cancels and double-clicking a row applies, both routed through the same handlers Escape and Enter use, so pointer and keyboard cannot drift.
 
 Anything with an inline `transition` must carry a class the reduced-motion block can name (`.maestro-wheel-row`, `.maestro-effort-stop`, `.maestro-keycap`); the blanket `.transition-*` reset in `index.css` only matches Tailwind's utility classes.
+
+### Following Streaming Output (`useStickToBottom`)
+
+`useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts` keeps a scrolling box pinned to its newest content while it grows, and lets go the moment the user scrolls up to read something. Returns a callback ref to put on the scrolling element; pass whatever value changes on every append as `contentKey`.
+
+Reach for it whenever a box has BOTH a capped height and content that arrives over time - streaming command output, a live log tail. The failure it prevents is specific: the box stops growing once it hits its cap, so the outer transcript's auto-scroll has nothing left to follow, and the user is left staring at the FIRST screen of output while the live tail piles up out of sight. `ShellCommandCard`'s 480px output box is the first caller.
+
+**Pinning is derived from geometry, never remembered.** The hook recomputes "are we at the bottom" from `scrollHeight - scrollTop - clientHeight` on every scroll event rather than tracking whether a scroll was the user's or its own. A remembered flag needs to tell those apart, which means a guard flag, which means a race the moment a scroll event does not arrive - scrolling to where you already are fires nothing. Geometry has no such ambiguity: after the hook scrolls to the bottom it IS at the bottom, so the event its own scroll produces recomputes to exactly the state it just set. Do NOT "optimize" this into a boolean the hook sets and trusts.
+
+It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same frame as the new content, or the box paints once at the old position and the output visibly jumps afterwards. The 50px bottom threshold matches the transcript's own in `TerminalOutput`, so a card follows its output on the same terms the conversation around it does.
+
+Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
 
 ### Text Selection in Modals
 
@@ -585,6 +601,18 @@ src/shared/theme-types.ts   - Type definitions (ThemeId, ThemeColors, Theme)
 src/shared/themes.ts        - Canonical theme objects (THEMES record)
 src/renderer/constants/themes.ts - Re-exports for renderer imports
 ```
+
+### `src/shared/themes.ts` Is Public API
+
+The RunMaestro.ai website generates its theme picker from this file. It checks
+out RunMaestro/Maestro in CI (and on a daily cron) and fails its build when its
+generated palette drifts from ours. Renaming the file, moving the `THEMES`
+export, or changing its shape turns that repo red with no signal here, so treat
+the export surface as public and change it deliberately.
+
+The website layers on one extra token, `accentSecondary`, that has no
+counterpart in `ThemeColors`. It is deliberately website-only - do NOT add it
+here to "fix" the mismatch.
 
 ### Theme Structure
 
@@ -1238,13 +1266,27 @@ persistence. Do NOT hand-roll another pair of `AArrowUp` / `AArrowDown` buttons.
 
 ```tsx
 const fontScale = useFontScale('filePreview.fontScale');
-<FontScaleControl theme={theme} control={fontScale} variant="floating" target="preview" />;
+<FontScaleControl
+	theme={theme}
+	control={fontScale}
+	variant="floating"
+	collapsible
+	target="preview"
+/>;
 ```
 
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+- `collapsible` (floating only) - rests as a circle the size of that Table of Contents
+  button and expands to the full pill on hover or keyboard focus. The buttons are
+  CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
+  control the user cannot see. The resting circle tints itself with the theme accent
+  while the scale is not 100%, so the collapsed state still says the pane is zoomed.
 - The percentage in the middle appears only once zoomed and doubles as the reset.
+- The file preview also binds bare `-` / `+` (and `=` / `_`) to the two steps and `0`
+  to the reset, guarded on `canScaleFontForView()` and on `isTextInputTarget(e.target)`
+  so the find bar and the CM6 editor keep their keys.
 
 **Only render it where the zoom moves type.** A control that changes nothing reads
 as broken: Director's Notes hides it in Rich Mode (fixed-size widget chrome), and
@@ -1363,6 +1405,8 @@ Presets:
   (`#`) links, pluggable `imageRenderer`, `customLanguageRenderers` (mermaid),
   `extraRemark/RehypePlugins`. Renders bare so callers keep their own scoped prose
   container. Pass `frontmatter={false}` for GFM-only surfaces.
+  Also draws Auto Run marker pills (`autorunMarkers`, on for this preset only) -
+  see [Auto Run Marker Pills](#auto-run-marker-pills) below.
 - **`wizard-bubble`** / **`release-notes`** - minimal, tightly-styled presets.
 
 Shared internals (do NOT re-implement): plugin selection lives in
@@ -1375,6 +1419,36 @@ component map is `createMarkdownComponents()` in `utils/markdownConfig.ts`, whic
 keystroke-memoized preview, FilePreview's tier selection + from-tree image
 resolution, the Wizard DocumentEditor) consume `createMarkdownComponents()`
 directly rather than the shell, but share the same leaf implementation.
+
+#### Auto Run marker pills
+
+`MAESTRO:HITL`, `maestro:halt`, and `MAESTRO:MODEL` are HTML comments, so they
+render as NOTHING - and two of them silently block the next run (a live gate
+pauses it, a halt makes Auto Run refuse to start). That presents to the user as
+"I pressed Run and nothing happened", with the cause in text no surface draws.
+`remarkMaestroMarkers` (`components/Markdown/remarkMaestroMarkers.ts`) rewrites
+each marker node into a tagged element that `createMarkdownComponents()` renders
+as `<MarkerPill>`.
+
+Two things to know before touching it:
+
+- **It is opt-in per surface, and deliberately off for chat.** `<Markdown>` sets
+  `autorunMarkers` from `preset === 'document'`. A chat message that explains the
+  syntax is DESCRIBING a marker, not configuring one, so a pill there would
+  assert a setting that does not exist. Chat also builds its own component map,
+  which is the second half of that guarantee.
+- **The three surfaces that consume `createMarkdownComponents()` directly must
+  add the plugin themselves** - `FilePreview`, AutoRun's `useAutoRunMarkdown`,
+  and the Wizard `DocumentEditor` all do, because they assemble their own remark
+  list rather than going through the shell. Miss it on a new direct consumer and
+  the markers silently go back to rendering as nothing on that surface only.
+
+The pill shows STATUS (`live` / `spent` / `invalid`), not presence: a gate above
+an unchecked task and one above a checked task differ by a character in the
+source, and only the first stops the run. Status resolution lives in
+`scanMaestroMarkers()` (`src/shared/autorunMarkers.ts`) alongside the engines'
+own `findPendingHitlGate()` / `detectHaltMarker()`, so the pill and the engine
+cannot disagree about what is live.
 
 #### Clickable task checkboxes
 
@@ -1512,6 +1586,71 @@ Credential-shaped keys are masked behind a per-row reveal, decided by
 `isSecretEnvKey()`. This is deliberately loose - the surfaces that show an
 environment are diagnostic ones people open while screen-sharing for help, so a
 false positive costs one click and a false negative leaks a live key.
+
+---
+
+## Line Numbers on a `<textarea>` (`TextareaLineNumbers`)
+
+`src/renderer/components/ui/TextareaLineNumbers.tsx` is the one gutter. A
+textarea has none of its own, so the numbers live in an overlay, and the naive
+"one `<div>` per line" version gets two things wrong that this component owns:
+
+- **Scroll.** The textarea scrolls its own content, so the gutter is translated
+  by the same `scrollTop`. It is written straight to the DOM in a `scroll`
+  listener rather than through state, so a fast scroll cannot lag a frame behind
+  the text it labels.
+- **Soft wrap.** A prose line that wraps onto three visual rows is three rows
+  tall in the textarea but one entry in the gutter. Each logical line is measured
+  against a hidden mirror that copies the textarea's font, wrap width, and
+  wrapping rules, so number N always sits on the first visual row of line N.
+
+Render it inside a `position: relative` wrapper that also holds the textarea, and
+push the text clear of the digits with `lineNumberGutterMetrics(value)`:
+
+```tsx
+const metrics = lineNumberGutterMetrics(value);
+<div className="relative w-full h-full">
+	<TextareaLineNumbers textareaRef={ref} value={value} theme={theme} />
+	<textarea ref={ref} value={value} style={{ paddingLeft: metrics.textPaddingLeft }} />
+</div>;
+```
+
+The metrics are in `ch` units and reserve a minimum of two digits, so the editor
+does not reflow the first time the document reaches line 10, and the gutter
+scales with the monospace font instead of a hard-coded pixel guess. Both callers
+ride it: the Cue YAML editor and the Auto Run expanded modal (`showLineNumbers`,
+which the docked Auto Run panel leaves off because it has no room for a gutter).
+
+Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
+gutter. That is what the YAML editor had, and it drifted out of alignment the
+moment the file was taller than the box or any line wrapped.
+
+jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
+renders with natural row heights rather than measured ones. That is deliberate,
+not a polyfill gap - assert on the numbers and the transform, not on pixel
+heights.
+
+---
+
+## Collapsible Advisories (`AutoRunNoticeBanner`, `usePersistedToggle`)
+
+A banner that recurs on every qualifying document is an advisory, not an event:
+the author reads it once, then wants the space back. `AutoRunNoticeBanner`
+takes an optional `collapseKey`, which turns its heading into a disclosure
+button (chevron + title, `aria-expanded`/`aria-controls`) and folds the body and
+actions away. The Auto Run human-step warning uses it; the paused-run error
+banner deliberately does not, because that one describes a one-off event the
+user must act on.
+
+`usePersistedToggle(storageKey, defaultValue)` in
+`src/renderer/hooks/ui/usePersistedToggle.ts` is the state behind it: one
+boolean in localStorage, storage failures degrade to in-memory only. Reach for
+it for any view preference a user sets by clicking that must survive the
+surface unmounting (a Right Bar tab switch, a re-render from new data) but is
+not worth a Settings row. Do NOT hand-roll another
+`useState(() => localStorage.getItem(...) === 'true')` pair - the collapse would
+reset every time the panel re-rendered, which reads as the banner refusing to
+stay closed.
 
 ---
 

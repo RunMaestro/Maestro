@@ -8,7 +8,7 @@ import React, {
 	Suspense,
 	type ReactNode,
 } from 'react';
-import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
+import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfterRender';
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
 import { slashCommands } from './slashCommands';
@@ -1346,6 +1346,16 @@ function MaestroConsoleInner() {
 	const prevAiTabIdsRef = useRef<string[]>(
 		activeSession ? activeSession.aiTabs.map((t) => t.id) : []
 	);
+
+	// Return the caret to the AI composer when the queued-message editor closes.
+	// Nothing restores focus when a layer unregisters, so Escape otherwise left
+	// focus on the document body: the composer looked ready but swallowed the
+	// next keystroke, and the shortcut that opened the editor could not reopen it.
+	// Keyed on the uiStore id, so this covers the Cmd+Shift+E path and the pencil
+	// on a queued row, but NOT the copy inside the Execution Queue browser - that
+	// one owns local state and must hand focus back to the browser behind it.
+	const editingQueuedItemId = useUIStore((s) => s.editingQueuedItemId);
+	useFocusOnClose(inputRef, editingQueuedItemId !== null);
 	const shouldFocusOnLastTabReplaced = isSoleAiTabReplacement(
 		prevFocusSessionIdRef.current,
 		prevAiTabIdsRef.current,

@@ -16,6 +16,7 @@ import {
 	Bot,
 	ListPlus,
 	Play,
+	PlayCircle,
 	FileArchive,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
@@ -34,6 +35,11 @@ interface FileTreeContextMenuProps {
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
+	/**
+	 * How many Auto Run documents sit under this folder. Zero for any folder
+	 * outside the agent's Auto Run folder, which is what hides the staging entry.
+	 */
+	autoRunStagedCount?: number;
 	/** How many of the selected files are playable audio/video. */
 	selectedMediaCount?: number;
 	onCopyPath: () => void;
@@ -47,6 +53,7 @@ interface FileTreeContextMenuProps {
 	onNewAgentHere: () => void;
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
+	onStageForAutoRun: () => void;
 	onCompressFolder: () => void;
 	onPreviewMulti: () => void;
 	onQueueMedia: () => void;
@@ -68,6 +75,7 @@ export function FileTreeContextMenu({
 	isMultiSelectionContext = false,
 	selectedCount = 0,
 	selectedMediaCount = 0,
+	autoRunStagedCount = 0,
 	onCopyPath,
 	onCopyFileName,
 	onDownloadFile,
@@ -79,6 +87,7 @@ export function FileTreeContextMenu({
 	onNewAgentHere,
 	onPreviewFile,
 	onPreviewAllInFolder,
+	onStageForAutoRun,
 	onCompressFolder,
 	onPreviewMulti,
 	onQueueMedia,
@@ -233,6 +242,20 @@ export function FileTreeContextMenu({
 										<span>
 											Preview All {previewableCount} {previewableCount === 1 ? 'File' : 'Files'} in
 											Folder
+										</span>
+									</button>
+								)}
+								{autoRunStagedCount > 0 && (
+									<button
+										onClick={onStageForAutoRun}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<PlayCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>
+											{autoRunStagedCount === 1
+												? 'Stage Document for Auto Run'
+												: `Stage ${autoRunStagedCount} Documents for Auto Run`}
 										</span>
 									</button>
 								)}

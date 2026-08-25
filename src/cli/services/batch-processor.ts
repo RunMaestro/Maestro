@@ -28,14 +28,15 @@ import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { getCliPrompt } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
-import { detectHaltMarker } from '../../shared/autorun/haltMarker';
 import { findActiveModelHint } from '../../shared/autorunModelHints';
 import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
 import { cheapTurnSettings } from '../../shared/modelTiers';
 
-// `detectHaltMarker` is re-exported so existing CLI consumers and tests that
-// reference it via this module keep resolving. The canonical implementation now
-// lives in `shared/autorun/haltMarker` so the desktop renderer can share it.
+// Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
+// both share it and draw a pill for a marker that would block the next run.
+// Re-exported because this module is where the CLI engine and its tests reach
+// for it.
+import { detectHaltMarker } from '../../shared/autorunMarkers';
 export { detectHaltMarker };
 
 /**

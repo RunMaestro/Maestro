@@ -440,6 +440,19 @@ Do NOT hand-roll another line loop. A scanner that forgets the fence bookkeeping
 
 ---
 
+## Auto Run Folder Staging (`src/renderer/utils/autoRunStaging.ts` - Renderer)
+
+Two pure helpers behind the Files tab's **Stage Documents for Auto Run** entry. The playbooks folder appears in the file tree like any other directory, so these answer what turning one into a run list takes: is this folder inside the agent's Auto Run folder, and which documents live under it.
+
+| Function                                                       | Signature                              | Purpose                                                                                                                        |
+| -------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `relativeAutoRunFolderPath(folderAbsolutePath, autoRunFolder)` | `(string?, string?) => string \| null` | Path relative to the Auto Run folder, `''` for the folder itself, `null` when outside it. Normalizes `\` and trailing slashes. |
+| `collectAutoRunDocsInFolder(relativeFolder, documentList)`     | `(string, string[]) => string[]`       | Document ids under that folder, nested included. `''` means every document. Order follows `documentList`.                      |
+
+Document ids come from the batch store's `documentList`, NOT from the file tree. The tree is truncated on large workspaces and the run list only accepts ids the Auto Run loader already knows about, so deriving them from a partial tree stages names the modal cannot resolve. A shared-prefix sibling (`plans-old/` next to `plans/`) must not match - that is what the trailing-slash normalization and the `${root}/` prefix test are for.
+
+---
+
 ## Model Tiers & Effort (`src/shared/modelTiers.ts` - Both)
 
 One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's floor is `minimal`.

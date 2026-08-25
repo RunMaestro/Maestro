@@ -318,6 +318,13 @@ questions a canvas is bad at: what does each pipeline do, and is it working? It
 renders `dashboardPipelines` (the same disk-loaded pipelines the Dashboard uses),
 so it needs no editor state and no save path.
 
+**The prompt renders on the STEP, never the trigger.** A trigger's outgoing edge
+and its target's incoming edge are the same edge, so rendering `prompts` in both
+columns prints every prompt twice; a fan-out trigger also has one prompt per
+target rather than one of its own. `CuePipelineTriggerSummary.prompts` still
+exists for callers describing a trigger on its own - just do not put it in the
+trigger column. Same reason the search haystack indexes step prompts only.
+
 **Row-level "Run now" is gated on a SINGLE trigger subscription.** With several
 triggers the button is ambiguous (each trigger is its own subscription with its
 own prompt) and destructive - the real 39-trigger "Pedsidian" pipeline would
@@ -426,6 +433,14 @@ renderer, a future CLI listing, and tests all describe a pipeline identically.
   is usually N independent chains grouped under one name, so arrow-chaining their
   node names describes a sequence that does not exist - and a 39-node line buries
   every other row. `flow` stays exported for the search haystack.
+- Every trigger and step carries a `CueNodePrompts` (`prompts`, `count`,
+  `preview`). Resolution order matters: a step reads its INCOMING edges first and
+  only falls back to `AgentNodeData.inputPrompt` when none carried one. That
+  mirrors the loader, which deliberately CLEARS `inputPrompt` on trigger→agent
+  edges (mirroring the two caused stale saves) and reserves it for chain agents.
+  `preview` is whitespace-collapsed but NOT length-capped - the list clips it with
+  CSS so it fits the real column width; a character cap would waste space on a
+  wide window and still overflow on a narrow one.
 - `derivePipelineHealth(pipeline, ctx)` - the health badge. Precedence is
   `running > invalid > disabled > failing > healthy > idle`. Feed it `configErrors`
   from `validatePipelines` (prefix-stripped via `stripPipelinePrefix`) and the

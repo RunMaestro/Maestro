@@ -83,6 +83,20 @@ The run configuration modal has **Model** and **Effort** pickers, both defaultin
 
 The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`. See [CLI](cli.md#per-run-model-override).
 
+### Staging a Folder of Documents from the Files Tab
+
+The Auto Run folder shows up in the **Files** tab like any other directory, so a
+folder of task documents is one right-click away from being a run list.
+Right-click a folder that sits inside the agent's Auto Run folder and choose
+**Stage Documents for Auto Run**. The run configuration modal opens with every
+document under that folder already queued, including the ones in nested
+subfolders, in the same order the Auto Run dropdown lists them. From there it is
+the ordinary modal: reorder, duplicate, set per-document options, then **Go**.
+
+The entry only appears on folders inside the Auto Run folder, and it counts what
+it will stage ("Stage 6 Documents for Auto Run"), so an empty folder offers
+nothing.
+
 ## Fresh Context: Task vs Document
 
 The run configuration modal has a **Fresh context per** toggle that controls how context is scoped as the runner works through a document. This is distinct from [task granularity](#task-granularity-two-approaches) above - granularity is how you _structure_ a document, while this is how Maestro _executes_ it.
@@ -394,6 +408,31 @@ If an agent pauses mid-run because it hit a provider limit (a rate, token, or cr
 How it decides to resume: for Claude it reads your actual plan usage and only resumes when credits are genuinely available again; for every other provider (and Claude on an SSH remote) it simply retries on the interval - if the limit is still in force the agent re-pauses and the next check tries again. Probing is cheap, so it keeps trying the whole window.
 
 This survives a full app restart. If you reboot while an agent is limit-paused, Maestro restores the pause and resumes the **agent's conversation** (it continues from its own transcript) and drains any work you had queued. One caveat: the Auto Run / Goal-Driven **loop controller** does not survive a restart - the agent session and its queued messages resume, but the orchestration loop that was stepping through your document does not pick back up automatically. Manually resolving the error, or manually resuming or stopping the agent, always takes precedence and cancels auto-resume for that agent.
+
+## Marker Pills
+
+Every Maestro marker is an HTML comment, which means it renders as nothing. That is right for the file - other markdown tools ignore it, and an agent editing the document leaves it alone - but it is wrong for you. Two of the three markers do not merely change how a run behaves, they stop it:
+
+- A leftover **HITL gate** pauses every re-run until the box below it is ticked.
+- A leftover **halt marker** makes Auto Run refuse to start at all.
+
+Both present the same way: you press **Run** and nothing happens, with the cause sitting in text the panel does not draw.
+
+So Maestro renders each marker as a small pill wherever the document is previewed - the Auto Run panel, the file preview, the wizard's document editor, and the Playbook Exchange preview. The pill says what the marker **does**, not what it is called:
+
+| Pill                          | Meaning                                                           |
+| ----------------------------- | ----------------------------------------------------------------- |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.      |
+| ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                   |
+| ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it. |
+| ◆ **high model, high effort** | A live model hint governing the next task.                        |
+| ◆ **Unknown setting**         | A misspelled value. It will be ignored at run time.               |
+
+A pill carries the marker's reason text alongside it, so a gate reads as "Pauses here - Add STRIPE_SECRET_KEY to .env" rather than making you go find out why.
+
+Pills reflect **state, not just presence**. A gate above an unchecked task and a gate above a checked one are nearly identical in the source, but only the first will stop your run, so only the first is drawn as live. Markers inside fenced code blocks draw no pill at all, which is why the examples throughout this page render as plain text.
+
+Marker pills appear only on document surfaces. An agent that mentions the marker syntax in a chat message is describing a marker, not configuring one, so that text keeps rendering as ordinary prose.
 
 ## Halt Marker (Agent Early Exit)
 

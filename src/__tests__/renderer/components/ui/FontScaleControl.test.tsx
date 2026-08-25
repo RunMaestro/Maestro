@@ -57,6 +57,31 @@ describe('FontScaleControl', () => {
 		expect(zoomed.resetFontScale).toHaveBeenCalledTimes(1);
 	});
 
+	// Collapsed, the pill rests as a circle. The buttons must stay MOUNTED (they
+	// are only clipped by CSS) so a Tab into them expands it - unmounting them
+	// would make the control unreachable from the keyboard.
+	it('keeps the buttons mounted behind the collapsed circle', () => {
+		render(
+			<FontScaleControl
+				theme={mockTheme}
+				control={makeControl()}
+				variant="floating"
+				collapsible
+				testId="font-scale"
+			/>
+		);
+
+		expect(screen.getByTestId('font-scale-handle')).toBeInTheDocument();
+		expect(screen.getByLabelText('Increase font size')).toBeInTheDocument();
+		expect(screen.getByLabelText('Decrease font size')).toBeInTheDocument();
+	});
+
+	it('draws no collapsed circle for the inline variant', () => {
+		render(<FontScaleControl theme={mockTheme} control={makeControl()} testId="font-scale" />);
+
+		expect(screen.queryByTestId('font-scale-handle')).toBeNull();
+	});
+
 	it('names the pane it zooms in its labels', () => {
 		render(<FontScaleControl theme={mockTheme} control={makeControl()} target="preview" />);
 

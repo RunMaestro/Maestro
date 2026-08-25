@@ -45,16 +45,21 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 	return (
 		<>
 			<div className="flex items-center gap-2 mb-3">
-				<button
-					type="button"
-					onClick={() => setOrganizerOpen(true)}
-					title="Open image organizer"
-					aria-label="Open image organizer"
-					className="shrink-0 self-center p-1.5 rounded border transition-colors hover:opacity-80 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-				>
-					<Maximize2 className="w-4 h-4" />
-				</button>
+				{/* The organizer exists to compare thumbnails and reorder them, and a
+				    single image can do neither. Offering it there is a button that
+				    opens a modal with nothing to do in it. */}
+				{stagedImages.length > 1 && (
+					<button
+						type="button"
+						onClick={() => setOrganizerOpen(true)}
+						title="Open image organizer"
+						aria-label="Open image organizer"
+						className="shrink-0 self-center p-1.5 rounded border transition-colors hover:opacity-80 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+					>
+						<Maximize2 className="w-4 h-4" />
+					</button>
+				)}
 
 				<div
 					className="flex gap-2 pb-2 flex-1 overflow-x-auto overflow-y-visible scrollbar-thin"

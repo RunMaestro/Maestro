@@ -33,6 +33,7 @@ import type {
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
+import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore, selectSessionById } from './sessionStore';
@@ -400,6 +401,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			}
 		}
 
+		// The model/effort this turn runs under were frozen when the user queued
+		// it, so a queue that drains after the user switched models still spawns
+		// each item on what it was queued with. Falls back to the live values only
+		// for items queued before the capture existed.
+		const { turnModel, turnEffort } = codifyQueuedTurnSettings(item, targetTab, session);
+
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
 		// tab so it matches the error listener's tab) so it can be auto-resent if
 		// this turn fails with a transient upstream error. We record the item with
@@ -484,8 +491,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomArgs: session.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: targetTab.customModel ?? session.customModel,
-					sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
+					sessionCustomModel: turnModel,
+					sessionCustomEffort: turnEffort,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
@@ -583,8 +590,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: targetTab.customModel ?? session.customModel,
-						sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
+						sessionCustomModel: turnModel,
+						sessionCustomEffort: turnEffort,
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});

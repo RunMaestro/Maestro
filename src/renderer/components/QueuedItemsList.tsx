@@ -16,6 +16,7 @@ import type { BusyTabSummary } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { TurnSettingPills } from './ui/TurnSettingPills';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useUIStore } from '../stores/uiStore';
@@ -646,6 +647,16 @@ function QueuedItemRow({
 							Force Send
 						</button>
 					)}
+
+					{/* What this item will actually run under. The queue can sit through
+					    any number of model/effort changes, so naming the frozen values
+					    here is the only way the user can tell which pending message is
+					    on the big model. Same pills the finished turn gets. */}
+					<TurnSettingPills
+						theme={theme}
+						model={item.turnSettings?.model}
+						effort={item.turnSettings?.effort}
+					/>
 
 					<div className="ml-auto flex items-center gap-1">
 						{/* Edit button */}
