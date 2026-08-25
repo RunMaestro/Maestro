@@ -31,6 +31,7 @@ export type {
 
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
+export { useStickToBottom } from './useStickToBottom';
 
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';

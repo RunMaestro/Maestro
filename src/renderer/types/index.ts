@@ -326,6 +326,28 @@ export interface LogEntry {
 // Supports both messages and slash commands, processed sequentially
 export type QueuedItemType = 'message' | 'command';
 
+/**
+ * The model and effort a queued item was queued WITH.
+ *
+ * Settings are codified at send, and queuing is the send: a user who queues one
+ * message on a cheap model, flips to a big one, and queues another expects each
+ * to run - and to be labeled - with what was in force when they hit Enter. The
+ * live tab/agent values at dispatch time belong to whatever the user has since
+ * selected, so they cannot answer that.
+ *
+ * The whole object is optional but its FIELDS are meaningfully undefined:
+ * `undefined` model/effort means "the agent's own default was in force". So the
+ * presence of the object is the capture flag - never fall back with
+ * `item.model ?? liveModel`, or an item queued on the default would inherit a
+ * model the user picked afterwards.
+ */
+export interface QueuedTurnSettings {
+	/** Model in force when the item was queued, or undefined for the default. */
+	model?: string;
+	/** Effort in force when the item was queued, or undefined for the default. */
+	effort?: string;
+}
+
 export interface QueuedItem {
 	id: string; // Unique item ID
 	timestamp: number; // When it was queued (for ordering)
@@ -347,6 +369,11 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	// Model/effort captured when the user queued this item. Both the spawn and
+	// the transcript pills read it, so a queued turn runs under - and is labeled
+	// with - the configuration it was queued with, not whatever is selected by
+	// the time the queue drains. Undefined only on items queued by older builds.
+	turnSettings?: QueuedTurnSettings;
 }
 
 export interface WorkLogItem {

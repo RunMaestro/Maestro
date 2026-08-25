@@ -83,7 +83,7 @@ Each row has three action buttons:
 
 - **Run Now** - Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
 - **Edit YAML** - Open the inline YAML editor for that agent.
-- **View in Pipeline** - Jump to the Pipeline Graph filtered to that agent.
+- **View in Graph** - Jump to the Pipeline Graph tab with that agent's pipeline selected.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 

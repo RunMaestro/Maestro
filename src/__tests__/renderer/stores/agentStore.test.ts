@@ -1889,6 +1889,89 @@ describe('agentStore', () => {
 			);
 		});
 
+		// Queuing IS the send: the item carries the model/effort the user had
+		// selected when they hit Enter, and the spawn must honour that no matter
+		// how many times they switched models before the queue drained.
+		it('spawns a queued item under the settings frozen when it was queued', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customModel: 'session-model',
+				customEffort: 'session-effort',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						customModel: 'tab-model',
+						customEffort: 'tab-effort',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'Hello',
+				turnSettings: { model: 'queued-model', effort: 'queued-effort' },
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionCustomModel: 'queued-model',
+					sessionCustomEffort: 'queued-effort',
+				})
+			);
+		});
+
+		// An empty capture is a real choice ("the agent default was in force"),
+		// not a missing one - so it must NOT inherit what the user picked after.
+		it('keeps an item queued on the agent default off the live overrides', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customModel: 'session-model',
+				customEffort: 'session-effort',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						customModel: 'tab-model',
+						customEffort: 'tab-effort',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'Hello', turnSettings: {} });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionCustomModel: undefined,
+					sessionCustomEffort: undefined,
+				})
+			);
+		});
+
 		it('tracks pendingAICommandForSynopsis for command items', async () => {
 			const session = createMockSession({
 				id: 'session-1',

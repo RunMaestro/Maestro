@@ -198,7 +198,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		setActiveTab('pipeline');
 	}, []);
 
-	const handleViewInPipeline = useCallback(
+	const handleViewInGraphFromSession = useCallback(
 		(session: CueSessionStatus) => {
 			// Find the pipeline by session-membership, not by color. Multiple
 			// pipelines can share a color (e.g. two orange pipelines), so the
@@ -272,7 +272,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	// Wrap tab switching so navigating away from the pipeline tab clears the
 	// pending selection token - prevents a stale nonce from re-snapping the editor
-	// to the "View in Pipeline" target on the next remount.
+	// to the "View in Graph" target on the next remount.
 	const handleSetActiveTab = useCallback((tab: CueModalTab) => {
 		if (tab !== 'pipeline') setPendingPipelineId(null);
 		setActiveTab(tab);
@@ -383,7 +383,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									executionCount={eventCount}
 									activeRunsExpanded={activeRunsExpanded}
 									setActiveRunsExpanded={setActiveRunsExpanded}
-									onViewInPipeline={handleViewInPipeline}
+									onViewInGraph={handleViewInGraphFromSession}
 									onEditYaml={handleEditYaml}
 									onRemoveCue={handleRemoveCue}
 									onTriggerSubscription={triggerSubscription}

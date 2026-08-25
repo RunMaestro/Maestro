@@ -35,7 +35,7 @@ export interface CueDashboardProps {
 	executionCount: number;
 	activeRunsExpanded: boolean;
 	setActiveRunsExpanded: (expanded: boolean) => void;
-	onViewInPipeline: (session: CueSessionStatus) => void;
+	onViewInGraph: (session: CueSessionStatus) => void;
 	onEditYaml: (session: CueSessionStatus) => void;
 	onRemoveCue: (session: CueSessionStatus) => void;
 	onTriggerSubscription: (subscriptionName: string) => void;
@@ -61,7 +61,7 @@ export function CueDashboard({
 	executionCount,
 	activeRunsExpanded,
 	setActiveRunsExpanded,
-	onViewInPipeline,
+	onViewInGraph,
 	onEditYaml,
 	onRemoveCue,
 	onTriggerSubscription,
@@ -188,7 +188,7 @@ export function CueDashboard({
 				<SessionsTable
 					sessions={visibleSessions}
 					theme={theme}
-					onViewInPipeline={onViewInPipeline}
+					onViewInGraph={onViewInGraph}
 					onEditYaml={onEditYaml}
 					onRemoveCue={onRemoveCue}
 					onTriggerSubscription={onTriggerSubscription}

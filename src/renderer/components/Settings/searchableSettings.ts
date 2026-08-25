@@ -710,7 +710,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Tab Options',
-		description: `Show starred, file preview, terminal, and browser tabs when filtering by unread; ${META_KEY_NAME}+0 vs ${META_KEY_NAME}+9 last-tab shortcut; browser tab domain pill`,
+		description: `Show starred, file preview, terminal, and browser tabs when filtering by unread; ${META_KEY_NAME}+0 vs ${META_KEY_NAME}+9 last-tab shortcut; browser tab domain pill; tab count badge on the search icon`,
 		keywords: [
 			'tab',
 			'filter',
@@ -735,6 +735,12 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'hostname',
 			'url',
 			'pill',
+			'tab count',
+			'count badge',
+			'search icon',
+			'magnifier',
+			'magnifying glass',
+			'open tabs',
 		],
 	},
 	{

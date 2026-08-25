@@ -391,10 +391,26 @@ Each assistant message in the AI transcript carries a centered footer row naming
 
 The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedSessionUpdates` from the tab's send-time stamp (`AITab.turnModel` / `turnEffort`, written by `codifyTurnSettings()` in `utils/providerTabSessions.ts`). Read the stamp, never the live tab or agent value: settings are codified at send, so a model change made while a turn streams applies to the next message and must not relabel the response already running. An unset value means the agent's own default applied, and that pill is omitted rather than labeled with a guess.
 
+**A queued message freezes its settings when it is QUEUED, not when it dispatches.** Queuing is the send from the user's point of view - they picked a model, typed, hit Enter - but the turn may not spawn until several model changes later. So every path that builds a `QueuedItem` spreads `captureQueuedTurnSettings(tab, session)` into `item.turnSettings`, and both consumers read it back through `codifyQueuedTurnSettings(item, tab, session)`: `markTabRunningQueuedItem()` for the pills, and `agentStore.processQueuedItem()` for the actual `sessionCustomModel` / `sessionCustomEffort` it spawns with. The queued-item rows in the inline list and the Execution Queue browser render the same `<TurnSettingPills>`, so the user can see which pending message is on the big model before it runs.
+
+The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
+
 Two traps when touching this row:
 
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
 - `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
+
+### Following Streaming Output (`useStickToBottom`)
+
+`useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts` keeps a scrolling box pinned to its newest content while it grows, and lets go the moment the user scrolls up to read something. Returns a callback ref to put on the scrolling element; pass whatever value changes on every append as `contentKey`.
+
+Reach for it whenever a box has BOTH a capped height and content that arrives over time - streaming command output, a live log tail. The failure it prevents is specific: the box stops growing once it hits its cap, so the outer transcript's auto-scroll has nothing left to follow, and the user is left staring at the FIRST screen of output while the live tail piles up out of sight. `ShellCommandCard`'s 480px output box is the first caller.
+
+**Pinning is derived from geometry, never remembered.** The hook recomputes "are we at the bottom" from `scrollHeight - scrollTop - clientHeight` on every scroll event rather than tracking whether a scroll was the user's or its own. A remembered flag needs to tell those apart, which means a guard flag, which means a race the moment a scroll event does not arrive - scrolling to where you already are fires nothing. Geometry has no such ambiguity: after the hook scrolls to the bottom it IS at the bottom, so the event its own scroll produces recomputes to exactly the state it just set. Do NOT "optimize" this into a boolean the hook sets and trusts.
+
+It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same frame as the new content, or the box paints once at the old position and the output visibly jumps afterwards. The 50px bottom threshold matches the transcript's own in `TerminalOutput`, so a card follows its output on the same terms the conversation around it does.
+
+Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
 
 ### Text Selection in Modals
 

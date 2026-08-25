@@ -108,6 +108,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setUseCmd0AsLastTab,
 		showBrowserTabDomain,
 		setShowBrowserTabDomain,
+		showTabCountBadge,
+		setShowTabCountBadge,
 		useNativeTitleBar,
 		setUseNativeTitleBar,
 		autoHideMenuBar,
@@ -1258,6 +1260,40 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									showBrowserTabDomain ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Tab Count Badge on the Search Icon */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show tab count on the search icon
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the number of open tabs as a small badge on the tab bar search (magnifier)
+								icon. When off, the count is still shown next to "Search Tabs" in the popover that
+								opens when you click the icon.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowTabCountBadge(!showTabCountBadge)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showTabCountBadge ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showTabCountBadge}
+							aria-label="Show tab count on the search icon"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showTabCountBadge ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

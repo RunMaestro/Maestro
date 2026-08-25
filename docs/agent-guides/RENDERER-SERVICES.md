@@ -115,7 +115,13 @@ Command mode ("bang commands"): running a `!command` typed in the AI composer an
 
 Output is buffered and flushed on an animation frame (one store write per frame, not per chunk) and capped at `SHELL_COMMAND_OUTPUT_LIMIT` characters, because transcript logs are persisted to the sessions file.
 
+The output box caps at 480px and follows its own tail via `useStickToBottom`, so a chatty command cannot push the conversation off the screen AND the newest lines stay visible. That pairing is the whole reason the hook exists: the cap is what stops the outer transcript auto-scroll from being able to follow the output, because the card stops growing once it is reached.
+
 Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellCommand`. Routing happens at the top of `useInputProcessing.processInput`.
+
+**The card has TWO copy buttons, and they copy different things.** The one in the header copies the OUTPUT (ANSI-stripped - the stored text keeps its escape codes so the card can render colour, but pasting `\x1b[36m` anywhere is never wanted). The one beside the command copies the COMMAND, and appears only while the command is expanded, so it cannot be mistaken for the output copy a few pixels to its right. Both are `<CopyIconButton>`; the hand-rolled copy-then-swap-to-a-checkmark this file used to carry is gone.
+
+**The command line is a disclosure.** It is truncated to one line by default and expands to a wrapped, selectable block when the header is clicked - a `find` with a dozen predicates otherwise buries the exit code and the controls on every card. The toggle is a real `<button>` with `aria-expanded`, not a `div` with `role="button"`: this is a keyboard-first app, and `role` grants the semantics without the tab stop or Enter/Space handling. The copy button inside that clickable header relies on `CopyIconButton`'s `stopPropagation`, or copying would also collapse the command out from under the click.
 
 **Deleting a card.** The card carries its own trash icon (with the same inline "Delete? Yes/No" confirm the transcript's user messages use) because it takes an early return in `TerminalOutput` and never renders the shared hover toolbar. It routes to the SAME `handleDeleteLog` in `hooks/tabs/internal/useScrollLogHandlers.ts`, which now branches on `log.shellCommand` before its `source === 'user'` guard, since a card is neither a user message nor part of one:
 

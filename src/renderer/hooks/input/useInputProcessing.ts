@@ -11,7 +11,7 @@ import type {
 import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
-import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
@@ -439,6 +439,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 										: 'New'),
 								readOnlyMode: isReadOnlyMode,
 								...(forceParallel && { forceParallel: true }),
+								// Freeze the model/effort now: the queue may not drain until
+								// after the user has switched to something else, and this
+								// command must run under - and be labeled with - what was
+								// selected when they sent it.
+								turnSettings: captureQueuedTurnSettings(activeTab, activeSession),
 							};
 
 							// If session is idle, we need to set up state and process immediately
@@ -810,6 +815,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								: 'New'),
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
+						// Freeze the model/effort now - see the slash-command queue path
+						// above. Queuing is the send; the dispatch happens later.
+						turnSettings: captureQueuedTurnSettings(activeTab, activeSession),
 					};
 
 					// Add to queue - will be processed when:

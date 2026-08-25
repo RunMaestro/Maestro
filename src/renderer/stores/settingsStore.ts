@@ -399,6 +399,7 @@ export interface SettingsStoreState {
 	showBrowserTabsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
 	showBrowserTabDomain: boolean;
+	showTabCountBadge: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -550,6 +551,7 @@ export interface SettingsStoreActions {
 	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	setShowTabCountBadge: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -782,6 +784,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showBrowserTabsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
 		showBrowserTabDomain: true,
+		showTabCountBadge: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -1303,6 +1306,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowBrowserTabDomain: (value) => {
 			set({ showBrowserTabDomain: value });
 			window.maestro.settings.set('showBrowserTabDomain', value);
+		},
+
+		setShowTabCountBadge: (value) => {
+			set({ showTabCountBadge: value });
+			window.maestro.settings.set('showTabCountBadge', value);
 		},
 
 		setDocumentGraphShowExternalLinks: (value) => {
@@ -2748,6 +2756,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['showBrowserTabDomain'] !== undefined)
 			patch.showBrowserTabDomain = allSettings['showBrowserTabDomain'] as boolean;
+
+		if (allSettings['showTabCountBadge'] !== undefined)
+			patch.showTabCountBadge = allSettings['showTabCountBadge'] as boolean;
 
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)

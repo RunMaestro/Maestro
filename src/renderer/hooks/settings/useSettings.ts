@@ -274,6 +274,8 @@ export interface UseSettingsReturn {
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	showTabCountBadge: boolean;
+	setShowTabCountBadge: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;

@@ -27,7 +27,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { isWindowsPlatform } from './platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersistence';
 import { getLiveDraft } from './liveDraftStore';
-import { codifyTurnSettings } from './providerTabSessions';
+import { codifyQueuedTurnSettings } from './providerTabSessions';
 
 /**
  * Build the unified tab list from a session's tab data.
@@ -536,6 +536,12 @@ export function resolveQueuedItemTarget(
  * message typed while the agent was busy (the common case on a multi-tab agent,
  * where session-level busy sends the message to the queue) answered with no model
  * or effort pills at all.
+ *
+ * The model and effort come from the item's OWN capture (`turnSettings`, frozen
+ * when the user queued it), not from the live tab/agent values - a queue drains
+ * long after the user moved on to another model, and the pills must name the
+ * configuration the turn actually spawns with. `codifyQueuedTurnSettings` falls
+ * back to the live values only for items queued before this was captured.
  */
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const now = Date.now();
@@ -543,7 +549,7 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 		...tab,
 		state: 'busy',
 		thinkingStartTime: now,
-		...codifyTurnSettings(tab, session),
+		...codifyQueuedTurnSettings(item, tab, session),
 	};
 	if (item.type === 'message' && item.text) {
 		const logEntry: LogEntry = {
