@@ -520,6 +520,43 @@ describe('useRemoteHandlers', () => {
 			]);
 		});
 
+		it('drops a leading @mention when the agent has no AI tab to anchor the reply', async () => {
+			// `suppressLocal` means "this agent must not be sent to". With no tab
+			// there is nowhere to stream the consult's reply, so the dispatch is
+			// dropped and reported as undelivered. Falling through to the spawn
+			// would hand the local agent a message addressed to someone else.
+			const session = createMockSession({ inputMode: 'ai', aiTabs: [], activeTabId: '' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal: true };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: '@Reviewer look at this',
+							inputMode: 'ai',
+							receiptChannel: 'receipt-1',
+						},
+					})
+				);
+			});
+
+			expect(dispatchCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-1',
+				false,
+				'no-target-tab-for-mention'
+			);
+		});
+
 		it('spawns AND consults when the @mention is not leading', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			const deps = createMockDeps({ sessionsRef: { current: [session] } });
