@@ -14,7 +14,7 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 3. Capabilities      src/main/agents/capabilities.ts  Feature flags per agent
 4. Detection         src/main/agents/detector.ts      Runtime binary detection + PATH resolution
 5. Output Parsers    src/main/parsers/                 JSON output normalization per agent
-6. Error Patterns    src/main/parsers/error-patterns.ts  Regex patterns for error detection
+6. Error Patterns    src/shared/agentErrorPatterns.ts    Regex patterns for error detection
 7. Session Storage   src/main/storage/                 Per-agent session file reading
 ```
 
@@ -456,9 +456,15 @@ initializeOutputParsers(); // Registers all 4 parsers
 
 ---
 
-## 6. Error Pattern System (`src/main/parsers/error-patterns.ts`)
+## 6. Error Pattern System (`src/shared/agentErrorPatterns.ts`)
 
 Regex-based error detection for agent output. Each agent has patterns organized by error type.
+
+There is ONE bank, and it lives in `shared/` because both processes classify agent output: main parses streaming stdout/stderr through it, and the wizard classifies a finished run through it. `src/main/parsers/error-patterns.ts` is the main-process face of the same module - identical API, plus the logger the shared file cannot import. Import that path from main code and `shared/agentErrorPatterns` from renderer code; both reach the same registry object.
+
+Do NOT start a second bank. The wizard used to carry its own copy of about twenty patterns, which drifted behind this one and told every user to run `claude login` regardless of which of the seven providers had actually failed.
+
+An error `message` here names WHAT failed and stops there. The remedy belongs to whichever surface shows it, because only that surface knows the credential: an agent authenticating with `ANTHROPIC_API_KEY`, a gateway `ANTHROPIC_BASE_URL`, and a Bedrock agent all produce `auth_expired` output, and none of them is repaired by a login command. See `classifyCredentialKind()` in `src/shared/providerAuthIdentity.ts`, which is what `ReauthModal` gates its login terminal on.
 
 ### Error Types
 
@@ -652,7 +658,7 @@ interface AgentSessionInfo {
 4. **Add capabilities** to `AGENT_CAPABILITIES` in `src/main/agents/capabilities.ts`
 5. **Add context window** to `DEFAULT_CONTEXT_WINDOWS` in `src/shared/agentConstants.ts`
 6. **Create output parser** in `src/main/parsers/<agent>-output-parser.ts`, register in `src/main/parsers/index.ts`
-7. **Add error patterns** in `src/main/parsers/error-patterns.ts`
+7. **Add error patterns** in `src/shared/agentErrorPatterns.ts`
 8. **Create session storage** in `src/main/storage/<agent>-session-storage.ts`, register in `src/main/storage/index.ts`
 9. **Add beta flag** (optional) to `BETA_AGENTS` in `src/shared/agentMetadata.ts`
 10. **Add combined context flag** (if applicable) to `COMBINED_CONTEXT_AGENTS` in `src/shared/agentConstants.ts`

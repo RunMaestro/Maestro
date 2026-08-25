@@ -118,6 +118,6 @@ To add support for a new agent:
 6. Sync `AgentCapabilities` interface in renderer: `useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`
 7. (If `supportsJsonOutput`) Create output parser in `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
 8. (If `supportsSessionStorage`) Create session storage extending `BaseSessionStorage` in `src/main/storage/`
-9. (Optional) Add error patterns to `src/main/parsers/error-patterns.ts`
+9. (Optional) Add error patterns to `src/shared/agentErrorPatterns.ts`
 
 The `agent-completeness.test.ts` CI test will fail if required steps are missed. See [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for comprehensive integration documentation.
