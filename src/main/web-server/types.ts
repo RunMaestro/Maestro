@@ -678,6 +678,37 @@ export type ConfigureAutoRunCallback = (
 ) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 
 /**
+ * Launch a Goal-Driven Auto Run that the DESKTOP owns, from the CLI
+ * (`goal-run --visible`). Distinct from `ConfigureAutoRunCallback`, which is
+ * document/playbook-driven: goal mode has no documents, so it carries a
+ * `GoalRunConfig` instead and routes to the same `startBatchRun({ goalConfig })`
+ * entry point the Auto Run modal's Go button uses.
+ *
+ * Resolves only once the renderer has confirmed the run actually reached a
+ * running state (or failed to start). Reporting "launched" before that would
+ * hand the CLI a success for a run that silently bailed on a missing prompt
+ * template or the Auto Run kill switch.
+ */
+export type LaunchGoalRunCallback = (
+	sessionId: string,
+	config: {
+		goal: string;
+		exitCriteria?: string;
+		maxIterations?: number | null;
+		/** Per-run model/effort override - wins over the session model for this run only. */
+		model?: string;
+		effort?: string;
+	}
+) => Promise<{
+	success: boolean;
+	/** Id of the AI tab the run surfaces on, for the `maestro://` deep link. */
+	tabId?: string;
+	/** Stable machine-readable failure code (AGENT_BUSY, SESSION_NOT_FOUND, ...). */
+	code?: string;
+	error?: string;
+}>;
+
+/**
  * Callback type for fetching current theme.
  */
 export type GetThemeCallback = () => Theme | null;

@@ -688,21 +688,73 @@ maestro-cli goal-run <agent-id> "Quick experiment" --no-history
 
 # Pursue the goal on a different model than the agent's default
 maestro-cli goal-run <agent-id> "Port the parser to the new API" --model opus --effort high
+
+# Run it INSIDE the desktop app, where you can watch it, instead of headlessly
+maestro-cli goal-run <agent-id> "Migrate the settings store" --visible
+
+# Same, but queue behind whatever the agent is doing rather than failing
+maestro-cli goal-run <agent-id> "Migrate the settings store" --visible --wait --json
 ```
 
-| Option                   | Description                                                                   | Default       |
-| ------------------------ | ----------------------------------------------------------------------------- | ------------- |
-| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock                         | _(none)_      |
-| `--max-iterations <n>`   | Cap the number of iterations                                                  | Infinite      |
-| `--no-history`           | Do not write history entries                                                  | Writes        |
-| `--json`                 | Output as JSON lines (for scripting)                                          | Human text    |
-| `--verbose`              | Show the full prompt sent to the agent on each iteration                      | Off           |
-| `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | Agent default |
-| `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | Agent default |
+| Option                   | Description                                                                       | Default       |
+| ------------------------ | --------------------------------------------------------------------------------- | ------------- |
+| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock                             | _(none)_      |
+| `--max-iterations <n>`   | Cap the number of iterations                                                      | Infinite      |
+| `--no-history`           | Do not write history entries                                                      | Writes        |
+| `--json`                 | Output as JSON lines (for scripting)                                              | Human text    |
+| `--verbose`              | Show the full prompt sent to the agent on each iteration                          | Off           |
+| `--visible`              | Run inside the desktop app as a visible Auto Run instead of headlessly            | Headless      |
+| `--wait`                 | With `--visible`, wait for a busy agent instead of failing (requires `--visible`) | Fail if busy  |
+| `--model <model>`        | Model to use for this run only, overriding the agent's configured default         | Agent default |
+| `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default     | Agent default |
 
 The run writes an immediate "started" history entry (recording the goal and exit criteria), one entry per iteration, and a final summary with the stop reason and final progress. Goal-Driven runs honor the same per-agent SSH remote and model/effort/args overrides as `playbook`, and refuse to start if the agent is already busy in the desktop app or another CLI instance.
 
 **JSON event stream:** `goal_start`, `goal_iteration_start`, `goal_iteration_complete` (carries `progress`, `rationale`, `complete`, `deadlock`), and `goal_complete` (carries `success`, `exitReason`, `finalProgress`, `iterations`).
+
+#### Visible runs (`--visible`)
+
+By default `goal-run` is **headless**: the CLI spawns the agent itself, so the
+run is real but only observable through the CLI stream and history entries. It
+never appears in the agent's Auto Run surface.
+
+`--visible` hands the run to the **running desktop app** instead. It then
+behaves exactly like a run started from the Auto Run modal's **Go** button:
+it shows up in the Auto Run panel, `maestro-cli stop-auto-run -a <agent-id>`
+stops it, and `maestro-cli session list` reports it. The CLI returns as soon as
+the desktop confirms the run has started rather than streaming iterations, and
+prints a `maestro://session/<agent-id>/tab/<tab-id>` deep link that reopens it.
+
+Use it when an orchestrating agent needs to launch a worker the user can watch;
+use the headless default for CI and scripting.
+
+`--visible` **fails closed**. If the desktop app is not reachable it exits with
+`MAESTRO_NOT_RUNNING` rather than quietly running headlessly, because a silent
+fallback is invisible in exactly the surface you were pointing at. Other stable
+failure codes: `AGENT_BUSY` (the agent already has an Auto Run going - pass
+`--wait` to queue instead), `AUTO_RUN_DISABLED`, `SESSION_NOT_FOUND`,
+`LAUNCH_TIMEOUT`, and `UNSUPPORTED_COMMAND` (the desktop app is an older build
+than the CLI - rebuild and restart it).
+
+With `--json`, a successful launch emits a single `visible_launch` event:
+
+```json
+{
+	"type": "visible_launch",
+	"ok": true,
+	"mode": "goal",
+	"visible": true,
+	"agentId": "agent-123",
+	"sessionId": "agent-123",
+	"tabId": "tab-9",
+	"status": "running",
+	"uri": "maestro://session/agent-123/tab/tab-9"
+}
+```
+
+Goal-Driven Auto Runs attach to the **agent**, not to a tab, so there is no
+`--new-tab` / `--tab`: the run surfaces on whichever AI tab is active, and that
+is the tab the returned deep link addresses.
 
 ### Running Documents Without a Playbook (`run-doc`)
 

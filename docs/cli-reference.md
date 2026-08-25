@@ -181,6 +181,8 @@ Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 | `--no-history`           | Do not write history entries                                                  | -       |
 | `--json`                 | Output as JSON lines (for scripting)                                          | -       |
 | `--verbose`              | Show full prompt sent to agent on each iteration                              | -       |
+| `--visible`              | Run inside the Maestro desktop app (visible Auto Run) instead of headlessly   | -       |
+| `--wait`                 | With --visible, wait for the agent to become available if busy                | -       |
 | `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | -       |
 | `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | -       |
 
@@ -613,25 +615,25 @@ Print the full command reference (Markdown, or --format json)
 
 Create a new agent in the Maestro desktop app
 
-| Option                            | Description                                                                                      | Default         |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ | --------------- |
-| `-d, --cwd <path>`                | Working directory for the agent                                                                  | -               |
-| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, gemini-cli, qwen3-coder)   | `"claude-code"` |
-| `-g, --group <id>`                | Group ID to assign the agent to                                                                  | -               |
-| `--nudge <message>`               | Nudge message appended to every user message                                                     | -               |
-| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                | -               |
-| `--custom-path <path>`            | Custom binary path for the agent                                                                 | -               |
-| `--custom-args <args>`            | Custom CLI arguments for the agent                                                               | -               |
-| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                | `[]`            |
-| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                              | -               |
-| `--effort <level>`                | Effort/reasoning level override                                                                  | -               |
-| `--context-window <size>`         | Context window size in tokens                                                                    | -               |
-| `--provider-path <path>`          | Custom provider path                                                                             | -               |
-| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                               | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                         | -               |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote) | -               |
-| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)   | -               |
-| `--json`                          | Output as JSON (for scripting)                                                                   | -               |
+| Option                            | Description                                                                                                 | Default         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------- |
+| `-d, --cwd <path>`                | Working directory for the agent                                                                             | -               |
+| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder) | `"claude-code"` |
+| `-g, --group <id>`                | Group ID to assign the agent to                                                                             | -               |
+| `--nudge <message>`               | Nudge message appended to every user message                                                                | -               |
+| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                           | -               |
+| `--custom-path <path>`            | Custom binary path for the agent                                                                            | -               |
+| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                          | -               |
+| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                           | `[]`            |
+| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                         | -               |
+| `--effort <level>`                | Effort/reasoning level override                                                                             | -               |
+| `--context-window <size>`         | Context window size in tokens                                                                               | -               |
+| `--provider-path <path>`          | Custom provider path                                                                                        | -               |
+| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                          | -               |
+| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
+| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
+| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)              | -               |
+| `--json`                          | Output as JSON (for scripting)                                                                              | -               |
 
 ## `maestro-cli create-group <name>`
 

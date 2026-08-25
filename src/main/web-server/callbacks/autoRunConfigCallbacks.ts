@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createRemoteRequest } from './remoteRequest';
 
 export function registerAutoRunConfigCallbacks(
 	server: WebServer,
@@ -62,6 +63,23 @@ export function registerAutoRunConfigCallbacks(
 			}, 10000);
 		});
 	});
+
+	// Goal-Driven Auto Run launched from the CLI (`goal-run --visible`). Uses the
+	// shared remoteRequest round-trip rather than the hand-rolled listener dance
+	// above. The renderer only replies once the run has actually reached a
+	// running state, so the timeout is generous: startGoalRun loads the
+	// `autorun-goal` prompt and reads git status before dispatching START_BATCH.
+	const remoteRequest = createRemoteRequest(getMainWindow);
+	server.setLaunchGoalRunCallback(async (sessionId, config) =>
+		remoteRequest<{ success: boolean; tabId?: string; code?: string; error?: string }>(
+			'launchGoalRun',
+			'launchGoalRun',
+			{ success: false, code: 'LAUNCH_TIMEOUT', error: 'Timed out waiting for the desktop app' },
+			(mainWindow, responseChannel) =>
+				mainWindow.webContents.send('remote:launchGoalRun', sessionId, config, responseChannel),
+			20000
+		)
+	);
 
 	// Set up callback for web server to update the Auto Run folder on a session.
 	// Mirrors `configureAutoRun` IPC pattern: bridge to renderer via remote IPC,

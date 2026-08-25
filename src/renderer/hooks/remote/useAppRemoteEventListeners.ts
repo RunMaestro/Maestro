@@ -30,6 +30,7 @@ import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { notifyToast } from '../../stores/notificationStore';
+import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
 import {
 	canCreateGroupInside,
 	removeGroupAndPromoteChildren,
@@ -753,6 +754,120 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				success: false,
 				error: String(error),
 			});
+		}
+	});
+
+	// Handle a remote Goal-Driven Auto Run launch from the CLI
+	// (`maestro-cli goal-run --visible`). Routes to the SAME
+	// `startBatchRun({ goalConfig })` entry point the Auto Run modal's Go button
+	// uses, so the run is desktop-owned: it appears in the Auto Run surface, is
+	// stoppable via `stop-auto-run`, and shows up in `session list` for free.
+	//
+	// Unlike `maestro:configureAutoRun`, this does NOT ack success up front.
+	// Every cheap failure is checked synchronously before the agent is claimed,
+	// and the reply then waits for the run to actually reach a running state -
+	// a CLI that is told "launched" needs that to be true.
+	useEventListener('maestro:launchGoalRun', async (e: Event) => {
+		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			config: {
+				goal: string;
+				exitCriteria?: string;
+				maxIterations?: number | null;
+				model?: string;
+				effort?: string;
+			};
+			responseChannel: string;
+		};
+
+		const respond = (result: { success: boolean; tabId?: string; code?: string; error?: string }) =>
+			window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, result);
+
+		const session =
+			sessionsRef.current.find((s) => s.id === sessionId) ||
+			selectSessionById(sessionId)(useSessionStore.getState());
+		if (!session) {
+			respond({
+				success: false,
+				code: 'SESSION_NOT_FOUND',
+				error: `Agent ${sessionId} not found`,
+			});
+			return;
+		}
+
+		const goal = config?.goal?.trim() ?? '';
+		if (!goal) {
+			respond({ success: false, code: 'EMPTY_GOAL', error: 'A non-empty goal is required' });
+			return;
+		}
+
+		// The goal runner honors this too, but it bails with only a toast, which
+		// would surface to the CLI as an opaque failed launch.
+		if (useSettingsStore.getState().autoRunDisabled) {
+			respond({
+				success: false,
+				code: 'AUTO_RUN_DISABLED',
+				error: 'Auto Run is disabled in Settings',
+			});
+			return;
+		}
+
+		// Synchronous claim - see goalRunLaunch.ts for why this cannot be a plain
+		// isRunning read.
+		if (!reserveGoalRunLaunch(sessionId)) {
+			respond({
+				success: false,
+				code: 'AGENT_BUSY',
+				error: `Agent "${session.name}" already has an Auto Run in progress`,
+			});
+			return;
+		}
+
+		try {
+			const batchConfig: BatchRunConfig = {
+				documents: [],
+				prompt: '',
+				loopEnabled: false,
+				maxLoops: null,
+				goalConfig: {
+					goal,
+					exitCriteria: config.exitCriteria?.trim() ?? '',
+					maxIterations: config.maxIterations ?? null,
+				},
+				...(config.model && { model: config.model }),
+				...(config.effort && { effort: config.effort }),
+			};
+
+			// Goal mode is document-less, so folderPath is only used for history
+			// bookkeeping; the agent runs in its own cwd.
+			const runPromise = startBatchRun(sessionId, batchConfig, session.autoRunFolderPath || '');
+			runPromise.catch((err) => {
+				logger.error('[Remote] Visible goal run failed:', undefined, err);
+			});
+
+			const started = await waitForGoalRunStart(sessionId, runPromise);
+			if (!started) {
+				respond({
+					success: false,
+					code: 'LAUNCH_FAILED',
+					error:
+						'The desktop app did not start the goal run (check the Auto Run prompt template and Settings)',
+				});
+				return;
+			}
+
+			// Goal runs attach to the AGENT, not a tab, and surface on whichever AI
+			// tab is active - that is the tab the returned deep link addresses.
+			respond({ success: true, tabId: session.activeTabId });
+		} catch (error) {
+			captureException(error, { extra: { event: 'maestro:launchGoalRun', sessionId } });
+			respond({
+				success: false,
+				code: 'LAUNCH_FAILED',
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			releaseGoalRunLaunch(sessionId);
 		}
 	});
 
