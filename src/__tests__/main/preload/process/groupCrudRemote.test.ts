@@ -25,26 +25,65 @@ describe('Process GroupCrudRemote Preload API', () => {
 	});
 
 	describe('onRemoteCreateGroup', () => {
-		it('forwards a parent group ID in its fixed IPC argument position', () => {
-			const callback = vi.fn();
-			let registeredHandler: (
-				event: unknown,
-				name: string,
-				emoji: string | undefined,
-				parentGroupId: string | undefined,
-				responseChannel: string
-			) => void;
-
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:createGroup') {
-					registeredHandler = handler;
-				}
+		/** Grab the handler the API registered for `channel`. */
+		function registerFor(channel: string): (...args: any[]) => void {
+			let registered: ((...args: any[]) => void) | undefined;
+			mockOn.mockImplementation((ch: string, handler: (...args: any[]) => void) => {
+				if (ch === channel) registered = handler;
 			});
+			return (...args: any[]) => registered!(...args);
+		}
+
+		it('forwards a parent group ID and appearance in their fixed IPC argument positions', () => {
+			const callback = vi.fn();
+			const fire = registerFor('remote:createGroup');
 
 			api.onRemoteCreateGroup(callback);
-			registeredHandler!({}, 'Project', '📁', 'company', 'response-channel');
+			fire({}, 'Project', '📁', 'company', { icon: 'rocket' }, 'response-channel');
 
-			expect(callback).toHaveBeenCalledWith('Project', '📁', 'company', 'response-channel');
+			expect(callback).toHaveBeenCalledWith(
+				'Project',
+				'📁',
+				'company',
+				{ icon: 'rocket' },
+				'response-channel'
+			);
+		});
+
+		it('substitutes an empty appearance when an older main process omits it', () => {
+			const callback = vi.fn();
+			const fire = registerFor('remote:createGroup');
+
+			api.onRemoteCreateGroup(callback);
+			fire({}, 'Project', '📁', 'company', undefined, 'response-channel');
+
+			expect(callback).toHaveBeenCalledWith('Project', '📁', 'company', {}, 'response-channel');
+		});
+	});
+
+	describe('onRemoteUpdateGroup', () => {
+		it('forwards the group ID and update payload', () => {
+			const callback = vi.fn();
+			let registered: ((...args: any[]) => void) | undefined;
+			mockOn.mockImplementation((ch: string, handler: (...args: any[]) => void) => {
+				if (ch === 'remote:updateGroup') registered = handler;
+			});
+
+			api.onRemoteUpdateGroup(callback);
+			registered!({}, 'group-1', { icon: 'shield', clear: ['color'] }, 'response-channel');
+
+			expect(callback).toHaveBeenCalledWith(
+				'group-1',
+				{ icon: 'shield', clear: ['color'] },
+				'response-channel'
+			);
+		});
+
+		it('unsubscribes from the IPC channel', () => {
+			const unsubscribe = api.onRemoteUpdateGroup(vi.fn());
+			unsubscribe();
+
+			expect(mockRemoveListener).toHaveBeenCalledWith('remote:updateGroup', expect.any(Function));
 		});
 	});
 });

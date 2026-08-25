@@ -32,8 +32,76 @@ import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { notifyToast } from '../../stores/notificationStore';
 import {
 	canCreateGroupInside,
+	canSetGroupParent,
 	removeGroupAndPromoteChildren,
+	setGroupParent,
 } from '../../../shared/groupHierarchy';
+import {
+	validateGroupAppearance,
+	validateGroupUpdate,
+	type GroupUpdateRequest,
+} from '../../../shared/groupAppearance';
+
+// ============================================================================
+// Group update helpers
+// ============================================================================
+
+/**
+ * Write the group list straight to disk and wait for it.
+ *
+ * The store's own persistence runs from a React effect, so it lands after this
+ * listener has already answered the caller. A CLI that verifies its write by
+ * reading `maestro-groups.json` back would then see the pre-update list and
+ * report a false mismatch. Flushing before responding makes the readback
+ * deterministic; the effect's later write is the same data and is idempotent.
+ * Same reasoning as the remote session-rename handler above.
+ */
+async function flushGroupsToDisk(groups: Group[]): Promise<void> {
+	try {
+		await window.maestro.groups.setAll(groups);
+	} catch (error) {
+		logger.error('[Remote] Failed to persist group change:', undefined, error);
+	}
+}
+
+/**
+ * Apply a validated update to one group. Pure so the ordering rules are
+ * testable: the parent move runs first (it can reject on its own terms and
+ * returns the list unchanged when it does), then the field-level sets and
+ * clears are applied to the moved list.
+ */
+function applyGroupUpdate(
+	groups: Group[],
+	groupId: string,
+	request: GroupUpdateRequest,
+	clear: Set<string>
+): Group[] {
+	let next = groups;
+	if (request.parentGroupId) {
+		next = setGroupParent(next, groupId, request.parentGroupId);
+	} else if (clear.has('parent')) {
+		next = setGroupParent(next, groupId, undefined);
+	}
+
+	return next.map((group) => {
+		if (group.id !== groupId) return group;
+		const updated: Group = { ...group };
+		if (request.name) updated.name = request.name.toUpperCase();
+		// An icon and an emoji are alternative presentations of the same group,
+		// and the Groups+ gate falls back to the emoji, so setting one never
+		// discards the other - clearing is always explicit.
+		if (request.emoji) updated.emoji = request.emoji;
+		if (request.icon) updated.icon = request.icon;
+		if (request.color) updated.color = request.color;
+		// The emoji is non-optional on Group and the Left Bar renders it when
+		// Groups+ is off, so clearing it restores the default folder rather
+		// than leaving a group with no glyph at all.
+		if (clear.has('emoji')) updated.emoji = '\u{1F4C2}';
+		if (clear.has('icon')) delete updated.icon;
+		if (clear.has('color')) delete updated.color;
+		return updated;
+	});
+}
 
 // ============================================================================
 // Dependencies interface
@@ -1718,11 +1786,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// --- Group CRUD ---
 
 	// Handle remote create group from web interface
-	useEventListener('maestro:remoteCreateGroup', (e: Event) => {
+	useEventListener('maestro:remoteCreateGroup', async (e: Event) => {
 		const {
 			name,
 			emoji,
 			parentGroupId: requestedParentGroupId,
+			appearance,
 			responseChannel,
 		} = (e as CustomEvent).detail;
 		const trimmed = name.trim();
@@ -1738,18 +1807,31 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
 			return;
 		}
+		// Re-validate here rather than trusting the sender: this listener is
+		// reachable from any client on the WS bridge, and a bad icon id written
+		// into the group list would survive every later read.
+		const validated = validateGroupAppearance({
+			emoji,
+			icon: appearance?.icon,
+			color: appearance?.color,
+		});
+		if (!validated.ok) {
+			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
+			return;
+		}
 		const newGroupId = `group-${generateId()}`;
-		setGroups((prev: Group[]) => [
-			...prev,
-			{
-				id: newGroupId,
-				name: trimmed.toUpperCase(),
-				emoji: emoji || '\u{1F4C2}',
-				kind: 'user',
-				...(parentGroupId ? { parentGroupId } : {}),
-				collapsed: false,
-			},
-		]);
+		const newGroup: Group = {
+			id: newGroupId,
+			name: trimmed.toUpperCase(),
+			emoji: validated.value.emoji || '\u{1F4C2}',
+			kind: 'user',
+			...(validated.value.icon ? { icon: validated.value.icon } : {}),
+			...(validated.value.color ? { color: validated.value.color } : {}),
+			...(parentGroupId ? { parentGroupId } : {}),
+			collapsed: false,
+		};
+		setGroups((prev: Group[]) => [...prev, newGroup]);
+		await flushGroupsToDisk([...useSessionStore.getState().groups, newGroup]);
 		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
 	});
 
@@ -1765,6 +1847,46 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			prev.map((g) => (g.id === groupId ? { ...g, name: trimmed.toUpperCase() } : g))
 		);
 		window.maestro.process.sendRemoteRenameGroupResponse(responseChannel, true);
+	});
+
+	// Handle a remote group update (name / appearance / parent). The payload is
+	// already validated by the WS handler; what only the renderer can decide is
+	// whether the group exists and whether the requested reparent is legal, so
+	// both are checked before any state is written.
+	useEventListener('maestro:remoteUpdateGroup', async (e: Event) => {
+		const { groupId, update, responseChannel } = (e as CustomEvent).detail as {
+			groupId: string;
+			update: GroupUpdateRequest;
+			responseChannel: string;
+		};
+		const respond = (success: boolean) =>
+			window.maestro.process.sendRemoteUpdateGroupResponse(responseChannel, success);
+
+		const validated = validateGroupUpdate(update ?? {});
+		if (!validated.ok) {
+			respond(false);
+			return;
+		}
+		const request = validated.value;
+		const clear = new Set(request.clear ?? []);
+
+		const currentGroups = useSessionStore.getState().groups;
+		if (!currentGroups.some((g) => g.id === groupId)) {
+			respond(false);
+			return;
+		}
+		if (
+			request.parentGroupId &&
+			!canSetGroupParent(currentGroups, groupId, request.parentGroupId)
+		) {
+			respond(false);
+			return;
+		}
+
+		const nextGroups = applyGroupUpdate(currentGroups, groupId, request, clear);
+		setGroups(() => nextGroups);
+		await flushGroupsToDisk(nextGroups);
+		respond(true);
 	});
 
 	// Handle remote delete group from web interface (fire-and-forget)

@@ -4,6 +4,7 @@
  */
 
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
@@ -931,9 +932,16 @@ export type GetGroupsCallback = () => GroupData[];
 export type CreateGroupCallback = (
 	name: string,
 	emoji?: string,
-	parentGroupId?: string
+	parentGroupId?: string,
+	appearance?: GroupAppearance
 ) => Promise<{ id: string } | null>;
 export type RenameGroupCallback = (groupId: string, name: string) => Promise<boolean>;
+/**
+ * Apply a validated group update. Resolves `false` when the group is gone or
+ * the requested reparent would break the one-level nesting rule - the renderer
+ * is the only place that can answer either question.
+ */
+export type UpdateGroupCallback = (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
 export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
 export type MoveSessionToGroupCallback = (
 	sessionId: string,

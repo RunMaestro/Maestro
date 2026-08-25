@@ -813,6 +813,7 @@ interface MaestroAPI {
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				appearance: import('../shared/groupAppearance').GroupAppearance,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -821,6 +822,14 @@ interface MaestroAPI {
 			callback: (groupId: string, name: string, responseChannel: string) => void
 		) => () => void;
 		sendRemoteRenameGroupResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteUpdateGroup: (
+			callback: (
+				groupId: string,
+				update: import('../shared/groupAppearance').GroupUpdateRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdateGroupResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteDeleteGroup: (callback: (groupId: string) => void) => () => void;
 		onRemoteMoveSessionToGroup: (
 			callback: (sessionId: string, groupId: string | null, responseChannel: string) => void
