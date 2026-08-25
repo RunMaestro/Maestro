@@ -102,7 +102,7 @@ export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
 export const CUE_GITHUB_STATES: CueGitHubState[] = ['open', 'closed', 'merged', 'all'];
 
 /** What a subscription does when it fires. */
-export type CueAction = 'prompt' | 'command' | 'notify';
+export type CueAction = 'prompt' | 'command' | 'notify' | 'autorun';
 
 /** Sub-mode of a `command` action. */
 export type CueCommandMode = 'shell' | 'cli';
@@ -123,6 +123,41 @@ export interface CueNotifyConfig {
 	/** When true, render the toast as dismissible (no auto-timeout - the
 	 *  user must explicitly close it). Maps to `notifyToast({ dismissible: true })`. */
 	sticky?: boolean;
+}
+
+/**
+ * Auto Run config for `action: 'autorun'` subscriptions.
+ *
+ * An autorun subscription launches an Auto Run in the owning agent instead of
+ * spawning a prompt. Paired with a `time.once` trigger this is what backs
+ * "schedule this Auto Run for 6am" - the Cue engine already owns persistence,
+ * the missed-fire grace window, and the activity log, so scheduling does not
+ * need a second timer of its own.
+ *
+ * `documents` is deliberately a list of ABSOLUTE paths captured at schedule
+ * time rather than a folder resolved when the run fires. An agent's Auto Run
+ * folder is a mutable setting: resolving it late means repointing the folder
+ * between scheduling and firing silently runs the agent against a different
+ * set of documents than the user chose.
+ */
+export interface CueAutoRunConfig {
+	/** Absolute paths to the `.md` documents to run, in order. Non-empty. */
+	documents: string[];
+	/** Per-document "uncheck every task when the run finishes" flags, aligned
+	 *  index-for-index with {@link documents}. Absent means all-false. */
+	reset_on_completion?: boolean[];
+	/** Extra instructions prepended to the run, mirroring the Auto Run panel's
+	 *  prompt box. */
+	prompt?: string;
+	/** Re-run the document set once every task is checked off. */
+	loop_enabled?: boolean;
+	/** Loop ceiling. Only meaningful when `loop_enabled` is true. */
+	max_loops?: number;
+	/** Run-scoped model override. Wins over the agent's configured model for
+	 *  this run only and is never written back to the session. */
+	model?: string;
+	/** Run-scoped reasoning-effort override. Same scope rules as `model`. */
+	effort?: string;
 }
 
 /**
@@ -191,6 +226,9 @@ export interface CueSubscription {
 	/** Toast notification config for `action: 'notify'` subscriptions.
 	 *  Required when `action === 'notify'`. See {@link CueNotifyConfig}. */
 	notify?: CueNotifyConfig;
+	/** Auto Run payload for `action: 'autorun'` subscriptions.
+	 *  Required when `action === 'autorun'`. See {@link CueAutoRunConfig}. */
+	auto_run?: CueAutoRunConfig;
 	watch?: string;
 	source_session?: string | string[];
 	/** Stable session ID(s) for chain subscriptions (event === 'agent.completed').

@@ -14,7 +14,7 @@
  * `src/main/cue/cue-scheduled-tasks.ts`.
  */
 
-import type { CueAction, CueScheduleDay } from './contracts';
+import type { CueAction, CueAutoRunConfig, CueScheduleDay } from './contracts';
 import { CUE_SCHEDULE_DAYS } from './contracts';
 
 /** Cue events that make a subscription a scheduled task. */
@@ -65,6 +65,10 @@ export interface ScheduledTask {
 	notifyMessage?: string;
 	/** Whether the notify toast sticks until dismissed. */
 	notifySticky?: boolean;
+	/** Captured Auto Run payload when `action === 'autorun'`. Present so the
+	 *  Scheduled Tasks tab can show WHICH documents a pending run will launch
+	 *  rather than just "an Auto Run". */
+	autoRun?: CueAutoRunConfig;
 	/**
 	 * Epoch ms of the next projected fire, or `null` when it cannot be known
 	 * (an `interval` task's phase depends on engine run state, and an expired
@@ -85,9 +89,13 @@ export interface ScheduledTaskCreateInput {
 	scheduleDays?: CueScheduleDay[];
 	/** Required for `interval`. */
 	intervalMinutes?: number;
-	/** Prompt to send. One of `prompt` / `notify` is required. */
+	/** Prompt to send. One of `prompt` / `notify` / `autoRun` is required. */
 	prompt?: string;
 	notify?: { message: string; sticky?: boolean };
+	/** Launch an Auto Run instead of sending a prompt. Mutually exclusive with
+	 *  `prompt` and `notify`: an Auto Run is the whole job, not a step
+	 *  alongside one. */
+	autoRun?: CueAutoRunConfig;
 	/** Subscription name. Auto-generated when omitted. */
 	name?: string;
 	label?: string;

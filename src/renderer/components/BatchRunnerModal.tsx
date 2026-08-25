@@ -17,6 +17,7 @@ import {
 	PlayCircle,
 	HelpCircle,
 	Target,
+	Clock,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
@@ -32,10 +33,19 @@ import { DocumentsPanel } from './DocumentsPanel';
 import { GoalConfigPanel } from './GoalConfigPanel';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { WorktreeRunSection } from './WorktreeRunSection';
+import {
+	ScheduleRunSection,
+	fromDateTimeLocalValue,
+	validateScheduledStart,
+} from './ScheduleRunSection';
 import { AutoRunnerHelpModal } from './AutoRun/AutoRunnerHelpModal';
 import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { cueService } from '../services/cue';
+import { notifyToast } from '../stores/notificationStore';
+import { captureException } from '../utils/sentry';
 import {
 	usePlaybookManagement,
 	useTaskSelectionRecommendation,
@@ -46,6 +56,7 @@ import {
 	validateAgentPromptHasTaskReference,
 } from '../hooks';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { joinPath } from '../../shared/formatters';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
 
@@ -150,6 +161,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// changing the agent's own model, which Session settings already does.
 	const [runModel, setRunModel] = useState('');
 	const [runEffort, setRunEffort] = useState('');
+
+	// Scheduled start. Empty string means "now" (the default, and the behavior
+	// this modal has always had). A non-empty value is a local `datetime-local`
+	// string; the run is handed to Maestro Cue as a one-shot `time.once`
+	// subscription instead of being launched here.
+	const [scheduledStart, setScheduledStart] = useState('');
+	const [isScheduling, setIsScheduling] = useState(false);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
 
@@ -406,11 +425,21 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// targets are already disabled in the WorktreeRunSection dropdown.)
 	const blocksLaunchWhileBusy = isAgentBusy && worktreeTarget === null;
 
+	// A scheduled run is only offered for Spec-Driven runs: the Cue autorun
+	// payload is a document list, and Goal-Driven runs have no documents.
+	const isScheduled = scheduledStart !== '' && !goalMode;
+	const scheduleError = isScheduled ? validateScheduledStart(scheduledStart) : null;
+
 	// Whether the Go button should be disabled, branching on the active mode.
+	// Scheduling deliberately ignores `blocksLaunchWhileBusy` and
+	// `isBatchRunningForSession`: those describe the agent right now, and a run
+	// scheduled for 6am has no reason to care what the agent is doing at 11pm.
+	// The engine re-checks readiness when the run actually fires.
 	const isGoDisabled =
 		isPreparingWorktree ||
-		blocksLaunchWhileBusy ||
-		isBatchRunningForSession ||
+		isScheduling ||
+		scheduleError !== null ||
+		(!isScheduled && (blocksLaunchWhileBusy || isBatchRunningForSession)) ||
 		(goalMode
 			? isGoalEmpty
 			: hasNoTasks ||
@@ -439,7 +468,88 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onChange: setAutoRunMode,
 	});
 
+	/**
+	 * Hand the run to Maestro Cue as a one-shot `time.once` subscription instead
+	 * of launching it now.
+	 *
+	 * Document paths are resolved to absolute here, at SCHEDULE time, and travel
+	 * with the subscription. The agent's Auto Run folder is a mutable setting,
+	 * so resolving late would mean repointing that folder between scheduling and
+	 * firing silently runs a different set of documents than the user picked.
+	 *
+	 * `keepOnFailure` leaves the subscription on disk when the launch fails.
+	 * A `time.once` sub is consumed on any terminal status, so without it a
+	 * failed 6am launch would delete itself and leave nothing to inspect - the
+	 * user would just find that their run never happened.
+	 */
+	const handleSchedule = async () => {
+		const validationError = validateScheduledStart(scheduledStart);
+		if (validationError) {
+			notifyToast({ color: 'red', title: 'Cannot schedule run', message: validationError });
+			return;
+		}
+		const fireAt = fromDateTimeLocalValue(scheduledStart);
+		if (!fireAt) return;
+
+		if (!folderPath) {
+			notifyToast({
+				color: 'red',
+				title: 'Cannot schedule run',
+				message: 'This agent has no Auto Run folder configured.',
+			});
+			return;
+		}
+
+		onSave(prompt);
+
+		const validDocuments = documents.filter((doc) => !doc.isMissing);
+		if (validDocuments.length === 0) return;
+
+		setIsScheduling(true);
+		try {
+			await cueService.createScheduledTask({
+				agentId: sessionId,
+				kind: 'once',
+				fireAt: fireAt.toISOString(),
+				keepOnFailure: true,
+				autoRun: {
+					documents: validDocuments.map((doc) => joinPath(folderPath, `${doc.filename}.md`)),
+					reset_on_completion: validDocuments.map((doc) => doc.resetOnCompletion),
+					prompt,
+					loop_enabled: loopEnabled,
+					...(loopEnabled && maxLoops ? { max_loops: maxLoops } : {}),
+					...(runModel && { model: runModel }),
+					...(runEffort && { effort: runEffort }),
+				},
+			});
+			notifyToast({
+				color: 'green',
+				title: 'Auto Run scheduled',
+				message: `Starts ${fireAt.toLocaleString()}. Cancel it under Scheduled Tasks in the Cue window.`,
+				sessionId,
+			});
+			onClose();
+		} catch (err) {
+			captureException(err, { extra: { sessionId, scheduledStart } });
+			notifyToast({
+				color: 'red',
+				title: 'Could not schedule Auto Run',
+				message: err instanceof Error ? err.message : String(err),
+			});
+		} finally {
+			setIsScheduling(false);
+		}
+	};
+
 	const handleGo = async () => {
+		// A scheduled start hands the run to Cue rather than launching it. Checked
+		// first so none of the launch-time side effects below (worktree prep,
+		// batch dispatch) run for a run that is not starting yet.
+		if (isScheduled) {
+			await handleSchedule();
+			return;
+		}
+
 		// Also save when running
 		onSave(prompt);
 
@@ -865,6 +975,18 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						/>
 					)}
 
+					{/* Start: Now / At a set time. Spec-Driven only - a scheduled run is
+					    stored as a Cue autorun subscription keyed on a document list, and
+					    Goal-Driven runs have no documents to key on. */}
+					{!goalMode && (
+						<ScheduleRunSection
+							theme={theme}
+							value={scheduledStart}
+							onChange={setScheduledStart}
+							cueEnabled={maestroCueEnabled}
+						/>
+					)}
+
 					{/* Spec-Driven config: Fresh-context selector + Agent Prompt. Hidden in
 					    goal mode, where the agent prompt is built internally by the goal
 					    runner and "Fresh context per" has no meaning without documents. */}
@@ -1211,29 +1333,45 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							title={
 								isPreparingWorktree
 									? 'Preparing worktree...'
-									: isBatchRunningForSession
-										? 'An Auto Run is already active for this agent - stop it before launching another'
-										: blocksLaunchWhileBusy
-											? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
-											: goalMode
-												? isGoalEmpty
-													? 'Enter a goal to launch a Goal-Driven run'
-													: 'Start goal-driven auto-run'
-												: isPromptEmpty
-													? 'Agent prompt cannot be empty'
-													: !hasValidPrompt
-														? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-														: documents.length === 0
-															? 'No documents selected'
-															: documents.length === missingDocCount
-																? 'All selected documents are missing'
-																: hasNoTasks
-																	? 'No unchecked tasks in documents'
-																	: 'Start auto-run'
+									: scheduleError
+										? scheduleError
+										: isScheduled
+											? 'Schedule this Auto Run to start at the chosen time'
+											: isBatchRunningForSession
+												? 'An Auto Run is already active for this agent - stop it before launching another'
+												: blocksLaunchWhileBusy
+													? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
+													: goalMode
+														? isGoalEmpty
+															? 'Enter a goal to launch a Goal-Driven run'
+															: 'Start goal-driven auto-run'
+														: isPromptEmpty
+															? 'Agent prompt cannot be empty'
+															: !hasValidPrompt
+																? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+																: documents.length === 0
+																	? 'No documents selected'
+																	: documents.length === missingDocCount
+																		? 'All selected documents are missing'
+																		: hasNoTasks
+																			? 'No unchecked tasks in documents'
+																			: 'Start auto-run'
 							}
 						>
-							{isPreparingWorktree ? <Spinner size={16} /> : <Play className="w-4 h-4" />}
-							{isPreparingWorktree ? 'Preparing Worktree...' : 'Go'}
+							{isPreparingWorktree || isScheduling ? (
+								<Spinner size={16} />
+							) : isScheduled ? (
+								<Clock className="w-4 h-4" />
+							) : (
+								<Play className="w-4 h-4" />
+							)}
+							{isPreparingWorktree
+								? 'Preparing Worktree...'
+								: isScheduling
+									? 'Scheduling...'
+									: isScheduled
+										? 'Schedule'
+										: 'Go'}
 						</button>
 					</div>
 				</div>

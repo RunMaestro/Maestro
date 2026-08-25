@@ -100,6 +100,7 @@ import { executeCuePrompt, recordCueHistoryEntry, stopCueRun } from './cue/cue-e
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { executeCueAutoRun } from './cue/cue-autorun-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
@@ -1101,6 +1102,7 @@ app
 				action,
 				command,
 				notify,
+				autoRun,
 			}) => {
 				const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
 				const storedSession = storedSessions.find((s) => s.id === sessionId);
@@ -1122,6 +1124,80 @@ app
 					},
 					conductorProfile: (store.get('conductorProfile', '') as string) || undefined,
 				};
+
+				// `action: autorun` launches an Auto Run in the owning agent. Handled
+				// before notify/command/prompt for the same reason they are: it never
+				// spawns an agent process here, so the agent-path resolution, SSH
+				// wrapping, and prompt plumbing below do not apply. The document list
+				// travels on the subscription rather than being re-read from the
+				// agent's Auto Run folder, so repointing that folder between
+				// scheduling and firing cannot swap the run out from under the user.
+				if (action === 'autorun') {
+					const sessionInfo = {
+						id: storedSession.id,
+						name: storedSession.name,
+						toolType: storedSession.toolType,
+						cwd: projectRoot,
+						projectRoot,
+						autoRunFolderPath: storedSession.autoRunFolderPath,
+					};
+					const subscription = {
+						name: subscriptionName,
+						event: event.type,
+						enabled: true,
+						prompt,
+						action,
+						auto_run: autoRun,
+						agent_id: storedSession.id,
+					};
+					const autoRunLog = (level: string, message: string) => {
+						if (level === 'error') logger.error(message, 'Cue');
+						else if (level === 'warn') logger.warn(message, 'Cue');
+						else if (level === 'debug') logger.debug(message, 'Cue');
+						else logger.cue(message, 'Cue');
+					};
+					if (!autoRun || autoRun.documents.length === 0) {
+						// Reachable when a queued run is restored from the persisted
+						// queue across a restart: the queue schema has no column for
+						// the payload, so it comes back undefined. Report a failure
+						// rather than throwing - a `time.once` autorun task is written
+						// with `self_destruct_on_failure: false`, so failing here keeps
+						// the subscription on disk instead of consuming it silently.
+						const reason =
+							'no documents on the run - the captured Auto Run payload did not survive the queue';
+						autoRunLog('error', `[CUE] Auto Run "${subscriptionName}" did not start: ${reason}`);
+						const startedAt = new Date().toISOString();
+						const failed = {
+							runId,
+							sessionId: storedSession.id,
+							sessionName: storedSession.name,
+							subscriptionName,
+							event,
+							status: 'failed' as const,
+							stdout: '',
+							stderr: `Auto Run launch failed: ${reason}`,
+							exitCode: 1,
+							durationMs: 0,
+							startedAt,
+							endedAt: startedAt,
+						};
+						const failedHistory = recordCueHistoryEntry(failed, sessionInfo);
+						void historyManager.addEntry(storedSession.id, projectRoot, failedHistory);
+						return failed;
+					}
+					const autoRunResult = await executeCueAutoRun({
+						runId,
+						session: sessionInfo,
+						subscription,
+						event,
+						autoRun,
+						mainWindow,
+						onLog: autoRunLog,
+					});
+					const autoRunHistory = recordCueHistoryEntry(autoRunResult, sessionInfo);
+					void historyManager.addEntry(storedSession.id, projectRoot, autoRunHistory);
+					return autoRunResult;
+				}
 
 				// `action: notify` surfaces a toast through the owning agent instead of
 				// spawning anything - handled before command/prompt so the spawn config,
