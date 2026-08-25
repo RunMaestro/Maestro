@@ -103,3 +103,88 @@ describe('keyboard shortcut registry wiring', () => {
 		expect(overlap(TAB_SHORTCUTS, FIXED_SHORTCUTS)).toEqual([]);
 	});
 });
+
+/**
+ * Duplicate-binding guard for the shipped defaults.
+ *
+ * Two actions in the SAME scope answering to one chord means one of them loses,
+ * silently, with nothing in the UI to explain it - the user just reports that a
+ * key they have used for months stopped working. `ShortcutsTab` now rejects
+ * this when a user records a binding by hand, but that check cannot see the
+ * defaults table, so a duplicate shipped as a default slips straight past it.
+ *
+ * Scope is real and this test has to respect it, or it fails on correct design:
+ * several actions deliberately share a chord because they can never be live at
+ * the same moment. Each such group is listed below WITH the reason it is safe.
+ * Anything not on that list is a bug - which is the point. A future action that
+ * takes an already-used chord fails here rather than in a bug report.
+ */
+describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings', () => {
+	/**
+	 * Chords that more than one action may legitimately claim, each with the
+	 * gate that keeps them apart. Add to this ONLY with the reason written down.
+	 */
+	const INTENTIONALLY_SHARED: { chord: string; ids: string[]; why: string }[] = [
+		{
+			chord: 'Meta+f',
+			ids: [
+				'filterFiles',
+				'filterSessions',
+				'filterHistory',
+				'searchLogs',
+				'searchOutput',
+				'searchDirectorNotes',
+			],
+			why: "Each is scoped to the surface that has focus (Files tab, Left Panel, History tab, System Log viewer, Main Window, Director's Notes). Only one of those surfaces is focused at a time.",
+		},
+		{
+			chord: 'Meta+Shift+k',
+			ids: ['clearTerminal', 'toggleShowThinking'],
+			why: 'Mutually exclusive by input mode: clearTerminal is gated on inputMode === "terminal" (useMainKeyboardHandler), toggleShowThinking is a tab shortcut reached only in AI mode.',
+		},
+	];
+
+	const normalize = (keys: string[]): string => [...keys].sort().join('+');
+
+	it('ships no unexplained duplicate binding', () => {
+		const all = [
+			...Object.values(DEFAULT_SHORTCUTS),
+			...Object.values(TAB_SHORTCUTS),
+			...Object.values(FIXED_SHORTCUTS),
+		];
+
+		const byChord = new Map<string, string[]>();
+		for (const sc of all) {
+			// An unassigned action (keys: []) claims nothing and cannot collide.
+			if (!sc.keys?.length) continue;
+			const chord = normalize(sc.keys);
+			byChord.set(chord, [...(byChord.get(chord) ?? []), sc.id]);
+		}
+
+		const unexplained: string[] = [];
+		for (const [chord, ids] of byChord) {
+			if (ids.length < 2) continue;
+			const allowed = INTENTIONALLY_SHARED.find((g) => g.chord === chord);
+			// The allowlist must match EXACTLY. Listing a chord does not license
+			// every future action to join that group - a new arrival is a new
+			// decision and has to be made deliberately.
+			if (allowed && [...allowed.ids].sort().join(',') === [...ids].sort().join(',')) continue;
+			unexplained.push(`${chord} is claimed by: ${ids.join(', ')}`);
+		}
+
+		expect(unexplained).toEqual([]);
+	});
+
+	it('keeps every allowlisted group honest - each id still exists', () => {
+		const known = new Set([
+			...Object.keys(DEFAULT_SHORTCUTS),
+			...Object.keys(TAB_SHORTCUTS),
+			...Object.keys(FIXED_SHORTCUTS),
+		]);
+		const missing = INTENTIONALLY_SHARED.flatMap((g) =>
+			g.ids.filter((id) => !known.has(id)).map((id) => `${g.chord}: ${id}`)
+		);
+		// A stale allowlist entry is how an exemption outlives the reason for it.
+		expect(missing).toEqual([]);
+	});
+});
