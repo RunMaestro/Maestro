@@ -1831,7 +1831,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			collapsed: false,
 		};
 		setGroups((prev: Group[]) => [...prev, newGroup]);
-		await flushGroupsToDisk([...useSessionStore.getState().groups, newGroup]);
+		await flushGroupsToDisk(useSessionStore.getState().groups);
 		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
 	});
 
