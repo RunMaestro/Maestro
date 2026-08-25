@@ -36,6 +36,7 @@ import type {
 	GroomingProgress,
 	MergeResult,
 } from '../../types/contextMerge';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 
 // Lazy-loaded: FilePreview is the single aggregation point that pulls mermaid,
 // react-syntax-highlighter, and the full react-markdown/remark/rehype stack into
@@ -168,9 +169,13 @@ export interface MainPanelContentProps {
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/**
+	 * Force Send eligibility for a queued item: can it be dispatched now, why not
+	 * if it can't, and which other tabs are working. Carries the FULL
+	 * ForceSendEligibility so the inline card renders the same decision the
+	 * Execution Queue modal does instead of re-deriving one from a subset.
+	 */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	onOpenQueueBrowser?: () => void;
 	showFlashNotification?: (message: string) => void;
 

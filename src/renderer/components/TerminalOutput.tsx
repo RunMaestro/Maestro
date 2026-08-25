@@ -66,6 +66,7 @@ import { SnoozeReturnCard } from './SnoozeReturnCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from './ui/TurnSettingPills';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import type { ForceSendEligibility } from '../utils/executionQueue';
 
 /**
  * Frames a cross-tab search jump keeps re-asserting its scroll position.
@@ -1414,9 +1415,8 @@ interface TerminalOutputProps {
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	onInterrupt?: () => void; // Callback to interrupt the current process
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom

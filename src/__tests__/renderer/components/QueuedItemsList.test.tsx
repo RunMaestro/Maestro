@@ -257,3 +257,84 @@ describe('QueuedItemsList turn setting pills', () => {
 		expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
 	});
 });
+
+/**
+ * The inline QUEUED card and the Execution Queue modal are two views of one
+ * decision. They disagreed: the modal asked getForceSendEligibility, the inline
+ * card re-derived the answer from a narrowed {targetTabBusy, otherBusyTabs} and
+ * HID the button in cases the helper allows. On a quiet agent - idle target,
+ * nothing else running - force send is always permitted, and the chat showed
+ * nothing while the modal showed a working button.
+ *
+ * These assert the inline card now mirrors the modal: visible unless the item
+ * has no tab to run on, disabled with the reason otherwise.
+ */
+describe('QueuedItemsList force send', () => {
+	const eligibility = (over: Record<string, unknown> = {}) => ({
+		targetTabBusy: false,
+		otherBusyTabs: [],
+		requiresParallel: false,
+		canForce: true,
+		blockedReason: undefined,
+		...over,
+	});
+
+	const withForceSend = (ctx: unknown, extra: Record<string, unknown> = {}) =>
+		setup({
+			onForceSendQueuedItem: vi.fn(),
+			getForceSendContext: () => ctx,
+			...extra,
+		});
+
+	it('offers Force Send on a quiet agent - idle target, nothing else busy', () => {
+		// The always-allowed case the old rule hid: it required at least one OTHER
+		// busy tab, so jumping the queue on an idle agent was unreachable.
+		withForceSend(eligibility());
+		const button = screen.getByRole('button', { name: /Force Send/i });
+		expect(button).toBeEnabled();
+		expect(button.getAttribute('title')).toMatch(/ahead of the rest of the queue/i);
+	});
+
+	it('offers Force Send even when Forced Parallel Execution is off', () => {
+		// forcedParallelEnabled is an INPUT to the helper, not a gate in front of
+		// it. With nothing else running the setting is irrelevant.
+		withForceSend(eligibility(), { forcedParallelEnabled: false });
+		expect(screen.getByRole('button', { name: /Force Send/i })).toBeEnabled();
+	});
+
+	it('shows Force Send disabled, with the reason, when the target tab is busy', () => {
+		// The old rule hid it outright here - so the queue stalled with no
+		// explanation, while the modal said why.
+		withForceSend(
+			eligibility({ targetTabBusy: true, canForce: false, blockedReason: 'target-tab-busy' })
+		);
+		const button = screen.getByRole('button', { name: /Force Send/i });
+		expect(button).toBeDisabled();
+		expect(button.getAttribute('title')).toMatch(/already working/i);
+	});
+
+	it('shows Force Send disabled when another tab is busy and forced parallel is off', () => {
+		withForceSend(
+			eligibility({
+				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+				requiresParallel: true,
+				canForce: false,
+				blockedReason: 'needs-forced-parallel',
+			})
+		);
+		const button = screen.getByRole('button', { name: /Force Send/i });
+		expect(button).toBeDisabled();
+		expect(button.getAttribute('title')).toMatch(/Forced Parallel Execution/i);
+	});
+
+	it('hides Force Send entirely when the item has no tab left to run on', () => {
+		// The one case where hiding is right: the button could never work.
+		withForceSend(eligibility({ canForce: false, blockedReason: 'no-target-tab' }));
+		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
+	});
+
+	it('hides Force Send when no eligibility is available', () => {
+		withForceSend(null);
+		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
+	});
+});

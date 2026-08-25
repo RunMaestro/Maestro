@@ -204,6 +204,31 @@ export function getForceSendEligibility(
 }
 
 /**
+ * The tooltip a Force Send control shows, given its eligibility.
+ *
+ * Both surfaces that offer Force Send - the Execution Queue modal and the
+ * inline QUEUED card in the AI chat - must say the same thing about the same
+ * state, so the copy lives with the decision rather than beside each button. A
+ * blocked button whose tooltip does not explain the block is just a dead
+ * control, which is the failure this whole path is fixing.
+ */
+export function getForceSendTitle(eligibility: ForceSendEligibility): string {
+	const otherBusyCount = eligibility.otherBusyTabs.length;
+	switch (eligibility.blockedReason) {
+		case 'target-tab-busy':
+			return 'This tab is already working - the message runs when the current turn finishes';
+		case 'needs-forced-parallel':
+			return 'Another tab in this agent is working. Turn on Forced Parallel Execution in Settings to send anyway.';
+		case 'no-target-tab':
+			return 'This message has no tab left to run on';
+		default:
+			return eligibility.requiresParallel
+				? `Send now, running in parallel with ${otherBusyCount} other working tab${otherBusyCount === 1 ? '' : 's'}`
+				: 'Send this message now, ahead of the rest of the queue';
+	}
+}
+
+/**
  * State transition for dispatching ONE specific queued item now: drop it from the
  * queue, mark its target tab busy (which appends the user-visible log entry), and
  * put the agent in the busy/ai state. Returns the session untouched when the item

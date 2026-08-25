@@ -1260,7 +1260,11 @@ describe('TerminalOutput', () => {
 					executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 				});
 
-			it('does not render Force Send button when forcedParallelEnabled is false', () => {
+			// These three used to assert the button was ABSENT. That was the bug:
+			// the inline card hid Force Send in cases the shared helper allows, or
+			// blocks-with-a-reason, while the Execution Queue modal showed it. The
+			// card now mirrors the modal - present unless there is no tab to run on.
+			it('renders Force Send disabled when forced parallel is off and another tab is busy', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: false,
@@ -1268,13 +1272,16 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: false,
+						blockedReason: 'needs-forced-parallel' as const,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeDisabled();
 			});
 
-			it('does not render Force Send button when target tab is busy', () => {
+			it('renders Force Send disabled when the target tab is busy', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: true,
@@ -1282,13 +1289,16 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: true,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: false,
+						blockedReason: 'target-tab-busy' as const,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeDisabled();
 			});
 
-			it('does not render Force Send button when no other tabs are busy', () => {
+			it('renders Force Send ENABLED on a quiet agent - the always-allowed case', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: true,
@@ -1296,10 +1306,12 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [],
+						requiresParallel: false,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeEnabled();
 			});
 
 			it('renders Force Send button when enabled, target idle, and another tab busy', () => {
@@ -1310,6 +1322,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1327,6 +1341,8 @@ describe('TerminalOutput', () => {
 							{ id: 'tab-2', displayName: 'Refactor' },
 							{ id: 'tab-3', displayName: 'A1B2C3D4' },
 						],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1348,6 +1364,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1367,6 +1385,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1391,6 +1411,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1428,6 +1450,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);

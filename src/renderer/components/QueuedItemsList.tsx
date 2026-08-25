@@ -12,7 +12,8 @@ import {
 	ImageIcon,
 } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
-import type { BusyTabSummary } from '../utils/executionQueue';
+import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
+import { getForceSendTitle } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
@@ -58,10 +59,7 @@ interface QueuedItemsListProps {
 	// Lookup for tab state/name used by the Force Send button + confirm modal.
 	// Returns the tab's current busy state, the other tabs currently busy in the
 	// same agent, and the item's own target tab display name.
-	getForceSendContext?: (item: QueuedItem) => {
-		targetTabBusy: boolean;
-		otherBusyTabs: BusyTabSummary[];
-	} | null;
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	// Opens the shared full-screen image carousel for a queued item's attachments.
 	// Reuses the same lightbox as history/staged images; pass 'history' source so
 	// the images are read-only (navigable, no delete).
@@ -199,8 +197,13 @@ export const QueuedItemsList = memo(
 			for (let i = filteredQueue.length - 1; i >= 0; i--) {
 				const item = filteredQueue[i];
 				if (item.forceParallel) continue;
+				// Ask the shared helper, not the busy-tab shape of it. The old test
+				// skipped any item with an idle target and nothing else running -
+				// exactly the case where force send is ALWAYS allowed - so the
+				// shortcut was dead on a quiet agent, which is when a user is most
+				// likely to reach for it.
 				const ctx = getForceSendContext(item);
-				if (!ctx || ctx.targetTabBusy || ctx.otherBusyTabs.length === 0) continue;
+				if (!ctx?.canForce) continue;
 				setForceSendConfirmId(item.id);
 				return;
 			}
@@ -238,21 +241,29 @@ export const QueuedItemsList = memo(
 				{/* Queued items (wrapped so drop-indicator lines align to the cards) */}
 				<div className="mx-6">
 					{filteredQueue.map((item, index) => {
-						// Force Send visibility: setting enabled, item not already forceParallel,
-						// a handler is wired, the target tab is idle (force-parallel only helps
-						// when *this* tab can dispatch), and at least one other tab is busy
-						// (otherwise nothing to bypass).
+						// Ask for eligibility whenever a handler is wired and the item is
+						// not already flagged to run in parallel. `forcedParallelEnabled` is
+						// deliberately NOT a gate here: it is one of the inputs the shared
+						// helper weighs, and gating on it up front hid the button in every
+						// case where force send is allowed without it - jumping the queue
+						// order, or releasing a held item on an otherwise idle agent.
 						const forceSendContext =
-							forcedParallelEnabled &&
-							onForceSendQueuedItem &&
-							getForceSendContext &&
-							!item.forceParallel
+							onForceSendQueuedItem && getForceSendContext && !item.forceParallel
 								? getForceSendContext(item)
 								: null;
+						// Same rule as the Execution Queue modal, deliberately: visible
+						// unless the item has no tab left to run on (where the button
+						// could never work), disabled with the reason otherwise. The old
+						// rule hid the button whenever the target tab was busy or nothing
+						// else was running - which meant that on a quiet agent, where
+						// force send is ALWAYS allowed, the chat offered nothing while
+						// the modal offered a working button.
 						const showForceSendButton =
-							!!forceSendContext &&
-							!forceSendContext.targetTabBusy &&
-							forceSendContext.otherBusyTabs.length > 0;
+							!!forceSendContext && forceSendContext.blockedReason !== 'no-target-tab';
+						const canForceSend = !!forceSendContext?.canForce;
+						const forceSendTitle = forceSendContext
+							? getForceSendTitle(forceSendContext)
+							: undefined;
 
 						return (
 							<React.Fragment key={item.id}>
@@ -285,6 +296,8 @@ export const QueuedItemsList = memo(
 											: undefined
 									}
 									showForceSendButton={showForceSendButton}
+									canForceSend={canForceSend}
+									forceSendTitle={forceSendTitle}
 									onForceSend={() => setForceSendConfirmId(item.id)}
 									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
@@ -429,6 +442,10 @@ interface QueuedItemRowProps {
 	onCopy: () => void;
 	onEdit?: () => void;
 	showForceSendButton: boolean;
+	/** False when the item cannot be forced right now - button renders disabled. */
+	canForceSend: boolean;
+	/** Why it can or cannot be forced. Shown as the button's tooltip. */
+	forceSendTitle?: string;
 	onForceSend: () => void;
 	onTogglePause?: () => void;
 	onRequestRemove: () => void;
@@ -452,6 +469,8 @@ function QueuedItemRow({
 	onCopy,
 	onEdit,
 	showForceSendButton,
+	canForceSend,
+	forceSendTitle,
 	onForceSend,
 	onTogglePause,
 	onRequestRemove,
@@ -629,12 +648,14 @@ function QueuedItemRow({
 					{showForceSendButton && (
 						<button
 							onClick={onForceSend}
-							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium hover:opacity-80 transition-opacity"
+							disabled={!canForceSend}
+							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-opacity hover:opacity-80 disabled:cursor-default"
 							style={{
-								backgroundColor: theme.colors.warning + '33',
+								backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
 								color: theme.colors.warning,
+								opacity: canForceSend ? 1 : 0.5,
 							}}
-							title="Force send this message now (skips cross-tab wait)"
+							title={forceSendTitle}
 						>
 							<Hammer className="w-3.5 h-3.5" />
 							Force Send

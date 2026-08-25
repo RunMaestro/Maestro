@@ -202,7 +202,7 @@ import {
 	hasActiveWizard,
 	findNextUnreadSession,
 } from './utils/tabHelpers';
-import { getQueueBusyContext } from './utils/executionQueue';
+import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -1653,13 +1653,26 @@ function MaestroConsoleInner() {
 		recoveryError: sessionRecoveryError,
 	} = useSessionRecovery({ processInputRef });
 
-	// Build (tab→busy summary) lookup used by the inline Force Send button to
-	// decide visibility and to populate the confirmation modal's "other tabs
-	// working" list. Computed from the current agent's tab states at call time.
-	const getForceSendContext = useCallback((item: QueuedItem) => {
+	// Force Send eligibility for the inline QUEUED card: whether the item can be
+	// dispatched out of turn, why not when it can't, and the busy-tab summary the
+	// confirmation modal lists. Computed from the current agent's tab states at
+	// call time.
+	//
+	// This returns the FULL eligibility rather than the busy context alone. The
+	// inline card used to re-derive "can I force this?" from a narrowed
+	// {targetTabBusy, otherBusyTabs} and reached a different answer than the
+	// Execution Queue modal, which asks the shared helper - so the same item
+	// offered Send Now in one surface and showed nothing in the other. One
+	// decision, computed once, read by both.
+	const getForceSendContext = useCallback((item: QueuedItem): ForceSendEligibility | null => {
 		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return null;
-		return getQueueBusyContext(session, item);
+		// Read the setting at call time rather than closing over it, so this
+		// callback keeps one identity and cannot hand back a stale answer after
+		// the user toggles Forced Parallel Execution.
+		return getForceSendEligibility(session, item, {
+			forcedParallelEnabled: useSettingsStore.getState().forcedParallelExecution,
+		});
 	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
