@@ -6,6 +6,13 @@ import { AutoRunNoticeBanner } from './AutoRunNoticeBanner';
 /** Cap the inline list so a badly-authored document can't flood the panel. */
 const MAX_LISTED = 3;
 
+/**
+ * Remembered collapse state. The warning is advisory and recurs on every
+ * document that has human-only steps, so an author who has already read it
+ * should not have to re-collapse it each time the panel re-renders.
+ */
+const COLLAPSE_KEY = 'autoRun.humanStepBanner.collapsed';
+
 export interface AutoRunHumanStepBannerProps {
 	theme: Theme;
 	tasks: HumanOnlyTask[];
@@ -35,6 +42,7 @@ export const AutoRunHumanStepBanner = memo(function AutoRunHumanStepBanner({
 		<AutoRunNoticeBanner
 			theme={theme}
 			severity="warning"
+			collapseKey={COLLAPSE_KEY}
 			title={
 				tasks.length === 1
 					? '1 task looks like a human step'

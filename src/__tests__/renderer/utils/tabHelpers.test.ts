@@ -5631,6 +5631,51 @@ describe('tabHelpers', () => {
 			expect(result.turnModel).toBe('fable');
 			expect(result.turnEffort).toBe('high');
 		});
+
+		// The queue can sit through any number of model changes. The item carries
+		// what the user had selected when they hit Enter, and THAT is what the turn
+		// runs under and what the response pills name.
+		it('stamps the settings the item was queued with, not the live ones', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'opus[1m]' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				toolType: 'claude-code',
+				customEffort: 'xhigh',
+			});
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'queued on the cheap model',
+				timestamp: 1700000000000,
+				turnSettings: { model: 'haiku', effort: 'low' },
+			};
+			const result = markTabRunningQueuedItem(tab, item, session);
+			expect(result.turnProvider).toBe('claude-code');
+			expect(result.turnModel).toBe('haiku');
+			expect(result.turnEffort).toBe('low');
+		});
+
+		// An empty capture is not a missing capture: the user queued on the agent
+		// default, so a model they picked afterwards must not be attributed to it.
+		it('keeps an item queued on the agent default unstamped', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'opus[1m]' });
+			const session = createMockSession({ aiTabs: [tab], customEffort: 'xhigh' });
+			const result = markTabRunningQueuedItem(
+				tab,
+				{
+					id: 'q1',
+					tabId: 't1',
+					type: 'message',
+					text: 'queued on the default',
+					timestamp: 1700000000000,
+					turnSettings: {},
+				},
+				session
+			);
+			expect(result.turnModel).toBeUndefined();
+			expect(result.turnEffort).toBeUndefined();
+		});
 	});
 
 	describe('group unread rollup (groupHasUnreadTabs / computeUnreadGroupIds)', () => {

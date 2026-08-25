@@ -10,6 +10,7 @@ import { remarkFrontmatterTable } from '../../../../renderer/utils/remarkFrontma
 import { remarkFileLinks } from '../../../../renderer/utils/remarkFileLinks';
 import { remarkMentionChips } from '../../../../renderer/utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../../shared/remarkPromoteDisplayMath';
+import { remarkMaestroMarkers } from '../../../../renderer/components/Markdown/remarkMaestroMarkers';
 import { buildMarkdownPlugins } from '../../../../renderer/components/Markdown/plugins';
 
 // Helper: a tuple plugin is [plugin, options]; a bare plugin is the function.
@@ -51,6 +52,27 @@ describe('buildMarkdownPlugins', () => {
 		expect(
 			pluginFns(buildMarkdownPlugins({ chatLineBreaks: false }).remarkPlugins as unknown[])
 		).not.toContain(remarkBreaks);
+	});
+
+	it('adds the Auto Run marker plugin only when autorunMarkers is set', () => {
+		expect(
+			pluginFns(buildMarkdownPlugins({ autorunMarkers: true }).remarkPlugins as unknown[])
+		).toContain(remarkMaestroMarkers);
+		// Off by default: a marker pill asserts that something is configured, so
+		// it must be opted into rather than inherited by every surface.
+		expect(pluginFns(buildMarkdownPlugins().remarkPlugins as unknown[])).not.toContain(
+			remarkMaestroMarkers
+		);
+	});
+
+	// The marker has to still be its own `html` node when the plugin runs. Once
+	// remark-breaks has spliced a <br> into the line, it is not.
+	it('runs the marker plugin before remark-breaks', () => {
+		const fns = pluginFns(
+			buildMarkdownPlugins({ autorunMarkers: true, chatLineBreaks: true })
+				.remarkPlugins as unknown[]
+		);
+		expect(fns.indexOf(remarkMaestroMarkers)).toBeLessThan(fns.indexOf(remarkBreaks));
 	});
 
 	it('adds remark-math (single-dollar disabled) + promote + rehype-katex for chatMath', () => {

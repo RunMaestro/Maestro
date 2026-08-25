@@ -277,3 +277,23 @@ describe('QueuedItemsList edit modal', () => {
 		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('from the other tab');
 	});
 });
+
+describe('QueuedItemsList turn setting pills', () => {
+	// The queue can sit through any number of model changes, so naming the frozen
+	// values on the row is the only way the user can tell which pending message
+	// is on the big model before it runs.
+	it('names the model and effort the item was queued with', () => {
+		setup({
+			executionQueue: [item({ turnSettings: { model: 'opus', effort: 'xhigh' } })],
+		});
+		expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+		expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('xhigh');
+	});
+
+	// An item queued on the agent's own default is not labeled with a guess.
+	it('renders no pills for an item queued on the agent default', () => {
+		setup({ executionQueue: [item({ turnSettings: {} })] });
+		expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+	});
+});

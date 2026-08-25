@@ -483,6 +483,7 @@ export function AutoRunExpandedModal({
 						sessionState={sessionState}
 						sessionId={sessionId}
 						hideTopControls
+						showLineNumbers
 						{...autoRunProps}
 					/>
 				</div>

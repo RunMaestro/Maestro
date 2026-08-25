@@ -256,9 +256,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				const isLayoutShortcut =
 					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
 				// Next unread / draft tab is benign navigation, so it stays live behind a
-				// modal. Resolved by SHORTCUT ID rather than by key: it has already moved
-				// combos once, and the hard-coded arrow left behind by that move silently
-				// stopped matching it.
+				// modal. Resolved by SHORTCUT ID rather than by key, for two reasons: it
+				// has already moved combos once and the hard-coded arrow left behind by
+				// that move silently stopped matching it, and a user who REBINDS it would
+				// otherwise get a shortcut that dies the moment any modal is open -
+				// including the Shortcuts settings pane they rebound it in.
 				const isNextUnreadTabShortcut = ctx.isShortcut(e, 'nextUnreadTab');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();

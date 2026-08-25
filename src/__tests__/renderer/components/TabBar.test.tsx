@@ -451,7 +451,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.getByTitle('Search…')).toBeInTheDocument();
+			expect(screen.getByTitle(/^Search…/)).toBeInTheDocument();
 		});
 
 		it('does not render search popover button when onOpenTabSearch not provided', () => {
@@ -466,7 +466,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.queryByTitle('Search…')).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/^Search…/)).not.toBeInTheDocument();
 		});
 	});
 
@@ -1098,7 +1098,7 @@ describe('TabBar', () => {
 			);
 
 			// Click the search button to open the popover
-			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByTitle(/^Search…/));
 			// Click "Search Tabs" in the popover
 			fireEvent.click(screen.getByText('Search Tabs'));
 			expect(mockOnOpenTabSearch).toHaveBeenCalled();
@@ -1120,7 +1120,7 @@ describe('TabBar', () => {
 			);
 
 			// Click the search button to open the popover
-			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByTitle(/^Search…/));
 			// Click the this-tab message search entry in the popover
 			fireEvent.click(screen.getByText('Search Messages (this tab)'));
 			expect(mockOnOpenOutputSearch).toHaveBeenCalled();
@@ -1141,7 +1141,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByTitle(/^Search…/));
 			fireEvent.click(screen.getByText('Search Messages (all agent tabs)'));
 			expect(mockOnOpenCrossTabSearch).toHaveBeenCalled();
 		});
@@ -1159,7 +1159,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByTitle(/^Search…/));
 			expect(screen.queryByText('Search Messages (all agent tabs)')).not.toBeInTheDocument();
 		});
 	});

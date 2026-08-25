@@ -24,6 +24,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { getForceSendEligibility, type ForceSendEligibility } from '../utils/executionQueue';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { TurnSettingPills } from './ui/TurnSettingPills';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -674,6 +675,14 @@ function QueueItemRow({
 								Send Now
 							</button>
 						)}
+						{/* The model/effort frozen when this item was queued - what it
+						    will spawn under, no matter what is selected by the time the
+						    queue reaches it. */}
+						<TurnSettingPills
+							theme={theme}
+							model={item.turnSettings?.model}
+							effort={item.turnSettings?.effort}
+						/>
 						<div className="ml-auto flex items-center gap-1">
 							{onEdit && (
 								<button

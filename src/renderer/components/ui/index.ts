@@ -74,12 +74,17 @@ export type { CopyIconButtonProps } from './CopyIconButton';
 
 export { FontScaleControl } from './FontScaleControl';
 export type { FontScaleControlProps } from './FontScaleControl';
+export { ScaleControl } from './ScaleControl';
+export type { ScaleControlProps } from './ScaleControl';
 
 export { GitChangeCounts } from './GitChangeCounts';
 export type { GitChangeCountsProps } from './GitChangeCounts';
 
 export { GitRunningBadge } from './GitRunningBadge';
 export type { GitRunningBadgeProps } from './GitRunningBadge';
+
+export { TextareaLineNumbers, lineNumberGutterMetrics } from './TextareaLineNumbers';
+export type { TextareaLineNumbersProps, LineNumberGutterMetrics } from './TextareaLineNumbers';
 
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';

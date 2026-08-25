@@ -98,6 +98,19 @@ describe('Markdown presets', () => {
 			expect(container.querySelector('.katex')).not.toBeInTheDocument();
 		});
 
+		// An agent explaining the marker syntax is describing a marker, not
+		// configuring one, so chat must keep rendering it as ordinary prose.
+		it('does NOT draw a marker pill for an Auto Run marker in a message', () => {
+			const { queryByTestId } = render(
+				<Markdown
+					preset="chat"
+					content={'<!-- maestro:halt: missing dependency -->'}
+					theme={mockTheme}
+				/>
+			);
+			expect(queryByTestId('maestro-marker-halt')).not.toBeInTheDocument();
+		});
+
 		it('renders mermaid fences via MermaidCodeBlock, not the plain CodeFence', () => {
 			const { container, getByTitle } = render(
 				<Markdown
@@ -136,6 +149,21 @@ describe('Markdown presets', () => {
 				<Markdown preset="document" content={'```ts\nconst x = 1;\n```'} theme={mockTheme} />
 			);
 			expect(container.querySelector('[data-testid="code-fence"]')).not.toBeInTheDocument();
+		});
+
+		// The preset is what decides whether a surface draws marker pills at all,
+		// so this pins the wiring rather than the plugin (covered separately).
+		it('draws a pill for an Auto Run marker that would block the next run', () => {
+			const { getByTestId } = render(
+				<Markdown
+					preset="document"
+					content={'<!-- maestro:halt: missing dependency -->'}
+					theme={mockTheme}
+				/>
+			);
+			const pill = getByTestId('maestro-marker-halt');
+			expect(pill).toHaveTextContent('Halted');
+			expect(pill).toHaveTextContent('missing dependency');
 		});
 
 		it('renders mermaid blocks via a custom language renderer', () => {
