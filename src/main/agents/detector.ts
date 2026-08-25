@@ -386,10 +386,11 @@ export class AgentDetector {
 		// Run agent-specific model discovery command
 		const models = await this.runModelDiscovery(agentId, agent);
 
-		// A transient `omp models --json` failure returns an empty list. Don't cache
-		// that, or the picker stays empty for the whole TTL even after the CLI
-		// recovers; let the next call retry. (omp always has a non-empty catalog.)
-		if (agentId === 'omp' && models.length === 0) {
+		// A transient `omp models --json` / `kilo models` failure returns an empty
+		// list. Don't cache that, or the picker stays empty for the whole TTL even
+		// after the CLI recovers; let the next call retry. (Both always have a
+		// non-empty catalog on a working install, so empty means failure.)
+		if ((agentId === 'omp' || agentId === 'kilo') && models.length === 0) {
 			return models;
 		}
 
