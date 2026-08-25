@@ -27,7 +27,12 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Open Memory Viewer',
 		keys: ['Meta', 'Shift', 'm'],
 	},
-	toggleMode: { id: 'toggleMode', label: 'Switch AI/Shell Mode', keys: ['Meta', 'j'] },
+	// Id kept as `toggleMode` on purpose. It stopped toggling in afad8e7be (March
+	// 2026) and now opens a terminal tab, but the id is what persisted custom
+	// bindings key off - renaming it would orphan every saved override and
+	// silently drop the user back to the default, which is a worse bug than a
+	// stale name. Only the label moves.
+	toggleMode: { id: 'toggleMode', label: 'New Terminal Tab', keys: ['Meta', 'j'] },
 	quickAction: { id: 'quickAction', label: 'Quick Actions', keys: ['Meta', 'k'] },
 	agentSwitcher: { id: 'agentSwitcher', label: 'Switch Agent', keys: ['Meta', 'o'] },
 	help: { id: 'help', label: 'Show Shortcuts', keys: ['Meta', '/'] },

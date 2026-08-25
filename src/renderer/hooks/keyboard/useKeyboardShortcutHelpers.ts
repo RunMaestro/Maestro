@@ -54,8 +54,6 @@ export function useKeyboardShortcutHelpers(
 			// `keys` would make every modifier check compare against 'none' and a
 			// bare keypress would trigger an unassigned action.
 			if (!sc.keys?.length) return false;
-			// Unassigned actions never match - see isShortcut.
-			if (!sc.keys?.length) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
 
 			const metaPressed = e.metaKey || e.ctrlKey;
@@ -137,6 +135,10 @@ export function useKeyboardShortcutHelpers(
 		(e: KeyboardEvent, actionId: string): boolean => {
 			const sc = tabShortcuts[actionId] || shortcuts[actionId];
 			if (!sc) return false;
+			// Unassigned actions never match - same reason as isShortcut: an empty
+			// combination reads as "no modifiers, no main key", so a bare keypress
+			// would fire an action the user never bound.
+			if (!sc.keys?.length) return false;
 			const keys = sc.keys.map((k) => k.toLowerCase());
 
 			const metaPressed = e.metaKey || e.ctrlKey;

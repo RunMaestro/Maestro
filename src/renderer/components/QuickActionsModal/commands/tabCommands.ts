@@ -150,7 +150,12 @@ export function buildTabCommands({
 		commands.push({
 			id: 'switchMode',
 			label: 'Switch AI/Shell Mode',
-			shortcut: shortcuts.toggleMode,
+			// No shortcut hint. This entry really does toggle inputMode in place,
+			// but `toggleMode`'s key (Cmd+J) stopped doing that in afad8e7be and now
+			// opens a terminal tab. Advertising that chord here told the user a key
+			// would do this, and it does something else - which is exactly the
+			// "switch AI/terminal isn't valid anymore" report. The palette is now the
+			// only way to reach the in-place toggle; it has no binding of its own.
 			action: toggleInputMode,
 		});
 	}
