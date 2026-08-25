@@ -104,6 +104,32 @@ export function reorderQueueItem(
 	return next;
 }
 
+/**
+ * The label to show for a queued item's target tab.
+ *
+ * `item.tabName` is a SNAPSHOT frozen when the item was queued, so an item
+ * queued into a brand-new tab keeps reading "New" forever - including after
+ * auto-naming gave that tab a real title, and even next to a LATER item on the
+ * same tab that does carry the name. The queue is exactly where the user decides
+ * what to reorder, so two entries for one tab must not look like two tabs.
+ *
+ * Resolution mirrors {@link resolveQueuedItemTarget}: the live tab first, then a
+ * closed-but-still-draining orphan, and only then the snapshot - which by that
+ * point is the last thing we ever knew about a tab that is gone.
+ */
+export function resolveQueuedItemTabName(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId' | 'tabName'>
+): string | undefined {
+	if (item.tabId) {
+		const tab =
+			session.aiTabs?.find((t) => t.id === item.tabId) ??
+			session.orphanedThinkingTabs?.find((t) => t.id === item.tabId);
+		if (tab) return getTabDisplayName(tab);
+	}
+	return item.tabName;
+}
+
 // ============================================================================
 // Force Send - dispatching one specific queued item out of turn
 // ============================================================================

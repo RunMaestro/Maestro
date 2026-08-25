@@ -1198,6 +1198,7 @@ interface QueuedItem {
 - Auto Run tasks queue with regular messages
 - Queue visible via indicator in tab bar
 - Users can cancel pending items via queue browser
+- Tab labels in the indicator and browser are resolved from the LIVE tab via `resolveQueuedItemTabName()`; `QueuedItem.tabName` is only a fallback for a tab that no longer exists
 
 ### Session Fields
 

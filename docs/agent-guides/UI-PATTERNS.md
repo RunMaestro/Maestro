@@ -400,6 +400,16 @@ Two traps when touching this row:
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
 - `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
 
+### Queued Item Tab Labels (`resolveQueuedItemTabName`)
+
+A `QueuedItem`'s `turnSettings` is frozen at queue time on purpose. Its `tabName` is NOT: that field is a last-known label, and the queue UI must resolve the tab's name as it is NOW.
+
+`resolveQueuedItemTabName(session, item)` in `src/renderer/utils/executionQueue.ts` is the one resolver, and both surfaces ride it - the tab pills in `ExecutionQueueIndicator` and the tab button on each row of `ExecutionQueueBrowser`. It mirrors `resolveQueuedItemTarget`: the live tab in `session.aiTabs` first, then a closed-but-still-draining tab in `session.orphanedThinkingTabs`, and only then `item.tabName`, which by that point is the last thing we ever knew about a tab that is gone.
+
+Reading `item.tabName` directly is what this replaced. A message queued into a brand-new tab snapshots the label `New`, and it keeps that label forever - including after auto-naming gives the tab a real title, and including next to a LATER message on the SAME tab that snapshotted the real name. The indicator groups by `tabId`, so one tab rendered under whichever name its first item happened to carry, and the browser listed two rows pointing at the same tab under two different names. The queue is exactly where the user decides what to reorder or drop, so two entries for one tab must never read as two tabs.
+
+The producer side still writes the snapshot, via `getTabDisplayName(activeTab)` in `useInputProcessing` - one display-name rule for the fallback and for the live path, rather than a second inline `name || sessionId.split('-')[0] || 'New'` ladder that disagreed with the tab bar.
+
 ### Following Streaming Output (`useStickToBottom`)
 
 `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts` keeps a scrolling box pinned to its newest content while it grows, and lets go the moment the user scrolls up to read something. Returns a callback ref to put on the scrolling element; pass whatever value changes on every append as `contentKey`.

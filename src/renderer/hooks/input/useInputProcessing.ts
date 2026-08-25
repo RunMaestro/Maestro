@@ -8,7 +8,12 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 } from '../../types';
-import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	getBusyTabs,
+	extractQuickTabName,
+	getTabDisplayName,
+} from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -432,11 +437,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								command: matchingCustomCommand.command,
 								commandArgs, // Arguments passed after the command (for $ARGUMENTS substitution)
 								commandDescription: matchingCustomCommand.description,
-								tabName:
-									activeTab?.name ||
-									(activeTab?.agentSessionId
-										? activeTab.agentSessionId.split('-')[0].toUpperCase()
-										: 'New'),
+								// Last-known label, used only if the tab is gone by the time
+								// the queue drains - the queue UI resolves the live name first.
+								tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
 								readOnlyMode: isReadOnlyMode,
 								...(forceParallel && { forceParallel: true }),
 								// Freeze the model/effort now: the queue may not drain until
@@ -808,11 +811,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						type: 'message',
 						text: effectiveInputValue,
 						images: [...effectiveImages],
-						tabName:
-							activeTab?.name ||
-							(activeTab?.agentSessionId
-								? activeTab.agentSessionId.split('-')[0].toUpperCase()
-								: 'New'),
+						// See the slash-command path above: a fallback label, not the
+						// name the queue actually renders.
+						tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
 						// Freeze the model/effort now - see the slash-command queue path
