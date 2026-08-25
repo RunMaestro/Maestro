@@ -31,6 +31,7 @@ import {
 	type AgentCompletionData,
 	type CueCommand,
 	type CueConfig,
+	type CueAutoRunConfig,
 	type CueNotifyConfig,
 	type CueEventType,
 	type CueRunResult,
@@ -92,6 +93,7 @@ export interface CueEngineDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		autoRun?: CueAutoRunConfig;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -395,7 +397,8 @@ export class CueEngine {
 				command,
 				chainRootId,
 				parentEventId,
-				notify
+				notify,
+				autoRun
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -411,7 +414,8 @@ export class CueEngine {
 					pipelineName,
 					chainRootId,
 					parentEventId,
-					notify
+					notify,
+					autoRun
 				);
 			},
 			onLog: meteredOnLog,

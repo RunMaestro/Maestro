@@ -22,6 +22,7 @@ import {
 } from '../../../../shared/cue-pipeline-types';
 import {
 	triggerGroupKey,
+	type CueAction,
 	type CueCommand,
 	type CueNotifyConfig,
 	type CueSubscription,
@@ -56,7 +57,9 @@ interface GraphSessionInput {
 		include_output_from?: string[];
 		forward_output_from?: string[];
 		cli_output?: { target: string };
-		action?: 'prompt' | 'command' | 'notify';
+		// Mirrors CueAction rather than re-listing it: a re-declared union here
+		// silently rejects every CueSubscription the moment a new action lands.
+		action?: CueAction;
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
 		fire_at?: string;
