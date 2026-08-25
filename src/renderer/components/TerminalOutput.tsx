@@ -27,7 +27,8 @@ import {
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../types';
 import type { FileNode } from '../types/fileTree';
-import Convert from 'ansi-to-html';
+import type Convert from 'ansi-to-html';
+import { useAnsiConverter } from '../hooks/ui/useAnsiConverter';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
@@ -1727,35 +1728,8 @@ export const TerminalOutput = memo(
 			}
 		}, [outputSearchOpen]);
 
-		// Create ANSI converter with theme-aware colors
-		const ansiConverter = useMemo(() => {
-			const c = theme.colors;
-			return new Convert({
-				fg: c.textMain,
-				bg: c.bgMain,
-				newline: false,
-				escapeXML: true,
-				stream: false,
-				colors: {
-					0: c.ansiBlack ?? c.textMain,
-					1: c.ansiRed ?? c.error,
-					2: c.ansiGreen ?? c.success,
-					3: c.ansiYellow ?? c.warning,
-					4: c.ansiBlue ?? c.accent,
-					5: c.ansiMagenta ?? c.accentDim,
-					6: c.ansiCyan ?? c.accent,
-					7: c.ansiWhite ?? c.textDim,
-					8: c.ansiBrightBlack ?? c.textDim,
-					9: c.ansiBrightRed ?? c.error,
-					10: c.ansiBrightGreen ?? c.success,
-					11: c.ansiBrightYellow ?? c.warning,
-					12: c.ansiBrightBlue ?? c.accent,
-					13: c.ansiBrightMagenta ?? c.accentText,
-					14: c.ansiBrightCyan ?? c.accentText,
-					15: c.ansiBrightWhite ?? c.textMain,
-				},
-			});
-		}, [theme]);
+		// Theme-aware ANSI palette, shared with every other raw-output surface.
+		const ansiConverter = useAnsiConverter(theme);
 
 		// PERF: Memoize active tab lookup to avoid O(n) .find() on every render
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);

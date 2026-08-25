@@ -422,6 +422,16 @@ It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same f
 
 Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
 
+### Rendering Raw Terminal Output (`useAnsiConverter`)
+
+`useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts` returns the theme-aware `ansi-to-html` converter every raw-output surface shares; `createAnsiConverter(theme)` is the non-React form. Feed its result to `getCachedAnsiHtml(text, theme.id, converter)` from `utils/textProcessing`, which converts, sanitizes with DOMPurify, and caches per theme. Callers today: `TerminalOutput` (transcript + terminal pane), `ShellCommandCard` (command mode), `GitCommandRunnerModal` (the Pull / Push console).
+
+The 16 ANSI slots map onto the ACTIVE theme, not the xterm palette, with a semantic fallback (`error` / `success` / `warning` / `accent`) for any slot a theme does not declare. Do NOT hand-roll another `new Convert({...})`: a second palette drifts the first time a theme adds a color, and the two surfaces then disagree about what "bright green" means.
+
+Two things have to be true for color to reach the screen, and the renderer only owns one of them. **Nothing Maestro spawns is a TTY**, so the producer suppresses color by default: git needs `-c color.ui=always` and anything its hooks run (a test suite, a linter) needs `FORCE_COLOR=1` / `CLICOLOR_FORCE=1` in the spawn env. A surface that renders ANSI perfectly still shows a wall of gray if its spawn site forgot that half.
+
+**Collapse carriage returns BEFORE converting.** `processCarriageReturns()` turns `Writing objects: 42%\r...100%` back into the single line a terminal would have shown; converting first emits a screen of dead progress rows instead. And any regex run against output that may now carry color (the "no upstream branch" probe, for one) must go through `stripAnsiCodes()` first, or a code landing mid-phrase hides the match.
+
 ### Text Selection in Modals
 
 **Rule:** any modal (or modal subtree) whose primary purpose is _clicking_ - buttons, tabs, list rows, cards, graph nodes, filter chips, toggles, dropdowns - must have `select-none` on its root container. The dashboard-style modals (Cue, Usage Dashboard, Symphony, Playbook Exchange, Settings, Director's Notes list) are all click-driven; native browser drag-to-select highlighting fires accidentally during normal interactions (clicking a tab, dragging a graph node, double-clicking a card) and looks broken.
