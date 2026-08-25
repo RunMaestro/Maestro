@@ -175,32 +175,55 @@ export interface AgentPickerMeta {
  * (superseded by Antigravity).
  *
  * The record is keyed by AgentId, so adding an id to AGENT_IDS does not compile
- * until a decision is made here. Key order is picker order - the wizard and the
- * moderator dropdown both auto-select the first entry that is installed.
+ * until a decision is made here. Key order is NOT picker order - PICKABLE_AGENT_IDS
+ * sorts by display name, so a new entry can go anywhere in this record and still
+ * land in the right place in every picker.
  */
 export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
+	antigravity: { description: "Google's agentic coding CLI", brandColor: '#4285F4' },
 	'claude-code': { description: "Anthropic's AI coding assistant", brandColor: '#D97757' },
 	codex: { description: "OpenAI's AI coding assistant", brandColor: '#10A37F' },
-	antigravity: { description: "Google's agentic coding CLI", brandColor: '#4285F4' },
-	opencode: { description: 'Open-source AI coding assistant', brandColor: '#F97316' },
-	'factory-droid': { description: "Factory's AI coding assistant", brandColor: '#3B82F6' },
 	'copilot-cli': { description: "GitHub's AI coding assistant", brandColor: '#24292F' },
+	'factory-droid': { description: "Factory's AI coding assistant", brandColor: '#3B82F6' },
 	grok: { description: "xAI's AI coding assistant", brandColor: '#B4B8C0' },
-	'qwen3-coder': { description: "Alibaba's AI coding assistant", brandColor: '#615CED' },
 	hermes: { description: "Nous Research's AI coding assistant", brandColor: '#2323FF' },
-	pi: { description: 'Your own agent harness', brandColor: '#E4E4E7' },
 	omp: { description: 'Multi-model coding agent', brandColor: '#9B4DFF' },
+	opencode: { description: 'Open-source AI coding assistant', brandColor: '#F97316' },
+	pi: { description: 'Your own agent harness', brandColor: '#E4E4E7' },
+	'qwen3-coder': { description: "Alibaba's AI coding assistant", brandColor: '#615CED' },
 	terminal: null,
 	'gemini-cli': null,
 };
 
 /**
- * Every agent a user may pick as a provider, in picker order.
- * Derived from AGENT_PICKER_META so the two can never disagree.
+ * Every agent a user may pick as a provider, in picker order: alphabetical by
+ * display name, so the user scans one predictable list everywhere. Derived from
+ * AGENT_PICKER_META so the two can never disagree.
+ *
+ * Sorting is done here rather than trusted to the record's key order, which is
+ * easy to get wrong when a provider is added and impossible to notice in review.
  */
-export const PICKABLE_AGENT_IDS: readonly AgentId[] = (
-	Object.keys(AGENT_PICKER_META) as AgentId[]
-).filter((id) => AGENT_PICKER_META[id] !== null);
+export const PICKABLE_AGENT_IDS: readonly AgentId[] = (Object.keys(AGENT_PICKER_META) as AgentId[])
+	.filter((id) => AGENT_PICKER_META[id] !== null)
+	.sort((a, b) => getAgentDisplayName(a).localeCompare(getAgentDisplayName(b)));
+
+/**
+ * Which provider a picker should land on when it has to choose for the user.
+ *
+ * Display order is alphabetical, but "first in the list" is a bad default: it
+ * would hand a fresh Group Chat to whichever beta provider happens to sort
+ * first. This is the preference order instead - the first entry the user
+ * actually has installed wins, and anything absent here falls back to the
+ * alphabetical order.
+ */
+export const AGENT_AUTOSELECT_ORDER: readonly AgentId[] = [
+	'claude-code',
+	'codex',
+	'antigravity',
+	'opencode',
+	'factory-droid',
+	'copilot-cli',
+];
 
 /**
  * Picker metadata for an agent, or null when it is never offered (unknown ids

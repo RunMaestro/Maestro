@@ -13,6 +13,7 @@ import path from 'path';
 import type { CodexUsageSnapshot } from '../stores/codexUsageStore';
 import { resolveCodexHomeKey } from '../stores/codexUsageStore';
 import { captureMessage } from '../utils/sentry';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 const CODEX_USAGE_ENDPOINT = 'https://chatgpt.com/backend-api/wham/usage';
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -100,20 +101,20 @@ export async function sampleCodexUsage(opts: SampleCodexUsageOptions): Promise<C
 		};
 	}
 
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 	let response: Response;
 	try {
-		response = await fetch(CODEX_USAGE_ENDPOINT, {
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				Accept: 'application/json',
-				...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
+		response = await fetchWithTimeout(
+			CODEX_USAGE_ENDPOINT,
+			{
+				headers: {
+					Authorization: `Bearer ${accessToken}`,
+					Accept: 'application/json',
+					...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
+				},
 			},
-			signal: controller.signal,
-		});
+			opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+		);
 	} catch {
-		clearTimeout(timeout);
 		// A thrown fetch means the request never completed: the user is offline,
 		// DNS/TLS failed, the endpoint is unreachable, or our own abort timeout
 		// fired. All are expected, recoverable, user-environment conditions - not
@@ -126,8 +127,6 @@ export async function sampleCodexUsage(opts: SampleCodexUsageOptions): Promise<C
 			email: extractEmailFromJwt(auth.tokens?.id_token),
 			error: 'Failed to request Codex quota metadata.',
 		};
-	} finally {
-		clearTimeout(timeout);
 	}
 
 	if (!response.ok) {

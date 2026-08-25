@@ -53,7 +53,7 @@ export interface CuePipelineEditorProps {
 	/** Callback fired after a successful save. Used by CueModal to refresh
 	 *  dashboard graph data so saved state is visible immediately (Fix #3). */
 	onSaveSuccess?: () => void;
-	/** Pre-select a specific pipeline when navigating from "View in Pipeline".
+	/** Pre-select a specific pipeline when navigating from "View in Graph".
 	 *  Nonce ensures repeated clicks on the same pipeline re-trigger selection. */
 	initialPipelineId?: { id: string | null; nonce: string };
 	/** True while the initial graph-data fetch is in flight. Combined with the
@@ -150,7 +150,7 @@ function CuePipelineEditorInner({
 		pipelineState: stateHook.pipelineState,
 	});
 
-	// When opened via "View in Pipeline", pre-select the resolved pipeline once
+	// When opened via "View in Graph", pre-select the resolved pipeline once
 	// the pipeline list has loaded. appliedNonce prevents pipelines.length changes
 	// (e.g. a pipeline being added) from overriding a subsequent user selection.
 	const appliedNonce = useRef<string | null>(null);

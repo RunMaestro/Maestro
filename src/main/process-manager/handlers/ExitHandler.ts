@@ -174,7 +174,10 @@ export class ExitHandler {
 			// a CLI that reports the failure in-band and then exits clean would settle
 			// the turn with no answer and no error at all - the tab just stops, and no
 			// retry or recovery handling ever fires.
-			if (event?.type === 'error' && !managedProcess.errorEmitted) {
+			// `interrupted` (the user pressed Stop) suppresses this the same way it
+			// does in StdoutHandler: a terminal envelope flushed on the way out of a
+			// deliberate stop is not a turn failure.
+			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
 				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
 				if (agentError) {
 					managedProcess.errorEmitted = true;

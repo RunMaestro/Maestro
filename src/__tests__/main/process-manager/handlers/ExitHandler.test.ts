@@ -239,6 +239,46 @@ describe('ExitHandler', () => {
 			expect(proc.errorEmitted).toBe(true);
 		});
 
+		it('suppresses that trailing failure envelope when the user interrupted the turn', async () => {
+			// `interrupt()` sets `interrupted` before signalling, so anything the CLI
+			// flushes on its way out is a consequence of the Stop, not a turn failure.
+			// Raising it would show a red error and arm recovery for a turn the user
+			// deliberately abandoned.
+			const errorJson = '{"event":"result","result":{"error":"cancelled"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'cancelled',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'unknown',
+					message: 'cancelled',
+					recoverable: true,
+					agentId: 'grok',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+				interrupted: true,
+			});
+			processes.set('test-session', proc);
+
+			const errorEvents: unknown[] = [];
+			emitter.on('agent-error', (_sid: string, err: unknown) => errorEvents.push(err));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(errorEvents).toHaveLength(0);
+			expect(proc.errorEmitted).toBe(false);
+		});
+
 		it('captures the provider session id from a failed trailing envelope', async () => {
 			// When the flushed line is the only event of the run, this is the sole
 			// chance to record the id. Losing it means a retry of a RECOVERABLE error

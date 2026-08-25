@@ -580,10 +580,10 @@ export class FeedbackConversationManager {
 				return args;
 			}
 			case 'codex': {
-				// batchModeArgs is intentionally omitted: it is pure permission bypass,
-				// and Codex's readOnlyArgs already carries the non-interactive flags
-				// (--dangerously-bypass-approvals-and-sandbox, --skip-git-repo-check)
-				// alongside --sandbox read-only.
+				// batchModeArgs is intentionally omitted: it is pure permission bypass
+				// (--dangerously-bypass-approvals-and-sandbox nullifies --sandbox
+				// read-only). Codex's readOnlyArgs carries --sandbox read-only and
+				// --skip-git-repo-check; `exec` is non-interactive on its own.
 				const args = [...baseArgs];
 				if (agent.jsonOutputArgs) args.push(...agent.jsonOutputArgs);
 				return args;

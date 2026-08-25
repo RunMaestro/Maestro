@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
-import path from 'path';
 
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
@@ -117,6 +116,7 @@ import {
 	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
+import path from 'path';
 
 describe('filesystem handlers', () => {
 	beforeEach(() => {
@@ -641,12 +641,6 @@ describe('filesystem handlers', () => {
 	});
 
 	describe('fs:compressFolder', () => {
-		// The LOCAL branch builds its destination with `path.join`, so the expected
-		// path is `\project\Competition.zip` on Windows. Route the expectations
-		// through the same primitive rather than hardcoding POSIX literals - the
-		// product is right on both platforms, the assertions were not. (The SSH
-		// cases below stay literal on purpose: remote paths are POSIX regardless of
-		// what the desktop runs on, and the handler joins them with '/' explicitly.)
 		it('zips a folder into <name>.zip beside it, nesting under the folder name', async () => {
 			vi.mocked(existsSync).mockReturnValue(false);
 
@@ -656,20 +650,24 @@ describe('filesystem handlers', () => {
 			expect(archiveMock.directory).toHaveBeenCalledWith('/project/Competition', 'Competition');
 			expect(result).toEqual({
 				success: true,
+				// The handler builds the destination with path.join, so the expected
+				// separator is the host's. Hardcoding '/' fails on Windows even
+				// though the product is correct.
 				path: path.join('/project', 'Competition.zip'),
 				name: 'Competition.zip',
 			});
 		});
 
 		it('increments a numeric suffix until the archive name is free', async () => {
-			// Competition.zip and Competition-1.zip are taken; -2 is free. The mock
-			// has to match on the joined form too, or the "is it taken?" probe never
-			// fires on Windows and the suffix never increments.
-			vi.mocked(existsSync).mockImplementation(
-				(candidate) =>
-					candidate === path.join('/project', 'Competition.zip') ||
-					candidate === path.join('/project', 'Competition-1.zip')
-			);
+			// Competition.zip and Competition-1.zip are taken; -2 is free. The
+			// candidates are path.join'd by the handler, so the mock has to match on
+			// the host's separator or the collision is never seen and the suffix
+			// never advances.
+			const taken = [
+				path.join('/project', 'Competition.zip'),
+				path.join('/project', 'Competition-1.zip'),
+			];
+			vi.mocked(existsSync).mockImplementation((candidate) => taken.includes(candidate as string));
 
 			const handler = registeredHandlers.get('fs:compressFolder');
 			const result = await handler!({}, '/project/Competition');
@@ -1168,7 +1166,10 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 			const result = await handler!({}, 'https://example.com/image.jpg');
 
-			expect(global.fetch).toHaveBeenCalledWith('https://example.com/image.jpg');
+			expect(global.fetch).toHaveBeenCalledWith(
+				'https://example.com/image.jpg',
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
+			);
 			expect(result).toMatch(/^data:image\/jpeg;base64,/);
 		});
 
@@ -1298,7 +1299,10 @@ describe('filesystem handlers', () => {
 				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 				const result = await handler!({}, 'https://cdn.example.com/image.png');
 
-				expect(global.fetch).toHaveBeenCalledWith('https://cdn.example.com/image.png');
+				expect(global.fetch).toHaveBeenCalledWith(
+					'https://cdn.example.com/image.png',
+					expect.objectContaining({ signal: expect.any(AbortSignal) })
+				);
 				expect(result).toMatch(/^data:image\/png;base64,/);
 			});
 		});

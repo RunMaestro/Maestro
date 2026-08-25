@@ -14,9 +14,11 @@ import { selectActiveSession, updateSessionWith, useSessionStore } from '../../s
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
-import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 
@@ -250,11 +252,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
 					(e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}');
-				// Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) and next-unread (Alt+Cmd+ArrowDown) even when modals are open
+				// Allow sidebar toggle shortcuts (Alt+Cmd+Left/Right) even when modals are open
 				const isLayoutShortcut =
-					e.altKey &&
-					(e.metaKey || e.ctrlKey) &&
-					(e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowDown');
+					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+				// Next unread / draft tab is benign navigation, so it stays live behind a
+				// modal. Resolved by SHORTCUT ID rather than by key, for two reasons: it
+				// has already moved combos once and the hard-coded arrow left behind by
+				// that move silently stopped matching it, and a user who REBINDS it would
+				// otherwise get a shortcut that dies the moment any modal is open -
+				// including the Shortcuts settings pane they rebound it in.
+				const isNextUnreadTabShortcut = ctx.isShortcut(e, 'nextUnreadTab');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();
 				const isRightPanelShortcut =
@@ -383,6 +390,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					// jumpToBottom, jumpToTerminal, markdown toggle, and font size to work (these are benign navigation/viewing preferences)
 					if (
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
@@ -404,6 +412,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (
 						!isCycleShortcut &&
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isRightPanelShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
@@ -480,7 +489,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.key.toLowerCase() === 'f'
 			) {
 				e.preventDefault();
-				document.querySelector<HTMLInputElement>('.terminal-output input')?.focus();
+				document.querySelector<HTMLInputElement>(OUTPUT_SEARCH_INPUT_SELECTOR)?.focus();
 				return;
 			}
 
@@ -1460,6 +1469,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openTerminalSearch();
 					trackShortcut('searchTerminal');
+				} else if (ctx.activeGroupChatId) {
+					// Group chat replaces MainPanel/TerminalOutput, so Find must open here.
+					// When the Right Bar history tab is focused, leave Cmd+F to that panel's filter.
+					const groupRightTab = useGroupChatStore.getState().groupChatRightTab;
+					if (ctx.activeFocus === 'right' && groupRightTab === 'history') {
+						trackShortcut('filterHistory');
+					} else {
+						e.preventDefault();
+						useUIStore
+							.getState()
+							.setOutputSearchOpen(groupChatOutputSearchKey(ctx.activeGroupChatId), true);
+						trackShortcut('searchOutput');
+					}
 				} else if (ctx.activeFocus === 'main') {
 					// Main panel search - handled by TerminalOutput component, just track here
 					trackShortcut('searchOutput');

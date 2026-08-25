@@ -169,6 +169,32 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **CONSOLIDATE:** Root cause is preload boundary re-declaration pattern. Types defined in `shared/`, re-declared in `main/preload/`, re-declared in `renderer/types/index.ts` and `renderer/global.d.ts`, then again locally. Fix the preload type-sharing mechanism
 - **Estimated savings:** ~370 lines
 
+### 41. fetch() Timeout Handling (6 hand-rolled implementations, 11 files with none) (RESOLVED 2026-08-18)
+
+- **Evidence:** Grep-verified against rc `d10006926`. Not from a scan file; found while
+  auditing the deferred `AbortSignal` finding from PR #1396.
+- **Count:** 28 `fetch()` call sites in `src/main`. Three separate functions named
+  `fetchWithTimeout` with three different signatures (`ipc/handlers/leaderboard.ts:209`,
+  `cue/cue-telemetry.ts:464`, `bmad-manager.ts:151`), three more inline
+  `AbortController` + `setTimeout` blocks (`checkin.ts`, `agents/detector.ts`,
+  `agents/codex-usage-sampler.ts`), and 11 files whose fetches had no timeout at all.
+- **Drift observed:** `codex-usage-sampler.ts` cleared its timer in both `catch` and
+  `finally`; `bmad-manager.ts` used `AbortSignal.timeout` while the others used a manual
+  controller; the two `fetchWithTimeout` copies disagreed on whether `options` was optional.
+- **RESOLVED 2026-08-18:** Consolidated onto `src/main/utils/fetchWithTimeout.ts`. All six
+  hand-rolled implementations removed and all 17 non-Symphony call sites migrated, each
+  with a named per-domain budget constant. The shared helper composes a caller-supplied
+  `signal` via `AbortSignal.any` instead of overwriting it (the old copies silently
+  disabled caller cancellation) and aborts with a `TimeoutError` so a budget timeout is
+  distinguishable from a user cancel. `bmad-manager.ts` keeps a thin local
+  `fetchBmadResource()` wrapper for its Sentry reporting.
+- **KEEP:** `src/main/utils/fetchWithTimeout.ts` only.
+- **STILL OPEN:** The 12 Symphony fetch sites
+  (`ipc/handlers/symphony/{discovery,sync,contributionStart,contributionFinish}.ts`,
+  `services/symphony-runner.ts`) are excluded pending the #1369 decomposition merge, to
+  avoid conflicting with that refactor. Migrating them is a mechanical follow-up.
+- **Estimated savings:** ~60 lines, and removes an unbounded-hang class from 17 call sites
+
 ---
 
 ## P2 - Medium Impact
@@ -250,7 +276,7 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **Evidence:** SCAN-FORMATTERS.md, "formatNumber / formatSize / formatFileSize definitions"
 - **Count:** 5 local `formatNumber` definitions; canonical exists at `shared/formatters.ts:41`
 - **KEEP:** `src/shared/formatters.ts:41`
-- **REMOVE:** `symphony.ts:928`, `AgentComparisonChart.tsx:93`, `AutoRunStats.tsx:70`, `LocationDistributionChart.tsx:40`, `SourceDistributionChart.tsx:62`, `SummaryCards.tsx:72`
+- **REMOVE:** ~~`symphony.ts:928`~~ (resolved via decomposition into `symphony/` directory), `AgentComparisonChart.tsx:93`, `AutoRunStats.tsx:70`, `LocationDistributionChart.tsx:40`, `SourceDistributionChart.tsx:62`, `SummaryCards.tsx:72`
 - **Estimated savings:** ~40 lines
 
 ### 25. Catch-Console.error Without Sentry (252 blocks, 118 files)

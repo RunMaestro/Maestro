@@ -222,11 +222,10 @@ const ToastItem = memo(function ToastItem({
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					{/* Line 1: Group + Agent/Project name + Tab name, with the arrival time
-					    pinned right (wraps to line 2 if needed). The row renders for the
-					    timestamp alone, so every toast is stamped, not just the ones that
-					    carry agent context. */}
-					{(toast.group || toast.project || toast.tabName || toast.timestamp > 0) && (
+					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if
+					    needed). The arrival time rides the title row below instead, so a
+					    toast with no agent context does not spend a line on a lone clock. */}
+					{(toast.group || toast.project || toast.tabName) && (
 						<div
 							className="flex flex-wrap items-center gap-2 text-xs mb-1"
 							style={{ color: theme.colors.textDim }}
@@ -262,21 +261,28 @@ const ToastItem = memo(function ToastItem({
 									{toast.tabName}
 								</span>
 							)}
-							{toast.timestamp > 0 && (
-								<time
-									className="ml-auto flex-shrink-0 tabular-nums"
-									dateTime={new Date(toast.timestamp).toISOString()}
-									title={formatTimestamp(toast.timestamp, 'full')}
-								>
-									{formatTimestamp(toast.timestamp, 'smart')}
-								</time>
-							)}
 						</div>
 					)}
 
-					{/* Title */}
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						{toast.title}
+					{/* Title, with the arrival time pinned right on the same line. Every
+					    toast is stamped, not just the ones that carry agent context. */}
+					<div className="flex items-baseline gap-2">
+						<div
+							className="font-medium text-sm min-w-0 flex-1"
+							style={{ color: theme.colors.textMain }}
+						>
+							{toast.title}
+						</div>
+						{toast.timestamp > 0 && (
+							<time
+								className="flex-shrink-0 text-xs tabular-nums"
+								style={{ color: theme.colors.textDim }}
+								dateTime={new Date(toast.timestamp).toISOString()}
+								title={formatTimestamp(toast.timestamp, 'full')}
+							>
+								{formatTimestamp(toast.timestamp, 'smart')}
+							</time>
+						)}
 					</div>
 
 					{/* Message */}

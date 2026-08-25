@@ -213,6 +213,94 @@ describe('GroupChatModal', () => {
 			expect(screen.getByRole('option', { name: /Factory Droid.*Beta/i })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: /^Codex$/i })).toBeInTheDocument();
 		});
+
+		it('should list moderator options alphabetically', async () => {
+			// Detection order is arbitrary; the dropdown is not. It matches the
+			// New Agent modal and the wizard tile strip so the user reads one
+			// predictable list everywhere.
+			setupDefaultMocks([
+				createMockAgent({ id: 'opencode', name: 'OpenCode' }),
+				createMockAgent({ id: 'codex', name: 'Codex' }),
+				createMockAgent({ id: 'antigravity', name: 'Antigravity CLI' }),
+				createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
+			]);
+
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			const values = screen
+				.getAllByRole('option')
+				.map((option) => (option as HTMLOptionElement).value);
+			expect(values).toEqual(['antigravity', 'claude-code', 'codex', 'opencode']);
+		});
+
+		it('should default to the preferred provider rather than the first listed', async () => {
+			// Antigravity CLI heads the alphabetical dropdown, but Codex outranks
+			// it in AGENT_AUTOSELECT_ORDER. Defaulting to whatever sorts first is
+			// what this guards against.
+			setupDefaultMocks([
+				createMockAgent({ id: 'antigravity', name: 'Antigravity CLI' }),
+				createMockAgent({ id: 'opencode', name: 'OpenCode' }),
+				createMockAgent({ id: 'codex', name: 'Codex' }),
+			]);
+
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toHaveValue('codex');
+				},
+				{ timeout: 3000 }
+			);
+		});
+
+		it('should fall back to the first listed provider when none is preferred', async () => {
+			// Neither is in AGENT_AUTOSELECT_ORDER, so the alphabetical order
+			// decides and the user still gets an installed, usable moderator.
+			setupDefaultMocks([
+				createMockAgent({ id: 'qwen3-coder', name: 'Qwen3 Coder' }),
+				createMockAgent({ id: 'grok', name: 'Grok CLI' }),
+			]);
+
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toHaveValue('grok');
+				},
+				{ timeout: 3000 }
+			);
+		});
 	});
 
 	describe('edit mode', () => {

@@ -366,6 +366,10 @@ export const MODAL_PRIORITIES = {
 	 * and Escape closes them first while editing a queued message's images). */
 	QUEUED_ITEM_EDIT: 145,
 
+	/** Staged-images organizer (drag-to-reorder at a readable size). Below the
+	 * lightbox and annotator, both of which open from inside it. */
+	STAGED_IMAGES_ORGANIZER: 143,
+
 	/** CSV row detail modal (above the file preview it opens from) */
 	CSV_ROW_DETAIL: 110,
 

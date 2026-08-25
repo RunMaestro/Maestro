@@ -42,6 +42,7 @@
 
 import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import {
 	insertTelemetryEvent,
 	getTelemetryBatch,
@@ -386,14 +387,18 @@ export async function flushTelemetry(
 			return { ok: false, reason: 'error', error: 'payload-too-large' };
 		}
 
-		const response = await fetchWithTimeout(config.endpoint ?? DEFAULT_TELEMETRY_ENDPOINT, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'User-Agent': `Maestro/${config.getAppVersion()}`,
+		const response = await fetchWithTimeout(
+			config.endpoint ?? DEFAULT_TELEMETRY_ENDPOINT,
+			{
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'User-Agent': `Maestro/${config.getAppVersion()}`,
+				},
+				body,
 			},
-			body,
-		});
+			FETCH_TIMEOUT_MS
+		);
 
 		const backoffHeader = response.headers.get('X-Cue-Telemetry-Backoff');
 		if (backoffHeader) {
@@ -459,18 +464,4 @@ function computeTotals(events: CueTelemetryEvent[]): CueTelemetryPayload['totals
 		run_completed: runs,
 		execution_time_ms: runDurationMs,
 	};
-}
-
-async function fetchWithTimeout(
-	url: string,
-	options: RequestInit,
-	timeoutMs: number = FETCH_TIMEOUT_MS
-): Promise<Response> {
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-	try {
-		return await fetch(url, { ...options, signal: controller.signal });
-	} finally {
-		clearTimeout(timeoutId);
-	}
 }

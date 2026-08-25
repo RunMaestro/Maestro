@@ -51,7 +51,7 @@ const render = (ui: React.ReactElement) => rtlRender(<LayerStackProvider>{ui}</L
 vi.mock('../../../renderer/components/XTerminal', () => {
 	const React = require('react');
 	const XTerminal = React.forwardRef((props: Record<string, unknown>, ref: React.Ref<unknown>) => {
-		React.useImperativeHandle(ref, () => ({ focus: vi.fn() }));
+		React.useImperativeHandle(ref, () => ({ focus: vi.fn(), write: vi.fn() }));
 		return React.createElement('div', {
 			'data-testid': 'xterm-mock',
 			'data-session-id': String(props.sessionId),
@@ -66,10 +66,23 @@ const mockWrite = vi.fn();
 const mockKill = vi.fn();
 const mockGetCustomEnvVars = vi.fn();
 let exitHandler: ((sessionId: string) => void) | undefined;
+let dataHandler: ((sessionId: string, data: string) => void) | undefined;
+
+/**
+ * The login command is held until the shell proves it is alive, so a test that
+ * wants to observe the write has to deliver that first byte.
+ */
+async function emitShellOutput(sessionId: string, data = '$ ') {
+	await act(async () => {
+		dataHandler?.(sessionId, data);
+		await Promise.resolve();
+	});
+}
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	exitHandler = undefined;
+	dataHandler = undefined;
 	mockSpawnTerminalTab.mockResolvedValue({ pid: 4242, success: true });
 	mockWrite.mockResolvedValue(true);
 	mockKill.mockResolvedValue(true);
@@ -85,6 +98,10 @@ beforeEach(() => {
 	maestro.agents.getCustomEnvVars = mockGetCustomEnvVars;
 	maestro.process.onExit = vi.fn((handler: (sessionId: string) => void) => {
 		exitHandler = handler;
+		return () => {};
+	});
+	maestro.process.onData = vi.fn((handler: (sessionId: string, data: string) => void) => {
+		dataHandler = handler;
 		return () => {};
 	});
 });
@@ -109,6 +126,11 @@ describe('ReauthModal', () => {
 			cwd: '/test/project',
 			toolType: 'claude-code',
 		});
+
+		// Held until the shell speaks: typing into a PTY that is not ready yet is
+		// how a remote login came up as an empty box.
+		expect(mockWrite).not.toHaveBeenCalled();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
 		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
 	});
 
@@ -125,6 +147,98 @@ describe('ReauthModal', () => {
 		expect(ptySessionId.startsWith('reauth-sess-1-terminal-')).toBe(true);
 		expect(ptySessionId.split('-terminal-')[0]).not.toBe('sess-1');
 		expect(screen.getByTestId('xterm-mock').getAttribute('data-session-id')).toBe(ptySessionId);
+	});
+
+	// The bug this guards: spawn and kill used to live in separate effects, so
+	// React StrictMode's remount (cleanup, then re-run) killed the shell the
+	// first pass had started while a one-shot guard blocked the second pass from
+	// starting another. The result was a dead PTY nobody typed into - an empty
+	// terminal box - and it reproduced every time over SSH, where the spawn takes
+	// long enough that the teardown always wins the race.
+	it('still has a live login shell after a StrictMode-style remount', async () => {
+		const session = createMockSession({ id: 'sess-1' });
+		const outage = createOutage();
+		const ui = (
+			<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />
+		);
+
+		// Mount, tear down, and mount again without letting the spawn settle in
+		// between - exactly what StrictMode does on a slow (SSH) spawn.
+		const first = render(ui);
+		first.unmount();
+		render(ui);
+		await flushSpawn();
+
+		// The remount must have started its own shell rather than being blocked.
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(2);
+		const liveSessionId: string = mockSpawnTerminalTab.mock.calls[1][0].sessionId;
+
+		// ...and that shell is the one that gets the login typed into it.
+		await emitShellOutput(liveSessionId);
+		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\n');
+	});
+
+	// The abandoned attempt's promise resolves after the remount. It must not
+	// type the login into a shell that is already being replaced.
+	it('does not type the login into a superseded shell', async () => {
+		const session = createMockSession({ id: 'sess-1' });
+		const outage = createOutage();
+		const ui = (
+			<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />
+		);
+
+		const first = render(ui);
+		first.unmount();
+		render(ui);
+		await flushSpawn();
+
+		const supersededSessionId: string = mockSpawnTerminalTab.mock.calls[0][0].sessionId;
+		await emitShellOutput(supersededSessionId);
+
+		expect(mockWrite).not.toHaveBeenCalledWith(supersededSessionId, expect.any(String));
+	});
+
+	// A shell that never prints (a wedged SSH handshake) must still get the
+	// command rather than leaving the user at a blank box forever.
+	it('types the login anyway when the shell prints nothing', async () => {
+		vi.useFakeTimers();
+		try {
+			const session = createMockSession({ id: 'sess-1' });
+			const outage = createOutage();
+			render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(mockWrite).not.toHaveBeenCalled();
+
+			await act(async () => {
+				vi.advanceTimersByTime(8000);
+			});
+
+			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	// Over SSH the override becomes a `cd` the remote shell runs before anything
+	// else, so a stale or local-looking path kills the session before the login
+	// can start. The login needs no project directory at all.
+	it('does not cd the remote login shell into a guessed project directory', async () => {
+		const session = createMockSession({
+			id: 'sess-1',
+			cwd: '/Users/local/only',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
+		const outage = createOutage();
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
+		await flushSpawn();
+
+		expect(
+			mockSpawnTerminalTab.mock.calls[0][0].sessionSshRemoteConfig.workingDirOverride
+		).toBeUndefined();
 	});
 
 	it('kills the login shell when the modal unmounts', async () => {
@@ -167,6 +281,7 @@ describe('ReauthModal', () => {
 		await flushSpawn();
 
 		expect(screen.getByText(/then type \/login/)).toBeInTheDocument();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
 		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\n');
 	});
 

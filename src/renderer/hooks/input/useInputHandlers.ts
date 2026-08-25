@@ -52,6 +52,8 @@ import {
 } from '../../services/crossAgentMentions';
 import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPatterns';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
+import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
+import { STAGED_IMAGE_MIME } from '../../components/InputArea/components/stagedImageDrag';
 import {
 	normalizeComposerCommandMode,
 	type ComposerCommandMode,
@@ -897,6 +899,22 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	);
 
 	/**
+	 * Append arbitrary text to the LIVE composer. Used by drops that are not
+	 * `@` mentions (a staged-image slot reference, say), which always target the
+	 * tab on screen because the drag ends there.
+	 */
+	const appendToAiInput = useCallback(
+		(text: string) => {
+			setInputValue((prev) => {
+				if (!prev) return text + ' ';
+				const sep = /\s$/.test(prev) ? '' : ' ';
+				return prev + sep + text + ' ';
+			});
+		},
+		[setInputValue]
+	);
+
+	/**
 	 * Append `@` mentions to the AI composer.
 	 *
 	 * `pinnedTabId` names the tab the mentions belong to. Pass it whenever the
@@ -1045,6 +1063,23 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					color: 'yellow',
 					detail: 'Press Esc to step back toward the agent',
 				});
+				return;
+			}
+
+			// A thumbnail dragged out of the staged-image strip. It is already
+			// attached, so the drop inserts the slot reference the user can then
+			// talk about ("crop Screenshot 2") rather than staging anything new.
+			// Appended at the end like an @mention: the drop caret a textarea
+			// paints during a drag is not readable from selectionStart, so
+			// pretending to insert "where you dropped it" would land the text
+			// somewhere else.
+			const stagedImageIndex = e.dataTransfer.getData(STAGED_IMAGE_MIME);
+			if (stagedImageIndex !== '') {
+				if (isGroupChatActive || !isDirectAIMode) return;
+				const index = Number(stagedImageIndex);
+				if (!Number.isInteger(index) || index < 0) return;
+				appendToAiInput(screenshotReferenceLabel(index));
+				inputRef.current?.focus();
 				return;
 			}
 
@@ -1206,6 +1241,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		},
 		[
 			setStagedImages,
+			appendToAiInput,
 			appendMentionsToAiInput,
 			appendMentionsToGroupChatDraft,
 			uploadAndMentionPathlessFiles,

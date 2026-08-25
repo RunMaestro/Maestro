@@ -26,6 +26,7 @@ import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 import { AlertCallout } from '../components/Markdown/components/AlertCallout';
 import { alertTypeFromClassName } from '../components/Markdown/remarkAlert';
 import { TaskCheckbox } from '../components/Markdown/components/TaskCheckbox';
+import { MarkerPill } from '../components/Markdown/components/MarkerPill';
 import {
 	INLINE_CODE_CLICK_PROPS,
 	INLINE_CODE_CLICK_STYLE,
@@ -521,6 +522,31 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 	// Fixes MAESTRO-8Q
 	components.details = ({ node: _node, onToggle: _onToggle, ...props }: any) =>
 		React.createElement('details', props);
+
+	// Auto Run markers, tagged by `remarkMaestroMarkers` (block markers become a
+	// div, inline ones a span). Only this DOCUMENT component map gets them: chat
+	// builds its own map, so an agent explaining the marker syntax in a message
+	// keeps rendering as prose rather than claiming something is configured.
+	//
+	// Both overrides fall through to a plain element when the attribute is
+	// absent, so they are inert on any surface that does not run the plugin.
+	const renderMarker = (tag: 'div' | 'span') => {
+		return ({ node: _node, children, ...props }: any) => {
+			const kind = props['data-maestro-marker'];
+			if (!kind) return React.createElement(tag, props, children);
+			return React.createElement(MarkerPill, {
+				kind,
+				status: props['data-maestro-marker-status'],
+				scope: props['data-maestro-marker-scope'],
+				label: props['data-maestro-marker-label'],
+				detail: props['data-maestro-marker-detail'],
+				artifact: props['data-maestro-marker-artifact'],
+				theme,
+			});
+		};
+	};
+	components.div = renderMarker('div');
+	components.span = renderMarker('span');
 
 	return components;
 }

@@ -207,3 +207,19 @@ export const useGitCommandRunStore = create<GitCommandRunStore>()((set, get) => 
 
 /** Subscribe to one run. Returns undefined once it has been cleared. */
 export const selectGitRun = (key: string) => (state: GitCommandRunStore) => state.runs[key];
+
+/**
+ * Is this operation still going against this repo?
+ *
+ * For menus that offer Pull / Push and want to say "already running" rather
+ * than pretend nothing is happening. Deliberately returns a boolean and not the
+ * run: `runs` is replaced on every output chunk, so a subscriber that selected
+ * the object would re-render on every line of a `git push` transfer, while a
+ * boolean only wakes the host when the run starts or settles.
+ */
+export function useGitRunActive(
+	target: Pick<GitCommandRunTarget, 'operation' | 'cwd' | 'sshRemoteId'> | null | undefined
+): boolean {
+	const key = target ? gitRunKey(target) : null;
+	return useGitCommandRunStore((state) => (key ? state.runs[key]?.status === 'running' : false));
+}

@@ -53,7 +53,7 @@ function makeProps(
 		executionCount: 0,
 		activeRunsExpanded: true,
 		setActiveRunsExpanded: vi.fn(),
-		onViewInPipeline: vi.fn(),
+		onViewInGraph: vi.fn(),
 		onEditYaml: vi.fn(),
 		onRemoveCue: vi.fn(),
 		onTriggerSubscription: vi.fn(),

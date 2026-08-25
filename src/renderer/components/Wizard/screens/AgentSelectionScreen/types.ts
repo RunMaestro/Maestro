@@ -31,6 +31,8 @@ export interface AgentLocationSelectProps {
 }
 
 export interface AgentSelectionKeyboardArgs {
+	/** The tiles the strip renders right now - what `focusedTileIndex` indexes. */
+	tiles: AgentTile[];
 	isNameFieldFocused: boolean;
 	focusedTileIndex: number;
 	detectedAgents: AgentConfig[];

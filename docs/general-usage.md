@@ -836,6 +836,8 @@ Each one creates the tab and places it in a single step, so you never have to op
 
 If a pane needs a moment to appear (a browser starting up, a file editor loading for the first time), Maestro waits for it and puts the caret in as soon as it is ready.
 
+The same rule holds for a plain new tab, not just a tiled one. A new file tab (`Opt+N` / `Alt+N`) opens a blank Untitled file with the caret already in the editor, and a new browser tab (`Cmd+B` / `Ctrl+B`) opens blank with the caret in the address bar, so you can type where you are going straight away. If you would rather a new browser tab land on a page, set one under **Settings -> General -> Browser Home URL**.
+
 If a tile is already on screen, the split happens inside the pane you are working in rather than under the whole grid. That is what lets you build a layout one command at a time: tile a terminal under your chat, click into the terminal, then tile a browser under that.
 
 **Creating a tile by dragging**

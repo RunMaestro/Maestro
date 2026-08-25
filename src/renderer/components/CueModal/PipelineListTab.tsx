@@ -35,12 +35,14 @@ import {
 	describePipeline,
 	derivePipelineHealth,
 	stripPipelinePrefix,
+	type CueNodePrompts,
 	type CuePipelineHealth,
 	type CuePipelineHealthStatus,
 } from '../../../shared/cue-pipeline-summary';
 import { validatePipelines } from '../CuePipelineEditor/utils/pipelineValidation';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { SegmentedControl } from '../ui/SegmentedControl';
+import { HoverTooltip } from '../ui/HoverTooltip';
 import { PipelineDot } from './StatusDot';
 import { formatDuration, formatRelativeTime } from './cueModalUtils';
 
@@ -160,12 +162,17 @@ export function PipelineListTab({
 				configErrors,
 				disabled,
 			});
+			// Prompt text is part of the haystack: in a fan-out pipeline the agent
+			// names are all identical, so the prompt is the only searchable thing
+			// that tells one step from another. Only the STEP prompts are added -
+			// every trigger prompt rides an edge into some step, so including both
+			// would just index the same text twice.
 			const haystack = [
 				pipeline.name,
 				description.flow,
 				health.label,
 				...description.triggers.map((t) => `${t.label} ${t.summary}`),
-				...description.steps.map((s) => `${s.label} ${s.detail}`),
+				...description.steps.map((s) => `${s.label} ${s.detail} ${s.prompts.prompts.join(' ')}`),
 			]
 				.join(' ')
 				.toLowerCase();
@@ -520,7 +527,13 @@ function PipelineListRow({
 									className="w-3 h-3 flex-shrink-0 translate-y-[1px]"
 									style={{ color: theme.colors.accent }}
 								/>
-								<span className="flex-1 break-words" style={{ color: theme.colors.textMain }}>
+								{/* min-w-0 is load-bearing: without it this flex child
+								    refuses to shrink below its content and the clipped
+								    prompt line stretches the row instead of ellipsising. */}
+								<span
+									className="flex-1 min-w-0 break-words"
+									style={{ color: theme.colors.textMain }}
+								>
 									{t.label}
 									{t.summary && <span style={{ color: theme.colors.textDim }}> · {t.summary}</span>}
 									{t.subscriptionName && (
@@ -531,6 +544,13 @@ function PipelineListRow({
 											{t.subscriptionName}
 										</span>
 									)}
+									{/* No prompt line here on purpose. A trigger's outgoing edge
+									    and its target's incoming edge are the SAME edge, so
+									    rendering it in both columns prints every prompt twice.
+									    It belongs on the step - that is the row it disambiguates,
+									    and a fan-out trigger has one prompt per target rather
+									    than one of its own. `t.prompts` stays on the summary for
+									    callers that describe a trigger on its own. */}
 								</span>
 								{/* Per-trigger Run replaces the row-level button on
 								    multi-trigger pipelines - each trigger is its own
@@ -562,7 +582,11 @@ function PipelineListRow({
 							return (
 								<li key={i} className="flex items-baseline gap-1.5">
 									<Icon className="w-3 h-3 flex-shrink-0 translate-y-[1px]" style={{ color }} />
-									<span className="break-words" style={{ color: theme.colors.textMain }}>
+									{/* min-w-0: see the trigger column above. */}
+									<span
+										className="flex-1 min-w-0 break-words"
+										style={{ color: theme.colors.textMain }}
+									>
 										{s.label}
 										{s.detail && (
 											<span
@@ -572,6 +596,7 @@ function PipelineListRow({
 												{s.detail}
 											</span>
 										)}
+										<PromptLine prompts={s.prompts} theme={theme} />
 									</span>
 								</li>
 							);
@@ -580,6 +605,70 @@ function PipelineListRow({
 				</div>
 			)}
 		</div>
+	);
+}
+
+/**
+ * How much of a prompt the hover card will show. Prompts routinely run to
+ * hundreds of lines; past this the card stops being a peek and becomes a
+ * document viewer, which is what the graph's config panel is for.
+ */
+const PROMPT_TOOLTIP_MAX_CHARS = 1200;
+
+/**
+ * The prompt attached to a trigger or step: one clipped line inline, the full
+ * text on hover.
+ *
+ * This is often the only thing distinguishing two rows - a fan-out pipeline
+ * renders the same agent name six times, and only the prompt says which job is
+ * which. The inline line is clipped by CSS rather than cut to a word count, so
+ * it fits exactly as many words as the column is actually wide.
+ */
+function PromptLine({ prompts, theme }: { prompts: CueNodePrompts; theme: Theme }) {
+	if (prompts.count === 0) return null;
+
+	const full = prompts.prompts[0];
+	const truncated =
+		full.length > PROMPT_TOOLTIP_MAX_CHARS ? `${full.slice(0, PROMPT_TOOLTIP_MAX_CHARS)}…` : full;
+	// A prompt that is already one short line needs no hover card repeating it;
+	// one that wraps or has newlines does, because the inline view loses both.
+	const isSingleLine = !full.includes('\n');
+
+	return (
+		<span className="flex items-baseline gap-1 min-w-0">
+			<HoverTooltip
+				theme={theme}
+				maxWidth={520}
+				onlyWhenTruncated={isSingleLine}
+				triggerClassName="truncate min-w-0 flex-1"
+				label={
+					<span className="whitespace-pre-wrap break-words">
+						{truncated}
+						{prompts.count > 1 && (
+							<span className="block mt-1.5 opacity-70">
+								+{prompts.count - 1} more prompt{prompts.count - 1 === 1 ? '' : 's'} feed this
+							</span>
+						)}
+					</span>
+				}
+			>
+				<span
+					className="block truncate text-[10px] italic"
+					style={{ color: theme.colors.textDim, opacity: 0.85 }}
+				>
+					{prompts.preview}
+				</span>
+			</HoverTooltip>
+			{prompts.count > 1 && (
+				<span
+					className="text-[9px] font-bold flex-shrink-0 px-1 rounded"
+					style={{ backgroundColor: `${theme.colors.textDim}25`, color: theme.colors.textDim }}
+					title={`${prompts.count} different prompts feed this`}
+				>
+					×{prompts.count}
+				</span>
+			)}
+		</span>
 	);
 }
 

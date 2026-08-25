@@ -11,6 +11,7 @@ import {
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../../components/Markdown/remarkAlert';
+import { remarkMaestroMarkers } from '../../components/Markdown/remarkMaestroMarkers';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import { MermaidRenderer } from '../../components/MermaidRenderer';
@@ -167,6 +168,9 @@ export function useAutoRunMarkdown({
 			remarkAlert,
 			remarkFrontmatter,
 			remarkFrontmatterTable,
+			// Marker pills matter most here: this is the panel with the Run button,
+			// so a gate or halt that will block the run has to be visible from it.
+			remarkMaestroMarkers,
 		];
 		if (fileTree.length > 0 || homeDir) {
 			// cwd is empty since we're at the root of the Auto Run folder

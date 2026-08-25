@@ -21,6 +21,9 @@ export type {
 export { ToggleSwitch } from './ToggleSwitch';
 export type { ToggleSwitchProps } from './ToggleSwitch';
 
+export { ProviderAvailabilityBar, PROVIDER_BAR_NAV_EXEMPT_ATTR } from './ProviderAvailabilityBar';
+export type { ProviderAvailabilityBarProps } from './ProviderAvailabilityBar';
+
 export { CollapsedCommandsNotice } from './CollapsedCommandsNotice';
 export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';
 
@@ -71,12 +74,23 @@ export type { CopyIconButtonProps } from './CopyIconButton';
 
 export { FontScaleControl } from './FontScaleControl';
 export type { FontScaleControlProps } from './FontScaleControl';
+export { ScaleControl } from './ScaleControl';
+export type { ScaleControlProps } from './ScaleControl';
 
 export { GitChangeCounts } from './GitChangeCounts';
 export type { GitChangeCountsProps } from './GitChangeCounts';
+
+export { GitRunningBadge } from './GitRunningBadge';
+export type { GitRunningBadgeProps } from './GitRunningBadge';
+
+export { TextareaLineNumbers, lineNumberGutterMetrics } from './TextareaLineNumbers';
+export type { TextareaLineNumbersProps, LineNumberGutterMetrics } from './TextareaLineNumbers';
 
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';
 
 export { CountBadge } from './CountBadge';
 export type { CountBadgeProps } from './CountBadge';
+
+export { MiniBadge } from './MiniBadge';
+export type { MiniBadgeProps } from './MiniBadge';

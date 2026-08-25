@@ -119,7 +119,7 @@ export function dropZoneToSplit(
 }
 
 /** Compare two tab refs by type + id (leaves reference tabs by value, not identity). */
-function sameTabRef(a: UnifiedTabRef, b: UnifiedTabRef): boolean {
+export function sameTabRef(a: UnifiedTabRef, b: UnifiedTabRef): boolean {
 	return a.type === b.type && a.id === b.id;
 }
 

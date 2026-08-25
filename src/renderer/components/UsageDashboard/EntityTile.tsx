@@ -1,12 +1,13 @@
 /**
  * EntityTile - the compact stat tile used by the Usage Dashboard's card grids.
  *
- * One shape serves both grids: a status dot, a title, optional badges, a corner
- * age, an optional secondary line, a row of labeled stats, and a sparkline. The
- * agent grid (`AgentOverviewCards`) and the per-agent tab grid (`TabBreakdown`)
- * render the same tile with different data, so the chrome - border states,
- * hover/selected promotion, the staggered enter animation, the highlighted-stat
- * coloring - lives here once instead of being copied per grid.
+ * One shape: a status dot, a title, optional badges, a corner age, an optional
+ * secondary line, a row of labeled stats, and a sparkline. It carries the
+ * chrome - border states, hover/selected promotion, the staggered enter
+ * animation, the highlighted-stat coloring - so a card grid does not re-derive
+ * it. The agent grid (`AgentOverviewCards`) is the current consumer; the
+ * per-agent tab breakdown reads as a list instead, since its rows are narrow
+ * enough that a table scans better than a second wall of tiles.
  *
  * Purely presentational: it takes formatted strings and colors, and reports
  * clicks. Callers own their own data shaping and sort/filter state.
@@ -14,6 +15,7 @@
 
 import { memo, useState } from 'react';
 import type { Theme } from '../../types';
+import { MiniBadge } from '../ui/MiniBadge';
 import { Sparkline } from './Sparkline';
 
 /** Per-tile delay of the staggered entrance, in ms. */
@@ -184,18 +186,14 @@ export const EntityTile = memo(function EntityTile({
 					{title}
 				</span>
 				{badges?.map((badge) => (
-					<span
+					<MiniBadge
 						key={badge.label}
-						className="flex-shrink-0 px-1 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide"
-						style={{
-							backgroundColor: `${badge.color ?? theme.colors.accent}20`,
-							color: badge.color ?? theme.colors.accent,
-						}}
+						label={badge.label}
+						theme={theme}
+						color={badge.color}
 						title={badge.title}
-						data-testid={badge.testId}
-					>
-						{badge.label}
-					</span>
+						testId={badge.testId}
+					/>
 				))}
 				{age && (
 					<span

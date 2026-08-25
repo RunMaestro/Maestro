@@ -7,6 +7,7 @@ import {
 	createGroupFromDrop,
 	generateGroupName,
 	movePaneInGroup,
+	sameTabRef,
 	swapPanesInGroup,
 	tileTabIntoGroup,
 	type DropZone,
@@ -37,6 +38,12 @@ import type { Session, TabGroup, Theme, UnifiedTabRef } from '../../types';
  * window) - both operate on different drop targets and different dataTransfer
  * channels. A `source: 'pane'` drag (a pane dragged toward the tab bar) is ignored
  * here so pulling a pane out doesn't re-tile it in place.
+ *
+ * A tab never tiles beside ITSELF, so dragging the tab that is already on screen
+ * (or a pane over its own tile) resolves to no target at all: no highlight, no
+ * `dropEffect`, so the cursor reads "not allowed" and the gesture stays a plain
+ * tab-bar reorder. The affordance is withheld rather than shown and then refused,
+ * which is why no "you can't do that" flash is needed on drop.
  */
 export interface PaneDropZonesProps {
 	session: Session;
@@ -110,21 +117,21 @@ export function PaneDropZones({
 	// receives no dragenter of its own to arm on.
 	const [dragActive, setDragActive] = React.useState(false);
 	const [hover, setHover] = React.useState<HoverTarget | null>(null);
-	// The `source` of the in-flight tiling drag ('pane' when a tile header is being
-	// dragged, 'tab-bar' when a strip tab is). Only a pane-rearrange drag unlocks the
-	// central swap zone; a tab-bar drag stays edges-only. Captured on dragstart (the one
-	// phase where reading dataTransfer is allowed) since dragover can't read the payload.
-	const dragSourceRef = React.useRef<TabTilePayload['source'] | null>(null);
+	// The in-flight tiling drag's payload: which tab is being dragged and where from
+	// ('pane' when a tile header is being dragged, 'tab-bar' when a strip tab is).
+	// Only a pane-rearrange drag unlocks the central swap zone; a tab-bar drag stays
+	// edges-only. Captured on dragstart (the one phase where reading dataTransfer is
+	// allowed) because dragover can only see the type list, not the payload - yet the
+	// hover hint must already know whether this drag is a self-drop.
+	const dragPayloadRef = React.useRef<TabTilePayload | null>(null);
 
 	React.useEffect(() => {
 		const onDragStart = (e: DragEvent) => {
-			dragSourceRef.current = e.dataTransfer
-				? (readTabTilePayload(e.dataTransfer)?.source ?? null)
-				: null;
+			dragPayloadRef.current = e.dataTransfer ? readTabTilePayload(e.dataTransfer) : null;
 			setDragActive(true);
 		};
 		const onDragEnd = () => {
-			dragSourceRef.current = null;
+			dragPayloadRef.current = null;
 			setDragActive(false);
 			setHover(null);
 		};
@@ -155,15 +162,21 @@ export function PaneDropZones({
 				height: r.height,
 			});
 
+			const payload = dragPayloadRef.current;
+
 			if (activeGroup) {
 				const paneEls = overlay.parentElement?.querySelectorAll<HTMLElement>('[data-pane-leaf-id]');
 				if (!paneEls || paneEls.length === 0) return null;
 				// A pane-rearrange drag (a tile header) unlocks the central swap zone; a
 				// tab-bar drag tiling a new tab stays edges-only (no swap target exists).
-				const allowCenter = dragSourceRef.current === 'pane';
+				const allowCenter = payload?.source === 'pane';
 				for (const el of Array.from(paneEls)) {
 					const r = el.getBoundingClientRect();
 					if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+						// A pane dragged over its own tile has nothing to move or swap with.
+						if (payload?.source === 'pane' && payload.leafId === el.dataset.paneLeafId) {
+							return null;
+						}
 						const local = toLocal(r);
 						const zone = computeDropZone(
 							local,
@@ -181,20 +194,31 @@ export function PaneDropZones({
 				return null;
 			}
 
+			// Single view: dragging the tab that is already on screen is a reorder, not a
+			// split - it has no second tab to pair with, so it gets no drop target.
+			if (payload && activeStandaloneRef && sameTabRef(payload.ref, activeStandaloneRef)) {
+				return null;
+			}
+
 			// Single view: the overlay itself is the one implicit pane.
 			const local = { left: 0, top: 0, width: overlayRect.width, height: overlayRect.height };
 			const zone = computeDropZone(local, clientX - overlayRect.left, clientY - overlayRect.top);
 			return { leafId: null, zone, highlight: highlightForZone(local, zone) };
 		},
-		[activeGroup]
+		[activeGroup, activeStandaloneRef]
 	);
 
 	const handleDragOver = React.useCallback(
 		(e: React.DragEvent) => {
 			if (!dragHasTabTilePayload(e.dataTransfer)) return;
+			const target = resolveHover(e.clientX, e.clientY);
+			setHover(target);
+			// No target means this drag can't tile here (a tab over its own view, a pane
+			// over its own tile). Leave the default in place so the drop is refused and
+			// the cursor says so, instead of promising a split that would do nothing.
+			if (!target) return;
 			e.preventDefault();
 			e.dataTransfer.dropEffect = 'move';
-			setHover(resolveHover(e.clientX, e.clientY));
 		},
 		[resolveHover]
 	);
@@ -259,18 +283,8 @@ export function PaneDropZones({
 				notifyCenterFlash({ color: 'yellow', message: 'Nothing here to tile with' });
 				return;
 			}
-			// Dropping a tab onto its own single view is a no-op: a tab can't be tiled
-			// beside itself. This is the trap that reads as "release does nothing" - the
-			// drop zones light up for any tiling drag, but pairing the on-screen tab with
-			// itself has no result. Tell the user to drag a *different* tab instead.
-			if (activeStandaloneRef.type === dragged.type && activeStandaloneRef.id === dragged.id) {
-				notifyCenterFlash({
-					color: 'yellow',
-					message: 'Drag a different tab to split the view',
-					detail: 'A tab tiles beside another tab, not itself.',
-				});
-				return;
-			}
+			// A tab can't tile beside itself, and resolveHover already refuses that drag
+			// (no highlight, no drop), so anything arriving here is a different tab.
 			const targetRef = activeStandaloneRef;
 			let newGroupId: string | null = null;
 			updateSessionWith(session.id, (s) => {

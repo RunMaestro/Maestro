@@ -21,9 +21,16 @@ import type {
 	AgentSelectionRefs,
 	AgentSelectionScreenProps,
 	AgentSelectionViewMode,
+	AgentTile,
 } from './types';
+import { providerLocationLabel } from '../../../../utils/providerAvailability';
 import { AGENT_TILES } from './utils/agentTiles';
-import { buildConfiguringAgent, findDetectedAgent } from './utils/agentAvailability';
+import {
+	buildConfiguringAgent,
+	countSelectableAgentTiles,
+	findDetectedAgent,
+	selectVisibleAgentTiles,
+} from './utils/agentAvailability';
 
 export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.Element {
 	const {
@@ -44,6 +51,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 
 	const [focusedTileIndex, setFocusedTileIndex] = useState(0);
 	const [isNameFieldFocused, setIsNameFieldFocused] = useState(false);
+	const [showAllProviders, setShowAllProviders] = useState(false);
 	const [viewMode, setViewMode] = useState<AgentSelectionViewMode>('grid');
 	const [configuringAgentId, setConfiguringAgentId] = useState<string | null>(null);
 	const [isTransitioning, setIsTransitioning] = useState(false);
@@ -52,6 +60,9 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
 	const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Mirrors `visibleTiles` (computed below) for the deferred callbacks that run
+	// after a transition timer, by which point a captured list may be stale.
+	const visibleTilesRef = useRef<AgentTile[]>(AGENT_TILES);
 
 	const refs = useMemo<AgentSelectionRefs>(
 		() => ({
@@ -98,7 +109,32 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		setSelectedAgent: selectAgent,
 	});
 
+	// What the strip renders, and therefore what every tile index in this screen
+	// refers to. Indexing the full registry instead would name the wrong provider
+	// the moment the unavailable ones are filtered out.
+	const visibleTiles = useMemo(
+		() =>
+			selectVisibleAgentTiles(AGENT_TILES, detectedAgents, showAllProviders, state.selectedAgent),
+		[detectedAgents, showAllProviders, state.selectedAgent]
+	);
+	visibleTilesRef.current = visibleTiles;
+
+	const availableProviderCount = useMemo(
+		() => countSelectableAgentTiles(AGENT_TILES, detectedAgents),
+		[detectedAgents]
+	);
+
+	// The counts describe whichever machine detection probed, so name that machine.
+	// Saying "locally" while the Location dropdown points at a remote is a claim
+	// about the wrong host.
+	const locationLabel = useMemo(() => {
+		if (!sshRemoteConfig?.enabled || !sshRemoteConfig.remoteId) return providerLocationLabel();
+		const remote = sshRemotes.find((entry) => entry.id === sshRemoteConfig.remoteId);
+		return providerLocationLabel(remote?.name ?? remote?.host ?? 'remote');
+	}, [sshRemoteConfig?.enabled, sshRemoteConfig?.remoteId, sshRemotes]);
+
 	useAgentSelectionFocus({
+		tiles: visibleTiles,
 		isDetecting,
 		selectedAgent: state.selectedAgent,
 		detectedAgents,
@@ -126,10 +162,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 				setConfiguringAgentId(null);
 				setIsTransitioning(false);
 				transitionTimerRef.current = null;
-				const index = AGENT_TILES.findIndex((tile) => tile.id === agentId);
+				const index = visibleTilesRef.current.findIndex((tile) => tile.id === agentId);
 				if (index !== -1) {
 					setFocusedTileIndex(index);
-					tileRefs.current[index]?.focus();
+					tileRefs.current[index]?.focus({ preventScroll: true });
 				}
 			}, 150);
 		},
@@ -159,6 +195,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	});
 
 	const handleKeyDown = useAgentSelectionKeyboard({
+		tiles: visibleTiles,
 		isNameFieldFocused,
 		focusedTileIndex,
 		detectedAgents,
@@ -170,6 +207,34 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		canProceedToNext,
 		nextStep,
 	});
+
+	/**
+	 * Flipping the filter renumbers the strip, so carry the focus ring by PROVIDER
+	 * rather than by index - keeping the raw index would slide it onto whichever
+	 * unrelated provider inherited that slot.
+	 */
+	const handleShowAllProvidersChange = useCallback(
+		(next: boolean) => {
+			const focusedId = visibleTilesRef.current[focusedTileIndex]?.id;
+			setShowAllProviders(next);
+
+			const nextTiles = selectVisibleAgentTiles(
+				AGENT_TILES,
+				detectedAgents,
+				next,
+				state.selectedAgent
+			);
+			const nextIndex = focusedId ? nextTiles.findIndex((tile) => tile.id === focusedId) : -1;
+			setFocusedTileIndex(nextIndex === -1 ? 0 : nextIndex);
+
+			announce(
+				next
+					? `Showing all ${nextTiles.length} supported providers`
+					: `Showing ${nextTiles.length} available providers`
+			);
+		},
+		[announce, detectedAgents, focusedTileIndex, state.selectedAgent]
+	);
 
 	const handleTileClick = useCallback(
 		(tile: (typeof AGENT_TILES)[number], index: number) => {
@@ -284,14 +349,19 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			) : (
 				<AgentGrid
 					theme={theme}
-					tiles={AGENT_TILES}
+					tiles={visibleTiles}
 					detectedAgents={detectedAgents}
 					selectedAgent={state.selectedAgent}
 					focusedTileIndex={focusedTileIndex}
 					isNameFieldFocused={isNameFieldFocused}
+					totalProviderCount={AGENT_TILES.length}
+					availableProviderCount={availableProviderCount}
+					providerLocationLabel={locationLabel}
+					showAllProviders={showAllProviders}
 					tileRefs={tileRefs}
 					onTileClick={handleTileClick}
 					onOpenConfig={configPanel.handleOpenConfig}
+					onShowAllProvidersChange={handleShowAllProvidersChange}
 					setFocusedTileIndex={setFocusedTileIndex}
 					setIsNameFieldFocused={setIsNameFieldFocused}
 				/>

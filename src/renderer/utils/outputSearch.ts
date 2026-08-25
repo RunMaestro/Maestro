@@ -1,11 +1,13 @@
 /**
- * Helpers for the AI chat "Find" bar, whose state is scoped per agent+AI-tab in
- * uiStore (`outputSearchByKey`). The key identifies one chat window so a search
- * opened in one agent/tab doesn't leak its open flag or term into others.
+ * Helpers for the AI / group-chat "Find" bar, whose state is scoped per chat
+ * window in uiStore (`outputSearchByKey`). The key identifies one chat window
+ * so a search opened in one agent/tab/group chat doesn't leak its open flag
+ * or term into others.
  *
- * This module imports both stores but neither store imports it, so it stays a
- * leaf and avoids the uiStore <-> sessionStore cycle.
+ * This module imports stores but those stores do not import it, so it stays a
+ * leaf and avoids store cycles.
  */
+import { useGroupChatStore } from '../stores/groupChatStore';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 
@@ -14,8 +16,23 @@ export function outputSearchKeyFor(sessionId: string, tabId: string | null | und
 	return `${sessionId}::${tabId ?? ''}`;
 }
 
-/** Key for the currently active agent+tab, or null when there's no active agent. */
+/**
+ * Build the per-window key for a group chat transcript Find bar.
+ * Group chats have no AI tabs, so they cannot reuse `sessionId::tabId`.
+ */
+export function groupChatOutputSearchKey(groupChatId: string): string {
+	return `group-chat::${groupChatId}`;
+}
+
+/**
+ * Key for the currently active chat window, or null when none.
+ * Prefers the active group chat when one is open (MainPanel is unmounted then).
+ */
 export function getActiveOutputSearchKey(): string | null {
+	const groupChatId = useGroupChatStore.getState().activeGroupChatId;
+	if (groupChatId) {
+		return groupChatOutputSearchKey(groupChatId);
+	}
 	const session = selectActiveSession(useSessionStore.getState());
 	return session ? outputSearchKeyFor(session.id, session.activeTabId) : null;
 }

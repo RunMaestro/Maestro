@@ -14,7 +14,10 @@ import { ShellCommandCard } from '../../../renderer/components/ShellCommandCard'
 import { mockTheme } from '../../helpers/mockTheme';
 import type { LogEntry } from '../../../renderer/types';
 
-const safeClipboardWrite = vi.fn().mockResolvedValue(undefined);
+// Resolves `true` like the real one: CopyIconButton bails out of its
+// copied-checkmark feedback on a falsy result, so a mock returning undefined
+// would silently skip that half of the button's behavior.
+const safeClipboardWrite = vi.fn().mockResolvedValue(true);
 vi.mock('../../../renderer/utils/clipboard', () => ({
 	safeClipboardWrite: (text: string) => safeClipboardWrite(text),
 }));
@@ -244,6 +247,107 @@ describe('ShellCommandCard', () => {
 		);
 
 		expect(screen.getByText('No output')).toBeTruthy();
+	});
+
+	describe('expanding the command line', () => {
+		const longCommand =
+			"find src -type f \\( -name '*.ts' -o -name '*.tsx' \\) ! -path '*__tests__*' -print0 | xargs -0 wc -l | sort -rn";
+
+		function longCard() {
+			return makeLog({
+				shellCommand: { command: longCommand, cwd: '/repo', status: 'finished', exitCode: 0 },
+			} as never);
+		}
+
+		it('truncates the command until the header is clicked', () => {
+			// Collapsed by default: the header's job is status at a glance, and a
+			// wrapped 100-char find would push the exit code out of view.
+			renderCard(longCard());
+
+			expect(screen.getByTestId('shell-command-text').className).toContain('truncate');
+			expect(screen.getByTestId('shell-command-toggle').getAttribute('aria-expanded')).toBe(
+				'false'
+			);
+		});
+
+		it('wraps the whole command once expanded', () => {
+			renderCard(longCard());
+
+			fireEvent.click(screen.getByTestId('shell-command-toggle'));
+
+			const text = screen.getByTestId('shell-command-text');
+			expect(text.className).not.toContain('truncate');
+			expect(text.className).toContain('whitespace-pre-wrap');
+			expect(text.textContent).toContain(longCommand.slice(0, 40));
+		});
+
+		it('collapses again on a second click', () => {
+			renderCard(longCard());
+			const toggle = screen.getByTestId('shell-command-toggle');
+
+			fireEvent.click(toggle);
+			expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+			fireEvent.click(toggle);
+			expect(toggle.getAttribute('aria-expanded')).toBe('false');
+			expect(screen.getByTestId('shell-command-text').className).toContain('truncate');
+		});
+
+		it('is a real button, so the keyboard can reach it', () => {
+			// role="button" on a div announces as a button and then does nothing from
+			// the keyboard - a hard failure in a keyboard-first app.
+			renderCard(longCard());
+
+			expect(screen.getByTestId('shell-command-toggle').tagName).toBe('BUTTON');
+		});
+
+		it('offers a copy-command button only while expanded', () => {
+			renderCard(longCard());
+			expect(screen.queryByTestId('shell-command-copy-command')).toBeNull();
+
+			fireEvent.click(screen.getByTestId('shell-command-toggle'));
+
+			expect(screen.getByTestId('shell-command-copy-command')).toBeTruthy();
+		});
+
+		it('copies the command, not the output', () => {
+			renderCard(
+				makeLog({
+					text: 'the output',
+					shellCommand: { command: longCommand, cwd: '/repo', status: 'finished', exitCode: 0 },
+				} as never)
+			);
+
+			fireEvent.click(screen.getByTestId('shell-command-toggle'));
+			fireEvent.click(screen.getByTestId('shell-command-copy-command'));
+
+			expect(safeClipboardWrite).toHaveBeenCalledWith(longCommand);
+		});
+
+		it('keeps the output copy button independent of the command one', () => {
+			// Two buttons, two payloads. Conflating them is the obvious bug here.
+			renderCard(
+				makeLog({
+					text: 'the output',
+					shellCommand: { command: longCommand, cwd: '/repo', status: 'finished', exitCode: 0 },
+				} as never)
+			);
+
+			fireEvent.click(screen.getByTestId('shell-command-copy-output'));
+
+			expect(safeClipboardWrite).toHaveBeenCalledWith('the output');
+		});
+
+		it('copying the command does not collapse it', () => {
+			// The copy button sits inside the clickable header; without
+			// stopPropagation the click would also toggle the disclosure shut.
+			renderCard(longCard());
+			fireEvent.click(screen.getByTestId('shell-command-toggle'));
+
+			fireEvent.click(screen.getByTestId('shell-command-copy-command'));
+
+			expect(screen.getByTestId('shell-command-toggle').getAttribute('aria-expanded')).toBe('true');
+		});
 	});
 
 	describe('the request that generated the command', () => {

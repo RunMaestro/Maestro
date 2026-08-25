@@ -440,6 +440,19 @@ Do NOT hand-roll another line loop. A scanner that forgets the fence bookkeeping
 
 ---
 
+## Auto Run Folder Staging (`src/renderer/utils/autoRunStaging.ts` - Renderer)
+
+Two pure helpers behind the Files tab's **Stage Documents for Auto Run** entry. The playbooks folder appears in the file tree like any other directory, so these answer what turning one into a run list takes: is this folder inside the agent's Auto Run folder, and which documents live under it.
+
+| Function                                                       | Signature                              | Purpose                                                                                                                        |
+| -------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `relativeAutoRunFolderPath(folderAbsolutePath, autoRunFolder)` | `(string?, string?) => string \| null` | Path relative to the Auto Run folder, `''` for the folder itself, `null` when outside it. Normalizes `\` and trailing slashes. |
+| `collectAutoRunDocsInFolder(relativeFolder, documentList)`     | `(string, string[]) => string[]`       | Document ids under that folder, nested included. `''` means every document. Order follows `documentList`.                      |
+
+Document ids come from the batch store's `documentList`, NOT from the file tree. The tree is truncated on large workspaces and the run list only accepts ids the Auto Run loader already knows about, so deriving them from a partial tree stages names the modal cannot resolve. A shared-prefix sibling (`plans-old/` next to `plans/`) must not match - that is what the trailing-slash normalization and the `${root}/` prefix test are for.
+
+---
+
 ## Model Tiers & Effort (`src/shared/modelTiers.ts` - Both)
 
 One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's floor is `minimal`.
@@ -625,6 +638,29 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 | `execFileNoThrow(command, args?, cwd?, options?)` | `(string, string[], string?, ExecOptions \| NodeJS.ProcessEnv) => Promise<ExecResult>` | Safe command execution. No shell injection. Returns `{ stdout, stderr, exitCode }` - never throws. Handles Windows batch files, stdin input, and timeouts.                                                                                         |
 | `execFileStreaming(command, args, options)`       | `(string, string[], ExecStreamingOptions) => ExecStreamingHandle`                      | Streaming sibling of `execFileNoThrow`: calls `onChunk(chunk, 'stdout' \| 'stderr')` as output arrives, plus `{ result, cancel }`. Use for long commands the user watches live (`git pull`/`git push`). Cancel resolves with exitCode `'SIGTERM'`. |
 | `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                                                                                                                     |
+
+### Network Fetch (`src/main/utils/fetchWithTimeout.ts`)
+
+| Function                                      | Signature                                              | Purpose                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetchWithTimeout(url, options?, timeoutMs?)` | `(string, RequestInit?, number?) => Promise<Response>` | The ONLY way to make an HTTP request from the main process. Adds a request budget to `fetch()`, composes rather than clobbers a caller-supplied `signal`. |
+| `isFetchTimeoutError(error)`                  | `(unknown) => boolean`                                 | Distinguishes a budget timeout from a caller-initiated abort or a transport failure.                                                                      |
+| `DEFAULT_FETCH_TIMEOUT_MS`                    | `number` (30s)                                         | Backstop for callers with no opinion. Latency-sensitive callers pass their own.                                                                           |
+
+A bare `fetch()` has no timeout: a stalled socket hangs the caller forever,
+which in the main process means an IPC handler that never settles and a
+renderer spinner that never stops. Always use `fetchWithTimeout`.
+
+Do NOT hand-roll `new AbortController()` + `setTimeout` around a `fetch`, and do
+NOT add another local `fetchWithTimeout`. There were previously three separate
+functions by that exact name with three different signatures (`leaderboard.ts`,
+`cue-telemetry.ts`, `bmad-manager.ts`), three more inline copies, and eleven
+call sites with no timeout at all.
+
+If a caller needs extra behaviour, wrap this function locally rather than
+reimplementing it. `bmad-manager.ts`'s `fetchBmadResource()` is the reference
+example: it delegates to `fetchWithTimeout` and adds only its own Sentry
+reporting.
 
 ### Safe IPC Send (`src/main/utils/safe-send.ts`)
 

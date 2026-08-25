@@ -53,7 +53,8 @@ export type AgentId = (typeof AGENT_IDS)[number];
 AGENT_DISPLAY_NAMES: Record<AgentId, string>       // Human-readable names
 BETA_AGENTS: ReadonlySet<AgentId>                  // Agents showing "(Beta)" badge
 AGENT_PICKER_META: Record<AgentId, Meta | null>    // Picker presentation, null = never offered
-PICKABLE_AGENT_IDS: readonly AgentId[]             // Picker order, derived from the record
+PICKABLE_AGENT_IDS: readonly AgentId[]             // Picker order, sorted by display name
+AGENT_AUTOSELECT_ORDER: readonly AgentId[]         // Which provider a picker defaults to
 getAgentDisplayName(agentId): string               // Get name with fallback
 isBetaAgent(agentId): boolean                      // Check beta status
 getAgentPickerMeta(agentId): Meta | null           // Description + brand color, or null
@@ -72,6 +73,12 @@ does not compile until that decision is made. Do NOT add a fourth hand-written
 list of agent ids for a new picker; the three used to be hand-written, and Grok
 and Qwen3 Coder shipped selectable in one of them and missing from the other two.
 
+`PICKABLE_AGENT_IDS` sorts the record by display name, so all three surfaces show
+the same alphabetical list and the record's key order carries no meaning - add a
+new entry wherever it reads best. A picker that has to choose for the user reads
+`AGENT_AUTOSELECT_ORDER` and takes the first entry that is installed; do NOT
+default to `PICKABLE_AGENT_IDS[0]`, which is only ever "whatever sorts first".
+
 Registering a provider also means drawing it: a `case` in `AgentLogo`
 (`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)
 and a glyph in `AGENT_ICONS` (`src/renderer/constants/agentIcons.ts`). Without
@@ -79,6 +86,14 @@ the logo case the tile renders a blank fallback ring, and a test in
 `AgentSelectionScreen/components.test.tsx` fails.
 
 **Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
+
+**Three things about the login shell `ReauthModal` spawns are not optional, and all three were bugs first.**
+
+1. **The command is typed on the shell's FIRST BYTE, not when the spawn resolves.** Over SSH the spawn resolves as soon as the local `ssh` client is running, seconds before the remote shell exists, and anything written into that gap is dropped - which is how a remote re-authentication came up as an empty box. The command is held in a ref until `process.onData` fires for that PTY, with an 8 second fallback for a shell that prints no prompt at all.
+2. **Spawn and kill live in ONE effect.** Split across two, StrictMode's remount (cleanup, then re-run) killed the shell the first pass had just started while a `spawnStarted` boolean blocked the second pass from starting another, leaving a dead PTY nobody typed into. The guard is therefore a generation counter the cleanup resets, and every async continuation re-checks it, so a remount ends with exactly one live shell.
+3. **Over SSH, no working directory is passed.** The shell exists only to run a login; it gains nothing from the project directory, and main turns `workingDirOverride` into a `cd` the remote runs first, so a stale or local-looking path kills the session before the login can start. Landing in the remote home directory is always safe. Never fall back to `session.cwd` on a remote.
+
+A login shell that dies without printing anything also writes `[the login session ended]` into the terminal, because an empty box with no explanation is indistinguishable from a hang.
 
 ### Context Windows (`src/shared/agentConstants.ts`)
 

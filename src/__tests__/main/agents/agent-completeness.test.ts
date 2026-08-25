@@ -28,8 +28,10 @@ import { getSessionStorage, clearStorageRegistry } from '../../../main/agents/se
 import { initializeSessionStorages } from '../../../main/storage';
 import { AGENT_IDS } from '../../../shared/agentIds';
 import {
+	AGENT_AUTOSELECT_ORDER,
 	AGENT_PICKER_META,
 	PICKABLE_AGENT_IDS,
+	getAgentDisplayName,
 	getAgentLoginCommand,
 } from '../../../shared/agentMetadata';
 import { createAgentRegistry } from '../../../shared/plugins/agent-registry';
@@ -176,6 +178,23 @@ describe('Agent Completeness', () => {
 					Object.prototype.hasOwnProperty.call(AGENT_PICKER_META, agentId),
 					`Agent "${agentId}" has no entry in AGENT_PICKER_META. Add presentation ` +
 						'metadata to offer it in the pickers, or null to withhold it.'
+				).toBe(true);
+			}
+		});
+
+		it('offers providers alphabetically by display name', () => {
+			// One predictable order across the New Agent modal, the wizard tile strip
+			// and the Group Chat moderator dropdown, so a provider is where the user
+			// expects it no matter which surface they open.
+			const names = PICKABLE_AGENT_IDS.map((id) => getAgentDisplayName(id));
+			expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+		});
+
+		it('auto-selects a real pickable agent rather than whatever sorts first', () => {
+			for (const agentId of AGENT_AUTOSELECT_ORDER) {
+				expect(
+					PICKABLE_AGENT_IDS.includes(agentId),
+					`Auto-select preference "${agentId}" is not a pickable provider`
 				).toBe(true);
 			}
 		});

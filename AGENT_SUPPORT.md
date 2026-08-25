@@ -384,7 +384,8 @@ Edit `src/shared/agentMetadata.ts`:
 
 ```typescript
 export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
-	// ... existing agents, in the order the pickers render them
+	// ... existing agents. Key order does not matter: PICKABLE_AGENT_IDS sorts
+	// by display name, so the pickers render one alphabetical list either way.
 	'your-agent': {
 		description: "Your Vendor's AI coding assistant",
 		brandColor: '#4285F4',
@@ -408,6 +409,14 @@ until a decision is made here. That is deliberate: Grok and Qwen3 Coder each
 shipped selectable in the New Agent modal yet absent from the wizard and
 un-pickable as a moderator, because the three lists were hand-written and nothing
 forced them to agree.
+
+Where the provider LANDS in each list is not your call: `PICKABLE_AGENT_IDS`
+sorts by display name so the user scans one predictable alphabetical order
+everywhere. If the new provider should also be a candidate DEFAULT - the choice a
+picker makes when the user has not made one - add it to `AGENT_AUTOSELECT_ORDER`
+in the same file, which is consulted in preference order and skips anything the
+user has not installed. Leaving it out is the normal case; it simply means the
+provider is never auto-selected.
 
 Then draw the mark. Add a `case` for the agent to `AgentLogo`
 (`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)

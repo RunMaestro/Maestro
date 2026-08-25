@@ -18,7 +18,7 @@ import {
 	DEFAULT_CAPABILITIES,
 	type AgentCapabilities,
 } from '../agent/useAgentCapabilities';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -32,6 +32,10 @@ import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
+import {
+	planCrossAgentMentions,
+	dispatchCrossAgentMentions,
+} from '../../services/crossAgentMentions';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -358,6 +362,45 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			const targetTab = requestedTab ?? getActiveTab(session);
 			const writeTabId = targetTab?.id;
 
+			// Cross-agent @mentions, resolved the way the composer does it
+			// (useInputProcessing): a remote prompt is the same message a user would
+			// have typed, so a mention in it must consult the target agent too.
+			// The agent is idle here (the busy guard above), so the consult fires
+			// now; a busy agent's prompt goes through `dispatch --queue`, which
+			// stamps the intent on the queued item instead.
+			const mentionPlan = planCrossAgentMentions(command, sessionId);
+			if (mentionPlan?.suppressLocal) {
+				// Leading mention: addressed only at the consulted agent(s). This
+				// agent does not answer, so record the user's bubble and skip the spawn.
+				//
+				// Without a tab there is nowhere to anchor the consult's streamed
+				// reply, so DROP the dispatch rather than letting it fall through:
+				// falling through would send a message the user addressed to someone
+				// else straight to this agent, which is the one thing `suppressLocal`
+				// exists to prevent.
+				if (!writeTabId) {
+					logger.warn(
+						`[Remote] Leading @mention for session ${sessionId} has no AI tab to anchor the consult - dropping`
+					);
+					reportDelivery(false, 'no-target-tab-for-mention');
+					return;
+				}
+				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+				const mentionOnlyEntry: LogEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					text: command,
+					...(images && images.length > 0 && { images }),
+				};
+				updateAiTab(sessionId, writeTabId, (tab) => ({
+					...tab,
+					logs: [...tab.logs, mentionOnlyEntry],
+				}));
+				reportDelivery(true);
+				return;
+			}
+
 			// Check for slash commands (built-in and custom)
 			let promptToSend = command;
 			let commandMetadata: { command: string; description: string } | undefined;
@@ -633,6 +676,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// A no-op if the grace timer already acked.
 				reportDelivery(true);
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
+				// Trailing mention: this agent answers AND the mentioned agent is consulted.
+				if (mentionPlan && writeTabId) {
+					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+				}
 			} catch (error: unknown) {
 				// A remote command that lands while the agent is mid-turn is refused
 				// by ProcessManager, on purpose - the session already owns a live

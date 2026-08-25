@@ -2536,6 +2536,75 @@ describe('StdoutHandler - single JSON parse per line', () => {
 		});
 	});
 
+	describe('user-interrupted turns suppress in-band errors', () => {
+		// A CLI that flushes a terminal envelope on its way out of a deliberate
+		// Stop must not paint that as a turn failure. Grok is the concrete case:
+		// headless, it ends a cancelled turn with `stopReason: "cancelled"`, which
+		// the parser (correctly) classifies as a turn that died early.
+		it('does not emit agent-error for a cancelled grok end after interrupt', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: new GrokOutputParser(),
+				interrupted: true,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"cancelled","sessionId":"sess-1"}\n'
+			);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+		});
+
+		it('still emits agent-error for a cancelled grok end when the user did not stop it', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: new GrokOutputParser(),
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"cancelled","sessionId":"sess-1"}\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy.mock.calls[0][1]).toMatchObject({
+				message: expect.stringContaining('cancelled'),
+			});
+		});
+
+		// Grok reports its session id ONLY on `end`. When that end is the one that
+		// died early, the error branch is the last place the id passes through -
+		// dropping it makes recovery resume into a brand-new conversation.
+		it('still captures the provider session id from a failing terminal envelope', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: new GrokOutputParser(),
+			});
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"cancelled","sessionId":"grok-sess-9"}\n'
+			);
+
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'grok-sess-9');
+			expect(proc.agentSessionId).toBe('grok-sess-9');
+		});
+	});
+
 	describe('Claude thinking-chunk routing', () => {
 		// Regression: claude-code was lumped into the isReasoning gate meant for
 		// Grok/Codex/OpenCode. Claude's ordinary assistant text arrives as partials

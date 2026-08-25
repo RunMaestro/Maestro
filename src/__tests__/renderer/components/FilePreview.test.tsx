@@ -51,6 +51,8 @@ vi.mock('lucide-react', () => ({
 	// Icons added by the floating font-zoom control.
 	AArrowUp: () => <span data-testid="a-arrow-up-icon">AArrowUp</span>,
 	AArrowDown: () => <span data-testid="a-arrow-down-icon">AArrowDown</span>,
+	// Resting-circle icon for the collapsible variant of that control.
+	ALargeSmall: () => <span data-testid="a-large-small-icon">ALargeSmall</span>,
 }));
 
 // Mock react-markdown
@@ -1945,6 +1947,70 @@ print("world")
 			);
 			fireEvent.click(screen.getByTestId('html-render-toggle'));
 			expect(onHtmlRenderModeChange).toHaveBeenCalledWith(true);
+		});
+	});
+
+	describe('bare font-zoom keys', () => {
+		// The floating zoom control also answers bare -/+ and 0, so a reader can
+		// resize the pane without reaching for the pill. Guarded on the view
+		// being zoomable and on the event target not being a text input.
+		function renderPreview(props: Record<string, unknown> = {}) {
+			const { container } = render(<FilePreview {...defaultProps} {...props} />);
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+			return previewContainer!;
+		}
+
+		function percentButton() {
+			return screen.queryByRole('button', { name: /Reset (preview|editor) font size/ });
+		}
+
+		it('does not show a percentage until the pane is zoomed', () => {
+			renderPreview();
+			expect(percentButton()).toBeNull();
+		});
+
+		it('zooms in on a bare + and on its unshifted twin =', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '+' });
+			expect(percentButton()).toHaveTextContent('110%');
+			fireEvent.keyDown(pane, { key: '=' });
+			expect(percentButton()).toHaveTextContent('120%');
+		});
+
+		it('zooms out on a bare - and on its shifted twin _', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '-' });
+			expect(percentButton()).toHaveTextContent('90%');
+			fireEvent.keyDown(pane, { key: '_' });
+			expect(percentButton()).toHaveTextContent('80%');
+		});
+
+		it('snaps back to 100% on a bare 0', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '+' });
+			expect(percentButton()).toHaveTextContent('110%');
+			fireEvent.keyDown(pane, { key: '0' });
+			expect(percentButton()).toBeNull();
+		});
+
+		it('leaves a modified -/+ to the app font-size shortcuts', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '+', metaKey: true });
+			fireEvent.keyDown(pane, { key: '-', ctrlKey: true });
+			fireEvent.keyDown(pane, { key: '0', altKey: true });
+			expect(percentButton()).toBeNull();
+		});
+
+		it('lets a text input inside the pane keep its keys', () => {
+			// The find bar and the CM6 editor live under the same keydown handler,
+			// so a bare '-' typed into one must reach the field, not the zoom.
+			const pane = renderPreview();
+			const input = document.createElement('input');
+			pane.appendChild(input);
+			fireEvent.keyDown(input, { key: '-', bubbles: true });
+			expect(percentButton()).toBeNull();
+			pane.removeChild(input);
 		});
 	});
 });

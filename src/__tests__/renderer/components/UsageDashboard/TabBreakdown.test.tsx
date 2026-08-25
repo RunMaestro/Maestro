@@ -1,12 +1,14 @@
 /**
- * Tests for TabBreakdown - the per-tab stat grid inside the agent detail modal.
+ * Tests for TabBreakdown - the per-tab activity list inside the agent detail
+ * modal.
  *
  * Verifies:
  * - Query events group per tab, with duration / auto% / recency aggregates
  * - Tab names resolve from open, snoozed, and recently-closed tabs, falling
  *   back to the id octet for tabs Maestro can no longer name
- * - Open tabs with no recorded queries still get a tile
- * - The Open / Last 10 / Last 25 / All filters and the four sort modes
+ * - Open tabs with no recorded queries still get a row
+ * - The Open / Last 10 / Last 25 / All filters, and the sortable column
+ *   headers including their flip-vs-switch direction rule
  * - Sparklines are omitted (not flat-lined) for tabs idle beyond the window
  * - Loading and empty states
  */
@@ -24,11 +26,14 @@ import type { Session } from '../../../../renderer/types';
 import { createMockSession, createMockAITab } from '../../../helpers';
 import { THEMES } from '../../../../shared/themes';
 
-// TabBreakdown itself uses no icons, but the Pager it renders once the tab
-// list overflows a page needs its chevrons.
+// TabBreakdown itself uses no icons, but its sortable headers need the sort
+// carets and the Pager it renders once the tab list overflows a page needs its
+// chevrons.
 vi.mock('lucide-react', () => ({
 	ChevronLeft: () => <span data-testid="chevron-left" />,
 	ChevronRight: () => <span data-testid="chevron-right" />,
+	ChevronDown: () => <span data-testid="chevron-down" />,
+	ChevronUp: () => <span data-testid="chevron-up" />,
 }));
 
 const theme = THEMES['dracula'];
@@ -88,7 +93,7 @@ describe('buildTabStats', () => {
 		expect(stats[0].tabId).toBe('tab-a');
 	});
 
-	it('gives an open tab with no recorded queries a tile', () => {
+	it('gives an open tab with no recorded queries a row', () => {
 		const session = createMockSession({
 			aiTabs: [createMockAITab({ id: 'fresh', name: 'Just opened', createdAt: NOW - 1000 })],
 		});
@@ -222,17 +227,40 @@ describe('applyTabFilter', () => {
 
 describe('sortTabStats', () => {
 	const stats = [
-		{ tabId: 'a', name: 'Zulu', queries: 1, totalDuration: 900, lastActive: 10 },
-		{ tabId: 'b', name: 'Alpha', queries: 9, totalDuration: 100, lastActive: 30 },
-		{ tabId: 'c', name: 'Mike', queries: 5, totalDuration: 500, lastActive: 20 },
+		{ tabId: 'a', name: 'Zulu', queries: 1, totalDuration: 900, lastActive: 10, autoPercent: 50 },
+		{ tabId: 'b', name: 'Alpha', queries: 9, totalDuration: 100, lastActive: 30, autoPercent: 0 },
+		{ tabId: 'c', name: 'Mike', queries: 5, totalDuration: 500, lastActive: 20, autoPercent: 90 },
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	] as any[];
 
-	it('sorts by recency, queries, duration, and name', () => {
+	it('sorts by each column in its natural default direction', () => {
 		expect(sortTabStats(stats, 'recent').map((s) => s.tabId)).toEqual(['b', 'c', 'a']);
 		expect(sortTabStats(stats, 'queries').map((s) => s.tabId)).toEqual(['b', 'c', 'a']);
 		expect(sortTabStats(stats, 'duration').map((s) => s.tabId)).toEqual(['a', 'c', 'b']);
+		expect(sortTabStats(stats, 'auto').map((s) => s.tabId)).toEqual(['c', 'a', 'b']);
 		expect(sortTabStats(stats, 'name').map((s) => s.tabId)).toEqual(['b', 'c', 'a']);
+	});
+
+	it('reverses when asked for the other direction', () => {
+		expect(sortTabStats(stats, 'queries', 'asc').map((s) => s.tabId)).toEqual(['a', 'c', 'b']);
+		expect(sortTabStats(stats, 'recent', 'asc').map((s) => s.tabId)).toEqual(['a', 'c', 'b']);
+		expect(sortTabStats(stats, 'name', 'desc').map((s) => s.tabId)).toEqual(['a', 'c', 'b']);
+	});
+
+	it('sinks tabs with no recorded auto share in both directions', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const withNulls = [...stats, { tabId: 'none', name: 'None', autoPercent: null }] as any[];
+
+		expect(
+			sortTabStats(withNulls, 'auto')
+				.map((s) => s.tabId)
+				.at(-1)
+		).toBe('none');
+		expect(
+			sortTabStats(withNulls, 'auto', 'asc')
+				.map((s) => s.tabId)
+				.at(-1)
+		).toBe('none');
 	});
 
 	it('does not mutate the input array', () => {
@@ -249,7 +277,7 @@ describe('TabBreakdown', () => {
 	it('shows a loading state until the events arrive', () => {
 		renderBreakdown(createMockSession(), null);
 		expect(screen.getByText('Loading…')).toBeInTheDocument();
-		expect(screen.queryByTestId('tab-breakdown-grid')).toBeNull();
+		expect(screen.queryByTestId('tab-breakdown-table')).toBeNull();
 	});
 
 	it('reports when the agent has no tab-level activity at all', () => {
@@ -257,7 +285,7 @@ describe('TabBreakdown', () => {
 		expect(screen.getByText('No tab-level activity recorded for this agent.')).toBeInTheDocument();
 	});
 
-	it('renders one tile per open tab by default', () => {
+	it('renders one row per open tab by default', () => {
 		const session = createMockSession({
 			aiTabs: [
 				createMockAITab({ id: 'tab-a', name: 'Alpha' }),
@@ -271,7 +299,7 @@ describe('TabBreakdown', () => {
 
 		renderBreakdown(session, events);
 
-		const names = screen.getAllByTestId('tab-card').map((c) => c.textContent);
+		const names = screen.getAllByTestId('tab-row').map((c) => c.textContent);
 		expect(names).toHaveLength(2);
 		expect(names.join(' ')).toContain('Alpha');
 		expect(names.join(' ')).toContain('Beta');
@@ -289,15 +317,15 @@ describe('TabBreakdown', () => {
 		];
 
 		renderBreakdown(session, events);
-		expect(screen.getAllByTestId('tab-card')).toHaveLength(1);
+		expect(screen.getAllByTestId('tab-row')).toHaveLength(1);
 
 		fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
 
-		expect(screen.getAllByTestId('tab-card')).toHaveLength(2);
+		expect(screen.getAllByTestId('tab-row')).toHaveLength(2);
 		expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('2 of 2');
 	});
 
-	it('reorders tiles when the sort changes', () => {
+	it('reorders rows when a column header is clicked', () => {
 		const session = createMockSession({
 			aiTabs: [
 				createMockAITab({ id: 'busy-tab', name: 'Busy' }),
@@ -312,20 +340,56 @@ describe('TabBreakdown', () => {
 		];
 
 		renderBreakdown(session, events);
-		expect(screen.getAllByTestId('tab-card')[0].textContent).toContain('Quiet');
+		expect(screen.getAllByTestId('tab-row')[0].textContent).toContain('Quiet');
 
-		fireEvent.click(screen.getByTestId('tab-breakdown-sort-queries'));
-		expect(screen.getAllByTestId('tab-card')[0].textContent).toContain('Busy');
+		fireEvent.click(screen.getByTitle('Sort by query count'));
+		expect(screen.getAllByTestId('tab-row')[0].textContent).toContain('Busy');
 
-		fireEvent.click(screen.getByTestId('tab-breakdown-sort-name'));
-		expect(screen.getAllByTestId('tab-card')[0].textContent).toContain('Busy');
+		fireEvent.click(screen.getByTitle('Sort alphabetically'));
+		expect(screen.getAllByTestId('tab-row')[0].textContent).toContain('Busy');
+	});
+
+	it('flips the active column and switches to a new column default direction', () => {
+		const session = createMockSession({
+			aiTabs: [
+				createMockAITab({ id: 'busy-tab', name: 'Busy' }),
+				createMockAITab({ id: 'quiet-tab', name: 'Quiet' }),
+			],
+		});
+		const events = [
+			buildEvent({ id: '1', tabId: 'busy-tab', startTime: NOW - 5 * DAY }),
+			buildEvent({ id: '2', tabId: 'busy-tab', startTime: NOW - 5 * DAY }),
+			buildEvent({ id: '3', tabId: 'quiet-tab', startTime: NOW - DAY }),
+		];
+		const firstRow = () => screen.getAllByTestId('tab-row')[0].textContent;
+
+		renderBreakdown(session, events);
+
+		// Recency starts descending; clicking it again reverses that column.
+		expect(screen.getByTestId('tab-breakdown-sort-recent')).toHaveAttribute(
+			'aria-sort',
+			'descending'
+		);
+		fireEvent.click(screen.getByTitle('Sort by recency'));
+		expect(screen.getByTestId('tab-breakdown-sort-recent')).toHaveAttribute(
+			'aria-sort',
+			'ascending'
+		);
+		expect(firstRow()).toContain('Busy');
+
+		// Switching to a text column takes that column's own default (A-Z)
+		// rather than inheriting the ascending state from recency.
+		fireEvent.click(screen.getByTitle('Sort alphabetically'));
+		expect(screen.getByTestId('tab-breakdown-sort-name')).toHaveAttribute('aria-sort', 'ascending');
+		expect(screen.getByTestId('tab-breakdown-sort-recent')).toHaveAttribute('aria-sort', 'none');
+		expect(firstRow()).toContain('Busy');
 	});
 
 	it('points at the wider filters when the agent has no open tabs', () => {
 		const session = createMockSession({ aiTabs: [] });
 		renderBreakdown(session, [buildEvent({ tabId: 'retired' })]);
 
-		expect(screen.queryAllByTestId('tab-card')).toHaveLength(0);
+		expect(screen.queryAllByTestId('tab-row')).toHaveLength(0);
 		expect(screen.getByTestId('tab-breakdown-empty').textContent).toContain('Last 10');
 	});
 
@@ -350,17 +414,17 @@ describe('TabBreakdown', () => {
 			renderBreakdown(session, manyEvents(20));
 			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
 
-			expect(screen.getAllByTestId('tab-card')).toHaveLength(20);
+			expect(screen.getAllByTestId('tab-row')).toHaveLength(20);
 			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
 			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('20 of 20');
 		});
 
-		it('caps the grid at one page and shows the pager once it overflows', () => {
+		it('caps the list at one page and shows the pager once it overflows', () => {
 			const session = createMockSession({ aiTabs: [] });
 			renderBreakdown(session, manyEvents(100));
 			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
 
-			expect(screen.getAllByTestId('tab-card')).toHaveLength(32);
+			expect(screen.getAllByTestId('tab-row')).toHaveLength(32);
 			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('1 / 4');
 			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('1-32 of 100');
 		});
@@ -370,18 +434,18 @@ describe('TabBreakdown', () => {
 			renderBreakdown(session, manyEvents(100));
 			fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
 
-			const firstTitle = screen.getAllByTestId('tab-card')[0].textContent;
+			const firstTitle = screen.getAllByTestId('tab-row')[0].textContent;
 
 			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
 			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('2 / 4');
 			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('33-64 of 100');
-			expect(screen.getAllByTestId('tab-card')[0].textContent).not.toBe(firstTitle);
+			expect(screen.getAllByTestId('tab-row')[0].textContent).not.toBe(firstTitle);
 
 			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
 			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
 			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('4 / 4');
 			// 100 items over 32-per-page leaves 4 on the last page.
-			expect(screen.getAllByTestId('tab-card')).toHaveLength(4);
+			expect(screen.getAllByTestId('tab-row')).toHaveLength(4);
 			expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('97-100 of 100');
 
 			fireEvent.click(screen.getByTestId('tab-breakdown-pager-prev'));
@@ -410,7 +474,7 @@ describe('TabBreakdown', () => {
 
 			// Page 2 of a brand-new ordering is an arbitrary slice, so the pager
 			// snaps back rather than leaving the user mid-list.
-			fireEvent.click(screen.getByTestId('tab-breakdown-sort-name'));
+			fireEvent.click(screen.getByTitle('Sort alphabetically'));
 			expect(screen.getByTestId('tab-breakdown-pager-label').textContent).toBe('1 / 4');
 		});
 
@@ -423,11 +487,11 @@ describe('TabBreakdown', () => {
 			fireEvent.click(screen.getByTestId('tab-breakdown-pager-next'));
 
 			// Narrowing from 100 tabs on page 2 down to a single open tab must not
-			// strand the grid on a page that no longer exists.
+			// strand the list on a page that no longer exists.
 			fireEvent.click(screen.getByTestId('tab-breakdown-filter-open'));
 			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
-			expect(screen.getAllByTestId('tab-card')).toHaveLength(1);
-			expect(screen.getByTestId('tab-card').textContent).toContain('Still open');
+			expect(screen.getAllByTestId('tab-row')).toHaveLength(1);
+			expect(screen.getByTestId('tab-row').textContent).toContain('Still open');
 		});
 
 		it('never paginates the bounded filters', () => {
@@ -436,11 +500,11 @@ describe('TabBreakdown', () => {
 
 			fireEvent.click(screen.getByTestId('tab-breakdown-filter-recent10'));
 			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
-			expect(screen.getAllByTestId('tab-card')).toHaveLength(10);
+			expect(screen.getAllByTestId('tab-row')).toHaveLength(10);
 
 			fireEvent.click(screen.getByTestId('tab-breakdown-filter-recent25'));
 			expect(screen.queryByTestId('tab-breakdown-pager')).toBeNull();
-			expect(screen.getAllByTestId('tab-card')).toHaveLength(25);
+			expect(screen.getAllByTestId('tab-row')).toHaveLength(25);
 		});
 	});
 
@@ -465,10 +529,10 @@ describe('TabBreakdown', () => {
 			buildEvent({ id: '2', tabId: 'sleepy' }),
 		]);
 
-		expect(screen.getByTestId('tab-card-active-badge')).toBeInTheDocument();
+		expect(screen.getByTestId('tab-row-active-badge')).toBeInTheDocument();
 
 		fireEvent.click(screen.getByTestId('tab-breakdown-filter-all'));
-		expect(screen.getByTestId('tab-card-snoozed-badge')).toBeInTheDocument();
+		expect(screen.getByTestId('tab-row-snoozed-badge')).toBeInTheDocument();
 	});
 
 	it('shows a dim placeholder rather than 0% for a tab with no queries', () => {
@@ -477,7 +541,7 @@ describe('TabBreakdown', () => {
 		});
 		renderBreakdown(session, [buildEvent({ tabId: 'other' })]);
 
-		expect(screen.getByTestId('tab-card-auto-pct').textContent).toBe('—');
-		expect(screen.getByTestId('tab-card-query-count').textContent).toBe('0');
+		expect(screen.getByTestId('tab-row-auto-pct').textContent).toBe('—');
+		expect(screen.getByTestId('tab-row-query-count').textContent).toBe('0');
 	});
 });
