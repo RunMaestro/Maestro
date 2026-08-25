@@ -62,6 +62,7 @@ import {
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	moveActiveUnifiedTabToEdge,
+	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
 	findNextUnreadSession,
 	resolveQueuedItemTarget,
@@ -5850,6 +5851,81 @@ describe('tabHelpers', () => {
 				activeTabId: 'a1',
 			});
 			expect(moveActiveUnifiedTabToEdge(session, 'end')).toBe(session);
+		});
+	});
+
+	describe('moveUnifiedTabToTarget', () => {
+		/** ai(a1) -> terminal(t1) -> file(f1) -> browser(b1) */
+		function stripSession(overrides: Record<string, unknown> = {}) {
+			return createMockSession({
+				aiTabs: [createMockTab({ id: 'a1' })],
+				terminalTabs: [
+					{ id: 't1', name: null, shellType: 'zsh', pid: 0, cwd: '', createdAt: 1, state: 'idle' },
+				],
+				filePreviewTabs: [createMockFileTab({ id: 'f1', path: '/tmp/f1' })],
+				browserTabs: [createMockBrowserTab({ id: 'b1' })],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'terminal', id: 't1' },
+					{ type: 'file', id: 'f1' },
+					{ type: 'browser', id: 'b1' },
+				],
+				activeTabId: 'a1',
+				...overrides,
+			});
+		}
+
+		it('drops a tab just past the target when dragging forwards', () => {
+			const result = moveUnifiedTabToTarget(stripSession(), 'a1', 'f1');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['t1', 'f1', 'a1', 'b1']);
+		});
+
+		it('drops a tab into the target slot when dragging backwards', () => {
+			const result = moveUnifiedTabToTarget(stripSession(), 'b1', 't1');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 'b1', 't1', 'f1']);
+		});
+
+		it('reorders across kinds without touching the tabs themselves', () => {
+			const session = stripSession();
+			const result = moveUnifiedTabToTarget(session, 'f1', 'a1');
+			expect(result.unifiedTabOrder.map((r) => `${r.type}:${r.id}`)).toEqual([
+				'file:f1',
+				'ai:a1',
+				'terminal:t1',
+				'browser:b1',
+			]);
+			expect(result.aiTabs).toBe(session.aiTabs);
+		});
+
+		it('moves the tab the user grabbed even when hidden refs sit between the chips', () => {
+			// The strip omits hidden AI tabs, so chip positions and unifiedTabOrder
+			// positions disagree. Addressing by id is what keeps the two in step.
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'a1' }),
+					createMockTab({ id: 'consult', hidden: true }),
+					createMockTab({ id: 'a2' }),
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'ai', id: 'consult' },
+					{ type: 'ai', id: 'a2' },
+				],
+				activeTabId: 'a1',
+			});
+			const result = moveUnifiedTabToTarget(session, 'a1', 'a2');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['consult', 'a2', 'a1']);
+		});
+
+		it('is a no-op when the source and target are the same tab', () => {
+			const session = stripSession();
+			expect(moveUnifiedTabToTarget(session, 'a1', 'a1')).toBe(session);
+		});
+
+		it('is a no-op when either id is absent from the order', () => {
+			const session = stripSession();
+			expect(moveUnifiedTabToTarget(session, 'a1', 'gone')).toBe(session);
+			expect(moveUnifiedTabToTarget(session, 'gone', 'a1')).toBe(session);
 		});
 	});
 

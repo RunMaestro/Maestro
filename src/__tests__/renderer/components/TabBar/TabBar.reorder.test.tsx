@@ -102,7 +102,7 @@ describe('tab strip reorder', () => {
 
 		drag(chip('ai-1'), chip('ai-2'));
 
-		expect(reorder).toHaveBeenCalledWith(0, 1);
+		expect(reorder).toHaveBeenCalledWith('ai-1', 'ai-2');
 	});
 
 	it('reorders across kinds - an AI chip onto a file chip', () => {
@@ -111,7 +111,7 @@ describe('tab strip reorder', () => {
 
 		drag(chip('ai-1'), chip('file-1'));
 
-		expect(reorder).toHaveBeenCalledWith(0, 2);
+		expect(reorder).toHaveBeenCalledWith('ai-1', 'file-1');
 	});
 
 	it('reorders backwards - a later chip onto an earlier one', () => {
@@ -120,7 +120,7 @@ describe('tab strip reorder', () => {
 
 		drag(chip('file-1'), chip('ai-1'));
 
-		expect(reorder).toHaveBeenCalledWith(2, 0);
+		expect(reorder).toHaveBeenCalledWith('file-1', 'ai-1');
 	});
 
 	it('still carries the tile payload, so dropping onto the panel keeps working', () => {
@@ -159,6 +159,6 @@ describe('tab strip reorder', () => {
 		fireEvent.dragOver(bar, { dataTransfer });
 		fireEvent.drop(bar, { dataTransfer });
 
-		expect(reorder).toHaveBeenCalledWith(0, unifiedTabs.length - 1);
+		expect(reorder).toHaveBeenCalledWith('ai-1', unifiedTabs[unifiedTabs.length - 1].id);
 	});
 });

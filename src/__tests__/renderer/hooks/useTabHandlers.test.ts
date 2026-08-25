@@ -1080,7 +1080,7 @@ describe('useTabHandlers', () => {
 
 			const { result } = renderHook(() => useTabHandlers());
 			act(() => {
-				result.current.handleUnifiedTabReorder(0, 1);
+				result.current.handleUnifiedTabReorder('ai-1', 'file-1');
 			});
 
 			const session = getSession();
@@ -1088,13 +1088,13 @@ describe('useTabHandlers', () => {
 			expect(session.unifiedTabOrder[1]).toEqual({ type: 'ai', id: 'ai-1' });
 		});
 
-		it('handleUnifiedTabReorder is no-op for invalid indices', () => {
+		it('handleUnifiedTabReorder is no-op for unknown tab ids', () => {
 			const aiTab = createMockAITab({ id: 'ai-1' });
 			setupSessionWithTabs([aiTab]);
 
 			const { result } = renderHook(() => useTabHandlers());
 			act(() => {
-				result.current.handleUnifiedTabReorder(-1, 0);
+				result.current.handleUnifiedTabReorder('gone', 'ai-1');
 			});
 
 			const session = getSession();

@@ -20,7 +20,7 @@ export interface TabBarProps {
 	onRequestRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
 	/** Handler to reorder tabs in unified tab order (AI + file tabs) */
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	/** Handler to open merge session modal with this tab as source */

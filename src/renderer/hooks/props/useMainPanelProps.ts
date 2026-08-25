@@ -161,7 +161,7 @@ export interface UseMainPanelPropsDeps {
 	handleNewTab: () => void;
 	handleRequestTabRename: (tabId: string) => void;
 	handleTabReorder: (fromIndex: number, toIndex: number) => void;
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	handleUnifiedTabReorder: (sourceTabId: string, targetTabId: string) => void;
 	handleUpdateTabByClaudeSessionId: (
 		agentSessionId: string,
 		updates: { name?: string | null; starred?: boolean }

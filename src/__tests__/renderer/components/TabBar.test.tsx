@@ -389,7 +389,7 @@ describe('TabBar', () => {
 			});
 
 			fireEvent.click(screen.getByText('Move to First Position'));
-			expect(mockOnTabReorder).toHaveBeenCalledWith(1, 0);
+			expect(mockOnTabReorder).toHaveBeenCalledWith('browser-1', 'tab-1');
 		});
 
 		it('shows a browser entry in the new-tab popover', async () => {
@@ -4289,8 +4289,8 @@ describe('Unified tabs drag and drop', () => {
 			},
 		});
 
-		// Should call onUnifiedTabReorder with indices in unified array (0 to 1)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(0, 1);
+		// Both ends are tab ids, never strip positions
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('ai-tab-1', 'file-tab-1');
 		// Should NOT call legacy onTabReorder since unified is available
 		expect(mockOnTabReorder).not.toHaveBeenCalled();
 	});
@@ -4332,8 +4332,7 @@ describe('Unified tabs drag and drop', () => {
 			},
 		});
 
-		// Should call onUnifiedTabReorder (from index 1 to index 2)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'ai-tab-2');
 	});
 
 	it('drags file tab to another file tab position', () => {
@@ -4373,8 +4372,7 @@ describe('Unified tabs drag and drop', () => {
 			},
 		});
 
-		// Should call onUnifiedTabReorder (from index 1 to index 3)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 3);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'file-tab-2');
 	});
 
 	it('does not reorder when dropping on the same tab', () => {
@@ -4607,8 +4605,8 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to First Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 1 -> 0
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 0);
+		// Dropped on the first chip: lands in its slot
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'ai-tab-1');
 	});
 
 	it('calls onUnifiedTabReorder when Move to Last is clicked on file tab', async () => {
@@ -4640,8 +4638,8 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to Last Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 1 -> 3 (last index)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 3);
+		// Dropped on the last chip: lands just past it
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'file-tab-2');
 	});
 
 	it('middle-click closes file tab', () => {
@@ -4806,8 +4804,7 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to First Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 2 -> 0
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(2, 0);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('term-2', 'ai-tab-1');
 	});
 
 	it('calls onUnifiedTabReorder when Move to Last is clicked on terminal tab', async () => {
@@ -4866,8 +4863,7 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to Last Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 1 -> 2 (last index)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('term-1', 'term-2');
 	});
 
 	// Regression: when the user clicks back to an AI tab and then opens a 2nd
@@ -6287,7 +6283,7 @@ describe('Performance: Many file tabs (10+)', () => {
 		const fileTab2 = screen.getByText('file-2').closest('[data-tab-id]')!;
 		const fileTab10 = screen.getByText('file-10').closest('[data-tab-id]')!;
 
-		// Start dragging file-tab-2 (index 3 in unified tabs: AI tab is at 0)
+		// Start dragging file-tab-2
 		fireEvent.dragStart(fileTab2, {
 			dataTransfer: {
 				effectAllowed: '',
@@ -6296,15 +6292,14 @@ describe('Performance: Many file tabs (10+)', () => {
 			},
 		});
 
-		// Drop on file-tab-10 (index 11 in unified tabs)
+		// Drop on file-tab-10
 		fireEvent.drop(fileTab10, {
 			dataTransfer: {
 				getData: vi.fn().mockReturnValue('file-tab-2'),
 			},
 		});
 
-		// Should call onUnifiedTabReorder with correct indices
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(3, 11);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-2', 'file-tab-10');
 	});
 
 	it('renders file tabs with different extensions correctly', () => {
@@ -6510,8 +6505,7 @@ describe('Group tab chip drag and drop', () => {
 			dataTransfer: { getData: vi.fn().mockReturnValue('group-1') },
 		});
 
-		// group is at unified index 1, AI Tab 2 at index 2
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('group-1', 'ai-tab-2');
 	});
 
 	it('accepts another tab dropped onto the group chip and reorders it', () => {
@@ -6530,8 +6524,8 @@ describe('Group tab chip drag and drop', () => {
 			dataTransfer: { getData: vi.fn().mockReturnValue('ai-tab-1') },
 		});
 
-		// ai-tab-1 (index 0) moves to the group's slot (index 1)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(0, 1);
+		// ai-tab-1 moves to the group's slot
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('ai-tab-1', 'group-1');
 	});
 
 	it('sets dropEffect on drag over so the chip is a valid drop target', () => {

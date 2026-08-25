@@ -105,7 +105,7 @@ export interface BrowserTabHandlersReturn {
 }
 
 export interface UnifiedTabHandlersReturn {
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	handleUnifiedTabReorder: (sourceTabId: string, targetTabId: string) => void;
 	handleCloseOtherTabs: (pivotTabId?: string) => void;
 	handleCloseTabsLeft: (pivotTabId?: string) => void;
 	handleCloseTabsRight: (pivotTabId?: string) => void;

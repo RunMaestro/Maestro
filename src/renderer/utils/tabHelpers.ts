@@ -447,6 +447,54 @@ export function moveActiveUnifiedTabToEdge(session: Session, edge: 'start' | 'en
 }
 
 /**
+ * Move one unified tab to another tab's slot, addressed by tab id. This is the
+ * drag-to-reorder gesture: a chip released on a sibling chip lands where that
+ * sibling sits.
+ *
+ * Identity, not position, is what the caller passes, and that is the whole point.
+ * The strip renders `buildUnifiedTabs`, which drops hidden AI tabs (unopened
+ * cross-agent consults keep their ref in the order) and tabs tiled into a group.
+ * A chip's index in the STRIP is therefore not its index in `unifiedTabOrder` -
+ * a session with seven hidden consult tabs had every drag splicing a ref seven
+ * slots away from the one the user grabbed, usually moving a hidden tab and
+ * leaving the strip visibly unchanged. Resolving both ends by id is the only way
+ * the two spaces cannot drift.
+ *
+ * Direction decides the landing side, the way a tab strip is expected to feel:
+ * dragging forwards drops the tab just PAST the target, dragging backwards drops
+ * it in the target's own slot.
+ *
+ * Returns the session unchanged when either id is absent from the order or the
+ * two are the same tab.
+ *
+ * @param session - The Maestro session
+ * @param sourceTabId - Id of the tab being dragged
+ * @param targetTabId - Id of the tab it was dropped on
+ * @returns New session with the reordered unifiedTabOrder, or the original if it's a no-op
+ */
+export function moveUnifiedTabToTarget(
+	session: Session,
+	sourceTabId: string,
+	targetTabId: string
+): Session {
+	if (sourceTabId === targetTabId) return session;
+
+	const order = getRepairedUnifiedTabOrder(session);
+	const fromIndex = order.findIndex((ref) => ref.id === sourceTabId);
+	const toIndex = order.findIndex((ref) => ref.id === targetTabId);
+	if (fromIndex === -1 || toIndex === -1) return session;
+
+	const newOrder = [...order];
+	const [moved] = newOrder.splice(fromIndex, 1);
+	// Re-find the target AFTER the removal rather than reusing toIndex: the splice
+	// shifts everything past the source, and hidden refs may sit between the two.
+	const landing = newOrder.findIndex((ref) => ref.id === targetTabId);
+	newOrder.splice(fromIndex < toIndex ? landing + 1 : landing, 0, moved);
+
+	return { ...session, unifiedTabOrder: newOrder };
+}
+
+/**
  * Get the initial name to show in the rename modal.
  * Returns empty string if no custom name is set (name is null),
  * or the custom name if user has set one.

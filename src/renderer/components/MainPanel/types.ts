@@ -158,7 +158,7 @@ export interface MainPanelProps {
 	onNewTab?: () => void;
 	onRequestTabRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	onUpdateTabByClaudeSessionId?: (

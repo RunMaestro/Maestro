@@ -9,6 +9,7 @@ import {
 	hasActiveWizard,
 	hasDraft,
 	hasWizardInteraction,
+	moveUnifiedTabToTarget,
 	resolveFocusedPaneTabRef,
 } from '../../../utils/tabHelpers';
 import { getTerminalSessionId } from '../../../utils/terminalTabHelpers';
@@ -32,37 +33,22 @@ export function useUnifiedTabHandlers({
 }: UseUnifiedTabHandlersOptions): UnifiedTabHandlersReturn {
 	const { endWizard: endInlineWizard } = useInlineWizardContext();
 
-	const handleUnifiedTabReorder = useCallback((fromIndex: number, toIndex: number) => {
+	// Drag-to-reorder: both ends are tab IDS, never strip positions. See
+	// moveUnifiedTabToTarget for why - the strip and unifiedTabOrder are different
+	// index spaces whenever a hidden or tiled tab is present.
+	const handleUnifiedTabReorder = useCallback((sourceTabId: string, targetTabId: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
+				const updated = moveUnifiedTabToTarget(s, sourceTabId, targetTabId);
 				logger.debug('[useTabHandlers] handleUnifiedTabReorder', undefined, {
-					fromIndex,
-					toIndex,
-					orderLength: s.unifiedTabOrder.length,
-					order: s.unifiedTabOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
+					sourceTabId,
+					targetTabId,
+					moved: updated !== s,
+					order: updated.unifiedTabOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
 				});
-				if (
-					fromIndex < 0 ||
-					fromIndex >= s.unifiedTabOrder.length ||
-					toIndex < 0 ||
-					toIndex >= s.unifiedTabOrder.length ||
-					fromIndex === toIndex
-				) {
-					logger.debug(
-						'[useTabHandlers] handleUnifiedTabReorder: bounds check failed, returning unchanged'
-					);
-					return s;
-				}
-				const newOrder = [...s.unifiedTabOrder];
-				const [movedRef] = newOrder.splice(fromIndex, 1);
-				newOrder.splice(toIndex, 0, movedRef);
-				logger.debug('[useTabHandlers] handleUnifiedTabReorder: reordered', undefined, {
-					movedRef,
-					newOrder: newOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
-				});
-				return { ...s, unifiedTabOrder: newOrder };
+				return updated;
 			})
 		);
 	}, []);

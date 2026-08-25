@@ -2370,7 +2370,6 @@ function MaestroConsoleInner() {
 		handleSummarizeAndContinue,
 		processQueuedItem,
 		handleCloseCurrentTab,
-		handleUnifiedTabReorder,
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
