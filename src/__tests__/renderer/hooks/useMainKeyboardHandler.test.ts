@@ -3766,10 +3766,12 @@ describe('useMainKeyboardHandler', () => {
 				activeSessionId: 'kbd-sess',
 			} as any);
 			// Mount a stand-in for the find bar's input so the handler's
-			// querySelector('.terminal-output input') focus target exists.
+			// querySelector('[data-output-search-input]') focus target exists
+			// (shared by AI TerminalOutput and group chat).
 			const container = document.createElement('div');
 			container.className = 'terminal-output';
 			searchInput = document.createElement('input');
+			searchInput.setAttribute('data-output-search-input', '');
 			container.appendChild(searchInput);
 			document.body.appendChild(container);
 			searchInput.blur();
