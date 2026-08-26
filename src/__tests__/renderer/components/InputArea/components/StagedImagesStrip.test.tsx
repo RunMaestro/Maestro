@@ -85,9 +85,18 @@ describe('StagedImagesStrip', () => {
 		vi.restoreAllMocks();
 	});
 
-	/** The draggable wrapper, not the img - the img carries draggable="false". */
-	function tileOf(index: number): HTMLElement {
+	/**
+	 * The drag SOURCE: the thumbnail control. `draggable` lives here rather than
+	 * on the wrapper because Chromium will not promote a press on a form control
+	 * into an ancestor's drag (the img itself carries draggable="false").
+	 */
+	function thumbOf(index: number): HTMLElement {
 		return screen.getAllByRole('img')[index].closest('[draggable="true"]') as HTMLElement;
+	}
+
+	/** The drop TARGET: the tile wrapper the drop geometry is measured against. */
+	function tileOf(index: number): HTMLElement {
+		return thumbOf(index).parentElement as HTMLElement;
 	}
 
 	/** Lay the tiles out as two 100px-wide boxes side by side. */
@@ -144,7 +153,7 @@ describe('StagedImagesStrip', () => {
 		stubTileLayout(tiles);
 		const dataTransfer = makeDataTransfer();
 
-		fireEvent.dragStart(tiles[0], { dataTransfer });
+		fireEvent.dragStart(thumbOf(0), { dataTransfer });
 		// Right of the second tile's midpoint: the gap AFTER it.
 		fireAt('dragOver', tiles[1], dataTransfer, 180);
 		fireAt('drop', tiles[1], dataTransfer, 180);
@@ -159,7 +168,7 @@ describe('StagedImagesStrip', () => {
 		stubTileLayout(tiles);
 		const dataTransfer = makeDataTransfer();
 
-		fireEvent.dragStart(tiles[1], { dataTransfer });
+		fireEvent.dragStart(thumbOf(1), { dataTransfer });
 		// Left of the first tile's midpoint: the gap BEFORE it.
 		fireAt('dragOver', tiles[0], dataTransfer, 20);
 		fireAt('drop', tiles[0], dataTransfer, 20);
@@ -174,11 +183,22 @@ describe('StagedImagesStrip', () => {
 		stubTileLayout(tiles);
 		const dataTransfer = makeDataTransfer();
 
-		fireEvent.dragStart(tiles[0], { dataTransfer });
+		fireEvent.dragStart(thumbOf(0), { dataTransfer });
 		fireAt('dragOver', tiles[0], dataTransfer, 20);
 		fireAt('drop', tiles[0], dataTransfer, 20);
 
 		expect(onReorder).not.toHaveBeenCalled();
+	});
+
+	it('starts the drag from the thumbnail control, not the wrapper', () => {
+		// Regression guard: with `draggable` on the wrapper instead, pressing the
+		// thumbnail was consumed as a button press and no drag ever began, so the
+		// strip could not be dragged into the chat at all.
+		renderStrip();
+
+		const thumb = thumbOf(0);
+		expect(thumb.tagName).toBe('BUTTON');
+		expect(tileOf(0).getAttribute('draggable')).toBeNull();
 	});
 
 	it('hides the organizer button when only one image is staged', () => {
@@ -199,7 +219,7 @@ describe('StagedImagesStrip', () => {
 		renderStrip();
 		const dataTransfer = makeDataTransfer();
 
-		fireEvent.dragStart(tileOf(1), { dataTransfer });
+		fireEvent.dragStart(thumbOf(1), { dataTransfer });
 
 		expect(dataTransfer.getData('text/plain')).toBe('Screenshot 2');
 		expect(dataTransfer.getData('application/x-maestro-staged-image')).toBe('1');

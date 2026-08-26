@@ -62,15 +62,20 @@ export const StagedImageTile = memo(function StagedImageTile({
 				minWidth: '64px',
 				opacity: isDragging ? 0.4 : isDimmed ? 0.65 : 1,
 			}}
-			{...dragHandlers}
+			{...dragHandlers.target}
 		>
 			<StagedImageDropLine theme={theme} side="left" isActive={dropBefore} />
 			<StagedImageDropLine theme={theme} side="right" isActive={dropAfter} />
 
+			{/* The thumbnail is both the drag source and the open-in-lightbox
+			    control. `draggable` has to sit HERE rather than on the wrapper:
+			    Chromium treats a press on a form control as a button press and
+			    never promotes it to an ancestor's drag. */}
 			<button
 				type="button"
 				className="p-0 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent rounded cursor-grab active:cursor-grabbing"
 				onClick={onOpen}
+				{...dragHandlers.source}
 			>
 				<img
 					src={image}
