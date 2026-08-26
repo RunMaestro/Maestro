@@ -812,8 +812,8 @@ describe('useFileContextMenu', () => {
 			expect(openBatchRunnerWithPresets).not.toHaveBeenCalled();
 		});
 
-		it('stages nothing for a file row, even inside the Auto Run folder', () => {
-			batchDocumentList.mockReturnValue(['RET/RET-01']);
+		it('stages a single markdown file inside the Auto Run folder', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01', 'RET/RET-02']);
 			const { result } = renderHook(() =>
 				useFileContextMenu({ ...defaultArgs, session: autoRunSession })
 			);
@@ -826,7 +826,163 @@ describe('useFileContextMenu', () => {
 					4
 				);
 			});
+			expect(result.current.autoRunStagedDocs).toEqual(['RET/RET-01']);
+
+			act(() => {
+				result.current.handleStageForAutoRun();
+			});
+			expect(openBatchRunnerWithPresets).toHaveBeenCalledWith(['RET/RET-01']);
+		});
+
+		it('stages nothing for a non-markdown file inside the Auto Run folder', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01']);
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: autoRunSession })
+			);
+
+			act(() => {
+				result.current.openContextMenu(
+					makeEvent(),
+					{ name: 'bundle.txt', type: 'file' },
+					'.maestro/playbooks/RET/bundle.txt',
+					4
+				);
+			});
 			expect(result.current.autoRunStagedDocs).toEqual([]);
+		});
+
+		it('stages nothing for a file the Auto Run loader does not know about', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01']);
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: autoRunSession })
+			);
+
+			act(() => {
+				result.current.openContextMenu(
+					makeEvent(),
+					{ name: 'RET-99.md', type: 'file' },
+					'.maestro/playbooks/RET/RET-99.md',
+					4
+				);
+			});
+			expect(result.current.autoRunStagedDocs).toEqual([]);
+		});
+
+		it('stages the whole selection when right-clicking inside a multi-selection', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01', 'RET/RET-02', 'RET/RET-03']);
+			const selectionSession = {
+				...autoRunSession,
+				fileTree: [
+					{
+						name: '.maestro',
+						type: 'folder',
+						children: [
+							{
+								name: 'playbooks',
+								type: 'folder',
+								children: [
+									{
+										name: 'RET',
+										type: 'folder',
+										children: [
+											{ name: 'RET-01.md', type: 'file' },
+											{ name: 'RET-03.md', type: 'file' },
+										],
+									},
+								],
+							},
+						],
+					},
+				],
+			} as any;
+			const selectedPathsRef = {
+				current: new Set(['.maestro/playbooks/RET/RET-01.md', '.maestro/playbooks/RET/RET-03.md']),
+			};
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: selectionSession, selectedPathsRef })
+			);
+
+			act(() => {
+				result.current.openContextMenu(
+					makeEvent(),
+					{ name: 'RET-01.md', type: 'file' },
+					'.maestro/playbooks/RET/RET-01.md',
+					4
+				);
+			});
+			// Emitted in loader order, not selection order.
+			expect(result.current.autoRunStagedDocs).toEqual(['RET/RET-01', 'RET/RET-03']);
+		});
+
+		it('stages only the clicked row when right-clicking outside the selection', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01', 'RET/RET-02', 'RET/RET-03']);
+			const selectedPathsRef = {
+				current: new Set(['.maestro/playbooks/RET/RET-01.md', '.maestro/playbooks/RET/RET-03.md']),
+			};
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: autoRunSession, selectedPathsRef })
+			);
+
+			act(() => {
+				result.current.openContextMenu(
+					makeEvent(),
+					{ name: 'RET-02.md', type: 'file' },
+					'.maestro/playbooks/RET/RET-02.md',
+					5
+				);
+			});
+			expect(result.current.autoRunStagedDocs).toEqual(['RET/RET-02']);
+		});
+
+		it('folds a folder, a file already under it, and an outsider into one staged run', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01', 'RET/RET-02', 'SPEC']);
+			const mixedSession = {
+				...autoRunSession,
+				fileTree: [
+					{
+						name: '.maestro',
+						type: 'folder',
+						children: [
+							{
+								name: 'playbooks',
+								type: 'folder',
+								children: [
+									{
+										name: 'RET',
+										type: 'folder',
+										children: [{ name: 'RET-01.md', type: 'file' }],
+									},
+									{ name: 'SPEC.md', type: 'file' },
+								],
+							},
+						],
+					},
+					{ name: 'docs', type: 'folder', children: [{ name: 'README.md', type: 'file' }] },
+				],
+			} as any;
+			const selectedPathsRef = {
+				current: new Set([
+					'.maestro/playbooks/RET',
+					'.maestro/playbooks/RET/RET-01.md',
+					'.maestro/playbooks/SPEC.md',
+					'docs/README.md',
+				]),
+			};
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: mixedSession, selectedPathsRef })
+			);
+
+			act(() => {
+				result.current.openContextMenu(
+					makeEvent(),
+					{ name: 'RET-01.md', type: 'file' },
+					'.maestro/playbooks/RET/RET-01.md',
+					4
+				);
+			});
+			// RET/RET-02 arrives from the folder, RET/RET-01 is not staged twice for
+			// being both picked and under it, and the file outside contributes nothing.
+			expect(result.current.autoRunStagedDocs).toEqual(['RET/RET-01', 'RET/RET-02', 'SPEC']);
 		});
 
 		it('stages nothing when the session has no Auto Run folder configured', () => {

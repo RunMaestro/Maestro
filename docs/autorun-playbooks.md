@@ -72,19 +72,27 @@ Auto Run supports running multiple documents in sequence:
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
 
-### Staging a Folder of Documents from the Files Tab
+### Staging Documents from the Files Tab
 
 The Auto Run folder shows up in the **Files** tab like any other directory, so a
-folder of task documents is one right-click away from being a run list.
-Right-click a folder that sits inside the agent's Auto Run folder and choose
-**Stage Documents for Auto Run**. The run configuration modal opens with every
-document under that folder already queued, including the ones in nested
-subfolders, in the same order the Auto Run dropdown lists them. From there it is
-the ordinary modal: reorder, duplicate, set per-document options, then **Go**.
+run list is one right-click away. Right-click anything inside the agent's Auto
+Run folder and choose **Stage Documents for Auto Run**:
 
-The entry only appears on folders inside the Auto Run folder, and it counts what
-it will stage ("Stage 6 Documents for Auto Run"), so an empty folder offers
-nothing.
+- **A folder** stages every document beneath it, nested subfolders included.
+- **A single markdown file** stages just that document.
+- **A multi-selection** stages every document in it. Select the files
+  (`Cmd`/`Ctrl`-click or `Shift`-click), then right-click one of them.
+  Right-clicking a row _outside_ the selection stages only that row instead.
+
+The run configuration modal opens with those documents already queued, in the
+same order the Auto Run dropdown lists them - not the order you selected them.
+From there it is the ordinary modal: reorder, duplicate, set per-document
+options, then **Go**.
+
+The entry only appears when something under the cursor actually resolves to an
+Auto Run document, and it counts what it will stage ("Stage 6 Documents for Auto
+Run"). An empty folder, a non-markdown file, or anything outside the Auto Run
+folder offers nothing.
 
 ## Fresh Context: Task vs Document
 
