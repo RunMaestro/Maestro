@@ -36,8 +36,9 @@ interface FileTreeContextMenuProps {
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
 	/**
-	 * How many Auto Run documents sit under this folder. Zero for any folder
-	 * outside the agent's Auto Run folder, which is what hides the staging entry.
+	 * How many Auto Run documents the current menu context resolves to - a
+	 * folder's subtree, one markdown file, or the whole selection. Zero for
+	 * anything outside the agent's Auto Run folder, which hides the staging entry.
 	 */
 	autoRunStagedCount?: number;
 	/** How many of the selected files are playable audio/video. */
@@ -119,6 +120,23 @@ export function FileTreeContextMenu({
 	// SSH there is nothing to stream, so the playback actions stay hidden.
 	const isMedia = isFile && !sshRemoteId && isMediaFile(nodeName);
 	const queueableCount = sshRemoteId ? 0 : selectedMediaCount;
+	// Same entry in three branches (folder, file, multi-selection): the count is
+	// already resolved per context, so the only thing that varies is the label.
+	const stageForAutoRunButton =
+		autoRunStagedCount > 0 ? (
+			<button
+				onClick={onStageForAutoRun}
+				className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+				style={{ color: theme.colors.textMain }}
+			>
+				<PlayCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+				<span>
+					{autoRunStagedCount === 1
+						? 'Stage Document for Auto Run'
+						: `Stage ${autoRunStagedCount} Documents for Auto Run`}
+				</span>
+			</button>
+		) : null;
 
 	return createPortal(
 		<div
@@ -186,6 +204,7 @@ export function FileTreeContextMenu({
 								<span>Open {selectedCount} in Default App</span>
 							</button>
 						)}
+						{stageForAutoRunButton}
 						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 						<button
 							onClick={onOpenDeleteMulti}
@@ -245,20 +264,7 @@ export function FileTreeContextMenu({
 										</span>
 									</button>
 								)}
-								{autoRunStagedCount > 0 && (
-									<button
-										onClick={onStageForAutoRun}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<PlayCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-										<span>
-											{autoRunStagedCount === 1
-												? 'Stage Document for Auto Run'
-												: `Stage ${autoRunStagedCount} Documents for Auto Run`}
-										</span>
-									</button>
-								)}
+								{stageForAutoRunButton}
 								<button
 									onClick={onCompressFolder}
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -326,6 +332,8 @@ export function FileTreeContextMenu({
 								<span>Add to Play Queue</span>
 							</button>
 						)}
+
+						{isFile && stageForAutoRunButton}
 
 						{/* Document Graph option - only for markdown files */}
 						{isMarkdown && onFocusFileInGraph && (

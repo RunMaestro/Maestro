@@ -73,6 +73,45 @@ describe('create-worktree command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 		});
 
+		describe('placement', () => {
+			function ok() {
+				return mockClient({
+					create_worktree_session_result: {
+						type: 'create_worktree_session_result',
+						success: true,
+						sessionId: 'wt-1',
+					},
+				});
+			}
+
+			it('selects the new agent by default, exactly as it always has', async () => {
+				const sent = ok();
+				await createWorktree({ agent: 'p', branch: 'feature/foo' });
+				expect(sent[0].payload.background).toBe(false);
+			});
+
+			it('leaves the Left Bar selection alone with --background', async () => {
+				const sent = ok();
+				await createWorktree({ agent: 'p', branch: 'feature/foo', background: true });
+				expect(sent[0].payload.background).toBe(true);
+				// Background placement never means "created but invisible": the id is
+				// still what the caller addresses the new agent by.
+				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('wt-1'));
+				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('in the background'));
+			});
+
+			it('lets --focus win over --background', async () => {
+				const sent = ok();
+				await createWorktree({
+					agent: 'p',
+					branch: 'feature/foo',
+					background: true,
+					focus: true,
+				});
+				expect(sent[0].payload.background).toBe(false);
+			});
+		});
+
 		it('forwards a trimmed baseBranch when provided', async () => {
 			const sent = mockClient({
 				create_worktree_session_result: {

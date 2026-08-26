@@ -5,12 +5,15 @@
 import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { getSettingDefault } from '../../shared/settingsMetadata';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 export interface DispatchOptions {
 	newTab?: boolean;
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
 	force?: boolean;
+	/** Explicitly ask for background placement of a `--new-tab` tab (the default). */
+	background?: boolean;
 	/** Commander sets this to `true` when `--focus` is passed. Unset/false is the
 	 *  default and dispatches in the background: the desktop delivers the prompt
 	 *  without switching to or focusing the target agent/tab. Only `focus === true`
@@ -308,7 +311,7 @@ export async function runDispatch(
 	// explicit `--focus` (Commander: focus === true) tells the desktop to switch
 	// to and focus the target agent/tab. The `background` bit is threaded to both
 	// the new-tab and existing-tab command paths.
-	const background = options.focus !== true;
+	const background = resolveBackgroundFlag(options, 'dispatch-new-tab');
 
 	const callback = buildCallbackFields(options, agentId);
 	if (!callback.ok) return callback.response;
@@ -325,6 +328,8 @@ export async function runDispatch(
 						type: 'new_ai_tab_with_prompt',
 						sessionId: agentId,
 						prompt: message,
+						// Background by default: a dispatched prompt is an agent talking to
+						// an agent, and the tab id we return is how the caller follows it.
 						...(background ? { background: true } : {}),
 						...callback.fields,
 					},

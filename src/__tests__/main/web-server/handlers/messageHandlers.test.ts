@@ -594,7 +594,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.switchMode).toHaveBeenCalledWith('session-1', 'ai');
+				expect(callbacks.switchMode).toHaveBeenCalledWith('session-1', 'ai', false);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -611,7 +611,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.switchMode).toHaveBeenCalledWith('session-1', 'terminal');
+				expect(callbacks.switchMode).toHaveBeenCalledWith('session-1', 'terminal', false);
 			});
 		});
 
@@ -740,14 +740,29 @@ describe('WebSocketMessageHandler', () => {
 				sessionId: 'session-1',
 			});
 
+			// Nothing on the wire means today's behaviour: the tab is focused.
+			// `--background` is additive, so an absent field is never an opt-in.
 			await vi.waitFor(() => {
-				expect(callbacks.newTab).toHaveBeenCalledWith('session-1');
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', false);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('new_tab_result');
 			expect(response.success).toBe(true);
 			expect(response.tabId).toBe('new-tab-123');
+			expect(response.background).toBe(false);
+		});
+
+		it('creates the tab in the background when asked', async () => {
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', true);
+			});
 		});
 
 		it('should reject new tab with missing sessionId', () => {
@@ -913,7 +928,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					true
+					{ background: false, switchToAgent: true }
 				);
 			});
 
@@ -924,7 +939,7 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.filePath).toBe('/home/user/project/src/index.ts');
 		});
 
-		it('should forward switchToAgent=false when --no-switch is used', async () => {
+		it('keeps switchToAgent=false meaning --no-switch, NOT --background', async () => {
 			handler.handleMessage(client, {
 				type: 'open_file_tab',
 				sessionId: 'session-1',
@@ -932,11 +947,49 @@ describe('WebSocketMessageHandler', () => {
 				switchToAgent: false,
 			});
 
+			// The weaker, older ask: stay on the current agent, but still activate
+			// the tab in the target one. Folding it into `background` would silently
+			// change behaviour for every caller already passing `--no-switch`.
 			await vi.waitFor(() => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					false
+					{ background: false, switchToAgent: false }
+				);
+			});
+		});
+
+		it('forwards background:true as the stronger, independent ask', async () => {
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/home/user/project/src/index.ts',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openFileTab).toHaveBeenCalledWith(
+					'session-1',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
+					{ background: true, switchToAgent: true }
+				);
+			});
+		});
+
+		it('carries both flags when both are passed, background being stronger', async () => {
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/home/user/project/src/index.ts',
+				background: true,
+				switchToAgent: false,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openFileTab).toHaveBeenCalledWith(
+					'session-1',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
+					{ background: true, switchToAgent: false }
 				);
 			});
 		});
@@ -999,7 +1052,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/../../etc/passwd'),
-					true
+					{ background: false, switchToAgent: true }
 				);
 			});
 
@@ -1017,6 +1070,7 @@ describe('WebSocketMessageHandler', () => {
 				url: 'https://example.com/',
 			});
 
+			// An absent field is not an opt-in: today's behaviour is preserved.
 			await vi.waitFor(() => {
 				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/', {
 					background: false,
@@ -1028,6 +1082,7 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
 			expect(response.url).toBe('https://example.com/');
+			expect(response.background).toBe(false);
 		});
 
 		it('should forward the background flag and return the created tab id', async () => {
@@ -1051,7 +1106,7 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.tabId).toBe('browser-tab-1');
 		});
 
-		it('should default background to false when the flag is absent or not true', async () => {
+		it('treats a non-boolean background as no preference', async () => {
 			handler.handleMessage(client, {
 				type: 'open_browser_tab',
 				sessionId: 'session-1',
@@ -1059,6 +1114,8 @@ describe('WebSocketMessageHandler', () => {
 				background: 'yes',
 			});
 
+			// Only a literal `true` opts in. Anything else leaves the verb doing
+			// exactly what it does today.
 			await vi.waitFor(() => {
 				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/', {
 					background: false,
@@ -1209,21 +1266,42 @@ describe('WebSocketMessageHandler', () => {
 				sessionId: 'session-1',
 			});
 
+			// open_terminal_tab carried no placement field at all before this. It now
+			// carries one, and an absent value still means "switch", as it always did.
 			await vi.waitFor(() => {
-				expect(callbacks.openTerminalTab).toHaveBeenCalledWith('session-1', {
-					cwd: undefined,
-					shell: undefined,
-					name: undefined,
-					command: undefined,
-				});
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+					'session-1',
+					{
+						cwd: undefined,
+						shell: undefined,
+						name: undefined,
+						command: undefined,
+					},
+					{ background: false }
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('open_terminal_tab_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+			expect(response.background).toBe(false);
 			// The id is the handle for send-terminal, so it has to survive the hop.
 			expect(response.tabId).toBe('terminal-tab-1');
+		});
+
+		it('creates the terminal in the background when asked', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith('session-1', expect.anything(), {
+					background: true,
+				});
+			});
 		});
 
 		it('should forward optional shell and name', async () => {
@@ -1235,12 +1313,16 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.openTerminalTab).toHaveBeenCalledWith('session-1', {
-					cwd: undefined,
-					shell: 'bash',
-					name: 'build logs',
-					command: undefined,
-				});
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+					'session-1',
+					{
+						cwd: undefined,
+						shell: 'bash',
+						name: 'build logs',
+						command: undefined,
+					},
+					{ background: false }
+				);
 			});
 		});
 
@@ -1255,7 +1337,8 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
 					'session-1',
-					expect.objectContaining({ name: 'Dev server', command: 'npm run dev' })
+					expect.objectContaining({ name: 'Dev server', command: 'npm run dev' }),
+					{ background: false }
 				);
 			});
 		});
@@ -1270,7 +1353,8 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
 					'session-1',
-					expect.objectContaining({ command: undefined })
+					expect.objectContaining({ command: undefined }),
+					{ background: false }
 				);
 			});
 		});
@@ -1358,7 +1442,8 @@ describe('WebSocketMessageHandler', () => {
 							// fs.promises.realpath (native), which expands Windows 8.3 short
 							// names (RUNNER~1 -> runneradmin); the JS realpathSync does not.
 							cwd: fs.realpathSync.native(path.join(sessionRoot, 'sub')),
-						})
+						}),
+						{ background: false }
 					);
 				});
 			});
@@ -1596,6 +1681,8 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
+				// The MESSAGE default is foreground. `dispatch --new-tab` sends
+				// background:true explicitly; `tab new --prompt` sends false.
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
 					'Summarize the repo',
@@ -3808,10 +3895,14 @@ describe('WebSocketMessageHandler', () => {
 
 			await new Promise((resolve) => setImmediate(resolve));
 
-			expect(callbacks.createWorktreeSession).toHaveBeenCalledWith('parent-1', {
-				branchName: 'feature/foo',
-				baseBranch: 'rc',
-			});
+			expect(callbacks.createWorktreeSession).toHaveBeenCalledWith(
+				'parent-1',
+				{
+					branchName: 'feature/foo',
+					baseBranch: 'rc',
+				},
+				false
+			);
 			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(payload).toMatchObject({
 				type: 'create_worktree_session_result',

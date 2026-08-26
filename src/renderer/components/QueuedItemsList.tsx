@@ -649,37 +649,49 @@ function QueuedItemRow({
 				)}
 
 				{/* Bottom footer: Force Send anchored bottom-left, control
-				    buttons anchored bottom-right (always visible). mt-auto
-				    pushes the row to the bottom of the flex column. */}
-				<div className={`mt-auto pt-2 flex items-center gap-2 ${canDrag ? 'pl-4' : ''}`}>
-					{showForceSendButton && (
-						<button
-							onClick={onForceSend}
-							disabled={!canForceSend}
-							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-opacity hover:opacity-80 disabled:cursor-default"
-							style={{
-								backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
-								color: theme.colors.warning,
-								opacity: canForceSend ? 1 : 0.5,
-							}}
-							title={forceSendTitle}
-						>
-							<Hammer className="w-3.5 h-3.5" />
-							Force Send
-						</button>
-					)}
+				    buttons anchored bottom-right (always visible), model/effort
+				    pills centered between them. mt-auto pushes the row to the
+				    bottom of the flex column. The three-column grid is what puts
+				    the pills on the card's true center line the way the finished
+				    turn's pills sit on the message's: the outer columns are equal
+				    1fr tracks, so the middle one stays centered no matter how wide
+				    the Force Send button or the control cluster gets, and nothing
+				    overlaps the way an absolutely-positioned center would. */}
+				<div
+					className={`mt-auto pt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 ${canDrag ? 'pl-4' : ''}`}
+				>
+					<div className="flex items-center gap-2 min-w-0">
+						{showForceSendButton && (
+							<button
+								onClick={onForceSend}
+								disabled={!canForceSend}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80 disabled:cursor-default"
+								style={{
+									backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
+									color: theme.colors.warning,
+									opacity: canForceSend ? 1 : 0.5,
+								}}
+								title={forceSendTitle}
+							>
+								<Hammer className="w-3.5 h-3.5" />
+								Force Send
+							</button>
+						)}
+					</div>
 
 					{/* What this item will actually run under. The queue can sit through
 					    any number of model/effort changes, so naming the frozen values
 					    here is the only way the user can tell which pending message is
 					    on the big model. Same pills the finished turn gets. */}
-					<TurnSettingPills
-						theme={theme}
-						model={item.turnSettings?.model}
-						effort={item.turnSettings?.effort}
-					/>
+					<div className="flex items-center justify-center gap-1 min-w-0">
+						<TurnSettingPills
+							theme={theme}
+							model={item.turnSettings?.model}
+							effort={item.turnSettings?.effort}
+						/>
+					</div>
 
-					<div className="ml-auto flex items-center gap-1">
+					<div className="flex items-center justify-end gap-1">
 						{/* Edit button */}
 						{onEdit && (
 							<button

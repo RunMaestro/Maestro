@@ -1,35 +1,36 @@
 import { describe, it, expect } from 'vitest';
 import {
+	autoRunDocIdForFile,
 	collectAutoRunDocsInFolder,
-	relativeAutoRunFolderPath,
+	relativeToAutoRunFolder,
 } from '../../../renderer/utils/autoRunStaging';
 
-describe('relativeAutoRunFolderPath', () => {
+describe('relativeToAutoRunFolder', () => {
 	const root = '/project/.maestro/playbooks';
 
 	it('returns the empty string for the Auto Run folder itself', () => {
-		expect(relativeAutoRunFolderPath(root, root)).toBe('');
+		expect(relativeToAutoRunFolder(root, root)).toBe('');
 	});
 
 	it('returns the path relative to the Auto Run folder for a descendant', () => {
-		expect(relativeAutoRunFolderPath(`${root}/RET/nested`, root)).toBe('RET/nested');
+		expect(relativeToAutoRunFolder(`${root}/RET/nested`, root)).toBe('RET/nested');
 	});
 
 	it('returns null for a folder outside the Auto Run folder', () => {
-		expect(relativeAutoRunFolderPath('/project/docs', root)).toBeNull();
+		expect(relativeToAutoRunFolder('/project/docs', root)).toBeNull();
 	});
 
 	it('does not treat a sibling with a shared prefix as inside', () => {
-		expect(relativeAutoRunFolderPath(`${root}-archive/RET`, root)).toBeNull();
+		expect(relativeToAutoRunFolder(`${root}-archive/RET`, root)).toBeNull();
 	});
 
 	it('ignores trailing slashes on either side', () => {
-		expect(relativeAutoRunFolderPath(`${root}/RET/`, `${root}/`)).toBe('RET');
+		expect(relativeToAutoRunFolder(`${root}/RET/`, `${root}/`)).toBe('RET');
 	});
 
 	it('matches across Windows separators', () => {
 		expect(
-			relativeAutoRunFolderPath(
+			relativeToAutoRunFolder(
 				'C:\\project\\.maestro\\playbooks\\RET',
 				'C:/project/.maestro/playbooks'
 			)
@@ -37,9 +38,9 @@ describe('relativeAutoRunFolderPath', () => {
 	});
 
 	it('returns null when either path is missing', () => {
-		expect(relativeAutoRunFolderPath(undefined, root)).toBeNull();
-		expect(relativeAutoRunFolderPath(root, undefined)).toBeNull();
-		expect(relativeAutoRunFolderPath(root, '')).toBeNull();
+		expect(relativeToAutoRunFolder(undefined, root)).toBeNull();
+		expect(relativeToAutoRunFolder(root, undefined)).toBeNull();
+		expect(relativeToAutoRunFolder(root, '')).toBeNull();
 	});
 });
 
@@ -60,5 +61,29 @@ describe('collectAutoRunDocsInFolder', () => {
 
 	it('returns an empty list when the folder holds no documents', () => {
 		expect(collectAutoRunDocsInFolder('Working', docs)).toEqual([]);
+	});
+});
+
+describe('autoRunDocIdForFile', () => {
+	const root = '/project/.maestro/playbooks';
+
+	it('drops the .md extension to form the document id', () => {
+		expect(autoRunDocIdForFile(`${root}/RET/RET-01.md`, root)).toBe('RET/RET-01');
+	});
+
+	it('handles an uppercase extension', () => {
+		expect(autoRunDocIdForFile(`${root}/SPEC.MD`, root)).toBe('SPEC');
+	});
+
+	it('returns null for a non-markdown file inside the Auto Run folder', () => {
+		expect(autoRunDocIdForFile(`${root}/notes.txt`, root)).toBeNull();
+	});
+
+	it('returns null for a markdown file outside the Auto Run folder', () => {
+		expect(autoRunDocIdForFile('/project/docs/README.md', root)).toBeNull();
+	});
+
+	it('returns null for the Auto Run folder itself', () => {
+		expect(autoRunDocIdForFile(root, root)).toBeNull();
 	});
 });

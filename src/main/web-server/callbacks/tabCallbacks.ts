@@ -31,8 +31,11 @@ export function registerTabCallbacks(
 		return true;
 	});
 
-	server.setNewTabCallback(async (sessionId: string) => {
-		logger.info(`[Web→Desktop] New tab callback invoked: session=${sessionId}`, 'WebServer');
+	server.setNewTabCallback(async (sessionId: string, background?: boolean) => {
+		logger.info(
+			`[Web→Desktop] New tab callback invoked: session=${sessionId}, background=${background === true}`,
+			'WebServer'
+		);
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for newTab', 'WebServer');
@@ -58,7 +61,7 @@ export function registerTabCallbacks(
 				resolve(null);
 				return;
 			}
-			mainWindow.webContents.send('remote:newTab', sessionId, responseChannel);
+			mainWindow.webContents.send('remote:newTab', sessionId, responseChannel, background === true);
 
 			// Timeout after 5 seconds - clean up the listener to prevent memory leak
 			const timeoutId = setTimeout(() => {
@@ -155,7 +158,11 @@ export function registerTabCallbacks(
 	});
 
 	server.setOpenFileTabCallback(
-		async (sessionId: string, filePath: string, switchToAgent: boolean) => {
+		async (
+			sessionId: string,
+			filePath: string,
+			options: { background: boolean; switchToAgent: boolean }
+		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for openFileTab', 'WebServer');
@@ -166,7 +173,10 @@ export function registerTabCallbacks(
 				logger.warn('webContents is not available for openFileTab', 'WebServer');
 				return false;
 			}
-			mainWindow.webContents.send('remote:openFileTab', sessionId, filePath, switchToAgent);
+			mainWindow.webContents.send('remote:openFileTab', sessionId, filePath, {
+				background: options.background,
+				switchToAgent: options.switchToAgent,
+			});
 			return true;
 		}
 	);

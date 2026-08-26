@@ -477,5 +477,56 @@ describe('FileTreeContextMenu', () => {
 
 			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
 		});
+
+		it('offers staging on a single Auto Run document file', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					autoRunStagedCount={1}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage Document for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging on a file outside the Auto Run folder', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('offers staging for a multi-selection of Auto Run documents', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					autoRunStagedCount={5}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage 5 Documents for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging for a multi-selection outside the Auto Run folder', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(fileNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+				/>
+			);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
 	});
 });

@@ -15,10 +15,14 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote new tab from web interface
 		 */
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string) => void
+			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, responseChannel: string) =>
-				callback(sessionId, responseChannel);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				responseChannel: string,
+				background?: boolean
+			) => callback(sessionId, responseChannel, background === true);
 			ipcRenderer.on('remote:newTab', handler);
 			return () => ipcRenderer.removeListener('remote:newTab', handler);
 		},
@@ -86,14 +90,29 @@ export function createTabRemoteApi() {
 
 		/**
 		 * Subscribe to remote open file tab from web interface.
-		 * `switchToAgent` controls whether the UI switches to the target agent
-		 * (defaults to true if the sender omits it).
+		 *
+		 * `background: true` creates the preview tab without moving the view at all:
+		 * neither the active agent nor the active tab within any agent changes.
+		 * `switchToAgent: false` is the older, weaker `--no-switch` ask - stay on
+		 * the current agent, but still activate the tab inside the target one.
 		 */
 		onRemoteOpenFileTab: (
-			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
+			callback: (
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, filePath: string, switchToAgent?: boolean) =>
-				callback(sessionId, filePath, switchToAgent !== false);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filePath: string,
+				options?: { background?: boolean; switchToAgent?: boolean }
+			) =>
+				callback(sessionId, filePath, {
+					background: options?.background === true,
+					switchToAgent: options?.switchToAgent !== false,
+				});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
 		},

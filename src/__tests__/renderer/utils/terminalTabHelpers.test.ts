@@ -177,6 +177,29 @@ describe('addTerminalTab', () => {
 		expect(updated.activeGroupId).toBeNull();
 	});
 
+	it('adds the tab without showing it when activate is false', () => {
+		// Background create: the tab is in the bar and in the unified order, but
+		// the selection and the input mode are untouched. The mode matters as much
+		// as the ids here - flipping an agent into terminal mode is itself a view
+		// change for anyone looking at that agent.
+		const session = createMockSession({
+			activeFileTabId: 'file-1',
+			activeBrowserTabId: 'browser-1',
+			activeTerminalTabId: 'terminal-old',
+			inputMode: 'ai',
+		});
+		const tab = createMockTerminalTab({ id: 'new-tab' });
+
+		const updated = addTerminalTab(session, tab, { activate: false });
+
+		expect(updated.terminalTabs).toHaveLength(1);
+		expect(updated.unifiedTabOrder).toContainEqual({ type: 'terminal', id: 'new-tab' });
+		expect(updated.activeTerminalTabId).toBe('terminal-old');
+		expect(updated.activeFileTabId).toBe('file-1');
+		expect(updated.activeBrowserTabId).toBe('browser-1');
+		expect(updated.inputMode).toBe('ai');
+	});
+
 	it('adds a terminal ref to unifiedTabOrder', () => {
 		const session = createMockSession();
 		const tab = createMockTerminalTab({ id: 'new-tab' });

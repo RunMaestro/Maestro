@@ -387,9 +387,13 @@ export class CallbackRegistry {
 		return this.callbacks.interruptSession?.(sessionId) ?? false;
 	}
 
-	async switchMode(sessionId: string, mode: 'ai' | 'terminal'): Promise<boolean> {
+	async switchMode(
+		sessionId: string,
+		mode: 'ai' | 'terminal',
+		background?: boolean
+	): Promise<boolean> {
 		if (!this.callbacks.switchMode) return false;
-		return this.callbacks.switchMode(sessionId, mode);
+		return this.callbacks.switchMode(sessionId, mode, background);
 	}
 
 	async selectSession(sessionId: string, tabId?: string, focus?: boolean): Promise<boolean> {
@@ -402,9 +406,9 @@ export class CallbackRegistry {
 		return this.callbacks.selectTab(sessionId, tabId);
 	}
 
-	async newTab(sessionId: string): Promise<{ tabId: string } | null> {
+	async newTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
-		return this.callbacks.newTab(sessionId);
+		return this.callbacks.newTab(sessionId, background);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -432,9 +436,13 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
-	async openFileTab(sessionId: string, filePath: string, switchToAgent: boolean): Promise<boolean> {
+	async openFileTab(
+		sessionId: string,
+		filePath: string,
+		options: { background: boolean; switchToAgent: boolean }
+	): Promise<boolean> {
 		if (!this.callbacks.openFileTab) return false;
-		return this.callbacks.openFileTab(sessionId, filePath, switchToAgent);
+		return this.callbacks.openFileTab(sessionId, filePath, options);
 	}
 
 	async openModal(params: OpenModalParams): Promise<boolean> {
@@ -463,10 +471,11 @@ export class CallbackRegistry {
 
 	async openTerminalTab(
 		sessionId: string,
-		config: OpenTerminalTabConfig
+		config: OpenTerminalTabConfig,
+		options?: { background?: boolean }
 	): Promise<OpenTerminalTabResult> {
 		if (!this.callbacks.openTerminalTab) return { success: false };
-		return this.callbacks.openTerminalTab(sessionId, config);
+		return this.callbacks.openTerminalTab(sessionId, config, options);
 	}
 
 	async writeTerminalTab(
@@ -705,10 +714,11 @@ export class CallbackRegistry {
 		toolType: string,
 		cwd: string,
 		groupId?: string,
-		config?: CreateSessionConfig
+		config?: CreateSessionConfig,
+		background?: boolean
 	): Promise<{ sessionId: string } | null> {
 		if (!this.callbacks.createSession) return null;
-		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
+		return this.callbacks.createSession(name, toolType, cwd, groupId, config, background);
 	}
 
 	async createWorktreeSession(
@@ -716,10 +726,11 @@ export class CallbackRegistry {
 		config: {
 			branchName: string;
 			baseBranch?: string;
-		}
+		},
+		background?: boolean
 	): Promise<{ success: boolean; sessionId?: string; error?: string }> {
 		if (!this.callbacks.createWorktreeSession) return { success: false, error: 'Not configured' };
-		return this.callbacks.createWorktreeSession(parentSessionId, config);
+		return this.callbacks.createWorktreeSession(parentSessionId, config, background);
 	}
 
 	async deleteSession(sessionId: string): Promise<boolean> {

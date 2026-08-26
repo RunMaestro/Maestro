@@ -11,6 +11,103 @@ and the Left Bar context menus (`src/renderer/components/SessionList/`). The
 authoritative CLI surface is `docs/cli-reference.md`, generated from the
 Commander tree by `npm run gen:cli-reference`.
 
+## Focus belongs to the human (`--background` / `--focus`)
+
+An agent may create a surface. It may not decide the human should be looking at
+it. Every verb that can move the Maestro view now carries a `background` bit so
+a caller that wants to stay out of the way has a way to say so.
+
+`background: true` means exactly two things, everywhere: the active **agent**
+does not change, and the active **tab** inside any agent does not change. The
+surface is still created and still addressable - it lands in the tab bar the way
+a browser opens a background tab. "Created but invisible" is a different bug and
+must never pass as background placement.
+
+### The flag is ADDITIVE. No verb's default changed.
+
+The defect was that an agent which wanted to be polite had no way to ask, on
+seven of nine verbs. It was **not** that the verbs focus. Every verb behaves
+exactly as it did before when the flag is absent, so no existing script,
+playbook, Cue prompt, or muscle-memory invocation changes.
+
+| Verb                                | Message                              | Default (unchanged)               |
+| ----------------------------------- | ------------------------------------ | --------------------------------- |
+| `open-file`                         | `open_file_tab`                      | focuses                           |
+| `open-terminal`                     | `open_terminal_tab`                  | focuses                           |
+| `open-browser`                      | `open_browser_tab`                   | focuses                           |
+| `tab new`                           | `new_tab` / `new_ai_tab_with_prompt` | focuses                           |
+| `dispatch --new-tab`                | `new_ai_tab_with_prompt`             | **background** (as it always was) |
+| `create-agent`                      | `create_session`                     | selects the new agent             |
+| `create-worktree`                   | `create_worktree_session`            | selects the new agent             |
+| `switch-mode`                       | `switch_mode`                        | switches                          |
+| `focus-agent`, `send --tab`, `open` | `select_session`, `open_modal`       | **always foreground, no flag**    |
+
+`focus-agent`, `send --tab` and `open` exist TO move the view - the caller named
+that intent - so they are deliberately absent from the table and must stay that
+way.
+
+`--focus` ships on every verb even where it currently just names the default,
+because a future default flip needs the escape hatch to already exist.
+
+### The contract lives in one module
+
+`src/shared/focusPlacement.ts`, imported by both ends:
+
+- CLI: `resolveBackgroundFlag(flags, verb)` turns `--background` / `--focus`
+  into the bit that goes on the wire. Keyed by **verb, not message**: `tab new
+--prompt` and `dispatch --new-tab` both send `new_ai_tab_with_prompt` and
+  disagree about the default, so keying by message would force one of them to
+  change behaviour.
+- Main process: `readBackgroundField(message)` reads it back, and it is an
+  **opt-in** - only a literal `true` counts.
+
+> [!WARNING]
+> Never write `message.background !== false` in a handler. That reads an absent
+> field as an opt-in and silently stops the verb from focusing, which breaks
+> every existing caller at once. It is the single most likely way this change
+> regresses, and it is why the read goes through one shared function.
+
+### `--no-switch` is NOT a spelling of `--background`
+
+They coexist on `open-file` and mean different things:
+
+- `--no-switch` stays on the current agent and **still activates the tab there**.
+  If you were already on that agent, your view still changes.
+- `--background` changes nothing currently rendered, on any agent.
+
+Passing both is fine; `--background` is strictly stronger and wins. Folding the
+first into the second would silently change behaviour for everyone already
+passing it. Worth knowing regardless: `--no-switch` reads like it means
+`--background` and does not, so anyone who reached for it probably wanted the
+stronger one.
+
+### Renderer side
+
+Background placement is the absence of a focus patch: the four `*FocusFields`
+helpers in `src/renderer/utils/tabFocusFields.ts` are what make a tab visible, so
+`createTab({ activate: false })`, `addTerminalTab(s, tab, { activate: false })`
+and `handleOpenFileTab(file, { activate: false })` simply do not spread one.
+`open_file_tab` is the one three-state path, because it has to serve both flags:
+
+```
+neither       -> switch agent, activate tab   (default)
+--no-switch   -> stay on agent, activate tab
+--background  -> touch nothing rendered anywhere
+```
+
+### Verifying
+
+Use `Claude/Tools/focus_watch.py`, never your eyes: it logs every focus
+transition, so an inert flag cannot pass as a fix. **Two runs per verb:**
+
+1. **With `--background`**, against a _different_ agent than the focused one:
+   the log stays empty, and the surface still exists (`tab show`,
+   `session list`, `list terminals`).
+2. **Without the flag**: the log records exactly the jump it recorded before.
+   Since no default changed, an unflagged call that stops focusing is a
+   regression - and it is the failure mode this design is most likely to
+   produce.
+
 ## How to add a scriptable write
 
 Persistent per-agent and per-tab state goes through **one** message:

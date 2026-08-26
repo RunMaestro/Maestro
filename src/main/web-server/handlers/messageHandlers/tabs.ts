@@ -7,6 +7,7 @@
  */
 
 import path from 'path';
+import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
@@ -66,7 +67,11 @@ export function handleNewTab(
 	message: WebClientMessage
 ): void {
 	const sessionId = message.sessionId as string;
-	logger.info(`[Web] Received new_tab message: session=${sessionId}`, LOG_CONTEXT);
+	const background = readBackgroundField(message);
+	logger.info(
+		`[Web] Received new_tab message: session=${sessionId}, background=${background}`,
+		LOG_CONTEXT
+	);
 
 	if (!sessionId) {
 		ctx.sendError(client, 'Missing sessionId');
@@ -79,13 +84,14 @@ export function handleNewTab(
 	}
 
 	ctx.callbacks
-		.newTab(sessionId)
+		.newTab(sessionId, background)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'new_tab_result',
 				success: !!result,
 				sessionId,
 				tabId: result?.tabId,
+				background,
 				requestId: message.requestId,
 			});
 		})
@@ -308,10 +314,16 @@ export function handleOpenFileTab(
 ): void {
 	const sessionId = message.sessionId as string;
 	const filePath = message.filePath as string;
-	// `switchToAgent` defaults to true so older clients keep the existing UX.
-	const switchToAgent = message.switchToAgent !== false;
+	// Two DIFFERENT asks, and folding one into the other would silently change
+	// behaviour for callers already passing `--no-switch`:
+	//   switchToAgent:false -> stay on the current agent, but still activate
+	//                          the new tab inside the target agent.
+	//   background:true     -> change nothing that is currently rendered,
+	//                          anywhere. Strictly stronger, so it wins.
+	const background = readBackgroundField(message);
+	const switchToAgent = readSwitchToAgentField(message);
 	logger.info(
-		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, switchToAgent=${switchToAgent}`,
+		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, background=${background}, switchToAgent=${switchToAgent}`,
 		LOG_CONTEXT
 	);
 
@@ -351,13 +363,15 @@ export function handleOpenFileTab(
 	}
 
 	ctx.callbacks
-		.openFileTab(sessionId, resolved, switchToAgent)
+		.openFileTab(sessionId, resolved, { background, switchToAgent })
 		.then((success) => {
 			ctx.send(client, {
 				type: 'open_file_tab_result',
 				success,
 				sessionId,
 				filePath,
+				background,
+				switchToAgent,
 				requestId: message.requestId,
 			});
 		})
@@ -517,6 +531,7 @@ export async function handleOpenTerminalTab(
 	const rawShell = message.shell;
 	const rawName = message.name;
 	const rawCommand = message.command;
+	const background = readBackgroundField(message);
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
 	logger.info(
@@ -607,13 +622,14 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command })
+		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',
 				success: result.success,
 				tabId: result.tabId,
 				sessionId,
+				background,
 				requestId: message.requestId,
 			});
 		})

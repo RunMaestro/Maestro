@@ -1,16 +1,18 @@
 // Open/close browser commands - manage browser tabs in the Maestro desktop app.
 //
 // `--background` creates the tab without moving the user: the active agent is
-// left alone and the new tab does not become the visible one. Agents doing
-// research should always use it, then `close-browser <tab-id>` when done, so
-// the window never jumps out from under whoever is working.
+// left alone and the new tab does not become the visible one. This verb has had
+// the flag since it shipped and is the model the others now follow. Agents doing
+// research should always pass it, then `close-browser <tab-id>` when done.
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 interface OpenBrowserOptions {
 	agent?: string;
 	background?: boolean;
+	focus?: boolean;
 	json?: boolean;
 }
 
@@ -64,7 +66,7 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 		process.exit(1);
 	}
 
-	const background = options.background === true;
+	const background = resolveBackgroundFlag(options, 'open-browser');
 
 	try {
 		const result = await withMaestroClient(async (client) => {

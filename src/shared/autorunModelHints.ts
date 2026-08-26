@@ -45,7 +45,8 @@ import {
 	CHECKED_TASK_COUNT_REGEX,
 	UNCHECKED_TASK_REGEX,
 } from './markdownTaskScan';
-import { asTierLevel, type ModelTier } from './modelTiers';
+import { asTierLevel, resolveTierModel, resolveEffortLevel, type ModelTier } from './modelTiers';
+import type { ToolType } from './types';
 
 /**
  * `<!-- MAESTRO:MODEL tier="high" effort="high" -->`
@@ -210,4 +211,115 @@ export function findAllModelHints(content: string): ModelHint[] {
 		hints.push(parseModelMarker(markerMatch[1] || '', index, isTaskLine ? 'task' : 'document'));
 	});
 	return hints;
+}
+
+/**
+ * The resolved `{model, effort}` pair for a hint, flattened to a comparable
+ * string.
+ *
+ * Deliberately re-derives from `modelTiers` rather than calling
+ * `resolveTurnSettings`: that lives in `autorunTurnSettings`, which imports
+ * `ModelHint` from this file. Type-only today, so erased - but a value import
+ * back the other way would make it a real cycle. This needs two lookups, not
+ * the notes and warnings machinery.
+ */
+function settingsKey(
+	toolType: ToolType,
+	hint: ModelHint | null,
+	baselineModel?: string,
+	baselineEffort?: string
+): string {
+	let model = baselineModel;
+	let effort = baselineEffort;
+	if (hint?.tier && hint.tier !== INHERIT_KEYWORD) {
+		model = resolveTierModel(toolType, hint.tier) ?? baselineModel;
+	}
+	if (hint?.effort && hint.effort !== INHERIT_KEYWORD) {
+		effort = resolveEffortLevel(toolType, hint.effort) ?? baselineEffort;
+	}
+	return `${model ?? ''}\u0000${effort ?? ''}`;
+}
+
+/**
+ * How many of the remaining unchecked tasks share the settings the NEXT task
+ * will run under, and how many remain in total.
+ *
+ * Document mode tells the agent to work the whole file in one dispatch, which
+ * is right until the document asks for different settings partway down: the
+ * agent is already running under the first task's model when it reaches a task
+ * that wanted another one. Counting the boundary lets the prompt say "do the
+ * next N, then stop", so the existing `while (remainingTasks > 0)` loop comes
+ * back around and re-resolves for the rest.
+ *
+ * Compares the RESOLVED `{model, effort}` pair, not the tier words, and that
+ * distinction is the whole reason this takes a toolType. `resolveTierModel`
+ * returns undefined for providers with no tier table (codex, copilot-cli,
+ * opencode), so on those `tier="low"` and `tier="high"` both resolve to the
+ * agent's own model - identical settings. Splitting on the words there would
+ * end one dispatch and start another to run at exactly the same configuration.
+ * `tier="default"` versus no marker is the same trap.
+ *
+ * @param content - the document, read fresh; this is recomputed per dispatch
+ * @param toolType - provider, because tier to model mapping is per provider
+ * @param baselineModel - the agent's configured model, the fallback a hint overrides
+ * @param baselineEffort - the agent's configured effort
+ */
+export function countTasksUnderActiveHint(
+	content: string,
+	toolType: ToolType,
+	baselineModel?: string,
+	baselineEffort?: string
+): { count: number; total: number } {
+	let documentHint: ModelHint | null = null;
+	let firstKey: string | null = null;
+	let count = 0;
+	let total = 0;
+
+	forEachMarkdownLine(content, (line, index) => {
+		const markerMatch = line.match(MODEL_MARKER_REGEX);
+
+		if (UNCHECKED_TASK_REGEX.test(line)) {
+			total++;
+			const taskHint = markerMatch ? parseModelMarker(markerMatch[1] || '', index, 'task') : null;
+			const merged = mergeHints(documentHint, taskHint);
+			const key = settingsKey(toolType, merged, baselineModel, baselineEffort);
+			if (firstKey === null) {
+				firstKey = key;
+				count = 1;
+			} else if (key === firstKey && count === total - 1) {
+				// Only extend while the run is UNBROKEN from the first task. Once a
+				// differing task appears, a later task that happens to match again
+				// belongs to a separate segment, not this one.
+				count++;
+			}
+			return;
+		}
+
+		if (CHECKED_TASK_COUNT_REGEX.test(line)) return;
+
+		if (markerMatch) {
+			documentHint = parseModelMarker(markerMatch[1] || '', index, 'document');
+		}
+	});
+
+	return { count, total };
+}
+
+/**
+ * The sentence appended to a document-mode selection block when the document
+ * changes settings partway down, or `''` when the whole remaining document runs
+ * under one configuration.
+ *
+ * Lives here rather than in the renderer's `batchUtils` because the CLI engine
+ * needs the identical sentence and cannot import from `src/renderer`. Two
+ * copies would drift, and the drift would be invisible: both engines would keep
+ * working, just instructing the agent differently for the same document.
+ *
+ * Returning `''` for the common case is what keeps the block BYTE-IDENTICAL for
+ * every playbook written before model hints existed.
+ */
+export function describeSegmentLimit(segment?: { count: number; total: number }): string {
+	if (!segment || segment.count >= segment.total || segment.count < 1) return '';
+	const noun = segment.count === 1 ? 'task' : 'tasks';
+	return `\n\nIMPORTANT: Complete ONLY the next ${segment.count} unchecked ${noun}, then stop and report. The remaining tasks in this document are configured to run with different model or effort settings and will be handled in a separate pass.`;
 }

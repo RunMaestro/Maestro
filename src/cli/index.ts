@@ -401,6 +401,7 @@ program
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
 	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
+	.option('--background', 'Leave the new tab in the background (default; with --new-tab)')
 	.option(
 		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
@@ -488,7 +489,12 @@ program
 	.command('open-file <file-path>')
 	.description('Open a file as a preview tab in the Maestro desktop app')
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
-	.option('--no-switch', "Don't switch the Maestro UI to the target agent/tab")
+	.option(
+		'--background',
+		'Open the preview tab without changing anything currently rendered, on any agent'
+	)
+	.option('--focus', 'Switch to the file after opening it (default)')
+	.option('--no-switch', "Don't switch to the target agent, but still activate the tab there")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
 
@@ -501,6 +507,7 @@ program
 		'--background',
 		'Create the tab without focusing it or switching agents (use for agent research, then close-browser when done)'
 	)
+	.option('--focus', 'Switch to the browser tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openBrowser);
 
@@ -535,6 +542,8 @@ program
 		'--command <command>',
 		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
 	)
+	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--focus', 'Switch to the terminal tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
 
@@ -845,6 +854,8 @@ program
 		'--auto-run-folder <path>',
 		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
 	)
+	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
+	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
@@ -897,6 +908,8 @@ program
 		'-m, --message <text>',
 		'Optional initial prompt to dispatch to the new agent after creation'
 	)
+	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
+	.option('--focus', 'Select the new worktree agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createWorktree);
 
@@ -997,6 +1010,11 @@ program
 program
 	.command('switch-mode <agent-id> <mode>')
 	.description('Switch an agent between "ai" and "terminal" mode')
+	.option(
+		'--background',
+		'Refuse the switch if the agent is the one on screen, rather than changing what the user is looking at'
+	)
+	.option('--focus', 'Switch even when the agent is the one on screen (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, mode, options) => switchMode(agentId, mode, options));
 
@@ -1019,6 +1037,8 @@ tab
 	.description('Open a new tab for an agent (optionally seeded with a prompt)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('-p, --prompt <text>', 'Seed the new AI tab with this prompt')
+	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--focus', 'Switch to the new tab after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabNew(options));
 

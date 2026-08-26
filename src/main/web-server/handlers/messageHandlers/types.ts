@@ -53,7 +53,10 @@ export interface WebClientMessage {
 	filePath?: string;
 	focus?: boolean;
 	force?: boolean;
+	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
 	background?: boolean;
+	/** open_file_tab only: the older, weaker `--no-switch` ask. */
+	switchToAgent?: boolean;
 	[key: string]: unknown;
 }
 
@@ -103,16 +106,24 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean
 	) => Promise<boolean>;
-	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
+	switchMode: (
+		sessionId: string,
+		mode: 'ai' | 'terminal',
+		background?: boolean
+	) => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
-	newTab: (sessionId: string) => Promise<{ tabId: string } | null>;
+	newTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (sessionId: string, tabId: string, newName: string) => Promise<boolean>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
-	openFileTab: (sessionId: string, filePath: string, switchToAgent: boolean) => Promise<boolean>;
+	openFileTab: (
+		sessionId: string,
+		filePath: string,
+		options: { background: boolean; switchToAgent: boolean }
+	) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	openBrowserTab: (
 		sessionId: string,
@@ -124,7 +135,8 @@ export interface MessageHandlerCallbacks {
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (
 		sessionId: string,
@@ -258,14 +270,16 @@ export interface MessageHandlerCallbacks {
 		toolType: string,
 		cwd: string,
 		groupId?: string,
-		config?: CreateSessionConfig
+		config?: CreateSessionConfig,
+		background?: boolean
 	) => Promise<{ sessionId: string } | null>;
 	createWorktreeSession: (
 		parentSessionId: string,
 		config: {
 			branchName: string;
 			baseBranch?: string;
-		}
+		},
+		background?: boolean
 	) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;

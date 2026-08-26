@@ -1,14 +1,28 @@
-// Open file command - open a file as a preview tab in the Maestro desktop app
+// Open file command - open a file as a preview tab in the Maestro desktop app.
+//
+// Focuses by default, as it always has. Two different opt-outs, deliberately
+// NOT merged - folding one into the other would silently change behaviour for
+// anyone already passing `--no-switch`:
+//
+//   --no-switch   stay on the current agent, but still activate the tab in the
+//                 target agent. If you are already on that agent your view
+//                 still changes, which is why the name over-promises.
+//   --background  change nothing that is currently rendered, on any agent.
+//                 Strictly stronger, so it wins when both are passed.
 
 import * as fs from 'fs';
 import * as path from 'path';
 import type { SessionInfo } from '../../shared/types';
 import { withMaestroClient } from '../services/maestro-client';
 import { getSessionById, getSessionHistoryMtimeMs, readSessions } from '../services/storage';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 interface OpenFileOptions {
 	agent?: string;
+	/** commander sets this false for `--no-switch`. Distinct from `background`. */
 	switch?: boolean;
+	background?: boolean;
+	focus?: boolean;
 	json?: boolean;
 }
 
@@ -25,6 +39,9 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 		process.exit(1);
 	}
 
+	const background = resolveBackgroundFlag(options, 'open-file');
+	// `--background` is strictly stronger, so it implies the weaker ask too and
+	// there is no combination that has to be rejected.
 	const switchToAgent = options.switch !== false;
 
 	try {
@@ -34,6 +51,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 					type: 'open_file_tab',
 					sessionId: target.sessionId,
 					filePath: target.absolutePath,
+					background,
 					switchToAgent,
 				},
 				'open_file_tab_result'
@@ -47,9 +65,16 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 						success: true,
 						sessionId: target.sessionId,
 						path: target.absolutePath,
+						background,
+						switchToAgent,
 					})
 				);
-			else console.log(`Opened ${path.basename(target.absolutePath)} in Maestro`);
+			else
+				console.log(
+					`Opened ${path.basename(target.absolutePath)} in Maestro${
+						background ? ' (background tab)' : ''
+					}`
+				);
 		} else {
 			const error = result.error || 'Failed to open file';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));

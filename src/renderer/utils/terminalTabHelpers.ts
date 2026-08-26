@@ -8,6 +8,7 @@ import {
 	getNavigableUnifiedTabOrder,
 	insertAfterActiveInUnifiedTabOrder,
 } from './unifiedTabOrderUtils';
+import { terminalTabFocusFields } from './tabFocusFields';
 
 /** Maximum number of closed terminal tab entries to expose via the public API (e.g., for UI limits). */
 export const MAX_CLOSED_TERMINAL_TABS = 10;
@@ -156,6 +157,13 @@ export function parseTerminalSessionId(
 
 // ─── CRUD Mutations ──────────────────────────────────────────────────────────
 
+/** Options for {@link addTerminalTab}. */
+export interface AddTerminalTabOptions {
+	/** When false, append the tab without making it visible (background create).
+	 *  Every active-* selection and `inputMode` are left untouched. Default true. */
+	activate?: boolean;
+}
+
 /**
  * Mint the next `coworkingId` for a terminal tab plus the bumped session
  * counter. Shared by addTerminalTab and the reopen-closed-tab restore path so
@@ -178,7 +186,13 @@ export function nextTerminalCoworkingId(session: Session): {
 /**
  * Add a terminal tab to a session.
  * Appends the tab to terminalTabs, inserts it into unifiedTabOrder directly to
- * the right of the currently active tab, and makes it the active terminal tab.
+ * the right of the currently active tab, and (unless `activate` is false) makes
+ * it the active terminal tab.
+ *
+ * Activation also sets `inputMode: 'terminal'` via terminalTabFocusFields: a
+ * terminal tab renders in terminal mode only, so activating one without the mode
+ * would select a tab the user cannot see. A BACKGROUND add deliberately leaves
+ * the mode alone - flipping an agent into terminal mode is itself a view change.
  *
  * Mints a stable, monotonic, never-reused `coworkingId` (used by the coworking
  * MCP server to address terminals as "term:N") via the session-level counter
@@ -198,7 +212,7 @@ export function nextTerminalCoworkingId(session: Session): {
 export function addTerminalTab(
 	session: Session,
 	tab: TerminalTab,
-	options: { activate?: boolean } = {}
+	options: AddTerminalTabOptions = {}
 ): Session {
 	const { activate = true } = options;
 	// Mint the base id + bumped counter from the shared source, then let an
@@ -214,18 +228,7 @@ export function addTerminalTab(
 	return {
 		...session,
 		terminalTabs: [...(session.terminalTabs || []), tabWithCoworkingId],
-		...(activate
-			? {
-					activeTerminalTabId: tab.id,
-					activeFileTabId: null,
-					activeBrowserTabId: null,
-					// A newly-created standalone terminal takes over the panel, so it must leave
-					// any active tiled group (mirrors selectTerminalTab). Without this the group
-					// stays active, TiledLayout keeps publishing pane rects, and a tiled browser
-					// overlay bleeds over the terminal view (its webview sits above at z-index 2).
-					activeGroupId: null,
-				}
-			: {}),
+		...(activate ? terminalTabFocusFields(tab.id) : {}),
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 		// Bump strictly past the larger of the bumped counter and the chosen id so
 		// we never hand out the same id twice within a session.

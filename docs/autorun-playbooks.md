@@ -83,19 +83,27 @@ The run configuration modal has **Model** and **Effort** pickers, both defaultin
 
 The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`. See [CLI](cli.md#per-run-model-override).
 
-### Staging a Folder of Documents from the Files Tab
+### Staging Documents from the Files Tab
 
 The Auto Run folder shows up in the **Files** tab like any other directory, so a
-folder of task documents is one right-click away from being a run list.
-Right-click a folder that sits inside the agent's Auto Run folder and choose
-**Stage Documents for Auto Run**. The run configuration modal opens with every
-document under that folder already queued, including the ones in nested
-subfolders, in the same order the Auto Run dropdown lists them. From there it is
-the ordinary modal: reorder, duplicate, set per-document options, then **Go**.
+run list is one right-click away. Right-click anything inside the agent's Auto
+Run folder and choose **Stage Documents for Auto Run**:
 
-The entry only appears on folders inside the Auto Run folder, and it counts what
-it will stage ("Stage 6 Documents for Auto Run"), so an empty folder offers
-nothing.
+- **A folder** stages every document beneath it, nested subfolders included.
+- **A single markdown file** stages just that document.
+- **A multi-selection** stages every document in it. Select the files
+  (`Cmd`/`Ctrl`-click or `Shift`-click), then right-click one of them.
+  Right-clicking a row _outside_ the selection stages only that row instead.
+
+The run configuration modal opens with those documents already queued, in the
+same order the Auto Run dropdown lists them - not the order you selected them.
+From there it is the ordinary modal: reorder, duplicate, set per-document
+options, then **Go**.
+
+The entry only appears when something under the cursor actually resolves to an
+Auto Run document, and it counts what it will stage ("Stage 6 Documents for Auto
+Run"). An empty folder, a non-markdown file, or anything outside the Auto Run
+folder offers nothing.
 
 ## Fresh Context: Task vs Document
 
@@ -346,6 +354,16 @@ An inline marker only overrides the axes it names. Given a document-wide `tier="
 - [ ] Design the caching layer
 - [ ] Rename the config keys <!-- MAESTRO:MODEL tier="default" effort="default" -->
 ```
+
+### Markers in per-document mode
+
+In per-task mode each dispatch is one task, so a marker is honored on the task it names and nothing special happens.
+
+Per-document mode hands the agent the whole file in one run, and a run has one model. When the document changes settings partway down, Auto Run stops the dispatch at that boundary instead: the agent is told to complete only the tasks that share the current settings, and the runner comes straight back around with the next set resolved fresh. A document with a `low` header and one inline `high` task therefore runs as two dispatches, at two different models, without you splitting the file.
+
+A document that names no markers - which is every playbook written before this feature - is unaffected. It is still a single whole-document dispatch, with the same prompt text it has always had.
+
+The boundary is measured on the resolved model and effort, not on the words. On a provider with no tier table (Codex, Copilot-CLI, OpenCode), `tier="low"` and `tier="high"` both fall back to the agent's own model, so they resolve to the same settings and the run is not split. Ending one dispatch to start another at an identical configuration would cost a turn and buy nothing.
 
 ### `low`, `medium`, and `high` are positions, not literal values
 

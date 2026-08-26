@@ -105,7 +105,8 @@ export function registerBrowserTabCallbacks(
 	server.setOpenTerminalTabCallback(
 		async (
 			sessionId: string,
-			config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+			config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+			options?: { background?: boolean }
 		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -141,7 +142,9 @@ export function registerBrowserTabCallbacks(
 					resolve({ success: false });
 					return;
 				}
-				mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel);
+				mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel, {
+					background: options?.background === true,
+				});
 
 				const timeoutId = setTimeout(() => {
 					if (resolved) return;

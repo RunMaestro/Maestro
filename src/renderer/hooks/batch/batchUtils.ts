@@ -3,6 +3,7 @@
  * Extracted from useBatchProcessor.ts for reusability.
  */
 
+import { describeSegmentLimit } from '../../../shared/autorunModelHints';
 import type { TaskSelectionMode } from '../../types';
 import {
 	CHECKED_TASK_COUNT_REGEX,
@@ -56,9 +57,21 @@ function getAutorunDefaultPrompt(): string {
  * blank lines around the swapped block. Falls back to the per-task block if a
  * caller passes an unrecognized value.
  */
-export function getTaskSelectionBlock(mode: TaskSelectionMode | undefined): string {
+export function getTaskSelectionBlock(
+	mode: TaskSelectionMode | undefined,
+	segment?: { count: number; total: number }
+): string {
 	const content = mode === 'document' ? cachedAutorunPerDocumentBlock : cachedAutorunPerTaskBlock;
-	return content.replace(/\s+$/, '');
+	const block = content.replace(/\s+$/, '');
+
+	// Only document mode has a boundary to honour - per-task already stops after
+	// one. The shared helper returns '' when the whole remaining document shares
+	// one setting, which keeps the text BYTE-IDENTICAL to what it has always
+	// been: every playbook written before model hints existed has no markers, so
+	// anything else would change the behaviour of every existing document at
+	// once.
+	if (mode !== 'document') return block;
+	return `${block}${describeSegmentLimit(segment)}`;
 }
 
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)

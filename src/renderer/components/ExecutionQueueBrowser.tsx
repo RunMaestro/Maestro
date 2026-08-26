@@ -662,36 +662,42 @@ function QueueItemRow({
 					    chat: Send Now on the left, controls on the right. Stacking these
 					    vertically forced every card to reserve the height of the whole
 					    button column, which wasted space on the short messages that make
-					    up most of the queue. */}
-					<div className="mt-1.5 flex items-center gap-1">
-						{showForceSend && (
-							<button
-								onClick={(e) => {
-									e.stopPropagation();
-									onForceSend?.();
-								}}
-								disabled={!canForceSend}
-								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-opacity hover:opacity-80 disabled:cursor-default"
-								style={{
-									backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
-									color: theme.colors.warning,
-									opacity: canForceSend ? 1 : 0.5,
-								}}
-								title={forceSendTitle}
-							>
-								<Hammer className="w-3.5 h-3.5" />
-								Send Now
-							</button>
-						)}
+					    up most of the queue. The three-column grid keeps the pills on
+					    the card's center line (equal 1fr outer tracks) exactly like the
+					    inline queue footer and the finished turn's pills. */}
+					<div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
+						<div className="flex items-center gap-1 min-w-0">
+							{showForceSend && (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										onForceSend?.();
+									}}
+									disabled={!canForceSend}
+									className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80 disabled:cursor-default"
+									style={{
+										backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
+										color: theme.colors.warning,
+										opacity: canForceSend ? 1 : 0.5,
+									}}
+									title={forceSendTitle}
+								>
+									<Hammer className="w-3.5 h-3.5" />
+									Send Now
+								</button>
+							)}
+						</div>
 						{/* The model/effort frozen when this item was queued - what it
 						    will spawn under, no matter what is selected by the time the
 						    queue reaches it. */}
-						<TurnSettingPills
-							theme={theme}
-							model={item.turnSettings?.model}
-							effort={item.turnSettings?.effort}
-						/>
-						<div className="ml-auto flex items-center gap-1">
+						<div className="flex items-center justify-center gap-1 min-w-0">
+							<TurnSettingPills
+								theme={theme}
+								model={item.turnSettings?.model}
+								effort={item.turnSettings?.effort}
+							/>
+						</div>
+						<div className="flex items-center justify-end gap-1">
 							{onEdit && (
 								<button
 									onClick={(e) => {
