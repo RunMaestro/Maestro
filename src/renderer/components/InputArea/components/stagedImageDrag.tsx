@@ -22,12 +22,29 @@ export function dragCarriesStagedImage(dataTransfer: DataTransfer | null): boole
 	return Array.from(dataTransfer.types).includes(STAGED_IMAGE_MIME);
 }
 
+/**
+ * A tile is a drag SOURCE and a drop TARGET, and the two sets go on different
+ * elements. The source belongs on the thumbnail itself, because Chromium will
+ * not start an ancestor's drag from inside a form control: with `draggable` on
+ * the wrapper, pressing the thumbnail `<button>` was consumed as a button press
+ * and no drag ever began. The target stays on the wrapper, which is what the
+ * drop geometry is measured against.
+ *
+ * Keeping the source off the wrapper has a second payoff: the remove and
+ * annotate buttons no longer start a drag when you press them.
+ */
 export interface StagedImageTileDragHandlers {
-	draggable: true;
-	onDragStart: (e: React.DragEvent<HTMLElement>) => void;
-	onDragEnd: () => void;
-	onDragOver: (e: React.DragEvent<HTMLElement>) => void;
-	onDrop: (e: React.DragEvent<HTMLElement>) => void;
+	/** Spread on the thumbnail control - the thing the user grabs. */
+	source: {
+		draggable: true;
+		onDragStart: (e: React.DragEvent<HTMLElement>) => void;
+		onDragEnd: () => void;
+	};
+	/** Spread on the tile wrapper - the drop target. */
+	target: {
+		onDragOver: (e: React.DragEvent<HTMLElement>) => void;
+		onDrop: (e: React.DragEvent<HTMLElement>) => void;
+	};
 }
 
 export interface StagedImageDnd {
@@ -79,34 +96,38 @@ export function useStagedImageDnd(
 
 	const tileHandlers = useCallback(
 		(index: number): StagedImageTileDragHandlers => ({
-			draggable: true,
-			onDragStart: (e) => {
-				e.dataTransfer.setData(STAGED_IMAGE_MIME, String(index));
-				// The plain-text flavor is what a drop outside Maestro (or on a
-				// plain text field) receives, and it matches what handleDrop
-				// inserts into the composer.
-				e.dataTransfer.setData('text/plain', screenshotReferenceLabel(index));
-				e.dataTransfer.effectAllowed = 'copyMove';
-				setDragIndex(index);
+			source: {
+				draggable: true,
+				onDragStart: (e) => {
+					e.dataTransfer.setData(STAGED_IMAGE_MIME, String(index));
+					// The plain-text flavor is what a drop outside Maestro (or on a
+					// plain text field) receives, and it matches what handleDrop
+					// inserts into the composer.
+					e.dataTransfer.setData('text/plain', screenshotReferenceLabel(index));
+					e.dataTransfer.effectAllowed = 'copyMove';
+					setDragIndex(index);
+				},
+				onDragEnd: reset,
 			},
-			onDragEnd: reset,
-			onDragOver: (e) => {
-				if (!dragCarriesStagedImage(e.dataTransfer)) return;
-				e.preventDefault();
-				e.dataTransfer.dropEffect = 'move';
-				// Horizontal strip: the cursor's side of the tile's midpoint decides
-				// whether the drop lands before or after it.
-				const rect = e.currentTarget.getBoundingClientRect();
-				const midX = rect.left + rect.width / 2;
-				setDropGap(e.clientX < midX ? index : index + 1);
-			},
-			onDrop: (e) => {
-				if (!dragCarriesStagedImage(e.dataTransfer)) return;
-				e.preventDefault();
-				// Don't let a reorder bubble to the chat drop zone, which would
-				// read it as an attachment drop.
-				e.stopPropagation();
-				commit(e, dropGap);
+			target: {
+				onDragOver: (e) => {
+					if (!dragCarriesStagedImage(e.dataTransfer)) return;
+					e.preventDefault();
+					e.dataTransfer.dropEffect = 'move';
+					// Horizontal strip: the cursor's side of the tile's midpoint decides
+					// whether the drop lands before or after it.
+					const rect = e.currentTarget.getBoundingClientRect();
+					const midX = rect.left + rect.width / 2;
+					setDropGap(e.clientX < midX ? index : index + 1);
+				},
+				onDrop: (e) => {
+					if (!dragCarriesStagedImage(e.dataTransfer)) return;
+					e.preventDefault();
+					// Don't let a reorder bubble to the chat drop zone, which would
+					// read it as an attachment drop.
+					e.stopPropagation();
+					commit(e, dropGap);
+				},
 			},
 		}),
 		[commit, dropGap, reset]

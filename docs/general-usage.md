@@ -480,6 +480,34 @@ When working with image attachments, use the **Image Carousel** to view, manage,
 
 Images can be attached via drag-and-drop, paste, or the attachment button. The carousel shows all images queued for the current message.
 
+## Staged Images
+
+Attached images wait in a thumbnail strip directly above the input box until you send. Their **order in that strip is the order the agent receives them**, so the first thumbnail is Screenshot 1, the second is Screenshot 2, and so on. That is what lets you write "compare Screenshot 1 and Screenshot 3" and have the agent look at the right pictures.
+
+### Reordering
+
+Drag a thumbnail sideways to move it. While a drag is in flight, every thumbnail shows the slot number it currently occupies, so with six or seven screenshots staged you can aim at a number instead of counting positions.
+
+### The Staged Images organizer
+
+With two or more images staged, an expand button (⤢) appears to the left of the strip. It opens the **Staged Images** organizer: the same set of images at a size you can actually tell apart, always numbered, with the same drag-to-reorder.
+
+- **Zoom** with the magnifier buttons in the header to grow or shrink the thumbnails. The size you pick is remembered across sessions; click the percentage to snap back to 100%.
+- **Annotate** or **remove** any image from its thumbnail, exactly as in the strip.
+- **Esc** or the ESC pill closes it.
+
+With a single image staged the button is hidden, since there is nothing to compare and nothing to reorder.
+
+### Referring to an image by number
+
+Drag a thumbnail from the strip into the conversation and Maestro types its reference into your message for you, as `Screenshot 1`, `Screenshot 2`, and so on. Drop it anywhere in the chat area, not just on the input box itself.
+
+**References follow the pictures.** If you write `Screenshot 1` and then reorder the strip so that image becomes the third one, Maestro rewrites the reference in your draft to `Screenshot 3`. Swapping two images swaps both references rather than collapsing them onto one number, and numbers you typed for images that did not move are left alone.
+
+<Note>
+Reordering rewrites references in the message you are currently composing. Messages you have already sent are unchanged, since the agent has already seen those images in the order they were sent.
+</Note>
+
 ## Output Filtering
 
 Filter and search through AI output to find specific content or hide noise.
