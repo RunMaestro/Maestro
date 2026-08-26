@@ -1,4 +1,4 @@
-<!-- Verified 2026-04-10 against origin/rc (06e5a2eb3) -->
+<!-- Verified 2026-08-26 against origin/rc (9c689c545) -->
 
 # Deduplication Tracker
 
@@ -6,21 +6,26 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 
 > **Note:** This `agent-guides` branch does not include the underlying `SCAN-*.md` evidence files (they live on the companion `docs/codebase-dedup-guides` branch). The tracker below references them by name for cross-reference; counts here were grep-verified as of the "Refreshed" date at the top. To re-verify against current code, grep the patterns described in each finding.
 
-**Status markers (as of 2026-04-10 verification against rc 06e5a2eb3):**
+**Status markers (as of 2026-08-26 verification against rc 9c689c545):**
 
-- Component decomposition PARTIALLY RESOLVED: `MainPanel/`, `TabBar/`, `FilePreview/`, `AutoRun/`, `NewInstanceModal/`, `CueModal/` all exist as decomposed directories in `src/renderer/components/`. However, `AutoRun/AutoRun.tsx` (844), `NewInstanceModal/NewInstanceModal.tsx` (843), and `FilePreview/FilePreview.tsx` (1,322) are still over the 800-line target. See `scans/SCAN-OVERSIZED.md` for current counts.
-- **Shared hooks that now exist in rc (infra ready, migration not done):**
+- This is a spot-check refresh, not a full re-scan of every count. Findings below that still quote April 2026 counts should be re-grepped before treating those numbers as current.
+- Component decomposition PARTIALLY RESOLVED: `MainPanel/`, `TabBar/`, `FilePreview/`, `AutoRun/`, `NewInstanceModal/`, `CueModal/` all exist as decomposed directories. Over-800-line files have grown since April: `AutoRun/AutoRun.tsx` (1,064), `NewInstanceModal/NewInstanceModal.tsx` (1,250), `FilePreview/FilePreview.tsx` (2,622). `DocumentGraphView.tsx` is 2,239.
+- **Canonical duration engine now exists:** `src/shared/duration.ts` (`humanizeDuration` plus presets). Re-exported from `src/shared/formatters.ts`. Do not add another unit ladder. `ThinkingStatusPill` still has a local `formatTime` seconds ladder (separate branch: `refactor/thinking-status-duration`).
+- **Canonical `formatTimestamp` now exists** at `src/shared/formatters.ts`. Finding #23 is no longer "create a canonical". Remaining work is deleting local wrappers that already call it, or that still hand-roll a relative ladder (`ParticipantCard`).
+- **Shared hooks that now exist in rc:**
   - `useModalLayer` at `src/renderer/hooks/ui/useModalLayer.ts`
   - `useActiveSession` at `src/renderer/hooks/session/useActiveSession.ts`
   - `useFocusAfterRender` at `src/renderer/hooks/utils/useFocusAfterRender.ts`
   - `useEventListener` at `src/renderer/hooks/utils/useEventListener.ts`
   - `useDebouncedValue`, `useThrottledCallback`, `useDebouncedCallback` at `src/renderer/hooks/utils/useThrottle.ts`
-- **Shared helpers that now exist in rc (infra ready, migration not done):**
-  - `updateSessionWith` exported from `src/renderer/stores/sessionStore.ts:444` (related to finding for Phase 07A)
+- **Shared helpers that now exist in rc:**
+  - `updateSessionWith` exported from `src/renderer/stores/sessionStore.ts`
   - `selectActiveSession` and `selectSessionById` in `src/renderer/stores/sessionStore.ts`
-- **Canonical formatters in rc** (`src/shared/formatters.ts`): `formatSize`, `formatNumber`, `formatTokens`, `formatTokensCompact`, `formatRelativeTime`, `formatActiveTime`, `formatElapsedTime`, `formatCost`, `estimateTokenCount`, `formatElapsedTimeColon`, `truncatePath`, `getParentDir`, `truncateCommand`. **`formatDuration` is in `src/shared/performance-metrics.ts:336`** (not formatters.ts). `formatTime` / `formatTimestamp` NOT YET canonicalized - local copies still present in multiple files.
-- **Shared widget library now exists** (`src/renderer/components/widgets/`): theme-aware, presentational-only, Encore-flag-independent stat cards, charts, sparklines, breakdowns, and starter input controls. Reuse these before hand-rolling new stat cards / bar charts / donuts / sparklines (a recurring duplication source). Full reference: [WIDGET-LIBRARY.md](WIDGET-LIBRARY.md). Note: the older Usage Dashboard chart components (`src/renderer/components/UsageDashboard/`) predate the library and are NOT yet migrated onto it.
-- **NOT in rc** (still genuinely missing): `EmptyState`, `GhostIconButton`, `Spinner` in `src/renderer/components/ui/`; `src/__tests__/helpers/` directory; unified `SpecCommandManager` base (speckit and openspec managers still separate); `spawnGroupChatAgent.ts` helper.
+- **Canonical formatters in rc** (`src/shared/formatters.ts`): `formatSize`, `formatNumber`, `formatTokens`, `formatTokensCompact`, `formatRelativeTime`, `formatTimestamp`, `formatActiveTime`, `formatElapsedTime`, `formatCost`, `estimateTokenCount`, `formatElapsedTimeColon`, `truncatePath`, `getParentDir`, `truncateCommand`. **`formatDuration` is in `src/shared/performance-metrics.ts`** (not formatters.ts). Duration presets live in `src/shared/duration.ts`.
+- **Shared widget library now exists** (`src/renderer/components/widgets/`). Full reference: [WIDGET-LIBRARY.md](WIDGET-LIBRARY.md).
+- **Shared UI primitives that now exist** (April said missing): `GhostIconButton`, `Spinner`, `EmptyStatePlaceholder` in `src/renderer/components/ui/`. There is still no component named exactly `EmptyState`.
+- **Test helpers that now exist:** `src/__tests__/helpers/` (`mockSession`, `mockTheme`, `mockTab`, `resetStores`, and others). Finding #9 is no longer "create the folder".
+- **STILL missing / still open:** unified `SpecCommandManager` base (speckit and openspec managers still separate); dedicated `spawnGroupChatAgent.ts` helper (no file by that name). `tabHelpers.ts` is still a single ~3.4k-line file on `rc` (split started on `refactor/split-tab-helpers`, not merged yet).
 
 ## Priority Legend
 
@@ -39,6 +44,7 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **Count:** 7 component files with zero non-test imports
 - **KEEP:** Nothing (all are unused)
 - **REMOVE:** `AgentSessionsModal.tsx`, `GitWorktreeSection.tsx`, `GroupChatParticipants.tsx`, `MergeProgressModal.tsx`, `ShortcutEditor.tsx`, `SummarizeProgressModal.tsx`, `ThemePicker.tsx`
+- **2026-08-26:** Six of the seven files are gone. `AgentSessionsModal.tsx` is still on disk; no production file imports that component (the modal store still has an `agentSessions` slot). Re-grep before deleting: the store surface may still be wired.
 - **Estimated savings:** ~7 files deleted entirely
 
 ### 2. Dead Store Selectors (53 exports across 9 store files)
@@ -259,16 +265,19 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 
 - **Evidence:** SCAN-FORMATTERS.md, "formatElapsed / formatElapsedTime re-definitions"
 - **Count:** 5 local `formatElapsedTime` definitions; canonical exists at `shared/formatters.ts:144`
-- **KEEP:** `src/shared/formatters.ts:144`
-- **REMOVE:** `MergeProgressModal.tsx:58`, `MergeProgressOverlay.tsx:53`, `SummarizeProgressModal.tsx:57`, `SummarizeProgressOverlay.tsx:51`, `TransferProgressModal.tsx:79` (all identical)
+- **KEEP:** `src/shared/duration.ts` (`formatElapsedTime`), re-exported from `src/shared/formatters.ts`
+- **2026-08-26: RESOLVED.** Grep finds no local `function formatElapsedTime` outside `src/shared/duration.ts`. The listed modal/overlay copies are gone.
 - **Estimated savings:** ~50 lines
 
 ### 23. formatTime/formatTimestamp (15 definitions, no canonical)
 
 - **Evidence:** SCAN-FORMATTERS.md, "formatTime / formatTimestamp re-definitions"
-- **Count:** 15 local `formatTime`/`formatTimestamp` definitions with no canonical source
-- **KEEP:** Create canonical `formatTimestamp(timestamp: number): string` in `shared/formatters.ts`
-- **CONSOLIDATE:** Replace 15 local definitions across `GroupChatHistoryPanel.tsx`, `GroupChatMessages.tsx`, `HistoryEntryItem.tsx`, `HistoryDetailModal.tsx`, `WizardMessageBubble.tsx`, `ParticipantCard.tsx`, `ThinkingStatusPill.tsx`, `LongestAutoRunsTable.tsx`, `ConversationScreen.tsx`, `conductorBadges.ts`, `groupChatExport.ts`, `tabExport.ts`, `MessageHistory.tsx`, `MobileHistoryPanel.tsx`, `ResponseViewer.tsx`
+- **Count (April):** 15 local `formatTime`/`formatTimestamp` definitions with no canonical source
+- **KEEP:** Canonical `formatTimestamp(timestamp, style)` in `src/shared/formatters.ts`. Relative "just now" / "Xm ago" is `formatRelativeTime`. Elapsed tickers belong in `src/shared/duration.ts`, not this finding.
+- **2026-08-26: PARTIAL.** Canonical `formatTimestamp` exists. Remaining local wrappers (grep `function formatTime` / local `formatTimestamp`):
+  - Timestamp wrappers (should call `formatTimestamp` / `formatRelativeTime`): `ParticipantCard.tsx`, `HistoryEntryItem.tsx`, `HistoryDetailModal.tsx`, `GroupChatHistoryPanel.tsx`, `GroupChatMessages.tsx`, `groupChatExport.ts`, `tabExport.ts`, `CueModal/BackupTab.tsx`
+  - Not a timestamp: `ThinkingStatusPill.tsx` (elapsed seconds ladder), `AgentRunDashboard/dashboardHelpers.ts`
+- **CONSOLIDATE:** Delete the wrappers; do not add a second `formatTime` in formatters.ts.
 - **Estimated savings:** ~100 lines
 
 ### 24. formatNumber Re-definitions (5 redundant)
@@ -312,7 +321,7 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **Evidence:** SCAN-TYPES.md, "Duplicate Constant Definitions"
 - **Count:** 3 identical definitions of `AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR`
 - **KEEP:** `PLAYBOOKS_DIR` from `shared/maestro-paths.ts:14` (already canonical)
-- **REMOVE:** `phaseGenerator.ts:153`, `inlineWizardDocumentGeneration.ts:25`, `existingDocsDetector.ts:13` - use `PLAYBOOKS_DIR` directly
+- **2026-08-26: RESOLVED.** No `AUTO_RUN_FOLDER_NAME` constant remains. Call sites use `PLAYBOOKS_DIR`. Template placeholder `{{AUTO_RUN_FOLDER_NAME}}` in wizard prompts is a string token, not a duplicate constant.
 - **Estimated savings:** ~6 lines
 
 ### 29. DEFAULT_CAPABILITIES Duplication (2 definitions)
@@ -450,9 +459,9 @@ _Last validated: 2026-04-01 against origin/rc. All 40 findings re-verified. Chan
 
 2. **Fix AgentCapabilities double-definition bug (P0 #5)** - Eliminate the duplicate interface in `renderer/global.d.ts` that may cause type shadowing.
 
-3. **Consolidate test mock factories (P1 #9, #10, #11, P3 #34)** - Create `src/__tests__/helpers/` with shared `mockSession.ts`, `mockTheme.ts`, `mockTab.ts`. Extend `setup.ts` for `window.maestro`. Touches only test files, zero production risk. Saves ~2,240 lines.
+3. **Consolidate test mock factories (P1 #9, #10, #11, P3 #34)** - `src/__tests__/helpers/` now exists (`mockSession`, `mockTheme`, `mockTab`). Remaining work is migrating the still-duplicated inline mocks onto those factories, not creating the folder.
 
-4. **Extract shared formatters (P1 #12, P2 #22-24, P3 #31-33)** - Consolidate all `formatDuration`, `formatElapsedTime`, `formatTime`, `formatNumber`, `estimateTokens`, `stripAnsi`, `generateId` into `shared/formatters.ts`. Start with UsageDashboard (11 identical copies). Saves ~505 lines.
+4. **Extract shared formatters (P1 #12, P2 #22-24, P3 #31-33)** - Canonical formatters and the duration engine already live in `shared/formatters.ts` / `shared/duration.ts`. Remaining work is deleting local wrappers (#23) and migrating Usage Dashboard charts onto the widget library, not creating a new formatter file.
 
 5. **Unify SpecKit/OpenSpec (P1 #13)** - Create shared base class/functions for the 5 near-identical file pairs. Saves ~1,100 lines.
 
@@ -460,7 +469,7 @@ _Last validated: 2026-04-01 against origin/rc. All 40 findings re-verified. Chan
 
 7. **Extract session update helpers (P1 #6, #7, P2 #15)** - Add `updateAiTab()`, `updateActiveAiTab()` to `sessionStore.ts`. Replace `sessions.find` with `getSessionById`. Eliminate `setSessions` prop-drilling. Saves ~700 lines.
 
-8. **Create shared UI components (P2 #19, #20, P3 #35)** - Build `<GhostIconButton>`, `<Spinner>`, extend `<EmptyStateView>`. Replace 100+ ghost buttons, 95+ spinners, 26+ empty states. Saves ~650 lines.
+8. **Create shared UI components (P2 #19, #20, P3 #35)** - `<GhostIconButton>`, `<Spinner>`, and `<EmptyStatePlaceholder>` now exist. Remaining work is replacing leftover hand-rolled copies, not creating the primitives.
 
 9. **Extract shared hooks (P2 #17, #18, P3 #36, #37)** - Create `useFocusAfterRender`, `useEventListener`. Promote existing debounce hooks. Migrate `activeSession` derivations to selectors. Saves ~490 lines.
 
