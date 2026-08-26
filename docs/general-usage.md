@@ -821,9 +821,9 @@ The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the 
 | **Tile New File Below**     | New blank file tab takes the bottom half              |
 | **Tile New Terminal Below** | New terminal takes the bottom half                    |
 
-**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab.
+Each of the four also has a key of its own, on `Ctrl+Cmd` beside the rest of the pane commands: `Ctrl+Cmd+T` AI chat, `Ctrl+Cmd+B` browser, `Ctrl+Cmd+F` file, `Ctrl+Cmd+J` terminal. The letter matches the plain "new tab" chord, so the tiled twin is that letter with one more modifier. On Windows and Linux the second modifier is the Windows / Super key.
 
-The other three ship with no key assigned, so Maestro is not claiming three more chords on your behalf. They are still in the shortcuts list: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want - it reads **Not set** - and click it to record whatever combination you like. Once bound, the key works everywhere the terminal one does, and Quick Actions starts showing it next to the command.
+Any of the four can be rebound: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want, and click it to record whatever combination you like. Quick Actions shows your binding next to the command.
 
 Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half.
 

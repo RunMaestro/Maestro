@@ -85,11 +85,12 @@ const FOCUS_AFTER_RENDER_DELAY_MS = 50;
 
 /**
  * The "Tile New ... Below" shortcut family, paired with the tab kind each one
- * creates. Only `tileTerminalBelow` has a default binding (Cmd+Shift+J); the
- * other three are registered with `keys: []` so they appear in Settings ->
- * Shortcuts as "Not set" and do nothing until a user records a chord. Keeping
- * them in one table means adding a tileable kind is a single line here rather
- * than a fourth branch in the keydown chain.
+ * creates. All four ship on Ctrl+Cmd (T / J / B / F), the same namespace as the
+ * pane commands, so they are matched with `isPaneShortcut` rather than
+ * `isShortcut` - the general matcher folds Meta and Ctrl into one modifier and
+ * would fire these on a plain Cmd+T. Keeping them in one table means adding a
+ * tileable kind is a single line here rather than a fourth branch in the
+ * keydown chain.
  */
 const TILE_SHORTCUTS: ReadonlyArray<{ shortcutId: string; kind: TileableTabKind }> = [
 	{ shortcutId: 'tileTerminalBelow', kind: 'terminal' },
@@ -489,9 +490,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 
 			// Which "Tile New ... Below" command this event matches, if any. Resolved
 			// once here rather than as four more links in the else-if chain below.
-			// Only the terminal entry ships with a default chord; the rest sit unbound
-			// until a user records one in Settings -> Shortcuts.
-			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isShortcut(e, t.shortcutId)) ?? null;
+			// isPaneShortcut, not isShortcut: the family lives on Ctrl+Cmd and the
+			// general matcher treats Ctrl and Cmd as the same modifier, so it would
+			// report a match on a bare Cmd+T.
+			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isPaneShortcut(e, t.shortcutId)) ?? null;
 
 			// Helper to track shortcut usage for keyboard mastery gamification
 			// AND for the daily-usage time series shown on the Usage Dashboard.
@@ -658,13 +660,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				trackShortcut('toggleMode');
 			} else if (matchedTile) {
-				// The tile-below family. Cmd+Shift+J is the tiled twin of Cmd+J: instead
-				// of a new terminal tab that takes over the panel, split the current view
-				// and put the terminal in the bottom half. The AI / browser / file
-				// entries ship UNBOUND and only reach here once a user records a binding
-				// in Settings (an empty `keys` never matches). tileNewTabInSession
-				// focuses the new pane; it flashes and no-ops when the agent has nothing
-				// on screen to tile with.
+				// The tile-below family. Each is the tiled twin of its plain "new tab"
+				// chord: instead of a new tab that takes over the panel, split the
+				// current view and put the new tab in the bottom half. Unlike the pane
+				// commands above this is NOT gated on an existing group - tiling into a
+				// single view is what creates the first one. tileNewTabInSession focuses
+				// the new pane; it flashes and no-ops when the agent has nothing on
+				// screen to tile with.
 				e.preventDefault();
 				if (ctx.activeSessionId) {
 					tileNewTabInSession(ctx.activeSessionId, matchedTile.kind);

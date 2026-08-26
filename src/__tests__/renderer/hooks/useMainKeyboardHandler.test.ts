@@ -106,6 +106,9 @@ describe('useMainKeyboardHandler', () => {
 
 	beforeEach(() => {
 		addedListeners = [];
+		// Hoisted module mocks survive across tests in this file, so a "did NOT
+		// fire" assertion would otherwise read calls left by an earlier case.
+		mockTileNewTabInSession.mockClear();
 		originalMaestro = (window as any).maestro;
 		const maestroObj = ((window as any).maestro ?? {}) as Record<string, unknown>;
 		const processObj = ((maestroObj.process as Record<string, unknown> | undefined) ??
@@ -691,12 +694,12 @@ describe('useMainKeyboardHandler', () => {
 			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
 		});
 
-		it('tiles a new terminal below on tileTerminalBelow (Cmd+Shift+J)', () => {
+		it('tiles a new terminal below on tileTerminalBelow (Ctrl+Cmd+J)', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
 			const mockHandleOpenTerminalTab = vi.fn();
 			result.current.keyboardHandlerRef.current = createMockContext({
-				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileTerminalBelow',
+				isPaneShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileTerminalBelow',
 				activeSessionId: 'test-session',
 				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
 				handleOpenTerminalTab: mockHandleOpenTerminalTab,
@@ -704,7 +707,12 @@ describe('useMainKeyboardHandler', () => {
 
 			act(() => {
 				window.dispatchEvent(
-					new KeyboardEvent('keydown', { key: 'j', metaKey: true, shiftKey: true, bubbles: true })
+					new KeyboardEvent('keydown', {
+						key: 'j',
+						metaKey: true,
+						ctrlKey: true,
+						bubbles: true,
+					})
 				);
 			});
 
@@ -714,26 +722,45 @@ describe('useMainKeyboardHandler', () => {
 		});
 
 		it.each([
-			['tileAiBelow', 'ai'],
-			['tileBrowserBelow', 'browser'],
-			['tileFileBelow', 'file'],
-		])('tiles a new %s tab once the user binds that shortcut', (shortcutId, kind) => {
-			// These three ship UNBOUND. They reach the handler only after a user
-			// records a chord in Settings, which is what the isShortcut stub models.
+			['tileAiBelow', 'ai', 't'],
+			['tileBrowserBelow', 'browser', 'b'],
+			['tileFileBelow', 'file', 'f'],
+		])('tiles a new %s tab on its Ctrl+Cmd chord', (shortcutId, kind, key) => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 			result.current.keyboardHandlerRef.current = createMockContext({
-				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
+				isPaneShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
 				activeSessionId: 'test-session',
 				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
 			});
 
 			act(() => {
 				window.dispatchEvent(
-					new KeyboardEvent('keydown', { key: 'k', metaKey: true, shiftKey: true, bubbles: true })
+					new KeyboardEvent('keydown', { key, metaKey: true, ctrlKey: true, bubbles: true })
 				);
 			});
 
 			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', kind);
+		});
+
+		it('does not tile when only the general matcher would fire (plain Cmd+T)', () => {
+			// The family lives on Ctrl+Cmd and is matched by isPaneShortcut. Routing
+			// it through isShortcut instead would fire on a bare Cmd+T, because that
+			// matcher folds Ctrl and Cmd into one modifier.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileAiBelow',
+				isPaneShortcut: () => false,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 't', metaKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).not.toHaveBeenCalled();
 		});
 
 		it('should allow tab cycle shortcut with brace characters when layers are open', () => {

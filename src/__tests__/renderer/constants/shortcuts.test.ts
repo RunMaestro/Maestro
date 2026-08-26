@@ -42,27 +42,33 @@ function walk(dir: string, files: string[] = []): string[] {
 function collectShortcutRefs(): {
 	isShortcutIds: Set<string>;
 	isTabShortcutIds: Set<string>;
+	isPaneShortcutIds: Set<string>;
 } {
 	const isShortcutIds = new Set<string>();
 	const isTabShortcutIds = new Set<string>();
+	const isPaneShortcutIds = new Set<string>();
 	// Match calls like `ctx.isShortcut(e, 'foo')` or `isShortcut(e, "bar")`.
-	// Tolerates the receiver (`ctx.`) being absent.
+	// Tolerates the receiver (`ctx.`) being absent. `isShortcutRe` does not also
+	// match `isPaneShortcut(` - there is no word boundary inside the longer name.
 	const isShortcutRe =
 		/\bisShortcut\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*['"]([A-Za-z][A-Za-z0-9]*)['"]\s*\)/g;
 	const isTabShortcutRe =
 		/\bisTabShortcut\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*['"]([A-Za-z][A-Za-z0-9]*)['"]\s*\)/g;
+	const isPaneShortcutRe =
+		/\bisPaneShortcut\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*['"]([A-Za-z][A-Za-z0-9]*)['"]\s*\)/g;
 
 	for (const file of walk(RENDERER_ROOT)) {
 		const src = readFileSync(file, 'utf8');
 		for (const m of src.matchAll(isShortcutRe)) isShortcutIds.add(m[1]);
 		for (const m of src.matchAll(isTabShortcutRe)) isTabShortcutIds.add(m[1]);
+		for (const m of src.matchAll(isPaneShortcutRe)) isPaneShortcutIds.add(m[1]);
 	}
 
-	return { isShortcutIds, isTabShortcutIds };
+	return { isShortcutIds, isTabShortcutIds, isPaneShortcutIds };
 }
 
 describe('keyboard shortcut registry wiring', () => {
-	const { isShortcutIds, isTabShortcutIds } = collectShortcutRefs();
+	const { isShortcutIds, isTabShortcutIds, isPaneShortcutIds } = collectShortcutRefs();
 
 	it('finds shortcut references to scan (sanity check)', () => {
 		// If the regex breaks, the rest of these tests would pass vacuously.
@@ -84,6 +90,24 @@ describe('keyboard shortcut registry wiring', () => {
 		expect(
 			missing,
 			`These ids are passed to isTabShortcut() but are not in TAB_SHORTCUTS (or DEFAULT_SHORTCUTS as a documented fallback).`
+		).toEqual([]);
+	});
+
+	it('every isPaneShortcut(e, <id>) call references a Ctrl+Cmd DEFAULT_SHORTCUTS entry', () => {
+		// isPaneShortcut hard-requires BOTH physical modifiers and returns false for
+		// anything else, so an id bound without a 'Control' token in its keys is
+		// registered, dispatched, and permanently dead.
+		const broken = [...isPaneShortcutIds].filter((id) => {
+			const sc = (DEFAULT_SHORTCUTS as Record<string, Shortcut>)[id];
+			if (!sc) return true;
+			const keys = sc.keys.map((k) => k.toLowerCase());
+			const hasCtrl = keys.includes('control') || keys.includes('ctrl');
+			const hasMeta = keys.includes('meta') || keys.includes('command');
+			return !hasCtrl || !hasMeta;
+		});
+		expect(
+			broken,
+			`These ids are matched with isPaneShortcut() but are missing from DEFAULT_SHORTCUTS or are not bound to a Ctrl+Cmd chord - isPaneShortcut can never match them.`
 		).toEqual([]);
 	});
 
@@ -218,8 +242,9 @@ describe('keyboard shortcut registry wiring', () => {
 
 		const byCombo = new Map<string, string[]>();
 		for (const [id, shortcut] of Object.entries(DEFAULT_SHORTCUTS as Record<string, Shortcut>)) {
-			// An empty binding is the "unbound by default" convention (the tile
-			// family), not a collision - every one of them would otherwise collide.
+			// An empty binding is the "unbound by default" convention (the media
+			// player, Show Snoozed Tabs), not a collision - every one of them would
+			// otherwise collide with every other.
 			if (shortcut.keys.length === 0) continue;
 			const combo = canonical(shortcut.keys);
 			if (!byCombo.has(combo)) byCombo.set(combo, []);
