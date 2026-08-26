@@ -145,6 +145,8 @@ The Tab Switcher provides fuzzy search across all open tabs with quick navigatio
 
 The bulk close operations (Close All, Close Others, Close Left, Close Right) are also available via the [Tab Menu](./context-management#tab-close-operations) hover overlay and Quick Actions (`Cmd+K`).
 
+In the **Snooze Tab** dialog, `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) sets the snooze from anywhere in the dialog - including the note field, where plain `Enter` stays a newline.
+
 ## Input & Output
 
 | Action                   | Key                                               |
