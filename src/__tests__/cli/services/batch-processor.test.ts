@@ -53,6 +53,10 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 // + synopsis prompts without hitting disk. Per-test overrides allowed.
 vi.mock('../../../cli/services/prompt-loader', () => ({
 	getCliPrompt: vi.fn().mockResolvedValue('Default Auto Run prompt'),
+	// The engine now resolves `{{TASK_SELECTION_BLOCK}}` before the
+	// template-variable pass; without this the placeholder reaches the agent
+	// verbatim, which is the bug the substitution fixed.
+	getCliTaskSelectionBlock: vi.fn().mockResolvedValue('SELECTION BLOCK'),
 }));
 
 // Mock storage
@@ -92,6 +96,7 @@ import {
 import { addHistoryEntry, readGroups } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { getCliTaskSelectionBlock } from '../../../cli/services/prompt-loader';
 
 describe('batch-processor', () => {
 	// Helper to create mock session
@@ -444,6 +449,67 @@ describe('batch-processor', () => {
 			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
 			expect(promptArg).toContain('Custom prompt for processing');
 			expect(promptArg).toContain('My task');
+		});
+
+		// The CLI engine never substituted `{{TASK_SELECTION_BLOCK}}`, so step 2 of
+		// the default Auto Run prompt reached the agent as a literal placeholder:
+		// it was handed a template rather than an instruction. The desktop engine
+		// has always expanded it.
+		it('expands the task-selection placeholder rather than sending it verbatim', async () => {
+			// readDocAndCountTasks is called several times per pass (initial scan,
+			// loop check, prompt build, post-task remaining check). Feed the task
+			// through the first three and then report the document as done, or the
+			// loop never terminates.
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3
+					? { content: '- [ ] My task', taskCount: 1 }
+					: { content: '', taskCount: 0 };
+			});
+			vi.mocked(readDocAndGetTasks).mockReturnValue({
+				content: '- [ ] My task',
+				tasks: ['My task'],
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				prompt: 'Step 1\n\n{{TASK_SELECTION_BLOCK}}\n\nStep 3',
+			});
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2] as string;
+			expect(promptArg).toContain('SELECTION BLOCK');
+			expect(promptArg).not.toContain('{{');
+		});
+
+		it('asks for the selection block matching the playbook mode', async () => {
+			// readDocAndCountTasks is called several times per pass (initial scan,
+			// loop check, prompt build, post-task remaining check). Feed the task
+			// through the first three and then report the document as done, or the
+			// loop never terminates.
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3
+					? { content: '- [ ] My task', taskCount: 1 }
+					: { content: '', taskCount: 0 };
+			});
+			vi.mocked(readDocAndGetTasks).mockReturnValue({
+				content: '- [ ] My task',
+				tasks: ['My task'],
+			});
+
+			const session = mockSession();
+			await collectEvents(
+				runPlaybook(session, mockPlaybook({ taskSelectionMode: 'document' }), '/playbooks')
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', {
+				count: 1,
+				total: 1,
+			});
 		});
 
 		it('should track usage statistics', async () => {

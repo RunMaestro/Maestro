@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { findActiveModelHint, findAllModelHints } from '../../shared/autorunModelHints';
+import {
+	findActiveModelHint,
+	findAllModelHints,
+	countTasksUnderActiveHint,
+	describeSegmentLimit,
+} from '../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../shared/autorunTurnSettings';
 
 describe('findActiveModelHint', () => {
@@ -286,5 +291,156 @@ describe('resolveTurnSettings', () => {
 		const resolved = resolveTurnSettings('claude-code', hint, undefined, undefined);
 		expect(resolved.warnings.join(' ')).toContain('hihg');
 		expect(resolved.effort).toBeUndefined();
+	});
+});
+
+describe('countTasksUnderActiveHint', () => {
+	// The regression that would hurt: every playbook written before model hints
+	// existed has no markers, so this path decides whether the whole existing
+	// corpus keeps behaving as it always has.
+	it('reports the whole document when nothing changes settings', () => {
+		const content = ['- [ ] one', '- [ ] two', '- [ ] three'].join('\n');
+		expect(countTasksUnderActiveHint(content, 'claude-code', 'sonnet', 'medium')).toEqual({
+			count: 3,
+			total: 3,
+		});
+	});
+
+	it('stops at the task that asks for a different tier', () => {
+		const content = [
+			'<!-- MAESTRO:MODEL tier="low" -->',
+			'- [ ] one',
+			'- [ ] two',
+			'- [ ] three <!-- MAESTRO:MODEL tier="high" -->',
+			'- [ ] four',
+		].join('\n');
+		expect(countTasksUnderActiveHint(content, 'claude-code', 'sonnet', 'medium')).toEqual({
+			count: 2,
+			total: 4,
+		});
+	});
+
+	it('stops when a standalone marker changes the settings partway down', () => {
+		const content = [
+			'- [ ] one',
+			'<!-- MAESTRO:MODEL tier="high" -->',
+			'- [ ] two',
+			'- [ ] three',
+		].join('\n');
+		expect(countTasksUnderActiveHint(content, 'claude-code', 'sonnet', 'medium')).toEqual({
+			count: 1,
+			total: 3,
+		});
+	});
+
+	// The whole reason this compares resolved settings instead of tier words:
+	// codex has no tier table, so both tiers fall back to the agent's own model.
+	// Splitting here would end one dispatch and start another at exactly the
+	// same configuration.
+	it('does not split on tier words that resolve to identical settings', () => {
+		const content = [
+			'<!-- MAESTRO:MODEL tier="low" -->',
+			'- [ ] one',
+			'- [ ] two <!-- MAESTRO:MODEL tier="high" -->',
+		].join('\n');
+		expect(countTasksUnderActiveHint(content, 'codex', 'gpt-5', 'medium')).toEqual({
+			count: 2,
+			total: 2,
+		});
+	});
+
+	it('treats tier="default" as the agent baseline rather than a change', () => {
+		const content = ['- [ ] one', '- [ ] two <!-- MAESTRO:MODEL tier="default" -->'].join('\n');
+		expect(countTasksUnderActiveHint(content, 'claude-code', 'sonnet', 'medium')).toEqual({
+			count: 2,
+			total: 2,
+		});
+	});
+
+	it('ignores checked tasks and counts only what remains', () => {
+		const content = ['- [x] done', '- [ ] one', '- [ ] two'].join('\n');
+		expect(countTasksUnderActiveHint(content, 'claude-code', 'sonnet', 'medium')).toEqual({
+			count: 2,
+			total: 2,
+		});
+	});
+
+	it('reports nothing for a document with no unchecked tasks', () => {
+		expect(countTasksUnderActiveHint('- [x] done', 'claude-code')).toEqual({ count: 0, total: 0 });
+	});
+});
+
+describe('describeSegmentLimit', () => {
+	it('returns nothing when the whole remainder shares one setting', () => {
+		expect(describeSegmentLimit({ count: 3, total: 3 })).toBe('');
+		expect(describeSegmentLimit(undefined)).toBe('');
+	});
+
+	it('names the boundary when the settings change partway down', () => {
+		const text = describeSegmentLimit({ count: 2, total: 5 });
+		expect(text).toContain('ONLY the next 2 unchecked tasks');
+		expect(text).toContain('separate pass');
+	});
+
+	it('says "task" rather than "tasks" for a single one', () => {
+		expect(describeSegmentLimit({ count: 1, total: 4 })).toContain('next 1 unchecked task,');
+	});
+});
+
+/**
+ * The contract the two pieces make together: a document that changes settings
+ * partway down must produce MORE THAN ONE dispatch, each at its own resolved
+ * model, rather than one dispatch that silently runs every task at whatever the
+ * first task asked for. The engines recompute both of these per dispatch from
+ * the document as it stands, so replaying them over the checked-off document is
+ * the same walk the runner does.
+ */
+describe('document-mode dispatch boundary', () => {
+	const dispatch = (content: string) => {
+		const settings = resolveTurnSettings(
+			'claude-code',
+			findActiveModelHint(content),
+			'sonnet',
+			'medium'
+		);
+		const segment = countTasksUnderActiveHint(content, 'claude-code', 'sonnet', 'medium');
+		return { model: settings.model, effort: settings.effort, segment };
+	};
+
+	it('splits a mixed-tier document into two dispatches at different models', () => {
+		const first = dispatch(
+			[
+				'<!-- MAESTRO:MODEL tier="low" -->',
+				'- [ ] one',
+				'- [ ] two',
+				'- [ ] three <!-- MAESTRO:MODEL tier="high" -->',
+			].join('\n')
+		);
+		expect(first.segment).toEqual({ count: 2, total: 3 });
+
+		// The runner checks off what it completed and comes back around.
+		const second = dispatch(
+			[
+				'<!-- MAESTRO:MODEL tier="low" -->',
+				'- [x] one',
+				'- [x] two',
+				'- [ ] three <!-- MAESTRO:MODEL tier="high" -->',
+			].join('\n')
+		);
+		expect(second.segment).toEqual({ count: 1, total: 1 });
+
+		// Two dispatches, and they are genuinely at different models - not two
+		// passes over the same configuration.
+		expect(first.model).toBeTruthy();
+		expect(second.model).toBeTruthy();
+		expect(second.model).not.toBe(first.model);
+	});
+
+	it('leaves an unmarked document as a single whole-document dispatch', () => {
+		const only = dispatch(['- [ ] one', '- [ ] two', '- [ ] three'].join('\n'));
+		expect(only.segment).toEqual({ count: 3, total: 3 });
+		expect(describeSegmentLimit(only.segment)).toBe('');
+		expect(only.model).toBe('sonnet');
+		expect(only.effort).toBe('medium');
 	});
 });

@@ -19,7 +19,7 @@ import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
-import { findActiveModelHint } from '../../../shared/autorunModelHints';
+import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
 
 /**
@@ -394,9 +394,21 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// Resolve the task-selection block placeholder before the generic template
 			// substitution pass so any variables inside the swapped-in block are also
 			// expanded. No-op if the user has removed the placeholder from their prompt.
+			// In document mode, tell the agent to stop at the point where the
+			// document asks for DIFFERENT settings: it is already running under
+			// the settings resolved above, so it cannot honour a change it reads
+			// halfway down. The loop comes back around and re-resolves for the
+			// rest. Same content and baseline as the resolve above, so the two
+			// cannot disagree about where the boundary is.
+			const hintSegment = countTasksUnderActiveHint(
+				documentContent,
+				session.toolType,
+				session.customModel,
+				session.customEffort
+			);
 			const promptWithSelectionBlock = customPrompt.replace(
 				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
-				getTaskSelectionBlock(taskSelectionMode)
+				getTaskSelectionBlock(taskSelectionMode, hintSegment)
 			);
 
 			// Substitute template variables in the prompt

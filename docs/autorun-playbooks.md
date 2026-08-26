@@ -270,6 +270,16 @@ An inline marker only overrides the axes it names. Given a document-wide `tier="
 - [ ] Rename the config keys <!-- MAESTRO:MODEL tier="default" effort="default" -->
 ```
 
+### Markers in per-document mode
+
+In per-task mode each dispatch is one task, so a marker is honored on the task it names and nothing special happens.
+
+Per-document mode hands the agent the whole file in one run, and a run has one model. When the document changes settings partway down, Auto Run stops the dispatch at that boundary instead: the agent is told to complete only the tasks that share the current settings, and the runner comes straight back around with the next set resolved fresh. A document with a `low` header and one inline `high` task therefore runs as two dispatches, at two different models, without you splitting the file.
+
+A document that names no markers - which is every playbook written before this feature - is unaffected. It is still a single whole-document dispatch, with the same prompt text it has always had.
+
+The boundary is measured on the resolved model and effort, not on the words. On a provider with no tier table (Codex, Copilot-CLI, OpenCode), `tier="low"` and `tier="high"` both fall back to the agent's own model, so they resolve to the same settings and the run is not split. Ending one dispatch to start another at an identical configuration would cost a turn and buy nothing.
+
 ### `low`, `medium`, and `high` are positions, not literal values
 
 The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's effort ladder runs `low, medium, high, xhigh, max`, so:

@@ -18,10 +18,10 @@ import { parseSynopsis } from '../../shared/synopsis';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
-import { getCliPrompt } from './prompt-loader';
+import { getCliPrompt, getCliTaskSelectionBlock } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
-import { findActiveModelHint } from '../../shared/autorunModelHints';
+import { findActiveModelHint, countTasksUnderActiveHint } from '../../shared/autorunModelHints';
 import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
 import { cheapTurnSettings } from '../../shared/modelTiers';
 
@@ -424,15 +424,10 @@ export async function* runPlaybook(
 						documentPath: docFilePath,
 					};
 
-					// Substitute template variables in the prompt
-					// Use default Auto Run prompt if playbook.prompt is empty/null
-					// Marketplace playbooks with prompt: null will use the default
-					const basePrompt = substituteTemplateVariables(
-						playbook.prompt || (await getCliPrompt(PROMPT_IDS.AUTORUN_DEFAULT)),
-						templateContext
-					);
-
-					// Read document content and expand template variables in it
+					// Read document content and expand template variables in it. Read
+					// BEFORE the prompt is built: the selection block depends on where
+					// the document's model hints change, so the content has to exist
+					// first.
 					const { content: docContent } = readDocAndCountTasks(folderPath, docEntry.filename);
 					const expandedDocContent = docContent
 						? substituteTemplateVariables(docContent, templateContext)
@@ -442,6 +437,31 @@ export async function* runPlaybook(
 					if (expandedDocContent && expandedDocContent !== docContent) {
 						writeDoc(folderPath, `${docEntry.filename}.md`, expandedDocContent);
 					}
+
+					// Resolve the task-selection block BEFORE the template-variable pass,
+					// so variables inside the swapped-in block expand too. The desktop
+					// engine has always done this (useDocumentProcessor -> batchUtils);
+					// the CLI never did, so `{{TASK_SELECTION_BLOCK}}` reached the agent
+					// as a literal placeholder in step 2 of the default prompt. The
+					// agent was being handed a template, not an instruction.
+					const rawBasePrompt = playbook.prompt || (await getCliPrompt(PROMPT_IDS.AUTORUN_DEFAULT));
+					// Same content and baseline the model hint is resolved from below, so
+					// the boundary the prompt names and the settings the run uses cannot
+					// disagree.
+					const hintSegment = countTasksUnderActiveHint(
+						expandedDocContent,
+						session.toolType,
+						session.customModel,
+						session.customEffort
+					);
+					const selectionBlock = await getCliTaskSelectionBlock(
+						playbook.taskSelectionMode,
+						hintSegment
+					);
+					const basePrompt = substituteTemplateVariables(
+						rawBasePrompt.replace(/\{\{TASK_SELECTION_BLOCK\}\}/gi, selectionBlock),
+						templateContext
+					);
 
 					// Combine prompt with document content - agent works on what it's given
 					// Include explicit file path so agent knows where to save changes
