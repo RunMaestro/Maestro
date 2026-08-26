@@ -337,12 +337,14 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
-			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
+			callback: (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => void
 		) => () => void;
 		onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectSession: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
-		onRemoteNewTab: (callback: (sessionId: string, responseChannel: string) => void) => () => void;
+		onRemoteNewTab: (
+			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
+		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteRenameTab: (
@@ -356,7 +358,11 @@ interface MaestroAPI {
 		) => () => void;
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
 		onRemoteOpenFileTab: (
-			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
+			callback: (
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => void
 		) => () => void;
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
@@ -409,7 +415,8 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => void
 		) => () => void;
 		sendRemoteOpenTerminalTabResponse: (
@@ -434,7 +441,12 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteListTerminalTabsResponse: (responseChannel: string, tabs: unknown[]) => void;
 		onRemoteNewAITabWithPrompt: (
-			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
 			responseChannel: string,
@@ -467,7 +479,8 @@ interface MaestroAPI {
 					branchName: string;
 					baseBranch?: string;
 				},
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => void
 		) => () => void;
 		sendRemoteCreateWorktreeSessionResponse: (
@@ -547,7 +560,8 @@ interface MaestroAPI {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => void
 		) => () => void;
 		sendRemoteCreateSessionResponse: (

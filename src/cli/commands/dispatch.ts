@@ -5,12 +5,17 @@
 import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
 import { getSettingDefault } from '../../shared/settingsMetadata';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 export interface DispatchOptions {
 	newTab?: boolean;
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
 	force?: boolean;
+	/** Explicitly ask for background placement of a `--new-tab` tab (the default). */
+	background?: boolean;
+	/** Switch to the new tab after creating it. Only meaningful with --new-tab. */
+	focus?: boolean;
 }
 
 export interface DispatchResponse {
@@ -86,7 +91,14 @@ export async function runDispatch(
 		const tabId = await withMaestroClient(async (client) => {
 			if (options.newTab) {
 				const result = await client.sendCommand<{ tabId?: string }>(
-					{ type: 'new_ai_tab_with_prompt', sessionId: agentId, prompt: message },
+					{
+						type: 'new_ai_tab_with_prompt',
+						sessionId: agentId,
+						prompt: message,
+						// Background by default: a dispatched prompt is an agent talking to
+						// an agent, and the tab id we return is how the caller follows it.
+						background: resolveBackgroundFlag(options, 'dispatch-new-tab'),
+					},
 					'new_ai_tab_with_prompt_result'
 				);
 				// `--new-tab`'s sole purpose is to surface a fresh tab id for

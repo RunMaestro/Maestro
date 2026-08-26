@@ -120,6 +120,37 @@ describe('tab commands', () => {
 		expect(p.prompt).toBe('hello');
 	});
 
+	describe('tab new placement', () => {
+		// `tab new --prompt` and `dispatch --new-tab` send the SAME
+		// new_ai_tab_with_prompt message and disagree about the default: tab new
+		// has always focused, dispatch has always been background. That is why the
+		// default is keyed by verb rather than by message, and it is what these
+		// assertions pin down.
+		it('stays foreground by default, on both message shapes', async () => {
+			const getNoPrompt = mockTab({ success: true, tabId: 'tab-new' });
+			await tabNew({ agent: 'agent-1' });
+			expect(getNoPrompt().background).toBe(false);
+
+			const getWithPrompt = mockTab({ success: true, tabId: 'tab-new' });
+			await tabNew({ agent: 'agent-1', prompt: 'hello' });
+			expect(getWithPrompt().type).toBe('new_ai_tab_with_prompt');
+			expect(getWithPrompt().background).toBe(false);
+		});
+
+		it('puts background:true on the wire for --background', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'tab-new' });
+			await tabNew({ agent: 'agent-1', background: true });
+			expect(getPayload().background).toBe(true);
+			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('background'));
+		});
+
+		it('lets --focus name the default explicitly', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'tab-new' });
+			await tabNew({ agent: 'agent-1', background: true, focus: true });
+			expect(getPayload().background).toBe(false);
+		});
+	});
+
 	it('tab close resolves the owning agent from the tab id', async () => {
 		const getPayload = mockTab({ success: true });
 		await tabClose('tab-bbbb', {});

@@ -659,27 +659,29 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to switch session mode through the desktop
 		// This forwards to the renderer which handles state updates and broadcasts
-		server.setSwitchModeCallback(async (sessionId: string, mode: 'ai' | 'terminal') => {
-			logger.info(
-				`[Web→Desktop] Mode switch callback invoked: session=${sessionId}, mode=${mode}`,
-				'WebServer'
-			);
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for switchMode', 'WebServer');
-				return false;
-			}
+		server.setSwitchModeCallback(
+			async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => {
+				logger.info(
+					`[Web→Desktop] Mode switch callback invoked: session=${sessionId}, mode=${mode}`,
+					'WebServer'
+				);
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for switchMode', 'WebServer');
+					return false;
+				}
 
-			// Forward to renderer - it will handle mode switch and broadcasts
-			// This ensures web mode switches go through exact same code path as desktop
-			logger.info(`[Web→Desktop] Sending IPC remote:switchMode to renderer`, 'WebServer');
-			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for switchMode', 'WebServer');
-				return false;
+				// Forward to renderer - it will handle mode switch and broadcasts
+				// This ensures web mode switches go through exact same code path as desktop
+				logger.info(`[Web→Desktop] Sending IPC remote:switchMode to renderer`, 'WebServer');
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for switchMode', 'WebServer');
+					return false;
+				}
+				mainWindow.webContents.send('remote:switchMode', sessionId, mode, background === true);
+				return true;
 			}
-			mainWindow.webContents.send('remote:switchMode', sessionId, mode);
-			return true;
-		});
+		);
 
 		// Set up callback for web server to select/switch to a session in the desktop
 		// This forwards to the renderer which handles state updates and broadcasts
@@ -731,8 +733,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return true;
 		});
 
-		server.setNewTabCallback(async (sessionId: string) => {
-			logger.info(`[Web→Desktop] New tab callback invoked: session=${sessionId}`, 'WebServer');
+		server.setNewTabCallback(async (sessionId: string, background?: boolean) => {
+			logger.info(
+				`[Web→Desktop] New tab callback invoked: session=${sessionId}, background=${background === true}`,
+				'WebServer'
+			);
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for newTab', 'WebServer');
@@ -758,7 +763,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					resolve(null);
 					return;
 				}
-				mainWindow.webContents.send('remote:newTab', sessionId, responseChannel);
+				mainWindow.webContents.send(
+					'remote:newTab',
+					sessionId,
+					responseChannel,
+					background === true
+				);
 
 				// Timeout after 5 seconds - clean up the listener to prevent memory leak
 				const timeoutId = setTimeout(() => {
@@ -855,7 +865,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		});
 
 		server.setOpenFileTabCallback(
-			async (sessionId: string, filePath: string, switchToAgent: boolean) => {
+			async (
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
 					logger.warn('mainWindow is null for openFileTab', 'WebServer');
@@ -866,7 +880,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					logger.warn('webContents is not available for openFileTab', 'WebServer');
 					return false;
 				}
-				mainWindow.webContents.send('remote:openFileTab', sessionId, filePath, switchToAgent);
+				mainWindow.webContents.send('remote:openFileTab', sessionId, filePath, {
+					background: options.background,
+					switchToAgent: options.switchToAgent,
+				});
 				return true;
 			}
 		);
@@ -1023,7 +1040,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		server.setOpenTerminalTabCallback(
 			async (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				options?: { background?: boolean }
 			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
@@ -1059,7 +1077,15 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						resolve({ success: false });
 						return;
 					}
-					mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel);
+					mainWindow.webContents.send(
+						'remote:openTerminalTab',
+						sessionId,
+						config,
+						responseChannel,
+						{
+							background: options?.background === true,
+						}
+					);
 
 					const timeoutId = setTimeout(() => {
 						if (resolved) return;
@@ -1178,61 +1204,64 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		server.setNewAITabWithPromptCallback(async (sessionId: string, prompt: string) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return { success: false };
-			}
-
-			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
-				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					// Renderer was updated to ack with `{ success, tabId? }`. Older
-					// renderers that still send a bare boolean stay supported via
-					// the `result === true` fallback.
-					if (typeof result === 'object' && result !== null) {
-						const r = result as { success?: unknown; tabId?: unknown };
-						resolve({
-							success: r.success === true,
-							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
-						});
-					} else {
-						resolve({ success: result === true });
-					}
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false });
-					return;
+		server.setNewAITabWithPromptCallback(
+			async (sessionId: string, prompt: string, background?: boolean) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
+					return { success: false };
 				}
-				mainWindow.webContents.send(
-					'remote:newAITabWithPrompt',
-					sessionId,
-					prompt,
-					responseChannel
-				);
 
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`newAITabWithPrompt callback timed out for session ${sessionId}`,
-						'WebServer'
+				return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
+					const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						// Renderer was updated to ack with `{ success, tabId? }`. Older
+						// renderers that still send a bare boolean stay supported via
+						// the `result === true` fallback.
+						if (typeof result === 'object' && result !== null) {
+							const r = result as { success?: unknown; tabId?: unknown };
+							resolve({
+								success: r.success === true,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							});
+						} else {
+							resolve({ success: result === true });
+						}
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:newAITabWithPrompt',
+						sessionId,
+						prompt,
+						responseChannel,
+						background === true
 					);
-					resolve({ success: false });
-				}, 5000);
-			});
-		});
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`newAITabWithPrompt callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false });
+					}, 5000);
+				});
+			}
+		);
 
 		server.setRefreshAutoRunDocsCallback(async (sessionId: string) => {
 			const mainWindow = getMainWindow();
@@ -1553,7 +1582,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to create a session
 		// Uses IPC request-response pattern - renderer creates the session and responds with sessionId
-		server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
+		server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config, background) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for createSession', 'WebServer');
@@ -1585,7 +1614,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					cwd,
 					groupId,
 					config,
-					responseChannel
+					responseChannel,
+					background === true
 				);
 
 				const timeoutId = setTimeout(() => {
@@ -1601,50 +1631,53 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// Set up callback for web server to create a worktree agent off a parent.
 		// Mirrors the createSession bridge: hand off to the renderer (which owns
 		// the worktree-spawn helper) and resolve with the new agent's session id.
-		server.setCreateWorktreeSessionCallback(async (parentSessionId: string, config: any) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for createWorktreeSession', 'WebServer');
-				return { success: false, error: 'Main window not available' };
-			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:createWorktreeSession:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result || { success: false, error: 'No response' });
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for createWorktreeSession', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false, error: 'Web contents not available' });
-					return;
+		server.setCreateWorktreeSessionCallback(
+			async (parentSessionId: string, config: any, background?: boolean) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for createWorktreeSession', 'WebServer');
+					return { success: false, error: 'Main window not available' };
 				}
-				mainWindow.webContents.send(
-					'remote:createWorktreeSession',
-					parentSessionId,
-					config,
-					responseChannel
-				);
 
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`createWorktreeSession callback timed out for parent ${parentSessionId}`,
-						'WebServer'
+				return new Promise((resolve) => {
+					const responseChannel = `remote:createWorktreeSession:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						resolve(result || { success: false, error: 'No response' });
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for createWorktreeSession', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, error: 'Web contents not available' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:createWorktreeSession',
+						parentSessionId,
+						config,
+						responseChannel,
+						background === true
 					);
-					resolve({ success: false, error: 'Timeout' });
-				}, 30000);
-			});
-		});
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`createWorktreeSession callback timed out for parent ${parentSessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false, error: 'Timeout' });
+					}, 30000);
+				});
+			}
+		);
 
 		// Set up callback for web server to delete a session
 		// Fire-and-forget pattern

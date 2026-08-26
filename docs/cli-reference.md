@@ -144,6 +144,8 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | Option           | Description                                                                                                                                          | Default |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `--new-tab`      | Create a fresh AI tab and dispatch the prompt into it                                                                                                | -       |
+| `--background`   | Leave the new tab in the background (default; with --new-tab)                                                                                        | -       |
+| `--focus`        | Switch to the new tab after creating it (with --new-tab)                                                                                             | -       |
 | `-t, --tab <id>` | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                             | -       |
 | `-f, --force`    | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy) | -       |
 
@@ -173,11 +175,13 @@ Print conversation history for a desktop tab
 
 Open a file as a preview tab in the Maestro desktop app
 
-| Option             | Description                                                        | Default |
-| ------------------ | ------------------------------------------------------------------ | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent) | -       |
-| `--no-switch`      | Don't switch the Maestro UI to the target agent/tab                | -       |
-| `--json`           | Output as JSON (for scripting)                                     | -       |
+| Option             | Description                                                                     | Default |
+| ------------------ | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)              | -       |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent | -       |
+| `--focus`          | Switch to the file after opening it (default)                                   | -       |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there              | -       |
+| `--json`           | Output as JSON (for scripting)                                                  | -       |
 
 ## `maestro-cli open-browser <url>`
 
@@ -187,6 +191,7 @@ Open a URL as a browser tab in the Maestro desktop app
 | ------------------ | ------------------------------------------------------------------------------------------------------------- | ------- |
 | `-a, --agent <id>` | Target agent by ID (defaults to active)                                                                       | -       |
 | `--background`     | Create the tab without focusing it or switching agents (use for agent research, then close-browser when done) | -       |
+| `--focus`          | Switch to the browser tab after opening it (default)                                                          | -       |
 | `--json`           | Output as JSON (for scripting)                                                                                | -       |
 
 ## `maestro-cli open [surface]`
@@ -218,6 +223,8 @@ Open a new terminal tab in the Maestro desktop app
 | `--shell <shell>`     | Shell binary to use (default: zsh)                                                              | -       |
 | `--name <name>`       | Display name for the tab                                                                        | -       |
 | `--command <command>` | Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts) | -       |
+| `--background`        | Create the tab without moving the view (agent and tab stay put)                                 | -       |
+| `--focus`             | Switch to the terminal tab after opening it (default)                                           | -       |
 | `--json`              | Output as JSON (for scripting)                                                                  | -       |
 
 ## `maestro-cli send-terminal [command]`
@@ -502,6 +509,8 @@ Create a new agent in the Maestro desktop app
 | `--ssh-cwd <path>`                | Working directory override on SSH remote                                                         | -               |
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote) | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)   | -               |
+| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                             | -               |
+| `--focus`                         | Select the new agent after creating it (default)                                                 | -               |
 | `--json`                          | Output as JSON (for scripting)                                                                   | -               |
 
 ## `maestro-cli create-group <name>`
@@ -540,6 +549,8 @@ Create a new agent in a git worktree branched off an existing parent agent
 | `-b, --branch <name>`  | Branch name for the worktree (created if it does not exist)                                                        | -       |
 | `--base-branch <name>` | Ref the new branch is based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the parent repo HEAD. | -       |
 | `-m, --message <text>` | Optional initial prompt to dispatch to the new agent after creation                                                | -       |
+| `--background`         | Create the agent without selecting it (Left Bar selection stays put)                                               | -       |
+| `--focus`              | Select the new worktree agent after creating it (default)                                                          | -       |
 | `--json`               | Output as JSON (for scripting)                                                                                     | -       |
 
 ## `maestro-cli remove-agent <agent-id>`
@@ -614,9 +625,11 @@ Focus (select) an agent in the Maestro desktop UI
 
 Switch an agent between "ai" and "terminal" mode
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option         | Description                                                                                           | Default |
+| -------------- | ----------------------------------------------------------------------------------------------------- | ------- |
+| `--background` | Refuse the switch if the agent is the one on screen, rather than changing what the user is looking at | -       |
+| `--focus`      | Switch even when the agent is the one on screen (default)                                             | -       |
+| `--json`       | Output as JSON (for scripting)                                                                        | -       |
 
 ## `maestro-cli tab`
 
@@ -626,11 +639,13 @@ Manage an agent's tabs in the desktop app
 
 Open a new tab for an agent (optionally seeded with a prompt)
 
-| Option                | Description                          | Default |
-| --------------------- | ------------------------------------ | ------- |
-| `-a, --agent <id>`    | Target agent ID                      | -       |
-| `-p, --prompt <text>` | Seed the new AI tab with this prompt | -       |
-| `--json`              | Output as JSON (for scripting)       | -       |
+| Option                | Description                                                     | Default |
+| --------------------- | --------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Target agent ID                                                 | -       |
+| `-p, --prompt <text>` | Seed the new AI tab with this prompt                            | -       |
+| `--background`        | Create the tab without moving the view (agent and tab stay put) | -       |
+| `--focus`             | Switch to the new tab after creating it (default)               | -       |
+| `--json`              | Output as JSON (for scripting)                                  | -       |
 
 ## `maestro-cli tab close <tab-id>`
 

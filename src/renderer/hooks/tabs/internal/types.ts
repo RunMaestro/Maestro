@@ -73,7 +73,13 @@ export type MediaOpenMode = 'play' | 'queue';
 export interface FilePreviewTabHandlersReturn {
 	handleOpenFileTab: (
 		file: FileTabOpenParams,
-		options?: { openInNewTab?: boolean; targetSessionId?: string; mediaMode?: MediaOpenMode }
+		options?: {
+			openInNewTab?: boolean;
+			targetSessionId?: string;
+			mediaMode?: MediaOpenMode;
+			/** false = create the tab without showing it (background placement). */
+			activate?: boolean;
+		}
 	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;
 	handleCloseFileTab: (tabId: string) => void;

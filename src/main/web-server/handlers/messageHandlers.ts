@@ -56,6 +56,7 @@ import {
 	resolveUiSurfaceTab,
 	surfaceTabIds,
 } from '../../../shared/uiSurfaces';
+import { readBackgroundField, readSwitchToAgentField } from '../../../shared/focusPlacement';
 import type {
 	AutoRunDocument,
 	AutoRunState,
@@ -150,6 +151,10 @@ export interface WebClientMessage {
 	filePath?: string;
 	focus?: boolean;
 	force?: boolean;
+	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
+	background?: boolean;
+	/** open_file_tab only: the older, weaker `--no-switch` ask. */
+	switchToAgent?: boolean;
 	[key: string]: unknown;
 }
 
@@ -198,16 +203,24 @@ export interface MessageHandlerCallbacks {
 		force?: boolean,
 		images?: string[]
 	) => Promise<boolean>;
-	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
+	switchMode: (
+		sessionId: string,
+		mode: 'ai' | 'terminal',
+		background?: boolean
+	) => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
-	newTab: (sessionId: string) => Promise<{ tabId: string } | null>;
+	newTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (sessionId: string, tabId: string, newName: string) => Promise<boolean>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
-	openFileTab: (sessionId: string, filePath: string, switchToAgent: boolean) => Promise<boolean>;
+	openFileTab: (
+		sessionId: string,
+		filePath: string,
+		options: { background: boolean; switchToAgent: boolean }
+	) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
@@ -219,7 +232,8 @@ export interface MessageHandlerCallbacks {
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (
 		sessionId: string,
@@ -228,7 +242,8 @@ export interface MessageHandlerCallbacks {
 	listTerminalTabs: (sessionId?: string) => Promise<TerminalTabInfo[]>;
 	newAITabWithPrompt: (
 		sessionId: string,
-		prompt: string
+		prompt: string,
+		background?: boolean
 	) => Promise<{ success: boolean; tabId?: string }>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
@@ -308,14 +323,16 @@ export interface MessageHandlerCallbacks {
 		toolType: string,
 		cwd: string,
 		groupId?: string,
-		config?: CreateSessionConfig
+		config?: CreateSessionConfig,
+		background?: boolean
 	) => Promise<{ sessionId: string } | null>;
 	createWorktreeSession: (
 		parentSessionId: string,
 		config: {
 			branchName: string;
 			baseBranch?: string;
-		}
+		},
+		background?: boolean
 	) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
@@ -994,8 +1011,9 @@ export class WebSocketMessageHandler {
 	private handleSwitchMode(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
 		const mode = message.mode as 'ai' | 'terminal';
+		const background = readBackgroundField(message);
 		logger.info(
-			`[Web] Received switch_mode message: session=${sessionId}, mode=${mode}`,
+			`[Web] Received switch_mode message: session=${sessionId}, mode=${mode}, background=${background}`,
 			LOG_CONTEXT
 		);
 
@@ -1014,7 +1032,7 @@ export class WebSocketMessageHandler {
 		// This ensures single source of truth - desktop handles state updates and broadcasts
 		logger.info(`[Web] Calling switchModeCallback for session ${sessionId}: ${mode}`, LOG_CONTEXT);
 		this.callbacks
-			.switchMode(sessionId, mode)
+			.switchMode(sessionId, mode, background)
 			.then(async (success) => {
 				// Spawn or kill the web terminal PTY based on mode
 				if (success && mode === 'terminal') {
@@ -1199,7 +1217,11 @@ export class WebSocketMessageHandler {
 	 */
 	private handleNewTab(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
-		logger.info(`[Web] Received new_tab message: session=${sessionId}`, LOG_CONTEXT);
+		const background = readBackgroundField(message);
+		logger.info(
+			`[Web] Received new_tab message: session=${sessionId}, background=${background}`,
+			LOG_CONTEXT
+		);
 
 		if (!sessionId) {
 			this.sendError(client, 'Missing sessionId');
@@ -1212,13 +1234,14 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.newTab(sessionId)
+			.newTab(sessionId, background)
 			.then((result) => {
 				this.send(client, {
 					type: 'new_tab_result',
 					success: !!result,
 					sessionId,
 					tabId: result?.tabId,
+					background,
 					requestId: message.requestId,
 				});
 			})
@@ -1829,10 +1852,16 @@ export class WebSocketMessageHandler {
 	private handleOpenFileTab(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
 		const filePath = message.filePath as string;
-		// `switchToAgent` defaults to true so older clients keep the existing UX.
-		const switchToAgent = message.switchToAgent !== false;
+		// Two DIFFERENT asks, and folding one into the other would silently change
+		// behaviour for callers already passing `--no-switch`:
+		//   switchToAgent:false -> stay on the current agent, but still activate
+		//                          the new tab inside the target agent.
+		//   background:true     -> change nothing that is currently rendered,
+		//                          anywhere. Strictly stronger, so it wins.
+		const background = readBackgroundField(message);
+		const switchToAgent = readSwitchToAgentField(message);
 		logger.info(
-			`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, switchToAgent=${switchToAgent}`,
+			`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, background=${background}, switchToAgent=${switchToAgent}`,
 			LOG_CONTEXT
 		);
 
@@ -1872,13 +1901,15 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.openFileTab(sessionId, resolved, switchToAgent)
+			.openFileTab(sessionId, resolved, { background, switchToAgent })
 			.then((success) => {
 				this.send(client, {
 					type: 'open_file_tab_result',
 					success,
 					sessionId,
 					filePath,
+					background,
+					switchToAgent,
 					requestId: message.requestId,
 				});
 			})
@@ -2015,7 +2046,7 @@ export class WebSocketMessageHandler {
 
 		// Background tabs are created without moving the user: the active agent
 		// is left alone and the new tab does not become the visible one.
-		const background = message.background === true;
+		const background = readBackgroundField(message);
 
 		this.callbacks
 			.openBrowserTab(sessionId, parsed.toString(), { background })
@@ -2089,6 +2120,7 @@ export class WebSocketMessageHandler {
 		const rawShell = message.shell;
 		const rawName = message.name;
 		const rawCommand = message.command;
+		const background = readBackgroundField(message);
 		// cwd/shell/name/command can leak local usernames, project names, or
 		// secrets in flags - log presence flags only.
 		logger.info(
@@ -2181,13 +2213,14 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command })
+			.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
 			.then((result) => {
 				this.send(client, {
 					type: 'open_terminal_tab_result',
 					success: result.success,
 					tabId: result.tabId,
 					sessionId,
+					background,
 					requestId: message.requestId,
 				});
 			})
@@ -2333,6 +2366,7 @@ export class WebSocketMessageHandler {
 	private handleNewAITabWithPrompt(client: WebClient, message: WebClientMessage): void {
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 		const prompt = typeof message.prompt === 'string' ? message.prompt : '';
+		const background = readBackgroundField(message);
 		// Prompts can contain user-authored content with secrets or PII -
 		// log length only rather than a raw preview.
 		logger.info(
@@ -2367,13 +2401,14 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.newAITabWithPrompt(sessionId, prompt)
+			.newAITabWithPrompt(sessionId, prompt, background)
 			.then((result) => {
 				this.send(client, {
 					type: 'new_ai_tab_with_prompt_result',
 					success: result.success,
 					sessionId,
 					...(result.tabId ? { tabId: result.tabId } : {}),
+					background,
 					requestId: message.requestId,
 				});
 			})
@@ -3189,7 +3224,14 @@ export class WebSocketMessageHandler {
 		const hasConfig = Object.keys(config).length > 0;
 
 		this.callbacks
-			.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined)
+			.createSession(
+				name,
+				toolType,
+				cwd,
+				groupId,
+				hasConfig ? config : undefined,
+				readBackgroundField(message)
+			)
 			.then((result) => {
 				this.send(client, {
 					type: 'create_session_result',
@@ -3239,7 +3281,7 @@ export class WebSocketMessageHandler {
 		};
 
 		this.callbacks
-			.createWorktreeSession(parentSessionId, config)
+			.createWorktreeSession(parentSessionId, config, readBackgroundField(message))
 			.then((result) => {
 				this.send(client, {
 					type: 'create_worktree_session_result',

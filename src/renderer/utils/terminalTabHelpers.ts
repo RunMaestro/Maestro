@@ -5,6 +5,7 @@
 import { Session, TerminalTab, ClosedTabEntry, UnifiedTabRef } from '../types';
 import { generateId } from './ids';
 import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
+import { terminalTabFocusFields } from './tabFocusFields';
 
 /** Maximum number of closed terminal tab entries to expose via the public API (e.g., for UI limits). */
 export const MAX_CLOSED_TERMINAL_TABS = 10;
@@ -153,23 +154,40 @@ export function parseTerminalSessionId(
 
 // ─── CRUD Mutations ──────────────────────────────────────────────────────────
 
+/** Options for {@link addTerminalTab}. */
+export interface AddTerminalTabOptions {
+	/** When false, append the tab without making it visible (background create).
+	 *  Every active-* selection and `inputMode` are left untouched. Default true. */
+	activate?: boolean;
+}
+
 /**
  * Add a terminal tab to a session.
  * Appends the tab to terminalTabs, inserts it into unifiedTabOrder directly to
- * the right of the currently active tab, and makes it the active terminal tab.
+ * the right of the currently active tab, and (unless `activate` is false) makes
+ * it the active terminal tab.
+ *
+ * Activation also sets `inputMode: 'terminal'` via terminalTabFocusFields: a
+ * terminal tab renders in terminal mode only, so activating one without the mode
+ * would select a tab the user cannot see. A BACKGROUND add deliberately leaves
+ * the mode alone - flipping an agent into terminal mode is itself a view change.
  *
  * @param session - The Maestro session to add the tab to
  * @param tab - The TerminalTab to add (created via createTerminalTab)
- * @returns New session with the tab added and set as active
+ * @param options - Placement options; pass `{ activate: false }` for a background tab
+ * @returns New session with the tab added
  */
-export function addTerminalTab(session: Session, tab: TerminalTab): Session {
+export function addTerminalTab(
+	session: Session,
+	tab: TerminalTab,
+	options: AddTerminalTabOptions = {}
+): Session {
+	const { activate = true } = options;
 	const newTabRef: UnifiedTabRef = { type: 'terminal', id: tab.id };
 	return {
 		...session,
 		terminalTabs: [...(session.terminalTabs || []), tab],
-		activeTerminalTabId: tab.id,
-		activeFileTabId: null,
-		activeBrowserTabId: null,
+		...(activate ? terminalTabFocusFields(tab.id) : {}),
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 	};
 }

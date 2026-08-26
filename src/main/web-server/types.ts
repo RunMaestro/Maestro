@@ -238,6 +238,10 @@ export interface WebClientMessage {
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
+	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
+	background?: boolean;
+	/** open_file_tab only: the older, weaker `--no-switch` ask. */
+	switchToAgent?: boolean;
 	[key: string]: unknown;
 }
 
@@ -291,7 +295,11 @@ export type InterruptSessionCallback = (sessionId: string) => Promise<boolean>;
  * Callback type for switching session input mode through the desktop's existing logic.
  * This forwards to the renderer which handles state updates and broadcasts.
  */
-export type SwitchModeCallback = (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
+export type SwitchModeCallback = (
+	sessionId: string,
+	mode: 'ai' | 'terminal',
+	background?: boolean
+) => Promise<boolean>;
 
 /**
  * Callback type for selecting/switching to a session in the desktop app.
@@ -308,7 +316,10 @@ export type SelectSessionCallback = (
  * Tab operation callbacks for multi-tab support.
  */
 export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
-export type NewTabCallback = (sessionId: string) => Promise<{ tabId: string } | null>;
+export type NewTabCallback = (
+	sessionId: string,
+	background?: boolean
+) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type RenameTabCallback = (
 	sessionId: string,
@@ -329,7 +340,12 @@ export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 export type OpenFileTabCallback = (
 	sessionId: string,
 	filePath: string,
-	switchToAgent: boolean
+	/**
+	 * `switchToAgent: false` (`--no-switch`) stays on the current agent but still
+	 * activates the new tab inside the target. `background: true` changes nothing
+	 * currently rendered anywhere, and wins when both are given.
+	 */
+	options: { background: boolean; switchToAgent: boolean }
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
@@ -348,7 +364,8 @@ export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
 export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
-	prompt: string
+	prompt: string,
+	background?: boolean
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Opens a URL as a browser tab in the desktop app.
@@ -393,7 +410,8 @@ export interface OpenTerminalTabResult {
 }
 export type OpenTerminalTabCallback = (
 	sessionId: string,
-	config: OpenTerminalTabConfig
+	config: OpenTerminalTabConfig,
+	options?: { background?: boolean }
 ) => Promise<OpenTerminalTabResult>;
 
 /**
@@ -833,7 +851,8 @@ export type CreateSessionCallback = (
 	toolType: string,
 	cwd: string,
 	groupId?: string,
-	config?: CreateSessionConfig
+	config?: CreateSessionConfig,
+	background?: boolean
 ) => Promise<{ sessionId: string } | null>;
 /**
  * Create a new agent in a git worktree branched off an existing parent agent,
@@ -845,7 +864,8 @@ export type CreateWorktreeSessionCallback = (
 	config: {
 		branchName: string;
 		baseBranch?: string;
-	}
+	},
+	background?: boolean
 ) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 export type DeleteSessionCallback = (sessionId: string) => Promise<boolean>;
 export type RenameSessionCallback = (sessionId: string, newName: string) => Promise<boolean>;

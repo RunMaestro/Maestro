@@ -406,12 +406,17 @@ export function createProcessApi() {
 		 * Forwards to desktop's toggleInputMode logic
 		 */
 		onRemoteSwitchMode: (
-			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
+			callback: (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => void
 		): (() => void) => {
 			log('Registering onRemoteSwitchMode listener');
-			const handler = (_: unknown, sessionId: string, mode: 'ai' | 'terminal') => {
-				log('Received remote:switchMode IPC', { sessionId, mode });
-				callback(sessionId, mode);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				mode: 'ai' | 'terminal',
+				background?: boolean
+			) => {
+				log('Received remote:switchMode IPC', { sessionId, mode, background });
+				callback(sessionId, mode, background === true);
 			};
 			ipcRenderer.on('remote:switchMode', handler);
 			return () => ipcRenderer.removeListener('remote:switchMode', handler);
@@ -457,10 +462,14 @@ export function createProcessApi() {
 		 * Subscribe to remote new tab from web interface
 		 */
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string) => void
+			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, responseChannel: string) =>
-				callback(sessionId, responseChannel);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				responseChannel: string,
+				background?: boolean
+			) => callback(sessionId, responseChannel, background === true);
 			ipcRenderer.on('remote:newTab', handler);
 			return () => ipcRenderer.removeListener('remote:newTab', handler);
 		},
@@ -528,14 +537,29 @@ export function createProcessApi() {
 
 		/**
 		 * Subscribe to remote open file tab from web interface.
-		 * `switchToAgent` controls whether the UI switches to the target agent
-		 * (defaults to true if the sender omits it).
+		 *
+		 * `background: true` creates the preview tab without moving the view at all:
+		 * neither the active agent nor the active tab within any agent changes.
+		 * `switchToAgent: false` is the older, weaker `--no-switch` ask - stay on
+		 * the current agent, but still activate the tab inside the target one.
 		 */
 		onRemoteOpenFileTab: (
-			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
+			callback: (
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, filePath: string, switchToAgent?: boolean) =>
-				callback(sessionId, filePath, switchToAgent !== false);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filePath: string,
+				options?: { background?: boolean; switchToAgent?: boolean }
+			) =>
+				callback(sessionId, filePath, {
+					background: options?.background === true,
+					switchToAgent: options?.switchToAgent !== false,
+				});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
 		},
@@ -687,17 +711,21 @@ export function createProcessApi() {
 			callback: (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options?: { background?: boolean }
 			) => {
 				try {
-					callback(sessionId, config, responseChannel);
+					callback(sessionId, config, responseChannel, {
+						background: options?.background === true,
+					});
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;
@@ -791,11 +819,22 @@ export function createProcessApi() {
 		 * doesn't wait for the 5s response timeout.
 		 */
 		onRemoteNewAITabWithPrompt: (
-			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, prompt: string, responseChannel: string) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => {
 				try {
-					callback(sessionId, prompt, responseChannel);
+					callback(sessionId, prompt, responseChannel, background === true);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;
@@ -869,17 +908,25 @@ export function createProcessApi() {
 		 * agent in a git worktree branched off a parent agent, without Auto Run.
 		 */
 		onRemoteCreateWorktreeSession: (
-			callback: (parentSessionId: string, config: any, responseChannel: string) => void
+			callback: (
+				parentSessionId: string,
+				config: any,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				parentSessionId: string,
 				config: any,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => {
 				try {
 					// callback may return a promise even though typed as void
-					Promise.resolve(callback(parentSessionId, config, responseChannel)).catch((error) => {
+					Promise.resolve(
+						callback(parentSessionId, config, responseChannel, background === true)
+					).catch((error) => {
 						ipcRenderer.send(responseChannel, {
 							success: false,
 							error: error instanceof Error ? error.message : String(error),
@@ -1315,7 +1362,8 @@ export function createProcessApi() {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -1325,8 +1373,9 @@ export function createProcessApi() {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
-			) => callback(name, toolType, cwd, groupId, config, responseChannel);
+				responseChannel: string,
+				background?: boolean
+			) => callback(name, toolType, cwd, groupId, config, responseChannel, background === true);
 			ipcRenderer.on('remote:createSession', handler);
 			return () => ipcRenderer.removeListener('remote:createSession', handler);
 		},

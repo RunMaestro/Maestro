@@ -918,7 +918,11 @@ describe('web-server/web-server-factory', () => {
 			expect(mockWebContents.send).toHaveBeenCalledWith(
 				'remote:switchMode',
 				'session-1',
-				'terminal'
+				'terminal',
+				// Placement rides along on the IPC hop. switch_mode defaults to
+				// foreground because background would make the verb a no-op against
+				// the agent on screen.
+				false
 			);
 		});
 	});

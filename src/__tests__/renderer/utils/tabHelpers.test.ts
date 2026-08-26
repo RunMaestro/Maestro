@@ -167,6 +167,54 @@ describe('tabHelpers', () => {
 			expect(result.session.activeTabId).toBe('mock-generated-id');
 		});
 
+		it('leaves every visible-surface pointer alone when activate is false', () => {
+			// Background create. The tab has to exist and be reachable, and NOTHING
+			// the user is currently looking at may change - "created but invisible"
+			// and "created and stole the view" are both failures.
+			const session = createMockSession({
+				aiTabs: [],
+				activeTabId: 'was-active',
+				activeFileTabId: 'file-1',
+				activeBrowserTabId: 'browser-1',
+				activeTerminalTabId: 'terminal-1',
+				inputMode: 'terminal',
+			});
+
+			const result = createTab(session, { activate: false })!;
+
+			expect(result.session.aiTabs).toHaveLength(1);
+			expect(result.session.unifiedTabOrder).toContainEqual({
+				type: 'ai',
+				id: 'mock-generated-id',
+			});
+			expect(result.session.activeTabId).toBe('was-active');
+			expect(result.session.activeFileTabId).toBe('file-1');
+			expect(result.session.activeBrowserTabId).toBe('browser-1');
+			expect(result.session.activeTerminalTabId).toBe('terminal-1');
+			expect(result.session.inputMode).toBe('terminal');
+		});
+
+		it('clears the higher-precedence surfaces when activate is true', () => {
+			// The other half: a browser/file/terminal selection outranks the AI tab
+			// in the render precedence, so activation that left one set would show
+			// the old view and look like the new tab did nothing.
+			const session = createMockSession({
+				aiTabs: [],
+				activeFileTabId: 'file-1',
+				activeBrowserTabId: 'browser-1',
+				activeTerminalTabId: 'terminal-1',
+				inputMode: 'terminal',
+			});
+
+			const result = createTab(session, { activate: true })!;
+
+			expect(result.session.activeTabId).toBe('mock-generated-id');
+			expect(result.session.activeFileTabId).toBeNull();
+			expect(result.session.activeBrowserTabId).toBeNull();
+			expect(result.session.activeTerminalTabId).toBeNull();
+			expect(result.session.inputMode).toBe('ai');
+		});
+
 		it('creates a tab with custom options', () => {
 			const session = createMockSession({ aiTabs: [] });
 			const options = {

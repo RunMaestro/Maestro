@@ -106,6 +106,9 @@ describe('dispatch command', () => {
 					type: 'new_ai_tab_with_prompt',
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
+					// The dispatched tab is created in the background; the tabId we
+					// return is how the caller follows it without stealing the view.
+					background: true,
 				},
 				'new_ai_tab_with_prompt_result'
 			);

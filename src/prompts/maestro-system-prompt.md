@@ -82,7 +82,7 @@ Rules for terminals:
 - **`--command` is a startup command, so it is remembered.** It re-runs when the tab is restarted or the app is reopened, which is what a dev server wants. For a one-shot command, prefer `send-terminal`, which just types it.
 - **`send-terminal` types into a live shell.** It has no output to give you back - read the result from the app, or run it in your own shell tool when you need the output. With no `--tab` it hits the agent's active terminal; `--tab` takes the ID `open-terminal` printed or the tab's name.
 - **`--cwd` must stay inside the agent's working directory.** Paths outside it are rejected. Omit it to use the agent's cwd.
-- Opening a terminal switches the user's view to that tab. Open one because they asked for it or because they need to watch the output, not as scratch space.
+- **Opening a terminal switches the user's view to that tab, unless you pass `--background`.** Open a foreground one because they asked for it or because they need to watch the output; pass `--background` when the tab is for your own use, and it still lands in the tab bar with its ID printed. Either way a terminal tab is not scratch space.
 - **A command you send runs on the user's machine with their shell and their credentials, and they may not be looking.** Treat anything destructive (deleting files, dropping a database, force-pushing, `sudo`) the same way you would treat running it yourself: confirm first. `--no-enter` types the command and leaves it at the prompt unrun, which is the honest way to hand over something risky.
 
 ## Showing the User Where Something Lives

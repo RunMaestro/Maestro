@@ -52,6 +52,29 @@ Commands exit with a standardized code so scripts and CI can branch on the failu
 | `4`  | The running app does not support the command (older build) |
 | `5`  | The app was reachable but did not respond in time          |
 
+### Who Moves the View (`--background` / `--focus`)
+
+Focus belongs to whoever is at the keyboard. An agent may create a surface; it should not decide you ought to be looking at it. Every verb that can move the Maestro view therefore accepts `--background`, which means exactly two things: the active agent does not change, and the active tab inside any agent does not change. The surface is still created and still addressable - it lands in the tab bar the way a browser opens a background tab.
+
+`--focus` is the opposite ask, and it ships on every one of these verbs even where it only names the current default. If both are passed, `--focus` wins.
+
+**The flag is additive: no verb's default changed.** An unflagged call behaves exactly as it always has, so existing scripts, playbooks, and Cue prompts are unaffected.
+
+| Command              | Default when neither flag is passed |
+| -------------------- | ----------------------------------- |
+| `open-file`          | switches to the file                |
+| `open-terminal`      | switches to the new terminal        |
+| `open-browser`       | switches to the new browser tab     |
+| `tab new`            | switches to the new tab             |
+| `dispatch --new-tab` | **background** (as it always was)   |
+| `create-agent`       | selects the new agent               |
+| `create-worktree`    | selects the new agent               |
+| `switch-mode`        | switches the mode                   |
+
+`focus-agent`, `send --tab`, and `open` exist _to_ move the view - you named that intent - so they take no placement flag.
+
+`switch-mode` is the one verb here that creates nothing: changing an agent's rendered surface is its entire effect, so there is no background surface to leave behind. `--background` there means "skip it rather than move me", and it only refuses when the target is the agent already on screen. Switching an off-screen agent changes no pixels and goes through normally.
+
 ### Sending Messages to Agents
 
 Send a message to an agent and receive a structured JSON response. Supports creating new sessions or resuming existing ones for multi-turn conversations.
@@ -154,6 +177,8 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 | Flag             | Description                                                                                                                                    |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--new-tab`      | Create a fresh AI tab in the target agent. Mutually exclusive with `-t` and `-f` (a new tab is never busy, so `--force` has nothing to bypass) |
+| `--background`   | Leave the new tab in the background. This is already the default for `--new-tab`; the flag just says so explicitly                             |
+| `--focus`        | Switch to the new tab after creating it (with `--new-tab`)                                                                                     |
 | `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                 |
 | `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`         |
 
@@ -439,6 +464,8 @@ The flag table below covers `create-agent`:
 | `--ssh-remote <id>`               | SSH remote ID for remote execution                       | -                          |
 | `--ssh-cwd <path>`                | Working directory override on the SSH remote             | -                          |
 | `--auto-run-folder <path>`        | Auto Run / playbooks folder for this agent               | `<cwd>/.maestro/playbooks` |
+| `--background`                    | Create the agent without selecting it in the Left Bar    | -                          |
+| `--focus`                         | Select the new agent after creating it (default)         | -                          |
 | `--json`                          | Machine-readable JSON output                             | -                          |
 
 ### Creating and Removing Groups
@@ -504,6 +531,8 @@ The optional `--message` is delivered to the new agent as a plain prompt (not an
 | `-b, --branch <name>`  | Branch name for the worktree, created if it does not exist (required)         | -                |
 | `--base-branch <name>` | Ref the new branch is based on when it does not yet exist (e.g. `rc`, `main`) | parent repo HEAD |
 | `-m, --message <text>` | Optional initial prompt dispatched to the new agent after creation            | -                |
+| `--background`         | Create the agent without selecting it in the Left Bar                         | -                |
+| `--focus`              | Select the new worktree agent after creating it (default)                     | -                |
 | `--json`               | Machine-readable JSON output                                                  | -                |
 
 ### Driving the Workspace (Focus, Mode, Tabs)
@@ -522,6 +551,9 @@ maestro-cli switch-mode <agent-id> terminal
 # Open a new tab for an agent (optionally seed an AI tab with a prompt)
 maestro-cli tab new -a <agent-id>
 maestro-cli tab new -a <agent-id> --prompt "Start reviewing the API layer"
+
+# Create the tab without taking the view from whoever is working
+maestro-cli tab new -a <agent-id> --background
 
 # Close, rename, star, or unstar a tab. The owning agent is resolved from the
 # tab ID automatically, so you only need the tab ID (exact or a unique prefix).
@@ -554,6 +586,8 @@ maestro-cli tab move <tab-id> 2
 maestro-cli bookmark <agent-id>
 maestro-cli unbookmark <agent-id>
 ```
+
+`tab new` and `switch-mode` both take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
 
 Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`). Every verb that takes a `<tab-id>` also accepts the literal `active`, which resolves to the tab the agent currently has selected - `-a <agent-id>` says whose, and without it the CLI uses the agent the desktop has focused.
 
@@ -987,16 +1021,20 @@ Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Dir
 
 #### Open a File
 
-Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent - the file must live inside that agent's `cwd`. Pass `--no-switch` to skip switching the Maestro UI to the resulting agent/tab.
+Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent - the file must live inside that agent's `cwd`.
 
 ```bash
-maestro-cli open-file <file-path> [-a <id>] [--no-switch]
+maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch]
 ```
 
-| Flag               | Description                                                        |
-| ------------------ | ------------------------------------------------------------------ |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent) |
-| `--no-switch`      | Don't switch the Maestro UI to the target agent/tab                |
+| Flag               | Description                                                                     |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)              |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent |
+| `--focus`          | Switch to the file after opening it (default)                                   |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there              |
+
+`--no-switch` and `--background` are different asks, and this is the one command that offers both. `--no-switch` keeps the Left Bar selection where it is but still activates the new tab inside the target agent - so if you were already on that agent, your view still changes. `--background` changes nothing rendered anywhere. Passing both is fine; `--background` is strictly stronger and wins. If `--no-switch` is what you reached for, `--background` is probably what you meant.
 
 #### Open a Browser Tab
 
@@ -1022,6 +1060,7 @@ maestro-cli open-browser https://example.com/docs --background -a <agent-id>
 | ------------------ | ---------------------------------------------------------------- |
 | `-a, --agent <id>` | Target agent by ID (defaults to the active agent)                |
 | `--background`     | Create the tab without focusing it or switching the active agent |
+| `--focus`          | Switch to the browser tab after opening it (default)             |
 
 <Note>
 	Agents doing research should always pass `--background` and then `close-browser` when finished. A
@@ -1065,6 +1104,8 @@ maestro-cli open-terminal -a <agent-id> --name "Build watch"
 | `--shell <bin>`    | Shell binary to use                                                 | `zsh`       |
 | `--name <label>`   | Display name for the tab                                            | -           |
 | `--command <cmd>`  | Command to run once the shell is ready                              | -           |
+| `--background`     | Create the tab without moving the view (agent and tab stay put)     | -           |
+| `--focus`          | Switch to the terminal tab after opening it (default)               | -           |
 
 `--command` is stored as the tab's startup command, the same field the tab's right-click "Startup Command…" menu writes. The command runs as soon as the shell finishes loading its rc files, and it runs again if the tab is restarted or the app is reopened. That is what you want for `npm run dev`; for a one-shot command that should not come back, close the tab when it finishes, or use `send-terminal` instead.
 

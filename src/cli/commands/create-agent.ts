@@ -1,10 +1,14 @@
-// Create agent command - create a new agent in the Maestro desktop app
+// Create agent command - create a new agent in the Maestro desktop app.
+//
+// Selects the new agent, as it always has. Pass --background to create it
+// without moving the Left Bar selection; the agent is still created and listed.
 
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
 import { parseCliBool } from '../utils/parse';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -25,6 +29,8 @@ interface CreateAgentOptions {
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
+	background?: boolean;
+	focus?: boolean;
 	json?: boolean;
 }
 
@@ -121,12 +127,14 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	}
 
 	// Build the WebSocket message payload
+	const background = resolveBackgroundFlag(options, 'create-agent');
 	const payload: Record<string, unknown> = {
 		type: 'create_session',
 		name,
 		toolType: options.type,
 		cwd,
 		groupId: options.group,
+		background,
 	};
 
 	// Add optional config fields
@@ -155,10 +163,20 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		if (result.success) {
 			if (options.json) {
 				console.log(
-					JSON.stringify({ success: true, agentId: result.sessionId, name, type: options.type })
+					JSON.stringify({
+						success: true,
+						agentId: result.sessionId,
+						name,
+						type: options.type,
+						background,
+					})
 				);
 			} else {
-				console.log(formatSuccess(`Created agent "${name}" (${options.type})`));
+				console.log(
+					formatSuccess(
+						`Created agent "${name}" (${options.type})${background ? ' in the background' : ''}`
+					)
+				);
 				console.log(`  ID: ${result.sessionId}`);
 				console.log(`  CWD: ${cwd}`);
 			}

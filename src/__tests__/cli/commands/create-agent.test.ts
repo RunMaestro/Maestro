@@ -93,6 +93,65 @@ describe('create-agent command', () => {
 			expect(sentPayload.customEnvVars).toEqual({ FOO: 'bar', BAZ: 'qux' });
 		});
 
+		describe('placement', () => {
+			function capture() {
+				const sent: Record<string, unknown> = {};
+				vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+					const mockClient = {
+						sendCommand: vi.fn().mockImplementation((payload) => {
+							Object.assign(sent, payload);
+							return Promise.resolve({
+								type: 'create_session_result',
+								success: true,
+								sessionId: 'id-1',
+							});
+						}),
+					};
+					return action(mockClient as never);
+				});
+				return sent;
+			}
+
+			it('selects the new agent by default, exactly as it always has', async () => {
+				const sent = capture();
+				await createAgent('Agent', { cwd: '/tmp', type: 'claude-code' });
+				expect(sent.background).toBe(false);
+			});
+
+			it('leaves the Left Bar selection alone with --background', async () => {
+				const sent = capture();
+				await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', background: true });
+				expect(sent.background).toBe(true);
+				// The agent still exists and is still addressable - "created but
+				// invisible" would be a different bug, so the id is still reported.
+				expect(formatSuccess).toHaveBeenCalledWith(expect.stringContaining('in the background'));
+				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('id-1'));
+			});
+
+			it('reports the placement in JSON output', async () => {
+				capture();
+				await createAgent('Agent', {
+					cwd: '/tmp',
+					type: 'claude-code',
+					background: true,
+					json: true,
+				});
+				const printed = JSON.parse(vi.mocked(consoleSpy).mock.calls.at(-1)![0] as string);
+				expect(printed).toMatchObject({ success: true, agentId: 'id-1', background: true });
+			});
+
+			it('lets --focus win over --background', async () => {
+				const sent = capture();
+				await createAgent('Agent', {
+					cwd: '/tmp',
+					type: 'claude-code',
+					background: true,
+					focus: true,
+				});
+				expect(sent.background).toBe(false);
+			});
+		});
+
 		it('should send SSH config when ssh-remote is provided', async () => {
 			let sentPayload: Record<string, unknown> = {};
 			vi.mocked(withMaestroClient).mockImplementation(async (action) => {

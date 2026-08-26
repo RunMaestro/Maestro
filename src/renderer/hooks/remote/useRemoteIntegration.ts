@@ -193,7 +193,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// This allows web mode switches to go through the same code path as desktop
 	useEffect(() => {
 		const unsubscribeSwitchMode = window.maestro.process.onRemoteSwitchMode(
-			(sessionId: string, mode: 'ai' | 'terminal') => {
+			(sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => {
 				// Find the session and update its mode
 				setSessions((prev) => {
 					const session = prev.find((s) => s.id === sessionId);
@@ -203,6 +203,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					// Only switch if mode is different
 					if (session.inputMode === mode) {
+						return prev;
+					}
+
+					// Background placement: mode IS the rendered surface, so switching
+					// the agent the human is looking at would move their view. Nothing
+					// is created here that could sit in a tab bar instead, so the only
+					// honest background behaviour is to decline. Agents that are not on
+					// screen switch normally - that changes no pixels.
+					if (background && useSessionStore.getState().activeSessionId === sessionId) {
 						return prev;
 					}
 
@@ -325,23 +334,30 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string) => {
+			(sessionId: string, responseChannel: string, background?: boolean) => {
 				let newTabId: string | null = null;
 
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
-						// Use createTab helper
+						// Use createTab helper. `activate: false` appends the tab without
+						// touching any active-* id, so it shows up in the tab bar the way
+						// a browser opens a background tab.
 						const result = createTab(s, {
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
+							activate: !background,
 						});
 						if (!result) return s;
 						newTabId = result.tab.id;
 						return result.session;
 					})
 				);
+				// A background create must not pull the Left Bar over either.
+				if (newTabId && !background) {
+					setActiveSessionId(sessionId);
+				}
 
 				// Send response back with the new tab ID
 				if (newTabId) {
@@ -362,7 +378,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Ack the renderer result on responseChannel so the CLI only reports
 		// success when a tab was actually created.
 		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
-			(sessionId: string, prompt: string, responseChannel: string) => {
+			(sessionId: string, prompt: string, responseChannel: string, background?: boolean) => {
 				// Guard: the downstream maestro:remoteCommand handler drops commands
 				// for missing or busy sessions. Check here so we don't create an
 				// orphan tab and falsely ack success.
@@ -389,13 +405,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							const result = createTab(s, {
 								saveToHistory: defaultSaveToHistory,
 								showThinking: defaultShowThinking,
+								activate: !background,
 							});
 							if (!result) return s;
 							createdTabId = result.tab.id;
 							return result.session;
 						})
 					);
-					if (createdTabId) {
+					if (createdTabId && !background) {
 						setActiveSessionId(sessionId);
 					}
 				});
@@ -555,10 +572,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenFileTab(
-			(sessionId: string, filePath: string, switchToAgent: boolean) => {
+			(
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openFileTab', {
-						detail: { sessionId, filePath, switchToAgent },
+						detail: {
+							sessionId,
+							filePath,
+							background: options.background,
+							switchToAgent: options.switchToAgent,
+						},
 					})
 				);
 			}
@@ -717,11 +743,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openTerminalTab', {
-						detail: { sessionId, config, responseChannel },
+						detail: {
+							sessionId,
+							config,
+							responseChannel,
+							background: options?.background === true,
+						},
 					})
 				);
 			}
@@ -797,10 +829,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// git worktree branched off a parent agent, without an Auto Run playbook.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteCreateWorktreeSession(
-			(parentSessionId: string, config: any, responseChannel: string) => {
+			(parentSessionId: string, config: any, responseChannel: string, background?: boolean) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:createWorktreeSession', {
-						detail: { parentSessionId, config, responseChannel },
+						detail: { parentSessionId, config, responseChannel, background },
 					})
 				);
 			}
@@ -1138,11 +1170,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCreateSession', {
-						detail: { name, toolType, cwd, groupId, config, responseChannel },
+						detail: { name, toolType, cwd, groupId, config, responseChannel, background },
 					})
 				);
 			}
