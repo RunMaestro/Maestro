@@ -458,12 +458,23 @@ export const RightPanel = memo(
 				onClick={() => setActiveFocus('right')}
 				onFocus={() => setActiveFocus('right')}
 				onBlur={(e) => {
-					// Clear focus ring when focus moves entirely outside this panel
-					if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+					const panel = e.currentTarget;
+					const next = e.relatedTarget as Node | null;
+					// Focus moved to another node still inside this panel (tab button,
+					// file row, filter input). Keep the Right Bar focused.
+					if (next && panel.contains(next)) return;
+					// relatedTarget is null when the click landed on a non-focusable
+					// child (padding, file-tree row). That is NOT "left the panel" -
+					// React fires blur anyway, and treating null as outside handed
+					// focus to Main on a second click. Check after the click: only
+					// drop the ring when the caret actually left.
+					requestAnimationFrame(() => {
+						if (!panel.isConnected) return;
+						if (panel.contains(document.activeElement)) return;
 						if (useUIStore.getState().activeFocus === 'right') {
 							setActiveFocus('main');
 						}
-					}
+					});
 				}}
 			>
 				{/* Resize Handle */}

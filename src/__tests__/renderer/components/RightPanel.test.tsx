@@ -421,6 +421,45 @@ describe('RightPanel', () => {
 			expect(spy).toHaveBeenCalledWith('right');
 		});
 
+		it('keeps Right Bar focus when blur relatedTarget is null but a child is still active', async () => {
+			useUIStore.setState({ activeFocus: 'right' });
+			const spy = vi.spyOn(useUIStore.getState(), 'setActiveFocus');
+			const props = createDefaultProps();
+			const { container } = render(<RightPanel {...props} />);
+
+			const panel = container.firstChild as HTMLElement;
+			const contentArea = container.querySelector('.overflow-y-auto') as HTMLElement;
+			contentArea.focus();
+			spy.mockClear();
+
+			fireEvent.blur(panel, { relatedTarget: null });
+			await act(async () => {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			});
+
+			expect(spy).not.toHaveBeenCalledWith('main');
+			expect(useUIStore.getState().activeFocus).toBe('right');
+		});
+
+		it('hands focus to Main when blur really leaves the panel', async () => {
+			useUIStore.setState({ activeFocus: 'right' });
+			const outside = document.createElement('button');
+			document.body.appendChild(outside);
+			const props = createDefaultProps();
+			const { container } = render(<RightPanel {...props} />);
+
+			const panel = container.firstChild as HTMLElement;
+			panel.focus();
+			fireEvent.blur(panel, { relatedTarget: outside });
+			outside.focus();
+			await act(async () => {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			});
+
+			expect(useUIStore.getState().activeFocus).toBe('main');
+			outside.remove();
+		});
+
 		it('should show focus ring when activeFocus is right', () => {
 			useUIStore.setState({ activeFocus: 'right' });
 			const props = createDefaultProps();

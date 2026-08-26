@@ -372,6 +372,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.activeFocus === 'right' &&
 					ctx.activeRightTab === 'files' &&
 					ctx.fileTreeFilterOpen;
+				// Cmd+F on a focused side pane is that pane's local filter, even if
+				// the transcript Find bar is still open from earlier.
+				const isPaneLocalFindShortcut =
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					keyLower === 'f' &&
+					(ctx.activeFocus === 'right' || ctx.activeFocus === 'sidebar');
 				// The Concerto keys stay live through the guard. The stage is a
 				// workspace surface, not a dialog, so its own toggle has to be able to
 				// close it - a toggle that only ever opens is a dead keypress. And
@@ -459,6 +467,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isBrowserFindShortcut &&
 						!isBrowserNavShortcut &&
 						!isFileFilterRefocusShortcut &&
+						!isPaneLocalFindShortcut &&
 						!isOutputSearchGlobalShortcut &&
 						!isOutputSearchRefocusShortcut &&
 						!isConcertoToggleShortcut &&
@@ -512,11 +521,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			};
 
 			// Cmd+F while the output find bar is already open: bring focus back to its
-			// input from anywhere instead of no-opping. The find bar's own keydown
-			// handler only opens search when it's closed, so without this re-pressing
-			// the shortcut after focus moved away (e.g. to the AI input) does nothing.
+			// input from anywhere in the MAIN chat, instead of no-opping. Do NOT steal
+			// the chord when a side pane is focused: the Right Bar (Files/History) and
+			// Left Bar have their own Cmd+F filters, and a click on those panes is the
+			// user asking for that filter, not the transcript Find they left open.
+			const sidePaneOwnsFind = ctx.activeFocus === 'right' || ctx.activeFocus === 'sidebar';
 			if (
 				isActiveOutputSearchOpen() &&
+				!sidePaneOwnsFind &&
 				(e.metaKey || e.ctrlKey) &&
 				!e.altKey &&
 				!e.shiftKey &&
@@ -1513,12 +1525,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			// Cmd+F contextual shortcuts - prioritize explicit focus over input mode
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+			// Cmd+F contextual shortcuts - prioritize explicit focus over input mode.
+			// Alt is excluded: Opt+Cmd+F is searchAllTabs (cross-tab message search)
+			// and must not also open in-tab Find, group Find, Files filter, or
+			// terminal/browser find.
+			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				// Browser-tab in-page find takes precedence whenever a browser tab is
 				// the active tab. Routed both here (when webview isn't focused) and via
 				// `onBrowserTabShortcutKey` (when it is).
-				if (activeSession?.activeBrowserTabId && !e.altKey) {
+				if (activeSession?.activeBrowserTabId) {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openBrowserFind();
 					trackShortcut('searchOutput');
