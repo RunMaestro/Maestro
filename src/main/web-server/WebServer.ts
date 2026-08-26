@@ -1009,8 +1009,12 @@ export class WebServer {
 				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
 			summarizeContext: async (sessionId: string) =>
 				this.callbackRegistry.summarizeContext(sessionId),
-			createGist: async (sessionId: string, description: string, isPublic: boolean) =>
-				this.callbackRegistry.createGist(sessionId, description, isPublic),
+			createGist: async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				agentSessionId?: string
+			) => this.callbackRegistry.createGist(sessionId, description, isPublic, agentSessionId),
 			getCueSubscriptions: async (sessionId?: string) =>
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>

@@ -7,6 +7,9 @@ import { aiTabFocusFields, createTab, closeTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
+import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
+import type { SessionMessage } from '../agent/useSessionViewer';
+import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import { notifyToast } from '../../stores/notificationStore';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -41,6 +44,67 @@ export interface UseRemoteIntegrationDeps {
  */
 export interface UseRemoteIntegrationReturn {
 	// No return values - all functionality is via side effects
+}
+
+/**
+ * Upper bound on messages pulled from a provider transcript for a gist. The
+ * read is tail-anchored, so this keeps the newest N and reports the cut.
+ */
+const GIST_SESSION_MESSAGE_LIMIT = 10000;
+
+type GistBody = { body: string } | { error: string };
+
+/**
+ * Transcript body for `gist create <agent-id> --session <id>` - ONE provider
+ * session, not the agent's open AI tabs.
+ *
+ * Headless callers (Maestro Relay, playbooks, Cue, CI) address a conversation
+ * by its provider session id and have no desktop tab, so publishing the
+ * agent's tabs for them puts an unrelated conversation in a URL-readable gist.
+ *
+ * Prefers a live tab holding that session (its logs are already in memory and
+ * every provider has them) and falls back to the provider's on-disk transcript,
+ * which is where a purely headless session lives.
+ */
+async function buildSessionGistBody(session: Session, agentSessionId: string): Promise<GistBody> {
+	const liveTab = session.aiTabs.find((tab) => tab.agentSessionId === agentSessionId);
+	if (liveTab) {
+		const body = formatLogsForClipboard(liveTab.logs);
+		return body ? { body } : { error: `Session has no conversation history: ${agentSessionId}` };
+	}
+
+	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
+	if (!projectPathForSessions) {
+		return { error: `Cannot resolve a project path for agent ${session.id}` };
+	}
+
+	let result: { messages: SessionMessage[]; hasMore: boolean };
+	try {
+		result = await window.maestro.agentSessions.read(
+			session.toolType,
+			projectPathForSessions,
+			agentSessionId,
+			{ offset: 0, limit: GIST_SESSION_MESSAGE_LIMIT },
+			sshRemoteId
+		);
+	} catch {
+		// A missing transcript throws out of the provider storage read. That is
+		// an ordinary miss (wrong id, wrong agent, provider without on-disk
+		// sessions), so answer the caller instead of reporting a crash.
+		return { error: `No transcript found for session ${agentSessionId}` };
+	}
+
+	const body = formatLogsForClipboard(messagesToLogEntries(result.messages, agentSessionId));
+	if (!body) {
+		return { error: `No transcript found for session ${agentSessionId}` };
+	}
+	// Say so when the tail was cut - a silently truncated transcript reads as a
+	// complete one to whoever opens the gist.
+	return {
+		body: result.hasMore
+			? `_Older messages truncated - showing the most recent ${GIST_SESSION_MESSAGE_LIMIT}._\n\n${body}`
+			: body,
+	};
 }
 
 /**
@@ -1416,6 +1480,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				sessionId: string,
 				description: string,
 				isPublic: boolean,
+				agentSessionId: string | undefined,
 				responseChannel: string
 			) => {
 				try {
@@ -1428,26 +1493,49 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
-					const sections: string[] = [];
-					for (const tab of session.aiTabs) {
-						const body = formatLogsForClipboard(tab.logs);
-						if (!body) continue;
-						const header = tab.name || tab.id.slice(0, 8);
-						sections.push(`## Tab: ${header}\n\n${body}`);
+					let content: string;
+					if (agentSessionId) {
+						// Narrowed to one provider session: publish exactly that
+						// conversation, never a fallback to the agent's tabs. A caller
+						// that named a session and got a different one published has
+						// leaked it - gists are readable by anyone with the URL.
+						const result = await buildSessionGistBody(session, agentSessionId);
+						if ('error' in result) {
+							window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+								success: false,
+								error: result.error,
+							});
+							return;
+						}
+						content = `# ${session.name}\n\n_Session \`${agentSessionId}\`_\n\n${result.body}\n`;
+					} else {
+						const sections: string[] = [];
+						for (const tab of session.aiTabs) {
+							const body = formatLogsForClipboard(tab.logs);
+							if (!body) continue;
+							const header = tab.name || tab.id.slice(0, 8);
+							sections.push(`## Tab: ${header}\n\n${body}`);
+						}
+
+						if (sections.length === 0) {
+							window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+								success: false,
+								error: 'Session has no conversation history to publish',
+							});
+							return;
+						}
+
+						content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
 					}
 
-					if (sections.length === 0) {
-						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
-							success: false,
-							error: 'Session has no conversation history to publish',
-						});
-						return;
-					}
-
-					const content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
 					const safeName =
 						(session.name || 'session').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 60) || 'session';
-					const filename = `${safeName}_context.md`;
+					// Session ids are provider-issued, so scrub them the same way as the
+					// agent name before they become a gist filename.
+					const safeSessionId = agentSessionId?.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 8);
+					const filename = safeSessionId
+						? `${safeName}_${safeSessionId}_context.md`
+						: `${safeName}_context.md`;
 
 					const result = await window.maestro.git.createGist(
 						filename,
@@ -1469,6 +1557,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							sessionId,
 							isPublic,
 							descriptionProvided: Boolean(description),
+							agentSessionTargeted: Boolean(agentSessionId),
 						},
 					});
 					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {

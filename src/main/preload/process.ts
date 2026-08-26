@@ -1831,6 +1831,7 @@ export function createProcessApi() {
 				sessionId: string,
 				description: string,
 				isPublic: boolean,
+				agentSessionId: string | undefined,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -1839,10 +1840,11 @@ export function createProcessApi() {
 				sessionId: string,
 				description: string,
 				isPublic: boolean,
+				agentSessionId: string | undefined,
 				responseChannel: string
 			) => {
 				try {
-					callback(sessionId, description, isPublic, responseChannel);
+					callback(sessionId, description, isPublic, agentSessionId, responseChannel);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, {
 						success: false,

@@ -1112,6 +1112,10 @@ gist
 	)
 	.option('-d, --description <text>', 'Gist description')
 	.option('-p, --public', 'Create a public gist (default: private)')
+	.option(
+		'-s, --session <id>',
+		"Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs"
+	)
 	.action(gistCreate);
 
 // Notify commands - surface notifications in the Maestro desktop app

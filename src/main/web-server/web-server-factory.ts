@@ -2746,7 +2746,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// the AI-tab transcripts in memory, so we forward to it and let it
 		// build the payload + call the existing `git:createGist` handler.
 		server.setCreateGistCallback(
-			async (sessionId: string, description: string, isPublic: boolean) => {
+			async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				agentSessionId?: string
+			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
 					logger.warn('mainWindow is null for createGist', 'WebServer');
@@ -2779,6 +2784,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						sessionId,
 						description,
 						isPublic,
+						agentSessionId,
 						responseChannel
 					);
 

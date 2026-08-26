@@ -1028,7 +1028,14 @@ export type SummarizeContextCallback = (sessionId: string) => Promise<boolean>;
 export type CreateGistCallback = (
 	sessionId: string,
 	description: string,
-	isPublic: boolean
+	isPublic: boolean,
+	/**
+	 * Provider session id to publish instead of the agent's open AI tabs.
+	 * Headless callers (Relay, playbooks, Cue, CI) hold a provider session id
+	 * rather than a desktop tab, and publishing the agent's tabs for them
+	 * leaks an unrelated conversation.
+	 */
+	agentSessionId?: string
 ) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 
 // =============================================================================

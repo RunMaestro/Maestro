@@ -1571,12 +1571,16 @@ maestro-cli gist create <agent-id> -d "Auth refactor pairing session"
 
 # Make it public
 maestro-cli gist create <agent-id> --public -d "Repro for issue #1234"
+
+# Publish one provider session instead of the agent's open tabs
+maestro-cli gist create <agent-id> --session <session-id>
 ```
 
-| Flag                       | Description                            | Default |
-| -------------------------- | -------------------------------------- | ------- |
-| `-d, --description <text>` | Gist description                       | -       |
-| `-p, --public`             | Create a public gist (default private) | private |
+| Flag                       | Description                                                        | Default        |
+| -------------------------- | ------------------------------------------------------------------ | -------------- |
+| `-d, --description <text>` | Gist description                                                   | -              |
+| `-p, --public`             | Create a public gist (default private)                             | private        |
+| `-s, --session <id>`       | Publish one provider session's transcript instead of the open tabs | the agent tabs |
 
 Output is JSON with the gist URL on success:
 
@@ -1584,7 +1588,21 @@ Output is JSON with the gist URL on success:
 { "success": true, "agentId": "a1b2c3d4-...", "gistUrl": "https://gist.github.com/..." }
 ```
 
-Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh auth login`). Error codes: `AGENT_NOT_FOUND`, `MAESTRO_NOT_RUNNING`, `GIST_CREATE_FAILED`.
+### Publishing a headless session
+
+Without `--session`, `gist create` publishes the transcripts of the agent's **open AI tabs** in the desktop app. Headless callers (chat bridges, playbooks, Cue pipelines, CI) run their conversations with `maestro-cli send -s <session-id>` and have no tab, so for them that publishes an unrelated conversation - and a gist is readable by anyone holding the URL.
+
+Pass the same session id you sent with:
+
+```bash
+SESSION=$(maestro-cli send <agent-id> "..." | jq -r .sessionId)
+maestro-cli send <agent-id> "follow-up" -s "$SESSION"
+maestro-cli gist create <agent-id> --session "$SESSION"
+```
+
+The desktop app publishes that session and nothing else: it uses the open tab holding the session when there is one, otherwise it reads the provider's stored transcript (SSH remotes included). If the session cannot be found it fails with `GIST_CREATE_FAILED` rather than falling back to the open tabs. The response echoes `agentSessionId` so you can confirm what was published.
+
+Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh auth login`). Error codes: `AGENT_NOT_FOUND`, `INVALID_SESSION`, `MAESTRO_NOT_RUNNING`, `GIST_CREATE_FAILED`.
 
 ## Scheduling with Cron
 

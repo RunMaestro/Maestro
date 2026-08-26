@@ -628,6 +628,7 @@ interface MaestroAPI {
 				sessionId: string,
 				description: string,
 				isPublic: boolean,
+				agentSessionId: string | undefined,
 				responseChannel: string
 			) => void
 		) => () => void;

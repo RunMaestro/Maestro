@@ -984,10 +984,11 @@ Publish session context to GitHub gists
 
 Publish an agent's session transcript as a GitHub gist (requires running Maestro app)
 
-| Option                     | Description                             | Default |
-| -------------------------- | --------------------------------------- | ------- |
-| `-d, --description <text>` | Gist description                        | -       |
-| `-p, --public`             | Create a public gist (default: private) | -       |
+| Option                     | Description                                                                                              | Default |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- | ------- |
+| `-d, --description <text>` | Gist description                                                                                         | -       |
+| `-p, --public`             | Create a public gist (default: private)                                                                  | -       |
+| `-s, --session <id>`       | Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs | -       |
 
 ## `maestro-cli notify`
 
