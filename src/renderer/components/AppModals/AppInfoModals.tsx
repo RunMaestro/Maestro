@@ -16,6 +16,7 @@ import { AboutModal } from '../AboutModal';
 import { FeedbackModal } from '../FeedbackModal';
 import { ShortcutsHelpModal } from '../ShortcutsHelpModal';
 import { UpdateCheckModal } from '../UpdateCheckModal';
+import { getModalActions } from '../../stores/modalStore';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
 const ProcessMonitor = lazy(() =>
@@ -137,6 +138,12 @@ export const AppInfoModals = memo(function AppInfoModals({
 					onClose={onCloseShortcutsHelp}
 					hasNoAgents={hasNoAgents}
 					keyboardMasteryStats={keyboardMasteryStats}
+					onOpenShortcutSettings={() => {
+						// Close the overlay first: Settings opens on top of it otherwise,
+						// leaving the user to dismiss two surfaces to get back to work.
+						onCloseShortcutsHelp();
+						getModalActions().openSettings('shortcuts');
+					}}
 				/>
 			)}
 

@@ -188,3 +188,38 @@ describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings
 		expect(missing).toEqual([]);
 	});
 });
+
+/**
+ * Unbound ids are only useful if the app can act on them once a user binds a
+ * key. `showSnoozeList` shipped registered-but-unhandled: it appeared in the
+ * overlay, counted toward the total, and binding a key to it did nothing. This
+ * pins the invariant so the next unbound id cannot repeat that shape.
+ */
+describe('every registered action has a handler', () => {
+	const UNBOUND_IDS = [
+		'showSnoozeList',
+		'openMediaPlayer',
+		'mediaPlayPause',
+		'mediaNext',
+		'mediaPrev',
+		'openLeaderboard',
+		'clearAllNotifications',
+		'openThemeSettings',
+	];
+
+	it('registers each unbound id with empty keys', () => {
+		for (const id of UNBOUND_IDS) {
+			expect(DEFAULT_SHORTCUTS[id], `${id} missing from DEFAULT_SHORTCUTS`).toBeDefined();
+			expect(DEFAULT_SHORTCUTS[id].keys, `${id} should ship unbound`).toEqual([]);
+		}
+	});
+
+	it('handles each unbound id somewhere in the keyboard handler', () => {
+		const handler = readFileSync(
+			join(RENDERER_ROOT, 'hooks/keyboard/useMainKeyboardHandler.ts'),
+			'utf-8'
+		);
+		const unhandled = UNBOUND_IDS.filter((id) => !handler.includes(`'${id}'`));
+		expect(unhandled, 'registered but never dispatched').toEqual([]);
+	});
+});

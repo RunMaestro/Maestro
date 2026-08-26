@@ -4,6 +4,10 @@ interface BuildMediaPlayerCommandsArgs {
 	/** True when media is loaded but the user has hidden the floating widget. */
 	canRestoreFloatingPlayer: boolean;
 	restoreFloatingPlayer: () => void;
+	/** True when there is anything to open: a loaded item, a queue, or history. */
+	canOpenMediaPlayer: boolean;
+	/** Open the player on its target item (loaded item, else most recent). */
+	openMediaPlayer: () => void;
 	setQuickActionOpen: (open: boolean) => void;
 }
 
@@ -18,19 +22,38 @@ interface BuildMediaPlayerCommandsArgs {
 export function buildMediaPlayerCommands({
 	canRestoreFloatingPlayer,
 	restoreFloatingPlayer,
+	canOpenMediaPlayer,
+	openMediaPlayer,
 	setQuickActionOpen,
 }: BuildMediaPlayerCommandsArgs): QuickAction[] {
-	if (!canRestoreFloatingPlayer) return [];
-
-	return [
+	const commands: QuickAction[] = [
 		{
-			id: 'show-floating-media-player',
-			label: 'Show Floating Media Player',
-			subtext: 'Bring back the hidden now-playing controls',
+			id: 'open-media-player',
+			label: 'Open Media Player',
+			// Listed even when there is nothing to play. Hiding a command is how a
+			// user concludes a feature does not exist; a subtext that says why it
+			// will not do anything is strictly more useful than an empty palette.
+			subtext: canOpenMediaPlayer
+				? 'Show the floating player and its queue'
+				: 'Nothing has been played yet',
 			action: () => {
-				restoreFloatingPlayer();
+				if (canOpenMediaPlayer) openMediaPlayer();
 				setQuickActionOpen(false);
 			},
 		},
 	];
+
+	if (!canRestoreFloatingPlayer) return commands;
+
+	commands.push({
+		id: 'show-floating-media-player',
+		label: 'Show Floating Media Player',
+		subtext: 'Bring back the hidden now-playing controls',
+		action: () => {
+			restoreFloatingPlayer();
+			setQuickActionOpen(false);
+		},
+	});
+
+	return commands;
 }
