@@ -70,76 +70,18 @@ import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
-import type { FileNode } from '../../types/fileTree';
+import { buildFileTreeFromPaths } from '../../utils/fileTree';
+import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
 
-/**
- * Build a file tree structure from graph node file paths.
- * This enables wiki-link resolution in the preview panel.
- */
-function buildFileTreeFromPaths(filePaths: string[]): FileNode[] {
-	const root: FileNode[] = [];
-	const folderMap = new Map<string, FileNode>();
-
-	for (const filePath of filePaths) {
-		if (!filePath) continue;
-
-		const parts = filePath.split('/');
-		let currentLevel = root;
-		let currentPath = '';
-
-		for (let i = 0; i < parts.length; i++) {
-			const part = parts[i];
-			const isLastPart = i === parts.length - 1;
-			currentPath = currentPath ? `${currentPath}/${part}` : part;
-
-			if (isLastPart) {
-				// It's a file
-				currentLevel.push({
-					name: part,
-					type: 'file',
-					fullPath: filePath,
-				});
-			} else {
-				// It's a folder - check if it already exists
-				let folder = folderMap.get(currentPath);
-				if (!folder) {
-					folder = {
-						name: part,
-						type: 'folder',
-						isFolder: true,
-						children: [],
-					};
-					folderMap.set(currentPath, folder);
-					currentLevel.push(folder);
-				}
-				currentLevel = folder.children!;
-			}
-		}
-	}
-
-	return root;
-}
 /** Default maximum number of nodes to load initially */
 const DEFAULT_MAX_NODES = 200;
 /** Number of additional nodes to load when clicking "Load more" */
 const LOAD_MORE_INCREMENT = 25;
-
-/**
- * Count markdown tasks (checkboxes) in content
- * Reuses pattern from FilePreview.tsx
- */
-const countMarkdownTasks = (content: string): { completed: number; total: number } => {
-	const openMatches = content.match(/^[\s]*[-*]\s*\[\s*\]/gm);
-	const closedMatches = content.match(/^[\s]*[-*]\s*\[[xX]\]/gm);
-	const open = openMatches?.length || 0;
-	const closed = closedMatches?.length || 0;
-	return { completed: closed, total: open + closed };
-};
 
 /**
  * Format date for display in footer
@@ -897,8 +839,9 @@ export function DocumentGraphView({
 			.readFile(fullPath, sshRemoteId)
 			.then((content) => {
 				if (!content) return;
-				const tasks = countMarkdownTasks(content);
-				setSelectedNodeTasks(tasks.total > 0 ? tasks : null);
+				const { open, closed } = countMarkdownTasks(content);
+				const total = open + closed;
+				setSelectedNodeTasks(total > 0 ? { completed: closed, total } : null);
 			})
 			.catch(() => {
 				setSelectedNodeTasks(null);

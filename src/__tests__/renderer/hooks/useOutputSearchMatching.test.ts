@@ -68,4 +68,84 @@ describe('useOutputSearchMatching', () => {
 		unmount();
 		container.remove();
 	});
+
+	it('rescans when contentRevision changes after the DOM text updates', async () => {
+		const container = mountContainer('<p>alpha</p>');
+		const { result, rerender, unmount } = renderHook(
+			({ contentRevision }: { contentRevision: number }) => {
+				const containerRef = useRef<HTMLElement | null>(container);
+				return useOutputSearchMatching({
+					containerRef,
+					outputSearchOpen: true,
+					outputSearchRegex: false,
+					debouncedSearchQuery: 'alpha',
+					contentRevision,
+				});
+			},
+			{ initialProps: { contentRevision: 1 } }
+		);
+
+		await waitFor(() => {
+			expect(result.current.totalMatches).toBe(1);
+		});
+
+		container.innerHTML = '<p>alpha alpha</p>';
+		rerender({ contentRevision: 2 });
+
+		await waitFor(() => {
+			expect(result.current.totalMatches).toBe(2);
+		});
+
+		unmount();
+		container.remove();
+	});
+
+	it('sets regexError and reports zero matches for an invalid regex', async () => {
+		const container = mountContainer('<p>alpha</p>');
+		const { result, unmount } = renderHook(() => {
+			const containerRef = useRef<HTMLElement | null>(container);
+			return useOutputSearchMatching({
+				containerRef,
+				outputSearchOpen: true,
+				outputSearchRegex: true,
+				debouncedSearchQuery: '[',
+				contentRevision: 1,
+			});
+		});
+
+		await waitFor(() => {
+			expect(result.current.regexError).toBeTruthy();
+		});
+		expect(result.current.totalMatches).toBe(0);
+
+		unmount();
+		container.remove();
+	});
+
+	it('selects the match inside the jumped-to row', async () => {
+		const container = mountContainer(
+			'<div data-log-id="a">alpha</div><div data-log-id="b">alpha</div>'
+		);
+		const jumpRef = { current: 'b' as string | null };
+		const { result, unmount } = renderHook(() => {
+			const containerRef = useRef<HTMLElement | null>(container);
+			return useOutputSearchMatching({
+				containerRef,
+				outputSearchOpen: true,
+				outputSearchRegex: false,
+				debouncedSearchQuery: 'alpha',
+				contentRevision: 1,
+				pendingJumpMatchIdRef: jumpRef,
+				jumpIdAttribute: 'data-log-id',
+			});
+		});
+
+		await waitFor(() => {
+			expect(result.current.currentMatchIndex).toBe(1);
+		});
+		expect(jumpRef.current).toBeNull();
+
+		unmount();
+		container.remove();
+	});
 });

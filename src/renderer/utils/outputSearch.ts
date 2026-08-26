@@ -25,6 +25,20 @@ export function groupChatOutputSearchKey(groupChatId: string): string {
 }
 
 /**
+ * Fingerprint for group-chat Find. Message COUNT is not enough: a streaming
+ * reply grows `content` in place, so the Find bar must re-scan when any
+ * message's text length changes. Query and open are included so a closed bar
+ * with a leftover query does not share a revision with an open one.
+ */
+export function groupChatSearchContentRevision(
+	messages: ReadonlyArray<{ content: string }>,
+	searchQuery: string,
+	searchOpen: boolean
+): string {
+	return `${messages.length}:${messages.map((m) => m.content.length).join(',')}:${searchQuery}:${searchOpen}`;
+}
+
+/**
  * Key for the currently active chat window, or null when none.
  * Prefers the active group chat when one is open (MainPanel is unmounted then).
  */

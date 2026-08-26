@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	outputSearchKeyFor,
 	groupChatOutputSearchKey,
+	groupChatSearchContentRevision,
 	getActiveOutputSearchKey,
 } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -14,7 +15,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 describe('outputSearch keys', () => {
 	beforeEach(() => {
 		useGroupChatStore.setState({ activeGroupChatId: null });
-		useSessionStore.setState({ sessions: [], activeSessionId: null });
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	});
 
 	it('builds a stable agent+tab key', () => {
@@ -54,5 +55,31 @@ describe('outputSearch keys', () => {
 		});
 
 		expect(getActiveOutputSearchKey()).toBe('sess-1::tab-a');
+	});
+});
+
+describe('groupChatSearchContentRevision', () => {
+	const query = 'alpha';
+
+	it('changes when an existing message text grows (streaming) even if count stays 1', () => {
+		const before = groupChatSearchContentRevision([{ content: 'hel' }], query, true);
+		const after = groupChatSearchContentRevision([{ content: 'hello world' }], query, true);
+		expect(before).not.toBe(after);
+	});
+
+	it('stays stable when neither text length, query, nor open flag changes', () => {
+		const a = groupChatSearchContentRevision([{ content: 'hello' }], query, true);
+		const b = groupChatSearchContentRevision([{ content: 'hello' }], query, true);
+		expect(a).toBe(b);
+	});
+
+	it('still changes when a new message arrives', () => {
+		const before = groupChatSearchContentRevision([{ content: 'hello' }], query, true);
+		const after = groupChatSearchContentRevision(
+			[{ content: 'hello' }, { content: 'alpha' }],
+			query,
+			true
+		);
+		expect(before).not.toBe(after);
 	});
 });

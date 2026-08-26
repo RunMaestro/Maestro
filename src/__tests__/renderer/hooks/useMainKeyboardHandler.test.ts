@@ -5,6 +5,7 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 
 // Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
 // wiring rather than re-running the layout transform (covered in tileNewTab.test).
@@ -3860,6 +3861,57 @@ describe('useMainKeyboardHandler', () => {
 			expect(document.activeElement).toBe(searchInput);
 		});
 
+		it('does not steal Cmd+F back to Find when the Right Bar is focused', () => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, true);
+			const setFileTreeFilterOpen = vi.fn();
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				// Find overlay is registered while the bar is open.
+				hasOpenLayers: () => true,
+				activeFocus: 'right',
+				activeRightTab: 'files',
+				fileTreeFilterOpen: false,
+				setFileTreeFilterOpen,
+				fileTreeFilterInputRef: { current: null },
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(document.activeElement).not.toBe(searchInput);
+			expect(setFileTreeFilterOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('does not steal Cmd+F back to Find when the Left Bar is focused', () => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, true);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				activeFocus: 'sidebar',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(document.activeElement).not.toBe(searchInput);
+		});
+
 		it('does not steal Cmd+F focus when output search is closed', () => {
 			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, false);
 
@@ -4061,6 +4113,60 @@ describe('useMainKeyboardHandler', () => {
 			expect(handleOpenCrossTabSearch).not.toHaveBeenCalled();
 			// Must not silently swallow the key when it cannot act.
 			expect(evt.defaultPrevented).toBe(false);
+		});
+	});
+
+	describe('group chat Cmd+F vs Opt+Cmd+F', () => {
+		const GROUP_ID = 'gc-find';
+		const SEARCH_KEY = groupChatOutputSearchKey(GROUP_ID);
+
+		afterEach(() => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, false);
+		});
+
+		it('opens group Find on Cmd+F', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: GROUP_ID,
+				activeFocus: 'main',
+				isShortcut: () => false,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useUIStore.getState().outputSearchByKey[SEARCH_KEY]?.open).toBe(true);
+		});
+
+		it('does not open group Find on Opt+Cmd+F', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: GROUP_ID,
+				activeFocus: 'main',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch: vi.fn(),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						code: 'KeyF',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useUIStore.getState().outputSearchByKey[SEARCH_KEY]?.open).toBeFalsy();
 		});
 	});
 });
