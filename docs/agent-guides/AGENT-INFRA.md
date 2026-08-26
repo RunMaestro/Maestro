@@ -14,7 +14,7 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 3. Capabilities      src/main/agents/capabilities.ts  Feature flags per agent
 4. Detection         src/main/agents/detector.ts      Runtime binary detection + PATH resolution
 5. Output Parsers    src/main/parsers/                 JSON output normalization per agent
-6. Error Patterns    src/main/parsers/error-patterns.ts  Regex patterns for error detection
+6. Error Patterns    src/shared/agentErrorPatterns.ts    Regex patterns for error detection
 7. Session Storage   src/main/storage/                 Per-agent session file reading
 8. Picker Registry   src/shared/agentMetadata.ts       Whether and how the user can choose it
 ```
@@ -86,6 +86,14 @@ the logo case the tile renders a blank fallback ring, and a test in
 `AgentSelectionScreen/components.test.tsx` fails.
 
 **Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
+
+**Three things about the login shell `ReauthModal` spawns are not optional, and all three were bugs first.**
+
+1. **The command is typed on the shell's FIRST BYTE, not when the spawn resolves.** Over SSH the spawn resolves as soon as the local `ssh` client is running, seconds before the remote shell exists, and anything written into that gap is dropped - which is how a remote re-authentication came up as an empty box. The command is held in a ref until `process.onData` fires for that PTY, with an 8 second fallback for a shell that prints no prompt at all.
+2. **Spawn and kill live in ONE effect.** Split across two, StrictMode's remount (cleanup, then re-run) killed the shell the first pass had just started while a `spawnStarted` boolean blocked the second pass from starting another, leaving a dead PTY nobody typed into. The guard is therefore a generation counter the cleanup resets, and every async continuation re-checks it, so a remount ends with exactly one live shell.
+3. **Over SSH, no working directory is passed.** The shell exists only to run a login; it gains nothing from the project directory, and main turns `workingDirOverride` into a `cd` the remote runs first, so a stale or local-looking path kills the session before the login can start. Landing in the remote home directory is always safe. Never fall back to `session.cwd` on a remote.
+
+A login shell that dies without printing anything also writes `[the login session ended]` into the terminal, because an empty box with no explanation is indistinguishable from a hang.
 
 ### Context Windows (`src/shared/agentConstants.ts`)
 
@@ -557,9 +565,15 @@ initializeOutputParsers(); // Registers all 4 parsers
 
 ---
 
-## 6. Error Pattern System (`src/main/parsers/error-patterns.ts`)
+## 6. Error Pattern System (`src/shared/agentErrorPatterns.ts`)
 
 Regex-based error detection for agent output. Each agent has patterns organized by error type.
+
+There is ONE bank, and it lives in `shared/` because both processes classify agent output: main parses streaming stdout/stderr through it, and the wizard classifies a finished run through it. `src/main/parsers/error-patterns.ts` is the main-process face of the same module - identical API, plus the logger the shared file cannot import. Import that path from main code and `shared/agentErrorPatterns` from renderer code; both reach the same registry object.
+
+Do NOT start a second bank. The wizard used to carry its own copy of about twenty patterns, which drifted behind this one and told every user to run `claude login` regardless of which of the seven providers had actually failed.
+
+An error `message` here names WHAT failed and stops there. The remedy belongs to whichever surface shows it, because only that surface knows the credential: an agent authenticating with `ANTHROPIC_API_KEY`, a gateway `ANTHROPIC_BASE_URL`, and a Bedrock agent all produce `auth_expired` output, and none of them is repaired by a login command. See `classifyCredentialKind()` in `src/shared/providerAuthIdentity.ts`, which is what `ReauthModal` gates its login terminal on.
 
 ### Error Types
 
@@ -823,7 +837,7 @@ interface AgentSessionInfo {
 4. **Add capabilities** to `AGENT_CAPABILITIES` in `src/main/agents/capabilities.ts`
 5. **Add context window** to `DEFAULT_CONTEXT_WINDOWS` in `src/shared/agentConstants.ts`
 6. **Create output parser** in `src/main/parsers/<agent>-output-parser.ts`, register in `src/main/parsers/index.ts`
-7. **Add error patterns** in `src/main/parsers/error-patterns.ts`
+7. **Add error patterns** in `src/shared/agentErrorPatterns.ts`
 8. **Create session storage** in `src/main/storage/<agent>-session-storage.ts`, register in `src/main/storage/index.ts`
 9. **Add beta flag** (optional) to `BETA_AGENTS` in `src/shared/agentMetadata.ts`
 10. **Add combined context flag** (if applicable) to `COMBINED_CONTEXT_AGENTS` in `src/shared/agentConstants.ts`

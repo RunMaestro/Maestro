@@ -549,6 +549,38 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
 	});
+
+	// The main-process sampler skips SSH-remote sessions because it cannot probe a
+	// remote host's directory locally. The COUNT must not copy that rule: a remote
+	// agent configured against this profile still spends this plan's quota, so it
+	// belongs in the total. Locked in by test because the two behaviors look
+	// contradictory and invite a well-meaning "fix".
+	it('counts SSH-remote agents, which the sampler deliberately skips', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'local',
+					name: 'local',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					id: 'remote',
+					name: 'remote',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('2 agents');
+	});
 });
 
 describe('ClaudePlanUsage — account identity', () => {

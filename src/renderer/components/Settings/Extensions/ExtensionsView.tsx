@@ -5,8 +5,8 @@
  * Mounted in EncoreTab in place of the old plugins-only section.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Search, FolderPlus, Puzzle } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { Search, FolderPlus, Puzzle, ChevronLeft } from 'lucide-react';
 import type { EncoreFeatureFlags, Theme } from '../../../types';
 import type { ReactNode } from 'react';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
@@ -68,8 +68,13 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	// than in the grid because the grid unmounts while the details pane is open -
 	// keeping it here is what lets Escape drop the user back on the tile they
 	// opened instead of resetting them to the first one.
-	const gridRef = useRef<HTMLDivElement>(null);
-	const columns = useGridColumnCount(gridRef, visible.length);
+	// The grid element lives in STATE, not a ref: it unmounts while the details
+	// pane is open, and a ref's `.current` changing is invisible to React - the
+	// column measurement would stay bound to the old, detached grid and read as
+	// a single column for the rest of the visit, quietly turning the row jump
+	// back into a one-tile step.
+	const [gridEl, setGridEl] = useState<HTMLDivElement | null>(null);
+	const columns = useGridColumnCount(gridEl, visible.length);
 	const openDetails = useCallback((ext: UnifiedExtension) => setSelectedKey(ext.key), []);
 
 	const {
@@ -115,9 +120,21 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Plugins
 				</h3>
-				{/* Installing belongs to the marketplace grid, not to one plugin's
-				    details pane - showing it there reads as "install this plugin". */}
-				{!selected && (
+				{/* One header slot, two jobs. Installing belongs to the marketplace
+				    grid, not to one plugin's details pane - shown there it reads as
+				    "install this plugin" - so the details pane spends the slot on the
+				    way back to the grid instead. */}
+				{selected ? (
+					<button
+						type="button"
+						data-testid="extensions-back"
+						onClick={closeDetails}
+						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<ChevronLeft className="w-3.5 h-3.5" /> All plugins
+					</button>
+				) : (
 					<button
 						type="button"
 						data-testid="extensions-install"
@@ -161,7 +178,6 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					ext={selected}
 					contributions={contributions}
 					busy={busyId === selected.id}
-					onBack={closeDetails}
 					onTogglePlugin={togglePlugin}
 					onToggleBuiltin={toggleBuiltin}
 					onUninstall={uninstallPlugin}
@@ -212,9 +228,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 									// reaching for Tab, which has to cross the only-installed toggle.
 									if (e.key !== 'ArrowDown') return;
 									e.preventDefault();
-									gridRef.current
-										?.querySelector<HTMLButtonElement>(ACTIVE_EXTENSION_TILE_SELECTOR)
-										?.focus();
+									gridEl?.querySelector<HTMLButtonElement>(ACTIVE_EXTENSION_TILE_SELECTOR)?.focus();
 								}}
 								placeholder="Search extensions…"
 								className="bg-transparent flex-1 text-sm outline-none"
@@ -257,7 +271,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 						activeIndex={activeIndex}
 						onActiveIndexChange={setActiveIndex}
 						onKeyDown={handleGridKeyDown}
-						gridRef={gridRef}
+						onGridElement={setGridEl}
 					/>
 				</>
 			)}

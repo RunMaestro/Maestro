@@ -16,8 +16,12 @@
 import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
-import { resolveQueuedItemTarget, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
-import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
+import {
+	moveActiveUnifiedTabToEdge,
+	resolveQueuedItemTarget,
+	toggleReadOnlyModeFields,
+} from '../../utils/tabHelpers';
+import type { Session, ThinkingMode } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -43,8 +47,6 @@ export interface UseQuickActionsHandlersDeps {
 	processQueuedItem: (sessionId: string, item: any) => Promise<void>;
 	/** Close the current tab */
 	handleCloseCurrentTab: () => void;
-	/** Reorder unified tabs (AI + file + terminal tabs) */
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
 	/** Copy tab context to clipboard */
 	handleCopyContext: (tabId: string) => void;
 	/** Export tab as HTML */
@@ -98,23 +100,6 @@ export interface UseQuickActionsHandlersReturn {
 // Hook implementation
 // ============================================================================
 
-/** Returns the UnifiedTabRef for the currently active tab (AI, file, terminal, or browser). */
-function getActiveUnifiedRef(session: Session): UnifiedTabRef | null {
-	if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
-		return { type: 'terminal', id: session.activeTerminalTabId };
-	}
-	if (session.activeFileTabId) {
-		return { type: 'file', id: session.activeFileTabId };
-	}
-	if (session.activeBrowserTabId) {
-		return { type: 'browser', id: session.activeBrowserTabId };
-	}
-	if (session.activeTabId) {
-		return { type: 'ai', id: session.activeTabId };
-	}
-	return null;
-}
-
 export function useQuickActionsHandlers(
 	deps: UseQuickActionsHandlersDeps
 ): UseQuickActionsHandlersReturn {
@@ -126,7 +111,6 @@ export function useQuickActionsHandlers(
 		handleSummarizeAndContinue,
 		processQueuedItem,
 		handleCloseCurrentTab,
-		handleUnifiedTabReorder,
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
@@ -309,32 +293,27 @@ export function useQuickActionsHandlers(
 		handleCloseCurrentTab();
 	}, [handleCloseCurrentTab]);
 
-	const handleQuickActionsMoveTabToFirst = useCallback(() => {
-		const activeSession = selectActiveSession(useSessionStore.getState());
-		if (!activeSession) return;
-		// Find the active tab's index in the unified tab order (supports AI, file, and terminal tabs)
-		const activeRef = getActiveUnifiedRef(activeSession);
-		if (!activeRef) return;
-		const idx = activeSession.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+	// Move the active tab to the strip's first / last slot. Same helper the
+	// Cmd+Shift+Left / Right shortcuts use, so the palette and the keyboard cannot
+	// disagree about where the tab lands (supports AI, file, browser, and terminal
+	// tabs, since it operates on unifiedTabOrder).
+	const moveActiveTabToEdge = useCallback((edge: 'start' | 'end') => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		if (!activeSessionId) return;
+		setSessions((prev: Session[]) =>
+			prev.map((s) => (s.id === activeSessionId ? moveActiveUnifiedTabToEdge(s, edge) : s))
 		);
-		if (idx > 0) {
-			handleUnifiedTabReorder(idx, 0);
-		}
-	}, [handleUnifiedTabReorder]);
+	}, []);
 
-	const handleQuickActionsMoveTabToLast = useCallback(() => {
-		const activeSession = selectActiveSession(useSessionStore.getState());
-		if (!activeSession) return;
-		const activeRef = getActiveUnifiedRef(activeSession);
-		if (!activeRef) return;
-		const idx = activeSession.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
-		);
-		if (idx >= 0 && idx < activeSession.unifiedTabOrder.length - 1) {
-			handleUnifiedTabReorder(idx, activeSession.unifiedTabOrder.length - 1);
-		}
-	}, [handleUnifiedTabReorder]);
+	const handleQuickActionsMoveTabToFirst = useCallback(
+		() => moveActiveTabToEdge('start'),
+		[moveActiveTabToEdge]
+	);
+
+	const handleQuickActionsMoveTabToLast = useCallback(
+		() => moveActiveTabToEdge('end'),
+		[moveActiveTabToEdge]
+	);
 
 	const handleQuickActionsCopyTabContext = useCallback(
 		(tabId: string) => handleCopyContext(tabId),

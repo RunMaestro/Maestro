@@ -13,8 +13,17 @@ vi.mock('../../../../../renderer/hooks/ui/useContextMenuPosition', () => ({
 	useContextMenuPosition: vi.fn(() => ({ top: 100, left: 200, ready: true })),
 }));
 
+const openBatchRunnerWithPresets = vi.fn();
 vi.mock('../../../../../renderer/stores/modalStore', () => ({
 	useModalStore: { getState: vi.fn(() => ({ openModal: vi.fn() })) },
+	getModalActions: vi.fn(() => ({ openBatchRunnerWithPresets })),
+}));
+
+// The Auto Run document list is the source of truth for what can be staged.
+const batchDocumentList = vi.fn<() => string[]>(() => []);
+vi.mock('../../../../../renderer/stores/batchStore', () => ({
+	useBatchStore: (selector: (state: { documentList: string[] }) => unknown) =>
+		selector({ documentList: batchDocumentList() }),
 }));
 
 vi.mock('../../../../../renderer/utils/clipboard', () => ({
@@ -99,6 +108,9 @@ const mockMaestro = {
 	shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
 	fs: {
 		delete: vi.fn().mockResolvedValue({ success: true }),
+		deleteMany: vi.fn(async (paths: string[]) => ({
+			results: paths.map((path) => ({ path, success: true })),
+		})),
 		downloadRemoteFile: vi.fn().mockResolvedValue({ success: true, path: '/local/App.tsx' }),
 		compressFolder: vi
 			.fn()
@@ -731,14 +743,46 @@ describe('useFileContextMenu', () => {
 			await result.current.handleDeleteMulti();
 		});
 
-		expect(mockMaestro.fs.delete).toHaveBeenCalledWith('/project/README.md', {
-			sshRemoteId: undefined,
-		});
-		expect(mockMaestro.fs.delete).toHaveBeenCalledWith('/project/docs/a.md', {
-			sshRemoteId: undefined,
-		});
+		// One batched call for the whole selection, not one call per file - the
+		// per-file loop put a round trip in front of every path (issue #1423).
+		expect(mockMaestro.fs.deleteMany).toHaveBeenCalledTimes(1);
+		expect(mockMaestro.fs.deleteMany).toHaveBeenCalledWith(
+			['/project/README.md', '/project/docs/a.md'],
+			{ sshRemoteId: undefined }
+		);
+		expect(mockMaestro.fs.delete).not.toHaveBeenCalled();
 		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
 		expect(setSelectedPaths).toHaveBeenCalledWith(expect.any(Set));
+		expect(result.current.multiDeleteModal).toBeNull();
+	});
+
+	it('handleDeleteMulti reports partial failures without losing the successes', async () => {
+		const refreshFileTree = vi.fn().mockResolvedValue(undefined);
+		const onShowFlash = vi.fn();
+		const selectedPathsRef = { current: new Set(['README.md', 'docs/a.md']) };
+		// A bulk delete is partially successful all the time (one locked or
+		// permission-denied file among many), so the batch resolves with a
+		// per-path outcome rather than rejecting on the first failure.
+		mockMaestro.fs.deleteMany.mockResolvedValueOnce({
+			results: [
+				{ path: '/project/README.md', success: true },
+				{ path: '/project/docs/a.md', success: false, error: 'Permission denied' },
+			],
+		});
+
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, selectedPathsRef, refreshFileTree, onShowFlash })
+		);
+
+		act(() => {
+			result.current.handleOpenDeleteMulti();
+		});
+		await act(async () => {
+			await result.current.handleDeleteMulti();
+		});
+
+		expect(onShowFlash).toHaveBeenCalledWith('Deleted 1, 1 failed');
+		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
 		expect(result.current.multiDeleteModal).toBeNull();
 	});
 	it('handleCompressFolder zips the folder, toasts the archive name, and refreshes', async () => {
@@ -778,6 +822,93 @@ describe('useFileContextMenu', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ color: 'red', message: expect.stringContaining('disk full') })
 		);
+	});
+
+	describe('Auto Run staging', () => {
+		const autoRunSession = {
+			...session,
+			autoRunFolderPath: '/project/.maestro/playbooks',
+		} as any;
+		const playbookFolder: FileNode = { name: 'RET', type: 'folder', children: [] };
+
+		it('stages every document under a folder inside the Auto Run folder', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01', 'RET/nested/RET-02', 'OTHER/OTH-01']);
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: autoRunSession })
+			);
+
+			act(() => {
+				result.current.openContextMenu(makeEvent(), playbookFolder, '.maestro/playbooks/RET', 4);
+			});
+			expect(result.current.autoRunStagedDocs).toEqual(['RET/RET-01', 'RET/nested/RET-02']);
+
+			act(() => {
+				result.current.handleStageForAutoRun();
+			});
+			expect(openBatchRunnerWithPresets).toHaveBeenCalledWith(['RET/RET-01', 'RET/nested/RET-02']);
+			expect(result.current.contextMenu).toBeNull();
+		});
+
+		it('stages the whole list when the Auto Run folder itself is right-clicked', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01', 'SPEC']);
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: autoRunSession })
+			);
+
+			act(() => {
+				result.current.openContextMenu(
+					makeEvent(),
+					{ name: 'playbooks', type: 'folder', children: [] },
+					'.maestro/playbooks',
+					4
+				);
+			});
+			expect(result.current.autoRunStagedDocs).toEqual(['RET/RET-01', 'SPEC']);
+		});
+
+		it('stages nothing for a folder outside the Auto Run folder', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01']);
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: autoRunSession })
+			);
+
+			act(() => {
+				result.current.openContextMenu(makeEvent(), folderNode, 'docs', 3);
+			});
+			expect(result.current.autoRunStagedDocs).toEqual([]);
+
+			act(() => {
+				result.current.handleStageForAutoRun();
+			});
+			expect(openBatchRunnerWithPresets).not.toHaveBeenCalled();
+		});
+
+		it('stages nothing for a file row, even inside the Auto Run folder', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01']);
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: autoRunSession })
+			);
+
+			act(() => {
+				result.current.openContextMenu(
+					makeEvent(),
+					{ name: 'RET-01.md', type: 'file' },
+					'.maestro/playbooks/RET/RET-01.md',
+					4
+				);
+			});
+			expect(result.current.autoRunStagedDocs).toEqual([]);
+		});
+
+		it('stages nothing when the session has no Auto Run folder configured', () => {
+			batchDocumentList.mockReturnValue(['RET/RET-01']);
+			const { result } = renderHook(() => useFileContextMenu(defaultArgs));
+
+			act(() => {
+				result.current.openContextMenu(makeEvent(), playbookFolder, '.maestro/playbooks/RET', 4);
+			});
+			expect(result.current.autoRunStagedDocs).toEqual([]);
+		});
 	});
 
 	it('handleCompressFolder is a no-op on a file row', async () => {

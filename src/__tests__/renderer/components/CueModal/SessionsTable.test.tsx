@@ -66,7 +66,7 @@ function makeProps(
 	return {
 		sessions: [],
 		theme,
-		onViewInPipeline: vi.fn(),
+		onViewInGraph: vi.fn(),
 		onEditYaml: vi.fn(),
 		onRemoveCue: vi.fn(),
 		onTriggerSubscription: vi.fn(),

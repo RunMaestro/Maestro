@@ -135,7 +135,16 @@ export interface AgentPickerGridProps {
 	theme: Theme;
 	loading: boolean;
 	sshConnectionError: string | null;
-	sortedAgents: AgentConfig[];
+	/** The rows to render - already sorted AND filtered by the availability toggle. */
+	visibleAgents: AgentConfig[];
+	/** Supported providers detected on the target machine, across the WHOLE list. */
+	availableProviderCount: number;
+	/** Supported providers in total. Never the length of `visibleAgents`. */
+	totalProviderCount: number;
+	/** Follows "available" in the summary - "locally" or "on <host>". */
+	providerLocationLabel: string;
+	showAllProviders: boolean;
+	onShowAllProvidersChange: (showAll: boolean) => void;
 	selectedAgent: string;
 	expandedAgent: string | null;
 	refreshingAgent: string | null;

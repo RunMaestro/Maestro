@@ -30,6 +30,10 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { resolveAuthOutage, type AuthOutage } from '../stores/authOutageStore';
+import {
+	classifyCredentialKind,
+	credentialKindBlocksLogin,
+} from '../../shared/providerAuthIdentity';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import {
@@ -55,6 +59,13 @@ export interface ReauthModalProps {
 
 type ReauthStatus = 'starting' | 'running' | 'failed' | 'exited';
 
+/**
+ * How long to wait for the shell's first byte before typing the login command
+ * anyway. Generous because it has to cover an SSH handshake to a cold remote;
+ * the normal path fires on the prompt long before this.
+ */
+const SILENT_SHELL_FALLBACK_MS = 8000;
+
 export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProps) {
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
@@ -72,7 +83,12 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	//     `{sessionId}-terminal-*` exit for its own tabs) never mistakes this
 	//     login shell for a terminal tab that was closed.
 	const ptySessionId = useMemo(() => `reauth-${session.id}-terminal-${generateId()}`, [session.id]);
-	const spawnStartedRef = useRef(false);
+	// Bumped per spawn so a superseded attempt (StrictMode remount, a prop
+	// change) cannot type its login command into a shell that is being replaced.
+	const spawnGenerationRef = useRef(0);
+	// The login command, held until the shell proves it is alive. See below.
+	const pendingCommandRef = useRef<{ ptySessionId: string; command: string } | null>(null);
+	const commandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const [status, setStatus] = useState<ReauthStatus>('starting');
 	const [spawnError, setSpawnError] = useState<string | null>(null);
@@ -85,7 +101,6 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		() => getAgentLoginCommand(session.toolType, session.customPath),
 		[session.toolType, session.customPath]
 	);
-	const commandLine = login ? formatAgentLoginCommand(login) : null;
 	const agentName = getAgentDisplayName(outage.toolType);
 
 	// Names of the blocked agents, resolved live: more of them can fail while
@@ -130,40 +145,105 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		[shellEnvVars, providerEnv, session.customEnvVars]
 	);
 
+	/**
+	 * Why this agent cannot be signed in from here, or null when it can.
+	 *
+	 * An API-key, gateway, or Bedrock/Vertex agent rejects its credentials with
+	 * the same `auth_expired` output an expired login produces, and it would sit
+	 * through the whole login flow without its situation changing - the flow
+	 * succeeds, the user believes it is fixed, and the next prompt burns on the
+	 * same rejection. So the terminal only opens for a credential a login repairs.
+	 *
+	 * Held at null until the provider env resolves. Classifying against a partial
+	 * environment would miss exactly the override that makes the answer "no", and
+	 * this runs once per modal open rather than per keystroke.
+	 */
+	const loginBlockedReason = useMemo(() => {
+		if (providerEnv === null) return null;
+		const env = Object.fromEntries(effectiveEnv.map((entry) => [entry.key, entry.value]));
+		return credentialKindBlocksLogin(classifyCredentialKind(session.toolType, env), agentName);
+	}, [providerEnv, effectiveEnv, session.toolType, agentName]);
+
+	// Null until the environment has been read, so the spawn effect below waits
+	// rather than starting a login the classification is about to rule out.
+	const commandLine =
+		providerEnv !== null && !loginBlockedReason && login ? formatAgentLoginCommand(login) : null;
+
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
 	const sshConfig = useMemo(() => {
+		// Only paths that are definitely REMOTE are used. A terminal tab falls
+		// back to `session.cwd` here, but this shell exists solely to run a login:
+		// it gains nothing from the project directory, and main turns the override
+		// into a `cd` that the remote shell runs before anything else - so a stale
+		// or local-looking path kills the session before the login can start.
+		// Landing in the remote home directory is always safe.
 		if (session.sessionSshRemoteConfig?.enabled) {
 			return {
 				...session.sessionSshRemoteConfig,
 				workingDirOverride:
-					session.sessionSshRemoteConfig.workingDirOverride ||
-					session.remoteCwd ||
-					session.cwd ||
-					undefined,
+					session.sessionSshRemoteConfig.workingDirOverride || session.remoteCwd || undefined,
 			};
 		}
 		if (session.sshRemoteId) {
 			return {
 				enabled: true,
 				remoteId: session.sshRemoteId,
-				workingDirOverride: session.remoteCwd || session.cwd || undefined,
+				workingDirOverride: session.remoteCwd || undefined,
 			};
 		}
 		return undefined;
-	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd, session.cwd]);
+	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]);
 
-	// Spawn the PTY exactly once and type the login command into it. The guard
-	// is what keeps StrictMode's double effect from starting two logins.
+	// Type the login command in, once the shell is actually there to receive it.
+	//
+	// Not sent straight after the spawn resolves: over SSH the spawn resolves as
+	// soon as the local `ssh` client is running, seconds before the remote shell
+	// exists, and anything typed into that gap is dropped - which is exactly how
+	// a remote login came up as an empty box. So the command is held until the
+	// PTY produces its first byte (the prompt), with a timeout fallback for a
+	// shell that prints nothing at all.
+	const flushPendingCommand = useCallback(() => {
+		const pending = pendingCommandRef.current;
+		if (!pending) return;
+		pendingCommandRef.current = null;
+		if (commandTimerRef.current) {
+			clearTimeout(commandTimerRef.current);
+			commandTimerRef.current = null;
+		}
+		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\n`).catch(() => {
+			// A failed write surfaces as the process exiting; nothing to add here.
+		});
+	}, []);
+
 	useEffect(() => {
-		if (!commandLine || spawnStartedRef.current) return;
-		spawnStartedRef.current = true;
+		return window.maestro.process.onData((dataSessionId: string) => {
+			if (dataSessionId !== ptySessionId) return;
+			flushPendingCommand();
+		});
+	}, [ptySessionId, flushPendingCommand]);
 
-		let cancelled = false;
+	// Spawn the login shell, and tear it down when this modal really goes away.
+	//
+	// Spawn and kill live in ONE effect on purpose. Split across two, React's
+	// StrictMode remount (cleanup, then re-run) killed the shell that the first
+	// pass had just started while a `spawnStarted` guard blocked the second pass
+	// from starting another - leaving a dead or orphaned PTY that nobody ever
+	// typed into. The guard is therefore a generation counter that the cleanup
+	// resets, so a remount always ends up with exactly one live shell.
+	useEffect(() => {
+		if (!commandLine) return;
+
+		const generation = ++spawnGenerationRef.current;
+		let disposed = false;
+
 		void window.maestro.process
 			.spawnTerminalTab({
 				sessionId: ptySessionId,
-				cwd: session.cwd || session.projectRoot || '',
+				// The login runs wherever the shell lands (the remote's home dir
+				// over SSH). It needs no project directory, and guessing one risks a
+				// `cd` that fails and kills the session before the login can run.
+				cwd: sshConfig?.enabled ? '' : session.cwd || session.projectRoot || '',
 				shell: defaultShell || undefined,
 				shellArgs,
 				shellEnvVars,
@@ -172,7 +252,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 				sessionSshRemoteConfig: sshConfig,
 			})
 			.then((result) => {
-				if (cancelled) return;
+				// A superseded generation's shell is already being replaced; writing
+				// to it would type the login into a PTY nobody is watching.
+				if (disposed || spawnGenerationRef.current !== generation) return;
 				if (!result.success) {
 					setStatus('failed');
 					setSpawnError(
@@ -183,21 +265,28 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					return;
 				}
 				setStatus('running');
-				// The PTY buffers stdin, so this lands once the shell has finished
-				// sourcing its rc files.
-				void window.maestro.process.write(ptySessionId, `${commandLine}\n`).catch(() => {
-					// A failed write surfaces as the process exiting; nothing to add here.
-				});
+				pendingCommandRef.current = { ptySessionId, command: commandLine };
+				commandTimerRef.current = setTimeout(flushPendingCommand, SILENT_SHELL_FALLBACK_MS);
 			})
 			.catch((err: unknown) => {
-				if (cancelled) return;
+				if (disposed || spawnGenerationRef.current !== generation) return;
 				logger.error('[ReauthModal] Failed to spawn login terminal', undefined, err);
 				setStatus('failed');
 				setSpawnError(err instanceof Error ? err.message : 'The login terminal failed to start.');
 			});
 
 		return () => {
-			cancelled = true;
+			disposed = true;
+			pendingCommandRef.current = null;
+			if (commandTimerRef.current) {
+				clearTimeout(commandTimerRef.current);
+				commandTimerRef.current = null;
+			}
+			// Never leave a login shell running behind a closed modal. Re-spawning
+			// under the same key is safe: ProcessManager kills the predecessor.
+			void window.maestro.process.kill(ptySessionId).catch(() => {
+				// Already gone - that is the desired end state either way.
+			});
 		};
 	}, [
 		commandLine,
@@ -210,23 +299,20 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		session.projectRoot,
 		session.toolType,
 		session.customEnvVars,
+		flushPendingCommand,
 	]);
 
-	// The login shell exiting means the flow is over, one way or the other.
+	// The login shell exiting means the flow is over, one way or the other. A
+	// shell that dies without printing anything (a dropped SSH transport, a
+	// remote with no such binary) would otherwise leave an empty box with no
+	// explanation, so say so in the terminal itself.
 	useEffect(() => {
 		return window.maestro.process.onExit((exitSessionId: string) => {
 			if (exitSessionId !== ptySessionId) return;
+			pendingCommandRef.current = null;
+			terminalRef.current?.write('\r\n\x1b[2m[the login session ended]\x1b[0m\r\n');
 			setStatus((prev) => (prev === 'failed' ? prev : 'exited'));
 		});
-	}, [ptySessionId]);
-
-	// Never leave a login shell running behind a closed modal.
-	useEffect(() => {
-		return () => {
-			void window.maestro.process.kill(ptySessionId).catch(() => {
-				// Already gone - that is the desired end state either way.
-			});
-		};
 	}, [ptySessionId]);
 
 	const handleFocusTerminal = useCallback(() => {
@@ -249,8 +335,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		onClose();
 	}, [outage.providerKey, onClose]);
 
-	const statusLine =
-		status === 'failed'
+	const statusLine = loginBlockedReason
+		? 'Fix the credential this agent presents, then resume.'
+		: status === 'failed'
 			? spawnError
 			: status === 'exited'
 				? 'The login session ended. Resume to re-run everything that failed.'
@@ -258,8 +345,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					? 'Complete the provider login above, then resume.'
 					: 'Starting the login shell...';
 
-	const statusColor =
-		status === 'failed'
+	const statusColor = loginBlockedReason
+		? theme.colors.warning
+		: status === 'failed'
 			? theme.colors.error
 			: status === 'exited'
 				? theme.colors.success
@@ -408,6 +496,14 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 							</span>
 						)}
 					</div>
+				) : loginBlockedReason ? (
+					<p className="text-sm select-text" style={{ color: theme.colors.warning }}>
+						{loginBlockedReason}
+					</p>
+				) : providerEnv === null ? (
+					<p className="text-sm" style={{ color: theme.colors.textDim }}>
+						Reading this agent's environment to work out how it signs in...
+					</p>
 				) : (
 					<p className="text-sm" style={{ color: theme.colors.error }}>
 						{agentName} has no login command Maestro can run. Re-authenticate it from a terminal,

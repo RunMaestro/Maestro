@@ -13,6 +13,8 @@ import {
 	resolveTurnProvider,
 	updateProviderSlot,
 	codifyTurnSettings,
+	captureQueuedTurnSettings,
+	codifyQueuedTurnSettings,
 } from '../../../renderer/utils/providerTabSessions';
 import type { AITab, Session } from '../../../renderer/types';
 import type { ToolType } from '../../../shared/types';
@@ -197,5 +199,70 @@ describe('codifyTurnSettings', () => {
 			turnModel: undefined,
 			turnEffort: undefined,
 		});
+	});
+});
+
+describe('captureQueuedTurnSettings', () => {
+	it('freezes the model and effort in force when the item is queued', () => {
+		const tab = makeTab({ customModel: 'opus', customEffort: 'xhigh' });
+		const session = makeSession('claude-code', { customModel: 'sonnet', customEffort: 'low' });
+
+		expect(captureQueuedTurnSettings(tab, session)).toEqual({
+			model: 'opus',
+			effort: 'xhigh',
+		});
+	});
+
+	it('captures the agent default as an explicit pair of undefined fields', () => {
+		// The OBJECT is the capture flag, so it must exist even when both values
+		// are the agent's own default - otherwise dispatch falls back to the live
+		// values and the item inherits a model the user picked afterwards.
+		const captured = captureQueuedTurnSettings(makeTab(), makeSession('codex'));
+
+		expect(captured).toEqual({ model: undefined, effort: undefined });
+	});
+});
+
+describe('codifyQueuedTurnSettings', () => {
+	it('runs a queued item under what it was queued with, not the live values', () => {
+		const item = { turnSettings: { model: 'haiku', effort: 'low' } };
+		// The user has since switched the tab to a big model.
+		const tab = makeTab({ customModel: 'opus', customEffort: 'xhigh' });
+		const session = makeSession('claude-code');
+
+		expect(codifyQueuedTurnSettings(item, tab, session)).toEqual({
+			turnProvider: 'claude-code',
+			turnModel: 'haiku',
+			turnEffort: 'low',
+		});
+	});
+
+	it('keeps an item queued on the agent default on the default', () => {
+		const item = { turnSettings: {} };
+		const tab = makeTab({ customModel: 'opus', customEffort: 'xhigh' });
+
+		expect(codifyQueuedTurnSettings(item, tab, makeSession('claude-code'))).toEqual({
+			turnProvider: 'claude-code',
+			turnModel: undefined,
+			turnEffort: undefined,
+		});
+	});
+
+	it('falls back to the live values for items queued before capture existed', () => {
+		const tab = makeTab({ customModel: 'opus', customEffort: 'xhigh' });
+
+		expect(codifyQueuedTurnSettings({}, tab, makeSession('claude-code'))).toEqual({
+			turnProvider: 'claude-code',
+			turnModel: 'opus',
+			turnEffort: 'xhigh',
+		});
+	});
+
+	it('always spawns on the live provider, which owns the resume token', () => {
+		const item = { turnSettings: { model: 'haiku', effort: 'low' } };
+
+		expect(codifyQueuedTurnSettings(item, makeTab(), makeSession('codex')).turnProvider).toBe(
+			'codex'
+		);
 	});
 });

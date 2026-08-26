@@ -680,6 +680,23 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
 		) => void;
+		onRemoteLaunchGoalRun: (
+			callback: (
+				sessionId: string,
+				config: {
+					goal: string;
+					exitCriteria?: string;
+					maxIterations?: number | null;
+					model?: string;
+					effort?: string;
+				},
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteLaunchGoalRunResponse: (
+			responseChannel: string,
+			result: { success: boolean; tabId?: string; code?: string; error?: string }
+		) => void;
 		onRemoteCreateWorktreeSession: (
 			callback: (
 				parentSessionId: string,
@@ -1482,6 +1499,14 @@ interface MaestroAPI {
 			targetPath: string,
 			options?: { recursive?: boolean; sshRemoteId?: string }
 		) => Promise<{ success: boolean }>;
+		/**
+		 * Delete many paths in one IPC call. Resolves with a per-path outcome in
+		 * input order instead of rejecting on the first failure.
+		 */
+		deleteMany: (
+			targetPaths: string[],
+			options?: { recursive?: boolean; sshRemoteId?: string }
+		) => Promise<{ results: Array<{ path: string; success: boolean; error?: string }> }>;
 		countItems: (
 			dirPath: string,
 			sshRemoteId?: string

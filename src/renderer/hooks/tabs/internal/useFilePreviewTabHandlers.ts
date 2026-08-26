@@ -12,6 +12,7 @@ import { logger } from '../../../utils/logger';
 import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
+import { useUIStore } from '../../../stores/uiStore';
 import { getOpenedMediaKind } from '../../../utils/mediaItems';
 import {
 	buildReplacementNavigationHistory,
@@ -428,12 +429,16 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 
 	const handleNewFileTab = useCallback(() => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
+		// Captured inside the updater so focus is only requested for a tab that was
+		// actually created (no active session leaves every entry untouched).
+		let createdTabId: string | null = null;
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
 				const newFileTab = createUntitledFileTab();
 				const newTabId = newFileTab.id;
+				createdTabId = newTabId;
 
 				const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
 				const updatedUnifiedTabOrder = insertAfterActiveInUnifiedTabOrder(s, newTabRef);
@@ -452,6 +457,12 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				};
 			})
 		);
+		// A blank file exists to be typed into, so put the caret in the editor rather
+		// than leaving it wherever it was. The request retries until CodeMirror (a
+		// lazy import) has mounted.
+		if (createdTabId) {
+			useUIStore.getState().requestTabFocus({ type: 'file', id: createdTabId });
+		}
 	}, []);
 
 	const handleClearFilePreviewHistory = useCallback(() => {

@@ -68,11 +68,13 @@ export function formatNewCommentsForTemplate(comments: GitHubComment[]): string 
 export const GITHUB_RATE_LIMIT_MAX_BACKOFF_MS = 60 * 60 * 1000;
 
 /**
- * Heuristic rate-limit detector for `gh` CLI failures. GitHub surfaces rate
- * limits in stderr text rather than a structured error code, so we pattern
- * match the user-visible strings. Exported for tests.
+ * Lowercased `message` + `stderr` of a `gh` CLI failure, joined for pattern
+ * matching. `gh` reports the interesting detail (rate limits, HTTP status,
+ * auth hints) in stderr text rather than in a structured error code, and
+ * `execFile` rejections carry it on a separate property from the message, so
+ * every classifier below has to look at both.
  */
-export function isGitHubRateLimitError(err: unknown): boolean {
+function ghErrorHaystack(err: unknown): string {
 	const msg = (
 		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
 			? err.message
@@ -85,7 +87,16 @@ export function isGitHubRateLimitError(err: unknown): boolean {
 		typeof (err as { stderr: unknown }).stderr === 'string'
 			? (err as { stderr: string }).stderr.toLowerCase()
 			: '';
-	const haystack = `${msg}\n${stderr}`;
+	return `${msg}\n${stderr}`;
+}
+
+/**
+ * Heuristic rate-limit detector for `gh` CLI failures. GitHub surfaces rate
+ * limits in stderr text rather than a structured error code, so we pattern
+ * match the user-visible strings. Exported for tests.
+ */
+export function isGitHubRateLimitError(err: unknown): boolean {
+	const haystack = ghErrorHaystack(err);
 	return (
 		haystack.includes('api rate limit exceeded') ||
 		haystack.includes('secondary rate limit') ||
@@ -104,19 +115,7 @@ export function isGitHubRateLimitError(err: unknown): boolean {
  * paging Sentry on every tick of a GitHub outage is pure noise (MAESTRO-KE).
  */
 export function isGitHubConnectivityError(err: unknown): boolean {
-	const msg = (
-		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
-			? err.message
-			: String(err ?? '')
-	).toLowerCase();
-	const stderr =
-		err &&
-		typeof err === 'object' &&
-		'stderr' in err &&
-		typeof (err as { stderr: unknown }).stderr === 'string'
-			? (err as { stderr: string }).stderr.toLowerCase()
-			: '';
-	const haystack = `${msg}\n${stderr}`;
+	const haystack = ghErrorHaystack(err);
 	return (
 		haystack.includes('error connecting to api.github.com') ||
 		haystack.includes('check your internet connection') ||
@@ -125,7 +124,38 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 		haystack.includes('etimedout') ||
 		haystack.includes('network is unreachable') ||
 		haystack.includes('could not resolve host: api.github.com') ||
+		// `gh` is a Go binary, so a transport-level failure surfaces with Go's
+		// wording rather than a libuv errno: `Post "https://api.github.com/graphql":
+		// net/http: TLS handshake timeout`. Same unreachable-right-now condition as
+		// the ECONNRESET/ETIMEDOUT spellings above, different vocabulary.
+		haystack.includes('tls handshake timeout') ||
+		haystack.includes('i/o timeout') ||
+		haystack.includes('no such host') ||
 		/\bhttp\s+5\d{2}\b/.test(haystack)
+	);
+}
+
+/**
+ * Detect GitHub CLI authentication failures - an expired, revoked, or missing
+ * `gh` token.
+ *
+ * Deliberately NOT folded into `isGitHubConnectivityError`: that predicate is
+ * documented and unit-tested as *not* matching auth/configuration failures, and
+ * the two want different user-facing guidance ("GitHub is unreachable, we'll
+ * retry" vs "re-authenticate `gh`"). What they share is that neither is a
+ * Maestro bug, so neither should page Sentry. Without this, one install whose
+ * token went stale files an event on every poll tick indefinitely - MAESTRO-KE
+ * collected 924 of them from a single trigger.
+ */
+export function isGitHubAuthError(err: unknown): boolean {
+	const haystack = ghErrorHaystack(err);
+	return (
+		/\bhttp\s+401\b/.test(haystack) ||
+		haystack.includes('bad credentials') ||
+		haystack.includes('gh auth login') ||
+		haystack.includes('requires authentication') ||
+		haystack.includes('authentication required') ||
+		haystack.includes('not logged into any github hosts')
 	);
 }
 
@@ -270,13 +300,26 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			if (isGitHubRateLimitError(err)) {
 				throw err;
 			}
+			// A stale token fails here first, before `doPoll` ever gets a repo to
+			// poll, so the auth guidance has to be repeated at this call site -
+			// otherwise an auto-detect trigger only ever says "could not auto-detect
+			// repo", which reads like a project problem rather than a login one.
+			if (isGitHubAuthError(err)) {
+				const message = err instanceof Error ? err.message : String(err);
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
+				);
+				return null;
+			}
 			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" - skipping poll`);
 			// GitHub being unreachable or degraded is the same expected operational
 			// condition the doPoll catch below suppresses. Repo auto-detection runs
 			// first, so without this a `gh repo view` 5xx during an outage would
 			// still page Sentry once per tick for every auto-detect trigger
 			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
-			if (!isGitHubConnectivityError(err)) {
+			// A stale `gh` token is the same story with a different cause.
+			if (!isGitHubConnectivityError(err) && !isGitHubAuthError(err)) {
 				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			}
 			return null;
@@ -589,6 +632,13 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				onLog(
 					'warn',
 					`[CUE] GitHub poll skipped for "${triggerName}" because GitHub is unreachable: ${message}`
+				);
+			} else if (isGitHubAuthError(err)) {
+				// Actionable by the user and only by the user, so say what to do
+				// instead of filing a crash report on every tick (MAESTRO-KE).
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
 				);
 			} else {
 				// Emit typed payload so the metric interceptor bumps the

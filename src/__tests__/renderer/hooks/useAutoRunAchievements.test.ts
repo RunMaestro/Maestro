@@ -83,9 +83,12 @@ vi.mock('../../../renderer/services/cue', () => ({
 // Mock the leaderboard service - Cue credit must also ship a delta to the
 // server, which accumulates totals from deltaMs (no delta = permanent drift).
 const mockSubmitLeaderboardTimeDelta = vi.fn().mockResolvedValue(undefined);
+// Auto Run ticks record what they credited so a crash mid-run can be recovered.
+const mockNoteAutoRunCreditAccrued = vi.fn();
 
 vi.mock('../../../renderer/services/leaderboard', () => ({
 	submitLeaderboardTimeDelta: (args: any) => mockSubmitLeaderboardTimeDelta(args),
+	noteAutoRunCreditAccrued: (ms: number) => mockNoteAutoRunCreditAccrued(ms),
 }));
 
 // Mock conductorBadges - provide just enough badges for tests (inlined to avoid TDZ in hoisted vi.mock)

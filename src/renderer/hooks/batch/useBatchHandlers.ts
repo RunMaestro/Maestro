@@ -39,6 +39,7 @@ import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult, SpawnAgentOptions } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
+import { queueLeaderboardDelta, noteAutoRunCreditSettled } from '../../services/leaderboard';
 import { logger } from '../../utils/logger';
 
 /**
@@ -358,9 +359,23 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 							.split('T')[0];
 					}
 
+					// This run's time is already on the local badge (credited by the
+					// 60s timer), so every branch below must either ship the delta or
+					// queue it. Retire the uncommitted counter first: the delta is now
+					// this code's responsibility, not the crash-recovery counter's.
+					void noteAutoRunCreditSettled(info.elapsedTimeMs);
+
 					// Submit to leaderboard in background (only if we have an auth token)
 					if (!lbReg.authToken) {
-						logger.warn('Leaderboard submission skipped: no auth token');
+						// The token arrives when the user confirms their email. Queue
+						// rather than warn-and-drop - the server is delta-accumulated,
+						// so time that never ships a delta is lost for good.
+						logger.warn('Leaderboard submission queued: no auth token');
+						void queueLeaderboardDelta({
+							deltaMs: info.elapsedTimeMs,
+							deltaRuns: 1,
+							source: 'auto-run',
+						});
 					} else {
 						window.maestro.leaderboard
 							.submit({
@@ -384,6 +399,21 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								source: 'auto-run',
 							})
 							.then((result) => {
+								if (!result.success) {
+									// Rejected by the server (offline queue, bad token,
+									// rate limit). The time is on the local badge already,
+									// so hold the delta for the next flush.
+									logger.warn(
+										`Leaderboard submission failed, queued for retry: ${
+											result.error ?? result.message
+										}`
+									);
+									void queueLeaderboardDelta({
+										deltaMs: info.elapsedTimeMs,
+										deltaRuns: 1,
+										source: 'auto-run',
+									});
+								}
 								if (result.success) {
 									// Update last submission timestamp
 									setLbReg({
@@ -439,6 +469,13 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								}
 							})
 							.catch((error) => {
+								// Network blip. Queue so the next launch ships it - a
+								// dropped delta can never be reconstructed from the client.
+								void queueLeaderboardDelta({
+									deltaMs: info.elapsedTimeMs,
+									deltaRuns: 1,
+									source: 'auto-run',
+								});
 								Sentry.captureException(error, {
 									extra: { operation: 'leaderboard-submit', badgeLevel: updatedBadgeLevel },
 								});

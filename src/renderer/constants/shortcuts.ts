@@ -29,7 +29,12 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Open Memory Viewer',
 		keys: ['Meta', 'Shift', 'm'],
 	},
-	toggleMode: { id: 'toggleMode', label: 'Switch AI/Shell Mode', keys: ['Meta', 'j'] },
+	// Id kept as `toggleMode` on purpose. It stopped toggling in afad8e7be (March
+	// 2026) and now opens a terminal tab, but the id is what persisted custom
+	// bindings key off - renaming it would orphan every saved override and
+	// silently drop the user back to the default, which is a worse bug than a
+	// stale name. Only the label moves.
+	toggleMode: { id: 'toggleMode', label: 'New Terminal Tab', keys: ['Meta', 'j'] },
 	quickAction: {
 		id: 'quickAction',
 		label: 'Quick Actions',
@@ -95,10 +100,14 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Edit Last Queued Message',
 		keys: ['Meta', 'Shift', 'e'],
 	},
-	// Opt+Cmd+Down, not Opt+J: the J key is crowded (Cmd+J switches AI/Shell mode,
-	// Cmd+Shift+J tiles a new terminal, Opt+Cmd+J jumps to the nearest terminal),
-	// and a bare Opt+letter types a character while the composer has focus.
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'Meta', 'ArrowDown'] },
+	// Back on Cmd+Shift+J, the chord this action ORIGINALLY shipped with
+	// (b37423abf) and the one most installs never actually left - the Opt+J-era
+	// migration missed them, so they kept it through both the Opt+J and
+	// Opt+Cmd+Down eras. What made Cmd+Shift+J look unavailable was the tiling
+	// family briefly claiming it; that family now lives on Ctrl+Cmd with the rest
+	// of the pane commands, so the J key is free again. A bare Opt+letter is still
+	// off the table here: it types a character while the composer has focus.
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Meta', 'Shift', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
@@ -267,37 +276,77 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
-	// The "tile a NEW tab" family. Only the terminal ships with a binding: it sits
-	// on Cmd+Shift+J, one modifier away from Cmd+J (open a new terminal tab),
-	// because a terminal beside your work is the common case. The other three are
-	// registered UNBOUND (`keys: []`) rather than left out - that keeps them in
-	// Settings -> Shortcuts where a user can record their own binding, without
-	// Maestro claiming three more default chords nobody asked for. An empty `keys`
-	// never matches an event (see isShortcut) and renders as "Not set".
+	// The "tile a NEW tab" family. All four live on Ctrl+Cmd, alongside the pane
+	// commands above, because that is literally what they do: Ctrl+Cmd+D splits
+	// the current view, and each of these splits it AND puts a new tab of one kind
+	// in the bottom half. The letter is the same mnemonic the plain "new tab"
+	// chord uses (Cmd+J terminal, Cmd+B browser), so the tiled twin is the same
+	// letter one modifier over.
+	//
+	// Ctrl+Cmd is the only modifier pair Maestro can express for a family like
+	// this. `eventMatchesShortcutKeys` folds Meta and Ctrl into ONE modifier so a
+	// single table serves macOS and Windows, which means Ctrl+Opt is not a
+	// distinct chord there - on Windows it IS Cmd+Opt, where these letters already
+	// carry Tab Switcher, Jump to Nearest Terminal and Search All Tabs. These are
+	// matched by isPaneShortcut, which requires BOTH physical modifiers, so they
+	// never fire on the plain-Cmd equivalents.
+	//
+	// The terminal one previously shipped on Cmd+Shift+J, reasoned as "one
+	// modifier away from Cmd+J". That reasoning held against the defaults table
+	// and not against real installs: Cmd+Shift+J was jumpToBottom's ORIGINAL
+	// default (b37423abf), and the migration that later moved it only covered the
+	// Opt+J era, so every install predating that still held Cmd+Shift+J for Jump
+	// to Bottom and got two live actions on one key. Jump to Bottom now owns that
+	// chord outright and the whole tiling family sits here instead.
 	tileTerminalBelow: {
 		id: 'tileTerminalBelow',
 		label: 'Tile New Terminal Below',
-		keys: ['Meta', 'Shift', 'j'],
+		keys: ['Control', 'Meta', 'j'],
 		windowScoped: true,
 	},
 	tileAiBelow: {
 		id: 'tileAiBelow',
 		label: 'Tile New AI Chat Below',
-		keys: [],
+		keys: ['Control', 'Meta', 't'],
 		windowScoped: true,
 	},
 	tileBrowserBelow: {
 		id: 'tileBrowserBelow',
 		label: 'Tile New Browser Below',
-		keys: [],
+		keys: ['Control', 'Meta', 'b'],
 		windowScoped: true,
 	},
 	tileFileBelow: {
 		id: 'tileFileBelow',
 		label: 'Tile New File Below',
-		keys: [],
+		keys: ['Control', 'Meta', 'f'],
 		windowScoped: true,
 	},
+
+	// Registered unassigned: the snoozed-tab list is reachable by click today and
+	// there is no spare chord near Opt+Cmd+S worth spending by default. Listing
+	// it here is what makes it appear in Settings -> Shortcuts so a user can bind
+	// it, which is the whole point of allowing an empty `keys`.
+	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
+
+	// Media player. All four ship unbound: the player is a floating widget most
+	// users reach by opening a file, so claiming four default chords for it would
+	// spend keys nobody asked for. Listing them is what puts them in
+	// Settings -> Shortcuts for anyone who lives in the queue.
+	openMediaPlayer: { id: 'openMediaPlayer', label: 'Open Media Player', keys: [] },
+	mediaPlayPause: { id: 'mediaPlayPause', label: 'Media: Play / Pause', keys: [] },
+	mediaNext: { id: 'mediaNext', label: 'Media: Next Track', keys: [] },
+	mediaPrev: { id: 'mediaPrev', label: 'Media: Previous Track', keys: [] },
+
+	// Palette-only actions that had no keyboard route at all. Same reasoning:
+	// registered so they can be bound, unbound so nothing is claimed by default.
+	openLeaderboard: { id: 'openLeaderboard', label: 'Open Leaderboard', keys: [] },
+	clearAllNotifications: {
+		id: 'clearAllNotifications',
+		label: 'Clear All Notifications',
+		keys: [],
+	},
+	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)
@@ -371,11 +420,6 @@ export const TAB_SHORTCUTS = {
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },
 	snoozeTab: { id: 'snoozeTab', label: 'Snooze Tab', keys: ['Alt', 'Meta', 's'] },
-	// Registered unassigned: the snoozed-tab list is reachable by click today and
-	// there is no spare chord near Opt+Cmd+S worth spending by default. Listing
-	// it here is what makes it appear in Settings -> Shortcuts so a user can bind
-	// it, which is the whole point of allowing an empty `keys`.
-	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
 	closeTabsLeft: {
 		id: 'closeTabsLeft',
 		label: 'Close Tabs to Left',

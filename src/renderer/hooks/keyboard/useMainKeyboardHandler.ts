@@ -9,6 +9,9 @@ import {
 import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { useNotificationStore } from '../../stores/notificationStore';
+import { useMediaPlaybackStore, selectMediaPlayerTargetId } from '../../stores/mediaPlaybackStore';
+import { stepMediaItem } from '../../utils/mediaItems';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -21,6 +24,35 @@ import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
+import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
+
+/**
+ * Open the floating media player on whatever it should be showing.
+ *
+ * Mirrors the palette command rather than duplicating its reasoning: restore the
+ * widget, and land on the loaded item, else the most recent thing played. Reads
+ * the store at press time so a queue that advanced since the last render cannot
+ * strand the shortcut on a finished file.
+ */
+function openMediaPlayerFromShortcut(): void {
+	const state = useMediaPlaybackStore.getState();
+	const targetId = selectMediaPlayerTargetId(state);
+	state.restore();
+	if (targetId && targetId !== state.activeItemId) {
+		state.setActiveItem(targetId, { autoplay: false });
+	}
+}
+
+/**
+ * Step the queue by one, the same way MediaPlaybackHost's own transport does.
+ * No-op when there is nothing loaded - stepping from nowhere has no meaning.
+ */
+function stepMediaFromShortcut(direction: 1 | -1): void {
+	const state = useMediaPlaybackStore.getState();
+	if (!state.activeItemId) return;
+	const next = stepMediaItem(state.items, state.activeItemId, direction);
+	if (next) state.setActiveItem(next.id, { autoplay: true });
+}
 
 // Font size keyboard shortcut constants
 const FONT_SIZE_STEP = 2;
@@ -53,11 +85,12 @@ const FOCUS_AFTER_RENDER_DELAY_MS = 50;
 
 /**
  * The "Tile New ... Below" shortcut family, paired with the tab kind each one
- * creates. Only `tileTerminalBelow` has a default binding (Cmd+Shift+J); the
- * other three are registered with `keys: []` so they appear in Settings ->
- * Shortcuts as "Not set" and do nothing until a user records a chord. Keeping
- * them in one table means adding a tileable kind is a single line here rather
- * than a fourth branch in the keydown chain.
+ * creates. All four ship on Ctrl+Cmd (T / J / B / F), the same namespace as the
+ * pane commands, so they are matched with `isPaneShortcut` rather than
+ * `isShortcut` - the general matcher folds Meta and Ctrl into one modifier and
+ * would fire these on a plain Cmd+T. Keeping them in one table means adding a
+ * tileable kind is a single line here rather than a fourth branch in the
+ * keydown chain.
  */
 const TILE_SHORTCUTS: ReadonlyArray<{ shortcutId: string; kind: TileableTabKind }> = [
 	{ shortcutId: 'tileTerminalBelow', kind: 'terminal' },
@@ -256,9 +289,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				const isLayoutShortcut =
 					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
 				// Next unread / draft tab is benign navigation, so it stays live behind a
-				// modal. Resolved by SHORTCUT ID rather than by key: it has already moved
-				// combos once, and the hard-coded arrow left behind by that move silently
-				// stopped matching it.
+				// modal. Resolved by SHORTCUT ID rather than by key, for two reasons: it
+				// has already moved combos once and the hard-coded arrow left behind by
+				// that move silently stopped matching it, and a user who REBINDS it would
+				// otherwise get a shortcut that dies the moment any modal is open -
+				// including the Shortcuts settings pane they rebound it in.
 				const isNextUnreadTabShortcut = ctx.isShortcut(e, 'nextUnreadTab');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();
@@ -455,9 +490,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 
 			// Which "Tile New ... Below" command this event matches, if any. Resolved
 			// once here rather than as four more links in the else-if chain below.
-			// Only the terminal entry ships with a default chord; the rest sit unbound
-			// until a user records one in Settings -> Shortcuts.
-			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isShortcut(e, t.shortcutId)) ?? null;
+			// isPaneShortcut, not isShortcut: the family lives on Ctrl+Cmd and the
+			// general matcher treats Ctrl and Cmd as the same modifier, so it would
+			// report a match on a bare Cmd+T.
+			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isPaneShortcut(e, t.shortcutId)) ?? null;
 
 			// Helper to track shortcut usage for keyboard mastery gamification
 			// AND for the daily-usage time series shown on the Usage Dashboard.
@@ -624,13 +660,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				trackShortcut('toggleMode');
 			} else if (matchedTile) {
-				// The tile-below family. Cmd+Shift+J is the tiled twin of Cmd+J: instead
-				// of a new terminal tab that takes over the panel, split the current view
-				// and put the terminal in the bottom half. The AI / browser / file
-				// entries ship UNBOUND and only reach here once a user records a binding
-				// in Settings (an empty `keys` never matches). tileNewTabInSession
-				// focuses the new pane; it flashes and no-ops when the agent has nothing
-				// on screen to tile with.
+				// The tile-below family. Each is the tiled twin of its plain "new tab"
+				// chord: instead of a new tab that takes over the panel, split the
+				// current view and put the new tab in the bottom half. Unlike the pane
+				// commands above this is NOT gated on an existing group - tiling into a
+				// single view is what creates the first one. tileNewTabInSession focuses
+				// the new pane; it flashes and no-ops when the agent has nothing on
+				// screen to tile with.
 				e.preventDefault();
 				if (ctx.activeSessionId) {
 					tileNewTabInSession(ctx.activeSessionId, matchedTile.kind);
@@ -661,6 +697,41 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setSettingsModalOpen(true);
 				trackShortcut('settings');
+			} else if (ctx.isShortcut(e, 'openThemeSettings')) {
+				e.preventDefault();
+				ctx.setSettingsTab?.('theme');
+				ctx.setSettingsModalOpen(true);
+				trackShortcut('openThemeSettings');
+			} else if (ctx.isShortcut(e, 'showSnoozeList')) {
+				// Registered unbound since Part 3 and never wired, so binding a key to
+				// it did nothing. Same route the tab strip and the palette already use.
+				e.preventDefault();
+				useModalStore.getState().openModal('snoozedTabs');
+				trackShortcut('showSnoozeList');
+			} else if (ctx.isShortcut(e, 'openLeaderboard')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('leaderboard');
+				trackShortcut('openLeaderboard');
+			} else if (ctx.isShortcut(e, 'clearAllNotifications')) {
+				e.preventDefault();
+				useNotificationStore.getState().clearToasts();
+				trackShortcut('clearAllNotifications');
+			} else if (ctx.isShortcut(e, 'openMediaPlayer')) {
+				e.preventDefault();
+				openMediaPlayerFromShortcut();
+				trackShortcut('openMediaPlayer');
+			} else if (ctx.isShortcut(e, 'mediaPlayPause')) {
+				e.preventDefault();
+				useMediaPlaybackStore.getState().requestToggle();
+				trackShortcut('mediaPlayPause');
+			} else if (ctx.isShortcut(e, 'mediaNext')) {
+				e.preventDefault();
+				stepMediaFromShortcut(1);
+				trackShortcut('mediaNext');
+			} else if (ctx.isShortcut(e, 'mediaPrev')) {
+				e.preventDefault();
+				stepMediaFromShortcut(-1);
+				trackShortcut('mediaPrev');
 			} else if (ctx.isShortcut(e, 'agentSettings')) {
 				// In group chat, open the moderator's settings for the active chat.
 				// Otherwise open agent settings for the current session.
@@ -877,6 +948,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.toggleShowUnreadAgentsOnly();
 				trackShortcut('filterUnreadAgents');
+			} else if (ctx.isShortcut(e, 'forcedParallelSend')) {
+				// The composer owns this chord while the caret is inside it - only it
+				// can read the live draft it may need to send. Everywhere else the
+				// chord still has to work: with an empty draft it force-sends the
+				// newest eligible QUEUED item, and the queue is drawn in the
+				// transcript, so requiring focus in a textarea made the shortcut look
+				// broken from the one place the user was actually looking at the thing
+				// it acts on. The composer decides what to do with it (see
+				// runForcedParallelSend); this branch only says the chord fired.
+				const composerRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
+				const cameFromComposer = !!composerRef?.current && e.target === composerRef.current;
+				if (!cameFromComposer && useSettingsStore.getState().forcedParallelExecution) {
+					e.preventDefault();
+					window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+				}
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)

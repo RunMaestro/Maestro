@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -1490,6 +1490,27 @@ describe('SessionList', () => {
 			// Context menu items should appear
 			expect(screen.getByText('Rename')).toBeInTheDocument();
 			expect(screen.getByText('Remove Agent')).toBeInTheDocument();
+		});
+
+		it('heads the context menu with the name of the agent it acts on', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Header Me' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			// Only the Left Bar row carries the name before the menu opens.
+			expect(screen.getAllByText('Header Me')).toHaveLength(1);
+
+			fireEvent.contextMenu(screen.getByText('Header Me'), { clientX: 100, clientY: 100 });
+
+			// The menu pops away from the row it was opened on, so it has to name
+			// the agent itself or its destructive items are unattributed.
+			const menu = screen.getByText('Remove Agent').closest('div.fixed');
+			expect(menu).not.toBeNull();
+			expect(within(menu as HTMLElement).getByText('Header Me')).toBeInTheDocument();
 		});
 
 		it('closes context menu on Escape', () => {

@@ -45,6 +45,8 @@ import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
 import {
 	selectCanRestoreFloatingPlayer,
+	selectCanOpenMediaPlayer,
+	selectMediaPlayerTargetId,
 	useMediaPlaybackStore,
 } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
@@ -245,6 +247,18 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		() => setConcertoStageFloating(!concertoStageFloating),
 		[concertoStageFloating, setConcertoStageFloating]
 	);
+	const canOpenMediaPlayer = useMediaPlaybackStore(selectCanOpenMediaPlayer);
+	// Read the target at INVOKE time, not render time: the palette can sit open
+	// while a queued file advances, and landing on a stale id would open the
+	// player on something the user already finished.
+	const openMediaPlayer = useCallback(() => {
+		const state = useMediaPlaybackStore.getState();
+		const targetId = selectMediaPlayerTargetId(state);
+		state.restore();
+		if (targetId && targetId !== state.activeItemId) {
+			state.setActiveItem(targetId, { autoplay: false });
+		}
+	}, []);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -485,6 +499,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildMediaPlayerCommands({
 			canRestoreFloatingPlayer,
 			restoreFloatingPlayer,
+			canOpenMediaPlayer,
+			openMediaPlayer,
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({

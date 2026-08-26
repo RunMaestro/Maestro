@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useCallback } from 'react';
-import { X, Award, CheckCircle, Trophy, ExternalLink } from 'lucide-react';
+import { X, Award, CheckCircle, Trophy, ExternalLink, Settings } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { ShortcutFilterButton } from './ui/ShortcutFilterButton';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
@@ -20,6 +20,11 @@ interface ShortcutsHelpModalProps {
 	onClose: () => void;
 	hasNoAgents?: boolean;
 	keyboardMasteryStats?: KeyboardMasteryStats;
+	/**
+	 * Open Settings on the Shortcuts tab. Omitted when there is nowhere to send
+	 * the user, in which case the gear is not rendered rather than rendered dead.
+	 */
+	onOpenShortcutSettings?: () => void;
 }
 
 export function ShortcutsHelpModal({
@@ -29,6 +34,7 @@ export function ShortcutsHelpModal({
 	onClose,
 	hasNoAgents,
 	keyboardMasteryStats,
+	onOpenShortcutSettings,
 }: ShortcutsHelpModalProps) {
 	const [searchQuery, setSearchQuery] = useState('');
 	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
@@ -108,9 +114,23 @@ export function ShortcutsHelpModal({
 							: totalShortcuts}
 					</span>
 				</div>
-				<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
-					<X className="w-4 h-4" />
-				</GhostIconButton>
+				<div className="flex items-center gap-1">
+					{/* The footer already tells the user shortcuts are "customized from
+					    Settings -> Shortcuts"; until now that sentence named a
+					    destination it could not reach. */}
+					{onOpenShortcutSettings && (
+						<GhostIconButton
+							onClick={onOpenShortcutSettings}
+							color={theme.colors.textDim}
+							ariaLabel="Open shortcut settings"
+						>
+							<Settings className="w-4 h-4" />
+						</GhostIconButton>
+					)}
+					<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
+						<X className="w-4 h-4" />
+					</GhostIconButton>
+				</div>
 			</div>
 
 			{hasNoAgents && (

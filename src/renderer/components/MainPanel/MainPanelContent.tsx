@@ -28,7 +28,7 @@ import {
 	resolveTabRefTitle,
 	splitPaneRectsByKind,
 } from '../../utils/panelLayout';
-import { focusPaneInputWhenReady } from '../../utils/paneFocus';
+import { filePaneAttrs, focusPaneInputWhenReady } from '../../utils/paneFocus';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
@@ -57,6 +57,7 @@ import type {
 	GroomingProgress,
 	MergeResult,
 } from '../../types/contextMerge';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 
 // Lazy-loaded: FilePreview is the single aggregation point that pulls mermaid,
 // react-syntax-highlighter, and the full react-markdown/remark/rehype stack into
@@ -199,9 +200,13 @@ export interface MainPanelContentProps {
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/**
+	 * Force Send eligibility for a queued item: can it be dispatched now, why not
+	 * if it can't, and which other tabs are working. Carries the FULL
+	 * ForceSendEligibility so the inline card renders the same decision the
+	 * Execution Queue modal does instead of re-deriving one from a subset.
+	 */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	onOpenQueueBrowser?: () => void;
 	showFlashNotification?: (message: string) => void;
 
@@ -614,11 +619,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		},
 		[activeGroup, activeSession.id]
 	);
-	// Keyboard pane commands move the focus RING via `focusedPaneId`, but the caret
-	// stays wherever it was - so switching to a terminal tile and typing sent the
-	// keystrokes to the previous pane. The tiling shortcuts publish a one-shot
-	// `paneFocusRequest` (leaf id) and this consumes it, putting DOM focus inside
-	// the pane's real input:
+	// Creating or moving to a tab moves the focus RING (`focusedPaneId`, or just the
+	// active-tab ids), but the caret stays wherever it was - so tiling a terminal and
+	// typing sent the keystrokes to the previous pane. The commands publish a one-shot
+	// `focusRequest` and this consumes it, putting DOM focus inside the tab's real
+	// input:
 	//   - terminal -> that tab's xterm, by id. `focusActiveTerminal()` is NOT usable
 	//     here: a tiled terminal pane never sets `activeTerminalTabId`.
 	//   - ai       -> the shared chat textarea, which is already scoped to the
@@ -628,28 +633,46 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// The per-kind routing lives in utils/paneFocus so it stays testable and so the
 	// two DOM-resolved kinds (browser overlay, CodeMirror editor) are described in
 	// one place rather than inline here.
-	// Deferred a frame: the request is published in the same tick as the session
-	// commit, so the newly focused pane has not rendered/unhidden yet.
-	const paneFocusRequest = useUIStore((s) => s.paneFocusRequest);
+	//
+	// The retry is owned by a REF, not by the effect's cleanup. Consuming the request
+	// sets store state this effect subscribes to, so returning the canceller made the
+	// effect tear itself down: clear -> deps change -> React runs the cleanup ->
+	// cancel() -> the re-run sees a null request and does nothing. The retry was
+	// killed a few ms in, always before its first 50ms attempt, so NO pane ever took
+	// focus. A ref survives that re-run; a superseded request still cancels the one
+	// before it, which is all the cleanup was there for.
+	const focusRequest = useUIStore((s) => s.focusRequest);
+	const focusRetryRef = React.useRef<(() => void) | null>(null);
+	React.useEffect(() => () => focusRetryRef.current?.(), []);
 	React.useEffect(() => {
-		if (!paneFocusRequest) return;
+		if (!focusRequest) return;
 		// Consume immediately so a stale request can never re-steal focus on a later
 		// remount, even if the lookups below bail out.
-		useUIStore.getState().clearPaneFocusRequest();
-		if (!activeGroup) return;
-		const leaf = findLeafById(activeGroup.layout, paneFocusRequest);
-		if (!leaf || leaf.kind !== 'leaf') return;
-		const tab = leaf.tab;
+		useUIStore.getState().clearFocusRequest();
+		// Whatever the previous request was still chasing, it is stale now.
+		focusRetryRef.current?.();
+		focusRetryRef.current = null;
+		// A pane request addresses a leaf in the active group; a tab request names the
+		// tab outright (a plain "new tab" never belongs to a group).
+		let tab: UnifiedTabRef;
+		if ('tab' in focusRequest) {
+			tab = focusRequest.tab;
+		} else {
+			if (!activeGroup) return;
+			const leaf = findLeafById(activeGroup.layout, focusRequest.leafId);
+			if (!leaf || leaf.kind !== 'leaf') return;
+			tab = leaf.tab;
+		}
 		const sessionId = activeSession.id;
 		// The pane shortcuts are not gated on activeFocus, so they can fire while the
 		// Left Bar or Right Bar owns it. Land it back on 'main' for EVERY pane kind or
 		// the arrow keys keep navigating that other region while the caret sits in a
 		// pane. Set synchronously - it is plain state, nothing to wait for.
 		useUIStore.getState().setActiveFocus('main');
-		// Retried rather than fired once: a pane created and tiled in the same commit
+		// Retried rather than fired once: a tab created and tiled in the same commit
 		// has not rendered yet, and the file editor (lazy CodeMirror) and browser
 		// address bar (keep-alive overlay) can take several frames to exist.
-		return focusPaneInputWhenReady(
+		focusRetryRef.current = focusPaneInputWhenReady(
 			tab,
 			{
 				focusTerminal: (tabId) =>
@@ -662,7 +685,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			},
 			{ intervalMs: PANE_FOCUS_DELAY_MS }
 		);
-	}, [paneFocusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
+	}, [focusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
 	// Number of open modal/overlay layers. When any layer is open over a browser
 	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
 	// focus so keyboard navigation lands in the modal instead of the page. Driving
@@ -839,6 +862,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					ref={filePreviewContainerRef}
 					tabIndex={-1}
 					className="flex-1 overflow-hidden outline-none"
+					// Same marker the tiled file pane carries, so the focus router can put
+					// the caret in THIS tab's editor. A standalone file tab needs it just
+					// as much as a tiled one: "new file tab" should land you in the text.
+					{...filePaneAttrs(activeFileTabId)}
 				>
 					<React.Suspense fallback={null}>
 						<FilePreview

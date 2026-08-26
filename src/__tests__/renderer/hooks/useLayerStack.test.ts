@@ -1297,6 +1297,111 @@ describe('useLayerStack', () => {
 		});
 	});
 
+	describe('focus restoration', () => {
+		// The layer stack is the only thing that knows a layer opened at all, so
+		// it is where "give the caret back" belongs. Without it, every modal
+		// dismissed with Escape left focus on document.body and the pane behind
+		// it silently swallowed the next keystroke.
+		let input: HTMLInputElement;
+
+		beforeEach(() => {
+			input = document.createElement('input');
+			document.body.appendChild(input);
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			input.remove();
+		});
+
+		it('returns focus to the element that had it when the layer opened', () => {
+			input.focus();
+			expect(document.activeElement).toBe(input);
+
+			const { result } = renderHook(() => useLayerStack());
+			let id = '';
+			act(() => {
+				id = result.current.registerLayer(createModalLayer());
+			});
+
+			// Stand in for the modal taking focus, then giving it up on unmount.
+			(document.activeElement as HTMLElement)?.blur();
+			expect(document.activeElement).toBe(document.body);
+
+			act(() => {
+				result.current.unregisterLayer(id);
+				vi.runAllTimers();
+			});
+
+			expect(document.activeElement).toBe(input);
+		});
+
+		it('does not steal focus from whatever claimed it during the close', () => {
+			input.focus();
+			const { result } = renderHook(() => useLayerStack());
+			let id = '';
+			act(() => {
+				id = result.current.registerLayer(createModalLayer());
+			});
+
+			// A modal that deliberately moves focus on its way out (opens a tab,
+			// focuses a result) must win - restoring over it would undo the thing
+			// the user just asked for.
+			const other = document.createElement('input');
+			document.body.appendChild(other);
+			other.focus();
+
+			act(() => {
+				result.current.unregisterLayer(id);
+				vi.runAllTimers();
+			});
+
+			expect(document.activeElement).toBe(other);
+			other.remove();
+		});
+
+		it('does not restore for a layer that never captured focus', () => {
+			input.focus();
+			const { result } = renderHook(() => useLayerStack());
+			let id = '';
+			act(() => {
+				id = result.current.registerLayer(createOverlayLayer({ capturesFocus: false }));
+			});
+
+			(document.activeElement as HTMLElement)?.blur();
+
+			act(() => {
+				result.current.unregisterLayer(id);
+				vi.runAllTimers();
+			});
+
+			// A layer that never took the keyboard has no claim to hand it back.
+			expect(document.activeElement).toBe(document.body);
+		});
+
+		it('does not restore focus to an element that left the document', () => {
+			input.focus();
+			const { result } = renderHook(() => useLayerStack());
+			let id = '';
+			act(() => {
+				id = result.current.registerLayer(createModalLayer());
+			});
+
+			// The surface behind the modal can unmount while it is open (an agent
+			// switch, a closed tab). Focusing a detached node is a no-op in a real
+			// browser, but the intent check belongs in the hook, not in luck.
+			input.remove();
+
+			act(() => {
+				result.current.unregisterLayer(id);
+				vi.runAllTimers();
+			});
+
+			expect(document.activeElement).toBe(document.body);
+		});
+	});
+
 	describe('multiple hook instances', () => {
 		it('should maintain separate state for different hook instances', () => {
 			const { result: result1 } = renderHook(() => useLayerStack());

@@ -1,6 +1,7 @@
 import React from 'react';
 import { RefreshCw, ChevronRight, AlertTriangle } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { ProviderAvailabilityBar } from '../ui/ProviderAvailabilityBar';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { isBetaAgent } from '../../../shared/agentMetadata';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
@@ -13,7 +14,12 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	theme,
 	loading,
 	sshConnectionError,
-	sortedAgents,
+	visibleAgents,
+	availableProviderCount,
+	totalProviderCount,
+	providerLocationLabel,
+	showAllProviders,
+	onShowAllProvidersChange,
 	selectedAgent,
 	expandedAgent,
 	refreshingAgent,
@@ -52,11 +58,30 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 }: AgentPickerGridProps) {
 	return (
 		<div>
-			<div
-				className="block text-xs font-bold opacity-70 uppercase mb-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				Agent Provider
+			{/*
+				Counts and filter ride the section heading rather than a row of their
+				own: this modal scrolls, and every line spent here pushes the Working
+				Directory field - the one field that cannot be defaulted - further below
+				the fold.
+			*/}
+			<div className="flex items-center justify-between gap-3 mb-2">
+				<div
+					className="block text-xs font-bold opacity-70 uppercase"
+					style={{ color: theme.colors.textMain }}
+				>
+					Agent Provider
+				</div>
+				{!loading && !sshConnectionError && (
+					<ProviderAvailabilityBar
+						theme={theme}
+						variant="compact"
+						availableCount={availableProviderCount}
+						totalCount={totalProviderCount}
+						locationLabel={providerLocationLabel}
+						showAll={showAllProviders}
+						onShowAllChange={onShowAllProvidersChange}
+					/>
+				)}
 			</div>
 			{loading ? (
 				<div className="text-sm opacity-50">Loading agents...</div>
@@ -82,7 +107,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 				</div>
 			) : (
 				<div className="space-y-1" role="listbox" aria-label="Agent provider selection">
-					{sortedAgents.map((agent) => {
+					{visibleAgents.map((agent) => {
 						const isSupported = SUPPORTED_AGENTS.includes(agent.id);
 						const isExpanded = expandedAgent === agent.id;
 						const isSelected = selectedAgent === agent.id;

@@ -28,33 +28,46 @@ describe('uiStore', () => {
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
 			expect(state.usageDashboardViewMode).toBe('overview');
-			expect(state.paneFocusRequest).toBeNull();
+			expect(state.focusRequest).toBeNull();
 		});
 	});
 
-	describe('pane focus request (tab tiling)', () => {
-		it('publishes a request for the given leaf id', () => {
+	describe('focus request', () => {
+		it('publishes a pane request for the given leaf id', () => {
 			useUIStore.getState().requestPaneFocus('leaf-1');
-			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-1');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-1' });
+		});
+
+		it('publishes a tab request for the given tab ref', () => {
+			useUIStore.getState().requestTabFocus({ type: 'browser', id: 'b-1' });
+			expect(useUIStore.getState().focusRequest).toEqual({
+				tab: { type: 'browser', id: 'b-1' },
+			});
 		});
 
 		it('clears the request once it has been consumed', () => {
 			useUIStore.getState().requestPaneFocus('leaf-1');
-			useUIStore.getState().clearPaneFocusRequest();
-			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+			useUIStore.getState().clearFocusRequest();
+			expect(useUIStore.getState().focusRequest).toBeNull();
 		});
 
 		it('replaces an unconsumed request rather than queueing', () => {
 			useUIStore.getState().requestPaneFocus('leaf-1');
 			useUIStore.getState().requestPaneFocus('leaf-2');
-			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-2');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-2' });
+		});
+
+		it('lets a tab request supersede a pane request, so there is one focus owner', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().requestTabFocus({ type: 'file', id: 'f-1' });
+			expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'file', id: 'f-1' } });
 		});
 
 		it('re-publishes the same leaf after a clear so a repeat press refocuses', () => {
 			useUIStore.getState().requestPaneFocus('leaf-1');
-			useUIStore.getState().clearPaneFocusRequest();
+			useUIStore.getState().clearFocusRequest();
 			useUIStore.getState().requestPaneFocus('leaf-1');
-			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-1');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-1' });
 		});
 	});
 

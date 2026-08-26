@@ -180,6 +180,22 @@ export interface MessageHandlerCallbacks {
 			};
 		}
 	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	/**
+	 * Launch a desktop-owned Goal-Driven Auto Run (`goal-run --visible`). Goal
+	 * mode is document-less, so this carries a free-text goal rather than a
+	 * document list; the renderer routes it to the same `startBatchRun` entry
+	 * point the Auto Run modal's Go button uses.
+	 */
+	launchGoalRun: (
+		sessionId: string,
+		config: {
+			goal: string;
+			exitCriteria?: string;
+			maxIterations?: number | null;
+			model?: string;
+			effort?: string;
+		}
+	) => Promise<{ success: boolean; tabId?: string; code?: string; error?: string }>;
 	setSessionAutoRunFolder: (
 		sessionId: string,
 		folderPath: string

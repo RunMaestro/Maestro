@@ -47,7 +47,7 @@ Tips and gotchas:
 | Navigate Back               | `Cmd+Shift+,`         | `Ctrl+Shift+,`         |
 | Navigate Forward            | `Cmd+Shift+.`         | `Ctrl+Shift+.`         |
 | Jump to Agent (1-9, 0=10th) | `Opt+Cmd+NUMBER`      | `Alt+Ctrl+NUMBER`      |
-| Switch AI/Shell Mode        | `Cmd+J`               | `Ctrl+J`               |
+| New Terminal Tab            | `Cmd+J`               | `Ctrl+J`               |
 | Toggle Input/Output Focus   | `Cmd+.`               | `Ctrl+.`               |
 | Focus Left Panel            | `Cmd+Shift+A`         | `Ctrl+Shift+A`         |
 | Show Shortcuts Help         | `Cmd+/`               | `Ctrl+/`               |
@@ -57,8 +57,9 @@ Tips and gotchas:
 | System Log Viewer           | `Opt+Cmd+L`           | `Alt+Ctrl+L`           |
 | System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
 | Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
+| View Execution Queue        | `Cmd+Shift+X`         | `Ctrl+Shift+X`         |
 | Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
-| Jump to Bottom              | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`        |
+| Jump to Bottom              | `Cmd+Shift+J`         | `Ctrl+Shift+J`         |
 | Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
@@ -117,6 +118,9 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
 | Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
+| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
 | Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
@@ -144,6 +148,8 @@ The Tab Switcher provides fuzzy search across all open tabs with quick navigatio
 
 The bulk close operations (Close All, Close Others, Close Left, Close Right) are also available via the [Tab Menu](./context-management#tab-close-operations) hover overlay and Quick Actions (`Cmd+K`).
 
+In the **Snooze Tab** dialog, `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) sets the snooze from anywhere in the dialog - including the note field, where plain `Enter` stays a newline.
+
 ### Pane Shortcuts (Tiled Tabs)
 
 These act on the tiled set showing in the Main Panel. See [Tiling Tabs](./general-usage#tiling-tabs) for what tiling is and how to create one.
@@ -161,10 +167,10 @@ These act on the tiled set showing in the Main Panel. See [Tiling Tabs](./genera
 | Maximize / Restore Pane   | `Ctrl+Cmd+Z`       | `Ctrl+Win+Z`       |
 | Rebalance Panes           | `Ctrl+Cmd+=`       | `Ctrl+Win+=`       |
 | Close Focused Pane        | `Ctrl+Cmd+W`       | `Ctrl+Win+W`       |
-| Tile New Terminal Below   | `Cmd+Shift+J`      | `Ctrl+Shift+J`     |
-| Tile New AI Chat Below    | _Not set_          | _Not set_          |
-| Tile New Browser Below    | _Not set_          | _Not set_          |
-| Tile New File Below       | _Not set_          | _Not set_          |
+| Tile New AI Chat Below    | `Ctrl+Cmd+T`       | `Ctrl+Win+T`       |
+| Tile New Browser Below    | `Ctrl+Cmd+B`       | `Ctrl+Win+B`       |
+| Tile New File Below       | `Ctrl+Cmd+F`       | `Ctrl+Win+F`       |
+| Tile New Terminal Below   | `Ctrl+Cmd+J`       | `Ctrl+Win+J`       |
 
 <Note>
 The pane family deliberately requires **both** Ctrl and Cmd so it can never collide with the plain-Cmd equivalents (`Cmd+W` closes a tab, `Ctrl+Cmd+W` closes a pane). On Windows and Linux the second modifier is the Windows / Super key.
@@ -176,9 +182,7 @@ Maximize expands the focused pane to fill the panel and hides the rest; press it
 
 Closing a pane returns its tab to the tab bar rather than closing it. When only one pane is left the group dissolves and that tab goes back to the bar too.
 
-To create a tile without a drag, run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four. The terminal one has a key of its own, `Cmd+Shift+J`: one modifier away from `Cmd+J` (new terminal tab), because a terminal beside your work is the split people reach for most.
-
-The other three are listed as **Not set**. That is a binding you can record, not a missing feature - see [Customizing Shortcuts](#customizing-shortcuts). Whatever you assign shows up next to the command in Quick Actions too.
+Each of the four also has a key of its own, on `Ctrl+Cmd` beside the rest of the pane family. The letter is the same one the plain "new tab" chord uses, so the tiled twin is that letter with one more modifier: `Cmd+T` opens a new AI chat, `Ctrl+Cmd+T` splits the view and puts one in the bottom half. You can also run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four.
 
 A freshly tiled pane takes the keyboard, and the caret lands in whatever that pane's input is: the chat box for an AI tab, the command prompt for a terminal, the address bar (URL selected) for a browser, the editor for a file. See [Tiling Tabs](./general-usage#tiling-tabs).
 
@@ -319,7 +323,17 @@ the full walkthrough.
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
 | Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
+| Zoom Preview Text In                | `+` or `=`      | `+` or `=`      |
+| Zoom Preview Text Out               | `-` or `_`      | `-` or `_`      |
+| Reset Preview Zoom                  | `0`             | `0`             |
 | Close                               | `Esc`           | `Esc`           |
+
+The three zoom keys are bare - no modifier - and are distinct from the app-wide
+`Cmd+=` / `Cmd+-` in [Font Size](#font-size), which resizes the whole interface.
+They apply only where the zoom moves type (markdown, code, and text views), and
+they never fire while you are typing, so the find bar and the markdown editor
+keep those keys. The same steps are available from the zoom pill that rests in
+the top-right corner of the preview.
 
 ### CSV Row Detail
 
@@ -360,7 +374,7 @@ Most shortcuts can be remapped to fit your workflow:
 4. Press your desired key combination
 5. The new binding is saved immediately
 
-Some actions ship with **no** key assigned and read **Not set** instead of a combination - the tile-below family for AI, browser, and file tabs is the current example. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
+Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls and Open Leaderboard are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 

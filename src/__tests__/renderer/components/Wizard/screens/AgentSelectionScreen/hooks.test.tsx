@@ -296,6 +296,7 @@ describe('AgentSelectionScreen hooks', () => {
 		const { rerender } = renderHook(
 			({ detectedAgents, selectedAgent }) =>
 				useAgentSelectionFocus({
+					tiles: AGENT_TILES,
 					isDetecting: false,
 					selectedAgent,
 					detectedAgents,
@@ -339,6 +340,7 @@ describe('AgentSelectionScreen hooks', () => {
 		const { result, rerender } = renderHook(
 			({ isNameFieldFocused, focusedTileIndex }) =>
 				useAgentSelectionKeyboard({
+					tiles: AGENT_TILES,
 					isNameFieldFocused,
 					focusedTileIndex,
 					detectedAgents: [
@@ -373,6 +375,112 @@ describe('AgentSelectionScreen hooks', () => {
 		rerender({ isNameFieldFocused: true, focusedTileIndex: 0 });
 		act(() => result.current({ key: 'Tab', shiftKey: true, preventDefault } as any));
 		expect(setFocusedTileIndex).toHaveBeenCalledWith(1);
+	});
+
+	it('navigates the filtered strip, not the full provider registry', () => {
+		// With unavailable providers hidden, the strip is two tiles long. Clamping
+		// on the registry would let the focus ring walk past what is drawn.
+		const { refs, secondTile } = createRefs();
+		const setFocusedTileIndex = vi.fn();
+		const preventDefault = vi.fn();
+		const visibleTiles = AGENT_TILES.slice(0, 2);
+
+		const { result } = renderHook(
+			({ focusedTileIndex }) =>
+				useAgentSelectionKeyboard({
+					tiles: visibleTiles,
+					isNameFieldFocused: false,
+					focusedTileIndex,
+					detectedAgents: [
+						agent({ id: FIRST_TILE_ID, available: true }),
+						agent({ id: SECOND_TILE_ID, available: true }),
+					],
+					nameInputRef: refs.nameInputRef,
+					tileRefs: refs.tileRefs,
+					setIsNameFieldFocused: vi.fn(),
+					setFocusedTileIndex,
+					setSelectedAgent: vi.fn(),
+					canProceedToNext: () => true,
+					nextStep: vi.fn(),
+				}),
+			{ initialProps: { focusedTileIndex: 1 } }
+		);
+
+		act(() => result.current({ key: 'ArrowRight', preventDefault } as any));
+		expect(setFocusedTileIndex).not.toHaveBeenCalled();
+
+		act(() => result.current({ key: 'ArrowLeft', preventDefault } as any));
+		expect(setFocusedTileIndex).toHaveBeenCalledWith(0);
+
+		// The strip scrolls the focused tile into view itself, so the browser's own
+		// scroll must be suppressed or it parks the tile under an edge fade first.
+		expect(secondTile.focus).not.toHaveBeenCalled();
+	});
+
+	it('suppresses the browser scroll when moving focus onto a tile', () => {
+		const { refs, secondTile } = createRefs();
+		const preventDefault = vi.fn();
+
+		const { result } = renderHook(() =>
+			useAgentSelectionKeyboard({
+				tiles: AGENT_TILES,
+				isNameFieldFocused: false,
+				focusedTileIndex: 0,
+				detectedAgents: [
+					agent({ id: FIRST_TILE_ID, available: true }),
+					agent({ id: SECOND_TILE_ID, available: true }),
+				],
+				nameInputRef: refs.nameInputRef,
+				tileRefs: refs.tileRefs,
+				setIsNameFieldFocused: vi.fn(),
+				setFocusedTileIndex: vi.fn(),
+				setSelectedAgent: vi.fn(),
+				canProceedToNext: () => true,
+				nextStep: vi.fn(),
+			})
+		);
+
+		act(() => result.current({ key: 'ArrowRight', preventDefault } as any));
+		expect(secondTile.focus).toHaveBeenCalledWith({ preventScroll: true });
+	});
+
+	it('leaves keys alone for a control that opts out of strip navigation', () => {
+		// The keydown handler covers the whole screen, so the availability bar's
+		// toggle would otherwise lose its own Tab and arrow keys to tile movement.
+		const { refs } = createRefs();
+		const setFocusedTileIndex = vi.fn();
+		const setIsNameFieldFocused = vi.fn();
+		const preventDefault = vi.fn();
+
+		const exempt = document.createElement('label');
+		exempt.setAttribute('data-provider-bar-nav-exempt', 'true');
+		const toggle = document.createElement('button');
+		exempt.appendChild(toggle);
+
+		const { result } = renderHook(() =>
+			useAgentSelectionKeyboard({
+				tiles: AGENT_TILES,
+				isNameFieldFocused: false,
+				focusedTileIndex: 0,
+				detectedAgents: [agent({ id: FIRST_TILE_ID, available: true })],
+				nameInputRef: refs.nameInputRef,
+				tileRefs: refs.tileRefs,
+				setIsNameFieldFocused,
+				setFocusedTileIndex,
+				setSelectedAgent: vi.fn(),
+				canProceedToNext: () => true,
+				nextStep: vi.fn(),
+			})
+		);
+
+		act(() => result.current({ key: 'ArrowRight', preventDefault, target: toggle } as any));
+		act(() =>
+			result.current({ key: 'Tab', shiftKey: false, preventDefault, target: toggle } as any)
+		);
+
+		expect(setFocusedTileIndex).not.toHaveBeenCalled();
+		expect(setIsNameFieldFocused).not.toHaveBeenCalled();
+		expect(preventDefault).not.toHaveBeenCalled();
 	});
 
 	it('opens and closes config panel, loading config and models with SSH ID', async () => {

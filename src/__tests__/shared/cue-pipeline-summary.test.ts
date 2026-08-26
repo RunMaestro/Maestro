@@ -192,6 +192,193 @@ describe('describePipeline', () => {
 		);
 	});
 
+	// The prompt is often the ONLY thing distinguishing two steps - a fan-out
+	// pipeline renders the same agent name N times.
+	describe('prompts', () => {
+		it('resolves a step prompt from its incoming edge', () => {
+			const desc = describePipeline(
+				pipeline({
+					edges: [
+						{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'Scan the market.' },
+						{ id: 'e2', source: 'a1', target: 'a2', mode: 'pass' },
+					],
+				})
+			);
+			expect(desc.steps[0].prompts.prompts).toEqual(['Scan the market.']);
+			expect(desc.steps[0].prompts.preview).toBe('Scan the market.');
+			expect(desc.steps[0].prompts.count).toBe(1);
+		});
+
+		it('reports no prompt when nothing supplies one', () => {
+			const desc = describePipeline(pipeline());
+			expect(desc.steps[0].prompts.count).toBe(0);
+			expect(desc.steps[0].prompts.preview).toBe('');
+		});
+
+		// `edge.prompt` is the source of truth for trigger→agent edges, and the
+		// loader deliberately clears `inputPrompt` on those. Chain agents have no
+		// incoming trigger edge, so `inputPrompt` is the only source they have.
+		it('falls back to inputPrompt for a chain agent with no edge prompt', () => {
+			const chainAgent = {
+				id: 'a1',
+				type: 'agent',
+				position: { x: 0, y: 0 },
+				data: {
+					sessionId: 'rc-id',
+					sessionName: 'rc',
+					toolType: 'claude-code',
+					inputPrompt: 'Summarize the upstream output.',
+				},
+			} as PipelineNode;
+			const desc = describePipeline(
+				pipeline({
+					nodes: [trigger('t1'), chainAgent],
+					edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+				})
+			);
+			expect(desc.steps[0].prompts.prompts).toEqual(['Summarize the upstream output.']);
+		});
+
+		it('prefers the edge prompt over inputPrompt when both exist', () => {
+			const bothAgent = {
+				id: 'a1',
+				type: 'agent',
+				position: { x: 0, y: 0 },
+				data: {
+					sessionId: 'rc-id',
+					sessionName: 'rc',
+					toolType: 'claude-code',
+					inputPrompt: 'stale',
+				},
+			} as PipelineNode;
+			const desc = describePipeline(
+				pipeline({
+					nodes: [trigger('t1'), bothAgent],
+					edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'live' }],
+				})
+			);
+			expect(desc.steps[0].prompts.prompts).toEqual(['live']);
+		});
+
+		// A multi-trigger agent gets a different prompt per incoming edge; the
+		// count is what tells the reader the preview is one of several.
+		it('collects every distinct incoming prompt', () => {
+			const desc = describePipeline(
+				pipeline({
+					nodes: [
+						trigger('t1'),
+						trigger('t2', { eventType: 'app.startup', config: {} }),
+						agent('a1', 'rc'),
+					],
+					edges: [
+						{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'morning' },
+						{ id: 'e2', source: 't2', target: 'a1', mode: 'pass', prompt: 'on boot' },
+					],
+				})
+			);
+			expect(desc.steps[0].prompts.count).toBe(2);
+			expect(desc.steps[0].prompts.prompts).toEqual(['morning', 'on boot']);
+		});
+
+		// The trigger side of the same edge. Nothing in the list tab renders this
+		// (that would print every prompt twice), but it is a published field for
+		// callers describing a trigger on its own, so it has to stay correct.
+		it('reads a trigger prompt from its outgoing edge', () => {
+			const desc = describePipeline(
+				pipeline({
+					edges: [
+						{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'summarize the day' },
+						{ id: 'e2', source: 'a1', target: 'a2', mode: 'pass' },
+					],
+				})
+			);
+			expect(desc.triggers[0].prompts.prompts).toEqual(['summarize the day']);
+			expect(desc.triggers[0].prompts.preview).toBe('summarize the day');
+		});
+
+		// A fan-out trigger has one prompt per target rather than one of its own,
+		// which is the other half of why the prompt renders on the step.
+		it('collects one prompt per target for a fan-out trigger', () => {
+			const desc = describePipeline(
+				pipeline({
+					edges: [
+						{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'check the logs' },
+						{ id: 'e2', source: 't1', target: 'a2', mode: 'pass', prompt: 'check the queue' },
+					],
+				})
+			);
+			expect(desc.triggers[0].prompts.count).toBe(2);
+			expect(desc.triggers[0].prompts.prompts).toEqual(['check the logs', 'check the queue']);
+		});
+
+		it('reports no trigger prompt when no outgoing edge carries one', () => {
+			const desc = describePipeline(pipeline());
+			expect(desc.triggers[0].prompts.count).toBe(0);
+			expect(desc.triggers[0].prompts.preview).toBe('');
+		});
+
+		it('de-duplicates identical prompts rather than counting them twice', () => {
+			const desc = describePipeline(
+				pipeline({
+					nodes: [
+						trigger('t1'),
+						trigger('t2', { eventType: 'app.startup', config: {} }),
+						agent('a1', 'rc'),
+					],
+					edges: [
+						{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'same' },
+						{ id: 'e2', source: 't2', target: 'a1', mode: 'pass', prompt: 'same' },
+					],
+				})
+			);
+			expect(desc.steps[0].prompts.count).toBe(1);
+		});
+
+		// The preview sits in a one-line slot, so newlines and indentation have to
+		// go - the width-based clipping is CSS's job, not this module's.
+		it('collapses a multi-line prompt into a single preview line', () => {
+			const desc = describePipeline(
+				pipeline({
+					edges: [
+						{
+							id: 'e1',
+							source: 't1',
+							target: 'a1',
+							mode: 'pass',
+							prompt: '  Check the feed.\n\n    Then write it up.  ',
+						},
+					],
+				})
+			);
+			expect(desc.steps[0].prompts.preview).toBe('Check the feed. Then write it up.');
+			// The full text keeps its structure for the hover card.
+			expect(desc.steps[0].prompts.prompts[0]).toContain('\n');
+		});
+
+		it('gives a trigger the prompts on its outgoing edges', () => {
+			const desc = describePipeline(
+				pipeline({
+					nodes: [trigger('t1'), agent('a1', 'A'), agent('a2', 'B')],
+					edges: [
+						{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: 'first' },
+						{ id: 'e2', source: 't1', target: 'a2', mode: 'pass', prompt: 'second' },
+					],
+				})
+			);
+			expect(desc.triggers[0].prompts.prompts).toEqual(['first', 'second']);
+			expect(desc.triggers[0].prompts.count).toBe(2);
+		});
+
+		it('ignores a whitespace-only prompt', () => {
+			const desc = describePipeline(
+				pipeline({
+					edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass', prompt: '   \n  ' }],
+				})
+			);
+			expect(desc.steps[0].prompts.count).toBe(0);
+		});
+	});
+
 	it('prefers a custom trigger label over the event-type label', () => {
 		const desc = describePipeline(
 			pipeline({ nodes: [trigger('t1', { customLabel: 'Morning Check' }), agent('a1', 'rc')] })

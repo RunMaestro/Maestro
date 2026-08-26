@@ -133,7 +133,15 @@ export function useQueueHandlers({
 			// Re-resolve the pending consult against the EDITED text: the user may
 			// have added or removed an `@agent` mention, and the item's stale flag
 			// would otherwise consult the wrong agent (or nobody) when it dispatches.
-			const crossAgentMention = !!planCrossAgentMentions(patch.text, sessionId);
+			//
+			// BOTH flags have to be re-derived, not just `crossAgentMention`. Whether
+			// this agent answers at all is decided by where the mention sits, and the
+			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
+			// spawning locally, and the reverse must stop spawning. Leaving
+			// `crossAgentOnly` behind silently discards half of what the user edited.
+			const mentionPlan = planCrossAgentMentions(patch.text, sessionId);
+			const crossAgentMention = !!mentionPlan;
+			const crossAgentOnly = mentionPlan?.suppressLocal ?? false;
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
@@ -141,7 +149,13 @@ export function useQueueHandlers({
 						...s,
 						executionQueue: s.executionQueue.map((item) =>
 							item.id === itemId
-								? { ...item, text: patch.text, images: patch.images, crossAgentMention }
+								? {
+										...item,
+										text: patch.text,
+										images: patch.images,
+										crossAgentMention,
+										crossAgentOnly,
+									}
 								: item
 						),
 					};

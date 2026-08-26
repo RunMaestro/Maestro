@@ -83,7 +83,6 @@ function baseProps(): React.ComponentProps<typeof ExtensionDetails> {
 		ext: pluginTile('plugin-a'),
 		contributions: null,
 		busy: false,
-		onBack: vi.fn(),
 		onTogglePlugin: vi.fn(),
 		onToggleBuiltin: vi.fn(),
 		onUninstall: vi.fn(),

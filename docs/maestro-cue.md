@@ -83,7 +83,7 @@ Each row has three action buttons:
 
 - **Run Now** - Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
 - **Edit YAML** - Open the inline YAML editor for that agent.
-- **View in Pipeline** - Jump to the Pipeline Graph filtered to that agent.
+- **View in Graph** - Jump to the Pipeline Graph tab with that agent's pipeline selected.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
@@ -164,6 +164,12 @@ Each row collapses to a one-line overview:
 - **What is wrong** - any configuration problems, spelled out verbatim (a trigger with no schedule, an agent with no prompt, a node pointing at an agent that no longer exists). These stay visible while collapsed; a broken pipeline should not need a click to admit it.
 
 Click a row (or focus it and press `Enter` / `Space`) to expand it into two columns: every **Trigger** with its configuration and underlying subscription name, and every **Step** with its agent name or command body. Several rows can be open at once, which is the point - expanding two pipelines side by side is the usual reason to expand at all.
+
+**Prompts.** Each step shows the prompt it receives on one clipped line beneath its name, and hovering reveals the full text with its original line breaks. This is usually the only thing that tells two steps apart: a fan-out pipeline renders the same agent name six times, and the prompt is what says which of the six does what. The inline line is clipped by the column width rather than cut to a fixed word count, so a wider window simply shows more of it. A step fed by several different prompts (an agent wired to more than one trigger) carries an `×N` badge, and the hover card says how many others there are.
+
+Prompts are searchable, so `unusual volume` finds the pipeline containing that instruction even when every agent in it shares a name. Prompts written with `prompt_file` show their resolved file contents, not the filename.
+
+The prompt appears on the step rather than the trigger on purpose: a trigger's outgoing edge and its target's incoming edge are the same edge, so showing it in both columns would print everything twice, and a fan-out trigger has one prompt per target rather than one of its own.
 
 Health is derived, not stored. The badge is one of:
 

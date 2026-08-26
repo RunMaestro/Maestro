@@ -13,6 +13,8 @@
  *  - coming back from details restores focus to the tile the user opened, so
  *    exploring can continue from where it left off
  *  - ArrowDown in the search box hands focus down into the grid
+ *  - the row jump SURVIVES the details round trip (the grid unmounts there, and
+ *    a column count measured off the old detached node collapses to 1)
  *
  * jsdom has no layout engine, so `grid-template-columns` never resolves on its
  * own: the suite stubs the computed value to three tracks, which is exactly
@@ -63,15 +65,18 @@ vi.mock('../../../../../renderer/components/Settings/Extensions/useExtensions', 
 }));
 
 vi.mock('../../../../../renderer/components/Settings/Extensions/ExtensionDetails', () => ({
-	ExtensionDetails: ({ ext, onBack }: { ext: UnifiedExtension; onBack: () => void }) => (
+	ExtensionDetails: ({ ext }: { ext: UnifiedExtension }) => (
 		<div data-testid="extension-details-stub">
 			<span data-testid="details-name">{ext.name}</span>
-			<button data-testid="details-back" onClick={onBack} />
 		</div>
 	),
 }));
 
-/** Resolve `grid-template-columns` to N tracks, the way a browser would. */
+/**
+ * Resolve `grid-template-columns` to N tracks, the way a browser would - and to
+ * the EMPTY STRING for a detached node, which is also what a browser does and is
+ * the thing that used to collapse the count to one column.
+ */
 function stubGridColumns(tracks: number): void {
 	const original = window.getComputedStyle.bind(window);
 	vi.spyOn(window, 'getComputedStyle').mockImplementation(((
@@ -80,6 +85,15 @@ function stubGridColumns(tracks: number): void {
 	) => {
 		const style = original(el, pseudo);
 		if ((el as HTMLElement).dataset?.testid !== 'extensions-grid') return style;
+		if (!el.isConnected) {
+			return new Proxy(style, {
+				get(target, prop) {
+					if (prop === 'gridTemplateColumns') return '';
+					const value = Reflect.get(target, prop);
+					return typeof value === 'function' ? value.bind(target) : value;
+				},
+			});
+		}
 		return new Proxy(style, {
 			get(target, prop) {
 				if (prop === 'gridTemplateColumns') return Array(tracks).fill('240px').join(' ');
@@ -115,10 +129,51 @@ function press(key: string): void {
 	});
 }
 
-beforeEach(() => stubGridColumns(COLUMNS));
+/**
+ * A ResizeObserver whose callbacks fire on demand. The shared setup mock fires
+ * once on observe and never again, so it cannot express the case that matters:
+ * removing an observed element from the document resizes it to 0 and fires the
+ * callback on a node that is no longer in the tree.
+ */
+const liveObservers: Array<{ callback: ResizeObserverCallback; connected: boolean }> = [];
+
+function installControllableResizeObserver(): void {
+	vi.stubGlobal(
+		'ResizeObserver',
+		class {
+			private entry = { callback: undefined as unknown as ResizeObserverCallback };
+			constructor(callback: ResizeObserverCallback) {
+				this.entry.callback = callback;
+			}
+			observe() {
+				liveObservers.push({ callback: this.entry.callback, connected: true });
+			}
+			unobserve() {}
+			disconnect() {
+				for (const o of liveObservers) if (o.callback === this.entry.callback) o.connected = false;
+			}
+		}
+	);
+}
+
+/** Fire every observer that has not been disconnected. */
+function flushResizeObservers(): void {
+	act(() => {
+		for (const o of liveObservers) {
+			if (o.connected) o.callback([], {} as ResizeObserver);
+		}
+	});
+}
+
+beforeEach(() => {
+	liveObservers.length = 0;
+	installControllableResizeObserver();
+	stubGridColumns(COLUMNS);
+});
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 	cleanup();
 });
 
@@ -203,6 +258,28 @@ describe('ExtensionsView grid keyboard navigation', () => {
 		expect(screen.queryByTestId('extension-details-stub')).not.toBeInTheDocument();
 		expect(document.activeElement).toBe(activeTile());
 		expect(activeTile()).toHaveTextContent(opened.textContent ?? '');
+	});
+
+	it('still jumps a full row after a trip through the details pane', () => {
+		// The grid unmounts while details are open. A column count re-measured off
+		// that detached node reads as one column, which silently turns the row jump
+		// back into a single step for the rest of the visit.
+		renderView();
+		press('ArrowDown');
+		expect(activeTile()).toBe(tiles()[COLUMNS]);
+
+		press('Enter');
+		expect(screen.getByTestId('extension-details-stub')).toBeInTheDocument();
+		// The removal resizes the old grid to 0 and fires its observer.
+		flushResizeObservers();
+
+		act(() => {
+			fireEvent.keyDown(window, { key: 'Escape' });
+		});
+		flushResizeObservers();
+
+		press('ArrowDown');
+		expect(activeTile()).toBe(tiles()[COLUMNS * 2]);
 	});
 
 	it('hands focus from the search box down into the grid', () => {

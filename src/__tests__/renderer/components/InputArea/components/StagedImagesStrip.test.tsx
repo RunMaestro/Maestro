@@ -181,6 +181,20 @@ describe('StagedImagesStrip', () => {
 		expect(onReorder).not.toHaveBeenCalled();
 	});
 
+	it('hides the organizer button when only one image is staged', () => {
+		// Nothing to compare and nothing to reorder: the button would open a modal
+		// with no work in it.
+		renderStrip({ stagedImages: ['data:image/png;base64,a'] });
+
+		expect(screen.queryByLabelText('Open image organizer')).not.toBeInTheDocument();
+	});
+
+	it('shows the organizer button from two images up', () => {
+		renderStrip();
+
+		expect(screen.getByLabelText('Open image organizer')).toBeInTheDocument();
+	});
+
 	it('carries the slot reference as plain text so a drop on the composer reads it', () => {
 		renderStrip();
 		const dataTransfer = makeDataTransfer();

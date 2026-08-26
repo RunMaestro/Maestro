@@ -6,6 +6,7 @@ import { captureException } from '../../utils/sentry';
 import { aiTabFocusFields, createTab, closeTab, getActiveTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { generateId } from '../../utils/ids';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
@@ -719,6 +720,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// UI creates in useInputProcessing so it is a first-class queue citizen.
 					const isReadOnly =
 						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
+					// Cross-agent @mentions: stamp the intent so processQueuedItem fires the
+					// consult when this item becomes the agent's turn - the same contract a
+					// composer-queued message carries (useInputProcessing). Without the flag
+					// the mention is inert and the target agent is never consulted.
+					const mentionPlan = planCrossAgentMentions(command, sessionId);
 					const queuedItem: QueuedItem = {
 						id: generateId(),
 						timestamp: Date.now(),
@@ -732,6 +738,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								? targetTab.agentSessionId.split('-')[0].toUpperCase()
 								: 'New'),
 						readOnlyMode: isReadOnly,
+						...(mentionPlan && {
+							crossAgentMention: true,
+							crossAgentOnly: mentionPlan.suppressLocal,
+						}),
 					};
 
 					// Position is deterministic from the snapshot we already read: the item
@@ -1237,6 +1247,32 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(sessionId: string, config: any, responseChannel: string) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:configureAutoRun', {
+						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote Goal-Driven Auto Run launch (`goal-run --visible`) from the CLI
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteLaunchGoalRun(
+			(
+				sessionId: string,
+				config: {
+					goal: string;
+					exitCriteria?: string;
+					maxIterations?: number | null;
+					model?: string;
+					effort?: string;
+				},
+				responseChannel: string
+			) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:launchGoalRun', {
 						detail: { sessionId, config, responseChannel },
 					})
 				);

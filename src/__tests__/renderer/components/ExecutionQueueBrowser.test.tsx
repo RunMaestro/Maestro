@@ -1010,6 +1010,31 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.getByText('My Tab')).toBeInTheDocument();
 		});
 
+		it('should prefer the live tab name over the snapshot frozen at queue time', () => {
+			// The item was queued into an unnamed tab, so its snapshot reads "New".
+			// The queue browser is where the user decides what to reorder, so the
+			// row has to name the tab as it is now, not as it was.
+			const session = createSession({
+				id: 'active-session',
+				aiTabs: [{ id: 'tab-1', name: 'PR1427', state: 'idle' }] as unknown as Session['aiTabs'],
+				executionQueue: [createQueuedItem({ tabId: 'tab-1', tabName: 'New' })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('PR1427')).toBeInTheDocument();
+			expect(screen.queryByText('New')).not.toBeInTheDocument();
+		});
+
 		it('should switch session when tab name is clicked', () => {
 			const session = createSession({
 				id: 'session-1',

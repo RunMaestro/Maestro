@@ -21,9 +21,14 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { useSettingsStore } from '../stores/settingsStore';
-import { getForceSendEligibility, type ForceSendEligibility } from '../utils/executionQueue';
+import {
+	getForceSendEligibility,
+	resolveQueuedItemTabName,
+	type ForceSendEligibility,
+} from '../utils/executionQueue';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { TurnSettingPills } from './ui/TurnSettingPills';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -311,6 +316,7 @@ export function ExecutionQueueBrowser({
 													item={item}
 													index={index}
 													theme={theme}
+													tabLabel={resolveQueuedItemTabName(session, item)}
 													forceSend={forceSend}
 													onForceSend={
 														forceSend?.canForce
@@ -450,6 +456,8 @@ interface QueueItemRowProps {
 	item: QueuedItem;
 	index: number;
 	theme: Theme;
+	/** Live tab name, resolved now rather than read off the item's stale snapshot */
+	tabLabel?: string;
 	/** Null when the browser has no Force Send handler wired */
 	forceSend?: ForceSendEligibility | null;
 	/** Set only when the item can actually be sent right now */
@@ -472,6 +480,7 @@ function QueueItemRow({
 	item,
 	index,
 	theme,
+	tabLabel,
 	forceSend,
 	onForceSend,
 	onRemove,
@@ -593,7 +602,7 @@ function QueueItemRow({
 				{/* Content */}
 				<div className="flex-1 min-w-0">
 					<div className="flex items-center gap-2">
-						{item.tabName && (
+						{tabLabel && (
 							<button
 								onClick={(e) => {
 									e.stopPropagation();
@@ -606,7 +615,7 @@ function QueueItemRow({
 								}}
 								title="Jump to this session"
 							>
-								{item.tabName}
+								{tabLabel}
 							</button>
 						)}
 						<span
@@ -674,6 +683,14 @@ function QueueItemRow({
 								Send Now
 							</button>
 						)}
+						{/* The model/effort frozen when this item was queued - what it
+						    will spawn under, no matter what is selected by the time the
+						    queue reaches it. */}
+						<TurnSettingPills
+							theme={theme}
+							model={item.turnSettings?.model}
+							effort={item.turnSettings?.effort}
+						/>
 						<div className="ml-auto flex items-center gap-1">
 							{onEdit && (
 								<button

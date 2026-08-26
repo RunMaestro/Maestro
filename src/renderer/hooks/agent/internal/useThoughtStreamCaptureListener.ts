@@ -21,9 +21,28 @@
 import { useEffect, useRef } from 'react';
 import { useThoughtStreamStore } from '../../../stores/thoughtStreamStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
+import type { ParsedSessionId } from '../../../utils/sessionIdParser';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 
 /** Coalescing window for the raw chunk stream. */
+/**
+ * Streaming-id types the Thought Stream captures.
+ *
+ * Only Auto Run. Every in-app Auto Run path - the document loop, the batch
+ * processor and the goal runner - funnels through `spawnAgentForSession`
+ * (useAgentExecution), which mints exactly one shape, `{sessionId}-batch-{ts}`.
+ * That single mint site is why this is a one-element set rather than a guess.
+ *
+ * Deliberately excluded:
+ * - `ai-tab` / `legacy-ai`: ordinary conversation. This is the leak that made
+ *   the panel show chat alongside a run.
+ * - `synopsis`: background summarization of a finished turn. Not conversational,
+ *   but not an Auto Run either, and attributing it to a run would misread it.
+ * - `regular`: an unrecognized shape. Capturing the unknown is what produced the
+ *   over-broad behaviour this replaces.
+ */
+export const AUTO_RUN_SESSION_TYPES: ReadonlySet<ParsedSessionId['type']> = new Set(['batch']);
+
 export const THOUGHT_FLUSH_MS = 250;
 
 export function useThoughtStreamCaptureListener(): void {
@@ -57,6 +76,18 @@ export function useThoughtStreamCaptureListener(): void {
 				// the key the thought stream captures under. Using REGEX_AI_TAB alone
 				// silently dropped every Auto Run thinking chunk.
 				const parsed = parseSessionId(sessionId);
+
+				// ...and resolving them all to one base id is also why they MERGED: an
+				// Auto Run and an ordinary chat in the same agent share a base session
+				// id, so the run's Thoughts panel showed the conversation too. The base
+				// id says which agent; only `type` says which kind of run, so the kind
+				// is the gate and the base id stays the key.
+				//
+				// Adding a new Auto Run spawn shape means adding its type HERE. Leaving
+				// it out reproduces the original bug - silently dropping that run's
+				// thinking - so the set is asserted in this hook's tests rather than
+				// left to be discovered.
+				if (!AUTO_RUN_SESSION_TYPES.has(parsed.type)) return;
 
 				// Interactive tabs carry a real tabId; batch/synopsis spawns don't, so
 				// fall back to the full streaming id to keep parallel spawns distinct.

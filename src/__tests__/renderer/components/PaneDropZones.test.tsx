@@ -32,6 +32,15 @@ function mockDataTransfer(payload: TabTilePayload) {
 	} as unknown as DataTransfer;
 }
 
+/**
+ * Arm the overlay the way a real drag does. The payload MUST ride the dragstart:
+ * `dragover` can only see the MIME list, so the overlay captures which tab is being
+ * dragged here, and that is what lets it withhold the hint on a self-drop.
+ */
+function startDrag(dataTransfer: DataTransfer) {
+	fireEvent(window, Object.assign(new Event('dragstart'), { dataTransfer }));
+}
+
 describe('PaneDropZones drop', () => {
 	beforeEach(() => {
 		useSessionStore.getState().setSessions([]);
@@ -70,8 +79,7 @@ describe('PaneDropZones drop', () => {
 		const overlay = container.firstChild as HTMLElement;
 		const dt = mockDataTransfer({ ref: { type: 'ai', id: 'b' }, source: 'tab-bar' });
 
-		// Arm the overlay the way a real drag does (window dragstart).
-		fireEvent(window, new Event('dragstart'));
+		startDrag(dt);
 		fireEvent.dragOver(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
 		fireEvent.drop(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
 
@@ -83,10 +91,10 @@ describe('PaneDropZones drop', () => {
 		expect(notifyCenterFlash).toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }));
 	});
 
-	it('is a no-op when the currently-displayed tab is dropped onto its own view', () => {
-		// The single-view has nothing to pair a self-drop with, so tiling the active
-		// tab onto itself must do nothing. This is the trap that reads as "release does
-		// nothing": to tile you must drag a DIFFERENT (background) tab onto the view.
+	it('offers no drop target when the currently-displayed tab is dragged over its own view', () => {
+		// A tab tiles beside ANOTHER tab, never itself, so dragging the tab that is
+		// already on screen must stay a plain tab-bar reorder: no highlight, no accepted
+		// drop, and therefore no "you can't do that" flash to dismiss.
 		const session = createMockSession({
 			id: 's1',
 			aiTabs: [{ id: 'a', name: 'Alpha', logs: [] }] as never,
@@ -111,17 +119,22 @@ describe('PaneDropZones drop', () => {
 		const overlay = container.firstChild as HTMLElement;
 		// Drag the SAME tab that is on screen (id 'a').
 		const dt = mockDataTransfer({ ref: { type: 'ai', id: 'a' }, source: 'tab-bar' });
-		fireEvent(window, new Event('dragstart'));
-		fireEvent.dragOver(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
+		startDrag(dt);
+		const dragOver = fireEvent.dragOver(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
 		fireEvent.drop(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
+
+		// The drag is refused rather than accepted-and-ignored: a prevented dragover is
+		// what makes the cursor promise a drop, so it must NOT be prevented here.
+		expect(dragOver).toBe(true);
+		expect(dt.dropEffect).toBe('none');
+		// No highlight rectangle is painted over the view.
+		expect(overlay.querySelector('div')).toBeNull();
 
 		const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1')!;
 		expect(updated.tabGroups).toHaveLength(0);
 		expect(updated.activeGroupId).toBeNull();
 		expect(onGroupActivated).not.toHaveBeenCalled();
-		// Instead of silently doing nothing, the self-drop now explains why with a
-		// yellow flash telling the user to drag a different tab.
-		expect(notifyCenterFlash).toHaveBeenCalledWith(expect.objectContaining({ color: 'yellow' }));
+		expect(notifyCenterFlash).not.toHaveBeenCalled();
 	});
 
 	// The group path (dropping onto an existing tiled group) can't be driven through

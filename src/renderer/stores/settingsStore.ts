@@ -2079,28 +2079,21 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		if (allSettings['autoRunStats'] !== undefined) {
-			let stats = {
+			// NOTE: a `concurrentAutoRunTimeMigrationApplied` migration used to add
+			// 3 hours to `cumulativeTimeMs` here. It was removed because it grew the
+			// local total without submitting a delta, which is exactly what
+			// `services/leaderboard.ts` forbids: the 3 hours never reached the
+			// leaderboard, pushed the local total above the server's, and (before the
+			// drift branch in useAppInitialization) latched the startup sync off for
+			// good. It was also keyed per install, so a multi-machine user collected
+			// it once per machine, and it fired for installs that never saw the
+			// concurrent-tallying bug at all (the flag is only written by the
+			// migration, so a brand new install qualified after its first run).
+			// Installs that already took the 3 hours keep them; nothing claws back.
+			patch.autoRunStats = {
 				...DEFAULT_AUTO_RUN_STATS,
 				...(allSettings['autoRunStats'] as Partial<AutoRunStats>),
 			};
-
-			// One-time migration: Add 3 hours to compensate for concurrent Auto Run tallying bug
-			const concurrentAutoRunTimeMigrationApplied =
-				allSettings['concurrentAutoRunTimeMigrationApplied'];
-			if (!concurrentAutoRunTimeMigrationApplied && stats.cumulativeTimeMs > 0) {
-				const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-				stats = {
-					...stats,
-					cumulativeTimeMs: stats.cumulativeTimeMs + THREE_HOURS_MS,
-				};
-				window.maestro.settings.set('autoRunStats', stats);
-				window.maestro.settings.set('concurrentAutoRunTimeMigrationApplied', true);
-				logger.info(
-					'[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time'
-				);
-			}
-
-			patch.autoRunStats = stats;
 		}
 
 		if (allSettings['usageStats'] !== undefined) {

@@ -422,7 +422,7 @@ describe('useSettings', () => {
 
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				autoRunStats: savedStats,
-				concurrentAutoRunTimeMigrationApplied: true, // Skip migration in tests
+				concurrentAutoRunTimeMigrationApplied: true, // Legacy flag, now ignored on load
 			});
 
 			const { result } = renderHook(() => useSettings());
@@ -1003,7 +1003,7 @@ describe('useSettings', () => {
 						lastAcknowledgedBadgeLevel: 0,
 						badgeHistory: [],
 					},
-					concurrentAutoRunTimeMigrationApplied: true, // Skip migration in tests
+					concurrentAutoRunTimeMigrationApplied: true, // Legacy flag, now ignored on load
 				});
 
 				const { result } = renderHook(() => useSettings());
@@ -1062,7 +1062,7 @@ describe('useSettings', () => {
 						lastAcknowledgedBadgeLevel: 0,
 						badgeHistory: [],
 					},
-					concurrentAutoRunTimeMigrationApplied: true, // Skip migration in tests
+					concurrentAutoRunTimeMigrationApplied: true, // Legacy flag, now ignored on load
 				});
 
 				const { result } = renderHook(() => useSettings());

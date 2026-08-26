@@ -153,7 +153,25 @@ export function SnoozeTabModal({
 				/>
 			}
 		>
-			<div className="flex flex-col gap-4">
+			<div
+				className="flex flex-col gap-4"
+				// Cmd/Ctrl+Enter commits from anywhere in the dialog - the note
+				// textarea, the calendar, the time field, a focused preset. Every one
+				// of those was mouse-only: the single keyboard commit path was plain
+				// Enter in the free-form input, which is the field a user is least
+				// likely to be in when they are done. Plain Enter stays a newline in
+				// the textarea, which is why the chord has to carry a modifier.
+				//
+				// Same shape as QueuedItemEditModal. Modal-local, so it is not a
+				// registered shortcut id - there is nothing here to rebind.
+				onKeyDown={(e) => {
+					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && resolved.at != null) {
+						e.preventDefault();
+						e.stopPropagation();
+						handleConfirm();
+					}
+				}}
+			>
 				{/* What's being snoozed */}
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim }}>
 					{tabLabel}
@@ -191,7 +209,15 @@ export function SnoozeTabModal({
 						value={expression}
 						onChange={(e) => setExpression(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter' && resolved.at != null) {
+							// PLAIN Enter only. `e.key === 'Enter'` is also true for
+							// Cmd/Ctrl+Enter, so without this guard the body handler below
+							// and this one both fire for the same keypress: onConfirm runs
+							// twice, which snoozes twice and closes the modal twice.
+							//
+							// Deliberately an explicit modifier test rather than a
+							// `defaultPrevented` check - the split records which control
+							// owns which chord, instead of leaving it to event ordering.
+							if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && resolved.at != null) {
 								e.preventDefault();
 								handleConfirm();
 							}

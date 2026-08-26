@@ -15,6 +15,13 @@ import {
 	handleConcertoDesignerMessage,
 	registerConcertoDesignerFrame,
 } from '../../../renderer/components/Concerto/concertoDesignerBridge';
+import { planCrossAgentMentions } from '../../../renderer/services/crossAgentMentions';
+
+// The planner's verdict is the seam under test: a queued CLI prompt must carry
+// it as the same flags a composer-queued message does.
+vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+	planCrossAgentMentions: vi.fn(() => null),
+}));
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -208,6 +215,10 @@ describe('useRemoteIntegration', () => {
 		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteLaunchGoalRun: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteLaunchGoalRunResponse: vi.fn(),
 		onRemoteSetAutoRunFolder: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -1086,6 +1097,47 @@ describe('useRemoteIntegration', () => {
 			);
 
 			dispatchEventSpy.mockRestore();
+		});
+
+		it('stamps cross-agent mention intent on the queued item so the dequeue consults', () => {
+			// Without the flags the mention is inert: processQueuedItem only fires a
+			// consult for items marked crossAgentMention, and a CLI-queued item
+			// used to be built without it.
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+				targetSessionIds: ['reviewer-1'],
+				suppressLocal: true,
+			} as any);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'@Reviewer check this',
+					'chan-m',
+					'ai',
+					'tab-1'
+				);
+			});
+
+			expect(planCrossAgentMentions).toHaveBeenCalledWith('@Reviewer check this', 'session-1');
+			const updater = deps.setSessions.mock.calls[0][0];
+			const [updated] = updater([session]);
+			expect(updated.executionQueue[0]).toMatchObject({
+				text: '@Reviewer check this',
+				crossAgentMention: true,
+				crossAgentOnly: true,
+			});
 		});
 
 		it('appends after existing items so ordering stays FIFO and position advances', () => {

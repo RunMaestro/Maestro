@@ -1,10 +1,11 @@
 import { useCallback } from 'react';
 import type { AgentSelectionKeyDown, AgentSelectionKeyboardArgs } from '../types';
-import { AGENT_TILES } from '../utils/agentTiles';
+import { PROVIDER_BAR_NAV_EXEMPT_ATTR } from '../../../../ui/ProviderAvailabilityBar';
 import { getNextAgentTileIndex } from '../utils/agentGrid';
 import { findDetectedAgent } from '../utils/agentAvailability';
 
 export function useAgentSelectionKeyboard({
+	tiles,
 	isNameFieldFocused,
 	focusedTileIndex,
 	detectedAgents,
@@ -18,16 +19,23 @@ export function useAgentSelectionKeyboard({
 }: AgentSelectionKeyboardArgs): AgentSelectionKeyDown {
 	return useCallback(
 		(event) => {
+			if ((event.target as HTMLElement | null)?.closest?.(`[${PROVIDER_BAR_NAV_EXEMPT_ATTR}]`)) {
+				return;
+			}
+
 			if (isNameFieldFocused) {
 				if (event.key === 'Tab' && event.shiftKey) {
 					event.preventDefault();
 					setIsNameFieldFocused(false);
-					for (let index = AGENT_TILES.length - 1; index >= 0; index -= 1) {
-						const tile = AGENT_TILES[index];
+					for (let index = tiles.length - 1; index >= 0; index -= 1) {
+						const tile = tiles[index];
 						const detected = findDetectedAgent(detectedAgents, tile.id);
 						if (tile.supported && detected?.available) {
 							setFocusedTileIndex(index);
-							tileRefs.current?.[index]?.focus();
+							// `preventScroll`: the strip scrolls the focused tile into view
+							// itself, clear of the edge fades. The browser's own scroll would
+							// beat it to the punch and park the tile flush against one.
+							tileRefs.current?.[index]?.focus({ preventScroll: true });
 							break;
 						}
 					}
@@ -44,10 +52,14 @@ export function useAgentSelectionKeyboard({
 				case 'ArrowLeft':
 				case 'ArrowRight': {
 					event.preventDefault();
-					const nextIndex = getNextAgentTileIndex(focusedTileIndex, event.key);
+					const nextIndex = getNextAgentTileIndex(focusedTileIndex, event.key, tiles.length);
 					if (nextIndex !== focusedTileIndex) {
 						setFocusedTileIndex(nextIndex);
-						tileRefs.current?.[nextIndex]?.focus();
+						// A disabled tile cannot take DOM focus, so this is a no-op on one.
+						// The strip scrolls off `focusedTileIndex` rather than off focus for
+						// exactly that reason - arrowing across a dimmed provider still moves
+						// the strip with the ring.
+						tileRefs.current?.[nextIndex]?.focus({ preventScroll: true });
 					}
 					break;
 				}
@@ -63,7 +75,8 @@ export function useAgentSelectionKeyboard({
 				case 'Enter':
 				case ' ': {
 					event.preventDefault();
-					const tile = AGENT_TILES[focusedTileIndex];
+					const tile = tiles[focusedTileIndex];
+					if (!tile) break;
 					const detected = findDetectedAgent(detectedAgents, tile.id);
 					if (tile.supported && detected?.available) {
 						setSelectedAgent(tile.id);
@@ -76,6 +89,7 @@ export function useAgentSelectionKeyboard({
 			}
 		},
 		[
+			tiles,
 			isNameFieldFocused,
 			focusedTileIndex,
 			detectedAgents,

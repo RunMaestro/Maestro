@@ -20,6 +20,7 @@ import {
 	RefreshCw,
 	Send,
 	DownloadCloud,
+	UploadCloud,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
@@ -28,6 +29,12 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getBadgeForTime } from '../constants/conductorBadges';
+import {
+	flushLeaderboardOutbox,
+	submitLeaderboardTimeDelta,
+	LEADERBOARD_DRIFT_TOLERANCE_MS,
+} from '../services/leaderboard';
+import { formatDurationCompact } from '../../shared/duration';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { generateId } from '../utils/ids';
@@ -178,6 +185,15 @@ export function LeaderboardRegistrationModal({
 	// Sync from server state
 	const [isSyncing, setIsSyncing] = useState(false);
 	const [syncMessage, setSyncMessage] = useState('');
+	/**
+	 * How far this machine's total sits ABOVE the server's, as measured by the
+	 * last Pull Down. Non-zero means deltas were dropped: the server aggregates
+	 * every device, so it can never legitimately be behind one of them. Nothing
+	 * closes that gap on its own, because a `cumulativeTimeMs` sent without a
+	 * `deltaMs` is ignored for an existing user - hence the explicit push below.
+	 */
+	const [driftMs, setDriftMs] = useState(0);
+	const [isPushingDifference, setIsPushingDifference] = useState(false);
 
 	// Get current badge info
 	const currentBadge = getBadgeForTime(autoRunStats.cumulativeTimeMs);
@@ -627,8 +643,13 @@ export function LeaderboardRegistrationModal({
 		setIsSyncing(true);
 		setSyncMessage('');
 		setErrorMessage('');
+		setDriftMs(0);
 
 		try {
+			// Drain anything still owed first, so a queue that simply had not been
+			// flushed yet does not read as drift.
+			await flushLeaderboardOutbox();
+
 			const result = await window.maestro.leaderboard.sync({
 				email: email.trim(),
 				authToken: existingRegistration.authToken,
@@ -663,11 +684,18 @@ export function LeaderboardRegistrationModal({
 				} else if (serverTime === localTime) {
 					setSyncMessage('Already in sync! Local and server stats match.');
 				} else {
-					// Local has more data - no update needed
-					const hours = Math.floor(localTime / 3600000);
-					const minutes = Math.floor((localTime % 3600000) / 60000);
+					// Local is ahead. The server totals every device, so it cannot be
+					// behind this one unless deltas were dropped (offline, a crash
+					// mid-run, a missing auth token). Nothing fixes that by itself: a
+					// later submission only adds ITS OWN delta, so the gap survives
+					// every future run. Say so, and offer the explicit push.
+					const gap = localTime - serverTime;
+					setDriftMs(gap);
 					setSyncMessage(
-						`Local is ahead (${hours}h ${minutes}m). No sync needed - your next submission will update the server.`
+						`Local is ${formatDurationCompact(gap)} ahead of the leaderboard ` +
+							`(${formatDurationCompact(localTime)} here, ${formatDurationCompact(serverTime)} on the server). ` +
+							`That time never reached the server and future runs will not backfill it. ` +
+							`Use "Push Difference" to add it.`
 					);
 				}
 			} else if (result.success && !result.found) {
@@ -690,6 +718,50 @@ export function LeaderboardRegistrationModal({
 			setIsSyncing(false);
 		}
 	}, [existingRegistration?.authToken, email, autoRunStats.cumulativeTimeMs, onSyncStats]);
+
+	/**
+	 * Ship the measured gap to the server as one explicit delta. User-initiated
+	 * on purpose: it changes a leaderboard total, so it must never happen behind
+	 * the user's back. Re-reads the server total immediately before submitting so
+	 * a delta that landed between the Pull Down and this click cannot be counted
+	 * twice.
+	 */
+	const handlePushDifference = useCallback(async () => {
+		if (!existingRegistration?.authToken || !email.trim()) return;
+
+		setIsPushingDifference(true);
+		setErrorMessage('');
+
+		try {
+			await flushLeaderboardOutbox();
+
+			const fresh = await window.maestro.leaderboard.sync({
+				email: email.trim(),
+				authToken: existingRegistration.authToken,
+			});
+			if (!fresh.success || !fresh.found || !fresh.data) {
+				setErrorMessage('Could not read the server total. Try again in a moment.');
+				return;
+			}
+
+			const gap = autoRunStats.cumulativeTimeMs - fresh.data.cumulativeTimeMs;
+			if (gap <= LEADERBOARD_DRIFT_TOLERANCE_MS) {
+				setDriftMs(0);
+				setSyncMessage('Already in sync! Local and server stats match.');
+				return;
+			}
+
+			await submitLeaderboardTimeDelta({ deltaMs: gap, deltaRuns: 0, source: 'auto-run' });
+			setDriftMs(0);
+			setSyncMessage(
+				`Pushed ${formatDurationCompact(gap)} to the leaderboard. Pull Down to confirm the new total.`
+			);
+		} catch (error) {
+			setErrorMessage(error instanceof Error ? error.message : 'Failed to push the difference');
+		} finally {
+			setIsPushingDifference(false);
+		}
+	}, [existingRegistration?.authToken, email, autoRunStats.cumulativeTimeMs]);
 
 	// Cleanup polling on unmount
 	useEffect(() => {
@@ -1349,6 +1421,33 @@ export function LeaderboardRegistrationModal({
 								)}
 							</button>
 						)}
+
+					{/* Push Difference - only after a Pull Down measured real drift */}
+					{driftMs > 0 && !showOptOutConfirm && existingRegistration?.authToken && (
+						<button
+							onClick={handlePushDifference}
+							disabled={isPushingDifference || isSyncing}
+							title="Send the time this machine has that the leaderboard is missing"
+							className="px-4 py-2 text-sm rounded transition-colors flex items-center gap-2 disabled:opacity-50"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.warning,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							{isPushingDifference ? (
+								<>
+									<Spinner size={16} />
+									Pushing...
+								</>
+							) : (
+								<>
+									<UploadCloud className="w-4 h-4" />
+									Push Difference
+								</>
+							)}
+						</button>
+					)}
 
 					{/* Opt Out */}
 					{existingRegistration &&

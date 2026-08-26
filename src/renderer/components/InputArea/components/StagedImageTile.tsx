@@ -23,6 +23,8 @@ interface StagedImageTileProps {
 	showSlotNumber: boolean;
 	isDragging: boolean;
 	isDimmed: boolean;
+	/** Zoom multiplier over the size preset. Defaults to 1. */
+	scale?: number;
 	dropBefore: boolean;
 	dropAfter: boolean;
 	dragHandlers: StagedImageTileDragHandlers;
@@ -39,6 +41,7 @@ export const StagedImageTile = memo(function StagedImageTile({
 	showSlotNumber,
 	isDragging,
 	isDimmed,
+	scale = 1,
 	dropBefore,
 	dropAfter,
 	dragHandlers,
@@ -48,6 +51,9 @@ export const StagedImageTile = memo(function StagedImageTile({
 }: StagedImageTileProps) {
 	const dims = TILE_SIZES[size];
 	const slot = index + 1;
+	// Scale in CSS rather than recomputing a rem number: the presets are the
+	// design sizes, and `calc()` keeps the zoom a pure multiplier over them.
+	const scaled = (value: string) => (scale === 1 ? value : `calc(${value} * ${scale})`);
 
 	return (
 		<div
@@ -72,10 +78,10 @@ export const StagedImageTile = memo(function StagedImageTile({
 					draggable={false}
 					className="rounded border hover:opacity-80 transition-opacity block pointer-events-none"
 					style={{
-						height: dims.height,
+						height: scaled(dims.height),
 						borderColor: theme.colors.border,
 						objectFit: 'contain',
-						maxWidth: dims.maxWidth,
+						maxWidth: scaled(dims.maxWidth),
 					}}
 				/>
 			</button>

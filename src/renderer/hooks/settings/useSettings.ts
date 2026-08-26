@@ -296,6 +296,8 @@ export interface UseSettingsReturn {
 	setShowBrowserTabDomain: (value: boolean) => void;
 	tabBarWheelScroll: boolean;
 	setTabBarWheelScroll: (value: boolean) => void;
+	showTabCountBadge: boolean;
+	setShowTabCountBadge: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;

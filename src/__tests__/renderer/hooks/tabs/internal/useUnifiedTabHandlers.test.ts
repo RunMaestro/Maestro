@@ -55,18 +55,44 @@ describe('useUnifiedTabHandlers', () => {
 		cleanup();
 	});
 
-	it('reorders the unified tab order with bounds checks', () => {
+	it('reorders the unified tab order by tab id, ignoring ids that are not in it', () => {
 		setupSession({
 			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
 		});
 		const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
 
 		act(() => {
-			result.current.handleUnifiedTabReorder(0, 1);
-			result.current.handleUnifiedTabReorder(-1, 1);
+			result.current.handleUnifiedTabReorder('ai-1', 'ai-2');
+			result.current.handleUnifiedTabReorder('ai-1', 'gone');
 		});
 
 		expect(getSession().unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'ai-2' },
+			{ type: 'ai', id: 'ai-1' },
+		]);
+	});
+
+	it('reorders the visible chips when hidden tabs sit between them', () => {
+		// The strip renders buildUnifiedTabs, which drops hidden consult tabs while
+		// their refs stay in the order. Addressing the drop by POSITION moved the
+		// hidden ref instead and the strip never changed - the reported bug.
+		setupSession({
+			aiTabs: [
+				createMockAITab({ id: 'ai-1' }),
+				createMockAITab({ id: 'consult-1', hidden: true }),
+				createMockAITab({ id: 'consult-2', hidden: true }),
+				createMockAITab({ id: 'ai-2' }),
+			],
+		});
+		const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+		act(() => {
+			result.current.handleUnifiedTabReorder('ai-1', 'ai-2');
+		});
+
+		expect(getSession().unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'consult-1' },
+			{ type: 'ai', id: 'consult-2' },
 			{ type: 'ai', id: 'ai-2' },
 			{ type: 'ai', id: 'ai-1' },
 		]);

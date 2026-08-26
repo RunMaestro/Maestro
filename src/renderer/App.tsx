@@ -8,7 +8,7 @@ import React, {
 	Suspense,
 	type ReactNode,
 } from 'react';
-import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
+import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfterRender';
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
 import { slashCommands } from './slashCommands';
@@ -209,7 +209,7 @@ import {
 	findNextUnreadSession,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
-import { getQueueBusyContext } from './utils/executionQueue';
+import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -1346,6 +1346,16 @@ function MaestroConsoleInner() {
 	const prevAiTabIdsRef = useRef<string[]>(
 		activeSession ? activeSession.aiTabs.map((t) => t.id) : []
 	);
+
+	// Return the caret to the AI composer when the queued-message editor closes.
+	// Nothing restores focus when a layer unregisters, so Escape otherwise left
+	// focus on the document body: the composer looked ready but swallowed the
+	// next keystroke, and the shortcut that opened the editor could not reopen it.
+	// Keyed on the uiStore id, so this covers the Cmd+Shift+E path and the pencil
+	// on a queued row, but NOT the copy inside the Execution Queue browser - that
+	// one owns local state and must hand focus back to the browser behind it.
+	const editingQueuedItemId = useUIStore((s) => s.editingQueuedItemId);
+	useFocusOnClose(inputRef, editingQueuedItemId !== null);
 	const shouldFocusOnLastTabReplaced = isSoleAiTabReplacement(
 		prevFocusSessionIdRef.current,
 		prevAiTabIdsRef.current,
@@ -1862,13 +1872,26 @@ function MaestroConsoleInner() {
 		[processInput]
 	);
 
-	// Build (tab→busy summary) lookup used by the inline Force Send button to
-	// decide visibility and to populate the confirmation modal's "other tabs
-	// working" list. Computed from the current agent's tab states at call time.
-	const getForceSendContext = useCallback((item: QueuedItem) => {
+	// Force Send eligibility for the inline QUEUED card: whether the item can be
+	// dispatched out of turn, why not when it can't, and the busy-tab summary the
+	// confirmation modal lists. Computed from the current agent's tab states at
+	// call time.
+	//
+	// This returns the FULL eligibility rather than the busy context alone. The
+	// inline card used to re-derive "can I force this?" from a narrowed
+	// {targetTabBusy, otherBusyTabs} and reached a different answer than the
+	// Execution Queue modal, which asks the shared helper - so the same item
+	// offered Send Now in one surface and showed nothing in the other. One
+	// decision, computed once, read by both.
+	const getForceSendContext = useCallback((item: QueuedItem): ForceSendEligibility | null => {
 		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return null;
-		return getQueueBusyContext(session, item);
+		// Read the setting at call time rather than closing over it, so this
+		// callback keeps one identity and cannot hand back a stale answer after
+		// the user toggles Forced Parallel Execution.
+		return getForceSendEligibility(session, item, {
+			forcedParallelEnabled: useSettingsStore.getState().forcedParallelExecution,
+		});
 	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
@@ -2360,7 +2383,6 @@ function MaestroConsoleInner() {
 		handleSummarizeAndContinue,
 		processQueuedItem,
 		handleCloseCurrentTab,
-		handleUnifiedTabReorder,
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,

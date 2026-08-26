@@ -382,12 +382,12 @@ export function useKeyboardNavigation(
 				return false;
 			}
 
-			// Skip if Cmd/Ctrl+Arrow is pressed (with or without Alt) - could be a user-configured
-			// tab navigation shortcut (e.g. Cmd+Left/Right) or layout toggle (Alt+Cmd+Arrow).
-			// Plain ArrowLeft/Right (no modifiers) is reserved for group collapse/expand.
-			const isModifiedArrow =
-				(e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
-			if (isModifiedArrow) return false;
+			// Sidebar navigation owns BARE arrow keys only. A modified arrow is an app
+			// shortcut (Opt+Cmd+Left/Right panel toggles, Opt+Cmd+Down next-unread,
+			// Opt+Cmd+Up focus-active-tab) and has to reach the shortcut chain, which
+			// runs after this handler. Claiming every ArrowDown/ArrowUp made those
+			// combos dead whenever the Left Bar held focus.
+			if (e.metaKey || e.ctrlKey || e.altKey) return false;
 
 			// Only handle arrow keys and space
 			if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {

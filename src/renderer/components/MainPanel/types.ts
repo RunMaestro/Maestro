@@ -9,6 +9,7 @@ import type {
 	QueuedItem,
 } from '../../types';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 
 export interface SlashCommand {
 	command: string;
@@ -143,9 +144,13 @@ export interface MainPanelProps {
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/**
+	 * Force Send eligibility for a queued item: can it be dispatched now, why not
+	 * if it can't, and which other tabs are working. Carries the FULL
+	 * ForceSendEligibility so the inline card renders the same decision the
+	 * Execution Queue modal does instead of re-deriving one from a subset.
+	 */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	onOpenQueueBrowser?: () => void;
 
 	// Auto mode props
@@ -158,7 +163,7 @@ export interface MainPanelProps {
 	onNewTab?: () => void;
 	onRequestTabRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	onUpdateTabByClaudeSessionId?: (

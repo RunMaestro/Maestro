@@ -71,7 +71,6 @@ function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionD
 		ext: builtinTile('usageStats', true),
 		contributions: null,
 		busy: false,
-		onBack: vi.fn(),
 		onTogglePlugin: vi.fn(),
 		onToggleBuiltin: vi.fn(),
 		onUninstall: vi.fn(),

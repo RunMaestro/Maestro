@@ -11,6 +11,12 @@
  * The second block covers the environment disclosure: that the three env layers
  * are merged in the spawner's own precedence order, and that failing to read one
  * layer degrades instead of blocking the login.
+ *
+ * The third block covers the credential-kind gate: the environment does not just
+ * get disclosed, it decides whether a login is the right remedy at all. An
+ * API-key, gateway, or Bedrock agent fails with the same output an expired login
+ * produces, so the shell must not open for one - the flow would succeed and fix
+ * nothing.
  */
 
 import React from 'react';
@@ -51,7 +57,7 @@ const render = (ui: React.ReactElement) => rtlRender(<LayerStackProvider>{ui}</L
 vi.mock('../../../renderer/components/XTerminal', () => {
 	const React = require('react');
 	const XTerminal = React.forwardRef((props: Record<string, unknown>, ref: React.Ref<unknown>) => {
-		React.useImperativeHandle(ref, () => ({ focus: vi.fn() }));
+		React.useImperativeHandle(ref, () => ({ focus: vi.fn(), write: vi.fn() }));
 		return React.createElement('div', {
 			'data-testid': 'xterm-mock',
 			'data-session-id': String(props.sessionId),
@@ -66,10 +72,23 @@ const mockWrite = vi.fn();
 const mockKill = vi.fn();
 const mockGetCustomEnvVars = vi.fn();
 let exitHandler: ((sessionId: string) => void) | undefined;
+let dataHandler: ((sessionId: string, data: string) => void) | undefined;
+
+/**
+ * The login command is held until the shell proves it is alive, so a test that
+ * wants to observe the write has to deliver that first byte.
+ */
+async function emitShellOutput(sessionId: string, data = '$ ') {
+	await act(async () => {
+		dataHandler?.(sessionId, data);
+		await Promise.resolve();
+	});
+}
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	exitHandler = undefined;
+	dataHandler = undefined;
 	mockSpawnTerminalTab.mockResolvedValue({ pid: 4242, success: true });
 	mockWrite.mockResolvedValue(true);
 	mockKill.mockResolvedValue(true);
@@ -85,6 +104,10 @@ beforeEach(() => {
 	maestro.agents.getCustomEnvVars = mockGetCustomEnvVars;
 	maestro.process.onExit = vi.fn((handler: (sessionId: string) => void) => {
 		exitHandler = handler;
+		return () => {};
+	});
+	maestro.process.onData = vi.fn((handler: (sessionId: string, data: string) => void) => {
+		dataHandler = handler;
 		return () => {};
 	});
 });
@@ -109,6 +132,11 @@ describe('ReauthModal', () => {
 			cwd: '/test/project',
 			toolType: 'claude-code',
 		});
+
+		// Held until the shell speaks: typing into a PTY that is not ready yet is
+		// how a remote login came up as an empty box.
+		expect(mockWrite).not.toHaveBeenCalled();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
 		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
 	});
 
@@ -125,6 +153,102 @@ describe('ReauthModal', () => {
 		expect(ptySessionId.startsWith('reauth-sess-1-terminal-')).toBe(true);
 		expect(ptySessionId.split('-terminal-')[0]).not.toBe('sess-1');
 		expect(screen.getByTestId('xterm-mock').getAttribute('data-session-id')).toBe(ptySessionId);
+	});
+
+	// The bug this guards: spawn and kill used to live in separate effects, so
+	// React StrictMode's remount (cleanup, then re-run) killed the shell the
+	// first pass had started while a one-shot guard blocked the second pass from
+	// starting another. The result was a dead PTY nobody typed into - an empty
+	// terminal box - and it reproduced every time over SSH, where the spawn takes
+	// long enough that the teardown always wins the race.
+	it('still has a live login shell after a StrictMode-style remount', async () => {
+		const session = createMockSession({ id: 'sess-1' });
+		const outage = createOutage();
+		const ui = (
+			<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />
+		);
+
+		// Let the first mount get as far as its own shell (the environment read
+		// gates the spawn, so it has to settle first), then tear down and mount
+		// again without letting the second spawn settle - exactly what StrictMode
+		// does on a slow (SSH) spawn.
+		const first = render(ui);
+		await flushSpawn();
+		first.unmount();
+		render(ui);
+		await flushSpawn();
+
+		// The remount must have started its own shell rather than being blocked.
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(2);
+		const liveSessionId: string = mockSpawnTerminalTab.mock.calls[1][0].sessionId;
+
+		// ...and that shell is the one that gets the login typed into it.
+		await emitShellOutput(liveSessionId);
+		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\n');
+	});
+
+	// The abandoned attempt's promise resolves after the remount. It must not
+	// type the login into a shell that is already being replaced.
+	it('does not type the login into a superseded shell', async () => {
+		const session = createMockSession({ id: 'sess-1' });
+		const outage = createOutage();
+		const ui = (
+			<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />
+		);
+
+		const first = render(ui);
+		await flushSpawn();
+		first.unmount();
+		render(ui);
+		await flushSpawn();
+
+		const supersededSessionId: string = mockSpawnTerminalTab.mock.calls[0][0].sessionId;
+		await emitShellOutput(supersededSessionId);
+
+		expect(mockWrite).not.toHaveBeenCalledWith(supersededSessionId, expect.any(String));
+	});
+
+	// A shell that never prints (a wedged SSH handshake) must still get the
+	// command rather than leaving the user at a blank box forever.
+	it('types the login anyway when the shell prints nothing', async () => {
+		vi.useFakeTimers();
+		try {
+			const session = createMockSession({ id: 'sess-1' });
+			const outage = createOutage();
+			render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(mockWrite).not.toHaveBeenCalled();
+
+			await act(async () => {
+				vi.advanceTimersByTime(8000);
+			});
+
+			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	// Over SSH the override becomes a `cd` the remote shell runs before anything
+	// else, so a stale or local-looking path kills the session before the login
+	// can start. The login needs no project directory at all.
+	it('does not cd the remote login shell into a guessed project directory', async () => {
+		const session = createMockSession({
+			id: 'sess-1',
+			cwd: '/Users/local/only',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
+		const outage = createOutage();
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
+		await flushSpawn();
+
+		expect(
+			mockSpawnTerminalTab.mock.calls[0][0].sessionSshRemoteConfig.workingDirOverride
+		).toBeUndefined();
 	});
 
 	it('kills the login shell when the modal unmounts', async () => {
@@ -167,6 +291,7 @@ describe('ReauthModal', () => {
 		await flushSpawn();
 
 		expect(screen.getByText(/then type \/login/)).toBeInTheDocument();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
 		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\n');
 	});
 
@@ -333,6 +458,85 @@ describe('ReauthModal environment disclosure', () => {
 		await waitFor(() => expect(screen.getByTestId('reauth-env')).toBeInTheDocument());
 		// Falls back to the layers it does have.
 		expect(screen.getByText('GLOBAL_ONLY')).toBeInTheDocument();
+		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
+	});
+});
+
+/**
+ * Not every credential is an OAuth login, and the ones that are not fail with
+ * the same `auth_expired` output. Running the provider's login command for them
+ * produces a successful-looking flow that changes nothing the agent presents, so
+ * the shell must never open.
+ */
+describe('ReauthModal credential kinds', () => {
+	/** Render with `vars` as the agent's own environment layer. */
+	async function renderWithEnv(vars: Record<string, string>, toolType = 'claude-code') {
+		mockGetCustomEnvVars.mockResolvedValue(vars);
+		const session = createMockSession({ id: 'sess-1', toolType });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage({ toolType })}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+	}
+
+	it('opens the login shell for a plain OAuth agent', async () => {
+		await renderWithEnv({});
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not offer a login to an agent authenticating with an API key', async () => {
+		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/ANTHROPIC_API_KEY/)).toBeInTheDocument();
+	});
+
+	// The token belongs to the gateway operator, so it outranks a token check:
+	// even with a key set, no provider login can repair it.
+	it('names the gateway an agent is pointed at instead of offering a login', async () => {
+		await renderWithEnv({
+			ANTHROPIC_BASE_URL: 'https://api.z.ai/v1',
+			ANTHROPIC_AUTH_TOKEN: 'gw-token',
+		});
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/api\.z\.ai/)).toBeInTheDocument();
+	});
+
+	it('sends a Bedrock agent to its cloud credentials rather than a provider login', async () => {
+		await renderWithEnv({ CLAUDE_CODE_USE_BEDROCK: '1' });
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/AWS Bedrock/)).toBeInTheDocument();
+	});
+
+	// A flag the user turned off must not be read as a Bedrock agent.
+	it('treats a disabled cloud flag as the OAuth default', async () => {
+		await renderWithEnv({ CLAUDE_CODE_USE_BEDROCK: 'false' });
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
+	// An emptied row is how a user turns an inherited variable off.
+	it('treats a blank API key as unset', async () => {
+		await renderWithEnv({ ANTHROPIC_API_KEY: '   ' });
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
+	it('classifies per provider rather than assuming Anthropic vars', async () => {
+		await renderWithEnv({ OPENAI_API_KEY: 'sk-openai' }, 'codex');
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(await screen.findByText(/OPENAI_API_KEY/)).toBeInTheDocument();
+	});
+
+	// Blocked or not, the agents are still stopped and their queues still held.
+	it('still offers to resume the blocked agents', async () => {
+		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
 		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
 	});
 });

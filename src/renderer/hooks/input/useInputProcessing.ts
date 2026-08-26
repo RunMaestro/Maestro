@@ -8,10 +8,15 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 } from '../../types';
-import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	getBusyTabs,
+	extractQuickTabName,
+	getTabDisplayName,
+} from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
-import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
@@ -505,13 +510,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								command: matchingCustomCommand.command,
 								commandArgs, // Arguments passed after the command (for $ARGUMENTS substitution)
 								commandDescription: matchingCustomCommand.description,
-								tabName:
-									activeTab?.name ||
-									(activeTab?.agentSessionId
-										? activeTab.agentSessionId.split('-')[0].toUpperCase()
-										: 'New'),
+								// Last-known label, used only if the tab is gone by the time
+								// the queue drains - the queue UI resolves the live name first.
+								tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
 								readOnlyMode: isReadOnlyMode,
 								...(forceParallel && { forceParallel: true }),
+								// Freeze the model/effort now: the queue may not drain until
+								// after the user has switched to something else, and this
+								// command must run under - and be labeled with - what was
+								// selected when they sent it.
+								turnSettings: captureQueuedTurnSettings(activeTab, activeSession),
 							};
 
 							// If session is idle, we need to set up state and process immediately
@@ -1050,16 +1058,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						type: 'message',
 						text: effectiveInputValue,
 						images: [...effectiveImages],
-						tabName:
-							activeTab?.name ||
-							(activeTab?.agentSessionId
-								? activeTab.agentSessionId.split('-')[0].toUpperCase()
-								: 'New'),
+						// See the slash-command path above: a fallback label, not the
+						// name the queue actually renders.
+						tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
 						...(crossAgentMentionPlan && { crossAgentMention: true }),
+						// Freeze the model/effort now - see the slash-command queue path
+						// above. Queuing is the send; the dispatch happens later.
+						turnSettings: captureQueuedTurnSettings(activeTab, activeSession),
 					};
 
 					// Add to queue - will be processed when:

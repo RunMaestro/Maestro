@@ -417,6 +417,8 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 
 When [Forced Parallel Execution](./features) is enabled and another tab in the same agent is already working, a queued item gains a **Force Send** button. This dispatches that message immediately, running it in parallel instead of waiting its turn in the cross-tab queue. A confirmation lists which other tabs are currently busy before it sends.
 
+`Cmd+Shift+Enter` / `Ctrl+Shift+Enter` does the same thing from the keyboard, and it works wherever you are in the app - you do not have to click into the input box first. With text in the input, it sends what you typed in parallel; with the input empty, it force-sends the newest eligible queued item.
+
 ### Execution Queue view
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
@@ -707,7 +709,7 @@ Rearrange agents by dragging them:
 
 ### Context Menu
 
-Right-click any agent for quick actions:
+Right-click any agent for quick actions. The menu is headed by the name of the agent you right-clicked, so you can tell at a glance which agent an action will hit - the menu often pops away from the row it was opened on.
 
 - **Rename** - Change the agent's display name
 - **Edit Agent...** - Open configuration modal
@@ -819,9 +821,9 @@ The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the 
 | **Tile New File Below**     | New blank file tab takes the bottom half              |
 | **Tile New Terminal Below** | New terminal takes the bottom half                    |
 
-**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab.
+Each of the four also has a key of its own, on `Ctrl+Cmd` beside the rest of the pane commands: `Ctrl+Cmd+T` AI chat, `Ctrl+Cmd+B` browser, `Ctrl+Cmd+F` file, `Ctrl+Cmd+J` terminal. The letter matches the plain "new tab" chord, so the tiled twin is that letter with one more modifier. On Windows and Linux the second modifier is the Windows / Super key.
 
-The other three ship with no key assigned, so Maestro is not claiming three more chords on your behalf. They are still in the shortcuts list: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want - it reads **Not set** - and click it to record whatever combination you like. Once bound, the key works everywhere the terminal one does, and Quick Actions starts showing it next to the command.
+Any of the four can be rebound: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want, and click it to record whatever combination you like. Quick Actions shows your binding next to the command.
 
 Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half.
 
@@ -835,6 +837,8 @@ Each one creates the tab and places it in a single step, so you never have to op
 | File     | The editor, on a blank Untitled file - handy for a quick note      |
 
 If a pane needs a moment to appear (a browser starting up, a file editor loading for the first time), Maestro waits for it and puts the caret in as soon as it is ready.
+
+The same rule holds for a plain new tab, not just a tiled one. A new file tab (`Opt+N` / `Alt+N`) opens a blank Untitled file with the caret already in the editor, and a new browser tab (`Cmd+B` / `Ctrl+B`) opens blank with the caret in the address bar, so you can type where you are going straight away. If you would rather a new browser tab land on a page, set one under **Settings -> General -> Browser Home URL**.
 
 If a tile is already on screen, the split happens inside the pane you are working in rather than under the whole grid. That is what lets you build a layout one command at a time: tile a terminal under your chat, click into the terminal, then tile a browser under that.
 

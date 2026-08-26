@@ -73,6 +73,7 @@ import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
+	handleLaunchGoalRun,
 	handleSetAutoRunFolder,
 	handleGetAutoRunDocs,
 	handleGetAutoRunState,
@@ -343,6 +344,10 @@ export class WebSocketMessageHandler {
 
 			case 'configure_auto_run':
 				handleConfigureAutoRun(this.ctx, client, message);
+				break;
+
+			case 'launch_goal_run':
+				handleLaunchGoalRun(this.ctx, client, message);
 				break;
 
 			case 'create_worktree_session':

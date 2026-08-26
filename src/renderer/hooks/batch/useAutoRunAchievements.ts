@@ -20,7 +20,7 @@ import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import type { AchievementTimeSource } from '../../types';
 import { cueService } from '../../services/cue';
-import { submitLeaderboardTimeDelta } from '../../services/leaderboard';
+import { submitLeaderboardTimeDelta, noteAutoRunCreditAccrued } from '../../services/leaderboard';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import type { SleepAwareSpan } from '../../services/systemSleep';
 
@@ -115,6 +115,12 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 
 			// Update achievement stats with the delta (raises ovation on badge unlock)
 			creditAchievementTime(deltaMs, 'autoRun');
+
+			// Record the same delta as locally-credited-but-unshipped. Auto Run
+			// submits its whole elapsed time once at completion (useBatchHandlers),
+			// which retires this counter - so whatever is left at the next launch
+			// is time from a run that quit or crashed before it could submit.
+			void noteAutoRunCreditAccrued(deltaMs);
 		}, 60000); // Every 60 seconds
 
 		return () => {

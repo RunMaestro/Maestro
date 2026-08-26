@@ -62,7 +62,13 @@ describe('useThoughtStreamCaptureListener', () => {
 		expect(entries[0].text).toBe('auto-run reasoning ');
 	});
 
-	it('captures interactive `-ai-` tab thinking chunks too', () => {
+	// This used to assert the opposite - that interactive chunks were captured
+	// "too". That was the fix for an under-capture (matching only AI tabs dropped
+	// every Auto Run chunk) overshooting into an over-capture, and it is the bug
+	// the user reported: both consumers of this buffer are Auto Run surfaces
+	// (AutoRun.tsx's Thoughts button, RightPanel's brain button on the Auto Run
+	// card), so ordinary conversation appearing there is never right.
+	it('does not capture interactive `-ai-` tab thinking chunks', () => {
 		renderHook(() => useThoughtStreamCaptureListener());
 
 		act(() => {
@@ -70,10 +76,7 @@ describe('useThoughtStreamCaptureListener', () => {
 		});
 		flush();
 
-		const entries = useThoughtStreamStore.getState().buffers[SESSION_ID]?.entries ?? [];
-		expect(entries).toHaveLength(1);
-		expect(entries[0].text).toBe('interactive reasoning');
-		expect(entries[0].tabId).toBe('tab1');
+		expect(useThoughtStreamStore.getState().buffers[SESSION_ID]).toBeUndefined();
 	});
 
 	// The reason capture is ambient: by the time a user goes looking at a wedged
@@ -110,9 +113,9 @@ describe('useThoughtStreamCaptureListener', () => {
 		renderHook(() => useThoughtStreamCaptureListener());
 
 		act(() => {
-			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'one ');
-			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'two ');
-			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'three');
+			thinkingHandler?.(`${SESSION_ID}-batch-1700000000001`, 'one ');
+			thinkingHandler?.(`${SESSION_ID}-batch-1700000000001`, 'two ');
+			thinkingHandler?.(`${SESSION_ID}-batch-1700000000001`, 'three');
 		});
 		// Nothing has landed yet - the timer has not fired.
 		expect(useThoughtStreamStore.getState().buffers[SESSION_ID]).toBeUndefined();
@@ -127,7 +130,7 @@ describe('useThoughtStreamCaptureListener', () => {
 		const { unmount } = renderHook(() => useThoughtStreamCaptureListener());
 
 		act(() => {
-			thinkingHandler?.(`${SESSION_ID}-ai-tab1`, 'last words');
+			thinkingHandler?.(`${SESSION_ID}-batch-1700000000001`, 'last words');
 		});
 		act(() => unmount());
 
@@ -135,5 +138,52 @@ describe('useThoughtStreamCaptureListener', () => {
 		expect(entries).toHaveLength(1);
 		expect(entries[0].text).toBe('last words');
 		expect(mockUnsubscribe).toHaveBeenCalled();
+	});
+
+	// The Thought Stream is an Auto Run surface: both entry points (the Auto Run
+	// panel's Thoughts button, and the active-run card in the Right Bar) belong to
+	// a run. Interactive conversation is not part of that, and it used to leak in
+	// because every spawn shape for one agent resolves to the SAME base session id
+	// - the key the buffer is stored under - so an Auto Run and an ordinary chat in
+	// the same agent shared one buffer.
+	it('ignores an interactive AI tab chunk on the same base session', () => {
+		renderHook(() => useThoughtStreamCaptureListener());
+
+		act(() => {
+			thinkingHandler?.(`${SESSION_ID}-ai-tab-7`, 'ordinary conversation ');
+		});
+		flush();
+
+		expect(useThoughtStreamStore.getState().buffers[SESSION_ID]).toBeUndefined();
+	});
+
+	it('ignores a background synopsis chunk', () => {
+		// Non-conversational, but not an Auto Run either - a synopsis summarizes a
+		// finished turn, and showing it under a run's Thoughts would misattribute it.
+		renderHook(() => useThoughtStreamCaptureListener());
+
+		act(() => {
+			thinkingHandler?.(`${SESSION_ID}-synopsis-1699999999999`, 'summarizing ');
+		});
+		flush();
+
+		expect(useThoughtStreamStore.getState().buffers[SESSION_ID]).toBeUndefined();
+	});
+
+	it('keeps only the Auto Run chunk when both arrive for one agent', () => {
+		// The reported bug, end to end: same agent, one run and one chat, and the
+		// panel showed both.
+		renderHook(() => useThoughtStreamCaptureListener());
+
+		act(() => {
+			thinkingHandler?.(`${SESSION_ID}-batch-1699999999999`, 'auto-run reasoning ');
+			thinkingHandler?.(`${SESSION_ID}-ai-tab-7`, 'ordinary conversation ');
+		});
+		flush();
+
+		const entries = useThoughtStreamStore.getState().buffers[SESSION_ID]?.entries ?? [];
+		expect(entries).toHaveLength(1);
+		expect(entries[0].text).toContain('auto-run reasoning');
+		expect(entries.map((e) => e.text).join('')).not.toContain('ordinary conversation');
 	});
 });

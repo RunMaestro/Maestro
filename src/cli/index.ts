@@ -316,6 +316,11 @@ program
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option(
+		'--visible',
+		'Run inside the Maestro desktop app (visible Auto Run) instead of headlessly'
+	)
+	.option('--wait', 'With --visible, wait for the agent to become available if busy')
+	.option(
 		'--model <model>',
 		"Model to use for this run only, overriding the agent's configured default"
 	)

@@ -169,6 +169,32 @@ export function reorderQueueItem(
 	return next;
 }
 
+/**
+ * The label to show for a queued item's target tab.
+ *
+ * `item.tabName` is a SNAPSHOT frozen when the item was queued, so an item
+ * queued into a brand-new tab keeps reading "New" forever - including after
+ * auto-naming gave that tab a real title, and even next to a LATER item on the
+ * same tab that does carry the name. The queue is exactly where the user decides
+ * what to reorder, so two entries for one tab must not look like two tabs.
+ *
+ * Resolution mirrors {@link resolveQueuedItemTarget}: the live tab first, then a
+ * closed-but-still-draining orphan, and only then the snapshot - which by that
+ * point is the last thing we ever knew about a tab that is gone.
+ */
+export function resolveQueuedItemTabName(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId' | 'tabName'>
+): string | undefined {
+	if (item.tabId) {
+		const tab =
+			session.aiTabs?.find((t) => t.id === item.tabId) ??
+			session.orphanedThinkingTabs?.find((t) => t.id === item.tabId);
+		if (tab) return getTabDisplayName(tab);
+	}
+	return item.tabName;
+}
+
 // ============================================================================
 // Force Send - dispatching one specific queued item out of turn
 // ============================================================================
@@ -240,6 +266,31 @@ export function getForceSendEligibility(
 				? 'needs-forced-parallel'
 				: undefined;
 	return { ...busy, requiresParallel, canForce: !blockedReason, blockedReason };
+}
+
+/**
+ * The tooltip a Force Send control shows, given its eligibility.
+ *
+ * Both surfaces that offer Force Send - the Execution Queue modal and the
+ * inline QUEUED card in the AI chat - must say the same thing about the same
+ * state, so the copy lives with the decision rather than beside each button. A
+ * blocked button whose tooltip does not explain the block is just a dead
+ * control, which is the failure this whole path is fixing.
+ */
+export function getForceSendTitle(eligibility: ForceSendEligibility): string {
+	const otherBusyCount = eligibility.otherBusyTabs.length;
+	switch (eligibility.blockedReason) {
+		case 'target-tab-busy':
+			return 'This tab is already working - the message runs when the current turn finishes';
+		case 'needs-forced-parallel':
+			return 'Another tab in this agent is working. Turn on Forced Parallel Execution in Settings to send anyway.';
+		case 'no-target-tab':
+			return 'This message has no tab left to run on';
+		default:
+			return eligibility.requiresParallel
+				? `Send now, running in parallel with ${otherBusyCount} other working tab${otherBusyCount === 1 ? '' : 's'}`
+				: 'Send this message now, ahead of the rest of the queue';
+	}
 }
 
 /**

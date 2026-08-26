@@ -2205,6 +2205,102 @@ describe('settingsStore', () => {
 			}
 		});
 
+		it('returns Jump to Bottom to Cmd+Shift+J from every interim binding', async () => {
+			// The action went Cmd+Shift+J -> Opt+J -> Opt+Cmd+Down -> Cmd+Shift+J.
+			// Both interim eras must land back on the original chord; a user who
+			// skipped a build carries whichever one they last received.
+			for (const oldKeys of [
+				['Alt', 'j'],
+				['Alt', 'Meta', 'ArrowDown'],
+			]) {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: oldKeys },
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.jumpToBottom.keys).toEqual([
+					'Meta',
+					'Shift',
+					'j',
+				]);
+			}
+		});
+
+		it('does not re-migrate Jump to Bottom once it is already on Cmd+Shift+J', async () => {
+			// Cmd+Shift+J is the destination, so it must NOT appear in fromKeys -
+			// remapping a chord onto itself sets needsMigration on every load and
+			// re-enters the persist/file-watcher loop.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					jumpToBottom: {
+						id: 'jumpToBottom',
+						label: 'Jump to Bottom',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			vi.mocked(window.maestro.settings.set).mockClear();
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.jumpToBottom.keys).toEqual([
+				'Meta',
+				'Shift',
+				'j',
+			]);
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.some(([k]) => k === 'shortcuts')
+			).toBe(false);
+		});
+
+		it('gives the tiling family its Ctrl+Cmd defaults over a persisted unbound map', async () => {
+			// The merge keeps a saved `keys` whenever it is PRESENT, and `[]` is
+			// present. Anyone who opened Settings -> Shortcuts while these shipped
+			// unbound has empty arrays on disk and would never see the new defaults.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					tileAiBelow: { id: 'tileAiBelow', label: 'Tile New AI Chat Below', keys: [] },
+					tileBrowserBelow: { id: 'tileBrowserBelow', label: 'Tile New Browser Below', keys: [] },
+					tileFileBelow: { id: 'tileFileBelow', label: 'Tile New File Below', keys: [] },
+					tileTerminalBelow: {
+						id: 'tileTerminalBelow',
+						label: 'Tile New Terminal Below',
+						keys: [],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.tileAiBelow.keys).toEqual(['Control', 'Meta', 't']);
+			expect(shortcuts.tileBrowserBelow.keys).toEqual(['Control', 'Meta', 'b']);
+			expect(shortcuts.tileFileBelow.keys).toEqual(['Control', 'Meta', 'f']);
+			expect(shortcuts.tileTerminalBelow.keys).toEqual(['Control', 'Meta', 'j']);
+		});
+
+		it('moves Tile New Terminal off Cmd+Shift+J so Jump to Bottom can hold it', async () => {
+			// The one binding that would otherwise put two live actions on one key.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					tileTerminalBelow: {
+						id: 'tileTerminalBelow',
+						label: 'Tile New Terminal Below',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.tileTerminalBelow.keys).toEqual(['Control', 'Meta', 'j']);
+			expect(shortcuts.jumpToBottom.keys).toEqual(['Meta', 'Shift', 'j']);
+		});
+
 		it('leaves a user-customized New Group Chat binding alone', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {
@@ -2418,26 +2514,24 @@ describe('settingsStore', () => {
 			).toBe(true);
 		});
 
-		it('applies auto-run time migration for concurrent tallying bug', async () => {
-			const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+		it('never grows cumulative auto-run time on load', async () => {
+			// The removed concurrent-tallying migration added 3 hours here. Loading
+			// settings must not invent time: any local growth that does not also
+			// submit a leaderboard delta pushes the local total above the server's,
+			// which the server can never reconcile.
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				autoRunStats: {
 					...DEFAULT_AUTO_RUN_STATS,
 					cumulativeTimeMs: 100000,
 				},
-				// Migration not yet applied
+				// Migration flag absent - the pre-fix code treated this as "apply it"
 			});
 
 			await loadAllSettings();
 
 			const stats = useSettingsStore.getState().autoRunStats;
-			expect(stats.cumulativeTimeMs).toBe(100000 + THREE_HOURS_MS);
-			// Should persist the migrated stats and the flag
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'autoRunStats',
-				expect.objectContaining({ cumulativeTimeMs: 100000 + THREE_HOURS_MS })
-			);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+			expect(stats.cumulativeTimeMs).toBe(100000);
+			expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
 				'concurrentAutoRunTimeMigrationApplied',
 				true
 			);

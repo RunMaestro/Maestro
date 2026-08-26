@@ -130,6 +130,21 @@ vi.mock('../../../renderer/services/speckit', () => ({
 	getSpeckitCommands: vi.fn(() => Promise.resolve(mockSpeckitCommands)),
 }));
 
+const mockFlushOutbox = vi.fn(() => Promise.resolve({ sent: 0, pending: 0 }));
+const mockRecoverUncommitted = vi.fn(() => Promise.resolve(0));
+const mockReportDrift = vi.fn(() => Promise.resolve());
+
+vi.mock('../../../renderer/services/leaderboard', () => ({
+	flushLeaderboardOutbox: (...args: unknown[]) => mockFlushOutbox(...(args as [])),
+	recoverUncommittedAutoRunCredit: (...args: unknown[]) => mockRecoverUncommitted(...(args as [])),
+	reportLeaderboardDrift: (...args: unknown[]) => mockReportDrift(...(args as [])),
+}));
+
+// No WindowProvider in these tests; the hook treats that as the main window.
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindowContextOptional: () => null,
+}));
+
 vi.mock('../../../renderer/services/openspec', () => ({
 	getOpenSpecCommands: vi.fn(() => Promise.resolve(mockOpenspecCommands)),
 }));
@@ -647,6 +662,74 @@ describe('useAppInitialization', () => {
 			});
 
 			expect(mockLeaderboardSync).not.toHaveBeenCalled();
+		});
+
+		it('should report drift instead of silently skipping when server is behind local', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.leaderboardRegistration = {
+				authToken: 'token123',
+				email: 'user@example.com',
+			};
+			mockSettingsState.autoRunStats = {
+				cumulativeTimeMs: 3_693_225_045,
+				totalRuns: 10,
+				currentBadgeLevel: 3,
+				longestRunMs: 500,
+				longestRunTimestamp: 0,
+				lastBadgeUnlockLevel: 3,
+				lastAcknowledgedBadgeLevel: 3,
+			};
+			mockLeaderboardSync.mockResolvedValue({
+				success: true,
+				found: true,
+				data: { cumulativeTimeMs: 3_555_745_597, totalRuns: 9, badgeLevel: 3 },
+			});
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3500);
+			});
+
+			// Everything owed ships before the comparison, so the gap is real drift.
+			expect(mockRecoverUncommitted).toHaveBeenCalled();
+			expect(mockFlushOutbox).toHaveBeenCalled();
+			expect(mockReportDrift).toHaveBeenCalledWith(3_693_225_045, 3_555_745_597);
+			// Never overwrite the user's local total behind their back.
+			expect(mockSettingsState.setAutoRunStats).not.toHaveBeenCalled();
+		});
+
+		it('should not report drift when the server is ahead', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.leaderboardRegistration = {
+				authToken: 'token123',
+				email: 'user@example.com',
+			};
+			mockSettingsState.autoRunStats = {
+				cumulativeTimeMs: 100,
+				totalRuns: 1,
+				currentBadgeLevel: 0,
+				longestRunMs: 50,
+				longestRunTimestamp: 0,
+				lastBadgeUnlockLevel: 0,
+				lastAcknowledgedBadgeLevel: 0,
+			};
+			mockLeaderboardSync.mockResolvedValue({
+				success: true,
+				found: true,
+				data: { cumulativeTimeMs: 500, totalRuns: 5, badgeLevel: 2 },
+			});
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3500);
+			});
+
+			expect(mockReportDrift).not.toHaveBeenCalled();
+			expect(mockSettingsState.setAutoRunStats).toHaveBeenCalled();
 		});
 
 		it('should not update when server stats are lower', async () => {
