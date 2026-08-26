@@ -54,7 +54,7 @@ import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
-import { useThoughtStreamStore, selectThoughtCount } from '../../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
@@ -147,7 +147,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// point here for as long as there is something buffered to read.
 	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
 	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-	const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+	const bufferedThoughts = useThoughtStreamStore(selectActivityCount(sessionId));
 	const showOpenThoughtStream =
 		!isAutoRunActive && bufferedThoughts > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)

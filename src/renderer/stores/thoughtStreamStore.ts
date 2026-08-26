@@ -26,6 +26,15 @@
  * that already, and a second dismiss control that behaves almost identically to
  * the first is just a choice the user has to think about.
  *
+ * The buffer is ONE chronological event list, not a thought list with a tool
+ * list beside it. Reasoning and tool calls are captured into the same array in
+ * arrival order, which is what lets the feed render a tool call BETWEEN the two
+ * halves of the reasoning that produced it. Keeping two sequences and merging
+ * them at display time cannot express that: a block is one timestamp, so a tool
+ * call that happened mid-block has nowhere to go and surfaces after reasoning
+ * that actually followed it. For a feature whose whole value is "watch what the
+ * agent is doing, in order", that ordering is the product.
+ *
  * Capture is in-memory only - buffers do not survive an app restart. Memory is
  * bounded on three axes so an all-day fleet of agents cannot grow without
  * limit: entries per session, characters per session, and how many sessions
@@ -35,6 +44,7 @@
 
 import { create } from 'zustand';
 import { generateId } from '../utils/ids';
+import type { ToolActivityLabel } from '../utils/toolActivityLabel';
 
 /** A single captured unit of thinking (one coalesced stream flush). */
 export interface ThoughtEntry {
@@ -45,9 +55,50 @@ export interface ThoughtEntry {
 	text: string;
 }
 
+/**
+ * How a tool call ended. `running` is also what we show when a provider sends
+ * no status at all - an unfinished call is the honest reading of "we saw it
+ * start and never saw it end".
+ */
+export type ToolActivityStatus = 'running' | 'completed' | 'failed';
+
+/**
+ * A single tool call on the timeline, already reduced to one plain-language
+ * line. Discriminated from a ThoughtEntry by the presence of `tool`, so
+ * ThoughtEntry needs no marker field and every existing consumer of it still
+ * type-checks unchanged.
+ */
+export interface ToolActivityEntry {
+	id: string;
+	/** When the call STARTED. Preserved across the completion merge. */
+	timestamp: number;
+	/** AI tab (or batch stream id) the call came from. */
+	tabId: string;
+	tool: {
+		/** Raw provider tool name, kept so search can match it. */
+		name: string;
+		/** The one-line rendering (verb + target). */
+		label: ToolActivityLabel;
+		status: ToolActivityStatus;
+		/** Provider call id, when it sends one. Drives exact merge. */
+		toolCallId?: string;
+		/** When the call finished, once it has. */
+		endedAt?: number;
+	};
+}
+
+/** One event on a session's timeline: a unit of reasoning, or a tool call. */
+export type StreamEvent = ThoughtEntry | ToolActivityEntry;
+
+/** Narrow a timeline event to a tool call. */
+export function isToolEvent(event: StreamEvent): event is ToolActivityEntry {
+	return 'tool' in event;
+}
+
 /** Per-session capture buffer. */
 export interface ThoughtBuffer {
-	entries: ThoughtEntry[];
+	/** The session's single chronological timeline (thoughts AND tool calls). */
+	entries: StreamEvent[];
 	/** True once a cap forced us to drop the oldest thoughts. */
 	trimmed: boolean;
 	/** Running character total, maintained incrementally to keep trimming O(dropped). */
@@ -84,29 +135,72 @@ export interface ThoughtBlock {
  */
 export const THOUGHT_BLOCK_GAP_MS = 3000;
 
+/** One row of the rendered feed: a block of reasoning, or a tool call. */
+export type ActivityFeedItem =
+	| { kind: 'thought'; block: ThoughtBlock }
+	| { kind: 'tool'; activity: ToolActivityEntry };
+
 /**
- * Group a chronological entry list into display blocks (oldest-first). The
- * caller reverses for newest-on-top display. Pure - safe to memoize on entries.
+ * Walk a session's timeline ONCE and produce the rendered feed (oldest-first;
+ * the caller reverses for newest-on-top display).
+ *
+ * Consecutive thinking coalesces into a block, exactly as before. What is new
+ * is that a tool call CLOSES the open block, so reasoning that arrived after an
+ * action starts a fresh block below it. That is the whole ordering guarantee:
+ * because both event kinds come off one array in arrival order, a tool call
+ * physically sits between the reasoning before it and the reasoning after it,
+ * and no sort can put it anywhere else.
+ *
+ * Closing on ANY tool call (not just the same tab's) matches the rule already
+ * in force for thoughts, where a chunk from a different tab also starts a new
+ * block. One rule, applied to every event.
+ *
+ * Pure - safe to memoize on the entries array.
+ */
+export function buildActivityFeed(
+	events: StreamEvent[],
+	gapMs: number = THOUGHT_BLOCK_GAP_MS
+): ActivityFeedItem[] {
+	const feed: ActivityFeedItem[] = [];
+	for (const event of events) {
+		if (isToolEvent(event)) {
+			feed.push({ kind: 'tool', activity: event });
+			continue;
+		}
+		const last = feed[feed.length - 1];
+		// Only a thought block that is still the newest row can be extended.
+		const open = last && last.kind === 'thought' ? last.block : null;
+		if (open && open.tabId === event.tabId && event.timestamp - open.endTimestamp <= gapMs) {
+			open.text += event.text;
+			open.endTimestamp = event.timestamp;
+		} else {
+			feed.push({
+				kind: 'thought',
+				block: {
+					id: event.id,
+					startTimestamp: event.timestamp,
+					endTimestamp: event.timestamp,
+					tabId: event.tabId,
+					text: event.text,
+				},
+			});
+		}
+	}
+	return feed;
+}
+
+/**
+ * Reasoning blocks only, for callers that render thinking without the actions.
+ * A thin projection of `buildActivityFeed` rather than a second grouping loop,
+ * so the two can never disagree about where a block starts.
  */
 export function groupThoughtsIntoBlocks(
-	entries: ThoughtEntry[],
+	entries: StreamEvent[],
 	gapMs: number = THOUGHT_BLOCK_GAP_MS
 ): ThoughtBlock[] {
 	const blocks: ThoughtBlock[] = [];
-	for (const entry of entries) {
-		const last = blocks[blocks.length - 1];
-		if (last && last.tabId === entry.tabId && entry.timestamp - last.endTimestamp <= gapMs) {
-			last.text += entry.text;
-			last.endTimestamp = entry.timestamp;
-		} else {
-			blocks.push({
-				id: entry.id,
-				startTimestamp: entry.timestamp,
-				endTimestamp: entry.timestamp,
-				tabId: entry.tabId,
-				text: entry.text,
-			});
-		}
+	for (const item of buildActivityFeed(entries, gapMs)) {
+		if (item.kind === 'thought') blocks.push(item.block);
 	}
 	return blocks;
 }
@@ -139,6 +233,17 @@ export const MAX_CAPTURED_SESSIONS = 12;
  */
 export const THOUGHT_LIVE_WINDOW_MS = 5000;
 
+/**
+ * Memory a timeline event costs against the per-session character budget. A
+ * tool call is charged for its rendered line, so a run that is all actions and
+ * no reasoning is still bounded by the same budget.
+ */
+function eventCharCost(event: StreamEvent): number {
+	return isToolEvent(event)
+		? event.tool.label.verb.length + event.tool.label.target.length
+		: event.text.length;
+}
+
 /** An empty buffer, used when a session thinks for the first time. */
 function emptyBuffer(): ThoughtBuffer {
 	return { entries: [], trimmed: false, chars: 0, lastAppendAt: 0 };
@@ -169,6 +274,73 @@ function evictColdSessions(
 	return next;
 }
 
+/**
+ * Append one event to a buffer and enforce both caps. Shared by the thinking
+ * and tool-call paths so a timeline cannot be trimmed by two different rules.
+ */
+function pushEvent(prev: ThoughtBuffer, event: StreamEvent): ThoughtBuffer {
+	let entries = prev.entries.concat(event);
+	let chars = prev.chars + eventCharCost(event);
+	let trimmed = prev.trimmed;
+
+	if (entries.length > MAX_THOUGHTS_PER_SESSION) {
+		const dropCount = entries.length - MAX_THOUGHTS_PER_SESSION;
+		for (let i = 0; i < dropCount; i++) chars -= eventCharCost(entries[i]);
+		entries = entries.slice(dropCount);
+		trimmed = true;
+	}
+	// Drop whole oldest events until the character budget is met. The newest
+	// event always survives, even if it alone exceeds the budget.
+	let dropped = 0;
+	while (chars > MAX_THOUGHT_CHARS_PER_SESSION && dropped < entries.length - 1) {
+		chars -= eventCharCost(entries[dropped]);
+		dropped++;
+	}
+	if (dropped > 0) {
+		entries = entries.slice(dropped);
+		trimmed = true;
+	}
+
+	return { entries, trimmed, chars, lastAppendAt: event.timestamp };
+}
+
+/**
+ * Find the timeline slot a finalizing tool event belongs to, mirroring the
+ * rules the in-chat transcript already uses:
+ *  1. an exact `toolCallId` match, for providers that send one;
+ *  2. otherwise the newest still-running call with the same tool name in the
+ *     same tab (Codex and friends send no call id).
+ * Returns -1 when this is a call we have not seen start.
+ */
+function findMergeTarget(
+	entries: StreamEvent[],
+	tabId: string,
+	toolName: string,
+	toolCallId: string | undefined,
+	finalizing: boolean
+): number {
+	if (toolCallId) {
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const event = entries[i];
+			if (isToolEvent(event) && event.tool.toolCallId === toolCallId) return i;
+		}
+		return -1;
+	}
+	if (!finalizing) return -1;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const event = entries[i];
+		if (
+			isToolEvent(event) &&
+			event.tabId === tabId &&
+			event.tool.name === toolName &&
+			event.tool.status === 'running'
+		) {
+			return i;
+		}
+	}
+	return -1;
+}
+
 interface ThoughtStreamState {
 	/** Session whose panel is currently focused/visible (null = panel hidden). */
 	panelSessionId: string | null;
@@ -181,6 +353,22 @@ interface ThoughtStreamState {
 	closePanel: () => void;
 	/** Append a coalesced thinking flush to a session's buffer. */
 	appendThought: (sessionId: string, tabId: string, text: string) => void;
+	/**
+	 * Record a tool call on the same timeline as the reasoning. A completion is
+	 * merged into the entry its start created, so the feed lists ACTIONS rather
+	 * than state transitions.
+	 */
+	appendToolActivity: (
+		sessionId: string,
+		tabId: string,
+		activity: {
+			toolName: string;
+			label: ToolActivityLabel;
+			status: ToolActivityStatus;
+			toolCallId?: string;
+			timestamp?: number;
+		}
+	) => void;
 	/** Discard a session's buffered thoughts (explicit user action). */
 	clearBuffer: (sessionId: string) => void;
 }
@@ -205,35 +393,70 @@ export const useThoughtStreamStore = create<ThoughtStreamState>((set) => ({
 		set((state) => {
 			if (!text) return state;
 			const prev = state.buffers[sessionId] ?? emptyBuffer();
-			const timestamp = Date.now();
-			const entry: ThoughtEntry = { id: generateId(), timestamp, tabId, text };
+			const entry: ThoughtEntry = { id: generateId(), timestamp: Date.now(), tabId, text };
+			const buffers = { ...state.buffers, [sessionId]: pushEvent(prev, entry) };
+			return { buffers: evictColdSessions(buffers, [sessionId, state.panelSessionId]) };
+		}),
 
-			let entries = prev.entries.concat(entry);
-			let chars = prev.chars + text.length;
-			let trimmed = prev.trimmed;
+	appendToolActivity: (sessionId, tabId, activity) =>
+		set((state) => {
+			const toolName = (activity.toolName || '').trim();
+			if (!toolName) return state;
+			const prev = state.buffers[sessionId] ?? emptyBuffer();
+			const timestamp = activity.timestamp ?? Date.now();
+			const finalizing = activity.status !== 'running';
 
-			if (entries.length > MAX_THOUGHTS_PER_SESSION) {
-				const dropCount = entries.length - MAX_THOUGHTS_PER_SESSION;
-				for (let i = 0; i < dropCount; i++) chars -= entries[i].text.length;
-				entries = entries.slice(dropCount);
-				trimmed = true;
-			}
-			// Drop whole oldest entries until the character budget is met. The
-			// newest entry always survives, even if it alone exceeds the budget.
-			let dropped = 0;
-			while (chars > MAX_THOUGHT_CHARS_PER_SESSION && dropped < entries.length - 1) {
-				chars -= entries[dropped].text.length;
-				dropped++;
-			}
-			if (dropped > 0) {
-				entries = entries.slice(dropped);
-				trimmed = true;
+			const targetIdx = findMergeTarget(
+				prev.entries,
+				tabId,
+				toolName,
+				activity.toolCallId,
+				finalizing
+			);
+
+			if (targetIdx >= 0) {
+				const existing = prev.entries[targetIdx] as ToolActivityEntry;
+				// Merge IN PLACE: the entry keeps both its slot on the timeline and
+				// its START timestamp, so a call that finishes does not jump to the
+				// top of the feed or reorder the reasoning around it.
+				const merged: ToolActivityEntry = {
+					...existing,
+					tool: {
+						...existing.tool,
+						status: activity.status,
+						// A completion event often carries no input, so the running
+						// event's label is usually the descriptive one. Only take the
+						// new label when it actually says more.
+						label:
+							!existing.tool.label.target && activity.label.target
+								? activity.label
+								: existing.tool.label,
+						toolCallId: existing.tool.toolCallId ?? activity.toolCallId,
+						...(finalizing ? { endedAt: timestamp } : {}),
+					},
+				};
+				const entries = prev.entries.slice();
+				entries[targetIdx] = merged;
+				const buffers = {
+					...state.buffers,
+					[sessionId]: { ...prev, entries, lastAppendAt: timestamp },
+				};
+				return { buffers: evictColdSessions(buffers, [sessionId, state.panelSessionId]) };
 			}
 
-			const buffers = {
-				...state.buffers,
-				[sessionId]: { entries, trimmed, chars, lastAppendAt: timestamp },
+			const entry: ToolActivityEntry = {
+				id: generateId(),
+				timestamp,
+				tabId,
+				tool: {
+					name: toolName,
+					label: activity.label,
+					status: activity.status,
+					...(activity.toolCallId ? { toolCallId: activity.toolCallId } : {}),
+					...(finalizing ? { endedAt: timestamp } : {}),
+				},
 			};
+			const buffers = { ...state.buffers, [sessionId]: pushEvent(prev, entry) };
 			return { buffers: evictColdSessions(buffers, [sessionId, state.panelSessionId]) };
 		}),
 
@@ -243,8 +466,13 @@ export const useThoughtStreamStore = create<ThoughtStreamState>((set) => ({
 		})),
 }));
 
-/** Selector: how many thoughts are buffered for a session. */
-export function selectThoughtCount(sessionId: string | undefined | null) {
+/**
+ * Selector: how many timeline events are buffered for a session (reasoning and
+ * tool calls together). This is what the "is there anything to look at" entry
+ * points gate on - an agent that only ran tools and never narrated still has a
+ * feed worth opening.
+ */
+export function selectActivityCount(sessionId: string | undefined | null) {
 	return (state: ThoughtStreamState): number =>
 		sessionId ? (state.buffers[sessionId]?.entries.length ?? 0) : 0;
 }

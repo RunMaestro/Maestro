@@ -6,21 +6,26 @@
  * - ambient capture (thoughts buffer with no panel ever opened)
  * - closing keeps the buffer; only clearBuffer discards
  * - per-session entry cap, per-session character cap, session LRU eviction
- * - the selectThoughtCount / live selectors
+ * - the selectActivityCount / live selectors
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useThoughtStreamStore,
-	selectThoughtCount,
+	selectActivityCount,
 	selectLastAppendAt,
 	isThoughtStreamLive,
 	groupThoughtsIntoBlocks,
+	buildActivityFeed,
+	isToolEvent,
 	THOUGHT_BLOCK_GAP_MS,
 	THOUGHT_LIVE_WINDOW_MS,
 	MAX_THOUGHTS_PER_SESSION,
 	MAX_THOUGHT_CHARS_PER_SESSION,
 	MAX_CAPTURED_SESSIONS,
 	type ThoughtEntry,
+	type StreamEvent,
+	type ToolActivityEntry,
+	type ToolActivityStatus,
 } from '../../../renderer/stores/thoughtStreamStore';
 
 const SID = 'session-1';
@@ -258,13 +263,13 @@ describe('thoughtStreamStore', () => {
 		});
 	});
 
-	it('selectThoughtCount reports how much is buffered', () => {
+	it('selectActivityCount reports how much is buffered', () => {
 		const store = useThoughtStreamStore.getState();
-		expect(selectThoughtCount(SID)(useThoughtStreamStore.getState())).toBe(0);
-		expect(selectThoughtCount(undefined)(useThoughtStreamStore.getState())).toBe(0);
+		expect(selectActivityCount(SID)(useThoughtStreamStore.getState())).toBe(0);
+		expect(selectActivityCount(undefined)(useThoughtStreamStore.getState())).toBe(0);
 		store.appendThought(SID, TAB, 'a');
 		store.appendThought(SID, TAB, 'b');
-		expect(selectThoughtCount(SID)(useThoughtStreamStore.getState())).toBe(2);
+		expect(selectActivityCount(SID)(useThoughtStreamStore.getState())).toBe(2);
 	});
 
 	it('selectLastAppendAt drives the live indicator', () => {
@@ -333,5 +338,244 @@ describe('groupThoughtsIntoBlocks', () => {
 			50 // tighter than the 100ms spacing -> two blocks
 		);
 		expect(blocks).toHaveLength(2);
+	});
+});
+
+/**
+ * The action half of the timeline.
+ *
+ * The design constraint these pin down: reasoning and tool calls live in ONE
+ * array in arrival order. A previous attempt at this feature kept them in two
+ * lists and merged at display time, which cannot place a tool call inside a
+ * block of reasoning - the block has a single timestamp, so a fast tool call
+ * rendered AFTER the reasoning that actually followed it. For a feed whose
+ * whole purpose is "watch what the agent is doing, in order", that is the bug.
+ */
+describe('tool activity capture', () => {
+	beforeEach(reset);
+
+	const label = (verb: string, target = '') => ({ verb, target });
+
+	function tool(
+		sessionId: string,
+		tabId: string,
+		toolName: string,
+		status: ToolActivityStatus,
+		extra: { toolCallId?: string; timestamp?: number; target?: string } = {}
+	) {
+		useThoughtStreamStore.getState().appendToolActivity(sessionId, tabId, {
+			toolName,
+			label: label(toolName, extra.target ?? ''),
+			status,
+			toolCallId: extra.toolCallId,
+			timestamp: extra.timestamp,
+		});
+	}
+
+	it('records a tool call onto the same timeline as the reasoning', () => {
+		const store = useThoughtStreamStore.getState();
+		store.appendThought(SID, TAB, 'thinking ');
+		tool(SID, TAB, 'Bash', 'running');
+
+		const { entries } = useThoughtStreamStore.getState().buffers[SID];
+		expect(entries).toHaveLength(2);
+		expect(isToolEvent(entries[0])).toBe(false);
+		expect(isToolEvent(entries[1])).toBe(true);
+	});
+
+	it('ignores an event with no tool name', () => {
+		tool(SID, TAB, '   ', 'running');
+		expect(useThoughtStreamStore.getState().buffers[SID]).toBeUndefined();
+	});
+
+	it('merges a completion into the running entry by toolCallId', () => {
+		tool(SID, TAB, 'Bash', 'running', { toolCallId: 'call-1', timestamp: 1000 });
+		tool(SID, TAB, 'Bash', 'completed', { toolCallId: 'call-1', timestamp: 5000 });
+
+		const { entries } = useThoughtStreamStore.getState().buffers[SID];
+		// One ACTION, not two state transitions.
+		expect(entries).toHaveLength(1);
+		const event = entries[0] as ToolActivityEntry;
+		expect(event.tool.status).toBe('completed');
+		expect(event.tool.endedAt).toBe(5000);
+	});
+
+	it('keeps the START timestamp when a call completes, so the row does not jump', () => {
+		tool(SID, TAB, 'Bash', 'running', { toolCallId: 'call-1', timestamp: 1000 });
+		tool(SID, TAB, 'Bash', 'completed', { toolCallId: 'call-1', timestamp: 90_000 });
+
+		const event = useThoughtStreamStore.getState().buffers[SID].entries[0] as ToolActivityEntry;
+		expect(event.timestamp).toBe(1000);
+	});
+
+	it('merges into its ORIGINAL slot, leaving later events after it', () => {
+		const store = useThoughtStreamStore.getState();
+		tool(SID, TAB, 'Bash', 'running', { toolCallId: 'call-1', timestamp: 1000 });
+		store.appendThought(SID, TAB, 'while that runs');
+		tool(SID, TAB, 'Bash', 'completed', { toolCallId: 'call-1', timestamp: 9000 });
+
+		const { entries } = useThoughtStreamStore.getState().buffers[SID];
+		expect(entries).toHaveLength(2);
+		// The completed call stays FIRST - a long build must not leapfrog the
+		// reasoning that happened while it ran.
+		expect(isToolEvent(entries[0])).toBe(true);
+		expect((entries[0] as ToolActivityEntry).tool.status).toBe('completed');
+		expect(isToolEvent(entries[1])).toBe(false);
+	});
+
+	it('merges by newest running call of the same name when the provider sends no id', () => {
+		tool(SID, TAB, 'shell', 'running', { timestamp: 1000 });
+		tool(SID, TAB, 'shell', 'running', { timestamp: 2000 });
+		tool(SID, TAB, 'shell', 'failed', { timestamp: 3000 });
+
+		const { entries } = useThoughtStreamStore.getState().buffers[SID];
+		expect(entries).toHaveLength(2);
+		// The NEWEST running call is the one that finished.
+		expect((entries[0] as ToolActivityEntry).tool.status).toBe('running');
+		expect((entries[1] as ToolActivityEntry).tool.status).toBe('failed');
+	});
+
+	it('never merges a completion across tabs', () => {
+		tool(SID, 'tab-a', 'shell', 'running', { timestamp: 1000 });
+		tool(SID, 'tab-b', 'shell', 'completed', { timestamp: 2000 });
+
+		const { entries } = useThoughtStreamStore.getState().buffers[SID];
+		expect(entries).toHaveLength(2);
+		expect((entries[0] as ToolActivityEntry).tool.status).toBe('running');
+	});
+
+	it('appends a completion with no matching start rather than dropping it', () => {
+		tool(SID, TAB, 'Read', 'completed', { timestamp: 1000 });
+		expect(useThoughtStreamStore.getState().buffers[SID].entries).toHaveLength(1);
+	});
+
+	it('prefers a descriptive label when the running event carried no target', () => {
+		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
+			toolName: 'Bash',
+			label: { verb: 'Ran', target: '' },
+			status: 'running',
+			toolCallId: 'c1',
+		});
+		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
+			toolName: 'Bash',
+			label: { verb: 'Ran', target: 'npm test' },
+			status: 'completed',
+			toolCallId: 'c1',
+		});
+		const event = useThoughtStreamStore.getState().buffers[SID].entries[0] as ToolActivityEntry;
+		expect(event.tool.label.target).toBe('npm test');
+	});
+
+	it('counts tool calls toward the timeline cap', () => {
+		for (let i = 0; i < MAX_THOUGHTS_PER_SESSION + 5; i++) {
+			tool(SID, TAB, `tool-${i}`, 'completed', { timestamp: 1000 + i });
+		}
+		const buf = useThoughtStreamStore.getState().buffers[SID];
+		expect(buf.entries).toHaveLength(MAX_THOUGHTS_PER_SESSION);
+		expect(buf.trimmed).toBe(true);
+	});
+
+	it('a tool call keeps the session out of LRU eviction', () => {
+		tool(SID, TAB, 'Bash', 'running', { timestamp: 5000 });
+		expect(selectActivityCount(SID)(useThoughtStreamStore.getState())).toBe(1);
+		expect(selectLastAppendAt(SID)(useThoughtStreamStore.getState())).toBe(5000);
+	});
+});
+
+/**
+ * buildActivityFeed - the ordering guarantee.
+ *
+ * These are the regression tests for the defect that sank the first attempt at
+ * this feature: a tool call that happens in the MIDDLE of a run of reasoning
+ * has to render between the two halves of it. That is only expressible because
+ * both kinds of event come off one array in arrival order.
+ */
+describe('buildActivityFeed', () => {
+	const toolEvent = (
+		id: string,
+		timestamp: number,
+		name: string,
+		tabId = TAB,
+		status: ToolActivityStatus = 'completed'
+	): StreamEvent => ({
+		id,
+		timestamp,
+		tabId,
+		tool: { name, label: { verb: name, target: '' }, status },
+	});
+
+	it('returns an empty feed for no events', () => {
+		expect(buildActivityFeed([])).toEqual([]);
+	});
+
+	it('splits a block of reasoning around a tool call that interrupted it', () => {
+		// All three thoughts are inside the gap window, so WITHOUT the tool they
+		// would coalesce into a single block and the call would have nowhere to go.
+		const feed = buildActivityFeed([
+			entry('t1', 1000, 'I should check the tests. '),
+			toolEvent('x1', 1100, 'Bash'),
+			entry('t2', 1200, 'They passed, so '),
+			entry('t3', 1300, 'the bug is elsewhere.'),
+		]);
+
+		expect(feed.map((i) => i.kind)).toEqual(['thought', 'tool', 'thought']);
+		expect(feed[0].kind === 'thought' && feed[0].block.text).toBe('I should check the tests. ');
+		expect(feed[1].kind === 'tool' && feed[1].activity.id).toBe('x1');
+		// The reasoning AFTER the call is its own block, below it.
+		expect(feed[2].kind === 'thought' && feed[2].block.text).toBe(
+			'They passed, so the bug is elsewhere.'
+		);
+	});
+
+	it('renders a fast tool call before the reasoning that followed it', () => {
+		// The exact failure of the two-list design: `x1` is 1ms after the block
+		// started, so a feed sorted by block START time buried it underneath.
+		const feed = buildActivityFeed([
+			entry('t1', 1000, 'first'),
+			toolEvent('x1', 1001, 'Read'),
+			entry('t2', 1002, 'second'),
+		]);
+		const toolIndex = feed.findIndex((i) => i.kind === 'tool');
+		const afterIndex = feed.findIndex(
+			(i) => i.kind === 'thought' && i.block.text.includes('second')
+		);
+		expect(toolIndex).toBeLessThan(afterIndex);
+	});
+
+	it('keeps consecutive tool calls as separate rows in order', () => {
+		const feed = buildActivityFeed([
+			toolEvent('x1', 1000, 'Read'),
+			toolEvent('x2', 1100, 'Bash'),
+			toolEvent('x3', 1200, 'Edit'),
+		]);
+		expect(feed).toHaveLength(3);
+		expect(feed.map((i) => (i.kind === 'tool' ? i.activity.tool.name : null))).toEqual([
+			'Read',
+			'Bash',
+			'Edit',
+		]);
+	});
+
+	it('is emitted oldest-first so the panel can reverse for newest-on-top', () => {
+		const feed = buildActivityFeed([entry('t1', 1000, 'old'), toolEvent('x1', 2000, 'Bash')]);
+		expect(feed[0].kind).toBe('thought');
+		expect(feed[1].kind).toBe('tool');
+	});
+
+	it('still coalesces reasoning when no tool interrupts it', () => {
+		const feed = buildActivityFeed([entry('a', 1000, 'one '), entry('b', 1500, 'two')]);
+		expect(feed).toHaveLength(1);
+		expect(feed[0].kind === 'thought' && feed[0].block.text).toBe('one two');
+	});
+
+	it('groupThoughtsIntoBlocks projects the same walk, dropping tool rows', () => {
+		const events: StreamEvent[] = [
+			entry('t1', 1000, 'before '),
+			toolEvent('x1', 1100, 'Bash'),
+			entry('t2', 1200, 'after'),
+		];
+		// A tool call still SPLITS the reasoning here, because both views are the
+		// one walk - they can never disagree about where a block starts.
+		expect(groupThoughtsIntoBlocks(events).map((b) => b.text)).toEqual(['before ', 'after']);
 	});
 });

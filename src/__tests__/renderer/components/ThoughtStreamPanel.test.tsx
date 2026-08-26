@@ -115,3 +115,90 @@ describe('ThoughtStreamPanel', () => {
 		expect(screen.getByText('Thought Stream')).toBeInTheDocument();
 	});
 });
+
+/**
+ * The action feed. A tool call renders as ONE plain-language line, and it
+ * renders in timeline position relative to the reasoning around it - which is
+ * the whole point of the feature (spot a loop, interrupt it before it burns
+ * more tokens).
+ */
+describe('ThoughtStreamPanel tool activity', () => {
+	const TAB = 'tab-a';
+
+	function seed() {
+		const store = useThoughtStreamStore.getState();
+		store.appendThought(SID, TAB, 'I should check the tests. ');
+		store.appendToolActivity(SID, TAB, {
+			toolName: 'Bash',
+			label: { verb: 'Ran', target: 'npm test' },
+			status: 'completed',
+			toolCallId: 'c1',
+		});
+		store.appendThought(SID, TAB, 'They passed.');
+		store.openPanel(SID);
+	}
+
+	it('renders a tool call as one plain-language line', () => {
+		seed();
+		renderPanel();
+		expect(screen.getByText('Ran npm test')).toBeInTheDocument();
+	});
+
+	it('shows a running call with a spinner and a failed one with a warning', () => {
+		const store = useThoughtStreamStore.getState();
+		store.appendToolActivity(SID, TAB, {
+			toolName: 'Bash',
+			label: { verb: 'Ran', target: 'npm run build' },
+			status: 'running',
+			toolCallId: 'r1',
+		});
+		store.appendToolActivity(SID, TAB, {
+			toolName: 'Edit',
+			label: { verb: 'Edited', target: 'themes.ts' },
+			status: 'failed',
+			toolCallId: 'f1',
+		});
+		store.openPanel(SID);
+		renderPanel();
+
+		expect(screen.getByLabelText('running')).toBeInTheDocument();
+		expect(screen.getByLabelText('failed')).toBeInTheDocument();
+	});
+
+	it('counts thoughts and actions separately in the header', () => {
+		seed();
+		renderPanel();
+		// Two blocks of reasoning (the tool call split them) and one action.
+		expect(screen.getByText(/2 thoughts · 1 action/)).toBeInTheDocument();
+	});
+
+	it('renders the tool call BETWEEN the reasoning it interrupted', () => {
+		seed();
+		const { container } = renderPanel();
+		const text = container.textContent ?? '';
+		// Newest-on-top display, so the later reasoning comes first.
+		expect(text.indexOf('They passed.')).toBeLessThan(text.indexOf('Ran npm test'));
+		expect(text.indexOf('Ran npm test')).toBeLessThan(text.indexOf('I should check the tests.'));
+	});
+
+	it('search matches the rendered line', () => {
+		seed();
+		renderPanel();
+		fireEvent.change(screen.getByPlaceholderText('Search activity...'), {
+			target: { value: 'npm test' },
+		});
+		expect(screen.getByText('npm test')).toBeInTheDocument();
+		expect(screen.queryByText('They passed.')).not.toBeInTheDocument();
+	});
+
+	it('search also matches the raw provider tool name', () => {
+		// The feed renders "Ran npm test", so searching the tool the user knows
+		// they configured ("Bash") has to find it anyway.
+		seed();
+		renderPanel();
+		fireEvent.change(screen.getByPlaceholderText('Search activity...'), {
+			target: { value: 'Bash' },
+		});
+		expect(screen.getByText('Ran npm test')).toBeInTheDocument();
+	});
+});

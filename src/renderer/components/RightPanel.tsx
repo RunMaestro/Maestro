@@ -34,7 +34,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useThoughtStreamStore, selectThoughtCount } from '../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
@@ -186,7 +186,7 @@ export const RightPanel = memo(
 		// buffered and waiting to be read - clicking opens (or re-expands) the
 		// panel on that history. There is no separate floating pill.
 		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-		const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+		const bufferedThoughts = useThoughtStreamStore(selectActivityCount(sessionId));
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
