@@ -110,6 +110,56 @@ const initMermaid = (theme: Theme) => {
 	// ship `accentForeground` for exactly this pairing.
 	const onAccentColor = readableTextOn(colors.accentForeground, [colors.accent]);
 
+	/**
+	 * The twelve mindmap/timeline section fills, and a label color derived
+	 * against EACH one.
+	 *
+	 * Mermaid's mindmap CSS paints section `i` with `cScale{i}` and its label
+	 * with `cScaleLabel{i}`. Only `cScale0..5` used to be set here and no
+	 * `cScaleLabel*` at all, which broke this twice over:
+	 *
+	 * 1. Every label fell back to mermaid's derived `labelTextColor`, i.e. the
+	 *    theme's own `textMain`, painted straight onto a saturated fill. All 80
+	 *    theme/fill pairs failed WCAG AA; three themes were at ratio 1.00, where
+	 *    the label is literally the same color as the block behind it.
+	 * 2. Indices 6-11 were invented by mermaid from `primaryColor` as `hsl()`
+	 *    strings. `hexToRgb` cannot parse those, so `contrastRatio` returns its
+	 *    leave-it-alone 21 and any contrast test over them passes vacuously.
+	 *
+	 * So all twelve are declared, as hex, and each label is measured against its
+	 * own fill rather than one best-worst-case pick. Same shape as `pie1..pie12`
+	 * above. `readableTextOn` returns the theme's own text color untouched when
+	 * it already clears AA and nudges it otherwise, so labels stay tinted
+	 * versions of the theme rather than snapping to black or white.
+	 */
+	const cScaleFills = [
+		colors.accent,
+		colors.success,
+		colors.warning,
+		colors.error,
+		adjustBrightness(colors.accent, isDark ? 20 : -20),
+		adjustBrightness(colors.success, isDark ? 20 : -20),
+		adjustBrightness(colors.warning, isDark ? 20 : -20),
+		adjustBrightness(colors.error, isDark ? 20 : -20),
+		blendColors(colors.accent, colors.success, 0.5),
+		blendColors(colors.warning, colors.error, 0.5),
+		blendColors(colors.accent, colors.warning, 0.5),
+		blendColors(colors.success, colors.error, 0.5),
+	];
+	const cScaleVars = Object.fromEntries(
+		cScaleFills.flatMap((fill, i) => [
+			[`cScale${i}`, fill],
+			[`cScaleLabel${i}`, readableTextOn(colors.textMain, [fill])],
+		])
+	);
+
+	// Git branch labels sit on their own known `git{i}` fill, so each gets a
+	// color measured against that fill instead of sharing one worst-case pick.
+	const gitBranchFills = [colors.accent, colors.success, colors.warning, colors.error];
+	const gitBranchLabelVars = Object.fromEntries(
+		gitBranchFills.map((fill, i) => [`gitBranchLabel${i}`, readableTextOn(colors.textMain, [fill])])
+	);
+
 	// Create theme variables from the app's color scheme
 	const themeVariables = {
 		// Base colors - primary nodes get accent color treatment
@@ -187,10 +237,7 @@ const initMermaid = (theme: Theme) => {
 		git5: adjustBrightness(colors.success, isDark ? 20 : -20),
 		git6: adjustBrightness(colors.warning, isDark ? 20 : -20),
 		git7: adjustBrightness(colors.error, isDark ? 20 : -20),
-		gitBranchLabel0: paletteTextColor,
-		gitBranchLabel1: paletteTextColor,
-		gitBranchLabel2: paletteTextColor,
-		gitBranchLabel3: paletteTextColor,
+		...gitBranchLabelVars,
 		gitInv0: colors.bgMain,
 		gitInv1: colors.bgMain,
 		gitInv2: colors.bgMain,
@@ -244,8 +291,10 @@ const initMermaid = (theme: Theme) => {
 		requirementBorderColor: primaryBorder,
 		requirementTextColor: nodeTextColor,
 
-		// Mindmap - colorful nodes
-		mindmapBkg: primaryNodeBg,
+		// Mindmap sections are colored by cScale*/cScaleLabel* below, NOT by a
+		// mindmap-specific variable. `mindmapBkg` was set here and is provably
+		// dead: the string does not appear anywhere in mermaid 11.15.0's dist.
+		// Removed rather than left as a plausible-looking no-op.
 
 		// Quadrant chart
 		quadrant1Fill: transparentize(colors.accent, colors.bgMain, 0.15),
@@ -275,13 +324,8 @@ const initMermaid = (theme: Theme) => {
 			plotColorPalette: `${colors.accent}, ${colors.success}, ${colors.warning}, ${colors.error}`,
 		},
 
-		// Timeline
-		cScale0: colors.accent,
-		cScale1: colors.success,
-		cScale2: colors.warning,
-		cScale3: colors.error,
-		cScale4: adjustBrightness(colors.accent, isDark ? 20 : -20),
-		cScale5: adjustBrightness(colors.success, isDark ? 20 : -20),
+		// Timeline and mindmap sections, with a label color per fill.
+		...cScaleVars,
 
 		// Sankey diagram
 		sankeyLinkColor: transparentize(colors.accent, colors.bgMain, 0.3),

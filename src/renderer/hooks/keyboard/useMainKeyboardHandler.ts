@@ -9,6 +9,9 @@ import {
 import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { useNotificationStore } from '../../stores/notificationStore';
+import { useMediaPlaybackStore, selectMediaPlayerTargetId } from '../../stores/mediaPlaybackStore';
+import { stepMediaItem } from '../../utils/mediaItems';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -22,6 +25,34 @@ import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
+
+/**
+ * Open the floating media player on whatever it should be showing.
+ *
+ * Mirrors the palette command rather than duplicating its reasoning: restore the
+ * widget, and land on the loaded item, else the most recent thing played. Reads
+ * the store at press time so a queue that advanced since the last render cannot
+ * strand the shortcut on a finished file.
+ */
+function openMediaPlayerFromShortcut(): void {
+	const state = useMediaPlaybackStore.getState();
+	const targetId = selectMediaPlayerTargetId(state);
+	state.restore();
+	if (targetId && targetId !== state.activeItemId) {
+		state.setActiveItem(targetId, { autoplay: false });
+	}
+}
+
+/**
+ * Step the queue by one, the same way MediaPlaybackHost's own transport does.
+ * No-op when there is nothing loaded - stepping from nowhere has no meaning.
+ */
+function stepMediaFromShortcut(direction: 1 | -1): void {
+	const state = useMediaPlaybackStore.getState();
+	if (!state.activeItemId) return;
+	const next = stepMediaItem(state.items, state.activeItemId, direction);
+	if (next) state.setActiveItem(next.id, { autoplay: true });
+}
 
 // Font size keyboard shortcut constants
 const FONT_SIZE_STEP = 2;
@@ -664,6 +695,41 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setSettingsModalOpen(true);
 				trackShortcut('settings');
+			} else if (ctx.isShortcut(e, 'openThemeSettings')) {
+				e.preventDefault();
+				ctx.setSettingsTab?.('theme');
+				ctx.setSettingsModalOpen(true);
+				trackShortcut('openThemeSettings');
+			} else if (ctx.isShortcut(e, 'showSnoozeList')) {
+				// Registered unbound since Part 3 and never wired, so binding a key to
+				// it did nothing. Same route the tab strip and the palette already use.
+				e.preventDefault();
+				useModalStore.getState().openModal('snoozedTabs');
+				trackShortcut('showSnoozeList');
+			} else if (ctx.isShortcut(e, 'openLeaderboard')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('leaderboard');
+				trackShortcut('openLeaderboard');
+			} else if (ctx.isShortcut(e, 'clearAllNotifications')) {
+				e.preventDefault();
+				useNotificationStore.getState().clearToasts();
+				trackShortcut('clearAllNotifications');
+			} else if (ctx.isShortcut(e, 'openMediaPlayer')) {
+				e.preventDefault();
+				openMediaPlayerFromShortcut();
+				trackShortcut('openMediaPlayer');
+			} else if (ctx.isShortcut(e, 'mediaPlayPause')) {
+				e.preventDefault();
+				useMediaPlaybackStore.getState().requestToggle();
+				trackShortcut('mediaPlayPause');
+			} else if (ctx.isShortcut(e, 'mediaNext')) {
+				e.preventDefault();
+				stepMediaFromShortcut(1);
+				trackShortcut('mediaNext');
+			} else if (ctx.isShortcut(e, 'mediaPrev')) {
+				e.preventDefault();
+				stepMediaFromShortcut(-1);
+				trackShortcut('mediaPrev');
 			} else if (ctx.isShortcut(e, 'agentSettings')) {
 				// In group chat, open the moderator's settings for the active chat.
 				// Otherwise open agent settings for the current session.

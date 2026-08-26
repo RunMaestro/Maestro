@@ -571,6 +571,32 @@ export function selectShowNowPlayingIndicator(state: MediaPlaybackStoreState): b
 	return !state.dormant && selectCanRestoreFloatingPlayer(state);
 }
 
+/**
+ * Whether the palette should offer "Open Media Player" as an ACTIONABLE command.
+ *
+ * True whenever there is something to open - a loaded item, a queue, or
+ * anything in this session's history. Deliberately looser than
+ * {@link selectCanRestoreFloatingPlayer}, which answers a narrower question
+ * ("is a loaded player merely hidden?").
+ *
+ * The command is LISTED either way; this only decides whether invoking it does
+ * something. Hiding a control the rule permits is how the inline Force Send
+ * button went missing for a release, so the entry stays visible with an
+ * explanatory subtext when there is nothing to play, rather than vanishing and
+ * leaving the user to wonder whether the feature exists.
+ */
+export function selectCanOpenMediaPlayer(state: MediaPlaybackStoreState): boolean {
+	return state.activeItemId !== null || state.items.length > 0 || state.history.length > 0;
+}
+
+/**
+ * The item "Open Media Player" should land on: whatever is loaded, else the
+ * most recent thing played. Null when there is nothing to open.
+ */
+export function selectMediaPlayerTargetId(state: MediaPlaybackStoreState): string | null {
+	return state.activeItemId ?? state.history[0]?.id ?? state.items[0]?.id ?? null;
+}
+
 /** The loaded item, or null when the player is idle. */
 export function selectActiveMediaItem(state: MediaPlaybackStoreState): MediaItem | null {
 	if (!state.activeItemId) return null;

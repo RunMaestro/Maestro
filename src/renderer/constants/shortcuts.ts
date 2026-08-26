@@ -310,6 +310,31 @@ export const DEFAULT_SHORTCUTS = {
 		keys: [],
 		windowScoped: true,
 	},
+
+	// Registered unassigned: the snoozed-tab list is reachable by click today and
+	// there is no spare chord near Opt+Cmd+S worth spending by default. Listing
+	// it here is what makes it appear in Settings -> Shortcuts so a user can bind
+	// it, which is the whole point of allowing an empty `keys`.
+	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
+
+	// Media player. All four ship unbound: the player is a floating widget most
+	// users reach by opening a file, so claiming four default chords for it would
+	// spend keys nobody asked for. Listing them is what puts them in
+	// Settings -> Shortcuts for anyone who lives in the queue.
+	openMediaPlayer: { id: 'openMediaPlayer', label: 'Open Media Player', keys: [] },
+	mediaPlayPause: { id: 'mediaPlayPause', label: 'Media: Play / Pause', keys: [] },
+	mediaNext: { id: 'mediaNext', label: 'Media: Next Track', keys: [] },
+	mediaPrev: { id: 'mediaPrev', label: 'Media: Previous Track', keys: [] },
+
+	// Palette-only actions that had no keyboard route at all. Same reasoning:
+	// registered so they can be bound, unbound so nothing is claimed by default.
+	openLeaderboard: { id: 'openLeaderboard', label: 'Open Leaderboard', keys: [] },
+	clearAllNotifications: {
+		id: 'clearAllNotifications',
+		label: 'Clear All Notifications',
+		keys: [],
+	},
+	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)
@@ -383,11 +408,6 @@ export const TAB_SHORTCUTS = {
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },
 	snoozeTab: { id: 'snoozeTab', label: 'Snooze Tab', keys: ['Alt', 'Meta', 's'] },
-	// Registered unassigned: the snoozed-tab list is reachable by click today and
-	// there is no spare chord near Opt+Cmd+S worth spending by default. Listing
-	// it here is what makes it appear in Settings -> Shortcuts so a user can bind
-	// it, which is the whole point of allowing an empty `keys`.
-	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
 	closeTabsLeft: {
 		id: 'closeTabsLeft',
 		label: 'Close Tabs to Left',

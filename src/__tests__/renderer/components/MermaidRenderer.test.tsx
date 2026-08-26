@@ -5,6 +5,7 @@ import { MermaidRenderer } from '../../../renderer/components/MermaidRenderer';
 import { createMockTheme, mockTheme } from '../../helpers/mockTheme';
 import { AA_CONTRAST, contrastRatio } from '../../../shared/colorContrast';
 import type { ThemeColors } from '../../../shared/theme-types';
+import { THEMES } from '../../../shared/themes';
 
 // Mermaid is a static default import in MermaidRenderer. We stub parse (always
 // valid) and render (returns a caller-supplied SVG) so each test controls the
@@ -141,6 +142,52 @@ describe('MermaidRenderer', () => {
 	});
 
 	describe('theme contrast', () => {
+		it('keeps every mindmap section label readable on its own fill, in every theme', async () => {
+			// Mermaid paints section `i` with cScale{i} and its label with
+			// cScaleLabel{i}. Before this was fixed, cScaleLabel* was never set, so
+			// every label fell back to the theme's textMain painted straight onto a
+			// saturated fill: 80 of 80 theme/fill pairs failed AA, three at ratio
+			// 1.00 where label and fill were literally the same color.
+			for (const [themeId, theme] of Object.entries(THEMES)) {
+				const vars = await captureThemeVariables(`cscale-${themeId}`, theme.colors);
+				for (let i = 0; i < 12; i++) {
+					const fill = vars[`cScale${i}`];
+					const label = vars[`cScaleLabel${i}`];
+					// Assert both are real hex BEFORE measuring. contrastRatio returns
+					// its leave-it-alone 21 for anything hexToRgb cannot parse -
+					// including undefined and mermaid's derived hsl() strings - so a
+					// bare ratio assertion here would pass while measuring nothing.
+					expect(fill, `${themeId} cScale${i} fill`).toMatch(/^#[0-9a-fA-F]{6}$/);
+					expect(label, `${themeId} cScaleLabel${i}`).toMatch(/^#[0-9a-fA-F]{6}$/);
+					expect(contrastRatio(label, fill), `${themeId} cScale${i}`).toBeGreaterThanOrEqual(
+						AA_CONTRAST
+					);
+				}
+			}
+		});
+
+		it('declares all twelve section fills as parseable hex', async () => {
+			// This is what keeps the test above honest. Indices mermaid derives on
+			// its own come back as hsl() strings; hexToRgb returns null for those
+			// and contrastRatio then returns its leave-it-alone 21, so a contrast
+			// assertion over them passes without measuring anything.
+			const vars = await captureThemeVariables('cscale-hex', mockTheme.colors);
+			for (let i = 0; i < 12; i++) {
+				expect(vars[`cScale${i}`], `cScale${i}`).toMatch(/^#[0-9a-fA-F]{6}$/);
+				expect(vars[`cScaleLabel${i}`], `cScaleLabel${i}`).toMatch(/^#[0-9a-fA-F]{6}$/);
+			}
+		});
+
+		it('gives each git branch label a color measured against its own fill', async () => {
+			const vars = await captureThemeVariables('git-labels', mockTheme.colors);
+			for (let i = 0; i < 4; i++) {
+				expect(
+					contrastRatio(vars[`gitBranchLabel${i}`], vars[`git${i}`]),
+					`gitBranchLabel${i}`
+				).toBeGreaterThanOrEqual(AA_CONTRAST);
+			}
+		});
+
 		it('pins ER attribute row fills so labels stay readable', async () => {
 			// Regression: Mermaid's base theme derives rowOdd from
 			// lighten(primaryColor, 75), which renders a near-white attribute row
