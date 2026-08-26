@@ -11,6 +11,7 @@ import {
 	formatRelativeTime,
 	formatCacheAge,
 	formatAgeShort,
+	formatCalendarDay,
 	formatActiveTime,
 	formatElapsedTime,
 	formatElapsedTimeColon,
@@ -223,6 +224,32 @@ describe('shared/formatters', () => {
 			expect(formatCacheAge(60 * 60_000)).toBe('1h ago');
 			expect(formatCacheAge(2 * 60 * 60_000)).toBe('2h ago');
 			expect(formatCacheAge(25 * 60 * 60_000)).toBe('25h ago');
+		});
+	});
+
+	// ==========================================================================
+	// formatCalendarDay tests
+	// ==========================================================================
+	describe('formatCalendarDay', () => {
+		it('formats a YYYY-MM-DD day for display', () => {
+			expect(formatCalendarDay('2026-07-10')).toBe('Jul 10, 2026');
+			expect(formatCalendarDay('2025-11-26')).toBe('Nov 26, 2025');
+		});
+
+		it('renders the day it was given, not the UTC-shifted one', () => {
+			// `new Date('2026-01-01')` is UTC midnight, which is Dec 31 anywhere
+			// west of Greenwich. The parts are read out of the string instead.
+			expect(formatCalendarDay('2026-01-01')).toBe('Jan 1, 2026');
+		});
+
+		it('tolerates surrounding whitespace', () => {
+			expect(formatCalendarDay('  2026-03-01  ')).toBe('Mar 1, 2026');
+		});
+
+		it('returns the input unchanged when it is not a calendar day', () => {
+			expect(formatCalendarDay('July 2026')).toBe('July 2026');
+			expect(formatCalendarDay('2026-7-1')).toBe('2026-7-1');
+			expect(formatCalendarDay('')).toBe('');
 		});
 	});
 

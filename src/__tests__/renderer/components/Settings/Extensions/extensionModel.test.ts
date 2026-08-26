@@ -9,7 +9,11 @@ import {
 	buildExtensions,
 	builtinExtension,
 	pluginExtension,
+	sortExtensions,
 	BUILTIN_FEATURES,
+	EXTENSION_SORT_VALUES,
+	SORT_OPTIONS,
+	type UnifiedExtension,
 } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import type { EncoreFeatureFlags } from '../../../../../renderer/types';
 
@@ -184,5 +188,78 @@ describe('extensionModel plugin beta projection', () => {
 		expect(usageDef).toBeDefined();
 		// usageStats is not on the beta list, so its tile stays non-beta.
 		expect(builtinExtension(usageDef!, flags()).beta).toBe(false);
+	});
+});
+
+describe('extensionModel release dates', () => {
+	it('gives every first-party feature a well-formed calendar day', () => {
+		for (const def of BUILTIN_FEATURES) {
+			const ext = builtinExtension(def, flags());
+			expect(ext.releaseDate, `${def.flag} has no releaseDate`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+			expect(Number.isNaN(Date.parse(`${ext.releaseDate}T00:00:00Z`))).toBe(false);
+		}
+	});
+
+	it('carries a plugin manifest releaseDate onto its tile, and leaves it off when absent', () => {
+		const dated = pluginRecord('com.example.dated');
+		dated.manifest = { ...dated.manifest!, releaseDate: '2026-07-10' };
+		expect(pluginExtension(dated).releaseDate).toBe('2026-07-10');
+		expect(pluginExtension(pluginRecord('com.example.undated')).releaseDate).toBeUndefined();
+	});
+});
+
+describe('sortExtensions', () => {
+	function tile(name: string, releaseDate?: string): UnifiedExtension {
+		return {
+			key: `plugin:${name}`,
+			kind: 'plugin',
+			id: name,
+			name,
+			description: '',
+			category: 'other',
+			state: 'installed',
+			...(releaseDate ? { releaseDate } : {}),
+		};
+	}
+
+	const list = [
+		tile('Zeta', '2026-01-01'),
+		tile('alpha', '2025-06-01'),
+		tile('Undated'),
+		tile('Mid', '2026-07-04'),
+	];
+
+	it('sorts A-Z case-insensitively', () => {
+		expect(sortExtensions(list, 'name').map((e) => e.name)).toEqual([
+			'alpha',
+			'Mid',
+			'Undated',
+			'Zeta',
+		]);
+	});
+
+	it('sorts newest first and parks undated tiles at the end', () => {
+		expect(sortExtensions(list, 'newest').map((e) => e.name)).toEqual([
+			'Mid',
+			'Zeta',
+			'alpha',
+			'Undated',
+		]);
+	});
+
+	it('breaks ties on the same day by name, in both modes', () => {
+		const sameDay = [tile('Beta', '2026-02-02'), tile('Alpha', '2026-02-02')];
+		expect(sortExtensions(sameDay, 'newest').map((e) => e.name)).toEqual(['Alpha', 'Beta']);
+		expect(sortExtensions(sameDay, 'name').map((e) => e.name)).toEqual(['Alpha', 'Beta']);
+	});
+
+	it('does not mutate the input list', () => {
+		const original = [...list];
+		sortExtensions(list, 'newest');
+		expect(list).toEqual(original);
+	});
+
+	it('keeps the sort-option values and the persisted-choice list in step', () => {
+		expect(EXTENSION_SORT_VALUES).toEqual(SORT_OPTIONS.map((o) => o.value));
 	});
 });

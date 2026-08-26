@@ -404,6 +404,12 @@ export function wakeSnoozedTab(
 			break;
 	}
 
+	// A kind this switch has not been taught leaves `tabsPatch` unassigned, and
+	// spreading undefined is a silent no-op: the snooze would be cleared while
+	// the tab it holds is never restored, destroying the transcript. Refuse
+	// instead, so the snooze survives to be woken by a build that knows the kind.
+	if (!tabsPatch) return null;
+
 	const tabRef: UnifiedTabRef = { type: entry.type, id: entry.tab.id };
 
 	return {
@@ -480,6 +486,42 @@ export function updateSnoozedTab(
  */
 export function getDueSnoozes(session: Session, now: number = Date.now()): SnoozedTabEntry[] {
 	return (session.snoozedTabs || []).filter((entry) => entry.wakeAt <= now);
+}
+
+/**
+ * A snooze parked before the kind tag existed.
+ *
+ * The first snooze implementation could only park AI tabs, so it wrote no
+ * `type` field at all. Every per-kind switch added since falls through for
+ * those entries.
+ */
+function isUntaggedSnooze(entry: SnoozedTabEntry): boolean {
+	return !entry.type;
+}
+
+/**
+ * Tag snoozes written before {@link SnoozedTabEntry} carried a `type`.
+ *
+ * Left untagged, a legacy entry is invisible to every kind switch: the Snoozed
+ * Tabs list draws the generic fallback glyph with a BLANK label, the Usage
+ * Dashboard leaves its tokens out of the breakdown, and - worst - the wake path
+ * builds no tabs patch, so the snooze is cleared while the AI tab and its whole
+ * transcript are dropped on the floor. The payload was always an AITab, so
+ * stamping `'ai'` at load is the entire fix.
+ *
+ * Runs on restore rather than in a one-shot disk migration because a session
+ * can also arrive from the CLI or the web bridge; normalizing where sessions
+ * enter the store covers every path, and it is idempotent.
+ */
+export function migrateLegacySnoozedTabs(session: Session): Session {
+	const entries = session.snoozedTabs;
+	if (!entries?.length || !entries.some(isUntaggedSnooze)) return session;
+	return {
+		...session,
+		snoozedTabs: entries.map((entry) =>
+			isUntaggedSnooze(entry) ? ({ ...entry, type: 'ai' } as SnoozedTabEntry) : entry
+		),
+	};
 }
 
 /**

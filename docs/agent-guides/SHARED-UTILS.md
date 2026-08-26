@@ -197,6 +197,7 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `formatTokensCompact(tokens)`          | `(number) => string`                   | Token counts without `~`: `"1.5K"`, `"2.3M"`.                                     |
 | `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                                  |
 | `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
+| `formatCalendarDay(isoDay)`            | `(string) => string`                   | A `YYYY-MM-DD` day for display: `"Jul 10, 2026"`. Parsed as LOCAL, not UTC.       |
 | `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
 | `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
 | `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                                       |

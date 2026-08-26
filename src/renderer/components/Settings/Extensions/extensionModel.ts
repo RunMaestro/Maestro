@@ -72,6 +72,9 @@ export interface UnifiedExtension {
 	usage?: FirstPartyPluginDefinition['usage'];
 	settingsNamespace?: string;
 	backgroundServiceId?: string;
+	/** Ship date as `YYYY-MM-DD`. Always present on a built-in; only present on
+	 * a plugin whose manifest declares one. */
+	releaseDate?: string;
 	// --- plugin-only ---
 	tier?: number;
 	trust?: ExtensionTrust;
@@ -147,6 +150,7 @@ export function builtinExtension(
 		usage: backing.usage,
 		settingsNamespace: backing.settingsNamespace,
 		backgroundServiceId: backing.backgroundServices[0]?.id,
+		releaseDate: backing.releaseDate,
 		flag: def.flag,
 	};
 }
@@ -167,6 +171,7 @@ export function pluginExtension(record: PluginRecord): UnifiedExtension {
 		beta: m?.beta,
 		version: m?.version,
 		author: m?.author,
+		releaseDate: m?.releaseDate,
 		loadStatus: record.loadStatus,
 		record,
 	};
@@ -197,5 +202,50 @@ export function filterExtensions(
 			if (!haystack.includes(q)) return false;
 		}
 		return true;
+	});
+}
+
+/** How the grid is ordered. */
+export type ExtensionSort = 'name' | 'newest';
+
+/** Segments for the sort control, in bar order. */
+export const SORT_OPTIONS: ReadonlyArray<{ value: ExtensionSort; label: string; title: string }> = [
+	{ value: 'name', label: 'A-Z', title: 'Sort alphabetically by name' },
+	{ value: 'newest', label: 'Newest', title: 'Sort by release date, newest first' },
+];
+
+/** Just the values, as a stable module-level array (a fresh `.map()` per render
+ * would be a new identity every time a caller passes it to a hook). */
+export const EXTENSION_SORT_VALUES: readonly ExtensionSort[] = SORT_OPTIONS.map((o) => o.value);
+
+/** localStorage key for the remembered sort mode. */
+export const EXTENSION_SORT_STORAGE_KEY = 'extensions.sort';
+
+function byName(a: UnifiedExtension, b: UnifiedExtension): number {
+	return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+}
+
+/**
+ * Order the tiles. Non-mutating.
+ *
+ * Each mode carries its OWN direction rather than sharing one flag: names read
+ * forwards (A-Z) and dates read backwards (newest first), so a single toggle
+ * that flipped both would show Z-A or oldest-first the moment you switched
+ * columns - the same rule `useTableSort` applies to table headers.
+ *
+ * A plugin with no `releaseDate` sorts after everything dated, and name is the
+ * tiebreak in both modes so the grid never reshuffles between renders.
+ */
+export function sortExtensions(all: UnifiedExtension[], sort: ExtensionSort): UnifiedExtension[] {
+	const sorted = [...all];
+	if (sort === 'name') return sorted.sort(byName);
+	return sorted.sort((a, b) => {
+		if (a.releaseDate !== b.releaseDate) {
+			if (!a.releaseDate) return 1;
+			if (!b.releaseDate) return -1;
+			// ISO YYYY-MM-DD compares correctly as a string, so no Date parsing.
+			return b.releaseDate.localeCompare(a.releaseDate);
+		}
+		return byName(a, b);
 	});
 }

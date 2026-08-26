@@ -196,6 +196,24 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
 }
 
 /**
+ * Format a calendar day (`YYYY-MM-DD`) for display, e.g. "Jul 10, 2026".
+ *
+ * The parts are read out of the string and fed to a LOCAL `Date` rather than
+ * letting `new Date('2026-07-10')` do it: that form is parsed as UTC midnight,
+ * so every timezone west of Greenwich renders the day before. Returns the input
+ * unchanged when it is not a well-formed day, since the caller's alternative is
+ * showing nothing at all.
+ */
+export function formatCalendarDay(isoDay: string): string {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay.trim());
+	if (!match) return isoDay;
+	const [, year, month, day] = match;
+	const date = new Date(Number(year), Number(month) - 1, Number(day));
+	if (Number.isNaN(date.getTime())) return isoDay;
+	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
  * Format a future timestamp as a forward-looking relative string.
  *
  * `formatRelativeTime` only models the past - every future timestamp collapses

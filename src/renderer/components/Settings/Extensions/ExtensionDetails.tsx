@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
+import { formatCalendarDay } from '../../../../shared/formatters';
 import { PermissionList, RISK_COLOR } from './PermissionList';
 import { UsageGuide } from './UsageGuide';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
@@ -219,6 +220,11 @@ export function ExtensionDetails({
 						{ext.version && <span>v{ext.version}</span>}
 						{ext.author && <span>· {ext.author}</span>}
 						<span>· {CATEGORY_LABELS[ext.category]}</span>
+						{ext.releaseDate && (
+							<span data-testid="extension-details-release-date">
+								· Released {formatCalendarDay(ext.releaseDate)}
+							</span>
+						)}
 					</div>
 				</div>
 				<span

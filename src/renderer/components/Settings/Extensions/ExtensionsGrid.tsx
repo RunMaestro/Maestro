@@ -27,6 +27,7 @@ import {
 	type LucideIcon,
 } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { formatCalendarDay } from '../../../../shared/formatters';
 import { CATEGORY_LABELS, STATE_LABELS, type UnifiedExtension } from './extensionModel';
 
 interface ExtensionsGridProps {
@@ -239,6 +240,17 @@ export function ExtensionsGrid({
 								>
 									<TrustIcon className="w-3 h-3" />
 									{trust.label}
+								</span>
+							)}
+							{ext.releaseDate && (
+								<span
+									data-testid="extension-release-date"
+									data-release-date={ext.releaseDate}
+									className="px-1.5 py-0.5 rounded text-[10px] font-medium ml-auto"
+									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+									title={`Released ${formatCalendarDay(ext.releaseDate)}`}
+								>
+									{formatCalendarDay(ext.releaseDate)}
 								</span>
 							)}
 						</div>
