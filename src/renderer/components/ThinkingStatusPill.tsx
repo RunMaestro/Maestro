@@ -10,6 +10,7 @@ import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
+import { formatElapsedTicker } from '../../shared/duration';
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -46,24 +47,9 @@ const ElapsedTimeDisplay = memo(
 			return () => clearInterval(interval);
 		}, [startTime]);
 
-		const formatTime = (seconds: number): string => {
-			const days = Math.floor(seconds / 86400);
-			const hours = Math.floor((seconds % 86400) / 3600);
-			const mins = Math.floor((seconds % 3600) / 60);
-			const secs = seconds % 60;
-
-			if (days > 0) {
-				return `${days}d ${hours}h ${mins}m ${secs}s`;
-			} else if (hours > 0) {
-				return `${hours}h ${mins}m ${secs}s`;
-			} else {
-				return `${mins}m ${secs}s`;
-			}
-		};
-
 		return (
 			<span className="font-mono text-xs" style={{ color: textColor }}>
-				{formatTime(elapsedSeconds)}
+				{formatElapsedTicker(elapsedSeconds * 1000)}
 			</span>
 		);
 	}

@@ -98,9 +98,16 @@ export interface HumanizeDurationOptions {
 	/**
 	 * Print a rung even when its value is zero, once a larger rung has printed:
 	 * `2h 0m` instead of `2h`. Steady width for tables and tickers; noise in
-	 * prose. Does not apply to leading zeros, which are always skipped.
+	 * prose. Leading zeros are still skipped unless `keepLeadingZero` is also set.
 	 */
 	keepZeroUnits?: boolean;
+	/**
+	 * With `keepZeroUnits`, also print a zero of the first unit on the provided
+	 * ladder: `0m 3s` instead of `3s`. Off by default because most surfaces do
+	 * not want a leading `0h` / `0d`. The live thinking ticker is the case that
+	 * needs a steady `0m` prefix below one hour.
+	 */
+	keepLeadingZero?: boolean;
 	/**
 	 * Print at most the leading rung and the one immediately below it, so a
 	 * near-exact span stays round: `1h` rather than `1h 59s`, `1y` rather than
@@ -146,6 +153,7 @@ export function humanizeDuration(ms: number, options: HumanizeDurationOptions = 
 		style = 'short',
 		separator = ' ',
 		keepZeroUnits = false,
+		keepLeadingZero = false,
 		adjacentUnits = false,
 		round = 'floor',
 		fallback,
@@ -167,8 +175,9 @@ export function humanizeDuration(ms: number, options: HumanizeDurationOptions = 
 		if (parts.length >= budget) break;
 		const unit = UNITS[ladder[i]];
 		const value = Math.floor(remaining / unit.ms);
-		// Leading zeros never print; interior zeros print only when padding.
-		if (value === 0 && (parts.length === 0 || !keepZeroUnits)) continue;
+		// Interior zeros print only when padding. Leading zeros print only when
+		// both keepZeroUnits and keepLeadingZero are set (live tickers).
+		if (value === 0 && !(keepZeroUnits && (parts.length > 0 || keepLeadingZero))) continue;
 		if (parts.length === 0) leadIndex = i;
 		else if (adjacentUnits && i !== leadIndex + 1) break;
 		parts.push(renderUnit(value, unit, style));
@@ -303,6 +312,33 @@ export function formatActiveTime(ms: number): string {
 export function formatElapsedTime(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
 	return formatDurationHuman(ms);
+}
+
+/**
+ * Live ticker that always shows seconds, with zeros padded after the lead:
+ * `"0m 0s"`, `"0m 3s"`, `"1h 0m 5s"`, `"1d 1h 1m 1s"`.
+ *
+ * The thinking-status pill uses this so a three-second wait does not jump from
+ * `0m 3s` to `3s` (or drop the minutes column). Ladder starts at minutes below
+ * an hour, hours below a day, then days - so a short wait never prints `0d`.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted duration
+ */
+export function formatElapsedTicker(ms: number): string {
+	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+	const units =
+		safe >= DURATION_MS.day
+			? DURATION_LADDER_DAYS
+			: safe >= DURATION_MS.hour
+				? DURATION_LADDER_HOURS
+				: (['minute', 'second'] as const);
+	return humanizeDuration(safe, {
+		units,
+		keepZeroUnits: true,
+		keepLeadingZero: true,
+		maxUnits: 4,
+	});
 }
 
 /**
