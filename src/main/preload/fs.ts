@@ -191,6 +191,23 @@ export function createFsApi() {
 		): Promise<{ success: boolean }> => ipcRenderer.invoke('fs:delete', targetPath, options),
 
 		/**
+		 * Delete a batch of files/directories in a single IPC call.
+		 *
+		 * Prefer this over looping `delete` for a multi-selection: one round
+		 * trip instead of N, deletes overlapped locally, and collapsed into a
+		 * single remote `rm` over SSH.
+		 *
+		 * Resolves with one entry per input path (in input order) rather than
+		 * rejecting on the first failure, so a partially-successful batch still
+		 * reports exactly which paths survived.
+		 */
+		deleteMany: (
+			targetPaths: string[],
+			options?: { recursive?: boolean; sshRemoteId?: string }
+		): Promise<{ results: Array<{ path: string; success: boolean; error?: string }> }> =>
+			ipcRenderer.invoke('fs:deleteMany', targetPaths, options),
+
+		/**
 		 * Zip a folder into a `.zip` written beside it in its parent directory.
 		 * The archive is named after the folder, falling back to `name-1.zip`,
 		 * `name-2.zip`, ... when that name is taken. Resolves with the absolute

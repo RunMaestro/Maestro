@@ -33,6 +33,7 @@ import type {
 } from '../../types/contextMerge';
 import type { FileNode } from '../../types/fileTree';
 import type { DocumentGenerationCallbacks } from '../../services/inlineWizardDocumentGeneration';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 
 /**
  * Dependencies for computing MainPanel props.
@@ -150,9 +151,8 @@ export interface UseMainPanelPropsDeps {
 	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;
-	getForceSendContext: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
+	getForceSendContext: (item: QueuedItem) => ForceSendEligibility | null;
 	handleOpenQueueBrowser: () => void;
 
 	// Tab management handlers

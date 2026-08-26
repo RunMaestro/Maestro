@@ -11,6 +11,7 @@
  * - rename: Rename file/directory (local & SSH remote)
  * - copyPath: Copy a file/directory into a destination (local only; drag-import)
  * - delete: Delete file/directory (local & SSH remote)
+ * - deleteMany: Delete a batch of files/directories in one call (local & SSH remote)
  * - countItems: Count files and folders recursively (local & SSH remote)
  * - compressFolder: Zip a folder into its parent dir (local & SSH remote)
  * - fetchImageAsBase64: Fetch image from URL and return as base64
@@ -46,6 +47,7 @@ import {
 	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
+	deleteManyRemote,
 	existsRemote,
 	countItemsRemote,
 	compressFolderRemote,
@@ -57,6 +59,7 @@ import { resolveDirentType } from '../../utils/dirent-utils';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import { captureException } from '../../utils/sentry';
+import { mapWithConcurrency, LOCAL_FILE_DELETE_CONCURRENCY } from '../../utils/concurrency';
 
 /**
  * Recursively upload a local directory to a remote host over SSH.
@@ -214,6 +217,31 @@ async function resolveUniqueZipPath(
 		candidate = `${basePath}-${suffix}.zip`;
 	}
 	return candidate;
+}
+
+/** Outcome of one path in a `fs:deleteMany` batch. */
+interface BulkDeleteResult {
+	path: string;
+	success: boolean;
+	error?: string;
+}
+
+/**
+ * Delete one local file or directory.
+ *
+ * Shared by `fs:delete` and `fs:deleteMany` so the two cannot drift on what
+ * "delete" means. The `stat` is what decides between `rm` and `unlink`, and it
+ * stays here rather than being folded into an unconditional `fs.rm(..., {
+ * recursive })`: with `recursive: false` an explicit stat is what lets a
+ * directory fail as a directory instead of surfacing as a bare `ERR_FS_EISDIR`.
+ */
+async function deleteLocalPath(targetPath: string, recursive: boolean): Promise<void> {
+	const stat = await fs.stat(targetPath);
+	if (stat.isDirectory()) {
+		await fs.rm(targetPath, { recursive, force: true });
+	} else {
+		await fs.unlink(targetPath);
+	}
 }
 
 export function registerFilesystemHandlers(): void {
@@ -794,17 +822,78 @@ export function registerFilesystemHandlers(): void {
 					return { success: true };
 				}
 
-				// Local: standard fs delete
-				const stat = await fs.stat(targetPath);
-				if (stat.isDirectory()) {
-					await fs.rm(targetPath, { recursive: options?.recursive ?? true, force: true });
-				} else {
-					await fs.unlink(targetPath);
-				}
+				await deleteLocalPath(targetPath, options?.recursive ?? true);
 				return { success: true };
 			} catch (error) {
 				throw new Error(`Failed to delete: ${error}`);
 			}
+		}
+	);
+
+	// Delete a batch of files/folders in ONE IPC call (supports SSH remote).
+	//
+	// The renderer used to loop `fs:delete` per path, which serialized a full
+	// round trip - plus a `stat` and the SSH handshake - behind every single
+	// file. On a slow volume or a remote host that per-file latency is the whole
+	// cost, and a 125-file multi-select took over 30 seconds (issue #1423).
+	//
+	// Unlike `fs:delete` this RESOLVES with a per-path outcome instead of
+	// throwing on the first failure: a partial delete is the normal case for a
+	// bulk operation (one locked or permission-denied file among many), and the
+	// caller needs to know which paths survived so it can report and attribute
+	// them rather than losing the whole batch to one bad entry.
+	ipcMain.handle(
+		'fs:deleteMany',
+		async (
+			_,
+			targetPaths: string[],
+			options?: { recursive?: boolean; sshRemoteId?: string }
+		): Promise<{ results: BulkDeleteResult[] }> => {
+			if (!Array.isArray(targetPaths) || targetPaths.length === 0) {
+				return { results: [] };
+			}
+
+			const recursive = options?.recursive ?? true;
+			const sshRemoteId = options?.sshRemoteId;
+
+			// SSH remote: one `rm` for the whole batch rather than one per path.
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(sshRemoteId);
+				if (!sshConfig) {
+					// An unresolvable remote is a configuration failure, not a
+					// per-path one - fail the call rather than reporting 125
+					// identical path errors.
+					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				}
+				const remoteResults = await deleteManyRemote(targetPaths, sshConfig, recursive);
+				return {
+					results: remoteResults.map((result, index) => ({
+						path: targetPaths[index],
+						success: result.success,
+						...(result.success ? {} : { error: result.error || 'Failed to delete remote file' }),
+					})),
+				};
+			}
+
+			// Local: overlap the deletes so per-file latency stops being additive.
+			const results = await mapWithConcurrency(
+				targetPaths,
+				LOCAL_FILE_DELETE_CONCURRENCY,
+				async (targetPath): Promise<BulkDeleteResult> => {
+					try {
+						await deleteLocalPath(targetPath, recursive);
+						return { path: targetPath, success: true };
+					} catch (error) {
+						return {
+							path: targetPath,
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						};
+					}
+				}
+			);
+
+			return { results };
 		}
 	);
 

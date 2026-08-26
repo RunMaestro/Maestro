@@ -450,29 +450,48 @@ export function useFileContextMenu({
 		setIsMultiDeleting(true);
 		let succeeded = 0;
 		let failed = 0;
-		let lastError: unknown = null;
+		let lastError: string | null = null;
+		// The batch reports per-path failures in its result, so a THROW out of it
+		// means the whole call failed (an unresolvable SSH remote, a dead IPC
+		// bridge) and nothing was deleted. That is a different message from the
+		// refresh failing after the files are already gone.
+		let batchCompleted = false;
 
 		try {
-			for (const item of multiDeleteModal.nodes) {
-				const absolutePath = `${session.fullPath}/${item.path}`;
-				try {
-					await window.maestro.fs.delete(absolutePath, { sshRemoteId });
+			// ONE IPC call for the whole selection. Deleting these one at a time
+			// put a full round trip (and an SSH handshake, when remote) in front
+			// of every file, so the cost scaled with the slowest volume rather
+			// than with the work: 125 files took over 30 seconds (issue #1423).
+			const nodesByAbsolutePath = new Map(
+				multiDeleteModal.nodes.map((item) => [`${session.fullPath}/${item.path}`, item])
+			);
+			const { results } = await window.maestro.fs.deleteMany([...nodesByAbsolutePath.keys()], {
+				sshRemoteId,
+			});
+			batchCompleted = true;
+
+			for (const result of results) {
+				if (result.success) {
 					succeeded++;
-				} catch (error) {
-					failed++;
-					lastError = error;
-					captureException(error, {
-						extra: {
-							action: 'delete-multi',
-							path: item.path,
-							absolutePath,
-							nodeName: item.node.name,
-							nodeType: item.node.type,
-							sessionId: session.id,
-							sshRemoteId,
-						},
-					});
+					continue;
 				}
+				failed++;
+				lastError = result.error ?? 'Unknown error';
+				// The batch resolves with per-path outcomes instead of throwing,
+				// so report each failure here to keep the Sentry breadcrumb the
+				// per-file loop used to produce.
+				const item = nodesByAbsolutePath.get(result.path);
+				captureException(new Error(lastError), {
+					extra: {
+						action: 'delete-multi',
+						path: item?.path,
+						absolutePath: result.path,
+						nodeName: item?.node.name,
+						nodeType: item?.node.type,
+						sessionId: session.id,
+						sshRemoteId,
+					},
+				});
 			}
 
 			await refreshFileTree(session.id);
@@ -481,19 +500,18 @@ export function useFileContextMenu({
 			} else if (succeeded > 0 && failed > 0) {
 				onShowFlash?.(`Deleted ${succeeded}, ${failed} failed`);
 			} else if (failed > 0) {
-				const msg = lastError instanceof Error ? lastError.message : 'Unknown error';
-				onShowFlash?.(`Delete failed: ${msg}`);
+				onShowFlash?.(`Delete failed: ${lastError ?? 'Unknown error'}`);
 			}
 		} catch (error) {
 			captureException(error, {
 				extra: {
-					action: 'delete-multi-refresh',
+					action: batchCompleted ? 'delete-multi-refresh' : 'delete-multi-batch',
 					sessionId: session.id,
+					sshRemoteId,
 				},
 			});
-			onShowFlash?.(
-				`Delete refresh failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-			);
+			const msg = error instanceof Error ? error.message : 'Unknown error';
+			onShowFlash?.(batchCompleted ? `Delete refresh failed: ${msg}` : `Delete failed: ${msg}`);
 			throw error;
 		} finally {
 			setSelectedPaths(new Set());

@@ -88,6 +88,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	renameRemote: vi.fn(),
 	mkdirRemote: vi.fn(),
 	deleteRemote: vi.fn(),
+	deleteManyRemote: vi.fn(),
 	countItemsRemote: vi.fn(),
 	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
@@ -111,6 +112,7 @@ import {
 	renameRemote,
 	mkdirRemote,
 	deleteRemote,
+	deleteManyRemote,
 	writeFileRemote,
 	existsRemote,
 	compressFolderRemote,
@@ -143,6 +145,7 @@ describe('filesystem handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:copyPath', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:mkdir', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:delete', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith('fs:deleteMany', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:countItems', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:fetchImageAsBase64', expect.any(Function));
 		});
@@ -927,6 +930,109 @@ describe('filesystem handlers', () => {
 
 			expect(deleteRemote).toHaveBeenCalledWith('/remote/file.txt', mockSshConfig, true);
 			expect(result).toEqual({ success: true });
+		});
+	});
+
+	describe('fs:deleteMany', () => {
+		it('deletes every local path in one call and reports each outcome', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, ['/test/a.txt', '/test/b.txt', '/test/c.txt']);
+
+			expect(fs.unlink).toHaveBeenCalledTimes(3);
+			expect(result).toEqual({
+				results: [
+					{ path: '/test/a.txt', success: true },
+					{ path: '/test/b.txt', success: true },
+					{ path: '/test/c.txt', success: true },
+				],
+			});
+		});
+
+		it('keeps deleting past a failure and attributes it to the right path', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(fs.unlink).mockImplementation(async (target) => {
+				if (target === '/test/b.txt') throw new Error('EACCES: permission denied');
+			});
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, ['/test/a.txt', '/test/b.txt', '/test/c.txt']);
+
+			// One bad file must not sink the rest of the batch, and the caller
+			// needs to know WHICH path failed to report it.
+			expect(result.results).toEqual([
+				{ path: '/test/a.txt', success: true },
+				{ path: '/test/b.txt', success: false, error: 'EACCES: permission denied' },
+				{ path: '/test/c.txt', success: true },
+			]);
+		});
+
+		it('routes directories through rm and files through unlink', async () => {
+			vi.mocked(fs.stat).mockImplementation(
+				async (target) => ({ isDirectory: () => target === '/test/folder' }) as any
+			);
+			vi.mocked(fs.rm).mockResolvedValue(undefined);
+			vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			await handler!({}, ['/test/folder', '/test/file.txt']);
+
+			expect(fs.rm).toHaveBeenCalledWith('/test/folder', { recursive: true, force: true });
+			expect(fs.unlink).toHaveBeenCalledWith('/test/file.txt');
+		});
+
+		it('sends the whole remote batch to deleteManyRemote in one go', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(deleteManyRemote).mockResolvedValue([
+				{ success: true },
+				{ success: false, error: 'Permission denied: /remote/b.txt' },
+			]);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, ['/remote/a.txt', '/remote/b.txt'], {
+				sshRemoteId: 'remote-1',
+			});
+
+			// One SSH round trip for the batch, not one handshake per file.
+			expect(deleteManyRemote).toHaveBeenCalledTimes(1);
+			expect(deleteManyRemote).toHaveBeenCalledWith(
+				['/remote/a.txt', '/remote/b.txt'],
+				mockSshConfig,
+				true
+			);
+			expect(deleteRemote).not.toHaveBeenCalled();
+			expect(result).toEqual({
+				results: [
+					{ path: '/remote/a.txt', success: true },
+					{ path: '/remote/b.txt', success: false, error: 'Permission denied: /remote/b.txt' },
+				],
+			});
+		});
+
+		it('throws when the SSH remote cannot be resolved', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as any);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+
+			// A missing remote is a config failure for the whole call, not N
+			// identical per-path errors - and it must never fall through to a
+			// LOCAL delete of paths the user meant to remove on the remote host.
+			await expect(handler!({}, ['/remote/a.txt'], { sshRemoteId: 'gone' })).rejects.toThrow(
+				'SSH remote not found: gone'
+			);
+			expect(fs.unlink).not.toHaveBeenCalled();
+		});
+
+		it('short-circuits an empty batch without touching the filesystem', async () => {
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, []);
+
+			expect(result).toEqual({ results: [] });
+			expect(fs.unlink).not.toHaveBeenCalled();
+			expect(deleteManyRemote).not.toHaveBeenCalled();
 		});
 	});
 
