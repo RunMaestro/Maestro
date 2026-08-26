@@ -13,7 +13,7 @@ export function registerSessionCrudCallbacks(
 
 	// Set up callback for web server to create a session
 	// Uses IPC request-response pattern - renderer creates the session and responds with sessionId
-	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
+	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config, options) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for createSession', 'WebServer');
@@ -38,6 +38,8 @@ export function registerSessionCrudCallbacks(
 				resolve(null);
 				return;
 			}
+			// `background` rides after responseChannel, matching remote:openBrowserTab,
+			// so the positional arity of the existing args is untouched.
 			mainWindow.webContents.send(
 				'remote:createSession',
 				name,
@@ -45,7 +47,8 @@ export function registerSessionCrudCallbacks(
 				cwd,
 				groupId,
 				config,
-				responseChannel
+				responseChannel,
+				{ background: options?.background === true }
 			);
 
 			const timeoutId = setTimeout(() => {

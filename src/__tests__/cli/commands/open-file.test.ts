@@ -73,6 +73,65 @@ describe('open-file command', () => {
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
+	// --background is a strictly stronger --no-switch. The pair below pins both
+	// halves: the flag reaches the wire, and it also forces switchToAgent off so
+	// the two promises can't disagree.
+	it('should send background and force switchToAgent off with --background', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		let captured: { switchToAgent?: boolean; background?: boolean } = {};
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					captured = msg;
+					return Promise.resolve({ type: 'open_file_tab_result', success: true });
+				}),
+			} as never)
+		);
+
+		await openFile('/home/user/project/file.ts', { agent: 'session-123', background: true });
+
+		expect(captured.background).toBe(true);
+		expect(captured.switchToAgent).toBe(false);
+	});
+
+	it('should omit background when the flag is absent so the tab still focuses', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		let captured: { switchToAgent?: boolean; background?: boolean } = {};
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					captured = msg;
+					return Promise.resolve({ type: 'open_file_tab_result', success: true });
+				}),
+			} as never)
+		);
+
+		await openFile('/home/user/project/file.ts', { agent: 'session-123' });
+
+		expect(captured.background).toBeUndefined();
+		expect(captured.switchToAgent).toBe(true);
+	});
+
+	// --no-switch keeps its own meaning: it suppresses the agent switch and does
+	// NOT imply background, so a caller already passing it sees no change.
+	it('should not imply background from --no-switch', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		let captured: { switchToAgent?: boolean; background?: boolean } = {};
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					captured = msg;
+					return Promise.resolve({ type: 'open_file_tab_result', success: true });
+				}),
+			} as never)
+		);
+
+		await openFile('/home/user/project/file.ts', { agent: 'session-123', switch: false });
+
+		expect(captured.switchToAgent).toBe(false);
+		expect(captured.background).toBeUndefined();
+	});
+
 	it('should resolve relative file paths to absolute', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 		// Relative paths are resolved against process.cwd(); pin it inside the

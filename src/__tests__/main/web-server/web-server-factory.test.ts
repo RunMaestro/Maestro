@@ -2079,7 +2079,10 @@ describe('web-server/web-server-factory', () => {
 				'/cwd',
 				null,
 				{},
-				expect.any(String)
+				expect.any(String),
+				// The background flag rides last, so the existing positional args
+				// stay where they were.
+				{ background: false }
 			);
 		});
 

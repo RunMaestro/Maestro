@@ -55,7 +55,8 @@ export function createSessionCrudRemoteApi() {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -65,8 +66,9 @@ export function createSessionCrudRemoteApi() {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
-			) => callback(name, toolType, cwd, groupId, config, responseChannel);
+				responseChannel: string,
+				options?: { background?: boolean }
+			) => callback(name, toolType, cwd, groupId, config, responseChannel, options ?? {});
 			ipcRenderer.on('remote:createSession', handler);
 			return () => ipcRenderer.removeListener('remote:createSession', handler);
 		},

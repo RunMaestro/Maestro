@@ -488,7 +488,14 @@ program
 	.command('open-file <file-path>')
 	.description('Open a file as a preview tab in the Maestro desktop app')
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
-	.option('--no-switch', "Don't switch the Maestro UI to the target agent/tab")
+	.option(
+		'--no-switch',
+		"Don't switch the Maestro UI to the target agent (the tab is still activated within it)"
+	)
+	.option(
+		'--background',
+		'Stronger than --no-switch: change nothing currently rendered - neither the active agent nor the active tab in any agent'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
 
@@ -534,6 +541,10 @@ program
 	.option(
 		'--command <command>',
 		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
+	)
+	.option(
+		'--background',
+		'Create the tab without focusing it, switching agents, or flipping the agent into terminal mode'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
@@ -845,6 +856,7 @@ program
 		'--auto-run-folder <path>',
 		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
 	)
+	.option('--background', 'Create the agent without focusing it (the Left Bar selection stays put)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
@@ -1019,6 +1031,10 @@ tab
 	.description('Open a new tab for an agent (optionally seeded with a prompt)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('-p, --prompt <text>', 'Seed the new AI tab with this prompt')
+	.option(
+		'--background',
+		'Create the tab without making it the visible one (the agent stays on its current tab)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabNew(options));
 

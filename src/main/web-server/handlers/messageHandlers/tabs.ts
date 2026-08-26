@@ -66,7 +66,15 @@ export function handleNewTab(
 	message: WebClientMessage
 ): void {
 	const sessionId = message.sessionId as string;
-	logger.info(`[Web] Received new_tab message: session=${sessionId}`, LOG_CONTEXT);
+	// background=true creates the tab without making it the visible one. Absent
+	// or non-true keeps the historical focusing behaviour, so no existing caller
+	// changes. Matches the field open_browser_tab and new_ai_tab_with_prompt
+	// already carry.
+	const background = message.background === true;
+	logger.info(
+		`[Web] Received new_tab message: session=${sessionId}, background=${background}`,
+		LOG_CONTEXT
+	);
 
 	if (!sessionId) {
 		ctx.sendError(client, 'Missing sessionId');
@@ -79,7 +87,7 @@ export function handleNewTab(
 	}
 
 	ctx.callbacks
-		.newTab(sessionId)
+		.newTab(sessionId, { background })
 		.then((result) => {
 			ctx.send(client, {
 				type: 'new_tab_result',
@@ -309,9 +317,14 @@ export function handleOpenFileTab(
 	const sessionId = message.sessionId as string;
 	const filePath = message.filePath as string;
 	// `switchToAgent` defaults to true so older clients keep the existing UX.
-	const switchToAgent = message.switchToAgent !== false;
+	// `background` is the stronger promise and therefore wins over it: it also
+	// leaves the ACTIVE TAB inside the target agent alone, which `--no-switch`
+	// deliberately does not (a `--no-switch` open still activates the file tab
+	// within its agent, so switching there later lands on the file).
+	const background = message.background === true;
+	const switchToAgent = !background && message.switchToAgent !== false;
 	logger.info(
-		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, switchToAgent=${switchToAgent}`,
+		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, switchToAgent=${switchToAgent}, background=${background}`,
 		LOG_CONTEXT
 	);
 
@@ -351,7 +364,7 @@ export function handleOpenFileTab(
 	}
 
 	ctx.callbacks
-		.openFileTab(sessionId, resolved, switchToAgent)
+		.openFileTab(sessionId, resolved, switchToAgent, { background })
 		.then((success) => {
 			ctx.send(client, {
 				type: 'open_file_tab_result',
@@ -517,6 +530,9 @@ export async function handleOpenTerminalTab(
 	const rawShell = message.shell;
 	const rawName = message.name;
 	const rawCommand = message.command;
+	// background=true creates the terminal tab without moving the user: no agent
+	// switch, no active-tab change, and no flip into terminal mode.
+	const background = message.background === true;
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
 	logger.info(
@@ -524,7 +540,7 @@ export async function handleOpenTerminalTab(
 			typeof rawCwd === 'string' && rawCwd.length > 0
 		}, shellProvided=${
 			typeof rawShell === 'string' && rawShell.length > 0
-		}, nameProvided=${rawName !== undefined}`,
+		}, nameProvided=${rawName !== undefined}, background=${background}`,
 		LOG_CONTEXT
 	);
 
@@ -607,7 +623,7 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command })
+		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command, background })
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',

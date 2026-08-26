@@ -591,7 +591,18 @@ describe('CallbackRegistry', () => {
 
 			await registry.newTab('session-15');
 
-			expect(callback).toHaveBeenCalledWith('session-15');
+			// The options arg is forwarded verbatim, undefined included, so an
+			// omitted flag can never be read as an opt-in.
+			expect(callback).toHaveBeenCalledWith('session-15', undefined);
+		});
+
+		it('forwards the background option to the callback', async () => {
+			const callback = vi.fn().mockResolvedValue({ tabId: 'tab-new' });
+			registry.setNewTabCallback(callback);
+
+			await registry.newTab('session-15', { background: true });
+
+			expect(callback).toHaveBeenCalledWith('session-15', { background: true });
 		});
 	});
 

@@ -120,6 +120,31 @@ describe('tab commands', () => {
 		expect(p.prompt).toBe('hello');
 	});
 
+	// The whole risk of --background is a flag that does nothing, so assert the
+	// field on the wire in both directions: present when asked for, and ABSENT
+	// otherwise (an unflagged call that stops focusing is the regression).
+	it('tab new omits background by default so the tab still focuses', async () => {
+		const getPayload = mockTab({ success: true, tabId: 'tab-new' });
+		await tabNew({ agent: 'agent-1' });
+		expect(getPayload().background).toBeUndefined();
+	});
+
+	it('tab new --background sets background on new_tab', async () => {
+		const getPayload = mockTab({ success: true, tabId: 'tab-new' });
+		await tabNew({ agent: 'agent-1', background: true });
+		const p = getPayload();
+		expect(p.type).toBe('new_tab');
+		expect(p.background).toBe(true);
+	});
+
+	it('tab new --prompt --background sets background on new_ai_tab_with_prompt', async () => {
+		const getPayload = mockTab({ success: true, tabId: 't' });
+		await tabNew({ agent: 'agent-1', prompt: 'hello', background: true });
+		const p = getPayload();
+		expect(p.type).toBe('new_ai_tab_with_prompt');
+		expect(p.background).toBe(true);
+	});
+
 	it('tab close resolves the owning agent from the tab id', async () => {
 		const getPayload = mockTab({ success: true });
 		await tabClose('tab-bbbb', {});

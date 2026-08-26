@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
@@ -60,7 +60,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
 	let onRemoteSelectTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
-	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
+	let onRemoteNewTabHandler:
+		| ((sessionId: string, responseChannel: string, options?: { background?: boolean }) => void)
+		| undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
 		| ((sessionId: string, tabId: string, newName: string) => void)
@@ -929,6 +931,44 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setSessions).toHaveBeenCalled();
 			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalled();
+		});
+
+		// `tab new --background`: the tab is created and its id acked, but the
+		// agent stays on whatever tab the user was looking at.
+		it('leaves the active tab alone for a background create', () => {
+			const session = createMockSession({ id: 'session-1', activeTabId: 'tab-1' });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'chan', { background: true });
+			});
+
+			const updater = (deps.setSessions as Mock).mock.calls[0][0] as (s: Session[]) => Session[];
+			const [updated] = updater([session]);
+			expect(updated.aiTabs.length).toBe(session.aiTabs.length + 1);
+			expect(updated.activeTabId).toBe('tab-1');
+			// Created-but-unreachable is a different bug, so the ack must still
+			// carry the new tab's id.
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan', {
+				tabId: expect.any(String),
+			});
+		});
+
+		it('still activates the new tab when the flag is absent', () => {
+			const session = createMockSession({ id: 'session-1', activeTabId: 'tab-1' });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'chan');
+			});
+
+			const updater = (deps.setSessions as Mock).mock.calls[0][0] as (s: Session[]) => Session[];
+			const [updated] = updater([session]);
+			expect(updated.activeTabId).not.toBe('tab-1');
 		});
 	});
 

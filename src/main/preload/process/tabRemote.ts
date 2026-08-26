@@ -15,10 +15,18 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote new tab from web interface
 		 */
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				responseChannel: string,
+				options: { background?: boolean }
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, responseChannel: string) =>
-				callback(sessionId, responseChannel);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				responseChannel: string,
+				options?: { background?: boolean }
+			) => callback(sessionId, responseChannel, options ?? {});
 			ipcRenderer.on('remote:newTab', handler);
 			return () => ipcRenderer.removeListener('remote:newTab', handler);
 		},
@@ -90,10 +98,20 @@ export function createTabRemoteApi() {
 		 * (defaults to true if the sender omits it).
 		 */
 		onRemoteOpenFileTab: (
-			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
+			callback: (
+				sessionId: string,
+				filePath: string,
+				switchToAgent: boolean,
+				options: { background?: boolean }
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, filePath: string, switchToAgent?: boolean) =>
-				callback(sessionId, filePath, switchToAgent !== false);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filePath: string,
+				switchToAgent?: boolean,
+				options?: { background?: boolean }
+			) => callback(sessionId, filePath, switchToAgent !== false, options ?? {});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
 		},

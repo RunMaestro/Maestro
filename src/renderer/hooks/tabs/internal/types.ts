@@ -73,7 +73,18 @@ export type MediaOpenMode = 'play' | 'queue';
 export interface FilePreviewTabHandlersReturn {
 	handleOpenFileTab: (
 		file: FileTabOpenParams,
-		options?: { openInNewTab?: boolean; targetSessionId?: string; mediaMode?: MediaOpenMode }
+		options?: {
+			openInNewTab?: boolean;
+			targetSessionId?: string;
+			mediaMode?: MediaOpenMode;
+			/**
+			 * Create the tab without activating it, so nothing currently rendered
+			 * changes (`maestro-cli open-file --background`). Implies a new tab -
+			 * the replace-the-active-tab path rewrites the visible tab by
+			 * definition, which is the opposite of the promise.
+			 */
+			background?: boolean;
+		}
 	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;
 	handleCloseFileTab: (tabId: string) => void;

@@ -60,7 +60,7 @@ export interface UseAppRemoteEventListenersDeps {
 			/** Optional 1-based line to jump to once the editor mounts (deep links). */
 			pendingScrollToLine?: number;
 		},
-		options?: { targetSessionId?: string }
+		options?: { targetSessionId?: string; background?: boolean }
 	) => void;
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
@@ -102,10 +102,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, switchToAgent, line } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, switchToAgent, background, line } = (e as CustomEvent).detail as {
 			sessionId: string;
 			filePath: string;
 			switchToAgent?: boolean;
+			/**
+			 * `open-file --background`. Strictly stronger than `--no-switch`: that
+			 * one only suppresses the agent switch and still activates the tab
+			 * within the target agent, so the user's view changed anyway. This
+			 * leaves the active tab alone too, so nothing rendered anywhere moves.
+			 */
+			background?: boolean;
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
 			line?: number;
@@ -117,9 +124,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 		const sshRemoteId =
 			session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-		// Honor `--no-switch`: register the tab on the target agent but leave the
-		// active agent untouched so the CLI invocation doesn't hijack focus.
-		if (switchToAgent !== false) {
+		// Honor `--no-switch` / `--background`: register the tab on the target agent
+		// but leave the active agent untouched so the CLI invocation doesn't
+		// hijack focus.
+		if (!background && switchToAgent !== false) {
 			setActiveSessionId(sessionId);
 		}
 		try {
@@ -139,7 +147,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						sshRemoteId,
 						pendingScrollToLine: line,
 					},
-					{ targetSessionId: sessionId }
+					{ targetSessionId: sessionId, background }
 				);
 			}
 		} catch (error) {
@@ -260,9 +268,19 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
 		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
 			sessionId: string;
-			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
+			config: {
+				cwd?: string;
+				shell?: string;
+				name?: string | null;
+				command?: string;
+				background?: boolean;
+			};
 			responseChannel?: string;
 		};
+		// `open-terminal --background`: the tab is created and addressable by the
+		// id acked below (so `send-terminal --tab` works against it right away),
+		// but the agent is neither focused nor flipped into terminal mode.
+		const background = config?.background === true;
 		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
 				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success, tabId);
@@ -274,7 +292,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			ack(false);
 			return;
 		}
-		setActiveSessionId(sessionId);
+		if (!background) {
+			setActiveSessionId(sessionId);
+		}
 		const baseTab = createTerminalTabHelper(
 			config?.shell,
 			config?.cwd ?? session.cwd,
@@ -289,8 +309,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
-				const updated = addTerminalTabHelper(s, tab);
-				return { ...updated, inputMode: 'terminal' as const };
+				const updated = addTerminalTabHelper(s, tab, { activate: !background });
+				// Flipping inputMode is itself a view change on the visible agent,
+				// so a background open must leave it alone.
+				return background ? updated : { ...updated, inputMode: 'terminal' as const };
 			})
 		);
 		ack(true, tab.id);
@@ -1246,7 +1268,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote create session from web interface
 	useEventListener('maestro:remoteCreateSession', async (e: Event) => {
-		const { name, toolType, cwd, groupId, config, responseChannel } = (e as CustomEvent).detail;
+		const { name, toolType, cwd, groupId, config, responseChannel, background } = (e as CustomEvent)
+			.detail;
 		try {
 			// Get agent definition to validate
 			const agent = await (window as any).maestro.agents.get(toolType);
@@ -1377,7 +1400,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
-			setActiveSessionId(newId);
+			// `create-agent --background`: the agent lands in the Left Bar but the
+			// selection stays where the user left it.
+			if (background !== true) {
+				setActiveSessionId(newId);
+			}
 			(window as any).maestro.stats.recordSessionCreated({
 				sessionId: newId,
 				agentType: toolType,

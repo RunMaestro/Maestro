@@ -81,14 +81,26 @@ export function createBrowserTabRemoteApi() {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					background?: boolean;
+				},
 				responseChannel: string
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					background?: boolean;
+				},
 				responseChannel: string
 			) => {
 				try {

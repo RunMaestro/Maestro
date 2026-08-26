@@ -31,6 +31,12 @@ import type { DesktopTabEntry } from '../../shared/desktopTabs';
 interface TabNewOptions {
 	agent: string;
 	prompt?: string;
+	/**
+	 * Create the tab without making it the visible one. The tab still lands in
+	 * the tab bar and is addressable by id, but the agent stays on whatever tab
+	 * the user was looking at.
+	 */
+	background?: boolean;
 	json?: boolean;
 }
 
@@ -44,10 +50,20 @@ export async function tabNew(options: TabNewOptions): Promise<void> {
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
 	const prompt = options.prompt?.trim();
 
+	// `new_ai_tab_with_prompt` already carried a `background` field for
+	// `dispatch --new-tab`; `new_tab` gained one so both halves of `tab new`
+	// answer the same flag. Absent means focus, exactly as before.
+	const background = options.background === true;
+
 	try {
 		const payload = prompt
-			? { type: 'new_ai_tab_with_prompt', sessionId, prompt }
-			: { type: 'new_tab', sessionId };
+			? {
+					type: 'new_ai_tab_with_prompt',
+					sessionId,
+					prompt,
+					...(background ? { background: true } : {}),
+				}
+			: { type: 'new_tab', sessionId, ...(background ? { background: true } : {}) };
 		const responseType = prompt ? 'new_ai_tab_with_prompt_result' : 'new_tab_result';
 		const result = await sendSimpleCommand(payload, responseType);
 
@@ -58,7 +74,13 @@ export async function tabNew(options: TabNewOptions): Promise<void> {
 		if (options.json) {
 			console.log(JSON.stringify({ success: true, sessionId, tabId: tabId ?? null }));
 		} else {
-			console.log(formatSuccess(`Opened new tab for ${sessionId}`));
+			console.log(
+				formatSuccess(
+					background
+						? `Opened new background tab for ${sessionId}`
+						: `Opened new tab for ${sessionId}`
+				)
+			);
 			if (tabId) console.log(`  Tab: ${tabId}`);
 		}
 	} catch (error) {

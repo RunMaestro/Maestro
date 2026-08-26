@@ -1,4 +1,9 @@
-// Open terminal command - open a new terminal tab in the Maestro desktop app
+// Open terminal command - open a new terminal tab in the Maestro desktop app.
+//
+// `--background` creates the tab without moving the user: the active agent is
+// left alone, the new terminal does not become the visible tab, and the target
+// agent is not flipped into terminal mode. The tab is still addressable by the
+// id printed here, so `send-terminal --tab` works against it immediately.
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
@@ -9,6 +14,7 @@ interface OpenTerminalOptions {
 	shell?: string;
 	name?: string;
 	command?: string;
+	background?: boolean;
 	json?: boolean;
 }
 
@@ -25,6 +31,8 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 		sessionId = resolveSessionId({});
 	}
 
+	const background = options.background === true;
+
 	try {
 		const result = await withMaestroClient(async (client) => {
 			return client.sendCommand<{
@@ -40,6 +48,7 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 					shell: options.shell,
 					name: options.name,
 					command: options.command,
+					...(background ? { background: true } : {}),
 				},
 				'open_terminal_tab_result'
 			);
@@ -49,10 +58,11 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 			if (options.json) {
 				console.log(JSON.stringify({ success: true, sessionId, tabId: result.tabId ?? null }));
 			} else {
+				const where = background ? ' in the background' : '';
 				console.log(
 					options.command
-						? `Terminal tab opened in Maestro, running: ${options.command}`
-						: 'Terminal tab opened in Maestro'
+						? `Terminal tab opened in Maestro${where}, running: ${options.command}`
+						: `Terminal tab opened in Maestro${where}`
 				);
 				// Surface the id in plain output too - it's the handle for
 				// `send-terminal --tab`, and agents shouldn't need --json to get it.

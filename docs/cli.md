@@ -386,6 +386,9 @@ maestro-cli create-agent "My Agent" -d /path/to/project
 # Create a Codex agent with custom model and environment variables
 maestro-cli create-agent "Codex Worker" -d . -t codex --model gpt-5.3-codex --env API_KEY=abc123
 
+# Create an agent without jumping to it - the Left Bar selection stays put
+maestro-cli create-agent "Helper" -d . -t codex --background
+
 # Create an agent with SSH remote execution
 maestro-cli create-agent "Remote Agent" -d /home/user/project -t claude-code --ssh-remote <remote-id>
 
@@ -572,6 +575,9 @@ maestro-cli switch-mode <agent-id> terminal
 # Open a new tab for an agent (optionally seed an AI tab with a prompt)
 maestro-cli tab new -a <agent-id>
 maestro-cli tab new -a <agent-id> --prompt "Start reviewing the API layer"
+
+# Create the tab without making it visible - the agent stays on its current tab
+maestro-cli tab new -a <agent-id> --background
 
 # Close, rename, star, or unstar a tab. The owning agent is resolved from the
 # tab ID automatically, so you only need the tab ID (exact or a unique prefix).
@@ -1172,16 +1178,25 @@ Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Dir
 
 #### Open a File
 
-Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent - the file must live inside that agent's `cwd`. Pass `--no-switch` to skip switching the Maestro UI to the resulting agent/tab.
+Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent - the file must live inside that agent's `cwd`.
 
 ```bash
-maestro-cli open-file <file-path> [-a <id>] [--no-switch]
+maestro-cli open-file <file-path> [-a <id>] [--no-switch] [--background]
 ```
 
-| Flag               | Description                                                        |
-| ------------------ | ------------------------------------------------------------------ |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent) |
-| `--no-switch`      | Don't switch the Maestro UI to the target agent/tab                |
+| Flag               | Description                                                                                        |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                                 |
+| `--no-switch`      | Don't switch the Maestro UI to the target agent. The tab is still activated **within** that agent. |
+| `--background`     | Change nothing currently rendered: neither the active agent nor the active tab in any agent moves. |
+
+<Note>
+	`--no-switch` and `--background` are different promises, which is why both exist. `--no-switch`
+	keeps you on the agent you were on but still activates the new tab inside the target agent, so
+	switching to that agent later lands on the file. `--background` is strictly stronger: the tab
+	appears in the tab bar the way a browser opens a background tab, and nothing on screen changes.
+	Passing both is fine - `--background` wins.
+</Note>
 
 #### Open a Browser Tab
 
@@ -1241,6 +1256,9 @@ maestro-cli open-terminal --name "Dev server" --command "npm run dev"
 
 # Target a specific agent
 maestro-cli open-terminal -a <agent-id> --name "Build watch"
+
+# Background terminal - starts the dev server without pulling the user into it
+maestro-cli open-terminal --name "Dev server" --command "npm run dev" --background
 ```
 
 | Flag               | Description                                                         | Default     |
@@ -1250,6 +1268,9 @@ maestro-cli open-terminal -a <agent-id> --name "Build watch"
 | `--shell <bin>`    | Shell binary to use                                                 | `zsh`       |
 | `--name <label>`   | Display name for the tab                                            | -           |
 | `--command <cmd>`  | Command to run once the shell is ready                              | -           |
+| `--background`     | Create the tab without moving the user                              | -           |
+
+`--background` leaves the active agent alone, leaves the visible tab alone, and does **not** flip the agent into terminal mode. The tab still appears in the tab bar and the printed ID still works with `send-terminal --tab`, so a background terminal is fully usable - it just does not take the screen.
 
 `--command` is stored as the tab's startup command, the same field the tab's right-click "Startup Command…" menu writes. The command runs as soon as the shell finishes loading its rc files, and it runs again if the tab is restarted or the app is reopened. That is what you want for `npm run dev`; for a one-shot command that should not come back, close the tab when it finishes, or use `send-terminal` instead.
 

@@ -435,7 +435,13 @@ interface MaestroAPI {
 		onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectSession: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
-		onRemoteNewTab: (callback: (sessionId: string, responseChannel: string) => void) => () => void;
+		onRemoteNewTab: (
+			callback: (
+				sessionId: string,
+				responseChannel: string,
+				options: { background?: boolean }
+			) => void
+		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteRenameTab: (
@@ -449,7 +455,12 @@ interface MaestroAPI {
 		) => () => void;
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
 		onRemoteOpenFileTab: (
-			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
+			callback: (
+				sessionId: string,
+				filePath: string,
+				switchToAgent: boolean,
+				options: { background?: boolean }
+			) => void
 		) => () => void;
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
@@ -583,7 +594,13 @@ interface MaestroAPI {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					background?: boolean;
+				},
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -784,7 +801,8 @@ interface MaestroAPI {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => void
 		) => () => void;
 		sendRemoteCreateSessionResponse: (

@@ -509,6 +509,105 @@ describe('useFilePreviewTabHandlers', () => {
 		});
 	});
 
+	// `open-file --background`. This is the choke point every open path funnels
+	// through, so the promise has to hold HERE rather than only at the CLI: the
+	// tab lands in the strip and stays addressable, while every pointer that
+	// decides what is on screen is left exactly as it was.
+	describe('background opens', () => {
+		it('adds the tab to the strip without taking the panel', () => {
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				browserTabs: [createMockBrowserTab({ id: 'browser-1' })],
+				activeBrowserTabId: 'browser-1',
+			});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/repo/a.ts', name: 'a.ts', content: 'a' },
+					{ background: true }
+				);
+			});
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(1);
+			// Reachable: it is in the unified strip, so the user can click to it.
+			expect(session.unifiedTabOrder).toContainEqual({
+				type: 'file',
+				id: session.filePreviewTabs[0].id,
+			});
+			// Invisible: nothing that decides the rendered surface moved. This is
+			// exactly what `--no-switch` does NOT deliver, which is why the two
+			// flags are separate.
+			expect(session.activeFileTabId).toBeNull();
+			expect(session.activeBrowserTabId).toBe('browser-1');
+		});
+
+		it('still activates the new tab without the flag', () => {
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				browserTabs: [createMockBrowserTab({ id: 'browser-1' })],
+				activeBrowserTabId: 'browser-1',
+			});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/repo/a.ts', name: 'a.ts', content: 'a' });
+			});
+
+			const session = getSession();
+			expect(session.activeFileTabId).toBe(session.filePreviewTabs[0].id);
+			expect(session.activeBrowserTabId).toBeNull();
+		});
+
+		it('refreshes an already-open file in place without activating it', () => {
+			// Re-opening a file that already has a tab must not become a back door
+			// to the same focus steal.
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				filePreviewTabs: [createMockFileTab({ id: 'file-1', path: '/repo/a.ts' })],
+				activeFileTabId: null,
+			});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/repo/a.ts', name: 'a.ts', content: 'fresh' },
+					{ background: true }
+				);
+			});
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(1);
+			expect(session.filePreviewTabs[0].content).toBe('fresh');
+			expect(session.activeFileTabId).toBeNull();
+		});
+
+		it('forces a new tab rather than replacing the visible one', () => {
+			// openInNewTab:false rewrites the ACTIVE tab in place, which is the
+			// opposite of the promise - background has to win over it.
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				filePreviewTabs: [createMockFileTab({ id: 'file-1', path: '/repo/a.ts' })],
+				activeFileTabId: 'file-1',
+			});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/repo/b.ts', name: 'b.ts', content: 'b' },
+					{ background: true, openInNewTab: false }
+				);
+			});
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(2);
+			// The tab the user was looking at still shows the file it showed before.
+			expect(session.filePreviewTabs.find((t) => t.id === 'file-1')?.path).toBe('/repo/a.ts');
+			expect(session.activeFileTabId).toBe('file-1');
+		});
+	});
+
 	// A tiled file pane is not the active file tab (focusing a pane does not set
 	// activeFileTabId), so back / forward / breadcrumb-jump all take an explicit tab
 	// id. Without it a pane would navigate whichever other file tab was active.

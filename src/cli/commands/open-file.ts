@@ -1,4 +1,17 @@
-// Open file command - open a file as a preview tab in the Maestro desktop app
+// Open file command - open a file as a preview tab in the Maestro desktop app.
+//
+// Two different "don't move me" flags, because they answer two different
+// questions and folding them together would change what `--no-switch` already
+// means for callers passing it:
+//
+//   --no-switch   leave the ACTIVE AGENT alone, but still activate the new tab
+//                 inside the target agent (so switching to that agent later
+//                 lands on the file).
+//   --background  change nothing that is currently rendered anywhere: the tab
+//                 is created and addressable, and neither the active agent nor
+//                 the active tab within any agent moves.
+//
+// Passing both is fine - `--background` is strictly stronger and wins.
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -9,6 +22,7 @@ import { getSessionById, getSessionHistoryMtimeMs, readSessions } from '../servi
 interface OpenFileOptions {
 	agent?: string;
 	switch?: boolean;
+	background?: boolean;
 	json?: boolean;
 }
 
@@ -25,7 +39,10 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 		process.exit(1);
 	}
 
-	const switchToAgent = options.switch !== false;
+	const background = options.background === true;
+	// `--background` implies `--no-switch`: it is the stronger promise, so a
+	// caller passing both must not get the agent switch back.
+	const switchToAgent = !background && options.switch !== false;
 
 	try {
 		const result = await withMaestroClient(async (client) => {
@@ -35,6 +52,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 					sessionId: target.sessionId,
 					filePath: target.absolutePath,
 					switchToAgent,
+					...(background ? { background: true } : {}),
 				},
 				'open_file_tab_result'
 			);
@@ -49,7 +67,12 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 						path: target.absolutePath,
 					})
 				);
-			else console.log(`Opened ${path.basename(target.absolutePath)} in Maestro`);
+			else
+				console.log(
+					background
+						? `Opened ${path.basename(target.absolutePath)} in Maestro (background)`
+						: `Opened ${path.basename(target.absolutePath)} in Maestro`
+				);
 		} else {
 			const error = result.error || 'Failed to open file';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));

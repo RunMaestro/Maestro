@@ -1,4 +1,9 @@
-// Create agent command - create a new agent in the Maestro desktop app
+// Create agent command - create a new agent in the Maestro desktop app.
+//
+// Creating an agent focuses it by default (the desktop New Agent modal does the
+// same). `--background` adds it to the Left Bar without moving the user, for
+// scripts that provision several agents at once or an agent spinning up a
+// helper mid-task.
 
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
@@ -25,6 +30,7 @@ interface CreateAgentOptions {
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
+	background?: boolean;
 	json?: boolean;
 }
 
@@ -149,6 +155,10 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (options.providerPath) payload.customProviderPath = options.providerPath;
 	if (sessionSshRemoteConfig) payload.sessionSshRemoteConfig = sessionSshRemoteConfig;
 	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);
+	// Sits beside the config fields rather than inside them: `background` is a
+	// view instruction, not agent configuration, and CreateSessionConfig maps
+	// 1:1 to createNewSession's params.
+	if (options.background === true) payload.background = true;
 
 	try {
 		const result = await withMaestroClient(async (client) => {
@@ -166,7 +176,13 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 					JSON.stringify({ success: true, agentId: result.sessionId, name, type: options.type })
 				);
 			} else {
-				console.log(formatSuccess(`Created agent "${name}" (${options.type})`));
+				console.log(
+					formatSuccess(
+						options.background === true
+							? `Created agent "${name}" (${options.type}) in the background`
+							: `Created agent "${name}" (${options.type})`
+					)
+				);
 				console.log(`  ID: ${result.sessionId}`);
 				console.log(`  CWD: ${cwd}`);
 			}

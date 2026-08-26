@@ -68,6 +68,13 @@ export interface FileTabOpenOptions {
 	 * a tab. Defaults to playing it.
 	 */
 	mediaMode?: MediaOpenMode;
+	/**
+	 * Create the tab without activating it, so nothing currently rendered
+	 * changes (`maestro-cli open-file --background`). Distinct from the CLI's
+	 * `--no-switch`, which only suppresses the agent switch and still activates
+	 * the tab inside the target agent.
+	 */
+	background?: boolean;
 }
 
 /** Options for opening a file from the file tree. */

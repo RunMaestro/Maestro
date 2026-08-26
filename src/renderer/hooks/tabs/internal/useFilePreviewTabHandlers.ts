@@ -29,9 +29,14 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				openInNewTab?: boolean;
 				targetSessionId?: string;
 				mediaMode?: MediaOpenMode;
+				background?: boolean;
 			}
 		) => {
-			const openInNewTab = options?.openInNewTab ?? true;
+			// A background open must not change anything currently rendered, so it
+			// forces the new-tab path: the replace-the-active-tab branch below
+			// rewrites the visible tab in place, which is the opposite promise.
+			const background = options?.background === true;
+			const openInNewTab = background ? true : (options?.openInNewTab ?? true);
 			const { setSessions } = useSessionStore.getState();
 			const activeSessionId =
 				options?.targetSessionId || useSessionStore.getState().activeSessionId;
@@ -60,7 +65,10 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					// Queue mode is how a multi-file open stays sane: the first file
 					// plays and the rest line up behind it, instead of ten opens each
 					// stealing the player from the one before.
-					if (options?.mediaMode === 'queue') {
+					// Background is the polite form of an open, so it lines the track up
+					// behind whatever is playing rather than taking the player over -
+					// the audio equivalent of not stealing the visible tab.
+					if (options?.mediaMode === 'queue' || background) {
 						store.enqueueMedia([request]);
 					} else {
 						store.openMedia(request);
@@ -98,6 +106,15 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						// activeGroupId and set activeFileTabId, which would strand focus because
 						// buildUnifiedTabs excludes group members from the standalone strip.
 						// Mirrors the group branch in setActiveTab for AI tabs.
+						// Background: refresh the tab's content in place and make sure it
+						// is in the tab strip, but leave every active-* pointer alone.
+						if (background) {
+							return {
+								...s,
+								filePreviewTabs: updatedTabs,
+								unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder, 'file', existingTab.id),
+							};
+						}
 						const groupPane = findGroupPaneForTab(s, 'file', existingTab.id);
 						if (groupPane) {
 							return {
@@ -203,13 +220,19 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						...s,
 						filePreviewTabs: [...s.filePreviewTabs, newFileTab],
 						unifiedTabOrder: updatedUnifiedTabOrder,
-						activeFileTabId: newTabId,
-						activeBrowserTabId: null,
-						activeTerminalTabId: null,
-						inputMode: 'ai' as const,
-						// A newly-opened standalone file tab takes over the panel, so it
-						// must leave any active tiled group (mirrors handleSelectFileTab).
-						activeGroupId: null,
+						// A background tab lands in the strip without taking the panel:
+						// every active-* pointer, inputMode, and activeGroupId stay put.
+						...(background
+							? {}
+							: {
+									activeFileTabId: newTabId,
+									activeBrowserTabId: null,
+									activeTerminalTabId: null,
+									inputMode: 'ai' as const,
+									// A newly-opened standalone file tab takes over the panel, so it
+									// must leave any active tiled group (mirrors handleSelectFileTab).
+									activeGroupId: null,
+								}),
 					};
 				})
 			);

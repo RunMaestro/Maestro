@@ -733,6 +733,95 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	// One flag, one meaning, on every message that can move the view. The failure
+	// mode this guards is a flag the handler drops on the floor: the caller
+	// believes they were polite and the view moves anyway.
+	describe('--background threading (Web → Desktop)', () => {
+		it('threads background into new_tab', async () => {
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', { background: true });
+			});
+		});
+
+		it('threads background into open_file_tab and forces switchToAgent off', async () => {
+			// --background is strictly stronger than --no-switch, so passing both
+			// (or passing background alone) must not leave the agent switch armed.
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/home/user/project/src/index.ts',
+				switchToAgent: true,
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openFileTab).toHaveBeenCalledWith(
+					'session-1',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
+					false,
+					{ background: true }
+				);
+			});
+		});
+
+		it('threads background into open_terminal_tab', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ background: true })
+				);
+			});
+		});
+
+		it('threads background into create_session beside the config block', async () => {
+			handler.handleMessage(client, {
+				type: 'create_session',
+				name: 'Backgrounded',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createSession).toHaveBeenCalledWith(
+					'Backgrounded',
+					'claude-code',
+					'/home/user/project',
+					undefined,
+					// background is a view instruction, so the config arg stays empty.
+					undefined,
+					{ background: true }
+				);
+			});
+		});
+
+		// A non-true value must not be read as "be polite" - only an explicit
+		// true opts in, so anything else keeps the historical focusing default.
+		it('treats a non-boolean background as absent', async () => {
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				background: 'yes',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', { background: false });
+			});
+		});
+	});
+
 	describe('New Tab (Web → Desktop)', () => {
 		it('should create new tab and return tabId', async () => {
 			handler.handleMessage(client, {
@@ -741,7 +830,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.newTab).toHaveBeenCalledWith('session-1');
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', { background: false });
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -913,7 +1002,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					true
+					true,
+					{ background: false }
 				);
 			});
 
@@ -936,7 +1026,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					false
+					false,
+					{ background: false }
 				);
 			});
 		});
@@ -999,7 +1090,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/../../etc/passwd'),
-					true
+					true,
+					{ background: false }
 				);
 			});
 
@@ -1215,6 +1307,7 @@ describe('WebSocketMessageHandler', () => {
 					shell: undefined,
 					name: undefined,
 					command: undefined,
+					background: false,
 				});
 			});
 
@@ -1240,6 +1333,7 @@ describe('WebSocketMessageHandler', () => {
 					shell: 'bash',
 					name: 'build logs',
 					command: undefined,
+					background: false,
 				});
 			});
 		});

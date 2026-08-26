@@ -75,6 +75,7 @@ import type {
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
 	CreateWorktreeSessionCallback,
+	BackgroundOption,
 	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
@@ -402,9 +403,9 @@ export class CallbackRegistry {
 		return this.callbacks.selectTab(sessionId, tabId);
 	}
 
-	async newTab(sessionId: string): Promise<{ tabId: string } | null> {
+	async newTab(sessionId: string, options?: BackgroundOption): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
-		return this.callbacks.newTab(sessionId);
+		return this.callbacks.newTab(sessionId, options);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -432,9 +433,14 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
-	async openFileTab(sessionId: string, filePath: string, switchToAgent: boolean): Promise<boolean> {
+	async openFileTab(
+		sessionId: string,
+		filePath: string,
+		switchToAgent: boolean,
+		options?: BackgroundOption
+	): Promise<boolean> {
 		if (!this.callbacks.openFileTab) return false;
-		return this.callbacks.openFileTab(sessionId, filePath, switchToAgent);
+		return this.callbacks.openFileTab(sessionId, filePath, switchToAgent, options);
 	}
 
 	async openModal(params: OpenModalParams): Promise<boolean> {
@@ -705,10 +711,11 @@ export class CallbackRegistry {
 		toolType: string,
 		cwd: string,
 		groupId?: string,
-		config?: CreateSessionConfig
+		config?: CreateSessionConfig,
+		options?: BackgroundOption
 	): Promise<{ sessionId: string } | null> {
 		if (!this.callbacks.createSession) return null;
-		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
+		return this.callbacks.createSession(name, toolType, cwd, groupId, config, options);
 	}
 
 	async createWorktreeSession(

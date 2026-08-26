@@ -963,7 +963,8 @@ export class WebServer {
 				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
-			newTab: async (sessionId: string) => this.callbackRegistry.newTab(sessionId),
+			newTab: async (sessionId: string, options?: { background?: boolean }) =>
+				this.callbackRegistry.newTab(sessionId, options),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>
@@ -973,8 +974,12 @@ export class WebServer {
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
-			openFileTab: async (sessionId: string, filePath: string, switchToAgent: boolean) =>
-				this.callbackRegistry.openFileTab(sessionId, filePath, switchToAgent),
+			openFileTab: async (
+				sessionId: string,
+				filePath: string,
+				switchToAgent: boolean,
+				options?: { background?: boolean }
+			) => this.callbackRegistry.openFileTab(sessionId, filePath, switchToAgent, options),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
@@ -983,7 +988,13 @@ export class WebServer {
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
 			openTerminalTab: async (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					background?: boolean;
+				}
 			) => this.callbackRegistry.openTerminalTab(sessionId, config),
 			writeTerminalTab: async (sessionId: string, payload: WriteTerminalTabPayload) =>
 				this.callbackRegistry.writeTerminalTab(sessionId, payload),
@@ -1067,8 +1078,9 @@ export class WebServer {
 				toolType: string,
 				cwd: string,
 				groupId?: string,
-				config?: CreateSessionConfig
-			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config),
+				config?: CreateSessionConfig,
+				options?: { background?: boolean }
+			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config, options),
 			createWorktreeSession: async (
 				parentSessionId: string,
 				config: Parameters<CallbackRegistry['createWorktreeSession']>[1]

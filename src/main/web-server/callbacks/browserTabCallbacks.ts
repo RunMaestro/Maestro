@@ -105,7 +105,15 @@ export function registerBrowserTabCallbacks(
 	server.setOpenTerminalTabCallback(
 		async (
 			sessionId: string,
-			config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+			// `background` travels inside config, which is forwarded to the renderer
+			// verbatim - no separate arg to keep in sync.
+			config: {
+				cwd?: string;
+				shell?: string;
+				name?: string | null;
+				command?: string;
+				background?: boolean;
+			}
 		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {

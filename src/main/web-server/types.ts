@@ -336,7 +336,20 @@ export type SelectSessionCallback = (
  * Tab operation callbacks for multi-tab support.
  */
 export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
-export type NewTabCallback = (sessionId: string) => Promise<{ tabId: string } | null>;
+/**
+ * Opt-in "don't move the view" flag carried by every desktop surface-creating
+ * callback. Absent (or false) means the historical focusing behaviour, so no
+ * existing caller changes; true means the surface is created and addressable
+ * while neither the active agent nor the active tab within any agent moves.
+ */
+export interface BackgroundOption {
+	background?: boolean;
+}
+
+export type NewTabCallback = (
+	sessionId: string,
+	options?: BackgroundOption
+) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type RenameTabCallback = (
 	sessionId: string,
@@ -357,7 +370,8 @@ export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 export type OpenFileTabCallback = (
 	sessionId: string,
 	filePath: string,
-	switchToAgent: boolean
+	switchToAgent: boolean,
+	options?: BackgroundOption
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
@@ -488,6 +502,11 @@ export interface OpenTerminalTabConfig {
 	 * the behavior a long-running `npm run dev` wants.
 	 */
 	command?: string;
+	/**
+	 * Create the tab without moving the user: no agent switch, no active-tab
+	 * change, and no flip into terminal mode.
+	 */
+	background?: boolean;
 }
 export interface OpenTerminalTabResult {
 	success: boolean;
@@ -1005,7 +1024,8 @@ export type CreateSessionCallback = (
 	toolType: string,
 	cwd: string,
 	groupId?: string,
-	config?: CreateSessionConfig
+	config?: CreateSessionConfig,
+	options?: BackgroundOption
 ) => Promise<{ sessionId: string } | null>;
 /**
  * Create a new agent in a git worktree branched off an existing parent agent,

@@ -432,8 +432,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string) => {
+			(sessionId: string, responseChannel: string, options?: { background?: boolean }) => {
 				let newTabId: string | null = null;
+				// `tab new --background`: the tab is created and returned, but the
+				// agent stays on whatever tab the user was looking at. createTab's
+				// `activate: false` is the same switch `dispatch --new-tab` already
+				// rides, so the two verbs cannot drift.
+				const background = options?.background === true;
 
 				setSessions((prev) =>
 					prev.map((s) => {
@@ -443,6 +448,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						const result = createTab(s, {
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
+							activate: !background,
 						});
 						if (!result) return s;
 						newTabId = result.tab.id;
@@ -876,10 +882,20 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenFileTab(
-			(sessionId: string, filePath: string, switchToAgent: boolean) => {
+			(
+				sessionId: string,
+				filePath: string,
+				switchToAgent: boolean,
+				options?: { background?: boolean }
+			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openFileTab', {
-						detail: { sessionId, filePath, switchToAgent },
+						detail: {
+							sessionId,
+							filePath,
+							switchToAgent,
+							background: options?.background === true,
+						},
 					})
 				);
 			}
@@ -1180,7 +1196,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribe = window.maestro.process.onRemoteOpenTerminalTab(
 			(
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					background?: boolean;
+				},
 				responseChannel: string
 			) => {
 				window.dispatchEvent(
@@ -1628,11 +1650,20 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				options?: { background?: boolean }
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCreateSession', {
-						detail: { name, toolType, cwd, groupId, config, responseChannel },
+						detail: {
+							name,
+							toolType,
+							cwd,
+							groupId,
+							config,
+							responseChannel,
+							background: options?.background === true,
+						},
 					})
 				);
 			}

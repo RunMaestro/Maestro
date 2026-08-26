@@ -76,6 +76,33 @@ describe('create-agent command', () => {
 			expect(sentPayload.contextWindowSource).toBeUndefined();
 		});
 
+		it('sends background only when --background is passed', async () => {
+			let sentPayload: Record<string, unknown> = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'id-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex' });
+			// Absent means focus, exactly as before this flag existed.
+			expect(sentPayload.background).toBeUndefined();
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', background: true });
+			expect(sentPayload.background).toBe(true);
+			// It is a view instruction, not agent config, so it must not land in
+			// the CreateSessionConfig block the renderer spreads onto the Session.
+			expect(sentPayload.customArgs).toBeUndefined();
+		});
+
 		it('should send config fields when provided', async () => {
 			let sentPayload: Record<string, unknown> = {};
 			vi.mocked(withMaestroClient).mockImplementation(async (action) => {

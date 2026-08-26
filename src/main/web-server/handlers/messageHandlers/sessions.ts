@@ -101,8 +101,14 @@ export function handleCreateSession(
 	if (message.autoRunFolderPath) config.autoRunFolderPath = message.autoRunFolderPath as string;
 	const hasConfig = Object.keys(config).length > 0;
 
+	// `background` rides beside the config block rather than inside it: creating
+	// the agent unfocused is a view instruction, and CreateSessionConfig's fields
+	// map 1:1 to createNewSession's params. Absent keeps the existing focusing
+	// behaviour, so no caller changes.
+	const background = message.background === true;
+
 	ctx.callbacks
-		.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined)
+		.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined, { background })
 		.then((result) => {
 			ctx.send(client, {
 				type: 'create_session_result',
