@@ -23,25 +23,20 @@ import { getAutoRunFolderPath } from './existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from './terminalTabHelpers';
 import {
 	findActiveUnifiedTabIndex,
+	getNavigableUnifiedTabOrder,
 	insertAfterActiveInUnifiedTabOrder,
+	isAiTabHidden,
 } from './unifiedTabOrderUtils';
+
+// Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
+// circular import; re-exported here because tabHelpers is where callers look for
+// tab visibility rules.
+export { getNavigableUnifiedTabOrder, isAiTabHidden };
 import { useSettingsStore } from '../stores/settingsStore';
 import { isWindowsPlatform } from './platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersistence';
 import { getLiveDraft } from './liveDraftStore';
 import { codifyQueuedTurnSettings } from './providerTabSessions';
-
-/**
- * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
- * Currently only unopened cross-agent consult tabs (see `AITab.hidden`).
- *
- * The single predicate behind both visibility surfaces: `buildUnifiedTabs` (what
- * renders) and `getNavigableTabs` (what Cmd+1..9 / cycling reaches). They must
- * agree, or a shortcut lands on a tab the strip never showed.
- */
-export function isAiTabHidden(tab: AITab): boolean {
-	return tab.hidden === true;
-}
 
 /**
  * Reveal a hidden AI tab, permanently. Called when the user deliberately opens a
@@ -1204,8 +1199,13 @@ export function closeTab(
 			// This respects the visual tab order which includes terminal and file tabs -
 			// without this, closing an AI tab that sits to the right of a terminal tab
 			// would fall back to a random AI tab instead of the adjacent terminal tab.
-			// We use getRepairedUnifiedTabOrder to skip stale/duplicate refs (same as rendering).
-			const unifiedOrder = getRepairedUnifiedTabOrder(session);
+			// We use the navigable order to skip stale/duplicate refs and refs the strip
+			// doesn't render (same as rendering) - landing on a hidden neighbor would
+			// swap the panel to a conversation with no chip to click back from.
+			const unifiedOrder = getNavigableUnifiedTabOrder(
+				session,
+				getRepairedUnifiedTabOrder(session)
+			);
 			const closedUnifiedIndex = unifiedOrder.findIndex(
 				(ref) => ref.type === 'ai' && ref.id === tabId
 			);
@@ -1581,6 +1581,15 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 		(ref) => !(ref.type === 'file' && ref.id === tabId)
 	);
 
+	// Two coordinate spaces on purpose: `unifiedIndex` above is a position in the
+	// PERSISTED order, which is what a reopen restores the tab into, while picking
+	// the neighbor to activate walks the NAVIGABLE order - refs the strip never
+	// renders are not tabs the user can be handed after a close.
+	const navigableRemaining = getNavigableUnifiedTabOrder(session, updatedUnifiedTabOrder);
+	const navigableIndex = getNavigableUnifiedTabOrder(session, repairedOrder).findIndex(
+		(ref) => ref.type === 'file' && ref.id === tabId
+	);
+
 	// Determine new active tab if we closed the active file tab
 	let newActiveFileTabId = session.activeFileTabId;
 	let newActiveBrowserTabId = session.activeBrowserTabId;
@@ -1591,10 +1600,10 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 	if (session.activeFileTabId === tabId) {
 		// This was the active tab - select the tab to the left in unifiedTabOrder
 		// If closing the first tab, select the new first tab
-		if (updatedUnifiedTabOrder.length > 0 && unifiedIndex !== -1) {
+		if (navigableRemaining.length > 0 && navigableIndex !== -1) {
 			// Select the tab to the left (previous tab), or first tab if we were at position 0
-			const newIndex = Math.max(0, unifiedIndex - 1);
-			const nextTabRef = updatedUnifiedTabOrder[newIndex];
+			const newIndex = Math.max(0, navigableIndex - 1);
+			const nextTabRef = navigableRemaining[newIndex];
 
 			if (nextTabRef.type === 'file') {
 				// Previous tab is a file tab
@@ -1620,9 +1629,9 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newActiveTerminalTabId = null;
 				newInputMode = 'ai';
 			}
-		} else if (updatedUnifiedTabOrder.length > 0) {
+		} else if (navigableRemaining.length > 0) {
 			// Fallback: just select the first available tab
-			const firstTabRef = updatedUnifiedTabOrder[0];
+			const firstTabRef = navigableRemaining[0];
 			if (firstTabRef.type === 'file') {
 				newActiveFileTabId = firstTabRef.id;
 				newActiveBrowserTabId = null;
@@ -1712,10 +1721,17 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 	let nextInputMode = session.inputMode;
 
 	if (session.activeBrowserTabId === tabId) {
+		// Neighbor selection walks the NAVIGABLE order (what the strip renders), while
+		// closedTabEntry.unifiedIndex above stays in persisted-order coordinates so a
+		// reopen lands back in the same slot.
+		const navigableRemaining = getNavigableUnifiedTabOrder(session, updatedUnifiedTabOrder);
+		const navigableIndex = getNavigableUnifiedTabOrder(session, repairedOrder).findIndex(
+			(ref) => ref.type === 'browser' && ref.id === tabId
+		);
 		const fallbackRef =
-			updatedUnifiedTabOrder.length > 0 && unifiedIndex !== -1
-				? updatedUnifiedTabOrder[Math.max(0, unifiedIndex - 1)]
-				: (updatedUnifiedTabOrder[0] ?? null);
+			navigableRemaining.length > 0 && navigableIndex !== -1
+				? navigableRemaining[Math.max(0, navigableIndex - 1)]
+				: (navigableRemaining[0] ?? null);
 
 		nextActiveBrowserTabId = null;
 		if (fallbackRef?.type === 'ai') {
@@ -2729,17 +2745,19 @@ export function navigateToUnifiedTabByIndex(
 	showUnreadOnly = false
 ): NavigateToUnifiedTabResult | null {
 	// Use repaired order that includes any orphaned tabs (keeps navigation
-	// consistent with what buildUnifiedTabs renders in the tab bar)
+	// consistent with what buildUnifiedTabs renders in the tab bar), then drop the
+	// refs the strip never renders - the index must count chips, not stored refs.
 	const repairedOrder = getRepairedUnifiedTabOrder(session);
-	if (!session || repairedOrder.length === 0) {
+	const navigableOrder = getNavigableUnifiedTabOrder(session, repairedOrder);
+	if (!session || navigableOrder.length === 0) {
 		return null;
 	}
 
 	// When the unread filter is active, index into the filtered order so Cmd+N matches
 	// the Nth tab the user actually sees in the tab bar.
 	const effectiveOrder = showUnreadOnly
-		? filterUnifiedTabOrderForUnread(session, repairedOrder)
-		: repairedOrder;
+		? filterUnifiedTabOrderForUnread(session, navigableOrder)
+		: navigableOrder;
 
 	// Check if index is within bounds
 	if (index < 0 || index >= effectiveOrder.length) {
@@ -2945,7 +2963,10 @@ export function navigateToUnifiedTabById(
 	tabKind: UnifiedTabRef['type'],
 	tabId: string
 ): NavigateToUnifiedTabResult | null {
-	const order = getRepairedUnifiedTabOrder(session);
+	// Index into the navigable order, the same list navigateToUnifiedTabByIndex
+	// counts - a breadcrumb resolved against the persisted order would be off by
+	// however many hidden refs sit to its left.
+	const order = getNavigableUnifiedTabOrder(session, getRepairedUnifiedTabOrder(session));
 	const index = order.findIndex((ref) => ref.type === tabKind && ref.id === tabId);
 	if (index === -1) return null;
 	// Pass showUnreadOnly=false: breadcrumb restore must reach the exact tab
@@ -2965,16 +2986,17 @@ export function navigateToLastUnifiedTab(
 	session: Session,
 	showUnreadOnly = false
 ): NavigateToUnifiedTabResult | null {
-	// Use repaired order so orphaned tabs are reachable via Cmd+0
-	const repairedOrder = getRepairedUnifiedTabOrder(session);
-	if (!session || repairedOrder.length === 0) {
+	// Use repaired order so orphaned tabs are reachable via Cmd+0, minus the refs
+	// the strip doesn't render (a hidden tab must never be "the last tab").
+	const navigableOrder = getNavigableUnifiedTabOrder(session, getRepairedUnifiedTabOrder(session));
+	if (!session || navigableOrder.length === 0) {
 		return null;
 	}
 
 	// When unread filter is active, "last" means the last tab currently shown in the tab bar.
 	const effectiveOrder = showUnreadOnly
-		? filterUnifiedTabOrderForUnread(session, repairedOrder)
-		: repairedOrder;
+		? filterUnifiedTabOrderForUnread(session, navigableOrder)
+		: navigableOrder;
 
 	// Find the last valid tab, skipping orphaned entries
 	for (let i = effectiveOrder.length - 1; i >= 0; i--) {
@@ -2992,7 +3014,8 @@ export function navigateToLastUnifiedTab(
  * @returns The index in unifiedTabOrder, or -1 if not found
  */
 function getCurrentUnifiedTabIndex(session: Session, effectiveOrder?: UnifiedTabRef[]): number {
-	const order = effectiveOrder || getRepairedUnifiedTabOrder(session);
+	const order =
+		effectiveOrder || getNavigableUnifiedTabOrder(session, getRepairedUnifiedTabOrder(session));
 	return findActiveUnifiedTabIndex(session, order);
 }
 
@@ -3011,17 +3034,18 @@ export function navigateToNextUnifiedTab(
 	session: Session,
 	showUnreadOnly = false
 ): NavigateToUnifiedTabResult | null {
-	// Use repaired order so orphaned tabs are included (consistent with tab bar rendering)
-	const repairedOrder = getRepairedUnifiedTabOrder(session);
-	if (!session || repairedOrder.length < 2) {
+	// Use repaired order so orphaned tabs are included, minus the refs the strip
+	// never renders - cycling must stop only on chips the user can see.
+	const navigableOrder = getNavigableUnifiedTabOrder(session, getRepairedUnifiedTabOrder(session));
+	if (!session || navigableOrder.length < 2) {
 		return null;
 	}
 
 	// When the unread filter is on, walk within the exact list TabBar renders - the shared
 	// filter is the single source of truth so navigation and display can never drift.
 	const effectiveOrder = showUnreadOnly
-		? filterUnifiedTabOrderForUnread(session, repairedOrder)
-		: repairedOrder;
+		? filterUnifiedTabOrderForUnread(session, navigableOrder)
+		: navigableOrder;
 	if (effectiveOrder.length < 2) {
 		return null;
 	}
@@ -3057,17 +3081,18 @@ export function navigateToPrevUnifiedTab(
 	session: Session,
 	showUnreadOnly = false
 ): NavigateToUnifiedTabResult | null {
-	// Use repaired order so orphaned tabs are included (consistent with tab bar rendering)
-	const repairedOrder = getRepairedUnifiedTabOrder(session);
-	if (!session || repairedOrder.length < 2) {
+	// Use repaired order so orphaned tabs are included, minus the refs the strip
+	// never renders - cycling must stop only on chips the user can see.
+	const navigableOrder = getNavigableUnifiedTabOrder(session, getRepairedUnifiedTabOrder(session));
+	if (!session || navigableOrder.length < 2) {
 		return null;
 	}
 
 	// When the unread filter is on, walk within the exact list TabBar renders - the shared
 	// filter is the single source of truth so navigation and display can never drift.
 	const effectiveOrder = showUnreadOnly
-		? filterUnifiedTabOrderForUnread(session, repairedOrder)
-		: repairedOrder;
+		? filterUnifiedTabOrderForUnread(session, navigableOrder)
+		: navigableOrder;
 	if (effectiveOrder.length < 2) {
 		return null;
 	}
@@ -3097,7 +3122,7 @@ export function navigateToPrevUnifiedTab(
  * @returns Object with the tab type, id, and updated session, or null if no terminal tabs exist
  */
 export function navigateToClosestTerminalTab(session: Session): NavigateToUnifiedTabResult | null {
-	const effectiveOrder = getRepairedUnifiedTabOrder(session);
+	const effectiveOrder = getNavigableUnifiedTabOrder(session, getRepairedUnifiedTabOrder(session));
 	if (!session || effectiveOrder.length === 0) return null;
 
 	// Find all terminal tab indices

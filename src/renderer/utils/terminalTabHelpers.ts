@@ -4,7 +4,10 @@
 
 import { Session, TerminalTab, ClosedTabEntry, UnifiedTabRef } from '../types';
 import { generateId } from './ids';
-import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
+import {
+	getNavigableUnifiedTabOrder,
+	insertAfterActiveInUnifiedTabOrder,
+} from './unifiedTabOrderUtils';
 
 /** Maximum number of closed terminal tab entries to expose via the public API (e.g., for UI limits). */
 export const MAX_CLOSED_TERMINAL_TABS = 10;
@@ -270,10 +273,17 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 	let fallbackRef: UnifiedTabRef | null = null;
 	let newActiveTerminalTabId = session.activeTerminalTabId;
 	if (session.activeTerminalTabId === tabId) {
-		if (updatedUnifiedTabOrder.length > 0 && unifiedIndex !== -1) {
-			const fallbackIndex = Math.max(0, unifiedIndex - 1);
-			fallbackRef =
-				updatedUnifiedTabOrder[Math.min(fallbackIndex, updatedUnifiedTabOrder.length - 1)];
+		// The neighbor to activate comes from the NAVIGABLE order (what the tab strip
+		// renders), while `unifiedIndex` above stays in stored-order coordinates so a
+		// reopen lands back in the same slot. Handing focus to a hidden ref would show
+		// a conversation with no chip to click back from.
+		const navigableRemaining = getNavigableUnifiedTabOrder(session, updatedUnifiedTabOrder);
+		const navigableIndex = getNavigableUnifiedTabOrder(session, unifiedOrder).findIndex(
+			(ref) => ref.type === 'terminal' && ref.id === tabId
+		);
+		if (navigableRemaining.length > 0 && navigableIndex !== -1) {
+			const fallbackIndex = Math.max(0, navigableIndex - 1);
+			fallbackRef = navigableRemaining[Math.min(fallbackIndex, navigableRemaining.length - 1)];
 		} else {
 			// unifiedTabOrder out of sync - fall back to terminalTabs position
 			const newIndex = Math.max(0, tabIndex - 1);

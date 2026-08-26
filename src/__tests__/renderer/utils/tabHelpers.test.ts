@@ -4474,6 +4474,87 @@ describe('tabHelpers', () => {
 			expect(revealAiTab(session, 'ai-1')).toBe(session);
 			expect(revealAiTab(session, 'nope')).toBe(session);
 		});
+
+		// A hidden tab keeps its unifiedTabOrder ref (that's what restores its position
+		// on reveal), so every index the keyboard uses has to be taken from the strip's
+		// list rather than the stored one. Otherwise cycling stops on chips that aren't
+		// drawn: the user presses prev-tab and the panel changes with no tab selected.
+		const hiddenConsultSession = () =>
+			createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'ai-1' }),
+					createMockTab({ id: 'consult-1', hidden: true }),
+					createMockTab({ id: 'consult-2', hidden: true }),
+					createMockTab({ id: 'ai-2' }),
+				],
+				activeTabId: 'ai-2',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'ai', id: 'consult-2' },
+					{ type: 'ai', id: 'ai-2' },
+				],
+			});
+
+		it('steps prev-tab straight past hidden tabs onto the previous chip', () => {
+			const result = navigateToPrevUnifiedTab(hiddenConsultSession());
+
+			expect(result?.id).toBe('ai-1');
+		});
+
+		it('steps next-tab straight past hidden tabs when wrapping', () => {
+			const session = { ...hiddenConsultSession(), activeTabId: 'ai-1' };
+
+			const result = navigateToNextUnifiedTab(session);
+
+			expect(result?.id).toBe('ai-2');
+		});
+
+		it('counts Cmd+N over visible chips only', () => {
+			const session = hiddenConsultSession();
+
+			expect(navigateToUnifiedTabByIndex(session, 1)?.id).toBe('ai-2');
+			// Two chips are rendered, so there is no third position to reach.
+			expect(navigateToUnifiedTabByIndex(session, 2)).toBeNull();
+		});
+
+		it('treats the last visible chip as the last tab', () => {
+			expect(navigateToLastUnifiedTab(hiddenConsultSession())?.id).toBe('ai-2');
+		});
+
+		it('resolves a tab by id against the visible order', () => {
+			const session = hiddenConsultSession();
+
+			expect(navigateToUnifiedTabById(session, 'ai', 'ai-2')?.id).toBe('ai-2');
+		});
+
+		it('hands focus to a visible neighbor when the active tab is closed', () => {
+			const result = closeTab(hiddenConsultSession(), 'ai-2');
+
+			expect(result?.session.activeTabId).toBe('ai-1');
+		});
+
+		it('hands focus to a visible neighbor when the active file tab is closed', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' }), createMockTab({ id: 'consult-1', hidden: true })],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+
+			const result = closeFileTab(session, 'file-1');
+
+			expect(result?.session.activeTabId).toBe('ai-1');
+			expect(result?.session.activeFileTabId).toBeNull();
+			// The hidden tab keeps its stored ref so revealing it still restores position.
+			expect(result?.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: 'consult-1' });
+		});
 	});
 
 	describe('buildUnifiedTabs', () => {
