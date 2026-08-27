@@ -602,3 +602,15 @@ export function selectActiveMediaItem(state: MediaPlaybackStoreState): MediaItem
 	if (!state.activeItemId) return null;
 	return state.items.find((item) => item.id === state.activeItemId) ?? null;
 }
+
+/**
+ * Whether the Left Bar header's now-playing pill is actually on screen.
+ *
+ * `NowPlayingIndicator` renders nothing unless BOTH of these hold, and the
+ * header needs the same answer to decide how much width the pill is taking.
+ * One selector because two copies of "is the pill on screen" is how a width
+ * reserve ends up describing a header nobody is looking at.
+ */
+export function selectNowPlayingVisible(state: MediaPlaybackStoreState): boolean {
+	return selectShowNowPlayingIndicator(state) && selectActiveMediaItem(state) !== null;
+}
