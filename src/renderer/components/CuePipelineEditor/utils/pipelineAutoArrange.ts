@@ -39,11 +39,22 @@
  * left-to-right) so packing tidies without scrambling placement.
  */
 
-import type { CuePipeline, PipelineNode } from '../../../../shared/cue-pipeline-types';
+import type {
+	AgentNodeData,
+	CommandNodeData,
+	CuePipeline,
+	PipelineNode,
+	TriggerNodeData,
+} from '../../../../shared/cue-pipeline-types';
+import {
+	getTriggerConfigSummary,
+	summarizeCommandNode,
+} from '../../../../shared/cue-pipeline-summary';
 import {
 	NODE_BG_WIDTH,
 	NODE_BG_HEIGHT,
 	PIPELINE_GROUP_PADDING,
+	computePipelineYOffsets,
 	resolvePipelineOffset,
 } from './pipelineGraph';
 
@@ -78,6 +89,65 @@ const ROW_HEIGHT = DEFAULT_NODE_HEIGHT; // tallest node drives the uniform row s
 
 function nodeHeight(node: PipelineNode): number {
 	return node.type === 'trigger' ? TRIGGER_HEIGHT : DEFAULT_NODE_HEIGHT;
+}
+
+// ─── Width estimation (layout without a DOM) ────────────────────────────────
+// Nodes render at `width: max-content`, so their true width is text-driven and
+// only known after ReactFlow measures the DOM. Automatic layout passes (load
+// heal, structural-change heal) run BEFORE or WITHOUT measurement, so they
+// estimate from the same text the node components render. The estimate is
+// deliberately floored at NODE_BG_WIDTH: short labels keep today's uniform
+// column pitch (uniformity reads as a grid), while long labels - a shell
+// command's `$ …` summary, a long agent name - widen their column so the next
+// one clears them instead of overlapping (the naive fixed-pitch overlap bug).
+// Estimation errs WIDE on purpose: an overestimate costs a few px of gutter,
+// an underestimate stacks one node on top of another.
+
+// Approximate advance width per character as a fraction of font size. The app
+// themes render nodes in monospace-leaning faces (~0.6em); 0.66 adds the
+// err-wide margin.
+const CHAR_EM = 0.66;
+// Fixed horizontal chrome shared by content nodes: 32px drag rail + content
+// padding + trailing icon column (gear / play / handles) + borders.
+const NODE_CHROME = 110;
+
+function textPx(text: string | undefined, fontSize: number): number {
+	return (text ?? '').length * fontSize * CHAR_EM;
+}
+
+/**
+ * Estimate a node's rendered width from its data. Used as the floor for every
+ * layout pass (measured widths still win when they're larger) so automatic
+ * re-layouts are deterministic: the same node data always yields the same
+ * estimate, DOM or no DOM.
+ */
+export function estimateNodeWidth(node: PipelineNode): number {
+	let content = 0;
+	switch (node.type) {
+		case 'trigger': {
+			const data = node.data as TriggerNodeData;
+			// 14px icon + 6px gap beside the 12px label; 10px config summary below.
+			content = Math.max(20 + textPx(data.label, 12), textPx(getTriggerConfigSummary(data), 10));
+			break;
+		}
+		case 'agent': {
+			const data = node.data as AgentNodeData;
+			// 13px semibold title; "(N)" instance suffix adds up to ~4 chars.
+			content = Math.max(textPx(`${data.sessionName} (0)`, 13), textPx(data.toolType, 11));
+			break;
+		}
+		case 'command': {
+			const data = node.data as CommandNodeData;
+			// 12px icon + gap + 13px name + mode badge (~5 chars at 9px + padding);
+			// 11px monospace summary below (summarizeCommandNode caps it at 38 chars).
+			content = Math.max(24 + textPx(data.name, 13) + 46, textPx(summarizeCommandNode(data), 11));
+			break;
+		}
+		case 'error':
+			// ErrorNode caps itself at maxWidth: 320.
+			return NODE_BG_WIDTH;
+	}
+	return Math.max(NODE_BG_WIDTH, Math.ceil(content + NODE_CHROME));
 }
 
 // Horizontal step between rank columns = footprint + gap. The canonical node
@@ -622,10 +692,12 @@ function arrangeByColumns(
 	// Nodes render at `width: max-content`, so a command node with a long path or
 	// a long agent name is far wider than the canonical NODE_BG_WIDTH footprint.
 	// A fixed column pitch would let those wide nodes overrun the next column
-	// (the "3-node chain crammed into 2 columns" bug). Use the REAL measured
-	// width when available so each column clears the previous one. Fallback to
-	// the footprint when unmeasured (e.g. unit tests, first paint).
-	const widthOf = (node: PipelineNode): number => nodeWidths?.get(node.id) ?? NODE_BG_WIDTH;
+	// (the "3-node chain crammed into 2 columns" bug). Take the larger of the
+	// REAL measured width (when ReactFlow has one) and the text-derived estimate,
+	// so each column clears the previous one even when layout runs before or
+	// without measurement (load heal, structural heal, unit tests).
+	const widthOf = (node: PipelineNode): number =>
+		Math.max(nodeWidths?.get(node.id) ?? 0, estimateNodeWidth(node));
 
 	const arranged: PipelineNode[] = [];
 	let stackBottom = 0;
@@ -816,4 +888,50 @@ export function arrangePipelineGroups(
 		}
 	}
 	return result;
+}
+
+// ─── Beautify (automatic layout, no buttons) ────────────────────────────────
+
+/**
+ * Make every pipeline circuit-board clean in one pure pass: untangle each
+ * pipeline's nodes (crossing-minimized flow columns, seeded by the current
+ * order so user intent survives as ORDER even though pixels are re-derived)
+ * and pack the All-Pipelines group cards into a masonry via a fresh
+ * `viewOffset` per pipeline.
+ *
+ * This is the engine behind layout being maintenance-free: it runs on load
+ * (heals whatever other agents wrote into cue.yaml at naive default positions)
+ * and after every structural change in the editor (connect, drop, delete,
+ * duplicate, discard). Node widths come from `estimateNodeWidth` unioned with
+ * any measured widths the caller has, so the pass works identically with or
+ * without a DOM.
+ *
+ * Pipelines with 0 or 1 nodes keep their node positions (nothing to lay out);
+ * they still receive a packed `viewOffset`. Returns a NEW array; inputs are
+ * not mutated. Callers deciding "did this change anything?" should compare
+ * JSON snapshots - the pass always produces fresh node objects.
+ *
+ * @param viewport editor canvas (or window) dimensions; only the aspect ratio
+ *   matters - it picks how many side-by-side column-groups the untangle packs
+ *   independent sub-circuits into. Absent, everything stacks in one column.
+ * @param nodeWidths optional measured widths (canonical node id → px), unioned
+ *   with estimates per `arrangeByColumns`.
+ */
+export function beautifyPipelineLayouts(
+	pipelines: CuePipeline[],
+	viewport?: { width: number; height: number },
+	nodeWidths?: Map<string, number>
+): CuePipeline[] {
+	const untangled = pipelines.map((p) =>
+		p.nodes.length > 1 ? { ...p, nodes: untanglePipelineNodes(p, nodeWidths, viewport) } : p
+	);
+	// Card packing reads each pipeline's CURRENT resolved offset only to keep
+	// reading order, so feed it the same auto-stack offsets the renderer uses
+	// for never-dragged pipelines.
+	const offsets = arrangePipelineGroups(untangled, computePipelineYOffsets(untangled, null));
+	if (offsets.size === 0) return untangled;
+	return untangled.map((p) => {
+		const next = offsets.get(p.id);
+		return next ? { ...p, viewOffset: next } : p;
+	});
 }
