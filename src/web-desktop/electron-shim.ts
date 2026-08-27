@@ -28,7 +28,14 @@ interface BridgeConfig {
 
 declare global {
 	interface Window {
-		__MAESTRO_CONFIG__?: { wsUrl: string; apiBase: string; securityToken: string };
+		__MAESTRO_CONFIG__?: {
+			wsUrl: string;
+			apiBase: string;
+			securityToken: string;
+			/** Read-only token for the Concerto HTML document route. Optional so an
+			 *  older server's page still type-checks against this bundle. */
+			concertoToken?: string;
+		};
 	}
 }
 

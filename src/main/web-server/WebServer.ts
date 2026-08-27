@@ -34,7 +34,7 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, ConcertoRoutes, StaticRoutes, WsRoute } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -188,6 +188,12 @@ export class WebServer {
 	// Security token - persistent or regenerated per startup
 	private securityToken: string;
 
+	// Read-only token for the Concerto HTML document route. Deliberately NOT the
+	// security token above: a Concerto document is sandboxed but can still
+	// navigate its own frame, so anything in its URL can leave the machine.
+	// Regenerated every startup - documents are in-memory and never outlive it.
+	private concertoToken: string = randomUUID().replace(/-/g, '');
+
 	// Local IP address for generating URLs (detected at startup)
 	private localIpAddress: string = 'localhost';
 
@@ -203,6 +209,7 @@ export class WebServer {
 
 	// Route instances
 	private apiRoutes: ApiRoutes;
+	private concertoRoutes: ConcertoRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
@@ -254,10 +261,12 @@ export class WebServer {
 
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
+		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
 			this.webAssetsPath,
-			this.webDesktopPath
+			this.webDesktopPath,
+			this.concertoToken
 		);
 		this.wsRoute = new WsRoute(this.securityToken);
 
@@ -888,6 +897,9 @@ export class WebServer {
 			isSessionLive: (sessionId) => this.liveSessionManager.isSessionLive(sessionId),
 		});
 		this.apiRoutes.registerRoutes(this.server);
+
+		// Concerto HTML documents for browser clients (no custom-scheme handler).
+		this.concertoRoutes.registerRoutes(this.server);
 
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
