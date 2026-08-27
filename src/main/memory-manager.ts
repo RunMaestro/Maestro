@@ -32,12 +32,21 @@ export interface MemoryStats {
 	totalBytes: number;
 }
 
+export interface MemorySearchMatch {
+	name: string; // filename of the matching entry
+	matchedName: boolean; // the query matched the filename itself
+	snippet?: string; // first matching body line, trimmed and capped
+}
+
 export interface MemoryListResult {
 	directoryPath: string;
 	exists: boolean;
 	entries: MemoryEntry[];
 	stats: MemoryStats;
 }
+
+/** Longest body excerpt a search match carries back to the list row. */
+const SNIPPET_MAX_CHARS = 120;
 
 /** Resolve the memory directory path for a given project. */
 export function getMemoryDirectoryPath(
@@ -199,4 +208,48 @@ export async function deleteMemoryEntry(
 	}
 	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
 	await fs.unlink(path.join(dir, filename));
+}
+
+/**
+ * Case-insensitive keyword search across memory files.
+ *
+ * Matches on the filename AND on the file body, because the viewer's filter box
+ * is how the user finds a memory they only remember the contents of. Returns
+ * the matching entries in the same pinned/alphabetical order `listMemoryEntries`
+ * uses, each carrying the first matching body line so the list row can show why
+ * it matched.
+ *
+ * An empty/whitespace query returns every entry (no filter applied).
+ */
+export async function searchMemoryEntries(
+	projectPath: string,
+	query: string,
+	agentId: string = 'claude-code',
+	homeDir?: string
+): Promise<MemorySearchMatch[]> {
+	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir);
+	const needle = query.trim().toLowerCase();
+	if (!needle) return entries.map((e) => ({ name: e.name, matchedName: false }));
+
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const matches: MemorySearchMatch[] = [];
+
+	for (const entry of entries) {
+		const matchedName = entry.name.toLowerCase().includes(needle);
+		let snippet: string | undefined;
+		try {
+			const content = await fs.readFile(path.join(dir, entry.name), 'utf8');
+			const line = content
+				.split('\n')
+				.find((l) => l.toLowerCase().includes(needle))
+				?.trim();
+			if (line)
+				snippet = line.length > SNIPPET_MAX_CHARS ? `${line.slice(0, SNIPPET_MAX_CHARS)}…` : line;
+		} catch {
+			// Unreadable file (deleted mid-search): fall back to the name match alone.
+		}
+		if (matchedName || snippet) matches.push({ name: entry.name, matchedName, snippet });
+	}
+
+	return matches;
 }

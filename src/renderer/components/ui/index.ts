@@ -11,6 +11,9 @@ export type { ModalProps, ModalFooterProps } from './Modal';
 export { FormInput } from './FormInput';
 export type { FormInputProps } from './FormInput';
 
+export { FilterInput } from './FilterInput';
+export type { FilterInputProps } from './FilterInput';
+
 export { EmojiPickerField } from './EmojiPickerField';
 export type { EmojiPickerFieldProps } from './EmojiPickerField';
 

@@ -21,6 +21,7 @@ The `window.maestro` API exposes the following namespaces:
 - `agents` - Detect, get, config, refresh, custom paths, getCapabilities
 - `agentSessions` - Generic provider session storage API (list, read, search, delete)
 - `agentError` - Agent error handling (clearError, retryAfterError)
+- `memory` - Claude Code per-project memory (list, read, write, create, delete, search, getPath). `search` matches a query against both filenames and file bodies and returns the first matching line per hit, so the Memory Viewer's filter box does not have to pull every file into the renderer.
 - `claude` - (Deprecated) Claude Code provider sessions - use `agentSessions` instead
 
 ## Git Integration

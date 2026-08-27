@@ -17,6 +17,9 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from './shared/DualPaneFileEditor';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
+import { FilterInput } from './ui/FilterInput';
+import { useDebouncedValue } from '../hooks/utils/useThrottle';
+import { useModalStore } from '../stores/modalStore';
 
 interface MemoryViewerProps {
 	theme: Theme;
@@ -58,6 +61,17 @@ function starterContentFor(filename: string): string {
 	return filename === 'MEMORY.md' ? INDEX_STARTER_CONTENT : ENTRY_STARTER_CONTENT;
 }
 
+/**
+ * The entry to land on after `deleted` disappears: the one below it, else the
+ * one above. Keeps a Backspace-through cleanup pass moving in one direction
+ * instead of bouncing back to the MEMORY.md index after every delete.
+ */
+function nextSelectionAfterDelete(visibleNames: string[], deleted: string): string | null {
+	const index = visibleNames.indexOf(deleted);
+	if (index === -1) return null;
+	return visibleNames[index + 1] ?? visibleNames[index - 1] ?? null;
+}
+
 function suggestNewFilename(existing: Set<string>): string {
 	// First file should always be MEMORY.md (the index that points at every other entry).
 	if (existing.size === 0) return 'MEMORY.md';
@@ -96,6 +110,17 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+	// Keyword filter. `matches` is null while no filter is applied; a Map (name
+	// -> first matching body line) once one is, so an empty Map means "filter
+	// active, nothing matched" rather than "no filter".
+	const [filterQuery, setFilterQuery] = useState('');
+	const debouncedFilter = useDebouncedValue(filterQuery, 150);
+	const [matches, setMatches] = useState<Map<string, string | undefined> | null>(null);
+
+	// Bumped after a delete so focus returns to the list and the next Backspace
+	// keeps working (the row that had focus was just unmounted).
+	const [listFocusToken, setListFocusToken] = useState(0);
+
 	const [createModalOpen, setCreateModalOpen] = useState(false);
 	const [createName, setCreateName] = useState('');
 	const [createError, setCreateError] = useState<string | null>(null);
@@ -103,8 +128,17 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const createInputRef = useRef<HTMLInputElement>(null);
 
 	const layerIdRef = useRef<string>();
-	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
+	// Escape clears an active filter before it closes the viewer: the layer
+	// stack handles the key at capture, so an input-local handler would never
+	// see it and the user would lose the whole pane while resetting a filter.
+	const onEscapeRef = useRef<() => void>(() => {});
+	onEscapeRef.current = () => {
+		if (filterQuery) {
+			setFilterQuery('');
+			return;
+		}
+		onClose();
+	};
 
 	const { registerLayer, unregisterLayer } = useLayerStack();
 
@@ -117,7 +151,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			capturesFocus: false,
 			focusTrap: 'lenient',
 			ariaLabel: 'Project Memory Viewer',
-			onEscape: () => onCloseRef.current(),
+			onEscape: () => onEscapeRef.current(),
 		});
 		return () => {
 			if (layerIdRef.current) unregisterLayer(layerIdRef.current);
@@ -206,6 +240,49 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		void reloadList();
 	}, [reloadList]);
 
+	// Content search runs in the main process (it has to read every file), so it
+	// is debounced and re-runs whenever the file set changes under it.
+	useEffect(() => {
+		const query = debouncedFilter.trim();
+		if (!query || !projectPath) {
+			setMatches(null);
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			const result = await window.maestro.memory.search(projectPath, query, agentId);
+			if (cancelled) return;
+			if (!result.success) {
+				setActionError(result.error || 'Failed to search memory');
+				return;
+			}
+			setMatches(new Map((result.matches || []).map((m) => [m.name, m.snippet])));
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [debouncedFilter, projectPath, agentId, entries]);
+
+	const filteredEntries = useMemo(
+		() => (matches ? entries.filter((e) => matches.has(e.name)) : entries),
+		[entries, matches]
+	);
+
+	// Read at delete time to pick the next selection; a ref keeps the delete
+	// callbacks off the filtered list's identity.
+	const visibleNamesRef = useRef<string[]>([]);
+	visibleNamesRef.current = filteredEntries.map((e) => e.name);
+
+	// A filter that hides the current selection moves to the top hit, so typing
+	// shows the match instead of an empty editor. Unsaved edits win: never yank
+	// the user off a file they have changed.
+	useEffect(() => {
+		if (!matches || hasUnsavedChanges) return;
+		if (selectedName && matches.has(selectedName)) return;
+		const first = filteredEntries[0];
+		if (first) void loadEntry(first.name);
+	}, [matches, filteredEntries, selectedName, hasUnsavedChanges, loadEntry]);
+
 	const handleSelect = useCallback(
 		async (name: string) => {
 			if (name === selectedName) return;
@@ -243,31 +320,50 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		}
 	}, [selectedName, hasUnsavedChanges, editedContent, projectPath, agentId, reloadList]);
 
-	const handleDelete = useCallback(async () => {
-		if (!selectedName) return;
-		if (selectedName === 'MEMORY.md') {
-			setActionError('MEMORY.md is the index and cannot be deleted from the viewer');
-			return;
-		}
-		const confirmed = window.confirm(
-			`Delete memory file "${selectedName}"? This cannot be undone.`
-		);
-		if (!confirmed) return;
+	const performDelete = useCallback(
+		async (name: string) => {
+			const nextName = nextSelectionAfterDelete(visibleNamesRef.current, name);
+			setIsDeleting(true);
+			setActionError(null);
+			try {
+				const result = await window.maestro.memory.delete(projectPath, name, agentId);
+				if (!result.success) {
+					setActionError(result.error || `Failed to delete ${name}`);
+					return;
+				}
+				setSuccessMessage(`Deleted ${name}`);
+				await reloadList(nextName);
+			} finally {
+				setIsDeleting(false);
+				setListFocusToken((t) => t + 1);
+			}
+		},
+		[projectPath, agentId, reloadList]
+	);
 
-		setIsDeleting(true);
-		setActionError(null);
-		try {
-			const result = await window.maestro.memory.delete(projectPath, selectedName, agentId);
-			if (!result.success) {
-				setActionError(result.error || `Failed to delete ${selectedName}`);
+	/**
+	 * Raised by the Delete button and by Backspace/Delete on a focused list row.
+	 * Both go through the shared destructive confirm modal so the two paths
+	 * cannot drift on what they warn about.
+	 */
+	const requestDelete = useCallback(
+		(name: string) => {
+			if (!name) return;
+			if (name === 'MEMORY.md') {
+				setActionError('MEMORY.md is the index and cannot be deleted from the viewer');
 				return;
 			}
-			setSuccessMessage(`Deleted ${selectedName}`);
-			await reloadList(null);
-		} finally {
-			setIsDeleting(false);
-		}
-	}, [selectedName, projectPath, agentId, reloadList]);
+			useModalStore.getState().openModal('confirm', {
+				title: 'Delete Memory',
+				message: `Delete memory file "${name}"? This cannot be undone.`,
+				destructive: true,
+				onConfirm: () => {
+					void performDelete(name);
+				},
+			});
+		},
+		[performDelete]
+	);
 
 	const handleCreate = useCallback(() => {
 		if (!projectPath) return;
@@ -324,16 +420,18 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 
 	const items = useMemo<DualPaneFileEditorItem[]>(
 		() =>
-			entries.map((e) => {
+			filteredEntries.map((e) => {
 				const isCurrent = e.name === selectedName;
+				const snippet = matches?.get(e.name);
+				const meta = `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`;
 				return {
 					id: e.name,
 					label: e.name,
-					description: `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`,
+					description: snippet ? `${meta}\nmatch: ${snippet}` : meta,
 					isModified: isCurrent && hasUnsavedChanges,
 				};
 			}),
-		[entries, selectedName, hasUnsavedChanges]
+		[filteredEntries, matches, selectedName, hasUnsavedChanges]
 	);
 
 	const editorTokenCount = useMemo(
@@ -436,6 +534,16 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						last edited {formatRelativeTime(stats.lastModifiedAt)}
 					</span>
 				)}
+				<div className="flex-1" />
+				<FilterInput
+					theme={theme}
+					value={filterQuery}
+					onChange={setFilterQuery}
+					placeholder="Filter by name or content..."
+					ariaLabel="Filter memories by name or content"
+					width={280}
+					resultLabel={matches ? `${filteredEntries.length}/${entries.length}` : undefined}
+				/>
 			</div>
 
 			{/* Body */}
@@ -479,7 +587,11 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						items={items}
 						selectedId={selectedName}
 						onSelect={handleSelect}
-						emptyStateMessage="Select a memory file to view"
+						emptyStateMessage={
+							matches && filteredEntries.length === 0
+								? `No memory matches "${debouncedFilter.trim()}"`
+								: 'Select a memory file to view'
+						}
 						editorTitle={selectedName ?? undefined}
 						editorTokenCount={editorTokenCount}
 						showModifiedBadge={hasUnsavedChanges}
@@ -487,6 +599,8 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						successMessage={successMessage}
 						errorMessage={actionError}
 						listWidthStorageKey="maestro.memoryViewer.listWidth"
+						onDeleteItem={requestDelete}
+						listFocusToken={listFocusToken}
 						primaryAction={{
 							label: isSaving ? 'Saving…' : 'Save',
 							loading: isSaving,
@@ -500,7 +614,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 										loading: isDeleting,
 										disabled: isDeleting,
 										variant: 'danger',
-										onClick: handleDelete,
+										onClick: () => requestDelete(selectedName),
 									}
 								: undefined
 						}

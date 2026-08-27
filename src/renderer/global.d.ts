@@ -3811,6 +3811,15 @@ interface MaestroAPI {
 			filename: string,
 			agentId?: string
 		) => Promise<{ success: boolean; error?: string }>;
+		search: (
+			projectPath: string,
+			query: string,
+			agentId?: string
+		) => Promise<{
+			success: boolean;
+			matches?: Array<{ name: string; matchedName: boolean; snippet?: string }>;
+			error?: string;
+		}>;
 		getPath: (
 			projectPath: string,
 			agentId?: string
