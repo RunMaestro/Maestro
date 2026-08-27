@@ -465,6 +465,35 @@ describe('mediaPlaybackStore', () => {
 			expect(state.pendingAutoplay).toBe(false);
 		});
 
+		it('brings a hidden player back, without disturbing what is loaded', () => {
+			const a = request();
+			initial.openMedia(a);
+			initial.consumeAutoplay();
+			initial.setPlaying(true);
+			// Minimized to the header, or restored from disk and never touched:
+			// either way there is no widget on screen to queue into.
+			useMediaPlaybackStore.setState({ dismissed: true, dormant: true });
+
+			initial.enqueueMedia([request({ path: '/files/b.mp4', name: 'b.mp4', kind: 'video' })]);
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			// Un-hiding is not interrupting.
+			expect(state.activeItemId).toBe(idOf(a));
+			expect(state.playing).toBe(true);
+			expect(state.pendingAutoplay).toBe(false);
+		});
+
+		it('leaves a hidden player hidden when everything queued is already there', () => {
+			const a = request();
+			initial.openMedia(a);
+			initial.dismiss();
+
+			expect(initial.enqueueMedia([a])).toBe(0);
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+		});
+
 		it('loads the first file when the player is idle, so the queue is reachable', () => {
 			const a = request();
 			expect(initial.enqueueMedia([a])).toBe(1);
