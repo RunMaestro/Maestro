@@ -596,6 +596,24 @@ function validateSettings(rawSettings: unknown): string[] {
 			errors.push('"settings.queue_size" must be a non-negative integer between 0 and 10000');
 		}
 	}
+	if (settings.susfactor_enabled !== undefined) {
+		if (typeof settings.susfactor_enabled !== 'boolean') {
+			errors.push('"settings.susfactor_enabled" must be a boolean');
+		}
+	}
+	if (settings.susfactor_threshold !== undefined) {
+		// 0 would block everything and anything above 1 is unreachable on the
+		// endpoint's 0-1 scale, so both are configuration errors rather than
+		// aggressive-but-valid tuning.
+		if (
+			typeof settings.susfactor_threshold !== 'number' ||
+			!Number.isFinite(settings.susfactor_threshold) ||
+			settings.susfactor_threshold <= 0 ||
+			settings.susfactor_threshold > 1
+		) {
+			errors.push('"settings.susfactor_threshold" must be a number greater than 0 and at most 1');
+		}
+	}
 	if (settings.owner_agent_id !== undefined) {
 		if (typeof settings.owner_agent_id !== 'string' || settings.owner_agent_id.trim() === '') {
 			errors.push('"settings.owner_agent_id" must be a non-empty string (agent id or name)');

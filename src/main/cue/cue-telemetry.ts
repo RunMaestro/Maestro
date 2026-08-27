@@ -461,7 +461,7 @@ function computeTotals(events: CueTelemetryEvent[]): CueTelemetryPayload['totals
 	};
 }
 
-async function fetchWithTimeout(
+export async function fetchWithTimeout(
 	url: string,
 	options: RequestInit,
 	timeoutMs: number = FETCH_TIMEOUT_MS

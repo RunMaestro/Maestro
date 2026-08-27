@@ -32,6 +32,8 @@ import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
+import { setSusFactorNotifier } from './cue/cue-susfactor';
+import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -880,6 +882,25 @@ app
 					error: err instanceof Error ? err.message : String(err),
 				});
 			});
+
+		// SusFactor blocks are raised deep in the GitHub poll path, which has no
+		// BrowserWindow in scope. Register the emitter here (the one place that
+		// holds `mainWindow`) so the block notice reuses the existing Cue toast
+		// channel instead of inventing a second notification surface.
+		setSusFactorNotifier((notice) => {
+			emitCueNotifyToast(mainWindow, {
+				agentId: notice.sessionId,
+				title: 'Cue blocked a suspicious item',
+				message: `${notice.itemRef} scored ${notice.score.toFixed(2)} on the 0DIN SusFactor check and was NOT sent to the agent. Subscription "${notice.subscriptionName}". Review it before overriding.`,
+				// Sticky: this is a security decision the user has to acknowledge,
+				// not a status ping they can miss while looking elsewhere.
+				sticky: true,
+				color: 'red',
+				clickAction: notice.url
+					? { kind: 'open-url', url: notice.url }
+					: { kind: 'jump-session', sessionId: notice.sessionId },
+			});
+		});
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
