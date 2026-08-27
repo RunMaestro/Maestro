@@ -1,4 +1,4 @@
-<!-- Verified 2026-08-26 against origin/rc (9c689c545) -->
+<!-- Verified 2026-08-27 against origin/rc (53a448cf5) -->
 
 # Deduplication Tracker
 
@@ -6,12 +6,12 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 
 > **Note:** This `agent-guides` branch does not include the underlying `SCAN-*.md` evidence files (they live on the companion `docs/codebase-dedup-guides` branch). The tracker below references them by name for cross-reference; counts here were grep-verified as of the "Refreshed" date at the top. To re-verify against current code, grep the patterns described in each finding.
 
-**Status markers (as of 2026-08-26 verification against rc 9c689c545):**
+**Status markers (as of 2026-08-27 verification against rc 53a448cf5):**
 
 - This is a spot-check refresh, not a full re-scan of every count. Findings below that still quote April 2026 counts should be re-grepped before treating those numbers as current.
 - Component decomposition PARTIALLY RESOLVED: `MainPanel/`, `TabBar/`, `FilePreview/`, `AutoRun/`, `NewInstanceModal/`, `CueModal/` all exist as decomposed directories. Over-800-line files have grown since April: `AutoRun/AutoRun.tsx` (1,064), `NewInstanceModal/NewInstanceModal.tsx` (1,250), `FilePreview/FilePreview.tsx` (2,622). `DocumentGraphView.tsx` is 2,239.
-- **Canonical duration engine now exists:** `src/shared/duration.ts` (`humanizeDuration` plus presets). Re-exported from `src/shared/formatters.ts`. Do not add another unit ladder. `ThinkingStatusPill` still has a local `formatTime` seconds ladder (separate branch: `refactor/thinking-status-duration`).
-- **Canonical `formatTimestamp` now exists** at `src/shared/formatters.ts`. Finding #23 is no longer "create a canonical". Remaining work is deleting local wrappers that already call it, or that still hand-roll a relative ladder (`ParticipantCard`).
+- **Canonical duration engine now exists:** `src/shared/duration.ts` (`humanizeDuration` plus presets). Re-exported from `src/shared/formatters.ts`. Do not add another unit ladder. `ThinkingStatusPill` still has a local `formatTime` seconds ladder on `rc`. Open PR: [#1446](https://github.com/RunMaestro/Maestro/pull/1446) (`refactor/thinking-status-duration`).
+- **Canonical `formatTimestamp` now exists** at `src/shared/formatters.ts`. Finding #23 is no longer "create a canonical". Remaining work is deleting local wrappers that already call it, or that still hand-roll a relative ladder (`ParticipantCard` on `rc`). Open PR: [#1445](https://github.com/RunMaestro/Maestro/pull/1445) (`refactor/dedup-format-time`).
 - **Shared hooks that now exist in rc:**
   - `useModalLayer` at `src/renderer/hooks/ui/useModalLayer.ts`
   - `useActiveSession` at `src/renderer/hooks/session/useActiveSession.ts`
@@ -25,7 +25,7 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **Shared widget library now exists** (`src/renderer/components/widgets/`). Full reference: [WIDGET-LIBRARY.md](WIDGET-LIBRARY.md).
 - **Shared UI primitives that now exist** (April said missing): `GhostIconButton`, `Spinner`, `EmptyStatePlaceholder` in `src/renderer/components/ui/`. There is still no component named exactly `EmptyState`.
 - **Test helpers that now exist:** `src/__tests__/helpers/` (`mockSession`, `mockTheme`, `mockTab`, `resetStores`, and others). Finding #9 is no longer "create the folder".
-- **STILL missing / still open:** unified `SpecCommandManager` base (speckit and openspec managers still separate); dedicated `spawnGroupChatAgent.ts` helper (no file by that name). `tabHelpers.ts` is still a single ~3.4k-line file on `rc` (split started on `refactor/split-tab-helpers`, not merged yet).
+- **STILL missing / still open:** unified `SpecCommandManager` base (speckit and openspec managers still separate); dedicated `spawnGroupChatAgent.ts` helper (no file by that name). `tabHelpers.ts` is still a single 3,363-line file on `rc`. Open PR: [#1444](https://github.com/RunMaestro/Maestro/pull/1444) (`refactor/split-tab-helpers`).
 
 ## Priority Legend
 
@@ -274,9 +274,9 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **Evidence:** SCAN-FORMATTERS.md, "formatTime / formatTimestamp re-definitions"
 - **Count (April):** 15 local `formatTime`/`formatTimestamp` definitions with no canonical source
 - **KEEP:** Canonical `formatTimestamp(timestamp, style)` in `src/shared/formatters.ts`. Relative "just now" / "Xm ago" is `formatRelativeTime`. Elapsed tickers belong in `src/shared/duration.ts`, not this finding.
-- **2026-08-26: PARTIAL.** Canonical `formatTimestamp` exists. Remaining local wrappers (grep `function formatTime` / local `formatTimestamp`):
-  - Timestamp wrappers (should call `formatTimestamp` / `formatRelativeTime`): `ParticipantCard.tsx`, `HistoryEntryItem.tsx`, `HistoryDetailModal.tsx`, `GroupChatHistoryPanel.tsx`, `GroupChatMessages.tsx`, `groupChatExport.ts`, `tabExport.ts`, `CueModal/BackupTab.tsx`
-  - Not a timestamp: `ThinkingStatusPill.tsx` (elapsed seconds ladder), `AgentRunDashboard/dashboardHelpers.ts`
+- **2026-08-27: PARTIAL.** Canonical `formatTimestamp` exists. Remaining local wrappers on `rc` (grep `function formatTime` / local `formatTimestamp`):
+  - Timestamp wrappers (should call `formatTimestamp` / `formatRelativeTime`): `ParticipantCard.tsx`, `HistoryEntryItem.tsx`, `HistoryDetailModal.tsx`, `GroupChatHistoryPanel.tsx`, `GroupChatMessages.tsx`, `groupChatExport.ts`, `tabExport.ts`, `CueModal/BackupTab.tsx`. `ParticipantCard` and `HistoryEntryItem` are in [#1445](https://github.com/RunMaestro/Maestro/pull/1445).
+  - Not a timestamp: `ThinkingStatusPill.tsx` (elapsed seconds ladder, [#1446](https://github.com/RunMaestro/Maestro/pull/1446)), `AgentRunDashboard/dashboardHelpers.ts`
 - **CONSOLIDATE:** Delete the wrappers; do not add a second `formatTime` in formatters.ts.
 - **Estimated savings:** ~100 lines
 
@@ -407,7 +407,7 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 ### 39. Oversized Files (82 files over 800-line limit)
 
 - **Evidence:** SCAN-OVERSIZED.md, "Source Files Over 800 Lines"
-- **Count:** 82 source files exceed 800 lines. `App.tsx` at 4,034 (REGRESSION from 3,619), `symphony.ts` handler at 3,318 (was 3,301). `TabBar.tsx` FULLY RESOLVED (2,839 -> 542, split into `TabBar/` directory). `FilePreview.tsx` PARTIALLY RESOLVED (2,662 -> 1,320, split into `FilePreview/` directory). Also decomposed into directories on rc: `MainPanel/`, `AutoRun/`, `NewInstanceModal/`, `CueModal/`.
+- **Count:** 82 source files exceed 800 lines. `App.tsx` is 3,631 on `rc` as of 2026-08-27 (down from the April 4,034 peak). `TabBar.tsx` FULLY RESOLVED (split into `TabBar/` directory). `FilePreview/FilePreview.tsx` is 2,622 (the April "1,320 after split" figure did not hold). Also decomposed into directories on rc: `MainPanel/`, `AutoRun/`, `NewInstanceModal/`, `CueModal/`.
 - **Action:** Decompose top offenders as part of dedup work (many contain the duplicated patterns listed above). Prioritize `App.tsx` (worst offender, growing), `SymphonyModal.tsx`, `useTabHandlers.ts`, `useInputProcessing.ts`
 - **Estimated savings:** No direct line savings, but improved maintainability
 
