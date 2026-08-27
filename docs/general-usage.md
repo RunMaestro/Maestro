@@ -415,7 +415,7 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 
 ### Force Send
 
-When [Forced Parallel Execution](./features) is enabled and another tab in the same agent is already working, a queued item gains a **Force Send** button. This dispatches that message immediately, running it in parallel instead of waiting its turn in the cross-tab queue. A confirmation lists which other tabs are currently busy before it sends.
+A queued item carries a **Force Send** button that dispatches that message immediately instead of waiting its turn in the cross-tab queue. On a quiet agent it just sends. When another tab in the same agent is already working, it runs the message in parallel and a confirmation lists which other tabs are busy first - which needs [Forced Parallel Execution](./features) enabled, so with that setting off the button is visible but dimmed and says so. The button is hidden when there is nothing to force: the item's own tab is mid-turn, so the item is next in line regardless, or the tab it was queued for is gone. This is the same rule the **Send Now** button in the Execution Queue view follows.
 
 `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` does the same thing from the keyboard, and it works wherever you are in the app - you do not have to click into the input box first. With text in the input, it sends what you typed in parallel; with the input empty, it force-sends the newest eligible queued item.
 
@@ -423,7 +423,7 @@ When [Forced Parallel Execution](./features) is enabled and another tab in the s
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
-Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims with an explanation when the item cannot run yet: its own tab is mid-turn, or another tab in that agent is working and Forced Parallel Execution is off. When another tab is working, Send Now confirms first and lists which tabs are busy.
+Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims with an explanation when the item cannot run yet because another tab in that agent is working and Forced Parallel Execution is off - a state you can fix from Settings. It is hidden entirely when there is nothing to force: the item's own tab is already mid-turn, so the item is next in line anyway, or the tab it was queued for is gone. When another tab is working, Send Now confirms first and lists which tabs are busy.
 
 ## Input Toggles
 
