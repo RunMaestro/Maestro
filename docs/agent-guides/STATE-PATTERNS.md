@@ -407,6 +407,12 @@ history entry re-queues it.
   player and only the last file survives.
 - **A restored queue comes back `dismissed`.** Nothing plays at launch;
   `NowPlayingIndicator` in the Left Bar header is what advertises it.
+- **"Is the header pill on screen" has one owner: `selectNowPlayingVisible`.**
+  The pill renders only when the indicator is enabled AND something is loaded,
+  and the Left Bar header needs the same answer to decide how much width to
+  reserve for it (see [UI-PATTERNS.md -> Left Bar Header Width Gates](UI-PATTERNS.md#left-bar-header-width-gates)).
+  Re-deriving it in the header is how a width reserve ends up describing a
+  header nobody is looking at.
 - **Durations outlive the queue in memory but not on disk.** A history row still
   shows the length of a file dropped from the queue, so `closeItem` leaves the
   entry alone; `writeQueueNow` prunes to the queued IDs instead, or every file
