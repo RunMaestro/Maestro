@@ -23,6 +23,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
 	getForceSendEligibility,
+	shouldOfferForceSend,
 	resolveQueuedItemTabName,
 	type ForceSendEligibility,
 } from '../utils/executionQueue';
@@ -522,11 +523,11 @@ function QueueItemRow({
 	const minutes = Math.floor(timeSinceQueued / 60000);
 	const timeDisplay = minutes < 1 ? 'Just now' : `${minutes}m ago`;
 
-	// Send Now stays visible (dimmed) when it is merely waiting its turn, so the
-	// card explains why the queue is not moving. It is hidden outright only when
-	// the item has no tab left to run on, where the button could never work.
+	// Send Now stays visible (dimmed) only when the block is something the user
+	// can go fix - see shouldOfferForceSend. A target tab that is already
+	// mid-turn hides it, because the item is simply next in line.
 	const canForceSend = !!forceSend?.canForce && !!onForceSend;
-	const showForceSend = !!forceSend && forceSend.blockedReason !== 'no-target-tab';
+	const showForceSend = shouldOfferForceSend(forceSend);
 	const otherBusyCount = forceSend?.otherBusyTabs.length ?? 0;
 	const forceSendTitle =
 		forceSend?.blockedReason === 'target-tab-busy'

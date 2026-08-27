@@ -2065,14 +2065,14 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.queryByText('Force Send Message?')).not.toBeInTheDocument();
 		});
 
-		it('disables Send Now while the target tab is working', () => {
+		it('hides Send Now while the target tab is working', () => {
+			// The tab is mid-turn, so this item is next in line and nothing the
+			// user does on the card changes that. A control that can only be
+			// disabled here reads as broken.
 			const onForceSendItem = vi.fn();
 			renderBrowser(forceSendSession(['busy']), onForceSendItem);
 
-			const button = screen.getByText('Send Now').closest('button')!;
-			expect(button).toBeDisabled();
-			fireEvent.click(button);
-			expect(onForceSendItem).not.toHaveBeenCalled();
+			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
 		});
 
 		it('disables Send Now when another tab is working and forced parallel is off', () => {

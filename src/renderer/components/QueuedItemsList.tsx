@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
 import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
-import { getForceSendTitle } from '../utils/executionQueue';
+import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
@@ -251,15 +251,10 @@ export const QueuedItemsList = memo(
 							onForceSendQueuedItem && getForceSendContext && !item.forceParallel
 								? getForceSendContext(item)
 								: null;
-						// Same rule as the Execution Queue modal, deliberately: visible
-						// unless the item has no tab left to run on (where the button
-						// could never work), disabled with the reason otherwise. The old
-						// rule hid the button whenever the target tab was busy or nothing
-						// else was running - which meant that on a quiet agent, where
-						// force send is ALWAYS allowed, the chat offered nothing while
-						// the modal offered a working button.
-						const showForceSendButton =
-							!!forceSendContext && forceSendContext.blockedReason !== 'no-target-tab';
+						// Same rule as the Execution Queue modal, deliberately - see
+						// shouldOfferForceSend for why a busy target tab hides the button
+						// rather than dimming it.
+						const showForceSendButton = shouldOfferForceSend(forceSendContext);
 						const canForceSend = !!forceSendContext?.canForce;
 						const forceSendTitle = forceSendContext
 							? getForceSendTitle(forceSendContext)

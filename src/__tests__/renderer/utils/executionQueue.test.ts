@@ -6,6 +6,8 @@ import {
 	takeNextRunnableQueueItem,
 	reorderQueueItem,
 	resolveQueuedItemTabName,
+	getForceSendEligibility,
+	shouldOfferForceSend,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 
@@ -120,5 +122,47 @@ describe('resolveQueuedItemTabName', () => {
 		expect(resolveQueuedItemTabName(session([]), { tabId: 'gone', tabName: 'Old Name' })).toBe(
 			'Old Name'
 		);
+	});
+});
+
+describe('shouldOfferForceSend', () => {
+	const tab = (id: string, state: 'idle' | 'busy') => ({ id, state }) as unknown as AITab;
+	const session = (tabs: AITab[]) => ({ aiTabs: tabs }) as unknown as Session;
+	const queued = { tabId: 'tab-1' };
+	const eligibility = (tabs: AITab[], forcedParallelEnabled = true) =>
+		getForceSendEligibility(session(tabs), queued, { forcedParallelEnabled });
+
+	it('offers the control on a quiet agent, where forcing is always allowed', () => {
+		const e = eligibility([tab('tab-1', 'idle')]);
+		expect(e.canForce).toBe(true);
+		expect(shouldOfferForceSend(e)).toBe(true);
+	});
+
+	it('offers it disabled when only the Forced Parallel setting is in the way', () => {
+		// The one blocked reason the user can act on: the tooltip names a
+		// setting, so the dimmed button is a signpost rather than a dead control.
+		const e = eligibility([tab('tab-1', 'idle'), tab('tab-2', 'busy')], false);
+		expect(e.blockedReason).toBe('needs-forced-parallel');
+		expect(shouldOfferForceSend(e)).toBe(true);
+	});
+
+	it("hides it when the item's own tab is mid-turn", () => {
+		// A tab runs one turn at a time, so the item is next in line by
+		// definition and the wait resolves itself.
+		const e = eligibility([tab('tab-1', 'busy')]);
+		expect(e.blockedReason).toBe('target-tab-busy');
+		expect(shouldOfferForceSend(e)).toBe(false);
+	});
+
+	it('hides it when there is no tab left to run on', () => {
+		// No AI tabs at all, so there is not even an active tab to fall back to.
+		const e = eligibility([]);
+		expect(e.blockedReason).toBe('no-target-tab');
+		expect(shouldOfferForceSend(e)).toBe(false);
+	});
+
+	it('hides it when eligibility has not been computed', () => {
+		expect(shouldOfferForceSend(null)).toBe(false);
+		expect(shouldOfferForceSend(undefined)).toBe(false);
 	});
 });

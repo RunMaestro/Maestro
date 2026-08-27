@@ -266,8 +266,9 @@ describe('QueuedItemsList turn setting pills', () => {
  * nothing else running - force send is always permitted, and the chat showed
  * nothing while the modal showed a working button.
  *
- * These assert the inline card now mirrors the modal: visible unless the item
- * has no tab to run on, disabled with the reason otherwise.
+ * These assert the inline card now mirrors the modal: shown when force sending
+ * is either possible or one settings toggle away, hidden when the block is a
+ * dead end the user cannot act on from the card.
  */
 describe('QueuedItemsList force send', () => {
 	const eligibility = (over: Record<string, unknown> = {}) => ({
@@ -302,15 +303,14 @@ describe('QueuedItemsList force send', () => {
 		expect(screen.getByRole('button', { name: /Force Send/i })).toBeEnabled();
 	});
 
-	it('shows Force Send disabled, with the reason, when the target tab is busy', () => {
-		// The old rule hid it outright here - so the queue stalled with no
-		// explanation, while the modal said why.
+	it('hides Force Send when the target tab is already working', () => {
+		// A tab runs one turn at a time, so this item is simply next in line and
+		// the wait resolves itself. Offering a control whose only possible state
+		// is disabled reads as the button being broken.
 		withForceSend(
 			eligibility({ targetTabBusy: true, canForce: false, blockedReason: 'target-tab-busy' })
 		);
-		const button = screen.getByRole('button', { name: /Force Send/i });
-		expect(button).toBeDisabled();
-		expect(button.getAttribute('title')).toMatch(/already working/i);
+		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
 	});
 
 	it('shows Force Send disabled when another tab is busy and forced parallel is off', () => {
@@ -328,7 +328,7 @@ describe('QueuedItemsList force send', () => {
 	});
 
 	it('hides Force Send entirely when the item has no tab left to run on', () => {
-		// The one case where hiding is right: the button could never work.
+		// The button could never work here, at any point in the future.
 		withForceSend(eligibility({ canForce: false, blockedReason: 'no-target-tab' }));
 		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
 	});
