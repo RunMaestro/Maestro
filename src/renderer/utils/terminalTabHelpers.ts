@@ -1,5 +1,5 @@
 // Terminal tab helper functions - pure functions for managing TerminalTab state in Maestro sessions.
-// Follows the same pattern as tabHelpers.ts: take a Session, return a new Session (immutable).
+// Follows the same pattern as tabHelpers: take a Session, return a new Session (immutable).
 // No React hooks, no side effects, no IPC.
 
 import { Session, TerminalTab, ClosedTabEntry, UnifiedTabRef } from '../types';
@@ -13,7 +13,7 @@ import { terminalTabFocusFields } from './tabFocusFields';
 /** Maximum number of closed terminal tab entries to expose via the public API (e.g., for UI limits). */
 export const MAX_CLOSED_TERMINAL_TABS = 10;
 
-/** Maximum entries in unifiedClosedTabHistory - matches tabHelpers.ts MAX_CLOSED_TAB_HISTORY. */
+/** Maximum entries in unifiedClosedTabHistory - matches tabHelpers MAX_CLOSED_TAB_HISTORY. */
 const MAX_CLOSED_UNIFIED_HISTORY = 25;
 
 // ─── Factory ────────────────────────────────────────────────────────────────
@@ -400,7 +400,7 @@ export function renameTerminalTab(session: Session, tabId: string, name: string)
 /**
  * Reorder terminal tabs within the terminalTabs array.
  * Note: The visual order in the tab bar is determined by unifiedTabOrder and is reordered separately
- * (via reorderUnifiedTabs in tabHelpers.ts). This function updates the underlying array order.
+ * (via reorderUnifiedTabs in tabHelpers). This function updates the underlying array order.
  *
  * @param session - The Maestro session
  * @param fromIndex - Zero-based index of the tab to move

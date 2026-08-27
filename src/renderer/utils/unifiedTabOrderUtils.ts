@@ -1,6 +1,6 @@
 // Shared helpers for the per-session `unifiedTabOrder` array.
 //
-// Lives in its own file (rather than tabHelpers.ts or terminalTabHelpers.ts)
+// Lives in its own file (rather than tabHelpers or terminalTabHelpers.ts)
 // so both consumers can import it without forming a circular dependency.
 
 import type { AITab, Session, UnifiedTabRef } from '../types';

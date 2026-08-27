@@ -1783,7 +1783,7 @@ app
 		};
 		/**
 		 * Main-side mirror of the renderer's `aiTabFocusFields()`
-		 * (`src/renderer/utils/tabHelpers.ts`): land a session on an AI tab by
+		 * (`src/renderer/utils/tabHelpers`): land a session on an AI tab by
 		 * clearing every non-AI view that would otherwise outrank it in the render
 		 * precedence. Shared by `tabs.focus` and `sessions.focus` so the two plugin
 		 * verbs can never drift into different notions of "focused".
