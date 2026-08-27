@@ -652,6 +652,12 @@ Users can rebind `DEFAULT_SHORTCUTS` and `TAB_SHORTCUTS` via the ShortcutEditor 
 const { shortcuts, setShortcuts, tabShortcuts, setTabShortcuts } = useSettings();
 ```
 
+### Surface-Local Chords (`useCommandKeyShortcut`)
+
+`useCommandKeyShortcut(key, handler, enabled)` in `src/renderer/hooks/keyboard/useCommandKeyShortcut.ts` is the primitive for a bare Cmd/Ctrl+`<key>` chord that ONE visible surface claims for as long as it is up: Cmd+S in an editor pane (`useSaveShortcut` is a preset over it), Cmd+R on the Usage Dashboard's Anthropic Usage / OpenAI Usage panels (`useQuotaRefresh`'s `refreshHotkey` option). It listens in the capture phase with `preventDefault`, so it wins against a focused textarea and against the browser's own default for the chord, and it requires the modifier ALONE - a Shift- or Alt-qualified chord falls through to whatever else owns it.
+
+Do NOT reach for it to add a global shortcut. Those belong in `constants/shortcuts.ts` and must be matched through `eventMatchesShortcutKeys` so the user can rebind them. And do NOT let a component claim a chord just because it is mounted: `refreshHotkey` defaults to false and the dashboard opts in only on the tab that renders the panel, because two mounted panels both answering Cmd+R would refresh whichever one registered last. When a surface advertises its chord in a tooltip, gate the hint on the same flag that claims it, and build the label with `formatShortcutKeys()` so it does not read `⌘R` on Windows.
+
 ### Keyboard Mastery Gamification
 
 Shortcut usage is tracked for a gamification system (`keyboardMasteryStats`). The `recordShortcutUsage` function in settings increments counters and can trigger level-up celebrations.

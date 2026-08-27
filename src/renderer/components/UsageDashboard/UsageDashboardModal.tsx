@@ -963,7 +963,12 @@ export function UsageDashboardModal({
 								data-testid="section-anthropic-usage"
 							>
 								<ChartErrorBoundary theme={theme} chartName="Anthropic Usage">
-									<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+									<ClaudePlanUsage
+										theme={theme}
+										showAllAccounts
+										autoRefresh={false}
+										refreshHotkey
+									/>
 								</ChartErrorBoundary>
 							</div>
 						</div>
@@ -992,7 +997,7 @@ export function UsageDashboardModal({
 								data-testid="section-codex-usage"
 							>
 								<ChartErrorBoundary theme={theme} chartName="OpenAI Usage">
-									<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+									<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} refreshHotkey />
 								</ChartErrorBoundary>
 							</div>
 						</div>

@@ -10,6 +10,7 @@ import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } fro
 import type { Theme } from '../../../types';
 import { formatFutureTime } from '../../../../shared/formatters';
 import { QUOTA_REFRESH_OPTIONS, resolveQuotaFillColor } from './quotaFormatting';
+import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 
 interface QuotaBarRowProps {
 	label: string;
@@ -298,6 +299,7 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 	sweepClassName,
 	intervalAriaLabel,
 	buttonAriaLabel,
+	showHotkeyHint = false,
 }: {
 	theme: Theme;
 	refreshIntervalMs: number;
@@ -309,6 +311,12 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 	sweepClassName: string;
 	intervalAriaLabel: string;
 	buttonAriaLabel: string;
+	/**
+	 * Advertise the Cmd/Ctrl+R chord in the button tooltip. Only true where the
+	 * panel actually claims the chord (`refreshHotkey`), so the hint can never
+	 * promise a key that does nothing.
+	 */
+	showHotkeyHint?: boolean;
 }) {
 	return (
 		<div className="flex flex-wrap items-center justify-end gap-2">
@@ -357,6 +365,7 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 				}}
 				data-testid={`${testIdPrefix}-refresh`}
 				aria-label={buttonAriaLabel}
+				title={showHotkeyHint ? `Refresh (${formatShortcutKeys(['Meta', 'r'])})` : undefined}
 				aria-busy={isBusy}
 			>
 				{isBusy ? (

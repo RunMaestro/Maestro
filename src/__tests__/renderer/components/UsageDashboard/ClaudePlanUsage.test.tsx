@@ -7,6 +7,7 @@
  *     (incl. the `.claude` → `default` fallback)
  *   - bars render with progressbar role + accessible percentage
  *   - refresh button calls the IPC and triggers a store refresh
+ *   - Cmd+R re-samples only when the panel owns the hotkey
  *   - in-flight `refreshing` flag disables the refresh button
  */
 
@@ -361,6 +362,29 @@ describe('ClaudePlanUsage — refresh wiring', () => {
 		await waitFor(() => {
 			expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
 		});
+	});
+
+	it('re-samples on Cmd+R when the panel owns the hotkey', async () => {
+		render(<ClaudePlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		await waitFor(() => {
+			expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('ignores Cmd+R when the panel does not own the hotkey', () => {
+		render(<ClaudePlanUsage theme={theme} />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		expect(refreshClaudeUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
+	it('ignores Cmd+Shift+R so a qualified chord is not swallowed', () => {
+		render(<ClaudePlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'R', metaKey: true, shiftKey: true });
+
+		expect(refreshClaudeUsageSnapshotsMock).not.toHaveBeenCalled();
 	});
 
 	it('disables the refresh button while a refresh is in flight', () => {
