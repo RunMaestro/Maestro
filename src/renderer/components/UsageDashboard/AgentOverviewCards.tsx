@@ -172,6 +172,20 @@ interface AgentOverviewCardsProps {
 	/** Click handler for the per-card "view stats" icon - opens the per-agent
 	 *  stats sub-modal. When omitted, the icon is not rendered. */
 	onShowAgentDetails?: (session: Session) => void;
+	/**
+	 * Narrow the grid to these session ids. Set by the Groups tab drilling into
+	 * a group's members. `null`/omitted shows every agent.
+	 *
+	 * This is a hard restriction rather than a highlight: a group with three
+	 * agents is not usefully answered by tinting three cards inside a grid of
+	 * ninety. The restriction is always paired with a visible, dismissible chip
+	 * - a silently filtered grid reads as missing agents.
+	 */
+	restrictToSessionIds?: string[] | null;
+	/** Label for the restriction chip, e.g. the group's name. */
+	restrictionLabel?: string;
+	/** Clears the restriction. When omitted the chip renders without a button. */
+	onClearRestriction?: () => void;
 }
 
 /**
@@ -209,6 +223,9 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	theme,
 	activeFilterKey = null,
 	onShowAgentDetails,
+	restrictToSessionIds = null,
+	restrictionLabel,
+	onClearRestriction,
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
 	const [filterQuery, setFilterQuery] = useState('');
@@ -230,13 +247,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		capturesFocus: false,
 	});
 
-	// Terminal sessions aren't "agents" - exclude them so the card row matches
-	// the agent count shown elsewhere in the dashboard. Ordering lives in
-	// `sortAgentOverviewSessions` so the grid and its sort control can't drift.
-	const activeSessions = useMemo(
-		() => sortAgentOverviewSessions(sessions, data, sortMode),
-		[sessions, data, sortMode]
-	);
+	// Terminal sessions aren't "agents" - excluded inside
+	// `sortAgentOverviewSessions`, which also owns the ordering so the grid and
+	// its sort control can't drift. The group drill-down narrows the input first:
+	// restricting before sorting is what keeps the query-count ranking relative
+	// to the agents actually on screen rather than to the whole fleet.
+	const activeSessions = useMemo(() => {
+		const allowed = restrictToSessionIds ? new Set(restrictToSessionIds) : null;
+		const scoped = allowed ? sessions.filter((session) => allowed.has(session.id)) : sessions;
+		return sortAgentOverviewSessions(scoped, data, sortMode);
+	}, [sessions, data, sortMode, restrictToSessionIds]);
 
 	// Live fuzzy filter. With the default Name sort we re-rank by match score so
 	// the best hit lands first; an explicit sort (Queries, Tabs, ...) is the
@@ -255,10 +275,40 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		return scored.map((entry) => entry.session);
 	}, [activeSessions, filterQuery, sortMode]);
 
-	if (activeSessions.length === 0) return null;
+	// A restriction that matches nothing must still render, otherwise the tab
+	// goes blank with no visible reason and no way back to the full grid.
+	const isRestricted = Boolean(restrictToSessionIds);
+	if (activeSessions.length === 0 && !isRestricted) return null;
 
 	return (
 		<div className="flex flex-col gap-3">
+			{isRestricted && (
+				<div
+					className="flex items-center gap-2 text-xs px-2 py-1 rounded self-start"
+					style={{
+						backgroundColor: `${theme.colors.accent}18`,
+						color: theme.colors.textMain,
+						border: `1px solid ${theme.colors.accent}55`,
+					}}
+					data-testid="agent-overview-restriction"
+					role="status"
+				>
+					<span className="truncate">
+						Showing {restrictionLabel ?? 'selected agents'} ({activeSessions.length})
+					</span>
+					{onClearRestriction && (
+						<button
+							type="button"
+							onClick={onClearRestriction}
+							className="font-medium underline underline-offset-2"
+							style={{ color: theme.colors.accent }}
+							data-testid="agent-overview-restriction-clear"
+						>
+							Show all agents
+						</button>
+					)}
+				</div>
+			)}
 			<div className="flex items-center justify-between gap-3 flex-wrap">
 				<div className="flex items-center gap-2 min-w-0">
 					<div className="relative flex items-center" style={{ width: 260, maxWidth: '100%' }}>
@@ -316,7 +366,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					/>
 				</div>
 			</div>
-			{filteredSessions.length === 0 ? (
+			{activeSessions.length === 0 ? (
+				<div
+					className="py-8 text-center text-sm"
+					style={{ color: theme.colors.textDim }}
+					data-testid="agent-overview-restriction-empty"
+					role="status"
+				>
+					{restrictionLabel ? `${restrictionLabel} has no agents.` : 'No agents to show.'}
+				</div>
+			) : filteredSessions.length === 0 ? (
 				<div
 					className="py-8 text-center text-sm"
 					style={{ color: theme.colors.textDim }}

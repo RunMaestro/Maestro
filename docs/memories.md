@@ -20,9 +20,29 @@ Claude Code stores memory per project as a directory of small markdown files. Th
 
 - **Left pane** - list of every `.md` file in the project's memory directory, each row annotated with an estimated token count so you can see at a glance which entries are paying for themselves. `MEMORY.md` is always pinned to the top; everything else is alphabetical.
 - **Right pane** - a markdown editor for the selected file. A live token estimate sits next to the filename in the editor header and updates as you type.
-- **Stats bar** - file count, total bytes on disk, an estimated token cost (~4 bytes/token), first-created and last-edited timestamps.
+- **Stats bar** - file count, total bytes on disk, an estimated token cost (~4 bytes/token), first-created and last-edited timestamps, and the filter box (see below).
 
 The **Open in Finder** button (bottom right) reveals the underlying directory on disk if you want to inspect or back it up manually.
+
+## Finding a Memory
+
+The filter box at the right of the stats bar narrows the list as you type. It matches **both the filename and the text inside every memory**, so you can find an entry you only half-remember the contents of - type `worktree` and you get every file that mentions worktrees, whatever it happens to be called.
+
+The counter beside the box reads `matches/total`. Hovering a result row shows the line that matched. If the file you were reading is not among the matches, the viewer moves you to the top hit - unless you have unsaved edits, in which case it leaves you where you are.
+
+Press `Esc` once to clear the filter, or click the `x` in the box. A second `Esc` closes the viewer.
+
+## Keyboard
+
+Click any row in the left pane, then:
+
+| Action                       | Key                  |
+| ---------------------------- | -------------------- |
+| Previous / next memory       | `Up/Down Arrow`      |
+| Delete the selected memory   | `Backspace` or `Del` |
+| Clear the filter, then close | `Esc`                |
+
+This is the fast path for an audit pass: filter down to what you suspect is stale, then arrow through the results and press `Backspace` on the ones that should go.
 
 ## How Memory is Organized
 
@@ -91,7 +111,9 @@ Edit and **Save** as usual.
 
 ## Deleting a Memory
 
-With an entry selected, click **Delete** (bottom right). You'll get a standard confirmation dialog before the file is removed.
+With an entry selected, click **Delete** (bottom right) or press `Backspace`/`Delete` with a list row focused. Either way you get a confirmation dialog before the file is removed.
+
+After a delete the selection moves **down** to the next memory rather than back to the index, so a cleanup pass keeps moving in one direction: filter, arrow, `Backspace`, confirm, repeat.
 
 `MEMORY.md` is the index and cannot be deleted from the viewer - if you really need to wipe it, use **Open in Finder** and delete it manually. Removing it from disk effectively resets Claude's memory for the project, since the index is what tells it which entries exist.
 

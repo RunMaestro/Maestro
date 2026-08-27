@@ -354,6 +354,20 @@ The field list is focused on open, so these work without clicking first.
 | Leave the filter     | `Enter`               | `Enter`               |
 | Close row detail     | `Esc`                 | `Esc`                 |
 
+## Memories Viewer
+
+Click a row in the file list first - these act on the focused row. See
+[Memories](./memories) for the full walkthrough.
+
+| Action                       | Key                  |
+| ---------------------------- | -------------------- |
+| Previous / next memory       | `Up/Down Arrow`      |
+| Delete the selected memory   | `Backspace` or `Del` |
+| Clear the filter, then close | `Esc`                |
+
+The filter box in the stats bar matches both filenames and the text inside each
+memory, so `Esc` clears it before it closes the viewer.
+
 ## Document Graph
 
 | Action                        | Key          |

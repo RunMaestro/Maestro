@@ -25,6 +25,7 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -95,6 +96,31 @@ const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
  * label thresholds out by the same amount. Shared so the two cannot drift.
  */
 const HEADER_BADGE_WIDTH = 39;
+/**
+ * Width the header's left cluster needs before the MAESTRO wordmark is drawn:
+ * the wand, the wordmark itself, the hamburger, and the row's own padding.
+ * Excludes the LIVE pill and the now-playing pill, which are added below.
+ *
+ * The wordmark is drawn IN FULL or not at all. It used to `truncate`, which is
+ * how a narrow sidebar rendered the brand as "MAE...", and a clipped brand
+ * reads as a rendering bug rather than as a deliberate space saving. The wand
+ * stays at every width, so the header never loses its identity or its
+ * switch-agent affordance.
+ */
+const WORDMARK_MIN_WIDTH = 232;
+/**
+ * The LIVE toggle's own reserve, broken out rather than folded into the
+ * constant above so a build that hides the toggle can zero it in one line.
+ */
+const LIVE_PILL_RESERVE = 48;
+/**
+ * What the now-playing pill costs, by the form it is currently drawn in. It
+ * sheds its filename below NOW_PLAYING_LABEL_MIN_WIDTH, so reserving the wide
+ * figure at every width would hide the wordmark for a pill that is no longer
+ * that wide.
+ */
+const NOW_PLAYING_COMPACT_RESERVE = 51;
+const NOW_PLAYING_LABEL_RESERVE = 171;
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -247,6 +273,22 @@ function SessionListInner(props: SessionListProps) {
 	// thresholds below shift by the same amount when it is showing.
 	const headerBadgeWidth =
 		autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0;
+	// Whether the now-playing pill is on screen, and in which form. Read from the
+	// store's own selector rather than re-derived here, so the reserve below
+	// cannot end up describing a header nobody is looking at.
+	const nowPlayingVisible = useMediaPlaybackStore(selectNowPlayingVisible);
+	const nowPlayingCompact = leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth;
+	const nowPlayingReserve = !nowPlayingVisible
+		? 0
+		: nowPlayingCompact
+			? NOW_PLAYING_COMPACT_RESERVE
+			: NOW_PLAYING_LABEL_RESERVE;
+	// Constant on this build. The indirection is deliberate: a build that hides
+	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
+	const livePillReserve = LIVE_PILL_RESERVE;
+	const showWordmark =
+		leftSidebarWidthState >=
+		WORDMARK_MIN_WIDTH + livePillReserve + headerBadgeWidth + nowPlayingReserve;
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -1297,11 +1339,12 @@ function SessionListInner(props: SessionListProps) {
 			>
 				{leftSidebarOpen ? (
 					<>
-						{/* `min-w-0` here plus `truncate` on the wordmark below give this row
-						    a legitimate shrink target. It neither wraps nor scrolls, so without
-						    one, adding any control (the now-playing pill, a badge) pushes the
-						    hamburger menu off the edge on a narrow sidebar. Branding is what
-						    yields; every control stays shrink-0. */}
+						{/* This row neither wraps nor scrolls, so it needs a legitimate
+						    shrink target or any added control (the now-playing pill, a badge)
+						    pushes the hamburger menu off the edge on a narrow sidebar. That
+						    role now belongs to the now-playing pill's filename, which can be
+						    clipped without looking broken. The wordmark is drawn in full or
+						    dropped entirely - see `showWordmark`. */}
 						<div className="flex items-center gap-2 min-w-0">
 							<button
 								type="button"
@@ -1321,12 +1364,14 @@ function SessionListInner(props: SessionListProps) {
 									style={{ color: theme.colors.accent }}
 								/>
 							</button>
-							<h1
-								className="font-bold tracking-widest text-lg truncate min-w-0"
-								style={{ color: theme.colors.textMain }}
-							>
-								MAESTRO
-							</h1>
+							{showWordmark && (
+								<h1
+									className="font-bold tracking-widest text-lg shrink-0 whitespace-nowrap"
+									style={{ color: theme.colors.textMain }}
+								>
+									MAESTRO
+								</h1>
+							)}
 							{/* Badge Level Indicator */}
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (
 								<button
@@ -1345,10 +1390,7 @@ function SessionListInner(props: SessionListProps) {
 							    user can always see that audio is coming from Maestro and get
 							    the widget back with one click. Sheds its label on a narrow
 							    sidebar, the same way the LIVE pill below does. */}
-							<NowPlayingIndicator
-								theme={theme}
-								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth}
-							/>
+							<NowPlayingIndicator theme={theme} compact={nowPlayingCompact} />
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}

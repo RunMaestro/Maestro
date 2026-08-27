@@ -44,6 +44,7 @@ import {
 	type RunExitSynopsisDeps,
 } from './helpers/exitSynopsis';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
+import { drainTurnUsage, turnUsageStatsFields } from '../../../services/turnUsageLedger';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
@@ -793,6 +794,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					? deps.getBatchStateRef.current(sessionIdForStats).isRunning
 					: false;
 				const sessionForStats = getSessions().find((s) => s.id === sessionIdForStats);
+				// Per-turn token/cost deltas for THIS turn, keyed by the raw process
+				// id so concurrent turns on one agent stay separate. Never read
+				// `session.usageStats` here - that is the agent's running lifetime
+				// total, and writing it per row would re-count every earlier turn.
+				const turnUsage = drainTurnUsage(sessionId);
 
 				window.maestro.stats
 					.recordQuery({
@@ -805,6 +811,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						tabId: toastData.tabId,
 						isRemote: toastData.isRemote,
 						isWorktree: !!sessionForStats?.parentSessionId,
+						...turnUsageStatsFields(turnUsage),
 					})
 					.catch((err) => {
 						logger.warn('[onProcessExit] Failed to record query stats:', undefined, err);

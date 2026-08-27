@@ -7,6 +7,12 @@ import type { AgentsBaseViewProps } from './types';
 
 interface AgentsViewProps extends AgentsBaseViewProps {
 	onShowAgentDetails: (session: Session) => void;
+	/** Member ids of the group drilled into from the Groups tab, or null. */
+	restrictToSessionIds?: string[] | null;
+	/** Group name, shown on the chip that says what the grid is filtered to. */
+	restrictionLabel?: string;
+	/** Drop the restriction and show the whole fleet again. */
+	onClearRestriction?: () => void;
 }
 
 export function AgentsView({
@@ -17,6 +23,9 @@ export function AgentsView({
 	setSectionRef,
 	handleSectionKeyDown,
 	onShowAgentDetails,
+	restrictToSessionIds = null,
+	restrictionLabel,
+	onClearRestriction,
 }: AgentsViewProps) {
 	return (
 		<DashboardTabPanel viewMode="agents">
@@ -35,6 +44,9 @@ export function AgentsView({
 							data={data}
 							theme={theme}
 							onShowAgentDetails={onShowAgentDetails}
+							restrictToSessionIds={restrictToSessionIds}
+							restrictionLabel={restrictionLabel}
+							onClearRestriction={onClearRestriction}
 						/>
 					</ChartErrorBoundary>
 				) : (

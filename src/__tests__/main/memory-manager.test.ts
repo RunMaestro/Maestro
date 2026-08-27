@@ -17,6 +17,7 @@ import {
 	writeMemoryEntry,
 	createMemoryEntry,
 	deleteMemoryEntry,
+	searchMemoryEntries,
 } from '../../main/memory-manager';
 
 let tempHome: string;
@@ -110,5 +111,75 @@ describe('memory-manager', () => {
 		expect(result.stats.totalBytes).toBe(350);
 		expect(result.stats.firstCreatedAt).toBeTruthy();
 		expect(result.stats.lastModifiedAt).toBeTruthy();
+	});
+	describe('searchMemoryEntries', () => {
+		const projectPath = '/Users/me/Projects/Search';
+
+		beforeEach(async () => {
+			await writeMemoryEntry(projectPath, 'MEMORY.md', '- index line', 'claude-code', tempHome);
+			await writeMemoryEntry(
+				projectPath,
+				'project_widgets.md',
+				'The widget pipeline runs nightly.',
+				'claude-code',
+				tempHome
+			);
+			await writeMemoryEntry(
+				projectPath,
+				'user_prefs.md',
+				'Prefers tabs over spaces.',
+				'claude-code',
+				tempHome
+			);
+		});
+
+		it('returns every entry for an empty query', async () => {
+			const matches = await searchMemoryEntries(projectPath, '   ', 'claude-code', tempHome);
+			expect(matches.map((m) => m.name)).toEqual([
+				'MEMORY.md',
+				'project_widgets.md',
+				'user_prefs.md',
+			]);
+		});
+
+		it('matches on the filename', async () => {
+			const matches = await searchMemoryEntries(projectPath, 'PREFS', 'claude-code', tempHome);
+			expect(matches.map((m) => m.name)).toEqual(['user_prefs.md']);
+			expect(matches[0].matchedName).toBe(true);
+		});
+
+		it('matches on the body and reports the matching line', async () => {
+			const matches = await searchMemoryEntries(projectPath, 'nightly', 'claude-code', tempHome);
+			expect(matches.map((m) => m.name)).toEqual(['project_widgets.md']);
+			expect(matches[0].matchedName).toBe(false);
+			expect(matches[0].snippet).toBe('The widget pipeline runs nightly.');
+		});
+
+		it('returns nothing when neither name nor body matches', async () => {
+			const matches = await searchMemoryEntries(projectPath, 'zzzznope', 'claude-code', tempHome);
+			expect(matches).toEqual([]);
+		});
+
+		it('caps the snippet and keeps the pinned/alphabetical order', async () => {
+			await writeMemoryEntry(
+				projectPath,
+				'aaa_long.md',
+				`prefix ${'x'.repeat(400)}`,
+				'claude-code',
+				tempHome
+			);
+			await writeMemoryEntry(
+				projectPath,
+				'MEMORY.md',
+				'prefix in the index',
+				'claude-code',
+				tempHome
+			);
+			const matches = await searchMemoryEntries(projectPath, 'prefix', 'claude-code', tempHome);
+			expect(matches.map((m) => m.name)).toEqual(['MEMORY.md', 'aaa_long.md']);
+			const long = matches.find((m) => m.name === 'aaa_long.md');
+			expect(long?.snippet?.length).toBeLessThanOrEqual(121);
+			expect(long?.snippet?.endsWith('\u2026')).toBe(true);
+		});
 	});
 });

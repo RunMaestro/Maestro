@@ -1252,7 +1252,7 @@ function MaestroConsoleInner() {
 		handleLogViewerShortcutUsed,
 		handleViewGitDiff,
 		handleDirectorNotesResumeSession,
-	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef);
+	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef, groupChatInputRef);
 
 	const {
 		handleOpenWorktreeConfig,

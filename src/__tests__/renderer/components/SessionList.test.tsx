@@ -33,6 +33,7 @@ const enableGroupsPlus = () =>
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
 import type { BatchRunState } from '../../../renderer/types';
 
 const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
@@ -57,6 +58,10 @@ vi.mock('lucide-react', async (importOriginal) => ({
 	X: () => <span data-testid="icon-x" />,
 	Keyboard: () => <span data-testid="icon-keyboard" />,
 	Radio: () => <span data-testid="icon-radio" />,
+	// The now-playing pill's transport, needed by the wordmark width-gate tests.
+	Play: () => <span data-testid="icon-play" />,
+	Pause: () => <span data-testid="icon-pause" />,
+	Maximize2: () => <span data-testid="icon-maximize" />,
 	Copy: () => <span data-testid="icon-copy" />,
 	ExternalLink: () => <span data-testid="icon-external-link" />,
 	PanelLeftClose: () => <span data-testid="icon-panel-left-close" />,
@@ -407,6 +412,10 @@ describe('SessionList', () => {
 	describe('Basic Rendering', () => {
 		it('renders the MAESTRO branding header when expanded', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
+			// Wide enough to clear the wordmark's width gate. The default sidebar
+			// width is the 256px minimum, where the wordmark is dropped rather than
+			// clipped, so a branding assertion has to state the width it means.
+			useSettingsStore.setState({ leftSidebarWidth: 400 });
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 
@@ -415,6 +424,7 @@ describe('SessionList', () => {
 
 		it('branding header has z-20 to stack menu above sidebar content', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 400 });
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 
@@ -4167,6 +4177,100 @@ describe('SessionList', () => {
 				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
 			});
 			expect(scrollSpy).toHaveBeenCalled();
+		});
+	});
+
+	// ============================================================================
+	// Wordmark width gate
+	// ============================================================================
+
+	/**
+	 * The rule: MAESTRO is drawn IN FULL or not drawn at all. It used to
+	 * `truncate`, so a narrow sidebar rendered the brand as "MAE...", which reads
+	 * as a rendering bug rather than as a deliberate space saving.
+	 *
+	 * These drive `leftSidebarWidth` directly, the same way the LIVE and
+	 * now-playing label tests above do, so jsdom's missing layout engine is not a
+	 * problem.
+	 */
+	describe('MAESTRO wordmark', () => {
+		beforeEach(() => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		});
+
+		afterEach(() => {
+			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		});
+
+		/** Put the now-playing pill on screen: engaged this session, then hidden. */
+		const showNowPlayingPill = () => {
+			useMediaPlaybackStore.setState({
+				dismissed: true,
+				dormant: false,
+				activeItemId: 'media-1',
+				items: [
+					{
+						id: 'media-1',
+						name: 'a-very-long-recording-name.mp3',
+						path: '/tmp/a-very-long-recording-name.mp3',
+						kind: 'audio',
+					},
+				],
+			} as never);
+		};
+
+		it('shows the wordmark on a wide sidebar', () => {
+			useSettingsStore.setState({ leftSidebarWidth: 600 });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+		});
+
+		it('drops the wordmark entirely on a narrow sidebar', () => {
+			useSettingsStore.setState({ leftSidebarWidth: 256 });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			// Absence, not a class. Asserting that `truncate` is gone would pass on
+			// a wordmark that still renders clipped.
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			// The wand stays at every width, so the header keeps its identity and
+			// its switch-agent affordance.
+			expect(screen.getByTitle('Switch agent')).toBeInTheDocument();
+		});
+
+		// The regression that matters. Nothing between "MAESTRO" and nothing.
+		it('never renders a partial wordmark at any allowed width', () => {
+			for (let width = 256; width <= 600; width += 8) {
+				useSettingsStore.setState({ leftSidebarWidth: width });
+				const { unmount } = render(<SessionList {...createDefaultProps({})} />);
+
+				const heading = document.querySelector('h1');
+				if (heading) {
+					expect(heading.textContent).toBe('MAESTRO');
+					// A clipped wordmark is a full one that CSS cut off, so the class
+					// that would do the cutting must not be there either.
+					expect(heading.className).not.toContain('truncate');
+				}
+				unmount();
+			}
+		});
+
+		it('gives up the wordmark once the badge and the now-playing pill take the room', () => {
+			// One width, three states: the wordmark survives each control alone and
+			// is dropped once both are drawn.
+			const width = 330;
+
+			useSettingsStore.setState({ leftSidebarWidth: width, autoRunStats: undefined });
+			const bare = render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+			bare.unmount();
+
+			useSettingsStore.setState({ leftSidebarWidth: width });
+			showNowPlayingPill();
+			const withPill = render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			withPill.unmount();
 		});
 	});
 });

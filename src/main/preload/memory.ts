@@ -30,6 +30,12 @@ export interface MemoryListResponse {
 	error?: string;
 }
 
+export interface MemorySearchMatch {
+	name: string;
+	matchedName: boolean;
+	snippet?: string;
+}
+
 export function createMemoryApi() {
 	return {
 		list: (projectPath: string, agentId: string = 'claude-code'): Promise<MemoryListResponse> =>
@@ -64,6 +70,13 @@ export function createMemoryApi() {
 			agentId: string = 'claude-code'
 		): Promise<{ success: boolean; error?: string }> =>
 			ipcRenderer.invoke('memory:delete', projectPath, filename, agentId),
+
+		search: (
+			projectPath: string,
+			query: string,
+			agentId: string = 'claude-code'
+		): Promise<{ success: boolean; matches?: MemorySearchMatch[]; error?: string }> =>
+			ipcRenderer.invoke('memory:search', projectPath, query, agentId),
 
 		getPath: (
 			projectPath: string,

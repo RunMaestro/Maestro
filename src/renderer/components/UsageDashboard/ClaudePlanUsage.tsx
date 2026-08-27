@@ -56,6 +56,8 @@ interface ClaudePlanUsageProps {
 	showAllAccounts?: boolean;
 	autoRefresh?: boolean;
 	showRefreshButton?: boolean;
+	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
+	refreshHotkey?: boolean;
 }
 
 interface AccountRowProps {
@@ -169,6 +171,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	showAllAccounts = false,
 	autoRefresh = true,
 	showRefreshButton = true,
+	refreshHotkey = false,
 }: ClaudePlanUsageProps) {
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
 	const refreshing = useClaudeUsageStore((s) => s.refreshing);
@@ -243,6 +246,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		accountCount: configuredAccountKeys.length,
 		snapshotCount,
 		doRefresh,
+		refreshHotkey,
 	});
 
 	const renderAccount = useCallback(
@@ -331,6 +335,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 							sweepClassName="claude-plan-refresh-sweep"
 							intervalAriaLabel="Claude usage auto refresh interval"
 							buttonAriaLabel="Refresh Claude usage snapshots"
+							showHotkeyHint={refreshHotkey}
 						/>
 					)}
 				</div>

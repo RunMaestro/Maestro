@@ -216,6 +216,7 @@ describe('UsageDashboardModal hooks', () => {
 			'overview',
 			'agent-overview',
 			'agents',
+			'groups',
 			'tokens',
 			'activity',
 			'autorun',

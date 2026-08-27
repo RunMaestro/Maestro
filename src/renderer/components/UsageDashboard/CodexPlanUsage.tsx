@@ -42,6 +42,8 @@ interface CodexPlanUsageProps {
 	showAllAccounts?: boolean;
 	autoRefresh?: boolean;
 	showRefreshButton?: boolean;
+	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
+	refreshHotkey?: boolean;
 }
 
 interface AccountRowProps {
@@ -160,6 +162,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 	showAllAccounts = false,
 	autoRefresh = true,
 	showRefreshButton = true,
+	refreshHotkey = false,
 }: CodexPlanUsageProps) {
 	const snapshots = useCodexUsageStore((s) => s.snapshots);
 	const refreshing = useCodexUsageStore((s) => s.refreshing);
@@ -216,6 +219,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 		accountCount: configuredAccountKeys.length,
 		snapshotCount,
 		doRefresh,
+		refreshHotkey,
 	});
 
 	const renderAccount = useCallback(
@@ -301,6 +305,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 							sweepClassName="codex-plan-refresh-sweep"
 							intervalAriaLabel="Codex usage auto refresh interval"
 							buttonAriaLabel="Refresh Codex usage snapshots"
+							showHotkeyHint={refreshHotkey}
 						/>
 					)}
 				</div>
