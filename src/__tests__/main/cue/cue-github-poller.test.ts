@@ -25,6 +25,7 @@ const {
 	mockMarkGitHubItemSeen,
 	mockHasAnyGitHubSeen,
 	mockPruneGitHubSeen,
+	mockPruneSusFactorBlocks,
 	mockGetGitHubItemState,
 	mockRecordGitHubRetrigger,
 	mockCaptureException,
@@ -35,6 +36,7 @@ const {
 	mockMarkGitHubItemSeen: vi.fn<(subId: string, key: string, lastRevision?: string) => void>(),
 	mockHasAnyGitHubSeen: vi.fn<(subId: string) => boolean>().mockReturnValue(true),
 	mockPruneGitHubSeen: vi.fn<(olderThanMs: number) => void>(),
+	mockPruneSusFactorBlocks: vi.fn<(olderThanMs: number) => void>(),
 	mockGetGitHubItemState: vi
 		.fn<(subId: string, key: string) => { lastRevision: string | null; fireCount: number } | null>()
 		.mockReturnValue(null),
@@ -75,6 +77,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 		mockMarkGitHubItemSeen(subId, key, lastRevision),
 	hasAnyGitHubSeen: (subId: string) => mockHasAnyGitHubSeen(subId),
 	pruneGitHubSeen: (olderThanMs: number) => mockPruneGitHubSeen(olderThanMs),
+	pruneSusFactorBlocks: (olderThanMs: number) => mockPruneSusFactorBlocks(olderThanMs),
 	getGitHubItemState: (subId: string, key: string) => mockGetGitHubItemState(subId, key),
 	recordGitHubRetrigger: (subId: string, key: string, newRevision: string) =>
 		mockRecordGitHubRetrigger(subId, key, newRevision),
