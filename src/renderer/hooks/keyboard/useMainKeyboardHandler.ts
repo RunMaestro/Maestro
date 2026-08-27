@@ -689,7 +689,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Only act in AI mode - the composer is AI-only. While it's already
 				// open, the hotkey cycles between windowed and full-screen instead of
 				// being a no-op.
-				if (ctx.activeSession?.inputMode === 'ai') {
+				// A group chat is an AI surface too, but it has no inputMode of its
+				// own: activeSession still points at whatever agent was selected
+				// before the room was opened, so gating on that alone made the
+				// hotkey work or silently die depending on an unrelated agent's mode.
+				if (ctx.activeGroupChatId || ctx.activeSession?.inputMode === 'ai') {
 					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
 				}

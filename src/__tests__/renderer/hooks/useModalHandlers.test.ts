@@ -1161,6 +1161,28 @@ describe('useModalHandlers', () => {
 			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 
+		it('handleClosePromptComposer focuses the group chat input while a room is open', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'chat-1' });
+			getModalActions().setPromptComposerOpen(true);
+
+			const inputRef = createInputRef();
+			const groupChatInputRef = createInputRef();
+			const { result } = renderHook(() =>
+				useModalHandlers(inputRef, createTerminalOutputRef(), undefined, groupChatInputRef)
+			);
+			act(() => {
+				result.current.handleClosePromptComposer();
+			});
+
+			act(() => {
+				vi.advanceTimersByTime(10);
+			});
+			// The agent composer isn't on screen in a room, so focusing it would
+			// drop the caret on the document instead of the room's input.
+			expect(groupChatInputRef.current!.focus).toHaveBeenCalled();
+			expect(inputRef.current!.focus).not.toHaveBeenCalled();
+		});
+
 		it('handleCloseCreatePRModal closes modal and clears session', () => {
 			const session = createMockSession();
 			getModalActions().setCreatePRSession(session);

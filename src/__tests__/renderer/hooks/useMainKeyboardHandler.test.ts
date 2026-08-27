@@ -3752,3 +3752,51 @@ describe('useMainKeyboardHandler - editLastQueuedMessage', () => {
 		expect(useUIStore.getState().editingQueuedItemId).toBe('q-orphan');
 	});
 });
+
+describe('useMainKeyboardHandler - openPromptComposer', () => {
+	function press(ctxOverrides: Record<string, unknown>) {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'openPromptComposer',
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			...ctxOverrides,
+		});
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'P', metaKey: true, shiftKey: true, bubbles: true })
+			);
+		});
+	}
+
+	beforeEach(() => {
+		useModalStore.setState({ modals: new Map() });
+	});
+
+	afterEach(() => {
+		useModalStore.setState({ modals: new Map() });
+	});
+
+	it('opens the composer for an agent in AI mode', () => {
+		press({ activeSession: { id: 'agent-1', inputMode: 'ai' } });
+
+		expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+	});
+
+	it('opens the composer in a group chat even when the last agent was in terminal mode', () => {
+		// A room has no inputMode of its own - activeSession still points at the
+		// agent selected before the room was opened, so gating on that alone made
+		// the hotkey silently die in group chat.
+		press({
+			activeGroupChatId: 'chat-1',
+			activeSession: { id: 'agent-1', inputMode: 'terminal' },
+		});
+
+		expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+	});
+
+	it('stays closed for an agent in terminal mode with no room open', () => {
+		press({ activeSession: { id: 'agent-1', inputMode: 'terminal' } });
+
+		expect(useModalStore.getState().isOpen('promptComposer')).toBe(false);
+	});
+});
