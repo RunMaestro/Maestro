@@ -328,8 +328,14 @@ export const MODAL_PRIORITIES = {
 	 * lightbox and annotator, both of which open from inside it. */
 	STAGED_IMAGES_ORGANIZER: 143,
 
-	/** CSV row detail modal (above the file preview it opens from) */
-	CSV_ROW_DETAIL: 110,
+	/**
+	 * Record view for one row of a tabular preview - CSV/TSV and parquet both
+	 * open `<RecordDetailModal>` from the file preview beneath them. One
+	 * constant rather than one per format: they are the same surface at the
+	 * same tier, and two names at the same number is a distinction the layer
+	 * stack cannot act on.
+	 */
+	TABLE_ROW_DETAIL: 110,
 
 	/** File preview overlay */
 	FILE_PREVIEW: 100,

@@ -1640,6 +1640,30 @@ beforeEach(() => {
 });
 ```
 
+### The Record View for a Table Row (`<RecordDetailModal>`)
+
+`<RecordDetailModal>` in `src/renderer/components/ui/RecordDetailModal.tsx` flips one row of a table into a field/value list: one field per line, values wrapped with their newlines intact, a field filter, prev/next row navigation, and a per-value copy button.
+
+Every tabular preview uses it. `CsvRowDetailModal` is a thin adapter that maps a positional CSV row onto the field list; the parquet viewer maps typed cells through `formatCellExact`. Do NOT hand-roll a second one - the keyboard model here is subtle and easy to get subtly wrong.
+
+Callers supply their own `priority` (a `MODAL_PRIORITIES` entry), `resizeKey` (so each surface remembers its own dragged size), and `testIdPrefix` (so a test can target the surface it opened rather than "whichever record modal is up"). The `fields` prop is the only shape all callers agree on: a CSV row is positional strings and a parquet row is typed values, so the mapping belongs in the caller, not in a union type here.
+
+**Focus starts on the field list, not the filter input.** Left/Right step between rows and Up/Down scroll, and none of that works while a text input owns the caret - `/` is what moves focus to the filter. Escape is deliberately NOT handled locally: the layer stack takes it at capture on `window`, so "Escape clears the filter first" is not implementable here and Escape closing the modal is the app-wide contract anyway.
+
+### The Parquet Viewer (`src/renderer/components/ParquetViewer/`)
+
+The file preview for `.parquet`. Unlike every other preview it is a **client of a query engine**, not a renderer over file content: the file stays open in the main process and only the displayed window of rows crosses IPC. See [Parquet Preview](#parquet-preview-srcmainparquet) in AGENT-INFRA for the engine side.
+
+Three rules for editing it:
+
+- **Never filter or sort locally.** Both round-trip to the engine. Filtering the loaded page would only ever search the first few hundred rows, which on a 100M-row file is a search box that lies.
+- **`matchedRows` is a lower bound until `complete` is true.** Render it as `1,204+`, never as an exact total. A filtered scan stops as soon as it has filled the requested window; a background pass with `countAll: true` converges the number, and that pass is also what warms the scan for the next page.
+- **Hiding a column changes the projection.** It is a real optimization (the engine stops decoding that column), not a CSS toggle, which is why it invalidates the loaded window.
+
+The grid virtualizes with `@tanstack/react-virtual`. **Its "load the next page" effect must not fire for an unmeasured grid**: with no layout, the virtualizer renders a default window and the last rendered index looks like the end of the data, so the viewer pages the entire match set into memory without the user ever scrolling. `ParquetGrid` guards on `scrollRef.current?.clientHeight` and treats "no rendered rows" as `-1` rather than `0` for exactly this reason. jsdom has no layout engine, so this is the failure mode a render test will catch and a manual pass never will.
+
+Column widths are explicit state seeded from each column's type, not measured. Measuring needs cells, cells arrive one page at a time, and a width that jumps when page two lands is worse than one that is merely approximate.
+
 ---
 
 ## Key Files Reference
@@ -1660,3 +1684,5 @@ beforeEach(() => {
 | Markdown renderer | `src/renderer/components/Markdown/` (`<Markdown preset=...>`; `MarkdownRenderer.tsx` wraps the chat preset) |
 | Settings hook     | `src/renderer/hooks/settings/useSettings.ts`                                                                |
 | Settings store    | `src/renderer/stores/settingsStore.ts`                                                                      |
+| Record view       | `src/renderer/components/ui/RecordDetailModal.tsx`                                                          |
+| Parquet viewer    | `src/renderer/components/ParquetViewer/`                                                                    |

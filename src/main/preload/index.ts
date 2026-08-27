@@ -47,6 +47,7 @@ import { createProcessApi } from './process';
 import { createGitApi } from './git';
 import { createFeedbackApi } from './feedback';
 import { createFsApi } from './fs';
+import { createParquetApi } from './parquet';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
@@ -90,6 +91,7 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// File System API
 	fs: createFsApi(),
+	parquet: createParquetApi(),
 
 	// Web Server API
 	webserver: createWebserverApi(),
@@ -294,6 +296,7 @@ export {
 	createGitApi,
 	// Filesystem
 	createFsApi,
+	createParquetApi,
 	// Agents
 	createAgentsApi,
 	// Symphony

@@ -305,3 +305,75 @@ Returns: `{ success, draftPrUrl, draftPrNumber, autoRunPath, isFork, forkSlug }`
 - **CLI** - No overlap. The CLI has its own playbook processing (`src/cli/services/playbooks.ts`) which is independent.
 - **Group Chat** - No direct connection. Symphony sessions can participate in group chats, but the runner itself has no group chat logic.
 - **IPC integration** - Called from `src/main/ipc/handlers/symphony.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
+
+---
+
+## 5. Parquet Query Engine (`src/main/parquet/`, `src/shared/parquet/`)
+
+The main-process half of the Parquet file preview. Unlike every other previewable format, a Parquet file is never read into memory: it stays behind an open file descriptor and the renderer asks for windows of rows over `parquet:*` IPC.
+
+| File                                     | Role                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `src/shared/parquet/types.ts`            | Wire contract: `ParquetFileInfo`, `ParquetQueryRequest`, `ParquetQueryResult`, `ParquetScanStats` |
+| `src/shared/parquet/preview.ts`          | `isParquetFile()`, and the marker `fs:readFile` returns in place of content                       |
+| `src/shared/parquet/filterExpression.ts` | Tokenizer, parser, binder, and per-row evaluator for the filter language                          |
+| `src/shared/parquet/pushdown.ts`         | Compiles a bound predicate into parquet-level pruning                                             |
+| `src/main/parquet/parquet-file.ts`       | Open handles, footer metadata, schema summary, SSH caching                                        |
+| `src/main/parquet/parquet-query.ts`      | The scan engine: pruning, projection, resumable match sets, sorting, export                       |
+| `src/main/ipc/handlers/parquet.ts`       | `parquet:open` / `query` / `export` / `close`                                                     |
+
+### The four things that will bite you
+
+**1. Statistics are in the CONVERTED domain, not the physical one.**
+
+This is the single most important fact in the subsystem, and getting it wrong loses rows silently. A `TIMESTAMP(MICROS)` column stores `1704067200000000` on disk, so it is natural to assume a bound compared against footer statistics must be in microseconds. It must not: hyparquet runs every statistic through `convertMetadata` while parsing the footer, so by the time a bound reaches the pruning check a timestamp is a `Date`, a DATE is a `Date`, a DECIMAL is already scaled, and a BYTE_ARRAY is a UTF-8 string. Compiling a bound in microseconds makes it a thousand times larger than anything it is compared against, every row group "provably" cannot match, and the filter returns nothing while looking perfectly healthy.
+
+The upside of that fact: statistics and decoded row values live in the same domain, so `bindFilterExpression` coerces a literal once and both `compileFilterPushdown` and `evaluateFilterNode` use it unchanged.
+
+**2. The pushdown filter must never be more selective than the predicate.**
+
+Anything inexpressible is dropped and the residual evaluator still runs on every surviving row, so a dropped conjunct costs speed and never correctness. The asymmetry that matters: a child may be dropped from an `and`, but if any child of an `or` fails to compile the **whole** `or` must be dropped - narrowing one branch of a union discards rows the other branch would have matched. `pushdown.test.ts` pins both directions.
+
+**3. `pruningFilter`, not `filter`.**
+
+The engine calls `parquetScan({ pruningFilter })` rather than `parquetRead({ filter })`. `pruningFilter` eliminates physical row ranges without dropping individual rows, leaving row-level truth entirely to `evaluateFilterNode`. That is what makes a merely-conservative bound safe: even a sloppy pushdown can only cost pruning, never rows. `filter` would apply per-row matching with hyparquet's own semantics, and any disagreement between the two evaluators would drop real data.
+
+**4. Pruning is measured, not inferred.**
+
+`CountingAsyncBuffer` counts every byte read through the file handle, so `stats.bytesRead` is the truth about how much of the file a query touched. hyparquet decides internally which chunks and pages to fetch, so this is the only honest measurement available - do not try to compute it from the plan.
+
+### Resumable scans
+
+A query stops as soon as the requested window is full or `MAX_QUERY_MS` expires, and returns `complete: false`. The `ScanSession` (cached per file per filter) remembers which range it reached, so paging through a filtered 100M-row file is one forward pass in total rather than one pass per page.
+
+Two consequences for callers:
+
+- `matchedRows` is a **lower bound** until `complete` is true. Pass `countAll: true` to drive the scan toward completion instead of stopping at the window.
+- A session is cached per **filter only**, not per (filter, columns). Showing or hiding a column re-materializes a page from the existing match set instead of re-running the scan.
+
+Only one session is kept per file: filters are typed character by character, and an unbounded cache would pin a scan plus its decoded column buffers for every prefix the user passed through.
+
+### Two-phase projection
+
+Inside a surviving range, only the columns the predicate mentions are decoded first. If nothing matches, the wide columns are never touched. This is the whole point of a columnar format, and it is why a bare search term (which must read every column) is the slowest filter the language can express.
+
+### A broken filter matches nothing
+
+`ScanSession.blocked` is deliberately distinct from `identity` (no filter at all). An expression that fails to parse or bind matches zero rows and carries its `ParquetFilterProblem` back to the renderer. Falling back to "no filter" would show all 8 million rows under a red error message, which reads as filtering being broken rather than as the expression being broken.
+
+### hyparquet is loaded lazily
+
+It is ESM-only and about 150 KB of parser, and most sessions never open a Parquet file, so `loadParquetReader()` caches a dynamic `import()` rather than paying at app launch. `hyparquet-compressors` comes with it for gzip/brotli/zstd/lz4 (snappy is built in).
+
+### SSH
+
+There is no byte-range channel over an SSH shell, so a remote file is fetched whole into a cache directory keyed by remote id, path, size, and mtime, and read locally from there. Above `MAX_REMOTE_BYTES` the open fails loudly with a message that names the actual remedy, because the base64-over-SSH transfer materializes the file in main-process memory twice on the way to disk.
+
+### Testing
+
+`src/__tests__/main/parquet/parquet-query.test.ts` writes its fixture at test time with `hyparquet-writer`, so there is no binary in the repo and the reader runs against real row groups, real footer statistics, and real snappy pages.
+
+Two things to know before adding cases:
+
+- **Use `// @vitest-environment node`.** The reader hands hyparquet `ArrayBuffer`s that it checks with `instanceof`, and jsdom's separate realm fails that check for reasons unrelated to the code under test.
+- **`hyparquet-writer` records only a null count for annotated `TIMESTAMP` columns.** Do not assert row-group pruning on a timestamp filter against a written fixture - there are no min/max statistics to prune with. Pin the bound in `pushdown.test.ts` instead, and assert pruning on a plain `INT64` column.

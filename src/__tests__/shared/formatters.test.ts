@@ -6,6 +6,7 @@
 import {
 	formatSize,
 	formatNumber,
+	formatCount,
 	formatTokens,
 	formatTokensCompact,
 	formatRelativeTime,
@@ -84,6 +85,29 @@ describe('shared/formatters', () => {
 		it('should format billions with B suffix', () => {
 			expect(formatNumber(1000000000)).toBe('1.0B');
 			expect(formatNumber(2500000000)).toBe('2.5B');
+		});
+	});
+
+	// ==========================================================================
+	// formatCount tests (exact counterpart to formatNumber)
+	// ==========================================================================
+	describe('formatCount', () => {
+		it('groups digits instead of rounding to a magnitude', () => {
+			expect(formatCount(42)).toBe('42');
+			expect(formatCount(1000)).toBe('1,000');
+			expect(formatCount(1204993)).toBe('1,204,993');
+		});
+
+		it('keeps every digit where formatNumber discards them', () => {
+			// The whole reason this exists: a filtered row count is read for its
+			// digits, and `1.2M` throws away the part the user was looking at.
+			expect(formatNumber(1204993)).toBe('1.2M');
+			expect(formatCount(1204993)).toBe('1,204,993');
+		});
+
+		it('handles zero and negatives', () => {
+			expect(formatCount(0)).toBe('0');
+			expect(formatCount(-5)).toBe('-5');
 		});
 	});
 

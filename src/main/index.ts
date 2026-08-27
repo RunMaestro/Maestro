@@ -74,6 +74,7 @@ import {
 	registerDocumentGraphHandlers,
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
+	registerParquetHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	ensureCliServer,
@@ -125,6 +126,7 @@ import { initializeSessionStorages } from './storage';
 import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
+import { closeAllParquetFiles } from './parquet/parquet-file';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -1244,6 +1246,10 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		// Release parquet file descriptors (and their cached scans) on the way
+		// out. The idle reaper would get to them eventually, but a preview tab
+		// left open otherwise holds a descriptor until the process dies.
+		app.on('will-quit', () => void closeAllParquetFiles());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
@@ -1637,6 +1643,7 @@ function setupIpcHandlers() {
 
 	// Register filesystem handlers (extracted to handlers/filesystem.ts)
 	registerFilesystemHandlers();
+	registerParquetHandlers();
 
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts
