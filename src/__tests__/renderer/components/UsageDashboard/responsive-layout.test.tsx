@@ -670,10 +670,10 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
-			// between Agents and Activity.
-			const autoRunTab = screen.getAllByRole('tab')[4];
+			// Switch to Auto Run view. Selected by name rather than index - the
+			// tab strip has gained a tab twice now, and each time every positional
+			// lookup in this file broke at once.
+			const autoRunTab = screen.getByRole('tab', { name: 'Auto Run' });
 			act(() => {
 				autoRunTab.click();
 			});
@@ -696,10 +696,10 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
-			// between Agents and Activity.
-			const autoRunTab = screen.getAllByRole('tab')[4];
+			// Switch to Auto Run view. Selected by name rather than index - the
+			// tab strip has gained a tab twice now, and each time every positional
+			// lookup in this file broke at once.
+			const autoRunTab = screen.getByRole('tab', { name: 'Auto Run' });
 			act(() => {
 				autoRunTab.click();
 			});
@@ -721,10 +721,10 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
-			// between Agents and Activity.
-			const autoRunTab = screen.getAllByRole('tab')[4];
+			// Switch to Auto Run view. Selected by name rather than index - the
+			// tab strip has gained a tab twice now, and each time every positional
+			// lookup in this file broke at once.
+			const autoRunTab = screen.getByRole('tab', { name: 'Auto Run' });
 			act(() => {
 				autoRunTab.click();
 			});

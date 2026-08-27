@@ -61,6 +61,26 @@ export const CREATE_QUERY_EVENTS_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Query Event Token Columns (Migration v8)
+// ============================================================================
+
+/**
+ * Per-turn token and cost columns on `query_events`.
+ *
+ * Nullable with no default on purpose: NULL means "this turn predates token
+ * recording, or the provider reported nothing", which is a different fact from
+ * a genuine zero. Defaulting to 0 would make every historical row look like a
+ * free turn and silently understate cost-per-agent averages.
+ */
+export const ADD_QUERY_EVENT_TOKEN_COLUMNS = [
+	'input_tokens',
+	'output_tokens',
+	'cache_read_tokens',
+	'cache_creation_tokens',
+	'cost_usd',
+] as const;
+
+// ============================================================================
 // Auto Run Sessions (Migration v1)
 // ============================================================================
 

@@ -14,6 +14,7 @@ import {
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
+import { usageStatsToTurnFields } from '../../services/turnUsageLedger';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 // Type-only, so the cycle with useDocumentProcessor (which imports
 // AgentSpawnErrorKind from here) is erased at build. One definition of the
@@ -328,6 +329,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										tabId: activeTab?.id,
 										isRemote: session.sessionSshRemoteConfig?.enabled ?? false,
 										isWorktree: !!session.parentSessionId,
+										// `taskUsageStats` is already scoped to this task -
+										// it is declared inside the per-task closure and only
+										// accumulates that task's usage events - so it is the
+										// per-turn delta the row wants, no ledger needed.
+										...usageStatsToTurnFields(taskUsageStats),
 									})
 									.catch((err) => {
 										// Don't fail the batch flow if stats recording fails

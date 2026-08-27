@@ -18,6 +18,7 @@ import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-typ
 import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
 import { AgentOverviewCards } from './AgentOverviewCards';
+import { GroupOverviewCards } from './GroupOverviewCards';
 import { AgentDetailModal } from './AgentDetailModal';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
@@ -62,6 +63,7 @@ import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useClaudeUsageStore } from '../../stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../stores/codexUsageStore';
@@ -85,6 +87,7 @@ const OVERVIEW_SECTIONS = [
 	'radial-activity',
 ] as const;
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
+const GROUPS_SECTIONS = ['group-overview-cards'] as const;
 const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
 const AUTORUN_SECTIONS = [
@@ -99,6 +102,7 @@ const CODEX_USAGE_SECTIONS = ['codex-usage'] as const;
 type SectionId =
 	| (typeof OVERVIEW_SECTIONS)[number]
 	| (typeof AGENTS_SECTIONS)[number]
+	| (typeof GROUPS_SECTIONS)[number]
 	| (typeof AGENT_OVERVIEW_SECTIONS)[number]
 	| (typeof ACTIVITY_SECTIONS)[number]
 	| (typeof AUTORUN_SECTIONS)[number]
@@ -165,6 +169,7 @@ const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'overview', label: 'Overview' },
 	{ value: 'agent-overview', label: 'Agent Overview' },
 	{ value: 'agents', label: 'Agents' },
+	{ value: 'groups', label: 'Groups' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
 	{ value: 'shortcuts', label: 'Shortcuts' },
@@ -199,6 +204,10 @@ export function UsageDashboardModal({
 	const cueTabEnabled = useSettingsStore(
 		(s) => s.encoreFeatures.maestroCue && s.encoreFeatures.usageStats
 	);
+	// Groups come straight from the store rather than a prop: the dashboard is
+	// the only consumer, and threading them through AppInfoModals would add a
+	// prop to a component that has no other reason to know about groups.
+	const groups = useSessionStore((s) => s.groups);
 	const claudeUsageSnapshots = useClaudeUsageStore((s) => s.snapshots);
 	const codexUsageSnapshots = useCodexUsageStore((s) => s.snapshots);
 	const hasAnthropicUsageDetails =
@@ -244,6 +253,16 @@ export function UsageDashboardModal({
 	const [databaseSize, setDatabaseSize] = useState<number | null>(null);
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
+	// Group the user drilled into from the Groups tab. Holds the member ids
+	// rather than the group id so the Agents grid stays restricted to exactly
+	// the agents that were in the group when it was clicked - re-deriving from
+	// the live group would silently change the set under a user who is reading
+	// it, and the chip names a group that no longer matches what is shown.
+	const [groupDrillDown, setGroupDrillDown] = useState<{
+		id: string;
+		label: string;
+		sessionIds: string[];
+	} | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -503,6 +522,8 @@ export function UsageDashboardModal({
 				return OVERVIEW_SECTIONS;
 			case 'agents':
 				return AGENTS_SECTIONS;
+			case 'groups':
+				return GROUPS_SECTIONS;
 			case 'agent-overview':
 				return AGENT_OVERVIEW_SECTIONS;
 			case 'activity':
@@ -522,6 +543,33 @@ export function UsageDashboardModal({
 		}
 	}, [viewMode]);
 
+	// Drill into a group: jump to the Agents grid restricted to its members.
+	// Reusing that grid is the point - the answer to "which agents made this
+	// group's numbers" is the agent grid, and a second per-group grid would be
+	// the same tiles with a different data source.
+	const handleSelectGroup = useCallback(
+		(rollup: { groupId: string; name: string; sessions: Array<{ id: string }> }) => {
+			setGroupDrillDown({
+				id: rollup.groupId,
+				label: rollup.name,
+				sessionIds: rollup.sessions.map((s) => s.id),
+			});
+			switchViewMode('agents');
+		},
+		[switchViewMode]
+	);
+
+	const clearGroupDrillDown = useCallback(() => setGroupDrillDown(null), []);
+
+	// Leaving the Agents tab by any route drops the restriction. Without this
+	// the user returns to Agents days later still filtered to a group they no
+	// longer remember picking, which reads as agents having disappeared.
+	useEffect(() => {
+		if (viewMode !== 'agents' && viewMode !== 'groups') {
+			setGroupDrillDown(null);
+		}
+	}, [viewMode]);
+
 	// Fall back to 'overview' if a dynamic provider/Cue tab disappears.
 	useEffect(() => {
 		if (!VIEW_MODE_TABS.some((tab) => tab.value === viewMode)) {
@@ -537,6 +585,7 @@ export function UsageDashboardModal({
 			'query-percentiles': 'Query Duration Percentiles',
 			'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',
 			'agent-overview-cards': 'Active Agents Overview',
+			'group-overview-cards': 'Group Usage Overview',
 			'session-stats': 'Agent Statistics',
 			'anthropic-usage': 'Anthropic Usage',
 			'codex-usage': 'OpenAI Usage',
@@ -893,13 +942,17 @@ export function UsageDashboardModal({
 						<DashboardSkeleton
 							theme={theme}
 							viewMode={
-								viewMode === 'cue' ||
-								viewMode === 'agent-overview' ||
-								viewMode === 'shortcuts' ||
-								viewMode === 'anthropic-usage' ||
-								viewMode === 'codex-usage'
-									? 'overview'
-									: viewMode
+								// Groups is a card grid like Agents, so it borrows that
+								// skeleton; the rest have no skeleton of their own.
+								viewMode === 'groups'
+									? 'agents'
+									: viewMode === 'cue' ||
+										  viewMode === 'agent-overview' ||
+										  viewMode === 'shortcuts' ||
+										  viewMode === 'anthropic-usage' ||
+										  viewMode === 'codex-usage'
+										? 'overview'
+										: viewMode
 							}
 							chartGridCols={layout.chartGridCols}
 							summaryCardsCols={layout.summaryCardsCols}
@@ -1297,6 +1350,9 @@ export function UsageDashboardModal({
 												data={data}
 												theme={theme}
 												onShowAgentDetails={setDetailSession}
+												restrictToSessionIds={groupDrillDown?.sessionIds ?? null}
+												restrictionLabel={groupDrillDown?.label}
+												onClearRestriction={clearGroupDrillDown}
 											/>
 										</ChartErrorBoundary>
 									) : (
@@ -1310,6 +1366,36 @@ export function UsageDashboardModal({
 											No active agents
 										</div>
 									)}
+								</div>
+							)}
+
+							{viewMode === 'groups' && (
+								<div
+									ref={setSectionRef('group-overview-cards')}
+									tabIndex={0}
+									role="region"
+									aria-label={getSectionLabel('group-overview-cards')}
+									onKeyDown={(e) => handleSectionKeyDown(e, 'group-overview-cards')}
+									className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+									style={{
+										boxShadow:
+											focusedSection === 'group-overview-cards'
+												? `0 0 0 2px ${theme.colors.accent}`
+												: 'none',
+										animationDelay: '0ms',
+									}}
+									data-testid="section-group-overview-cards"
+								>
+									<ChartErrorBoundary theme={theme} chartName="Group Overview">
+										<GroupOverviewCards
+											groups={groups}
+											sessions={sessions}
+											data={data}
+											theme={theme}
+											activeGroupId={groupDrillDown?.id ?? null}
+											onSelectGroup={handleSelectGroup}
+										/>
+									</ChartErrorBoundary>
 								</div>
 							)}
 

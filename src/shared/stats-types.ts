@@ -22,6 +22,25 @@ export interface QueryEvent {
 	isRemote?: boolean;
 	/** Whether this query came from a worktree session (child of a parent agent) */
 	isWorktree?: boolean;
+	/**
+	 * Per-turn token and cost usage, when the provider reported any.
+	 *
+	 * These are DELTAS for the single turn this row represents, not the running
+	 * session totals - `Session.usageStats` accumulates for the life of the
+	 * agent, so writing that value here would multiply-count every turn. The
+	 * renderer drains a per-turn ledger (`turnUsageLedger`) at exit and passes
+	 * the difference.
+	 *
+	 * All of them are absent for rows recorded before the columns existed, and
+	 * for providers that report no usage at all - which is why the aggregation
+	 * counts priced queries separately rather than assuming zero means free.
+	 */
+	inputTokens?: number;
+	outputTokens?: number;
+	cacheReadTokens?: number;
+	cacheCreationTokens?: number;
+	/** Cost in USD for this turn, when the provider reports one. */
+	costUsd?: number;
 }
 
 /**
@@ -111,6 +130,14 @@ export interface StatsAggregation {
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** User vs auto query counts per Maestro session (for per-card auto% on the dashboard) */
 	bySessionSource: Record<string, { user: number; auto: number }>;
+	/**
+	 * Token and cost totals per Maestro session, for agent and group cost
+	 * rollups. `pricedQueries` is how many of that session's rows actually
+	 * carried usage data: rows written before the token columns landed report
+	 * none, so a session can show a large query count against a small priced
+	 * count, and the UI must not present the total as if it covered every turn.
+	 */
+	bySessionTokens: Record<string, SessionTokenTotals>;
 	/** Count of queries originating from worktree (child) agents */
 	worktreeQueries: number;
 	/** Count of queries originating from parent (non-worktree) agents */
@@ -122,6 +149,19 @@ export interface StatsAggregation {
 	};
 	/** Number of image annotations saved in the time range */
 	imageAnnotations: number;
+}
+
+/**
+ * Token and cost totals for one Maestro session within a time range.
+ */
+export interface SessionTokenTotals {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	costUsd: number;
+	/** Number of queries in the range that reported any token usage. */
+	pricedQueries: number;
 }
 
 /**
@@ -146,4 +186,4 @@ export interface ShortcutUsageDay {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 7;
+export const STATS_DB_VERSION = 8;

@@ -28,6 +28,7 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_SQL,
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
+	ADD_QUERY_EVENT_TOKEN_COLUMNS,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -78,6 +79,11 @@ function getMigrations(): Migration[] {
 			version: 7,
 			description: 'Add shortcut_usage_daily table for tracking keyboard shortcut firings per day',
 			up: (db) => migrateV7(db),
+		},
+		{
+			version: 8,
+			description: 'Add per-turn token and cost columns to query_events for cost attribution',
+			up: (db) => migrateV8(db),
 		},
 	];
 }
@@ -311,6 +317,26 @@ function migrateV7(db: Database.Database): void {
 	db.prepare(CREATE_SHORTCUT_USAGE_DAILY_SQL).run();
 
 	logger.debug('Created shortcut_usage_daily table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v8: Add per-turn token and cost columns to query_events.
+ *
+ * Columns stay nullable with no default so a historical row reads as "unknown"
+ * rather than "zero tokens" - see ADD_QUERY_EVENT_TOKEN_COLUMNS. Guarded by
+ * hasColumn for the same reason as v5: a partially-applied run must be safe to
+ * repeat.
+ *
+ * `cost_usd` is REAL; the token columns are INTEGER.
+ */
+function migrateV8(db: Database.Database): void {
+	for (const column of ADD_QUERY_EVENT_TOKEN_COLUMNS) {
+		if (hasColumn(db, 'query_events', column)) continue;
+		const type = column === 'cost_usd' ? 'REAL' : 'INTEGER';
+		db.prepare(`ALTER TABLE query_events ADD COLUMN ${column} ${type}`).run();
+	}
+
+	logger.debug('Added token and cost columns to query_events table', LOG_CONTEXT);
 }
 
 /**
