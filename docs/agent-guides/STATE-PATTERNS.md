@@ -24,7 +24,7 @@ All stores are in `src/renderer/stores/`.
 | ---------------------- | ----------------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
 | **sessionStore**       | `sessionStore.ts`       | `useSessionStore`       | Sessions, groups, active session, bookmarks, worktree tracking, initialization                      |
 | **uiStore**            | `uiStore.ts`            | `useUIStore`            | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing                           |
-| **tabStore**           | `tabStore.ts`           | `useTabStore`           | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers.ts + sessionStore         |
+| **tabStore**           | `tabStore.ts`           | `useTabStore`           | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers + sessionStore            |
 | **agentStore**         | `agentStore.ts`         | `useAgentStore`         | Agent detection cache, error recovery, queue processing, agent lifecycle                            |
 | **modalStore**         | `modalStore.ts`         | `useModalStore`         | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields                       |
 | **groupChatStore**     | `groupChatStore.ts`     | `useGroupChatStore`     | Group chat state: chats list, messages, moderator, participants, execution queue                    |
@@ -137,7 +137,7 @@ All actions support functional updaters and have toggle variants where appropria
 **File:** `src/renderer/stores/tabStore.ts`
 **Hook:** `useTabStore`
 
-Tab data lives inside Session objects in sessionStore. This store provides orchestration actions that compose `tabHelpers.ts` pure functions with sessionStore mutations.
+Tab data lives inside Session objects in sessionStore. This store provides orchestration actions that compose `tabHelpers` pure functions with sessionStore mutations.
 
 ### Own State
 

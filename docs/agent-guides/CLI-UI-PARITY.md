@@ -84,7 +84,7 @@ stronger one.
 ### Renderer side
 
 Background placement is the absence of a focus patch: the four `*FocusFields`
-helpers in `src/renderer/utils/tabFocusFields.ts` are what make a tab visible, so
+helpers in `src/renderer/utils/tabHelpers/focusFields.ts` are what make a tab visible, so
 `createTab({ activate: false })`, `addTerminalTab(s, tab, { activate: false })`
 and `handleOpenFileTab(file, { activate: false })` simply do not spread one.
 `open_file_tab` is the one three-state path, because it has to serve both flags:

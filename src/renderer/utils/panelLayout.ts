@@ -1,5 +1,5 @@
 // Panel layout helpers - pure, side-effect-free tree utilities for tmux-style
-// tab tiling (split panes). Mirrors the functional style of tabHelpers.ts and
+// tab tiling (split panes). Mirrors the functional style of tabHelpers and
 // terminalTabHelpers.ts: every function takes a node/group and returns a new
 // one, never mutating its input.
 //
@@ -858,7 +858,7 @@ function activateRestoredPane(session: Session, groupId: string, ref: UnifiedTab
  * rather than restoring one, so pulling it into a rebuilt group would yank a live
  * tab out of wherever the user currently has it.
  *
- * Lives here rather than beside `reopenUnifiedClosedTab` because tabHelpers.ts
+ * Lives here rather than beside `reopenUnifiedClosedTab` because tabHelpers
  * must not import this module (it would close an import cycle).
  */
 export function reopenClosedTabWithTiling(session: Session): ReopenUnifiedClosedTabResult | null {

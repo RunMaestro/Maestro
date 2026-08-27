@@ -436,7 +436,7 @@ This ensures the webview only captures keyboard input after an explicit user cli
 
 ### Tab Navigation Pitfall
 
-The `showUnreadOnly` filter in `tabHelpers.ts` (`navigateToNextUnifiedTab` / `navigateToPrevUnifiedTab`) handles tab types with explicit branches. Browser tabs must be listed alongside terminal tabs as "always navigable" - if omitted, they fall through to the AI tab lookup, return undefined, and are silently skipped.
+The `showUnreadOnly` filter in `tabHelpers` (`navigateToNextUnifiedTab` / `navigateToPrevUnifiedTab`) handles tab types with explicit branches. Browser tabs must be listed alongside terminal tabs as "always navigable" - if omitted, they fall through to the AI tab lookup, return undefined, and are silently skipped.
 
 ### Key Files
 
@@ -446,4 +446,4 @@ The `showUnreadOnly` filter in `tabHelpers.ts` (`navigateToNextUnifiedTab` / `na
 | `src/main/preload/system.ts`                            | `onBrowserTabShortcutKey` IPC bridge                                           |
 | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts` | IPC → blur + dispatch KeyboardEvent                                            |
 | `src/renderer/components/MainPanel/BrowserTabView.tsx`  | Focus-steal guard, scroll injection                                            |
-| `src/renderer/utils/tabHelpers.ts`                      | Tab navigation with browser tab handling                                       |
+| `src/renderer/utils/tabHelpers`                         | Tab navigation with browser tab handling                                       |
