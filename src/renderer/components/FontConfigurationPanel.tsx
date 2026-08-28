@@ -134,6 +134,37 @@ export function FontConfigurationPanel({
 		return known.includes(fontFamily) ? null : fontFamily;
 	}, [fontFamily, customFonts, installedFonts, inheritOption]);
 
+	// Every value the dropdown offers, in the order it is rendered, so Up/Down
+	// can walk the whole list rather than just one group.
+	const orderedFontValues = useMemo(() => {
+		const values: string[] = [];
+		if (inheritOption) values.push(inheritOption.value);
+		if (unlistedValue) values.push(unlistedValue);
+		values.push(...COMMON_MONOSPACE_FONTS, ...customFonts, ...installedFonts);
+		return values;
+	}, [inheritOption, unlistedValue, customFonts, installedFonts]);
+
+	const stepFont = (delta: number) => {
+		if (orderedFontValues.length === 0) return;
+		const current = orderedFontValues.indexOf(fontFamily);
+		// A value the list doesn't contain steps in from the near end, so the
+		// first press still moves instead of eating the keystroke.
+		const next = current === -1 ? (delta > 0 ? 0 : orderedFontValues.length - 1) : current + delta;
+		if (next < 0 || next >= orderedFontValues.length) return;
+		setFontFamily(orderedFontValues[next]);
+	};
+
+	const handleSelectKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
+		if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+		// macOS opens the native popup on an arrow key instead of stepping the
+		// value, so previewing font by font has to be driven by hand. Windows and
+		// Linux step natively; preventing that keeps one press to one font
+		// everywhere. A popup that is already open swallows the key itself, so
+		// this cannot double-step.
+		e.preventDefault();
+		stepFont(e.key === 'ArrowDown' ? 1 : -1);
+	};
+
 	const handleAddCustomFont = () => {
 		const trimmedFont = customFontInput.trim();
 		if (trimmedFont && !customFonts.includes(trimmedFont)) {
@@ -164,6 +195,7 @@ export function FontConfigurationPanel({
 				onChange={(e) => setFontFamily(e.target.value)}
 				onFocus={onFontInteraction}
 				onClick={onFontInteraction}
+				onKeyDown={handleSelectKeyDown}
 				className="w-full p-2 rounded border bg-transparent outline-none mb-1"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 			>
@@ -203,7 +235,7 @@ export function FontConfigurationPanel({
 				)}
 			</select>
 			<div className="h-4 mb-2 text-xs opacity-50">
-				{fontLoading ? 'Loading installed fonts...' : ''}
+				{fontLoading ? 'Loading installed fonts...' : 'Press Up/Down to preview each font.'}
 			</div>
 
 			<div className="space-y-2">

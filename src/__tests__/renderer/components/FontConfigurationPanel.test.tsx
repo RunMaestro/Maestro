@@ -59,4 +59,89 @@ describe('FontConfigurationPanel', () => {
 		fireEvent.click(removeButtons[0]);
 		expect(onRemoveCustomFont).toHaveBeenCalledWith('Verdana');
 	});
+	describe('arrow-key preview', () => {
+		it('steps to the next and previous font without opening the dropdown', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({ fontFamily: 'JetBrains Mono', setFontFamily });
+			const select = screen.getByRole('combobox');
+
+			fireEvent.keyDown(select, { key: 'ArrowDown' });
+			expect(setFontFamily).toHaveBeenLastCalledWith('Fira Code');
+
+			fireEvent.keyDown(select, { key: 'ArrowUp' });
+			expect(setFontFamily).toHaveBeenLastCalledWith('Roboto Mono');
+		});
+
+		it('walks out of one group and into the next', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({
+				fontFamily: 'Source Code Pro', // last common monospace font
+				setFontFamily,
+				customFonts: ['Verdana'],
+			});
+
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+			expect(setFontFamily).toHaveBeenCalledWith('Verdana');
+		});
+
+		it('reaches the installed fonts once the system sweep has run', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({
+				fontFamily: 'Verdana',
+				setFontFamily,
+				customFonts: ['Verdana'],
+				systemFonts: ['Helvetica', 'Zapfino'],
+				fontsLoaded: true,
+			});
+
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+			expect(setFontFamily).toHaveBeenCalledWith('Helvetica');
+		});
+
+		it('stops at the ends instead of wrapping', () => {
+			const setFontFamily = vi.fn();
+			const { rerender } = renderPanel({ fontFamily: 'Roboto Mono', setFontFamily });
+
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowUp' });
+			expect(setFontFamily).not.toHaveBeenCalled();
+
+			rerender(
+				<FontConfigurationPanel
+					fontFamily="Source Code Pro"
+					setFontFamily={setFontFamily}
+					systemFonts={[]}
+					fontsLoaded={false}
+					fontLoading={false}
+					customFonts={[]}
+					onAddCustomFont={vi.fn()}
+					onRemoveCustomFont={vi.fn()}
+					onFontInteraction={vi.fn()}
+					theme={mockTheme}
+				/>
+			);
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+			expect(setFontFamily).not.toHaveBeenCalled();
+		});
+
+		it('starts from the inherit entry when the terminal font inherits', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({
+				fontFamily: '',
+				setFontFamily,
+				inheritOption: { value: '', label: 'Same as interface font' },
+			});
+
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+			expect(setFontFamily).toHaveBeenCalledWith('Roboto Mono');
+		});
+
+		it('leaves other keys to the browser', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({ fontFamily: 'Roboto Mono', setFontFamily });
+
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'a' });
+			expect(setFontFamily).not.toHaveBeenCalled();
+		});
+	});
 });
