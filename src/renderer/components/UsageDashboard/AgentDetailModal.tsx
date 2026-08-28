@@ -32,6 +32,7 @@ import { computePercentiles } from '../../../shared/percentiles';
 import { useElementWidth } from '../../hooks/ui/useElementWidth';
 import { logger } from '../../utils/logger';
 import { Sparkline } from './Sparkline';
+import { Kpi, MetaField, SectionHeading } from './DetailPrimitives';
 import { TabBreakdown } from './TabBreakdown';
 
 interface AgentDetailModalProps {
@@ -416,77 +417,6 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 				)}
 			</div>
 		</Modal>
-	);
-});
-
-interface KpiProps {
-	label: string;
-	value: string;
-	theme: Theme;
-	compact?: boolean;
-}
-
-const Kpi = memo(function Kpi({ label, value, theme, compact = false }: KpiProps) {
-	return (
-		<div
-			className="rounded-md border"
-			style={{
-				borderColor: theme.colors.border,
-				backgroundColor: theme.colors.bgMain,
-				padding: compact ? '8px 10px' : '12px',
-			}}
-		>
-			<div
-				className="text-[10px] uppercase tracking-wide mb-1"
-				style={{ color: theme.colors.textDim }}
-			>
-				{label}
-			</div>
-			<div
-				className={compact ? 'text-base font-semibold' : 'text-lg font-bold'}
-				style={{ color: theme.colors.textMain }}
-			>
-				{value}
-			</div>
-		</div>
-	);
-});
-
-interface MetaFieldProps {
-	label: string;
-	value: string;
-	theme: Theme;
-	mono?: boolean;
-}
-
-const MetaField = memo(function MetaField({ label, value, theme, mono }: MetaFieldProps) {
-	return (
-		<span className="inline-flex items-baseline gap-1">
-			<span style={{ color: theme.colors.textDim }}>{label}:</span>
-			<span
-				className={mono ? 'font-mono' : ''}
-				style={{ color: theme.colors.textMain }}
-				title={value}
-			>
-				{value}
-			</span>
-		</span>
-	);
-});
-
-interface SectionHeadingProps {
-	theme: Theme;
-	children: React.ReactNode;
-}
-
-const SectionHeading = memo(function SectionHeading({ theme, children }: SectionHeadingProps) {
-	return (
-		<h3
-			className="text-xs font-semibold uppercase tracking-wide mb-2"
-			style={{ color: theme.colors.textDim }}
-		>
-			{children}
-		</h3>
 	);
 });
 

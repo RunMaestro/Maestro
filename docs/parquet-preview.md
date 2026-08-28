@@ -8,7 +8,7 @@ Double-click a `.parquet` file and Maestro opens it as a table you can filter, s
 
 Parquet files are routinely larger than memory, so Maestro never loads one. It reads the file's footer to learn the schema, then fetches only the rows on screen and only the columns you are looking at. Opening a 20 GB file costs the same few kilobytes as opening a 2 MB one.
 
-`.parquet`, `.parq`, and `.pq` are all recognized. Files on an [SSH remote](/ssh-remote-execution) work too: Maestro caches a local copy the first time you open one, because there is no way to read scattered byte ranges over an SSH shell.
+`.parquet`, `.parq`, and `.pq` are all recognized. Files on an [SSH remote](/ssh-remote-execution) work too, with a caveat covered in [Remote files](#remote-files) below.
 
 For how this compares to the other formats Maestro opens specially - jq for JSON, row filtering for CSV - see [File Formats](/file-formats).
 
@@ -84,9 +84,17 @@ If a filter matches an enormous number of rows, Maestro stops collecting at its 
 
 **Export** writes the currently matching rows to a file, honoring your filter, your sort, and your hidden columns. Choose `.csv` or `.jsonl` by the extension you give it.
 
+## Remote files
+
+A Parquet file on an [SSH remote](/ssh-remote-execution) opens too, but it is the one case where the format's usual trick does not apply. Everything above works because Maestro reads scattered byte ranges out of the file, and an SSH shell has no way to serve those. So a remote file has to be copied across in full before any of it can be read.
+
+Maestro copies it in 4 MB blocks into a temporary cache and shows a progress bar while it does. Re-opening the same unchanged file is free; a file that changed on the remote is fetched again.
+
+**The limit is 32 MB.** Above that Maestro refuses and tells you to copy the file locally, which is the honest answer: 32 MB is already ~43 MB over the wire once base64-encoded, and a larger file means minutes of waiting to open something you may only want a few rows of. Copy it to your machine and it opens instantly, with no size limit at all.
+
 ## What is not supported
 
 - **Editing.** The preview is read-only.
 - **Encrypted Parquet files.** Maestro will report that it could not open the file rather than showing partial data.
 - **Nested columns** (lists, maps, structs) render as JSON and can be searched as text, but cannot be sorted or compared with `>` and `<`.
-- **Remote files above 512 MB.** Fetching one over SSH means transferring the whole file, so Maestro refuses and suggests copying it locally first.
+- **Remote files above 32 MB.** See [Remote files](#remote-files).

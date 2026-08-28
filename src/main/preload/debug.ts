@@ -140,6 +140,17 @@ export function createDebugApi() {
 		// Delete an abandoned temp trace zip produced by stopProfilingToFile.
 		discardTrace: (filePath: string): Promise<{ success: boolean }> =>
 			ipcRenderer.invoke('debug:discardTrace', filePath),
+		/**
+		 * Fire a synthetic provider credential failure through the real event
+		 * channel, so the whole re-authentication flow can be exercised without
+		 * waiting for a token to actually expire.
+		 */
+		simulateAuthExpiry: (payload: {
+			processSessionId: string;
+			agentId: string;
+			sshRemoteId?: string;
+			fromPipeline?: boolean;
+		}): Promise<{ success: boolean }> => ipcRenderer.invoke('debug:simulateAuthExpiry', payload),
 
 		// Subscribe to capture progress (stopping -> compressing -> done). Returns
 		// an unsubscribe function. Mirrors the documentGraph:filesChanged pattern.

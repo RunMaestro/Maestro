@@ -533,7 +533,7 @@ Losing the whole pane while trying to reset a filter is the bug this prevents. T
 
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 
-The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus - clicking a row is enough, since rows are real `<button>`s and the handler sits on the list container:
+The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus. Rows are real `<button>`s and the handler sits on the list container, so clicking one is enough - or pass `autoFocusList` and the surface opens with the list already focused:
 
 - **Up / Down** walk the **visible** rows. The order comes from `visibleOrder`, which skips collapsed categories: stepping into a collapsed group would move the selection somewhere the user cannot see. The ends do not wrap, and a selection the current filter hides means the keys enter the list from whichever end they point at.
 - **Backspace / Delete** raise `onDeleteItem(selectedId)`. The list only reports the intent; the consumer owns the confirmation. Both keys are ignored unless the event came from a row, so Backspace on the "+ New" button in the same container cannot delete anything.
@@ -541,6 +541,8 @@ The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys o
 Two focus rules the component exists to enforce:
 
 **Selection is chased, not assumed.** `onSelect` may be async or may refuse (unsaved changes), so arrow nav records the requested id and only moves DOM focus once `selectedId` actually lands on it.
+
+**`autoFocusList` claims focus once, and only if nothing else has it.** The list loads async, so it cannot fire on mount - it waits for the first selection, which means a fast user may already be typing in the filter box by then. Focus must stay where they put it, so the effect checks `document.activeElement` first (the same rule the layer stack uses when restoring focus) and gives up if anything outside the list holds it. Only turn it on for a surface whose primary job is walking the list; on an editor-first surface it steals the caret from the textarea.
 
 **After a consumer-driven delete, bump `listFocusToken`.** The row that had focus was just unmounted, so focus falls to `<body>` and the next Backspace does nothing - which reads as the keyboard dying halfway through a cleanup pass. Only the consumer knows when its own async delete settled, hence the token.
 
@@ -1620,6 +1622,31 @@ every edit and does exactly that. Wrap it in `useStableCallback()`
 (`hooks/utils/useStableCallback.ts`) and keep the component memo's dependencies
 off the content (depend on `file.path`, not `file`). `useAutoRunMarkdown` does
 the wrapping internally, so its callers cannot get this wrong.
+
+#### Preview/edit scroll sync rides the same `data-source-line` tags
+
+`rehypeSourceLine` stamps EVERY block, not just task checkboxes, and the second
+consumer is `lineSync.ts` (`components/FilePreview/lineSync.ts`):
+`domGetTopLineByAttr()` reads the tags to find the source line at the fold so
+the preview -> edit toggle lands where the reader was, and
+`domScrollToLineByAttr()` walks them back the other way.
+
+**A component override in `createMarkdownComponents()` must forward its props.**
+`p`, `li`, and `blockquote` were written as
+`React.createElement('p', null, children)`, which silently eats
+`data-source-line` along with everything else. Headings forwarded theirs, so the
+tags did not disappear - they thinned out to HEADINGS ONLY, and the walk could
+no longer tell "the top of the document" from "the first heading". Destructure
+`node` out (it is react-markdown's mdast node and React warns if it reaches the
+DOM) and spread the rest.
+
+**"Above the first tagged block" is line 1, not the first block's line.** The
+container's own leading padding puts even block one below the fold at
+`scrollTop` 0, so a `blocks[0]` fallback answers with the first block for a
+document scrolled to the very top. `domScrollToLineByAttr()` is the mirror
+image: for a line at or above the first block it writes a hard
+`scrollTop = 0` rather than aligning block one with the scroller edge, which
+would scroll that same padding away and land a few pixels short.
 
 #### Alert callouts
 

@@ -29,6 +29,45 @@ const STAGGER_STEP_MS = 60;
  */
 const STAGGER_MAX_STEPS = 12;
 
+/**
+ * Per-size layout tokens.
+ *
+ * `lg` exists for the group grid. A group is a container of agents, so its tile
+ * is deliberately bigger than an agent's - the size difference is the visual
+ * cue for the containment relationship, not decoration.
+ *
+ * The stat layout is the substantive part. The default tile packs stats into a
+ * single flex row, which works for three short values but collides once a tile
+ * carries four (a group's queries + time + tokens + cost ran together as
+ * "79.5M$65.99"). The large tile lays them out in a wrapping grid instead, so
+ * adding a stat reflows rather than overlaps.
+ */
+const SIZE_TOKENS = {
+	default: {
+		container: 'p-3 gap-1.5',
+		title: 'text-sm',
+		subtitle: 'text-[11px]',
+		statLabel: 'text-[9px]',
+		statValue: 'text-base',
+		statLayout: 'flex items-end gap-3',
+		sparkline: { width: 70, height: 22 },
+	},
+	lg: {
+		container: 'p-4 gap-2',
+		title: 'text-base',
+		subtitle: 'text-xs',
+		statLabel: 'text-[10px]',
+		statValue: 'text-xl',
+		// auto-fit rather than a fixed column count: three stats stay on one
+		// row, four wrap to 2x2, and neither has to be special-cased here.
+		statLayout: 'grid gap-x-4 gap-y-2 grid-cols-[repeat(auto-fit,minmax(72px,1fr))]',
+		sparkline: { width: 96, height: 30 },
+	},
+} as const;
+
+/** Tile scale. `lg` is the group grid; `default` is everything else. */
+export type EntityTileSize = keyof typeof SIZE_TOKENS;
+
 /** One labeled number in the tile's stat row. */
 export interface EntityTileStat {
 	/** Short uppercase label, e.g. "Queries". Also used as the React key. */
@@ -88,6 +127,10 @@ export interface EntityTileProps {
 	isDashed?: boolean;
 	/** Makes the tile a button with a hover affordance. */
 	onClick?: () => void;
+	/** Tile scale. `lg` enlarges type and spacing and switches the stat row to a
+	 *  wrapping grid. Used by the group grid so a container of agents reads as
+	 *  larger than the agents inside it. */
+	size?: EntityTileSize;
 	/** Full accessible label. Callers build this since only they know the units. */
 	ariaLabel: string;
 	testId: string;
@@ -113,9 +156,11 @@ export const EntityTile = memo(function EntityTile({
 	isSelected = false,
 	isDashed = false,
 	onClick,
+	size = 'default',
 	ariaLabel,
 	testId,
 }: EntityTileProps) {
+	const tokens = SIZE_TOKENS[size];
 	const [isHovered, setIsHovered] = useState(false);
 	const isClickable = Boolean(onClick);
 
@@ -145,7 +190,7 @@ export const EntityTile = memo(function EntityTile({
 
 	return (
 		<div
-			className={`card-enter relative p-3 rounded-lg flex flex-col gap-1.5 transition-colors ${
+			className={`card-enter relative rounded-lg flex flex-col transition-colors ${tokens.container} ${
 				isClickable ? 'cursor-pointer focus:outline-none focus-visible:ring-2' : ''
 			}`}
 			style={{
@@ -156,6 +201,7 @@ export const EntityTile = memo(function EntityTile({
 				...(isClickable ? ({ '--tw-ring-color': theme.colors.accent } as React.CSSProperties) : {}),
 			}}
 			data-testid={testId}
+			data-size={size}
 			data-selected={isSelected ? 'true' : undefined}
 			data-clickable={isClickable ? 'true' : undefined}
 			role={isClickable ? 'button' : 'group'}
@@ -179,7 +225,7 @@ export const EntityTile = memo(function EntityTile({
 					/>
 				)}
 				<span
-					className="text-sm font-medium truncate flex-1 min-w-0"
+					className={`${tokens.title} font-medium truncate flex-1 min-w-0`}
 					style={{ color: theme.colors.textMain }}
 					title={title}
 				>
@@ -212,7 +258,7 @@ export const EntityTile = memo(function EntityTile({
 			</div>
 			{subtitle && (
 				<div
-					className="text-[11px] truncate"
+					className={`${tokens.subtitle} truncate`}
 					style={{ color: theme.colors.textDim }}
 					title={subtitle}
 					data-testid={subtitleTestId}
@@ -220,12 +266,12 @@ export const EntityTile = memo(function EntityTile({
 					{subtitle}
 				</div>
 			)}
-			<div className="flex items-end justify-between gap-2 mt-auto">
-				<div className="flex items-end gap-3 min-w-0">
+			<div className="flex items-end justify-between gap-3 mt-auto">
+				<div className={`${tokens.statLayout} min-w-0 flex-1`}>
 					{stats.map((stat) => (
 						<div key={stat.label} className="flex flex-col min-w-0">
 							<span
-								className="text-[9px] uppercase tracking-wide"
+								className={`${tokens.statLabel} uppercase tracking-wide`}
 								style={{
 									color: stat.highlighted ? theme.colors.accent : theme.colors.textDim,
 								}}
@@ -233,7 +279,7 @@ export const EntityTile = memo(function EntityTile({
 								{stat.label}
 							</span>
 							<span
-								className="text-base font-semibold"
+								className={`${tokens.statValue} font-semibold truncate tabular-nums`}
 								style={{
 									color:
 										stat.highlighted && !stat.muted
@@ -256,8 +302,8 @@ export const EntityTile = memo(function EntityTile({
 						<Sparkline
 							data={sparkline}
 							color={sparklineColor ?? theme.colors.accent}
-							width={70}
-							height={22}
+							width={tokens.sparkline.width}
+							height={tokens.sparkline.height}
 						/>
 					</div>
 				)}

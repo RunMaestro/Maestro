@@ -95,6 +95,21 @@ the logo case the tile renders a blank fallback ring, and a test in
 
 A login shell that dies without printing anything also writes `[the login session ended]` into the terminal, because an empty box with no explanation is indistinguishable from a hang.
 
+**Testing that flow means faking the failure, not waiting for one.** The command
+palette carries `Debug: Trigger Provider Re-auth` and a `(Cue pipeline)` variant,
+which call `debug:simulateAuthExpiry` in the MAIN process. The handler emits the
+real `agent:error` / `agent:authExpired` event rather than poking the renderer's
+stores, so classification, the provider-scoped outage grouping, the modal, the
+login PTY, and the resume that replays blocked turns all run exactly as they do
+in production - anything that only works when a test reaches past the IPC
+boundary is a bug this is meant to catch, not hide. Two payload details decide whether the
+exercise proves anything: the interactive variant sends the FULL process id
+(`{sessionId}-ai-{tabId}`), because that is what a real error carries and it is
+how the failing tab is identified for replay, while the pipeline variant sends
+the bare agent id on the separate channel Cue uses (its agents are spawned
+outside the ProcessManager). Send a bare id down the interactive path and the
+dialog opens and then resumes nothing, which looks like a passing test.
+
 ### Context Windows (`src/shared/agentConstants.ts`)
 
 ```typescript

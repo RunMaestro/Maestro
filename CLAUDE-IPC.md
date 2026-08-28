@@ -151,6 +151,7 @@ window.maestro.parquet = {
 	query(request: ParquetQueryRequest): Promise<ParquetQueryResult>;
 	export(options): Promise<{ path; rows; truncated }>;      // CSV / JSON Lines
 	close(handle): Promise<void>;
+	onFetchProgress(cb): () => void;                          // SSH copy progress
 };
 ```
 
@@ -161,6 +162,7 @@ Three contract details that bite callers:
 - **`matchedRows` is a LOWER BOUND until `complete` is true.** A filtered scan stops as soon as it has filled the requested window. Render it as `1,204+`, and pass `countAll: true` to drive the scan toward the exact total.
 - **`close` is not optional but is not load-bearing.** Idle handles are reaped, so a missed close leaks nothing permanent - it just holds a file descriptor until the reaper runs.
 - **A filter that fails to parse matches ZERO rows**, and returns the problem in `filterError`. It does not fall back to "no filter": showing every row under a red error reads as filtering being broken.
+- **`onFetchProgress` fires only for SSH-backed opens**, since a local file is opened in place with nothing to copy. It always ends with exactly one `done: true` event, including for an already-cached file, so a listener can unconditionally take its progress UI down on the terminal event. Events are sent to the requesting WebContents rather than broadcast, and carry `remotePath` so a listener can ignore another tab's copy.
 
 Engine internals (pruning, projection, resumable scans) are documented in [REMAINING-SYSTEMS.md → Parquet Query Engine](docs/agent-guides/REMAINING-SYSTEMS.md).
 

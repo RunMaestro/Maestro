@@ -215,7 +215,7 @@ Health is the default so anything needing a human sits at the top rather than be
 
 **Graph** jumps to the Pipeline Graph tab with that pipeline selected.
 
-**Rename** is the pencil beside the pipeline name. Click it (or the name's pencil on hover), type, and press `Enter` to commit or `Escape` to cancel; clicking away also commits, since clicking away from text you just typed reads as "keep it". A blank name, or one another pipeline already uses, is refused in the field rather than after a round-trip, so your text stays put and you can fix it. Changing only the capitalization of the current name is allowed.
+**Rename** is the pencil beside the pipeline name. Click it (or the name's pencil on hover), type, and press `Enter` to commit or `Escape` to cancel; clicking away also commits, since clicking away from text you just typed reads as "keep it". While a rename is open, `Escape` cancels it rather than closing the Cue modal - a second `Escape` closes the modal as usual. A blank name, or one another pipeline already uses, is refused in the field rather than after a round-trip, so your text stays put and you can fix it. Changing only the capitalization of the current name is allowed.
 
 A rename rewrites `pipeline_name` on every subscription in the pipeline, across every `cue.yaml` it spans - a cross-agent pipeline is physically several files and all of them are updated together. What it deliberately does not touch:
 

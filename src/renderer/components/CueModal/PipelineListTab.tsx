@@ -15,7 +15,7 @@
  * each row jumps there with that pipeline pre-selected.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
 	AlertTriangle,
 	Bot,
@@ -44,6 +44,8 @@ import { validatePipelines } from '../CuePipelineEditor/utils/pipelineValidation
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { HoverTooltip } from '../ui/HoverTooltip';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { cueService } from '../../services/cue';
 import { notifyToast } from '../../stores/notificationStore';
 import { PipelineDot } from './StatusDot';
@@ -141,6 +143,20 @@ export function PipelineListTab({
 	}, []);
 
 	const cancelRename = useCallback(() => setRenamingId(null), []);
+
+	// While a rename is open it owns Escape: the key cancels the rename rather
+	// than closing the whole Cue modal. The layer stack handles Escape on a
+	// capture-phase window listener, so a keydown handler on the input could
+	// never win - this has to be a real layer that outranks CUE_MODAL. Same
+	// mechanism the Scheduled Tasks filter box uses.
+	useModalLayer(MODAL_PRIORITIES.CUE_PIPELINE_RENAME, undefined, cancelRename, {
+		enabled: renamingId !== null,
+		// An inline field, not an overlay: it must not dim the modal, trap focus,
+		// or block the rest of the list from being clicked.
+		focusTrap: 'none',
+		blocksLowerLayers: false,
+		capturesFocus: false,
+	});
 
 	const commitRename = useCallback(
 		async (oldName: string, newName: string) => {
@@ -469,11 +485,29 @@ function PipelineNameEditor({
 				? 'Another pipeline already has that name'
 				: null;
 
+	// Set the instant this editor is being torn down, so a blur fired on the way
+	// out cannot commit. Escape cancels from the LAYER STACK, which unmounts this
+	// component while its input still holds focus, and a blur-commit racing that
+	// teardown would save the very rename Escape was pressed to abandon.
+	//
+	// Defensive: React does not fire `onBlur` for an element removed while
+	// focused, so no test drives this branch (one that tried passed with the
+	// guard deleted, which is worse than no test). Kept because it is one
+	// comparison and the failure it prevents is silent and destructive.
+	const closingRef = useRef(false);
+
+	const cancel = () => {
+		closingRef.current = true;
+		onCancel();
+	};
+
 	const commit = () => {
+		if (closingRef.current) return;
 		// An unchanged name is a no-op, not an error - it is what pressing Enter
 		// without typing should do.
-		if (trimmed === initialName) return onCancel();
+		if (trimmed === initialName) return cancel();
 		if (error) return;
+		closingRef.current = true;
 		onCommit(trimmed);
 	};
 
@@ -484,16 +518,19 @@ function PipelineNameEditor({
 				value={draft}
 				onChange={(e) => setDraft(e.target.value)}
 				onKeyDown={(e) => {
-					// Stop every key here: the row is a button (Space/Enter toggle
-					// it) and the modal's layer stack claims Escape. Without this,
-					// typing a space collapses the row under the caret.
+					// Stop every key here: the row is a button, so Space and Enter
+					// would otherwise toggle it while the user is typing.
+					//
+					// Escape is NOT handled here on purpose. The layer stack claims it
+					// on a capture-phase window listener, so this handler never sees
+					// it; the cancel comes from the CUE_PIPELINE_RENAME layer that
+					// PipelineListTab registers while a rename is open. A local
+					// Escape branch here would be dead code that reads as the source
+					// of the behavior.
 					e.stopPropagation();
 					if (e.key === 'Enter') {
 						e.preventDefault();
 						commit();
-					} else if (e.key === 'Escape') {
-						e.preventDefault();
-						onCancel();
 					}
 				}}
 				// Blur-commits rather than blur-cancels: clicking away from a field

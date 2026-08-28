@@ -353,6 +353,15 @@ Three invariants:
 Note that health history legitimately reads as empty right after a rename: runs
 recorded the name they ran under, and `derivePipelineHealth` matches on it.
 
+**Escape during a rename is a LAYER, not a keydown handler.** `PipelineListTab`
+registers `MODAL_PRIORITIES.CUE_PIPELINE_RENAME` (462, above `CUE_MODAL`) while
+`renamingId !== null`. The layer stack listens on `window` at CAPTURE, so an
+`onKeyDown` on the rename input can never see Escape - it would close the whole
+Cue modal instead of cancelling the rename. Same mechanism and same reason as
+`CUE_SCHEDULED_TASK_FILTER`. Register it with `focusTrap: 'none'`,
+`blocksLowerLayers: false`, `capturesFocus: false`: it is an inline field, not
+an overlay, and it must not dim the modal or trap focus.
+
 **Remembered tab.** `lastOpenCueTab` is module-level state in `CueModal.tsx`,
 resolved in the `useState` lazy initializer (a restore effect double-fires under
 StrictMode and clobbers the saved value). Same shape as `lastOpenSettingsTab` in

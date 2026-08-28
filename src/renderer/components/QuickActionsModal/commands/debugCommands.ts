@@ -216,6 +216,57 @@ export function buildDebugCommands({
 		});
 	}
 
+	// Provider re-authentication. Fires the same event a real credential failure
+	// produces, from the main process, so the whole flow runs for real: the
+	// provider-scoped outage grouping, the modal, the login PTY (including over
+	// SSH), and the resume that replays what the outage blocked. Waiting for a
+	// token to actually expire is not a workable way to test any of that.
+	//
+	// Needs the FULL process id, because a real error carries one and it is how
+	// the failing tab is identified for replay - a base agent id would open the
+	// dialog and then resume nothing.
+	if (activeSession) {
+		const activeTabId = activeSession.activeTabId ?? activeSession.aiTabs?.[0]?.id;
+		const simulate = (fromPipeline: boolean) => async () => {
+			setQuickActionOpen(false);
+			try {
+				await window.maestro.debug.simulateAuthExpiry({
+					processSessionId: fromPipeline
+						? activeSession.id
+						: `${activeSession.id}-ai-${activeTabId}`,
+					agentId: activeSession.toolType,
+					fromPipeline,
+				});
+			} catch (err) {
+				notifyToast({
+					type: 'error',
+					title: 'Error',
+					message: 'Failed to simulate a provider auth failure',
+				});
+				logger.error('[Debug] Failed to simulate auth expiry', undefined, err);
+			}
+		};
+
+		if (activeTabId) {
+			commands.push({
+				id: 'debugTriggerReauth',
+				label: 'Debug: Trigger Provider Re-auth',
+				subtext: `Fake an expired credential on ${activeSession.name}`,
+				action: simulate(false),
+			});
+		}
+
+		// The pipeline variant arrives on its own channel because Cue spawns its
+		// agents outside the ProcessManager. It is the path that failed silently
+		// in the field, and the one hardest to reproduce on purpose.
+		commands.push({
+			id: 'debugTriggerReauthPipeline',
+			label: 'Debug: Trigger Provider Re-auth (Cue pipeline)',
+			subtext: `Fake a pipeline auth failure on ${activeSession.name}`,
+			action: simulate(true),
+		});
+	}
+
 	// Performance profiling: a Start/End toggle. "End" only surfaces while a
 	// recording is in flight (main process is the source of truth for `active`).
 	if (profilingActive) {
