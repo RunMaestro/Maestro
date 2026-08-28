@@ -76,6 +76,24 @@ const MAX_QUERY_MS = 2_500;
 /** Rows the engine will sort. Sorting needs the whole match set materialized. */
 const MAX_SORT_ROWS = 200_000;
 
+/**
+ * Most rows decoded in one `readColumn` call.
+ *
+ * A scan range is a whole row group, and a row group is written by the
+ * producer, not by us. Most writers emit 10k-100k rows per group, but some -
+ * Polars by default - write the ENTIRE file as one row group. Reading "the
+ * range" for such a file means decoding every row of a column at once, and
+ * doing that across a wide table means holding the whole uncompressed dataset
+ * in memory. A real 474 MB file with one row group and 117 columns expands to
+ * 3.37 GB that way, which is a hard main-process OOM: not an exception, an
+ * abort that takes the whole app down with no error to report.
+ *
+ * So reads are bounded HERE rather than trusting the file's own chunking. The
+ * page index lets hyparquet fetch only the pages a window touches, so a bounded
+ * read of a giant row group is cheap as well as safe.
+ */
+const MAX_READ_SPAN_ROWS = 8_192;
+
 /** Bytes of a binary cell rendered as hex before it is elided. */
 const MAX_BINARY_PREVIEW_BYTES = 24;
 
@@ -111,6 +129,14 @@ interface ScanSession {
 	ranges: ScanRange[];
 	/** Next range to decode when the match set needs extending. */
 	nextRange: number;
+	/**
+	 * Row within `ranges[nextRange]` that scanning has reached.
+	 *
+	 * A range is consumed in bounded windows rather than whole, so a scan that
+	 * runs out of time budget mid-range has to remember where it stopped.
+	 * Without this the range would restart, duplicating matches.
+	 */
+	nextRowInRange: number;
 	matched: number[];
 	complete: boolean;
 	truncated: boolean;
@@ -247,6 +273,7 @@ async function getSession(file: OpenParquetFile, filterSource: string): Promise<
 		scan,
 		ranges,
 		nextRange: 0,
+		nextRowInRange: -1,
 		matched: [],
 		complete: node === null || blocked,
 		truncated: false,
@@ -297,32 +324,56 @@ async function extendMatches(
 			return;
 		}
 
-		const range = session.ranges[session.nextRange++];
-		session.rowGroupsScanned++;
-		session.rowsExamined += range.rowEnd - range.rowStart;
+		const range = session.ranges[session.nextRange];
+		if (session.nextRowInRange < 0) {
+			// First window of this range.
+			session.nextRowInRange = range.rowStart;
+			session.rowGroupsScanned++;
+		}
 
-		// Phase one: decode only the columns the predicate mentions. A range
+		// Consume the range in bounded windows rather than whole. Every filter
+		// column is held simultaneously (the predicate needs them together for
+		// a given row), so the peak is columns x window, and the window is the
+		// only half of that product we control.
+		const windowStart = session.nextRowInRange;
+		const windowEnd = Math.min(windowStart + MAX_READ_SPAN_ROWS, range.rowEnd);
+
+		// Phase one: decode only the columns the predicate mentions. A window
 		// where nothing matches never reaches phase two, so the wide columns
 		// are never touched for it.
 		const decoded = new Map<string, ArrayLike<unknown>>();
 		for (const column of filterColumns) {
 			decoded.set(
 				column,
-				(await session.scan.readColumn({ column, ...range })) as ArrayLike<unknown>
+				(await session.scan.readColumn({
+					column,
+					rowStart: windowStart,
+					rowEnd: windowEnd,
+				})) as ArrayLike<unknown>
 			);
 		}
 
-		const rows = range.rowEnd - range.rowStart;
+		const rows = windowEnd - windowStart;
+		session.rowsExamined += rows;
 		for (let i = 0; i < rows; i++) {
 			const accessor = (column: string) => decoded.get(column)?.[i];
 			if (evaluateFilterNode(session.node, accessor, allColumns)) {
-				session.matched.push(range.rowStart + i);
+				session.matched.push(windowStart + i);
 				if (session.matched.length >= MAX_MATCHED_ROWS) {
 					session.truncated = true;
 					session.complete = true;
 					break;
 				}
 			}
+		}
+
+		// Advance the cursor, stepping to the next range only once this one is
+		// fully consumed.
+		if (windowEnd >= range.rowEnd) {
+			session.nextRange++;
+			session.nextRowInRange = -1;
+		} else {
+			session.nextRowInRange = windowEnd;
 		}
 
 		await breathe();
@@ -438,9 +489,41 @@ async function readColumnForRows(
 
 	for (const [rangeIndex, positions] of byRange) {
 		const range = session.ranges[rangeIndex];
-		const data = (await session.scan.readColumn({ column, ...range })) as ArrayLike<unknown>;
-		for (const position of positions) {
-			out[position] = data[rowIndexes[position] - range.rowStart];
+		// Sorted so the walk below can cut windows greedily.
+		positions.sort((a, b) => rowIndexes[a] - rowIndexes[b]);
+
+		// Read the rows asked for, NOT the range that contains them.
+		//
+		// This is the line that took the app down. Reading `...range` decodes a
+		// whole row group, which for a normally-chunked file is a tolerable
+		// overshoot and for a single-row-group file is the entire dataset. Worse,
+		// hyparquet caches the last read per column, so materializing a 300-row
+		// page across a wide table retained one full-row-group decode PER COLUMN
+		// - gigabytes, in the main process, where OOM is an abort rather than a
+		// catchable error.
+		//
+		// Windows are cut greedily over the sorted rows and capped, so a
+		// contiguous page is one read of exactly its own size, and a scattered
+		// one (a sorted result) degrades into several bounded reads instead of a
+		// single unbounded one.
+		let cursor = 0;
+		while (cursor < positions.length) {
+			const windowStart = rowIndexes[positions[cursor]];
+			const limit = windowStart + MAX_READ_SPAN_ROWS;
+			let last = cursor;
+			while (last + 1 < positions.length && rowIndexes[positions[last + 1]] < limit) last++;
+
+			const windowEnd = Math.min(rowIndexes[positions[last]] + 1, range.rowEnd);
+			const data = (await session.scan.readColumn({
+				column,
+				rowStart: windowStart,
+				rowEnd: windowEnd,
+			})) as ArrayLike<unknown>;
+
+			for (let i = cursor; i <= last; i++) {
+				out[positions[i]] = data[rowIndexes[positions[i]] - windowStart];
+			}
+			cursor = last + 1;
 		}
 	}
 	return out;
