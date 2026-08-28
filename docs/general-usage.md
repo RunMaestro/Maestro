@@ -66,8 +66,14 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Image viewing** for common image formats
 - **Audio and video playback** with a speed control that sticks (see below)
 - **CSV and TSV tables** with sortable columns and a per-row detail view (see below)
+- **JSON and JSONL records** with jq filtering
+- **Parquet tables** with a typed query language, on files far larger than memory
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
+
+Several formats come with a filtering language built for that format rather than
+a plain search box. **[File Formats](./file-formats)** is the full map: what
+opens as what, and what you can type at each one.
 
 ### CSV and TSV Tables
 

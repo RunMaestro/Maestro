@@ -10,6 +10,8 @@ Parquet files are routinely larger than memory, so Maestro never loads one. It r
 
 `.parquet`, `.parq`, and `.pq` are all recognized. Files on an [SSH remote](/ssh-remote-execution) work too: Maestro caches a local copy the first time you open one, because there is no way to read scattered byte ranges over an SSH shell.
 
+For how this compares to the other formats Maestro opens specially - jq for JSON, row filtering for CSV - see [File Formats](/file-formats).
+
 ## The filter box
 
 One box, no mode switch. Type whatever you know:

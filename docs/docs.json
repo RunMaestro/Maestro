@@ -54,6 +54,7 @@
 					"group-chat",
 					"image-annotator",
 					"media-player",
+					"file-formats",
 					"parquet-preview",
 					"remote-control",
 					"ssh-remote-execution",
