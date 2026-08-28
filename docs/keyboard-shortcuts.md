@@ -243,6 +243,7 @@ In AI mode, use `@` to reference files in your prompts:
 | Select Agent                     | `Enter` while in sidebar           | `Enter` while in sidebar           |
 | Filter Sessions (in Left Panel)  | `Cmd+F`                            | `Ctrl+F`                           |
 | Navigate Files                   | `Up/Down Arrow` while in file tree | `Up/Down Arrow` while in file tree |
+| Preview Fonts (Settings)         | `Up/Down Arrow` on a font picker   | `Up/Down Arrow` on a font picker   |
 | Extend File Selection            | `Shift+Up/Down Arrow` in file tree | `Shift+Up/Down Arrow` in file tree |
 | Multi-select Files               | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
 | Filter Files (in Files tab)      | `Cmd+F`                            | `Ctrl+F`                           |

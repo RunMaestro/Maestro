@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FontConfigurationPanel } from '../../../renderer/components/FontConfigurationPanel';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -48,5 +48,51 @@ describe('FontConfigurationPanel', () => {
 
 		fireEvent.click(removeButtons[0]);
 		expect(onRemoveCustomFont).toHaveBeenCalledWith('Verdana');
+	});
+	describe('arrow-key preview', () => {
+		it('steps to the next and previous font without opening the dropdown', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({ fontFamily: 'JetBrains Mono', setFontFamily });
+			const select = screen.getByRole('combobox');
+
+			fireEvent.keyDown(select, { key: 'ArrowDown' });
+			expect(setFontFamily).toHaveBeenLastCalledWith('Fira Code');
+
+			fireEvent.keyDown(select, { key: 'ArrowUp' });
+			expect(setFontFamily).toHaveBeenLastCalledWith('Roboto Mono');
+		});
+
+		it('walks out of one group and into the next', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({
+				fontFamily: 'Source Code Pro', // last common monospace font
+				setFontFamily,
+				customFonts: ['Verdana'],
+			});
+
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+			expect(setFontFamily).toHaveBeenCalledWith('Verdana');
+		});
+
+		it('stops at the ends instead of wrapping', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({ fontFamily: 'Roboto Mono', setFontFamily });
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowUp' });
+			expect(setFontFamily).not.toHaveBeenCalled();
+
+			cleanup();
+			renderPanel({ fontFamily: 'Source Code Pro', setFontFamily });
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+			expect(setFontFamily).not.toHaveBeenCalled();
+		});
+
+		it('leaves other keys to the browser', () => {
+			const setFontFamily = vi.fn();
+			renderPanel({ fontFamily: 'Roboto Mono', setFontFamily });
+
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
+			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'a' });
+			expect(setFontFamily).not.toHaveBeenCalled();
+		});
 	});
 });
