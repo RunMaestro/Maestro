@@ -92,11 +92,23 @@ vi.mock('../../../../renderer/components/UsageDashboard/LongestAutoRunsTable', (
 vi.mock('../../../../renderer/components/UsageDashboard/KeyboardStats', () => ({
 	KeyboardStats: () => <div>KeyboardStats mock</div>,
 }));
+// Record the props the quota panels are rendered WITH. `refreshHotkey` is what
+// makes Cmd+R refresh the visible panel, and it is opt-in - a prop-less mock
+// cannot tell a wired call site from an unwired one, which is exactly how the
+// prop went missing from this view while the panels themselves supported it.
+const claudePlanUsageProps = vi.fn();
+const codexPlanUsageProps = vi.fn();
 vi.mock('../../../../renderer/components/UsageDashboard/ClaudePlanUsage', () => ({
-	ClaudePlanUsage: () => <div>ClaudePlanUsage mock</div>,
+	ClaudePlanUsage: (props: Record<string, unknown>) => {
+		claudePlanUsageProps(props);
+		return <div>ClaudePlanUsage mock</div>;
+	},
 }));
 vi.mock('../../../../renderer/components/UsageDashboard/CodexPlanUsage', () => ({
-	CodexPlanUsage: () => <div>CodexPlanUsage mock</div>,
+	CodexPlanUsage: (props: Record<string, unknown>) => {
+		codexPlanUsageProps(props);
+		return <div>CodexPlanUsage mock</div>;
+	},
 }));
 
 const theme = THEMES.dracula;
@@ -371,5 +383,22 @@ describe('UsageDashboardModal view modules', () => {
 
 		rerender(<ProviderQuotaUsageView provider="codex" theme={theme} {...navigation} />);
 		expect(screen.getByText('CodexPlanUsage mock')).toBeInTheDocument();
+	});
+
+	it('hands the Cmd+R claim to whichever quota panel it renders', () => {
+		claudePlanUsageProps.mockClear();
+		codexPlanUsageProps.mockClear();
+
+		const { rerender } = render(
+			<ProviderQuotaUsageView provider="anthropic" theme={theme} {...navigation} />
+		);
+		expect(claudePlanUsageProps).toHaveBeenCalledWith(
+			expect.objectContaining({ refreshHotkey: true })
+		);
+
+		rerender(<ProviderQuotaUsageView provider="codex" theme={theme} {...navigation} />);
+		expect(codexPlanUsageProps).toHaveBeenCalledWith(
+			expect.objectContaining({ refreshHotkey: true })
+		);
 	});
 });
