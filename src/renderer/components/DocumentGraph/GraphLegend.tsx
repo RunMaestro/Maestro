@@ -6,7 +6,8 @@
  * - External link nodes: Smaller pill-shaped nodes with domain
  * - Internal edges: Solid lines connecting markdown documents
  * - External edges: Dashed lines connecting to external domains
- * - Keyboard shortcuts: Arrow keys to navigate, Enter to preview, O to open
+ * - Keyboard shortcuts: Arrow keys to navigate, Enter to preview, O to open,
+ *   L to cycle the layout, D to widen the neighbor depth
  *
  * The legend is theme-aware and uses the same colors as the actual mind map elements.
  */
@@ -108,6 +109,14 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 	{
 		keys: '+ / -',
 		description: 'Increase / decrease node spacing',
+	},
+	{
+		keys: 'L',
+		description: 'Cycle layout',
+	},
+	{
+		keys: 'D',
+		description: 'Widen neighbor depth',
 	},
 ];
 

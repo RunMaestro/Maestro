@@ -70,11 +70,19 @@ import {
 import {
 	type MindMapLayoutType,
 	LAYOUT_LABELS,
+	MIND_MAP_LAYOUT_TYPES,
+	nextMindMapLayout,
 	SPACING_SCALE_DEFAULT,
 	SPACING_SCALE_MIN,
 	SPACING_SCALE_MAX,
 	SPACING_SCALE_STEP,
 } from './mindMapLayouts';
+import {
+	formatNeighborDepth,
+	NEIGHBOR_DEPTH_ALL,
+	NEIGHBOR_DEPTH_MAX,
+	nextNeighborDepth,
+} from './neighborDepth';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
@@ -916,13 +924,19 @@ export function DocumentGraphView({
 	/**
 	 * Handle neighbor depth change
 	 */
-	const handleNeighborDepthChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newDepth = parseInt(e.target.value, 10);
+	const applyNeighborDepth = useCallback(
+		(newDepth: number) => {
 			setNeighborDepth(newDepth);
 			onNeighborDepthChange?.(newDepth);
 		},
 		[onNeighborDepthChange]
+	);
+
+	const handleNeighborDepthChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			applyNeighborDepth(parseInt(e.target.value, 10));
+		},
+		[applyNeighborDepth]
 	);
 
 	/**
@@ -1287,38 +1301,56 @@ export function DocumentGraphView({
 	);
 
 	/**
-	 * Handle container keyboard shortcuts (Cmd+F for search; +/- for node spacing)
+	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
+	 * +/- node spacing)
 	 */
-	const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
-		// Cmd+F or Ctrl+F to focus search
-		if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+	const handleContainerKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			// Cmd+F or Ctrl+F to focus search
+			if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+				e.preventDefault();
+				searchInputRef.current?.focus();
+				searchInputRef.current?.select();
+				return;
+			}
+
+			// Everything below is an unmodified single key, so skip when a modifier
+			// is held (browser zoom on Cmd/Ctrl +/-, OS chords) and when the user is
+			// typing into an input (the search box, the sliders).
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			const target = e.target as HTMLElement | null;
+			const tag = target?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+
+			// L cycles the layout; D widens the neighbor depth. Both go through the
+			// same handlers the toolbar controls use, so a key press persists the
+			// choice and clears layout-specific drag overrides exactly like a click.
+			if (e.key === 'l' || e.key === 'L') {
+				e.preventDefault();
+				handleLayoutTypeChange(nextMindMapLayout(layoutType));
+				return;
+			}
+			if (e.key === 'd' || e.key === 'D') {
+				e.preventDefault();
+				applyNeighborDepth(nextNeighborDepth(neighborDepth));
+				return;
+			}
+
+			// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
+			const isIncrease = e.key === '+' || e.key === '=';
+			const isDecrease = e.key === '-' || e.key === '_';
+			if (!isIncrease && !isDecrease) return;
+
 			e.preventDefault();
-			searchInputRef.current?.focus();
-			searchInputRef.current?.select();
-			return;
-		}
-
-		// +/- adjust node spacing in any layout. Skip when modifiers are held so
-		// browser zoom (Cmd/Ctrl +/-) and similar shortcuts still work, and skip
-		// when typing into an input (search box, sliders).
-		if (e.metaKey || e.ctrlKey || e.altKey) return;
-		const target = e.target as HTMLElement | null;
-		const tag = target?.tagName;
-		if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
-
-		// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
-		const isIncrease = e.key === '+' || e.key === '=';
-		const isDecrease = e.key === '-' || e.key === '_';
-		if (!isIncrease && !isDecrease) return;
-
-		e.preventDefault();
-		setSpacingScale((prev) => {
-			const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
-			const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
-			// Round to one decimal to avoid floating-point drift.
-			return Math.round(clamped * 10) / 10;
-		});
-	}, []);
+			setSpacingScale((prev) => {
+				const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
+				const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
+				// Round to one decimal to avoid floating-point drift.
+				return Math.round(clamped * 10) / 10;
+			});
+		},
+		[applyNeighborDepth, handleLayoutTypeChange, layoutType, neighborDepth]
+	);
 	// The graph is a canvas the user pans around in, so its useful default is
 	// "as much of the screen as a modal may take" rather than a fixed box - the
 	// old 1200x760 default was a postage stamp on a large display. clampModalSize
@@ -1351,18 +1383,22 @@ export function DocumentGraphView({
 	// container can be narrower than the stored width (a small modal, a resized
 	// window), so the live clamp is separate from the stored bounds.
 	const previewMaxWidth = previewMaxWidthForContainer(graphDimensions.width);
+	// The drag must start from the width actually on screen, not the stored one:
+	// when the container is narrower than the remembered width the pane renders
+	// clamped, and starting the delta from the larger value snaps it wider on the
+	// first mousemove.
+	const renderedPreviewWidth = Math.min(previewWidth, previewMaxWidth);
 	const {
 		panelRef: previewPanelRef,
 		isResizing: isPreviewResizing,
 		onResizeStart: onPreviewResizeStart,
 	} = useResizablePanel({
-		width: previewWidth,
+		width: renderedPreviewWidth,
 		minWidth: PREVIEW_MIN_WIDTH,
 		maxWidth: previewMaxWidth,
 		setWidth: setPreviewWidth,
 		side: 'right',
 	});
-	const renderedPreviewWidth = Math.min(previewWidth, previewMaxWidth);
 
 	if (!isOpen) return null;
 
@@ -1496,7 +1532,7 @@ export function DocumentGraphView({
 								onMouseLeave={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
 								}
-								title={`Layout: ${LAYOUT_LABELS[layoutType].name}`}
+								title={`Layout: ${LAYOUT_LABELS[layoutType].name} (L to cycle)`}
 							>
 								<Network className="w-4 h-4" />
 								{LAYOUT_LABELS[layoutType].name}
@@ -1512,35 +1548,33 @@ export function DocumentGraphView({
 										minWidth: 200,
 									}}
 								>
-									{(['mindmap', 'radial', 'hierarchical', 'force'] as MindMapLayoutType[]).map(
-										(type) => (
-											<button
-												key={type}
-												onClick={() => handleLayoutTypeChange(type)}
-												className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
-												style={{
-													backgroundColor:
-														layoutType === type ? `${theme.colors.accent}15` : 'transparent',
-													color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
-												}}
-												onMouseEnter={(e) =>
-													(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-												}
-												onMouseLeave={(e) =>
-													(e.currentTarget.style.backgroundColor =
-														layoutType === type ? `${theme.colors.accent}15` : 'transparent')
-												}
+									{MIND_MAP_LAYOUT_TYPES.map((type) => (
+										<button
+											key={type}
+											onClick={() => handleLayoutTypeChange(type)}
+											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
+											style={{
+												backgroundColor:
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent',
+												color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
+											}}
+											onMouseEnter={(e) =>
+												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+											}
+											onMouseLeave={(e) =>
+												(e.currentTarget.style.backgroundColor =
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent')
+											}
+										>
+											<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
+											<span
+												className="text-xs whitespace-nowrap shrink-0"
+												style={{ color: theme.colors.textDim }}
 											>
-												<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
-												<span
-													className="text-xs whitespace-nowrap shrink-0"
-													style={{ color: theme.colors.textDim }}
-												>
-													{LAYOUT_LABELS[type].description}
-												</span>
-											</button>
-										)
-									)}
+												{LAYOUT_LABELS[type].description}
+											</span>
+										</button>
+									))}
 								</div>
 							)}
 						</div>
@@ -1564,12 +1598,12 @@ export function DocumentGraphView({
 								}
 								title={
 									neighborDepth > 0
-										? `Showing ${neighborDepth} level${neighborDepth > 1 ? 's' : ''} of neighbors`
-										: 'Show all nodes'
+										? `Showing ${neighborDepth} level${neighborDepth > 1 ? 's' : ''} of neighbors (D to widen)`
+										: 'Showing all nodes (D to cycle)'
 								}
 							>
 								<Sliders className="w-4 h-4" />
-								Depth: {neighborDepth === 0 ? 'All' : neighborDepth}
+								Depth: {formatNeighborDepth(neighborDepth)}
 							</button>
 
 							{showDepthSlider && (
@@ -1586,13 +1620,13 @@ export function DocumentGraphView({
 											Neighbor Depth
 										</span>
 										<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-											{neighborDepth === 0 ? 'All' : neighborDepth}
+											{formatNeighborDepth(neighborDepth)}
 										</span>
 									</div>
 									<input
 										type="range"
-										min="0"
-										max="5"
+										min={NEIGHBOR_DEPTH_ALL}
+										max={NEIGHBOR_DEPTH_MAX}
 										value={neighborDepth}
 										onChange={handleNeighborDepthChange}
 										className="w-full"

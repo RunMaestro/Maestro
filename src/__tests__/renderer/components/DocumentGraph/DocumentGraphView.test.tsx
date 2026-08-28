@@ -8,6 +8,12 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PREVIEW_WIDTH_STORAGE_KEY } from '../../../../renderer/components/DocumentGraph/previewPaneSizing';
+import { nextMindMapLayout } from '../../../../renderer/components/DocumentGraph/mindMapLayouts';
+import {
+	NEIGHBOR_DEPTH_ALL,
+	NEIGHBOR_DEPTH_MAX,
+	nextNeighborDepth,
+} from '../../../../renderer/components/DocumentGraph/neighborDepth';
 
 // Mock ReactFlow before importing the component
 vi.mock('reactflow', () => {
@@ -2196,6 +2202,45 @@ describe('DocumentGraphView', () => {
 				const focusAnimationDuration = 300;
 
 				expect(navigationAnimationDuration).toBeLessThan(focusAnimationDuration);
+			});
+		});
+
+		describe('container shortcuts (L / D / +-)', () => {
+			// L cycles the layout, D widens the neighbor depth. Both route through
+			// the SAME handlers the toolbar controls use, so a key press persists
+			// the choice and clears layout-specific drag overrides like a click.
+			const isBareKey = (e: {
+				key: string;
+				metaKey?: boolean;
+				ctrlKey?: boolean;
+				altKey?: boolean;
+			}) => !e.metaKey && !e.ctrlKey && !e.altKey;
+
+			it('L cycles the layout through the shared order', () => {
+				expect(nextMindMapLayout('mindmap')).toBe('radial');
+				expect(nextMindMapLayout('force')).toBe('mindmap');
+			});
+
+			it('D widens the depth and treats All as the top rung', () => {
+				expect(nextNeighborDepth(2)).toBe(3);
+				expect(nextNeighborDepth(NEIGHBOR_DEPTH_MAX)).toBe(NEIGHBOR_DEPTH_ALL);
+				expect(nextNeighborDepth(NEIGHBOR_DEPTH_ALL)).toBe(1);
+			});
+
+			it('ignores L and D while a modifier is held', () => {
+				// Cmd+D is an OS/browser chord; claiming it here would shadow it.
+				expect(isBareKey({ key: 'd', metaKey: true })).toBe(false);
+				expect(isBareKey({ key: 'l', ctrlKey: true })).toBe(false);
+				expect(isBareKey({ key: 'd' })).toBe(true);
+			});
+
+			it('ignores L and D while typing into a field', () => {
+				// Otherwise searching for "documentation" would cycle the layout
+				// four times and the depth twice on the way through.
+				const skips = (tag: string) => tag === 'INPUT' || tag === 'TEXTAREA';
+				expect(skips('INPUT')).toBe(true);
+				expect(skips('TEXTAREA')).toBe(true);
+				expect(skips('DIV')).toBe(false);
 			});
 		});
 

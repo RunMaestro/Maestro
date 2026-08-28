@@ -48,8 +48,14 @@ The Document Graph is designed for keyboard-first navigation:
 | Recenter view on node         | `Enter` (for document nodes)      |
 | Open external URL             | `Enter` (for external link nodes) |
 | Open document in File Preview | `O`                               |
+| Preview document in-graph     | `P`                               |
+| Cycle layout                  | `L`                               |
+| Widen neighbor depth          | `D`                               |
+| Adjust node spacing           | `+` / `-`                         |
 | Focus search                  | `Cmd/Ctrl+F`                      |
 | Close graph or help panel     | `Esc`                             |
+
+`L` steps through Mind Map, Radial, Hierarchical, and Force, in the same order as the layout dropdown. `D` widens the depth one level per press (1 through 5, then All, then back to 1).
 
 ### Mouse Controls
 
@@ -60,6 +66,7 @@ The Document Graph is designed for keyboard-first navigation:
 - **Shift+Scroll** to pan the canvas
 - **Pan** by dragging the background
 - **Mini-map** in the bottom-left corner shows the whole graph; click or drag on it to jump the main view to that spot
+- **Drag the left edge** of the in-graph document preview to make it wider or narrower; the width is remembered. Double-click that edge to restore the default.
 
 ## Graph Controls
 
@@ -74,7 +81,11 @@ Adjust the **Depth** slider to control how many levels of connections are shown 
 - **Depth: 2** - Show connections and their connections (default)
 - **Depth: 3-5** - Show deeper relationship chains
 
-Lower depth values keep the graph focused and improve performance; higher values reveal more of the document ecosystem. The depth can be adjusted from 0 (All) to 5.
+Lower depth values keep the graph focused and improve performance; higher values reveal more of the document ecosystem. The depth can be adjusted from 0 (All) to 5. Press `D` to widen it one level per press without opening the slider.
+
+### Layout
+
+The **layout** dropdown switches how nodes are arranged: Mind Map (tree columns), Radial (concentric rings), Hierarchical (top-down rows), and Force (physics simulation). Press `L` to step through them in that order. Switching layouts clears any nodes you dragged, since those positions belong to the layout they were set in.
 
 ### External Links
 
@@ -151,5 +162,9 @@ The Document Graph is especially useful for:
 | Navigate nodes            | `Arrow Keys`     | `Arrow Keys`      |
 | Recenter on node          | `Enter`          | `Enter`           |
 | Open document in preview  | `O`              | `O`               |
+| Preview document in-graph | `P`              | `P`               |
+| Cycle layout              | `L`              | `L`               |
+| Widen neighbor depth      | `D`              | `D`               |
+| Adjust node spacing       | `+` / `-`        | `+` / `-`         |
 | Focus search              | `Cmd+F`          | `Ctrl+F`          |
 | Close graph               | `Esc`            | `Esc`             |

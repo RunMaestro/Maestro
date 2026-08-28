@@ -39,6 +39,24 @@ export const LAYOUT_LABELS: Record<MindMapLayoutType, { name: string; descriptio
 	force: { name: 'Force', description: 'Physics simulation' },
 };
 
+/**
+ * Layout order, shared by the toolbar dropdown and the `L` cycle shortcut so a
+ * key press and a click can never disagree about what comes next.
+ */
+export const MIND_MAP_LAYOUT_TYPES: readonly MindMapLayoutType[] = [
+	'mindmap',
+	'radial',
+	'hierarchical',
+	'force',
+];
+
+/** The layout after `current`, wrapping at the end of the list. */
+export function nextMindMapLayout(current: MindMapLayoutType): MindMapLayoutType {
+	// An unrecognized value restarts the cycle rather than sticking on itself.
+	const index = MIND_MAP_LAYOUT_TYPES.indexOf(current);
+	return MIND_MAP_LAYOUT_TYPES[(index + 1) % MIND_MAP_LAYOUT_TYPES.length];
+}
+
 /** Result of a layout calculation */
 export interface LayoutResult {
 	nodes: MindMapNode[];
