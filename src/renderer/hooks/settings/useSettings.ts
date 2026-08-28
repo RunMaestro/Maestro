@@ -85,9 +85,15 @@ export interface UseSettingsReturn {
 	// Font settings
 	fontFamily: string;
 	terminalFontFamily: string;
+	chatFontFamily: string;
+	filePreviewFontFamily: string;
+	fileEditorFontFamily: string;
 	fontSize: number;
 	setFontFamily: (value: string) => void;
 	setTerminalFontFamily: (value: string) => void;
+	setChatFontFamily: (value: string) => void;
+	setFilePreviewFontFamily: (value: string) => void;
+	setFileEditorFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
 
 	// UI settings

@@ -46,6 +46,27 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: '',
 		category: 'appearance',
 	},
+	chatFontFamily: {
+		description:
+			'Font family for the AI chat transcript, independent of the UI font. Accepts any CSS font-family string. When empty, the chat inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	filePreviewFontFamily: {
+		description:
+			'Font family for rendered file previews, independent of the UI font. Accepts any CSS font-family string. When empty, the preview inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	fileEditorFontFamily: {
+		description:
+			'Font family for the file editor, independent of the UI font. Accepts any CSS font-family string. When empty, the editor inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
 	customFonts: {
 		description: 'List of user-installed custom font names available in the font picker.',
 		type: 'array',

@@ -23,20 +23,31 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof FontConfigur
 
 describe('FontConfigurationPanel', () => {
 	it('reports the saved font even when it is in no font group', () => {
-		renderPanel({ fontFamily: 'Verdana' });
+		renderPanel({ fontFamily: 'Berkeley Mono' });
 
 		// A <select> with no matching option silently shows its first entry, so
-		// the dropdown claimed Roboto Mono while the app rendered Verdana.
-		expect(screen.getByRole('combobox')).toHaveValue('Verdana');
+		// the dropdown claimed Roboto Mono while the app rendered Berkeley Mono.
+		expect(screen.getByRole('combobox')).toHaveValue('Berkeley Mono');
 		expect(screen.getByRole('group', { name: 'Current' })).toBeInTheDocument();
 	});
 
 	it('does not duplicate a font that is already listed', () => {
-		renderPanel({ fontFamily: 'Verdana', customFonts: ['Verdana'] });
+		renderPanel({ fontFamily: 'Berkeley Mono', customFonts: ['Berkeley Mono'] });
 
-		expect(screen.getByRole('combobox')).toHaveValue('Verdana');
+		expect(screen.getByRole('combobox')).toHaveValue('Berkeley Mono');
 		expect(screen.queryByRole('group', { name: 'Current' })).not.toBeInTheDocument();
-		expect(screen.getAllByRole('option', { name: 'Verdana' })).toHaveLength(1);
+		expect(screen.getAllByRole('option', { name: 'Berkeley Mono' })).toHaveLength(1);
+	});
+
+	it('offers proportional faces alongside the monospace ones', () => {
+		// Maestro was fixed width everywhere before per-surface fonts, so a
+		// reading face had to be typed in by hand to be reachable at all.
+		renderPanel();
+
+		expect(screen.getByRole('group', { name: 'Common Proportional Fonts' })).toBeInTheDocument();
+		for (const font of ['Arial', 'Helvetica', 'Verdana', 'Avenir Next']) {
+			expect(screen.getByRole('option', { name: font })).toBeInTheDocument();
+		}
 	});
 
 	it('leaves the inherit option selectable without a Current group', () => {
@@ -77,25 +88,24 @@ describe('FontConfigurationPanel', () => {
 			renderPanel({
 				fontFamily: 'Source Code Pro', // last common monospace font
 				setFontFamily,
-				customFonts: ['Verdana'],
 			});
 
 			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
-			expect(setFontFamily).toHaveBeenCalledWith('Verdana');
+			expect(setFontFamily).toHaveBeenCalledWith('Arial'); // first proportional font
 		});
 
 		it('reaches the installed fonts once the system sweep has run', () => {
 			const setFontFamily = vi.fn();
 			renderPanel({
-				fontFamily: 'Verdana',
+				fontFamily: 'Iosevka',
 				setFontFamily,
-				customFonts: ['Verdana'],
-				systemFonts: ['Helvetica', 'Zapfino'],
+				customFonts: ['Iosevka'],
+				systemFonts: ['Zapfino'],
 				fontsLoaded: true,
 			});
 
 			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
-			expect(setFontFamily).toHaveBeenCalledWith('Helvetica');
+			expect(setFontFamily).toHaveBeenCalledWith('Zapfino');
 		});
 
 		it('stops at the ends instead of wrapping', () => {
@@ -107,7 +117,7 @@ describe('FontConfigurationPanel', () => {
 
 			rerender(
 				<FontConfigurationPanel
-					fontFamily="Source Code Pro"
+					fontFamily="Georgia"
 					setFontFamily={setFontFamily}
 					systemFonts={[]}
 					fontsLoaded={false}

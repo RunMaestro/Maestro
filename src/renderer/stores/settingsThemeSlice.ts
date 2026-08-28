@@ -14,6 +14,9 @@ import type { SettingsStore } from './settingsStore';
 export interface ThemeState {
 	fontFamily: string;
 	terminalFontFamily: string;
+	chatFontFamily: string;
+	filePreviewFontFamily: string;
+	fileEditorFontFamily: string;
 	fontSize: number;
 	activeThemeId: ThemeId;
 	customThemeColors: ThemeColors;
@@ -24,6 +27,9 @@ export interface ThemeState {
 export interface ThemeActions {
 	setFontFamily: (value: string) => void;
 	setTerminalFontFamily: (value: string) => void;
+	setChatFontFamily: (value: string) => void;
+	setFilePreviewFontFamily: (value: string) => void;
+	setFileEditorFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
@@ -36,6 +42,9 @@ export type ThemeSlice = ThemeState & ThemeActions;
 export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> = (set) => ({
 	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
 	terminalFontFamily: '',
+	chatFontFamily: '',
+	filePreviewFontFamily: '',
+	fileEditorFontFamily: '',
 	fontSize: 14,
 	activeThemeId: 'dracula',
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -50,6 +59,21 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	setTerminalFontFamily: (value) => {
 		set({ terminalFontFamily: value });
 		window.maestro.settings.set('terminalFontFamily', value);
+	},
+
+	setChatFontFamily: (value) => {
+		set({ chatFontFamily: value });
+		window.maestro.settings.set('chatFontFamily', value);
+	},
+
+	setFilePreviewFontFamily: (value) => {
+		set({ filePreviewFontFamily: value });
+		window.maestro.settings.set('filePreviewFontFamily', value);
+	},
+
+	setFileEditorFontFamily: (value) => {
+		set({ fileEditorFontFamily: value });
+		window.maestro.settings.set('fileEditorFontFamily', value);
 	},
 
 	setFontSize: (value) => {
@@ -88,6 +112,15 @@ export function hydrateThemeSettings(
 
 	if (allSettings['terminalFontFamily'] !== undefined)
 		patch.terminalFontFamily = allSettings['terminalFontFamily'] as string;
+
+	if (allSettings['chatFontFamily'] !== undefined)
+		patch.chatFontFamily = allSettings['chatFontFamily'] as string;
+
+	if (allSettings['filePreviewFontFamily'] !== undefined)
+		patch.filePreviewFontFamily = allSettings['filePreviewFontFamily'] as string;
+
+	if (allSettings['fileEditorFontFamily'] !== undefined)
+		patch.fileEditorFontFamily = allSettings['fileEditorFontFamily'] as string;
 
 	if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 

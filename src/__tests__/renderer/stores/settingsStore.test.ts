@@ -200,6 +200,12 @@ describe('settingsStore', () => {
 			expect(state.shellEnvVars).toEqual({});
 			expect(state.ghPath).toBe('');
 			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			// Every surface font defaults to empty, meaning "inherit the interface
+			// font", so a fresh install pins no surface to a face of its own.
+			expect(state.terminalFontFamily).toBe('');
+			expect(state.chatFontFamily).toBe('');
+			expect(state.filePreviewFontFamily).toBe('');
+			expect(state.fileEditorFontFamily).toBe('');
 			expect(state.fontSize).toBe(14);
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
@@ -343,6 +349,23 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setFontFamily('Fira Code');
 				expect(useSettingsStore.getState().fontFamily).toBe('Fira Code');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontFamily', 'Fira Code');
+			});
+
+			it.each([
+				['setTerminalFontFamily', 'terminalFontFamily'],
+				['setChatFontFamily', 'chatFontFamily'],
+				['setFilePreviewFontFamily', 'filePreviewFontFamily'],
+				['setFileEditorFontFamily', 'fileEditorFontFamily'],
+			] as const)('%s updates state and persists', (action, key) => {
+				const store = useSettingsStore.getState() as unknown as Record<
+					string,
+					(value: string) => void
+				>;
+				store[action]('Verdana');
+				expect((useSettingsStore.getState() as unknown as Record<string, string>)[key]).toBe(
+					'Verdana'
+				);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(key, 'Verdana');
 			});
 
 			it('setFontSize updates state and persists', () => {
@@ -1587,6 +1610,9 @@ describe('settingsStore', () => {
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',
+				chatFontFamily: 'Verdana',
+				filePreviewFontFamily: 'Georgia',
+				fileEditorFontFamily: 'Iosevka',
 				fontSize: 16,
 				activeThemeId: 'one-dark-pro',
 				enterToSendAI: true,
@@ -1597,6 +1623,9 @@ describe('settingsStore', () => {
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('JetBrains Mono');
+			expect(state.chatFontFamily).toBe('Verdana');
+			expect(state.filePreviewFontFamily).toBe('Georgia');
+			expect(state.fileEditorFontFamily).toBe('Iosevka');
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');
 			expect(state.enterToSendAI).toBe(true);

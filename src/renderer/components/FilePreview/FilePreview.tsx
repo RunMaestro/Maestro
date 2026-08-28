@@ -52,6 +52,7 @@ import { hardBreakInlineFields } from '../Markdown/preprocess';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { resolveSurfaceFont } from '../../../shared/fontStack';
 import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
@@ -610,6 +611,16 @@ export const FilePreview = React.memo(
 		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
 		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
 		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
+		// Reading and editing are separate typographic jobs, so they are separate
+		// settings: a proportional face is easier to read a document in, while an
+		// editor wants the line-number gutter to stay aligned. Empty means "inherit
+		// the interface font", which is what resolveSurfaceFont resolves.
+		const previewFontFamily = useSettingsStore((s) =>
+			resolveSurfaceFont(s.filePreviewFontFamily, s.fontFamily)
+		);
+		const editorFontFamily = useSettingsStore((s) =>
+			resolveSurfaceFont(s.fileEditorFontFamily, s.fontFamily)
+		);
 		const hasActiveSearch = searchQuery.trim().length > 0;
 		const effectiveBionifyReadingMode = bionifyReadingMode && !hasActiveSearch;
 
@@ -1892,6 +1903,11 @@ export const FilePreview = React.memo(
 						{
 							overscrollBehavior: 'contain',
 							'--fp-font-scale': String(fontScale),
+							// The prose tiers (rich markdown, markdown Fast, text Fast) set no
+							// font of their own, so the File Preview font reaches all three by
+							// inheritance from here. The two CM6 tiers own `.cm-scroller`'s
+							// font and take theirs as a prop instead.
+							fontFamily: previewFontFamily,
 						} as React.CSSProperties
 					}
 				>
@@ -2271,6 +2287,7 @@ export const FilePreview = React.memo(
 							wrap={fileEditWordWrap}
 							showLineNumbers={fileEditShowLineNumbers}
 							fontScale={fontScale}
+							fontFamily={editorFontFamily}
 							onLineNumberContextMenu={(lineNumber, event) => {
 								setLineCtxMenu({
 									lineNumber,
@@ -2376,6 +2393,7 @@ export const FilePreview = React.memo(
 								containerRef={markdownContainerRef}
 								filePath={file.path}
 								fontScale={fontScale}
+								fontFamily={previewFontFamily}
 							/>
 						</Suspense>
 					) : isMarkdown && previewTier === 'fast' && !markdownEditMode ? (

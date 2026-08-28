@@ -53,5 +53,10 @@ export interface MarkdownEditorProps {
 	onKeyDown?: (event: KeyboardEvent) => void;
 	/** Reader font zoom (1 = unzoomed), applied to the CM6 theme. */
 	fontScale?: number;
+	/**
+	 * Resolved File Editor font. CM6 owns `.cm-scroller`'s font, so it cannot
+	 * inherit the pane's. Undefined keeps the built-in monospace stack.
+	 */
+	fontFamily?: string;
 	className?: string;
 }

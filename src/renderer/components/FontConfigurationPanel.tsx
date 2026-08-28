@@ -20,6 +20,25 @@ const COMMON_MONOSPACE_FONTS = [
 	'Source Code Pro',
 ];
 
+/**
+ * Proportional faces offered alongside the monospace list. Maestro was fixed
+ * width on every surface before per-surface fonts existed, so prose surfaces
+ * (AI chat, the file preview) had no way to reach a reading face at all.
+ * Availability is annotated the same way as the monospace group, so a face this
+ * platform lacks reads as "(Not Found)" rather than silently falling back.
+ */
+const COMMON_PROPORTIONAL_FONTS = [
+	'Arial',
+	'Helvetica',
+	'Helvetica Neue',
+	'Verdana',
+	'Avenir Next',
+	'Segoe UI',
+	'Tahoma',
+	'Trebuchet MS',
+	'Georgia',
+];
+
 export interface FontConfigurationPanelProps {
 	/** Currently selected font family */
 	fontFamily: string;
@@ -115,7 +134,11 @@ export function FontConfigurationPanel({
 	// and custom groups so the "All Installed Fonts" group has no duplicates.
 	const installedFonts = useMemo(() => {
 		const normalize = (str: string) => str.toLowerCase().replace(/[\s-]/g, '');
-		const shown = new Set([...COMMON_MONOSPACE_FONTS, ...customFonts].map((f) => normalize(f)));
+		const shown = new Set(
+			[...COMMON_MONOSPACE_FONTS, ...COMMON_PROPORTIONAL_FONTS, ...customFonts].map((f) =>
+				normalize(f)
+			)
+		);
 		return [...systemFonts]
 			.filter((font) => !shown.has(normalize(font)))
 			.sort((a, b) => a.localeCompare(b));
@@ -130,7 +153,12 @@ export function FontConfigurationPanel({
 	const unlistedValue = useMemo(() => {
 		if (!fontFamily) return null;
 		if (inheritOption && fontFamily === inheritOption.value) return null;
-		const known = [...COMMON_MONOSPACE_FONTS, ...customFonts, ...installedFonts];
+		const known = [
+			...COMMON_MONOSPACE_FONTS,
+			...COMMON_PROPORTIONAL_FONTS,
+			...customFonts,
+			...installedFonts,
+		];
 		return known.includes(fontFamily) ? null : fontFamily;
 	}, [fontFamily, customFonts, installedFonts, inheritOption]);
 
@@ -140,7 +168,12 @@ export function FontConfigurationPanel({
 		const values: string[] = [];
 		if (inheritOption) values.push(inheritOption.value);
 		if (unlistedValue) values.push(unlistedValue);
-		values.push(...COMMON_MONOSPACE_FONTS, ...customFonts, ...installedFonts);
+		values.push(
+			...COMMON_MONOSPACE_FONTS,
+			...COMMON_PROPORTIONAL_FONTS,
+			...customFonts,
+			...installedFonts
+		);
 		return values;
 	}, [inheritOption, unlistedValue, customFonts, installedFonts]);
 
@@ -207,6 +240,16 @@ export function FontConfigurationPanel({
 				)}
 				<optgroup label="Common Monospace Fonts">
 					{COMMON_MONOSPACE_FONTS.map((font) => {
+						const available = fontsLoaded ? isFontAvailable(font) : true;
+						return (
+							<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>
+								{font} {fontsLoaded && !available && '(Not Found)'}
+							</option>
+						);
+					})}
+				</optgroup>
+				<optgroup label="Common Proportional Fonts">
+					{COMMON_PROPORTIONAL_FONTS.map((font) => {
 						const available = fontsLoaded ? isFontAvailable(font) : true;
 						return (
 							<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>

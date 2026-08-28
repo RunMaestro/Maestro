@@ -57,6 +57,39 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					inheritOption={{ value: '', label: 'Same as interface font' }}
 				/>
 			</div>
+			<div data-setting-id="display-chat-font-family">
+				<FontFamilySection
+					theme={theme}
+					heading="AI Chat Font"
+					description="Font for the AI chat transcript. Leave on 'Same as interface font' to inherit the UI font, or pick a proportional face for easier long-form reading."
+					fontFamily={settings.chatFontFamily}
+					setFontFamily={settings.setChatFontFamily}
+					fontConfiguration={fontConfiguration}
+					inheritOption={{ value: '', label: 'Same as interface font' }}
+				/>
+			</div>
+			<div data-setting-id="display-file-preview-font-family">
+				<FontFamilySection
+					theme={theme}
+					heading="File Preview Font"
+					description="Font for a file being read. Leave on 'Same as interface font' to inherit the UI font."
+					fontFamily={settings.filePreviewFontFamily}
+					setFontFamily={settings.setFilePreviewFontFamily}
+					fontConfiguration={fontConfiguration}
+					inheritOption={{ value: '', label: 'Same as interface font' }}
+				/>
+			</div>
+			<div data-setting-id="display-file-editor-font-family">
+				<FontFamilySection
+					theme={theme}
+					heading="File Editor Font"
+					description="Font for a file being edited. Leave on 'Same as interface font' to inherit the UI font. A monospace face keeps code and the line-number gutter aligned."
+					fontFamily={settings.fileEditorFontFamily}
+					setFontFamily={settings.setFileEditorFontFamily}
+					fontConfiguration={fontConfiguration}
+					inheritOption={{ value: '', label: 'Same as interface font' }}
+				/>
+			</div>
 			<FontSizeSection
 				theme={theme}
 				fontSize={settings.fontSize}

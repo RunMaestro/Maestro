@@ -27,6 +27,12 @@ export const TEXT_LINE_HEIGHT = 1.6;
  * the virtualizer's page height in the component - the two MUST use the same
  * number, or the fixed-size virtualization drifts against what is painted.
  *
+ * The font is inherited from the pane rather than pinned here, so the File
+ * Preview font setting reaches this tier the same way it reaches the markdown
+ * tiers. The pane's own value already carries a monospace fallback chain, so an
+ * unset setting still lands on monospace - it is now the interface font's
+ * chain rather than a second copy of it that could drift.
+ *
  * Lives in its own module so the styling decisions are independently
  * unit-testable (string-contains assertions against the generated CSS).
  */
@@ -36,7 +42,7 @@ export function generateTextProseCss(theme: Theme, fontScale = 1): string {
 		.${TEXT_PAGE_CLASS} {
 			display: grid;
 			grid-template-columns: auto 1fr;
-			font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+			font-family: inherit;
 			font-size: ${TEXT_BASE_FONT_PX * fontScale}px;
 			line-height: ${TEXT_LINE_HEIGHT};
 			color: ${c.textMain};

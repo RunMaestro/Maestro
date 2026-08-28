@@ -47,7 +47,7 @@ import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
-import { withMonoFallback } from '../../../shared/fontStack';
+import { resolveSurfaceFont } from '../../../shared/fontStack';
 import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useTabStore } from '../../stores/tabStore';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -440,7 +440,9 @@ function TiledAiPane({
 	isFocused: boolean;
 	actions: PaneChatActions | null;
 }) {
-	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
+	// Same chat font as the single-pane view (MainPanelContent) - a tiled pane
+	// renders the same transcript, so it must not disagree about its typeface.
+	const fontFamily = useSettingsStore((s) => resolveSurfaceFont(s.chatFontFamily, s.fontFamily));
 	const maxOutputLines = useSettingsStore((s) => s.maxOutputLines);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 	const activeFocus = useUIStore((s) => s.activeFocus);

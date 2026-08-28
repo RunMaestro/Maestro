@@ -47,6 +47,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			onLineNumberContextMenu,
 			onKeyDown,
 			fontScale = 1,
+			fontFamily,
 			className,
 		},
 		ref
@@ -110,7 +111,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				doc: value,
 				extensions: [
 					compartments.base.of(baseExt),
-					compartments.theme.of(buildEditorTheme(theme, fontScale)),
+					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
 					updateListener,
@@ -156,16 +157,18 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			}
 		}, [value]);
 
-		// Theme or font-zoom change → reconfigure the theme compartment. Font size
-		// rides in the theme (see themeAdapter) so a zoom re-measures line heights
-		// the same way a theme swap does.
+		// Theme, font-zoom, or surface-font change → reconfigure the theme
+		// compartment. Font size and family both ride in the theme (see
+		// themeAdapter) so either re-measures line heights the same way a theme
+		// swap does; leaving fontFamily out of the deps would apply a new face
+		// only on the next unrelated theme change.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
 			view.dispatch({
-				effects: compartments.theme.reconfigure(buildEditorTheme(theme, fontScale)),
+				effects: compartments.theme.reconfigure(buildEditorTheme(theme, fontScale, fontFamily)),
 			});
-		}, [theme, fontScale, compartments.theme]);
+		}, [theme, fontScale, fontFamily, compartments.theme]);
 
 		// Language change → reload + reconfigure. Plain-text falls through to
 		// an empty extension so the previously loaded grammar is cleared.

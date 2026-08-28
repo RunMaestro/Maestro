@@ -33,7 +33,7 @@ import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { withMonoFallback } from '../../../shared/fontStack';
+import { resolveSurfaceFont } from '../../../shared/fontStack';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
@@ -470,15 +470,17 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onEffortChange,
 	} = props;
 
-	// Self-sourced from settingsStore. withMonoFallback guarantees the AI-output
-	// and terminal surfaces degrade to monospace instead of the browser's serif
-	// default when the stored font (a bare name from the picker) isn't installed.
-	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
-	// The command terminal can use its own font (issue #1228). An empty setting
-	// means "inherit the UI font", so fall back to fontFamily before applying the
-	// monospace safety net.
+	// Self-sourced from settingsStore. Each surface can carry its own font; an
+	// empty setting means "inherit the UI font", which is what resolveSurfaceFont
+	// resolves. It also guarantees the result degrades to monospace instead of
+	// the browser's serif default when the stored font (a bare name from the
+	// picker) isn't installed.
+	const chatFontFamily = useSettingsStore((s) =>
+		resolveSurfaceFont(s.chatFontFamily, s.fontFamily)
+	);
+	// The command terminal can use its own font (issue #1228).
 	const terminalFontFamily = useSettingsStore((s) =>
-		withMonoFallback(s.terminalFontFamily?.trim() || s.fontFamily)
+		resolveSurfaceFont(s.terminalFontFamily, s.fontFamily)
 	);
 	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const fontSize = useSettingsStore((s) => s.fontSize);
@@ -988,7 +990,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								ref={terminalOutputRef}
 								session={activeSession}
 								theme={theme}
-								fontFamily={fontFamily}
+								fontFamily={chatFontFamily}
 								activeFocus={activeFocus}
 								outputSearchOpen={outputSearchOpen}
 								outputSearchQuery={outputSearchQuery}

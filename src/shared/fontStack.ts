@@ -41,3 +41,21 @@ export function withMonoFallback(fontFamily: string | undefined | null): string 
 	if (/\b(monospace|sans-serif|serif)\b/i.test(value)) return value;
 	return `${value}, ${MONO_FALLBACK_STACK}`;
 }
+
+/**
+ * Resolve a per-surface font setting against the interface font.
+ *
+ * Every surface font (terminal, AI chat, file preview, file editor) stores the
+ * empty string to mean "inherit the interface font", so the surface keeps
+ * following the UI when the user never touches it. Resolving that chain in one
+ * place keeps the pickers, the rendered surfaces, and any future surface from
+ * disagreeing about what an empty value means: a surface that re-derives it and
+ * forgets the `.trim()` renders a whitespace-only family, which resolves to
+ * nothing and drops the pane to the browser default.
+ */
+export function resolveSurfaceFont(
+	surfaceFont: string | undefined | null,
+	interfaceFont: string | undefined | null
+): string {
+	return withMonoFallback((surfaceFont ?? '').trim() || interfaceFont);
+}
