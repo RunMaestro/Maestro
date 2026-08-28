@@ -820,6 +820,7 @@ export const A_CAPPELLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: A_CAPPELLA_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'aCappella',
 	encoreFlag: 'aCappella',
+	releaseDate: '2026-08-28',
 	// No supervised background service yet: the voice session service is inert
 	// until `startSession()` is called and returns to idle on stop, so disabling
 	// the flag leaves nothing running. Wake-word listening (a later phase) is the
