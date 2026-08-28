@@ -11,6 +11,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -605,6 +606,39 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribe();
 		};
 	}, []);
+
+	// Handle a remote request to graph a set of documents (`maestro-cli
+	// open-graph`). Paths arrive absolute; the graph addresses files relative to
+	// its own root, so they are relativized against the target agent here rather
+	// than in the main process, which does not know which root the view uses.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenDocumentGraph((params) => {
+			const session = useSessionStore
+				.getState()
+				.sessions.find((s: Session) => s.id === params.sessionId);
+			const root = session?.projectRoot || session?.cwd || '';
+			const relative = (absolutePath: string): string => {
+				if (!root) return absolutePath;
+				if (absolutePath === root) return '';
+				const prefix = root.endsWith('/') ? root : `${root}/`;
+				return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+			};
+
+			// Focusing the agent first: the graph is a full-window view on ONE
+			// agent, so rendering it under a different agent than the one the user
+			// is looking at would put it somewhere they cannot see.
+			if (session) setActiveSessionId(params.sessionId);
+
+			useFileExplorerStore.getState().openGraphScope({
+				files: params.files?.length ? params.files.map(relative) : undefined,
+				directory: params.directory !== undefined ? relative(params.directory) : undefined,
+				focusPath: params.focusPath ? relative(params.focusPath) : undefined,
+			});
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, [setActiveSessionId]);
 
 	// Handle remote refresh file tree from web/CLI interface
 	useEffect(() => {

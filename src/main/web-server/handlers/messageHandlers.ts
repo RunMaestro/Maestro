@@ -223,6 +223,13 @@ export interface MessageHandlerCallbacks {
 	) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
+	/** Render the Document Graph over an explicit file set or directory. */
+	openDocumentGraph: (params: {
+		sessionId: string;
+		files?: string[];
+		directory?: string;
+		focusPath?: string;
+	}) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	openBrowserTab: (
 		sessionId: string,
@@ -540,6 +547,10 @@ export class WebSocketMessageHandler {
 
 			case 'open_file_tab':
 				this.handleOpenFileTab(client, message);
+				break;
+
+			case 'open_document_graph':
+				this.handleOpenDocumentGraph(client, message);
 				break;
 
 			case 'open_modal':
@@ -1915,6 +1926,81 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				sendErrorResult(`Failed to open file tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle open_document_graph - render the Document Graph over a named set of
+	 * documents rather than the usual one-focus-file graph.
+	 *
+	 * Paths arrive absolute and are resolved against the agent's cwd only so a
+	 * relative path from a script still works. They are deliberately NOT confined
+	 * to the worktree, matching `open_file_tab`: a paired client already has
+	 * shell-level access, so confining a read-only visualization gates nothing
+	 * the connection token does not already gate.
+	 */
+	private handleOpenDocumentGraph(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const rawFiles = Array.isArray(message.files) ? (message.files as string[]) : [];
+		const rawDirectory = typeof message.directory === 'string' ? message.directory : undefined;
+		const rawFocus = typeof message.focusPath === 'string' ? message.focusPath : undefined;
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'open_document_graph_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId) {
+			sendErrorResult('Missing sessionId');
+			return;
+		}
+		if (rawFiles.length === 0 && rawDirectory === undefined) {
+			sendErrorResult('Give either files or a directory to graph');
+			return;
+		}
+
+		const sessions = this.callbacks.getSessions?.();
+		const session = sessions?.find((s) => s.id === sessionId);
+		if (!session?.cwd) {
+			sendErrorResult('Session not found or has no working directory');
+			return;
+		}
+
+		const sessionRoot = path.resolve(session.cwd);
+		const files = rawFiles
+			.filter((f) => typeof f === 'string' && f.length > 0)
+			.map((f) => path.resolve(sessionRoot, f));
+		const directory =
+			rawDirectory !== undefined ? path.resolve(sessionRoot, rawDirectory) : undefined;
+		const focusPath = rawFocus ? path.resolve(sessionRoot, rawFocus) : undefined;
+
+		logger.info(
+			`[Web] Received open_document_graph: session=${sessionId}, files=${files.length}, directory=${directory ?? 'none'}`,
+			LOG_CONTEXT
+		);
+
+		if (!this.callbacks.openDocumentGraph) {
+			sendErrorResult('Document graph opening not configured');
+			return;
+		}
+
+		this.callbacks
+			.openDocumentGraph({ sessionId, files, directory, focusPath })
+			.then((success) => {
+				this.send(client, {
+					type: 'open_document_graph_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to open document graph: ${error.message}`);
 			});
 	}
 

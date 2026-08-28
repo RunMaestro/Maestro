@@ -888,6 +888,20 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
+		server.setOpenDocumentGraphCallback(async (params) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for openDocumentGraph', 'WebServer');
+				return false;
+			}
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for openDocumentGraph', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:openDocumentGraph', params);
+			return true;
+		});
+
 		server.setOpenModalCallback(async (params) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {

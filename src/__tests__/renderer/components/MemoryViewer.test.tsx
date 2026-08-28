@@ -94,6 +94,9 @@ const memoryApi = {
 				.filter((m) => m.matchedName || m.snippet),
 		};
 	}),
+	// The viewer asks for orphans on every list change; omitting it here leaves
+	// an unhandled rejection behind every test in this file.
+	orphans: vi.fn(async () => ({ success: true, orphans: [], brokenLinks: [] })),
 	delete: vi.fn(async (_project: string, name: string) => {
 		files = files.filter((f) => f.name !== name);
 		return { success: true };
@@ -216,6 +219,61 @@ describe('MemoryViewer', () => {
 				'claude-code'
 			)
 		);
+	});
+
+	it('offers no unlinked chip when every memory is referenced', async () => {
+		renderViewer();
+		await waitFor(() => expect(listRowNames()).toHaveLength(3));
+		expect(screen.queryByTestId('memory-orphan-filter')).not.toBeInTheDocument();
+	});
+
+	it('narrows to the unlinked memories when the chip is clicked', async () => {
+		memoryApi.orphans.mockResolvedValueOnce({
+			success: true,
+			orphans: ['user_role.md'],
+			brokenLinks: [],
+		});
+		renderViewer();
+
+		const chip = await screen.findByTestId('memory-orphan-filter');
+		expect(chip).toHaveTextContent('1 unlinked');
+
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.click(chip);
+		});
+		await waitFor(() => expect(listRowNames()).toEqual(['user_role.md']));
+	});
+
+	it('composes the unlinked chip with the keyword filter', async () => {
+		// "unlinked entries mentioning macOS" is a real question; the chip must
+		// narrow the search results rather than replace them.
+		memoryApi.orphans.mockResolvedValueOnce({
+			success: true,
+			orphans: ['user_role.md', 'project_worktrees.md'],
+			brokenLinks: [],
+		});
+		renderViewer();
+
+		const chip = await screen.findByTestId('memory-orphan-filter');
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.click(chip);
+		});
+		await waitFor(() => expect(listRowNames()).toHaveLength(2));
+
+		await typeFilter('macOS');
+		await waitFor(() => expect(listRowNames()).toEqual(['user_role.md']));
+	});
+
+	it('survives an orphan lookup that throws', async () => {
+		// The chip is additive, so a failed lookup must degrade to "no chip"
+		// rather than leaving an unhandled rejection behind.
+		memoryApi.orphans.mockRejectedValueOnce(new Error('ipc exploded'));
+		renderViewer();
+
+		await waitFor(() => expect(listRowNames()).toHaveLength(3));
+		expect(screen.queryByTestId('memory-orphan-filter')).not.toBeInTheDocument();
 	});
 
 	it('routes a delete through the shared destructive confirm modal', async () => {

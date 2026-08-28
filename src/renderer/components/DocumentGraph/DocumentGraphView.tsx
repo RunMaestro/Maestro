@@ -18,6 +18,7 @@ import {
 	X,
 	Network,
 	ExternalLink,
+	Unlink,
 	RefreshCw,
 	Search,
 	ChevronDown,
@@ -188,6 +189,14 @@ export interface DocumentGraphViewProps {
 	onExternalLinkOpen?: (url: string) => void;
 	/** Required file path (relative to rootPath) to focus on - the center of the mind map */
 	focusFilePath: string;
+	/**
+	 * Explicit set of files to graph (relative to rootPath). Switches the view
+	 * from FOCUS mode ("what does this document reach?") to SCOPE mode ("how do
+	 * these documents relate, and which of them relate to nothing?").
+	 */
+	scopeFiles?: string[];
+	/** Directory whose markdown files form the scope. Ignored when `scopeFiles` is set. */
+	scopeDirectory?: string;
 	/** Callback when focus file is consumed (cleared after focusing) */
 	onFocusFileConsumed?: () => void;
 	/** Default setting for showing external links (from settings) */
@@ -223,6 +232,8 @@ export function DocumentGraphView({
 	onDocumentOpen,
 	onExternalLinkOpen,
 	focusFilePath,
+	scopeFiles,
+	scopeDirectory,
 	onFocusFileConsumed: _onFocusFileConsumed,
 	defaultShowExternalLinks = false,
 	onExternalLinksChange,
@@ -244,8 +255,19 @@ export function DocumentGraphView({
 	const [error, setError] = useState<string | null>(null);
 	const [progress, setProgress] = useState<ProgressData | null>(null);
 
+	/**
+	 * Files in the scope that connect to nothing else in it. Reported by the
+	 * builder rather than re-derived here: it owns the edge list, and a second
+	 * opinion about what counts as connected is a second thing to get wrong.
+	 */
+	const [orphanFiles, setOrphanFiles] = useState<string[]>([]);
+
 	// Settings state
 	const [includeExternalLinks, setIncludeExternalLinks] = useState(defaultShowExternalLinks);
+	// Orphans start visible: the whole reason to graph a hand-picked scope is to
+	// see which of those documents stand alone, so hiding them by default would
+	// hide the answer.
+	const [showOrphans, setShowOrphans] = useState(true);
 	const [neighborDepth, setNeighborDepth] = useState(defaultNeighborDepth);
 	const [showDepthSlider, setShowDepthSlider] = useState(false);
 	const [previewCharLimit, setPreviewCharLimit] = useState(defaultPreviewCharLimit);
@@ -635,6 +657,8 @@ export function DocumentGraphView({
 				const graphData = await buildGraphData({
 					rootPath,
 					focusFile: focusFilePath,
+					scopeFiles,
+					scopeDirectory,
 					maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
 					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
 					onProgress: handleProgress,
@@ -720,8 +744,12 @@ export function DocumentGraphView({
 					setLinks(allMindMapLinks);
 				}
 
-				// Set active focus file from the required focusFilePath prop
-				setActiveFocusFile(focusFilePath);
+				// Take the center the builder actually used. In scope mode it may
+				// have auto-picked the highest-degree file, and keeping the
+				// requested (possibly empty) path here renders an empty graph on
+				// top of a perfectly good node set.
+				setActiveFocusFile(graphData.centerFile || focusFilePath);
+				setOrphanFiles(graphData.orphanFiles);
 
 				// Streaming BFS is done - clear the in-flight badge.
 				setExpandingGraph(false);
@@ -757,6 +785,8 @@ export function DocumentGraphView({
 			handleBacklinkUpdate,
 			handleBacklinkComplete,
 			sshRemoteId,
+			scopeFiles,
+			scopeDirectory,
 		]
 	);
 
@@ -1803,6 +1833,31 @@ export function DocumentGraphView({
 							External
 						</button>
 
+						{/* Unlinked (orphan) toggle. Only scope mode can produce orphans,
+						    so the control stays hidden in focus mode rather than
+						    offering a toggle that can never change anything. */}
+						{orphanFiles.length > 0 && (
+							<button
+								onClick={() => setShowOrphans((v) => !v)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+								style={{
+									backgroundColor: showOrphans
+										? `${theme.colors.warning}25`
+										: `${theme.colors.warning}10`,
+									color: showOrphans ? theme.colors.warning : theme.colors.textDim,
+								}}
+								title={
+									showOrphans
+										? `Hide the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+										: `Show the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+								}
+								data-testid="document-graph-orphan-toggle"
+							>
+								<Unlink className="w-4 h-4" />
+								Unlinked {orphanFiles.length}
+							</button>
+						)}
+
 						{/* Reset Layout Button - only show when positions have been modified */}
 						{nodePositions.size > 0 && (
 							<button
@@ -1988,6 +2043,7 @@ export function DocumentGraphView({
 							height={graphDimensions.height}
 							maxDepth={neighborDepth || 2}
 							showExternalLinks={includeExternalLinks}
+							showOrphans={showOrphans}
 							selectedNodeId={selectedNodeId}
 							onNodeSelect={handleNodeSelect}
 							onNodeDoubleClick={handleNodeDoubleClick}

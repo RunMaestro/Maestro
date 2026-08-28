@@ -44,7 +44,8 @@ export interface MindMapNode {
 	width: number;
 	height: number;
 	depth: number;
-	side: 'left' | 'right' | 'center' | 'external';
+	/** Which band placed this node. `orphan` = unreachable from the center. */
+	side: 'left' | 'right' | 'center' | 'external' | 'orphan';
 	nodeType: 'document' | 'external';
 	label: string;
 	filePath?: string;
@@ -59,6 +60,8 @@ export interface MindMapNode {
 	wordCount?: number;
 	size?: string;
 	brokenLinks?: string[];
+	/** True when the layout placed this node in the orphan band. */
+	isOrphan?: boolean;
 	isLargeFile?: boolean;
 	isSelected?: boolean;
 	isFocused?: boolean;
@@ -103,6 +106,11 @@ export interface MindMapProps {
 	maxDepth: number;
 	/** Whether to show external link nodes */
 	showExternalLinks: boolean;
+	/**
+	 * Draw documents the center cannot reach, in a band below the graph.
+	 * Only a scope-mode graph can have any - see `BuildOptions.scopeFiles`.
+	 */
+	showOrphans?: boolean;
 	/** Currently selected node ID */
 	selectedNodeId: string | null;
 	/** Callback when a node is selected */
@@ -383,6 +391,7 @@ function renderDocumentNode(
 		filePath,
 		isSelected,
 		isFocused,
+		isOrphan,
 	} = node;
 	// Use description (frontmatter) or fall back to contentPreview (plaintext)
 	const previewText = description || contentPreview;
@@ -427,16 +436,23 @@ function renderDocumentNode(
 	ctx.fillStyle = subHeaderColor;
 	ctx.fillRect(nodeLeft, nodeTop + NODE_HEADER_HEIGHT, width, NODE_SUBHEADER_HEIGHT);
 
-	// Draw border around entire node
+	// Draw border around entire node. An orphan gets a dashed warning-colored
+	// border: it sits in its own band already, but the band alone reads as "a
+	// row at the bottom" rather than "these connect to nothing", and the two
+	// must stay distinguishable once the user pans away from the layout.
 	ctx.strokeStyle =
 		isFocused || isSelected
 			? theme.colors.accent
-			: isHovered
-				? `${theme.colors.accent}80`
-				: theme.colors.border;
+			: isOrphan
+				? theme.colors.warning
+				: isHovered
+					? `${theme.colors.accent}80`
+					: theme.colors.border;
 	ctx.lineWidth = isFocused || isSelected ? 2 : 1;
+	if (isOrphan && !isFocused && !isSelected) ctx.setLineDash([6, 4]);
 	roundRect(ctx, nodeLeft, nodeTop, width, height, NODE_BORDER_RADIUS);
 	ctx.stroke();
+	ctx.setLineDash([]);
 
 	// Title text (in header, white or light colored for contrast)
 	ctx.fillStyle = '#FFFFFF';
@@ -572,6 +588,7 @@ export function MindMap({
 	height,
 	maxDepth,
 	showExternalLinks,
+	showOrphans = false,
 	selectedNodeId,
 	onNodeSelect,
 	onNodeDoubleClick,
@@ -627,7 +644,8 @@ export function MindMap({
 			height,
 			showExternalLinks,
 			previewCharLimit,
-			spacingScale
+			spacingScale,
+			showOrphans
 		);
 	}, [
 		layoutType,
@@ -641,6 +659,7 @@ export function MindMap({
 		showExternalLinks,
 		previewCharLimit,
 		spacingScale,
+		showOrphans,
 	]);
 
 	// Set initial focus to center node when center file changes

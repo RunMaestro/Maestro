@@ -67,6 +67,7 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenDocumentGraphCallback,
 	OpenModalCallback,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
@@ -461,6 +462,10 @@ export class WebServer {
 
 	setOpenFileTabCallback(callback: OpenFileTabCallback): void {
 		this.callbackRegistry.setOpenFileTabCallback(callback);
+	}
+
+	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
+		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
 	}
 
 	setOpenModalCallback(callback: OpenModalCallback): void {
@@ -902,6 +907,7 @@ export class WebServer {
 				filePath: string,
 				options: { background: boolean; switchToAgent: boolean }
 			) => this.callbackRegistry.openFileTab(sessionId, filePath, options),
+			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),

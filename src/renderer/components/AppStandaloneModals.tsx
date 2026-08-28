@@ -260,6 +260,8 @@ function AppStandaloneModalsInner({
 	// Self-source file explorer state
 	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
 	const graphFocusFilePath = useFileExplorerStore((s) => s.graphFocusFilePath);
+	const graphScopeFiles = useFileExplorerStore((s) => s.graphScopeFiles);
+	const graphScopeDirectory = useFileExplorerStore((s) => s.graphScopeDirectory);
 
 	// Self-source tab gist content
 	const tabGistContent = useTabStore((s) => s.tabGistContent);
@@ -484,8 +486,14 @@ function AppStandaloneModalsInner({
 			)}
 
 			{/* --- DOCUMENT GRAPH VIEW (Mind Map, lazy-loaded) --- */}
-			{/* Only render when a focus file is provided - mind map requires a center document */}
-			{graphFocusFilePath && (
+			{/* Needs something to draw: either a focus document, or a scope the
+			    builder can pick a center from. `graphScopeDirectory` may legitimately
+			    be `''` (the project root), so it is compared against undefined
+			    rather than tested for truthiness - `''` is falsy and the root
+			    directory is a real scope. */}
+			{(graphFocusFilePath ||
+				(graphScopeFiles && graphScopeFiles.length > 0) ||
+				graphScopeDirectory !== undefined) && (
 				<Suspense fallback={null}>
 					<DocumentGraphView
 						isOpen={isGraphViewOpen}
@@ -536,7 +544,9 @@ function AppStandaloneModalsInner({
 							// Open external URL in default browser
 							openUrl(url);
 						}}
-						focusFilePath={graphFocusFilePath}
+						focusFilePath={graphFocusFilePath ?? ''}
+						scopeFiles={graphScopeFiles}
+						scopeDirectory={graphScopeDirectory}
 						defaultShowExternalLinks={documentGraphShowExternalLinks}
 						onExternalLinksChange={onExternalLinksChange}
 						defaultMaxNodes={documentGraphMaxNodes}

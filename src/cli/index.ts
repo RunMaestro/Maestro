@@ -16,6 +16,7 @@ import { dispatch } from './commands/dispatch';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { openGraph } from './commands/open-graph';
 import { openBrowser, closeBrowser } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
@@ -308,6 +309,18 @@ program
 	.option('--no-switch', "Don't switch to the target agent, but still activate the tab there")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
+
+// Open graph command - render a Document Graph over specific documents.
+//
+// Its own verb rather than a `open <surface>` entry: `open_modal` carries only
+// a surface name and a tab, and a graph needs a file set.
+program
+	.command('open-graph [paths...]')
+	.description('Open the Document Graph over specific markdown files or a directory')
+	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(openGraph);
 
 // Open browser command - open a URL in a browser tab in the Maestro desktop app
 program

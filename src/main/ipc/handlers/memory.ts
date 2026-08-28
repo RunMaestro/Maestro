@@ -13,6 +13,7 @@ import {
 	deleteMemoryEntry,
 	getMemoryDirectoryPath,
 	searchMemoryEntries,
+	findOrphanMemories,
 } from '../../memory-manager';
 import { logger } from '../../utils/logger';
 
@@ -104,6 +105,19 @@ export function registerMemoryHandlers(): void {
 				return { success: true, matches };
 			} catch (error) {
 				logger.error(`Failed to search memory: ${error}`, LOG_CONTEXT);
+				return { success: false, error: String(error) };
+			}
+		}
+	);
+
+	ipcMain.handle(
+		'memory:orphans',
+		async (_event, projectPath: string, agentId: string = 'claude-code') => {
+			try {
+				const report = await findOrphanMemories(projectPath, agentId);
+				return { success: true, ...report };
+			} catch (error) {
+				logger.error(`Failed to find orphan memories: ${error}`, LOG_CONTEXT);
 				return { success: false, error: String(error) };
 			}
 		}

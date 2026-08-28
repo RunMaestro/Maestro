@@ -183,6 +183,33 @@ Open a file as a preview tab in the Maestro desktop app
 | `--no-switch`      | Don't switch to the target agent, but still activate the tab there              | -       |
 | `--json`           | Output as JSON (for scripting)                                                  | -       |
 
+## `maestro-cli open-graph [paths...]`
+
+Open the Document Graph over specific markdown files or a directory.
+
+This is a separate verb rather than an `open <surface>` entry: `open` carries a
+surface name and a tab, and a graph needs a file set.
+
+A single directory stays a directory scope, so the app scans it when it renders
+and picks up documents written since you typed the command. Any other
+combination - several paths, or any explicit file - is flattened to that exact
+list of documents. Documents in the scope that link to nothing else in it are
+drawn in an "Unlinked" band you can toggle off.
+
+| Option             | Description                                                   | Default     |
+| ------------------ | ------------------------------------------------------------- | ----------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent) | -           |
+| `--focus <path>`   | Center the graph on this document                             | most-linked |
+| `--json`           | Output as JSON (for scripting)                                | -           |
+
+```bash
+# Everything under a folder
+maestro-cli open-graph docs/
+
+# An exact set, centered on the one you want to talk about
+maestro-cli open-graph docs/a.md docs/b.md docs/c.md --focus docs/a.md
+```
+
 ## `maestro-cli open-browser <url>`
 
 Open a URL as a browser tab in the Maestro desktop app

@@ -34,6 +34,34 @@ After you've opened a Document Graph at least once, a **graph icon** (branch ico
 
 Right-click any markdown file in the File Explorer and select **Document Graph** to open the graph focused on that file.
 
+### From a Folder or a Selection
+
+Right-click a **folder** and choose **Open in Document Graph** to graph every
+markdown file beneath it. Or select several markdown files (`Cmd`/`Ctrl+click`,
+or `Shift+click` for a range), right-click, and choose **Open N in Document
+Graph**.
+
+These open a _scoped_ graph, which answers a different question from the
+single-file graph. A single-file graph walks outward from one document and can
+only ever show what that document reaches. A scoped graph shows exactly the
+files you picked - including the ones that link to nothing, which is the only
+way an unlinked document is visible at all. Links pointing outside the scope
+stay broken rather than dragging their targets in.
+
+The center is picked automatically: whichever document in the scope has the most
+links. Right-click a specific file inside a selection to center on that one
+instead.
+
+### From the Command Line
+
+```bash
+maestro-cli open-graph docs/
+maestro-cli open-graph docs/a.md docs/b.md --focus docs/a.md
+```
+
+See [open-graph](/cli-reference#maestro-cli-open-graph-paths) for the full
+options.
+
 ### Using Go to File
 
 Press `Cmd+G` / `Ctrl+G` to open the fuzzy file finder, navigate to any markdown file, then use `Cmd+Shift+G` to jump to the Document Graph from there.
@@ -95,6 +123,22 @@ Toggle **External** to show or hide external URL links found in your documents:
 - **Disabled** - Only internal document relationships are shown
 
 External link nodes help you see which external resources your documentation references.
+
+### Unlinked Documents
+
+In a scoped graph, an **Unlinked N** button appears whenever some of the scoped
+documents connect to nothing else in the scope. They are drawn in a band below
+the graph with a dashed amber border, and the button hides them.
+
+They are shown by default: the reason to graph a hand-picked set is usually to
+find out which of those documents stand alone, so hiding them would hide the
+answer.
+
+"Unlinked" covers two cases, both invisible from the center: a document with no
+links at all, and a small cluster that links only within itself.
+
+This button does not appear on a single-file graph, where an unreachable
+document never becomes a node in the first place.
 
 ### Search
 

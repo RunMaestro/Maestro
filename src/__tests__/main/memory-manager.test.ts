@@ -18,6 +18,7 @@ import {
 	createMemoryEntry,
 	deleteMemoryEntry,
 	searchMemoryEntries,
+	findOrphanMemories,
 } from '../../main/memory-manager';
 
 let tempHome: string;
@@ -180,6 +181,92 @@ describe('memory-manager', () => {
 			const long = matches.find((m) => m.name === 'aaa_long.md');
 			expect(long?.snippet?.length).toBeLessThanOrEqual(121);
 			expect(long?.snippet?.endsWith('\u2026')).toBe(true);
+		});
+	});
+	describe('findOrphanMemories', () => {
+		const projectPath = '/Users/me/Projects/Orphans';
+
+		it('reports entries that nothing references', async () => {
+			await writeMemoryEntry(
+				projectPath,
+				'MEMORY.md',
+				'- [Indexed](project_indexed.md) - hook',
+				'claude-code',
+				tempHome
+			);
+			await writeMemoryEntry(projectPath, 'project_indexed.md', 'body', 'claude-code', tempHome);
+			await writeMemoryEntry(projectPath, 'project_lonely.md', 'body', 'claude-code', tempHome);
+
+			const { orphans } = await findOrphanMemories(projectPath, 'claude-code', tempHome);
+			expect(orphans).toEqual(['project_lonely.md']);
+		});
+
+		it('never reports MEMORY.md, which nothing is expected to point at', async () => {
+			await writeMemoryEntry(projectPath, 'MEMORY.md', '# index', 'claude-code', tempHome);
+			const { orphans } = await findOrphanMemories(projectPath, 'claude-code', tempHome);
+			expect(orphans).toEqual([]);
+		});
+
+		it('counts a wiki link by filename stem as a reference', async () => {
+			await writeMemoryEntry(projectPath, 'MEMORY.md', 'see [[a_note]]', 'claude-code', tempHome);
+			await writeMemoryEntry(projectPath, 'a_note.md', 'body', 'claude-code', tempHome);
+			const { orphans } = await findOrphanMemories(projectPath, 'claude-code', tempHome);
+			expect(orphans).toEqual([]);
+		});
+
+		it('counts a wiki link by frontmatter name as a reference', async () => {
+			// The memory instructions tell the agent to link by the `name:` slug,
+			// which is often NOT the filename. A checker that only knew filenames
+			// would report almost every entry as an orphan.
+			await writeMemoryEntry(projectPath, 'MEMORY.md', 'see [[the-slug]]', 'claude-code', tempHome);
+			await writeMemoryEntry(
+				projectPath,
+				'a_note.md',
+				'---\nname: the-slug\n---\n\nbody',
+				'claude-code',
+				tempHome
+			);
+			const { orphans } = await findOrphanMemories(projectPath, 'claude-code', tempHome);
+			expect(orphans).toEqual([]);
+		});
+
+		it('treats hyphen and underscore spellings as the same target', async () => {
+			// One character apart, invisible in rendered markdown, and the single
+			// biggest source of silently-dead pointers in a real memory dir.
+			await writeMemoryEntry(
+				projectPath,
+				'MEMORY.md',
+				'see [[project-my-note]]',
+				'claude-code',
+				tempHome
+			);
+			await writeMemoryEntry(projectPath, 'project_my_note.md', 'body', 'claude-code', tempHome);
+			const { orphans, brokenLinks } = await findOrphanMemories(
+				projectPath,
+				'claude-code',
+				tempHome
+			);
+			expect(orphans).toEqual([]);
+			expect(brokenLinks).toEqual([]);
+		});
+
+		it('reports a link whose target does not exist', async () => {
+			await writeMemoryEntry(projectPath, 'MEMORY.md', 'see [[nope]]', 'claude-code', tempHome);
+			const { brokenLinks } = await findOrphanMemories(projectPath, 'claude-code', tempHome);
+			expect(brokenLinks).toEqual([{ source: 'MEMORY.md', target: 'nope' }]);
+		});
+
+		it('does not let a self-link rescue an entry from being an orphan', async () => {
+			await writeMemoryEntry(projectPath, 'MEMORY.md', '# index', 'claude-code', tempHome);
+			await writeMemoryEntry(
+				projectPath,
+				'a_note.md',
+				'I link to [[a_note]] only',
+				'claude-code',
+				tempHome
+			);
+			const { orphans } = await findOrphanMemories(projectPath, 'claude-code', tempHome);
+			expect(orphans).toEqual(['a_note.md']);
 		});
 	});
 });
