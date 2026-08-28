@@ -485,13 +485,46 @@ describe('mediaPlaybackStore', () => {
 			expect(state.pendingAutoplay).toBe(false);
 		});
 
-		it('leaves a hidden player hidden when everything queued is already there', () => {
+		it('shows the player even when every file was already queued', () => {
+			// The retry case: queueing did nothing visible, so the user does it
+			// again with the same files. Nothing is added the second time, and
+			// bailing on that is what made the command look permanently broken.
+			const a = request();
+			const b = request({ path: '/files/b.mp4', name: 'b.mp4', kind: 'video' });
+			initial.openMedia(a);
+			initial.enqueueMedia([b]);
+			useMediaPlaybackStore.setState({ dismissed: true, dormant: true });
+
+			expect(initial.enqueueMedia([b])).toBe(0);
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			expect(state.items.map((i) => i.id)).toEqual([idOf(a), idOf(b)]);
+		});
+
+		it('re-queueing into a visible player changes nothing at all', () => {
 			const a = request();
 			initial.openMedia(a);
-			initial.dismiss();
+			initial.consumeAutoplay();
+			const before = useMediaPlaybackStore.getState();
 
 			expect(initial.enqueueMedia([a])).toBe(0);
-			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+			expect(useMediaPlaybackStore.getState()).toBe(before);
+		});
+
+		it('loads a requested file the queue already holds when the player is idle', () => {
+			// Closing the loaded track leaves the rest of the queue behind with
+			// nothing active. Queueing one of those files again must put it in the
+			// player rather than reporting "already queued" and showing nothing.
+			const a = request();
+			const b = request({ path: '/files/b.mp4', name: 'b.mp4', kind: 'video' });
+			initial.enqueueMedia([a, b]);
+			initial.closeItem(idOf(a));
+
+			expect(initial.enqueueMedia([b])).toBe(0);
+			expect(useMediaPlaybackStore.getState().activeItemId).toBe(idOf(b));
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
 		});
 
 		it('loads the first file when the player is idle, so the queue is reachable', () => {

@@ -166,8 +166,15 @@ interface MediaPlaybackStoreState {
 	 * app. It does not disturb the loaded track - what is playing keeps playing.
 	 *
 	 * The one exception is an idle player: with nothing loaded there is no
-	 * widget on screen, so the first queued file becomes the active one (paused,
-	 * not autoplaying) rather than landing in a queue the user cannot see.
+	 * widget on screen, so the first file the user asked for becomes the active
+	 * one (paused, not autoplaying) rather than landing in a queue nobody can
+	 * see.
+	 *
+	 * All of that happens whether or not anything was actually ADDED. Queueing
+	 * files that are already queued adds nothing, and a version of this that
+	 * bailed on `added === 0` turned "Add to Play Queue" into a silent no-op the
+	 * second time it was used on the same files - which is exactly when a user
+	 * retries a command that looked like it did nothing.
 	 *
 	 * @returns How many files were newly queued. Already-queued files are left
 	 *   where they are, so "add to queue" twice does not reorder anything.
@@ -359,16 +366,19 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 		set((state) => {
 			const items = [...state.items];
 			const known = new Set(items.map((item) => item.id));
-			let firstAddedId: string | null = null;
+			// The first file the user POINTED AT, whether or not it was already in
+			// the queue. That difference is the whole bug this replaced a
+			// `firstAddedId` with: queueing files that are all already queued adds
+			// nothing, and keying the response off what was added made the command
+			// a silent no-op the second time it was used on the same files.
+			const firstRequestedId = mediaItemId(requests[0].sessionId, requests[0].path);
 			for (const request of requests) {
 				const id = mediaItemId(request.sessionId, request.path);
 				if (known.has(id)) continue;
 				known.add(id);
 				items.push({ ...request, id });
-				if (!firstAddedId) firstAddedId = id;
 				added++;
 			}
-			if (added === 0) return state;
 
 			// Queueing NEVER interrupts: whatever is loaded stays loaded and keeps
 			// playing, which is the entire difference between this and `openMedia`.
@@ -382,20 +392,26 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				// produces no visible response anywhere in the app, which reads as
 				// the command having done nothing. Un-hiding is not interrupting:
 				// the loaded track is untouched and keeps playing.
+				//
+				// This runs even when nothing was added: "put these in the player"
+				// is answered by showing the player, and the files ARE in it.
+				if (added === 0 && !state.dismissed && !state.dormant) return state;
 				return {
-					items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId),
+					...(added > 0
+						? { items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId) }
+						: {}),
 					dismissed: false,
 					dormant: false,
 				};
 			}
 
 			// Idle player: there is no widget on screen, so a pure append would
-			// queue into the void. Load the track that was just queued - NOT
-			// `items[0]`, which after a close is some leftover the user never asked
-			// for. It loads paused, because queueing is not a request to listen.
+			// queue into the void. Load the file the user asked for - NOT
+			// `items[0]`, which after a close is some leftover they never named.
+			// It loads paused, because queueing is not a request to listen.
 			return {
-				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstAddedId),
-				activeItemId: firstAddedId,
+				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstRequestedId),
+				activeItemId: firstRequestedId,
 				dismissed: false,
 				dormant: false,
 			};
