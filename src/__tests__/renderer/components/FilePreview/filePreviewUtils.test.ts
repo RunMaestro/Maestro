@@ -124,6 +124,28 @@ describe('filePreviewUtils', () => {
 			expect(isBinaryExtension('font.woff2')).toBe(true);
 		});
 
+		it('leaves parquet out, because parquet has a viewer of its own', () => {
+			// Parquet IS a binary format, so adding these here looks like an
+			// obvious tidy-up. It is not: a parquet tab holds a handoff marker
+			// and renders as a filterable grid, and classifying it binary swaps
+			// that grid for an "Open in Default App" card.
+			//
+			// FilePreview also guards on the marker itself, so this absence is
+			// not the only thing holding the viewer up - but the two together
+			// are why the grid survives an edit to either one.
+			expect(isBinaryExtension('events.parquet')).toBe(false);
+			expect(isBinaryExtension('events.parq')).toBe(false);
+			expect(isBinaryExtension('events.pq')).toBe(false);
+		});
+
+		it('still treats database files as binary - Maestro has no SQLite viewer', () => {
+			// If a SQLite viewer ever lands, this is the assertion that will fail
+			// and point at the classifier that needs to learn about it.
+			expect(isBinaryExtension('app.db')).toBe(true);
+			expect(isBinaryExtension('app.sqlite')).toBe(true);
+			expect(isBinaryExtension('app.sqlite3')).toBe(true);
+		});
+
 		it('returns false for text files', () => {
 			expect(isBinaryExtension('index.ts')).toBe(false);
 			expect(isBinaryExtension('README.md')).toBe(false);

@@ -12,6 +12,7 @@ The `window.maestro` API exposes the following namespaces:
 - `sessions` / `groups` - Agent and group persistence
 - `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands)
 - `fs` - readDir, readFile
+- `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
 - `dialog` - Folder selection
 - `shells` - Detect available shells
 - `logger` - System logging
@@ -141,6 +142,27 @@ window.maestro.cueBackup = {
 ```
 
 Every write path validates the backup zip lives inside `userData/cue-backups/` to prevent path traversal. See `src/main/cue/backup/cue-backup-manager.ts` for the implementation and `src/shared/cue-backup-types.ts` for the manifest/diff-status contracts.
+
+## Parquet API
+
+```typescript
+window.maestro.parquet = {
+	open(filePath, sshRemoteId?): Promise<ParquetFileInfo>;   // footer + schema only
+	query(request: ParquetQueryRequest): Promise<ParquetQueryResult>;
+	export(options): Promise<{ path; rows; truncated }>;      // CSV / JSON Lines
+	close(handle): Promise<void>;
+};
+```
+
+**Parquet is the one previewable format that never crosses this bridge as content.** `fs:readFile` short-circuits a `.parquet` / `.parq` / `.pq` read to a marker string (`buildParquetPreviewMarker()` in `src/shared/parquet/preview.ts`), the main process keeps the file behind an open descriptor, and the renderer asks for the window of rows it is displaying. A Parquet file is routinely larger than RAM, so reading one into a string to "preview" it would defeat the format twice over.
+
+Three contract details that bite callers:
+
+- **`matchedRows` is a LOWER BOUND until `complete` is true.** A filtered scan stops as soon as it has filled the requested window. Render it as `1,204+`, and pass `countAll: true` to drive the scan toward the exact total.
+- **`close` is not optional but is not load-bearing.** Idle handles are reaped, so a missed close leaks nothing permanent - it just holds a file descriptor until the reaper runs.
+- **A filter that fails to parse matches ZERO rows**, and returns the problem in `filterError`. It does not fall back to "no filter": showing every row under a red error reads as filtering being broken.
+
+Engine internals (pruning, projection, resumable scans) are documented in [REMAINING-SYSTEMS.md → Parquet Query Engine](docs/agent-guides/REMAINING-SYSTEMS.md).
 
 ## Power Management
 

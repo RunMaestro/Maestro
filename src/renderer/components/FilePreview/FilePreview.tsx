@@ -381,9 +381,17 @@ export const FilePreview = React.memo(
 			if (!file) return false;
 			if (isImage) return false;
 			if (isMedia) return true;
-			// Parquet is binary on disk but has its own viewer, and its content
-			// here is a short ASCII marker that would otherwise sail through the
-			// text checks below and render as gibberish.
+			// Parquet is binary on disk but has its own viewer, so it must never
+			// be classified as binary here.
+			//
+			// This is currently belt-and-braces rather than load-bearing: the
+			// checks below already return false, because the marker is pure
+			// ASCII and `parquet` / `parq` / `pq` are deliberately absent from
+			// BINARY_EXTENSIONS. That absence is the fragile half - adding them
+			// there is the obvious thing to do for a binary format, and doing it
+			// would silently swap the grid for an "Open Externally" card. This
+			// line is what makes that edit safe. See the matching assertion in
+			// filePreviewUtils.test.ts.
 			if (isParquetPreviewMarker(file.content)) return false;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
 		}, [isImage, isMedia, file]);
