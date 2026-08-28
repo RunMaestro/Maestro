@@ -684,6 +684,22 @@ export const MainPanel = React.memo(
 			[resolveBuffer, props.onPublishTextAsGist]
 		);
 
+		// A file preview tab publishes under its own filename so the gist keeps the
+		// extension GitHub highlights by, and reports its path so the published URL
+		// is remembered against the file rather than the tab.
+		const handlePublishFileTabGist = useCallback(
+			(tabId: string) => {
+				const fileTab = activeSession?.filePreviewTabs?.find((t) => t.id === tabId);
+				if (!fileTab) return;
+				const filename = fileTab.name + fileTab.extension;
+				props.onPublishTextAsGist?.(fileTab.content, fileTab.name, {
+					filename,
+					filePath: fileTab.path,
+				});
+			},
+			[activeSession?.filePreviewTabs, props.onPublishTextAsGist]
+		);
+
 		const handleSendTerminalBufferToAgent = useCallback(
 			(tabId: string) => {
 				const resolved = resolveBuffer(tabId);
@@ -1136,6 +1152,9 @@ export const MainPanel = React.memo(
 									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
 									onNewFileTab={pianolaTabHandlers.onNewFileTab}
 									onNewBrowserTab={pianolaTabHandlers.onNewBrowserTab}
 									onBrowserTabSelect={pianolaTabHandlers.onBrowserTabSelect}
@@ -1222,6 +1241,9 @@ export const MainPanel = React.memo(
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
 									onNewFileTab={onNewFileTab}
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}

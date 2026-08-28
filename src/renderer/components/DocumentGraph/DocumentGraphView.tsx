@@ -36,6 +36,16 @@ import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { usePersistedPanelWidth } from '../../hooks/ui/usePersistedPanelWidth';
+import { useResizablePanel } from '../../hooks/ui/useResizablePanel';
+import { viewportModalSize } from '../../utils/modalSizing';
+import {
+	previewMaxWidthForContainer,
+	PREVIEW_DEFAULT_WIDTH,
+	PREVIEW_MIN_WIDTH,
+	PREVIEW_MAX_WIDTH,
+	PREVIEW_WIDTH_STORAGE_KEY,
+} from './previewPaneSizing';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -1309,13 +1319,50 @@ export function DocumentGraphView({
 			return Math.round(clamped * 10) / 10;
 		});
 	}, []);
+	// The graph is a canvas the user pans around in, so its useful default is
+	// "as much of the screen as a modal may take" rather than a fixed box - the
+	// old 1200x760 default was a postage stamp on a large display. clampModalSize
+	// caps this at the shared 90% viewport ratio.
+	const defaultModalSize = useMemo(
+		() => viewportModalSize({ width: 0.95, height: 0.95 }),
+		// Recomputing per render would fight the resize listener inside the hook,
+		// which already re-clamps the live size when the viewport changes.
+		[]
+	);
 	const resizableModal = useResizableModal({
 		resizeKey: 'document-graph',
-		defaultSize: { width: 1200, height: 760 },
+		defaultSize: defaultModalSize,
 		minSize: { width: 760, height: 500 },
 		enabled: isOpen,
 		externalRef: containerRef,
 	});
+
+	// Preview pane width: dragged by its left edge, remembered across opens.
+	const {
+		width: previewWidth,
+		setWidth: setPreviewWidth,
+		reset: resetPreviewWidth,
+	} = usePersistedPanelWidth(PREVIEW_WIDTH_STORAGE_KEY, {
+		defaultWidth: PREVIEW_DEFAULT_WIDTH,
+		minWidth: PREVIEW_MIN_WIDTH,
+		maxWidth: PREVIEW_MAX_WIDTH,
+	});
+	// Leave a strip of graph visible no matter how wide the pane is dragged. The
+	// container can be narrower than the stored width (a small modal, a resized
+	// window), so the live clamp is separate from the stored bounds.
+	const previewMaxWidth = previewMaxWidthForContainer(graphDimensions.width);
+	const {
+		panelRef: previewPanelRef,
+		isResizing: isPreviewResizing,
+		onResizeStart: onPreviewResizeStart,
+	} = useResizablePanel({
+		width: previewWidth,
+		minWidth: PREVIEW_MIN_WIDTH,
+		maxWidth: previewMaxWidth,
+		setWidth: setPreviewWidth,
+		side: 'right',
+	});
+	const renderedPreviewWidth = Math.min(previewWidth, previewMaxWidth);
 
 	if (!isOpen) return null;
 
@@ -1907,15 +1954,35 @@ export function DocumentGraphView({
 					{/* Markdown Preview Panel */}
 					{(previewFile || previewLoading || previewError) && (
 						<div
+							ref={previewPanelRef}
 							className="absolute top-4 right-4 bottom-4 rounded-lg shadow-2xl border flex flex-col z-50 outline-none"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								borderColor: theme.colors.border,
-								width: 'min(560px, 42vw)',
+								width: renderedPreviewWidth,
 								maxWidth: '90%',
 							}}
 							onKeyDown={handlePreviewKeyDown}
 						>
+							{/* Drag the left edge to widen/narrow; double-click restores the default. */}
+							<div
+								className={`absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent z-20 ${
+									isPreviewResizing ? '' : 'transition-colors'
+								}`}
+								style={{ borderLeftColor: isPreviewResizing ? theme.colors.accent : undefined }}
+								onPointerDown={onPreviewResizeStart}
+								onDoubleClick={resetPreviewWidth}
+								onMouseEnter={(e) => (e.currentTarget.style.borderLeftColor = theme.colors.accent)}
+								onMouseLeave={(e) =>
+									(e.currentTarget.style.borderLeftColor = isPreviewResizing
+										? theme.colors.accent
+										: 'transparent')
+								}
+								role="separator"
+								aria-orientation="vertical"
+								aria-label="Resize document preview"
+								title="Drag to resize (double-click to reset)"
+							/>
 							<style>{generateProseStyles({ theme, scopeSelector: '.graph-preview' })}</style>
 							<div
 								className="px-4 py-3 border-b flex items-center justify-between gap-3"

@@ -87,6 +87,7 @@ function TabBarInner({
 	onTerminalTabRename,
 	onCopyTerminalBuffer,
 	onPublishTerminalBufferGist,
+	onPublishFileGist,
 	onSendTerminalBufferToAgent,
 	onTerminalTabConfigureStartupCommand,
 	onCopyBrowserContent,
@@ -810,6 +811,7 @@ function TabBarInner({
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
 										onRename={onFileTabRename}
 										onSnooze={onSnooze || undefined}
+										onPublishGist={ghCliAvailable ? onPublishFileGist : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}

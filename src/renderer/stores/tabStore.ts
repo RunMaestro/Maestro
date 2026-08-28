@@ -99,6 +99,12 @@ export interface TabStoreState {
 		content: string;
 		messageId?: string;
 		/**
+		 * Absolute path of the file the content came from, when the publish
+		 * started on a file preview tab. The published URL is recorded against
+		 * it so the file reads as published afterwards.
+		 */
+		filePath?: string;
+		/**
 		 * Raw log entries that produced `content`. When present, the publish modal
 		 * can re-format the body (e.g. to opt in to reasoning/thinking blocks)
 		 * without going back through the caller.

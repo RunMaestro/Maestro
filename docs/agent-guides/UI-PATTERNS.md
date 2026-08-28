@@ -212,7 +212,59 @@ Dialog-style modals can offer persisted, center-anchored drag-to-resize via `use
 
 The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
+- `useResizableModal` (`src/renderer/hooks/ui/useResizableModal.ts`) owns the drag. Like `useResizablePanel` it writes to the DOM during the drag and commits React state once on mouseup. Deltas are doubled because the card is centered: growing the width by W moves the right edge by only W/2, so doubling keeps the grip under the pointer.
+- Sizes persist in one `modalSizes` map in `uiStore`, keyed by `resizeKey`, written through to settings and hydrated by `loadAllSettings` on startup.
+- Minimums default to `MODAL_MIN_WIDTH` (360) / `MODAL_MIN_HEIGHT` (300), never exceeding the modal's declared `width`. Pass higher values when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
+- Sizes are clamped to `MODAL_MAX_VIEWPORT_RATIO` (90%) of the viewport both at drag time and at read time, so a modal sized on a large display still opens sanely on a laptop.
+- `ModalResizeGrip` renders the bottom-right grip; double-clicking it forgets the remembered size and returns the modal to its declared default.
+
+`resizeKey` must be stable across renders - it is the persistence key, not a label.
+
 When two toggleable states of the same modal need independent footprints (e.g. Prompt Composer's compact vs. fullscreen), use two distinct `resizeKey`s (`prompt-composer-compact` / `prompt-composer-fullscreen`) rather than one shared key with a mode-dependent `defaultSize` - `defaultSize` is only consulted before the first saved size exists, so a single key would let one mode's manual resize silently pin the other mode's size too.
+
+**Sizing a canvas modal by the viewport.** A fixed pixel default is right for a
+form or a dialog: its content has a natural width and more room buys nothing.
+It is wrong for a surface the user pans around inside - a graph, a dashboard,
+a map - where the useful default is "as much of the screen as a modal may
+take". A default that reads as generous on a laptop is a postage stamp on a 5K
+display, and the user re-drags it on every machine. Pass
+`viewportModalSize({ width, height })` from `src/renderer/utils/modalSizing.ts`
+as the `defaultSize` instead of a literal (Document Graph is the reference
+caller). Memoize it once per mount rather than recomputing per render: the hook
+already re-clamps the live size on `resize`, and a default that moves under it
+fights that listener. The result still passes through `clampModalSize`, so the
+shared viewport cap and the modal's own `minSize` apply on top.
+
+### Resizable Panes Inside a Surface
+
+`useResizablePanel` (`src/renderer/hooks/ui/useResizablePanel.ts`) is the drag
+for a pane whose width the user sets: the Left Bar, the Right Bar, and the
+Document Graph's preview pane all ride it. It writes to the DOM during the drag
+and commits React state once on mouseup, so a drag costs one render rather than
+sixty.
+
+Who persists the width depends on where the pane lives:
+
+- **A top-level chrome pane** (Left Bar, Right Bar) is a real setting. Pass
+  `settingsKey` and back it with a `settingsStore` field, so it round-trips
+  through settings like any other preference.
+- **A pane inside another surface** (a preview inside a modal, a split inside a
+  panel) is a view preference, not a setting. Pair the hook with
+  `usePersistedPanelWidth(storageKey, { defaultWidth, minWidth, maxWidth })`
+  from `src/renderer/hooks/ui/usePersistedPanelWidth.ts` - the numeric
+  counterpart to `usePersistedToggle` - and **omit `settingsKey`**, or the hook
+  writes the same number a second time under a key nothing reads back.
+
+Stored bounds and the live clamp are two different questions, and conflating
+them is what lets a pane swallow its own container. The stored bounds decide
+what may be written to disk; the `maxWidth` handed to `useResizablePanel` folds
+in the container as it is right now, so a width that was legal on a maximized
+window narrows itself after the modal is resized down. See
+`previewPaneSizing.ts` in `src/renderer/components/DocumentGraph/` for the
+shape: constants plus one pure `previewMaxWidthForContainer()`, which also
+answers the unmeasured case (a `0` container width means the `ResizeObserver`
+has not reported, where clamping to the minimum would paint the remembered
+width narrow and then visibly jump).
 
 ### Modals Opened From Inside the Main Panel
 

@@ -11,9 +11,15 @@
  * screen. Three builders for one list is how they end up disagreeing in ten
  * places, so the render path and the cycle now share one source of truth -
  * adding a match rule here fixes both at once rather than one of them.
+ *
+ * The "does this agent need attention?" half lives one level down in
+ * `sessionAttention`, because the bell badge, the collapsed rail, and the
+ * jump-badge projection ask it without a filter context. Add an attention rule
+ * there, not here.
  */
 
 import type { Session } from '../types';
+import { sessionOrChildrenNeedAttention, type AttentionContext } from './sessionAttention';
 
 /**
  * Does this agent match the sidebar's filter text?
@@ -48,14 +54,17 @@ export interface UnreadFilterContext {
 	stuckOutageIds?: ReadonlySet<string>;
 }
 
+const NO_IDS: ReadonlySet<string> = new Set<string>();
+
 /**
  * Does this agent survive the unread-agents filter?
  *
- * An Auto Run agent sits in state `idle` between prompts and a stuck agent is
- * not "unread" in any literal sense, but both need attention, so both stay
- * visible. The ACTIVE agent always stays visible - a filter that hides the row
- * you are working in loses your place, and the cycle would then have no valid
- * position to move from.
+ * The "needs attention" half lives in `sessionAttention` because the bell badge,
+ * the collapsed rail, and the jump-badge projection ask the same question
+ * without a filter context. This function is that predicate plus the two rules
+ * that only membership cares about: the filter being off at all, and the ACTIVE
+ * agent always staying visible - a filter that hides the row you are working in
+ * loses your place, and the cycle would then have no valid position to move from.
  */
 export function passesUnreadFilter(session: Session, ctx: UnreadFilterContext): boolean {
 	if (!ctx.showUnreadAgentsOnly) return true;
@@ -66,15 +75,9 @@ export function passesUnreadFilter(session: Session, ctx: UnreadFilterContext): 
 		children.some((child) => child.id === ctx.activeSessionId);
 	if (isActiveOrParentOfActive) return true;
 
-	const needsAttention = (s: Session): boolean =>
-		(s.aiTabs?.some((tab) => tab.hasUnread) ?? false) ||
-		s.state === 'busy' ||
-		// An errored agent needs attention as much as an unread one - it is the
-		// case the user most wants surfaced, and leaving it out hid failed agents
-		// from the very filter meant to find them (#1256).
-		s.state === 'error' ||
-		(ctx.batchSessionIds?.has(s.id) ?? false) ||
-		(ctx.stuckOutageIds?.has(s.id) ?? false);
-
-	return needsAttention(session) || children.some(needsAttention);
+	const attentionCtx: AttentionContext = {
+		batchSessionIds: ctx.batchSessionIds ?? NO_IDS,
+		stuckOutageIds: ctx.stuckOutageIds ?? NO_IDS,
+	};
+	return sessionOrChildrenNeedAttention(session, children, attentionCtx);
 }

@@ -937,6 +937,30 @@ describe('useTabExportHandlers', () => {
 			});
 		});
 
+		// A file publishes under its own name so the gist keeps the extension
+		// GitHub highlights by, and names its path so the URL is remembered
+		// against the file rather than the tab it was published from.
+		it('uses an explicit filename and file path when given', () => {
+			const setGistPublishModalOpen = vi.fn();
+			const { result } = renderHook(() =>
+				useTabExportHandlers(createDeps({ setGistPublishModalOpen }))
+			);
+
+			act(() => {
+				result.current.handlePublishTextAsGist('# Notes', 'my notes', {
+					filename: 'my notes.md',
+					filePath: '/tmp/my notes.md',
+				});
+			});
+
+			expect(mockSetTabGistContent).toHaveBeenCalledWith({
+				filename: 'my notes.md',
+				content: '# Notes',
+				filePath: '/tmp/my notes.md',
+			});
+			expect(setGistPublishModalOpen).toHaveBeenCalledWith(true);
+		});
+
 		it('does nothing when the buffer text is blank', () => {
 			const setGistPublishModalOpen = vi.fn();
 			const { result } = renderHook(() =>

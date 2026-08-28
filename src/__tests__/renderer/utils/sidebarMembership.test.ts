@@ -67,6 +67,13 @@ describe('passesUnreadFilter', () => {
 		expect(passesUnreadFilter(agent({ id: 'a', state: 'busy', aiTabs: [] }), on)).toBe(true);
 	});
 
+	// An agent that failed is the case this filter most needs to surface. It used
+	// to be dropped, so a crashed agent with no unread tabs vanished from the very
+	// filter you would open to find it.
+	it('keeps an errored agent even with no unread tabs', () => {
+		expect(passesUnreadFilter(agent({ id: 'a', state: 'error', aiTabs: [] }), on)).toBe(true);
+	});
+
 	// An Auto Run agent sits idle between prompts and a stuck one is not "unread"
 	// in any literal sense, but both need attention.
 	it('keeps an Auto Run agent and a stuck agent', () => {
@@ -92,6 +99,9 @@ describe('passesUnreadFilter', () => {
 		const parent = agent({ id: 'p', state: 'idle', aiTabs: [] });
 		const busyChild = [agent({ id: 'c', state: 'busy', aiTabs: [] })];
 		expect(passesUnreadFilter(parent, { ...on, worktreeChildren: busyChild })).toBe(true);
+
+		const errorChild = [agent({ id: 'c', state: 'error', aiTabs: [] })];
+		expect(passesUnreadFilter(parent, { ...on, worktreeChildren: errorChild })).toBe(true);
 
 		const quietChild = [agent({ id: 'c', state: 'idle', aiTabs: [] })];
 		expect(passesUnreadFilter(parent, { ...on, worktreeChildren: quietChild })).toBe(false);

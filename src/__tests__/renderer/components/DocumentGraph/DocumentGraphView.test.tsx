@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PREVIEW_WIDTH_STORAGE_KEY } from '../../../../renderer/components/DocumentGraph/previewPaneSizing';
 
 // Mock ReactFlow before importing the component
 vi.mock('reactflow', () => {
@@ -2981,6 +2982,24 @@ describe('DocumentGraphView', () => {
 			expect(layerConfig.type).toBe('overlay');
 			expect(layerConfig.capturesFocus).toBe(true);
 			expect(layerConfig.focusTrap).toBe('lenient');
+		});
+
+		it('preview panel width is dragged by its left edge and remembered', () => {
+			// The pane floats over the right of the graph, so widening it means
+			// dragging its LEFT edge toward the canvas - `side: 'right'` in
+			// useResizablePanel. Persistence belongs to usePersistedPanelWidth, so
+			// no settingsKey is passed (a second write would go nowhere readable).
+			const resizeConfig = {
+				side: 'right',
+				storageKey: PREVIEW_WIDTH_STORAGE_KEY,
+				settingsKey: undefined,
+				handleClassName: 'absolute top-0 left-0 w-3 h-full cursor-col-resize',
+			};
+
+			expect(resizeConfig.side).toBe('right');
+			expect(resizeConfig.settingsKey).toBeUndefined();
+			expect(resizeConfig.handleClassName).toContain('cursor-col-resize');
+			expect(resizeConfig.storageKey).toBe('documentGraph.previewWidth');
 		});
 
 		it('preview content area is focusable for keyboard scrolling', () => {
