@@ -14,7 +14,7 @@
  * worktree's branch name.
  */
 
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import type { Session, SessionState, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -25,7 +25,14 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { ThemedSelect, type ThemedSelectOption } from '../shared/ThemedSelect';
+import { UNGROUPED_ID, UNGROUPED_NAME, type GroupLike } from '../../../shared/statsGroupRollup';
 import { EntityTile } from './EntityTile';
+
+/** Dropdown value meaning "do not narrow by group". */
+const ALL_GROUPS_VALUE = '__all__';
+
+const EMPTY_GROUPS: GroupLike[] = [];
 
 const SPARKLINE_DAYS = 7;
 
@@ -254,19 +261,11 @@ interface AgentOverviewCardsProps {
 	 *  stats sub-modal. When omitted, the icon is not rendered. */
 	onShowAgentDetails?: (session: Session) => void;
 	/**
-	 * Narrow the grid to these session ids. Set by the Groups tab drilling into
-	 * a group's members. `null`/omitted shows every agent.
-	 *
-	 * This is a hard restriction rather than a highlight: a group with three
-	 * agents is not usefully answered by tinting three cards inside a grid of
-	 * ninety. The restriction is always paired with a visible, dismissible chip
-	 * - a silently filtered grid reads as missing agents.
+	 * Left Bar groups, used to populate the group filter dropdown. Omit (or pass
+	 * an empty array) and the dropdown is not rendered at all - a filter with
+	 * one option is a control that can only do nothing.
 	 */
-	restrictToSessionIds?: string[] | null;
-	/** Label for the restriction chip, e.g. the group's name. */
-	restrictionLabel?: string;
-	/** Clears the restriction. When omitted the chip renders without a button. */
-	onClearRestriction?: () => void;
+	groups?: GroupLike[];
 }
 
 type SortMode = 'name' | 'created' | 'queries' | 'tabs' | 'auto';
@@ -314,12 +313,48 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	theme,
 	activeFilterKey = null,
 	onShowAgentDetails,
-	restrictToSessionIds = null,
-	restrictionLabel,
-	onClearRestriction,
+	groups = EMPTY_GROUPS,
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
 	const [filterQuery, setFilterQuery] = useState('');
+	// Which group the grid is narrowed to. ALL_GROUPS_VALUE means no narrowing;
+	// UNGROUPED_ID is the agents filed under no group.
+	const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS_VALUE);
+
+	// Only groups that actually hold an agent are offered, plus Ungrouped when
+	// any agent is unfiled. An option that can only ever produce an empty grid
+	// is a dead end the user has to back out of.
+	const groupOptions = useMemo((): ThemedSelectOption[] => {
+		const agents = sessions.filter((s) => s.toolType !== 'terminal');
+		const liveGroupIds = new Set(groups.map((g) => g.id));
+		const populated = new Set<string>();
+		for (const agent of agents) {
+			populated.add(
+				agent.groupId && liveGroupIds.has(agent.groupId) ? agent.groupId : UNGROUPED_ID
+			);
+		}
+
+		const options: ThemedSelectOption[] = [{ value: ALL_GROUPS_VALUE, label: 'All groups' }];
+		for (const group of groups) {
+			if (!populated.has(group.id)) continue;
+			options.push({
+				value: group.id,
+				label: group.emoji ? `${group.emoji} ${group.name}` : group.name,
+			});
+		}
+		if (populated.has(UNGROUPED_ID)) {
+			options.push({ value: UNGROUPED_ID, label: UNGROUPED_NAME });
+		}
+		return options;
+	}, [groups, sessions]);
+
+	// A group emptied or deleted while its filter was active would otherwise
+	// strand the grid on a selection with no option behind it, showing nothing.
+	useEffect(() => {
+		if (!groupOptions.some((o) => o.value === groupFilter)) {
+			setGroupFilter(ALL_GROUPS_VALUE);
+		}
+	}, [groupOptions, groupFilter]);
 	const filterInputRef = useRef<HTMLInputElement>(null);
 
 	const clearFilter = useCallback(() => {
@@ -344,10 +379,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	// how the Left Bar's session list orders names; the user can switch to
 	// query or tab count (descending) via the sort control above the grid.
 	const activeSessions = useMemo(() => {
-		const allowed = restrictToSessionIds ? new Set(restrictToSessionIds) : null;
-		const filtered = sessions.filter(
-			(s) => s.toolType !== 'terminal' && (!allowed || allowed.has(s.id))
-		);
+		// A groupId pointing at a deleted group counts as ungrouped, matching how
+		// the Left Bar and the group rollup both treat a dangling pointer - an
+		// agent must never become unreachable from every filter option.
+		const liveGroupIds = new Set(groups.map((g) => g.id));
+		const matchesGroup = (s: Session) => {
+			if (groupFilter === ALL_GROUPS_VALUE) return true;
+			const resolved = s.groupId && liveGroupIds.has(s.groupId) ? s.groupId : UNGROUPED_ID;
+			return resolved === groupFilter;
+		};
+		const filtered = sessions.filter((s) => s.toolType !== 'terminal' && matchesGroup(s));
 		const byName = (a: Session, b: Session) => compareNamesIgnoringEmojis(a.name, b.name);
 
 		if (sortMode === 'name') {
@@ -391,7 +432,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 			if (bPct === null) return -1;
 			return bPct - aPct;
 		});
-	}, [sessions, data, sortMode, restrictToSessionIds]);
+	}, [sessions, data, sortMode, groupFilter, groups]);
 
 	// Live fuzzy filter. With the default Name sort we re-rank by match score so
 	// the best hit lands first; an explicit sort (Queries, Tabs, ...) is the
@@ -410,42 +451,35 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		return scored.map((entry) => entry.session);
 	}, [activeSessions, filterQuery, sortMode]);
 
-	// A restriction that matches nothing must still render, otherwise the tab
-	// goes blank with no visible reason and no way back to the full grid.
-	const isRestricted = Boolean(restrictToSessionIds);
-	if (activeSessions.length === 0 && !isRestricted) return null;
+	// The dropdown earns its place only once a REAL group is on offer. With no
+	// groups configured the options collapse to "All groups" and "Ungrouped",
+	// which render the identical grid - a control whose every choice is a no-op.
+	const hasGroupChoice = groupOptions.some(
+		(o) => o.value !== ALL_GROUPS_VALUE && o.value !== UNGROUPED_ID
+	);
+	const isGroupFiltered = groupFilter !== ALL_GROUPS_VALUE;
+	// A group filter that matches nothing must still render the toolbar,
+	// otherwise the tab goes blank with no visible reason and no way back.
+	if (activeSessions.length === 0 && !isGroupFiltered) return null;
 
 	return (
 		<div className="flex flex-col gap-3">
-			{isRestricted && (
-				<div
-					className="flex items-center gap-2 text-xs px-2 py-1 rounded self-start"
-					style={{
-						backgroundColor: `${theme.colors.accent}18`,
-						color: theme.colors.textMain,
-						border: `1px solid ${theme.colors.accent}55`,
-					}}
-					data-testid="agent-overview-restriction"
-					role="status"
-				>
-					<span className="truncate">
-						Showing {restrictionLabel ?? 'selected agents'} ({activeSessions.length})
-					</span>
-					{onClearRestriction && (
-						<button
-							type="button"
-							onClick={onClearRestriction}
-							className="font-medium underline underline-offset-2"
-							style={{ color: theme.colors.accent }}
-							data-testid="agent-overview-restriction-clear"
-						>
-							Show all agents
-						</button>
-					)}
-				</div>
-			)}
 			<div className="flex items-center justify-between gap-3 flex-wrap">
 				<div className="flex items-center gap-2 min-w-0">
+					{hasGroupChoice && (
+						<ThemedSelect
+							value={groupFilter}
+							options={groupOptions}
+							onChange={setGroupFilter}
+							theme={theme}
+							style={{ width: 200 }}
+							aria-label="Filter agents by group"
+							// Long group lists are the normal case for anyone using
+							// groups per client, so the menu carries its own search.
+							filterable={groupOptions.length > 8}
+							filterPlaceholder="Filter groups…"
+						/>
+					)}
 					<div className="relative flex items-center" style={{ width: 260, maxWidth: '100%' }}>
 						<Search
 							className="absolute left-2 w-3.5 h-3.5 pointer-events-none"
@@ -505,10 +539,10 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 				<div
 					className="py-8 text-center text-sm"
 					style={{ color: theme.colors.textDim }}
-					data-testid="agent-overview-restriction-empty"
+					data-testid="agent-overview-group-empty"
 					role="status"
 				>
-					{restrictionLabel ? `${restrictionLabel} has no agents.` : 'No agents to show.'}
+					{groupOptions.find((o) => o.value === groupFilter)?.label ?? 'This group'} has no agents.
 				</div>
 			) : filteredSessions.length === 0 ? (
 				<div

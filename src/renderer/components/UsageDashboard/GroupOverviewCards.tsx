@@ -175,6 +175,7 @@ const GroupCard = memo(function GroupCard({
 			stats={stats}
 			sparkline={sparkline}
 			animationIndex={animationIndex}
+			size="lg"
 			isSelected={isSelected}
 			// The Ungrouped bucket is not a real group the user created, so it
 			// carries the same dashed treatment worktree agents get.
@@ -300,7 +301,10 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 			) : (
 				<div
 					className="grid gap-3"
-					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+					// Wider than the agent grid's 220px on purpose: a group tile is
+					// larger than the agents it contains, and it carries a fourth stat
+					// (cost) that has to fit beside the others without colliding.
+					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}
 					data-testid="group-overview-cards"
 					role="region"
 					aria-label="Group usage overview"

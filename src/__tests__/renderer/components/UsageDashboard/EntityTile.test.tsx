@@ -191,6 +191,56 @@ describe('EntityTile', () => {
 		rerender(<EntityTile {...baseProps} animationIndex={375} />);
 		expect(screen.getByTestId('tile').style.animationDelay).toBe('720ms');
 	});
+
+	describe('size variants', () => {
+		it('defaults to the standard size', () => {
+			render(<EntityTile {...baseProps} />);
+
+			expect(screen.getByTestId('tile')).toHaveAttribute('data-size', 'default');
+		});
+
+		it('marks a large tile so the group grid is distinguishable', () => {
+			render(<EntityTile {...baseProps} size="lg" />);
+
+			expect(screen.getByTestId('tile')).toHaveAttribute('data-size', 'lg');
+		});
+
+		it("lays a large tile's stats out as a grid rather than one flex row", () => {
+			// Four stats in a single flex row is what ran a group's tokens and cost
+			// together as "79.5M$65.99". The grid wraps instead of overlapping.
+			render(
+				<EntityTile
+					{...baseProps}
+					size="lg"
+					stats={[
+						{ label: 'Queries', value: '848' },
+						{ label: 'Time', value: '96h 57m' },
+						{ label: 'Tokens', value: '79.5M' },
+						{ label: 'Cost', value: '$65.99' },
+					]}
+				/>
+			);
+
+			const statRow = screen.getByText('Queries').parentElement!.parentElement!;
+			expect(statRow.className).toContain('grid');
+			expect(statRow.className).not.toContain('flex items-end gap-3');
+		});
+
+		it('keeps the default tile on the compact flex stat row', () => {
+			render(
+				<EntityTile
+					{...baseProps}
+					stats={[
+						{ label: 'Queries', value: '5' },
+						{ label: 'Tabs', value: '2' },
+					]}
+				/>
+			);
+
+			const statRow = screen.getByText('Queries').parentElement!.parentElement!;
+			expect(statRow.className).toContain('flex');
+		});
+	});
 });
 
 /** jsdom reports colors as `rgb(r, g, b)`; convert a theme hex for comparison. */

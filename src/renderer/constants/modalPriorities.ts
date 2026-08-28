@@ -253,8 +253,14 @@ export const MODAL_PRIORITIES = {
 	 *  Escape dismisses the sub-modal first. */
 	USAGE_DASHBOARD_AGENT_FILTER: 541,
 
-	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
-	USAGE_DASHBOARD_AGENT_DETAIL: 542,
+	/** Per-group detail sub-modal opened from the Usage Dashboard's Groups tab.
+	 *  Sits BELOW the per-agent detail: an agent row inside this modal opens the
+	 *  agent detail on top of it, and Escape has to unwind agent-then-group. */
+	USAGE_DASHBOARD_GROUP_DETAIL: 542,
+
+	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab,
+	 *  or from an agent row inside the group detail modal. */
+	USAGE_DASHBOARD_AGENT_DETAIL: 543,
 
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
