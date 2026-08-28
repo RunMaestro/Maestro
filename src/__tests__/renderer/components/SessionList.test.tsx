@@ -26,6 +26,7 @@ import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import { requestSidebarReveal } from '../../../renderer/utils/sidebarReveal';
 import type { BatchRunState } from '../../../renderer/types';
 
 // Mock QRCodeSVG to avoid complex rendering
@@ -3705,6 +3706,17 @@ describe('SessionList', () => {
 			Element.prototype.scrollIntoView = scrollSpy as unknown as () => void;
 		});
 
+		/**
+		 * The reveal defers a frame so the cursor can settle - `selectedSidebarIndex`
+		 * is synced from `activeSessionId` by a parent effect, and reading it
+		 * synchronously gives the row the cursor is leaving.
+		 */
+		const flushFrames = async () => {
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 40));
+			});
+		};
+
 		it('does not scroll the list when the active group chat is archived', () => {
 			// The group chat section only renders with at least two AI agents.
 			const sessions = [
@@ -3736,8 +3748,11 @@ describe('SessionList', () => {
 			expect(scrollSpy).not.toHaveBeenCalled();
 		});
 
-		it('still scrolls a group chat into view when it is opened', () => {
-			// The group chat section only renders with at least two AI agents.
+		// The list scrolls when something ASKS it to, not when state that a click
+		// and a keystroke both produce happens to change. Opening a group chat by
+		// clicking it must not move the list; the Cmd+[ / Cmd+] cycle requests a
+		// reveal explicitly and does.
+		it('does not scroll when a group chat simply becomes active', async () => {
 			const sessions = [
 				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
 				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
@@ -3745,10 +3760,7 @@ describe('SessionList', () => {
 			useSessionStore.setState({ sessions, activeSessionId: 's1' });
 			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
 			useSettingsStore.setState({ groupChatsExpanded: true });
-			useGroupChatStore.setState({
-				groupChats: [makeChat()],
-				activeGroupChatId: null,
-			});
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
 			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
 			render(<SessionList {...props} />);
 			scrollSpy.mockClear();
@@ -3756,7 +3768,54 @@ describe('SessionList', () => {
 			act(() => {
 				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
 			});
+			await flushFrames();
+
+			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		it('scrolls the group chat into view when a reveal is requested', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+				requestSidebarReveal();
+			});
+			await flushFrames();
+
 			expect(scrollSpy).toHaveBeenCalled();
+		});
+
+		it('does not scroll when an agent is clicked', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// The user is already looking at the row they clicked. Re-aiming the
+			// list they just scrolled by hand is the reported bug - and it used to
+			// scroll TWICE, first to wherever the keyboard cursor had been left.
+			fireEvent.click(screen.getByText('Agent Two'));
+			act(() => {
+				useSessionStore.setState({ activeSessionId: 's2' });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).not.toHaveBeenCalled();
 		});
 	});
 

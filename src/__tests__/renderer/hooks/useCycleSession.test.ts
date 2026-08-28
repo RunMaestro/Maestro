@@ -236,7 +236,7 @@ describe('useCycleSession', () => {
 	// =========================================================================
 	// Ungrouped sessions - sidebar open, bookmarks collapsed, no groups, no group chats
 	// =========================================================================
-	describe('next cycling — ungrouped sessions', () => {
+	describe('next cycling - ungrouped sessions', () => {
 		it('moves to the next session in alphabetical order', () => {
 			const sessA = makeSession({ id: 'a', name: 'Alpha' });
 			const sessB = makeSession({ id: 'b', name: 'Beta' });
@@ -1065,7 +1065,11 @@ describe('useCycleSession', () => {
 			expect(useSessionStore.getState().cyclePosition).toBe(1);
 		});
 
-		it('group chats are sorted alphabetically', () => {
+		// The cycle must walk group chats in the order the SIDEBAR draws them, which
+		// is a user setting, not a constant. This used to hardcode alphabetical
+		// while `groupChatSortAlphabetical` defaults to FALSE, so out of the box the
+		// cycle and the list disagreed - that mismatch is the reported jumping.
+		it('walks group chats alphabetically when that toggle is on', () => {
 			const sessA = makeSession({ id: 'a', name: 'Alpha' });
 			const gcZ = makeGroupChat('gc-z', 'Zebra Chat');
 			const gcA = makeGroupChat('gc-a', 'Ant Chat');
@@ -1083,29 +1087,72 @@ describe('useCycleSession', () => {
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
 			} as any);
-			useSettingsStore.setState({ groupChatsExpanded: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: true,
+				groupChatSortAlphabetical: true,
+			} as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ handleOpenGroupChat });
 			const { result } = renderHook(() => useCycleSession(deps));
 
 			// Visual order: [Alpha(0), Ant Chat(1), Zebra Chat(2)]
-			// next from Alpha → Ant Chat
 			act(() => {
 				result.current.cycleSession('next');
 			});
 			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-a');
 
-			// Simulate Ant Chat now being active (must be inside act for reactive update)
 			act(() => {
 				useGroupChatStore.setState({ activeGroupChatId: 'gc-a' } as any);
 			});
-
-			// next from Ant Chat → Zebra Chat
 			act(() => {
 				result.current.cycleSession('next');
 			});
 			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-z');
+		});
+
+		it('walks group chats most-recent-first by default, matching the rendered list', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			// Alphabetically Ant sorts first; by recency Zebra does. The two orders
+			// disagree on purpose, so a cycle still hardcoding alphabetical fails.
+			const gcA = { ...makeGroupChat('gc-a', 'Ant Chat'), updatedAt: 1000 };
+			const gcZ = { ...makeGroupChat('gc-z', 'Zebra Chat'), updatedAt: 2000 };
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useGroupChatStore.setState({
+				groupChats: [gcA, gcZ],
+				activeGroupChatId: null,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: true,
+				groupChatSortAlphabetical: false,
+			} as any);
+
+			const handleOpenGroupChat = vi.fn();
+			const deps = makeDeps({ handleOpenGroupChat });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Alpha(0), Zebra Chat(1), Ant Chat(2)]
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-z');
+
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-z' } as any);
+			});
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-a');
 		});
 
 		it('group chats are excluded when groupChatsExpanded is false', () => {

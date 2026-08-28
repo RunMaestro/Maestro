@@ -17,6 +17,8 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { compareNamesIgnoringEmojis } from '../session/useSortedSessions';
+import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
+import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import type { StarredItem } from './useStarredItems';
 
 // ============================================================================
@@ -82,6 +84,9 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const starredSectionCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
+	// Read from settings rather than assumed: the sidebar and the arrow keys both
+	// honor this toggle, so the cycle must too or the three disagree.
+	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
 
 	const cycleSession = useCallback(
 		(dir: 'next' | 'prev') => {
@@ -190,19 +195,42 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					}
 				}
 
-				// Ungrouped sessions (sorted alphabetically) - only if not collapsed
-				if (!ungroupedCollapsed) {
-					const ungroupedSessions = sessions
-						.filter((s) => !s.groupId && !s.parentSessionId)
-						.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
+				// Ungrouped sessions (sorted alphabetically).
+				//
+				// An agent whose groupId points at a group that no longer exists is
+				// drawn HERE by the sidebar (`useSessionCategories`: grouped requires
+				// `groupIds.has(s.groupId)`, everything else falls through to
+				// ungrouped). This used to filter on `!s.groupId`, so such an agent was
+				// in no section at all and Cmd+[ / Cmd+] could never reach it - it was
+				// on screen and unreachable.
+				const groupIds = new Set(groups.map((g) => g.id));
+				const isUngrouped = (s: Session) => !s.groupId || !groupIds.has(s.groupId);
+				const ungroupedSessions = sessions
+					.filter((s) => isUngrouped(s) && !s.parentSessionId)
+					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
+				// The collapse flag only counts when the sidebar actually offers the
+				// control. It draws the collapsible Ungrouped folder only when groups
+				// exist AND there are ungrouped agents (SessionList: `groups.length > 0
+				// && ungroupedSessions.length > 0`); otherwise the agents render with no
+				// header to collapse. A flag left true from before the last group was
+				// deleted would then hide every agent from the cycle while all of them
+				// are on screen, making Cmd+] a silent no-op.
+				const ungroupedIsCollapsible = groups.length > 0 && ungroupedSessions.length > 0;
+				if (!ungroupedCollapsed || !ungroupedIsCollapsible) {
 					ungroupedSessions.forEach((s) => addSessionWithWorktrees(s, 'ungrouped'));
 				}
 
 				// Group Chats section (if expanded and has non-archived group chats)
+				// The SAME ordering the sidebar draws and the arrow keys walk. This used
+				// to hardcode alphabetical while the list renders by recency, and
+				// recency is the DEFAULT (`groupChatSortAlphabetical: false`), so out of
+				// the box Cmd+[ / Cmd+] walked group chats in an order nothing on screen
+				// matched. That is the jumping.
 				const activeGroupChats = groupChats.filter((gc) => !gc.archived);
 				if (groupChatsExpanded && activeGroupChats.length > 0) {
-					const sortedGroupChats = [...activeGroupChats].sort((a, b) =>
-						compareNamesIgnoringEmojis(a.name, b.name)
+					const sortedGroupChats = orderGroupChatsForDisplay(
+						activeGroupChats,
+						groupChatSortAlphabetical
 					);
 					visualOrder.push(
 						...sortedGroupChats.map((gc) => ({
@@ -296,6 +324,10 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			// focuses its tab or resumes its closed session (activateStarredItem sets
 			// the active session itself).
 			const activateVisualItem = (item: VisualOrderItem) => {
+				// Cmd+[ / Cmd+] moves the cursor without the user touching the list, so
+				// the destination has to be brought into view. Requested before the
+				// cursor is set: the consumer defers a frame and re-reads it.
+				requestSidebarReveal();
 				if (item.type === 'session') {
 					setActiveGroupChatId(null);
 					// Landing on a plain agent clears the non-agent cursor so the agent's
@@ -351,6 +383,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			leftSidebarOpen,
 			bookmarksCollapsed,
 			groupChatsExpanded,
+			groupChatSortAlphabetical,
 			ungroupedCollapsed,
 			showUnreadAgentsOnly,
 			groupChats,

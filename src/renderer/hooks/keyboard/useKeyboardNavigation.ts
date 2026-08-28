@@ -3,6 +3,7 @@ import type { Session, Group, FocusArea } from '../../types';
 import type { SidebarExtraSelection } from '../../stores/uiStore';
 import type { StarredItem } from '../session/useStarredItems';
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
+import { requestSidebarReveal } from '../../utils/sidebarReveal';
 
 /**
  * Minimal group-chat shape the sidebar navigation needs. Mirrors the fields
@@ -83,6 +84,14 @@ export interface UseKeyboardNavigationDeps {
 	groupChatSortAlphabetical: boolean;
 	/** Unread-agents filter: hides the starred + group-chat sections when active. */
 	showUnreadAgentsOnly: boolean;
+	/**
+	 * Whether the Ungrouped section is collapsed. The sidebar does not draw those
+	 * rows while it is, so the cursor must not treat them as landable without
+	 * expanding the section first.
+	 */
+	ungroupedCollapsed: boolean;
+	/** Setter for the Ungrouped collapsed state. */
+	setUngroupedCollapsed: (collapsed: boolean) => void;
 }
 
 /**
@@ -171,6 +180,8 @@ export function useKeyboardNavigation(
 		setGroupChatsExpanded,
 		groupChatSortAlphabetical,
 		showUnreadAgentsOnly,
+		ungroupedCollapsed,
+		setUngroupedCollapsed,
 	} = deps;
 
 	// Use refs for values that change frequently to avoid stale closures
@@ -216,6 +227,9 @@ export function useKeyboardNavigation(
 	const showUnreadAgentsOnlyRef = useRef(showUnreadAgentsOnly);
 	showUnreadAgentsOnlyRef.current = showUnreadAgentsOnly;
 
+	const ungroupedCollapsedRef = useRef(ungroupedCollapsed);
+	ungroupedCollapsedRef.current = ungroupedCollapsed;
+
 	/**
 	 * Build the full top-to-bottom Left Bar order. Starred rows and group chats
 	 * are included only when the unread-agents filter is off (it hides both
@@ -235,10 +249,18 @@ export function useKeyboardNavigation(
 			}
 		}
 
+		// An agent whose groupId names a group that no longer exists is drawn in
+		// Ungrouped by the sidebar, so it belongs to that section here too.
+		// Labelling it `group:<dead-id>` made `isEntryVisible` resolve no group and
+		// read `!undefined?.collapsed` as visible, and left `expandSectionFor` with
+		// nothing to expand - the cursor could land on a row that was collapsed out
+		// of sight with no way to reveal it.
+		const groupIds = new Set(groupsRef.current.map((g) => g.id));
 		sessions.forEach((session, navIndex) => {
 			let section: string;
 			if (navIndex < bmNavSize) section = 'bookmarks';
-			else if (session.groupId) section = `group:${session.groupId}`;
+			else if (session.groupId && groupIds.has(session.groupId))
+				section = `group:${session.groupId}`;
 			else section = 'ungrouped';
 			order.push({ type: 'session', section, navIndex, session });
 		});
@@ -269,7 +291,11 @@ export function useKeyboardNavigation(
 					const group = groupsRef.current.find((g) => g.id === entry.session.groupId);
 					return !group?.collapsed;
 				}
-				return true; // ungrouped agents are always visible
+				// Ungrouped is a collapsible section like any other. It used to return
+				// an unconditional `true`, so with the section collapsed the cursor
+				// walked onto rows the sidebar was not drawing (SessionList only
+				// renders them when `!ungroupedCollapsed`) and the highlight vanished.
+				return !ungroupedCollapsedRef.current;
 			}
 		}
 	}, []);
@@ -292,17 +318,34 @@ export function useKeyboardNavigation(
 						setGroups((prev) =>
 							prev.map((g) => (g.id === groupId ? { ...g, collapsed: false } : g))
 						);
+					} else {
+						// Ungrouped. Without this branch, teaching `isEntryVisible` about
+						// the collapse flag would make the arrows SKIP the section - which
+						// is Cmd+[ / Cmd+] behaviour on the wrong key. The two paths
+						// diverge here on purpose: arrows open what they cross into, the
+						// cycle walks past it. See sidebarNavContract.test.ts.
+						if (ungroupedCollapsedRef.current) setUngroupedCollapsed(false);
 					}
 					break;
 				}
 			}
 		},
-		[setStarredSectionCollapsed, setGroupChatsExpanded, setBookmarksCollapsed, setGroups]
+		[
+			setStarredSectionCollapsed,
+			setGroupChatsExpanded,
+			setBookmarksCollapsed,
+			setGroups,
+			setUngroupedCollapsed,
+		]
 	);
 
 	/** Move the keyboard cursor onto a virtual entry (highlight only - no activation). */
 	const selectEntry = useCallback(
 		(entry: VirtualEntry): void => {
+			// Arrow navigation is the case the reveal exists for: the user moved the
+			// cursor and may have moved it off screen. A click never comes through
+			// here, which is what keeps a click from re-aiming the list.
+			requestSidebarReveal();
 			if (entry.type === 'session') {
 				setSidebarExtraSelection(null);
 				setSelectedSidebarIndex(entry.navIndex);

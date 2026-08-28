@@ -6,6 +6,7 @@ import React, {
 	memo,
 	useCallback,
 	useDeferredValue,
+	useSyncExternalStore,
 } from 'react';
 import {
 	Wand2,
@@ -24,6 +25,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import { subscribeSidebarReveal, getSidebarRevealToken } from '../../utils/sidebarReveal';
 import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
@@ -374,14 +376,13 @@ function SessionListInner(props: SessionListProps) {
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
 	const unreadGroupChatIds = useGroupChatStore((s) => s.unreadGroupChatIds);
 
-	// Previous nav-cursor snapshot, so the reveal effect below can tell a real
-	// move apart from the active group chat simply going away.
-	const prevNavTargetRef = useRef({
-		selectedSidebarIndex,
-		sidebarExtraSelection,
-		activeGroupChatId,
-		activeSessionId,
-	});
+	// Latest nav cursor, read by the reveal effect on the next frame rather than
+	// captured when the reveal was requested. The cursor is not settled at
+	// request time: `selectedSidebarIndex` is synced from `activeSessionId` by a
+	// parent effect, and parent effects run after child ones, so reading it
+	// synchronously gives the row the cursor was leaving.
+	const navCursorRef = useRef({ selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId });
+	navCursorRef.current = { selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId };
 
 	// Shared with the group chat rows' status dots and the agent jumper's LIVE
 	// bucket, so all three agree on what "running" means.
@@ -404,47 +405,45 @@ function SessionListInner(props: SessionListProps) {
 		]
 	);
 
-	// Keep the keyboard-selected Left Bar row in view as navigation moves it.
-	// Rows are tagged with `data-nav-key`; we resolve the current key from the
-	// active cursor (priority: Starred/Group-Chat extra cursor, then the active
-	// group chat, then the agent index) and scroll it into the list viewport.
-	// Fires for both arrow-key navigation and the global Cmd+[ / Cmd+] cycle.
+	// Bring the keyboard cursor into view - and ONLY when something asked.
+	//
+	// This used to fire on any `activeSessionId` change, which meant a click
+	// re-aimed the list the user had just scrolled by hand. Intent is now
+	// declared by the caller (`requestSidebarReveal`) rather than inferred from
+	// the state a click and a keystroke both produce; see utils/sidebarReveal.ts.
+	//
+	// Deferred to the next frame so the cursor has settled. Without that, a
+	// programmatic jump scrolls to the row the cursor is leaving and never
+	// corrects, because nothing asks a second time.
+	const revealToken = useSyncExternalStore(subscribeSidebarReveal, getSidebarRevealToken);
+	// Seeded with the token as it stands at mount, because MOUNTING IS NOT A
+	// REQUEST. The counter is global and monotonic, so a fresh SessionList (a new
+	// window, a remount) would otherwise run this effect once against whatever
+	// the last reveal left behind and scroll a list nobody had touched.
+	const handledRevealRef = useRef(revealToken);
 	useEffect(() => {
-		const prev = prevNavTargetRef.current;
-		prevNavTargetRef.current = {
-			selectedSidebarIndex,
-			sidebarExtraSelection,
-			activeGroupChatId,
-			activeSessionId,
-		};
-		// Closing the active group chat (archive, close, delete of the last chat)
-		// clears activeGroupChatId without moving the cursor. Nothing new became
-		// active, so there is nothing to reveal - falling through to the agent row
-		// under `selectedSidebarIndex` would scroll the list to a row the user
-		// never navigated to, most visibly to the very top, since that cursor
-		// defaults to index 0.
-		const closedGroupChat = prev.activeGroupChatId !== null && activeGroupChatId === null;
-		const cursorMoved =
-			prev.selectedSidebarIndex !== selectedSidebarIndex ||
-			prev.sidebarExtraSelection !== sidebarExtraSelection ||
-			prev.activeSessionId !== activeSessionId;
-		if (closedGroupChat && !cursorMoved) return;
-		const container = listScrollRef.current;
-		if (!container) return;
-		let navKey: string | null = null;
-		if (sidebarExtraSelection?.kind === 'starred') {
-			navKey = `starred:${sidebarExtraSelection.key}`;
-		} else if (sidebarExtraSelection?.kind === 'groupChat') {
-			navKey = `groupchat:${sidebarExtraSelection.id}`;
-		} else if (activeGroupChatId) {
-			navKey = `groupchat:${activeGroupChatId}`;
-		} else if (selectedSidebarIndex >= 0) {
-			navKey = `idx:${selectedSidebarIndex}`;
-		}
-		if (!navKey) return;
-		const el = container.querySelector(`[data-nav-key="${CSS.escape(navKey)}"]`);
-		el?.scrollIntoView({ block: 'nearest' });
-	}, [selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId, activeSessionId]);
+		if (revealToken === handledRevealRef.current) return;
+		handledRevealRef.current = revealToken;
+		const frame = requestAnimationFrame(() => {
+			const container = listScrollRef.current;
+			if (!container) return;
+			const cursor = navCursorRef.current;
+			let navKey: string | null = null;
+			if (cursor.sidebarExtraSelection?.kind === 'starred') {
+				navKey = `starred:${cursor.sidebarExtraSelection.key}`;
+			} else if (cursor.sidebarExtraSelection?.kind === 'groupChat') {
+				navKey = `groupchat:${cursor.sidebarExtraSelection.id}`;
+			} else if (cursor.activeGroupChatId) {
+				navKey = `groupchat:${cursor.activeGroupChatId}`;
+			} else if (cursor.selectedSidebarIndex >= 0) {
+				navKey = `idx:${cursor.selectedSidebarIndex}`;
+			}
+			if (!navKey) return;
+			const el = container.querySelector(`[data-nav-key="${CSS.escape(navKey)}"]`);
+			el?.scrollIntoView({ block: 'nearest' });
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [revealToken]);
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;

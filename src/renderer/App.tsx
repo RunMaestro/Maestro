@@ -1883,9 +1883,11 @@ function MaestroConsoleInner() {
 	// useStarredItems so it can traverse the Starred Sessions (top) and Group
 	// Chats (bottom) sections in addition to the agent list.
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
+	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
 	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
 	const starredSessionsCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
-	const { setGroupChatsExpanded, setStarredSessionsCollapsed } = useSettingsStore.getState();
+	const { setGroupChatsExpanded, setStarredSessionsCollapsed, setUngroupedCollapsed } =
+		useSettingsStore.getState();
 	const {
 		handleSidebarNavigation,
 		handleTabNavigation,
@@ -1919,6 +1921,8 @@ function MaestroConsoleInner() {
 		setGroupChatsExpanded,
 		groupChatSortAlphabetical,
 		showUnreadAgentsOnly,
+		ungroupedCollapsed,
+		setUngroupedCollapsed,
 	});
 
 	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
