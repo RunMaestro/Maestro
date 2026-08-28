@@ -122,6 +122,17 @@ export interface VoiceRouteContext {
 	scope: VoiceScope;
 	/** Agent the user is looking at, when a client reported one. */
 	activeAgentSessionId?: string | null;
+	/**
+	 * The file a document-scoped session is talking about.
+	 *
+	 * Carried separately from the scope so the prompt builder does not have to
+	 * narrow a union, and so a Brain that ignores it still routes sanely: the
+	 * session service pins the target and the tab after the fact either way (see
+	 * `shared/acappella/document-scope.ts`). What this buys is a BETTER prompt -
+	 * a model that knows the subject writes "add a diagram for the dispatch flow"
+	 * instead of "add a diagram".
+	 */
+	document?: { path: string; name: string };
 	/** Most recent utterances this session, oldest first, for "back to" style references. */
 	recentUtterances?: string[];
 	/**

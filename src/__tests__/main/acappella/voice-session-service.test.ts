@@ -218,6 +218,8 @@ function makeHarness(
 		bargeInGuardMs?: number;
 		getUtteranceComposerConfig?: () => { settleMs?: number; maxHoldMs?: number };
 		getConversationalMode?: () => boolean;
+		/** Roster override, for the tests that need more than one agent running. */
+		getRoster?: () => RosterAgent[];
 	} = {}
 ): Harness {
 	const stt = new FakeStt();
@@ -236,7 +238,7 @@ function makeHarness(
 
 	const service = new VoiceSessionService({
 		providers,
-		getRoster: () => makeRoster(),
+		getRoster: overrides.getRoster ?? (() => makeRoster()),
 		executeRoute: overrides.executeRoute ?? (executor as unknown as VoiceRouteExecutor),
 		onSpeechChunk: overrides.onSpeechChunk,
 		checkReadiness: overrides.checkReadiness,
@@ -284,6 +286,111 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('VoiceSessionService document scope', () => {
+	/** Start a session pinned to a document in the roster's one agent. */
+	async function startDocument(h: Harness, path = '/repo/docs/system-overview.md') {
+		await h.service.startSession({
+			scope: { kind: 'document', sessionId: 'agent-backend', path },
+			source: 'hotkey',
+		});
+		h.events.length = 0;
+	}
+
+	it('tells the Brain what the conversation is about', async () => {
+		const h = makeHarness();
+		await startDocument(h);
+
+		h.service.submitUtterance('add a diagram');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const context = h.brain.contexts[h.brain.contexts.length - 1];
+		expect(context.document).toEqual({
+			path: '/repo/docs/system-overview.md',
+			name: 'system-overview.md',
+		});
+		// A document scope IS a bound scope, so the routing bias has to survive it.
+		expect(context.activeAgentSessionId).toBe('agent-backend');
+	});
+
+	it('opens a tab named after the document and hands the document over', async () => {
+		const h = makeHarness();
+		h.brain.decision = { ...h.brain.decision, prompt: 'add a diagram of the dispatch flow' };
+		await startDocument(h);
+
+		h.service.submitUtterance('add a diagram of the dispatch flow');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		expect(decision.tabAction).toBe('new');
+		expect(decision.tabName).toBe('system-overview.md');
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+		expect(decision.prompt).toContain('/repo/docs/system-overview.md');
+		expect(decision.prompt).toContain('add a diagram of the dispatch flow');
+	});
+
+	it('stays in that tab afterwards, without repeating the document', async () => {
+		const h = makeHarness();
+		await startDocument(h);
+
+		h.service.submitUtterance('first thing');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+		h.events.length = 0;
+
+		// The harness roster lists tab-1, which is what the dispatch result reports,
+		// so the conversation is pinned there for every later turn.
+		h.brain.decision = { ...h.brain.decision, prompt: 'second thing' };
+		h.service.submitUtterance('second thing');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[1] as [RouteDecision];
+		expect(decision.tabAction).toBe('recall');
+		expect(decision.tabId).toBe('tab-1');
+		expect(decision.prompt).toBe('second thing');
+	});
+
+	it('refuses to let the Brain move the conversation to another running agent', async () => {
+		// The user pointed at a file inside ONE workspace. A second agent is really
+		// running here, so this is the case the roster guard lets through and only
+		// the document binding can catch.
+		const h = makeHarness({
+			getRoster: () => [
+				...makeRoster(),
+				{
+					sessionId: 'agent-frontend',
+					name: 'Frontend',
+					agentType: 'claude-code',
+					cwd: '/repo/web',
+					tabs: [{ id: 'tab-web', name: 'Styles', lastActiveAt: 1 }],
+				},
+			],
+		});
+		h.brain.decision = {
+			target: { sessionId: 'agent-frontend' },
+			tabAction: 'current',
+			prompt: 'rewrite the intro',
+			confidence: 0.9,
+		};
+		await startDocument(h);
+
+		h.service.submitUtterance('rewrite the intro');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+	});
+
+	it('leaves a conductor session completely alone', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.submitUtterance('run the tests');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		expect(decision).toEqual(h.brain.decision);
+	});
+});
 
 describe('VoiceSessionService lifecycle', () => {
 	let h: Harness;

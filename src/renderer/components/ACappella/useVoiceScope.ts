@@ -16,6 +16,11 @@
 import { useMemo } from 'react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
+import {
+	documentScopeName,
+	isDocumentScope,
+	voiceScopeAgentId,
+} from '../../../shared/acappella/document-scope';
 import { generateParticipantColor } from '../../utils/participantColors';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 
@@ -48,7 +53,7 @@ export function useVoiceScope(theme: Theme): VoiceScopeDisplay {
 	const lastDispatch = useVoiceSessionStore((s) => s.lastDispatch);
 
 	return useMemo(() => {
-		const agentSessionId = scope && scope.kind === 'agent' ? scope.sessionId : null;
+		const agentSessionId = voiceScopeAgentId(scope);
 		const index = agentSessionId
 			? roster.findIndex((agent) => agent.sessionId === agentSessionId)
 			: -1;
@@ -71,8 +76,19 @@ export function useVoiceScope(theme: Theme): VoiceScopeDisplay {
 		const dispatchMatches =
 			!!lastDispatch && (!agentSessionId || lastDispatch.agentSessionId === agentSessionId);
 
+		// A document conversation is named after the DOCUMENT, not the agent. The
+		// scope line answers "where is the next sentence going", and in a document
+		// session what the user needs confirmed is which file they are talking
+		// about - the agent is an implementation detail of that binding, and it is
+		// still on the row below as the tab the dispatch landed in.
+		const label = isDocumentScope(scope)
+			? documentScopeName(scope)
+			: agentSessionId
+				? (agent?.name ?? 'Agent')
+				: 'Conductor';
+
 		return {
-			label: agentSessionId ? (agent?.name ?? 'Agent') : 'Conductor',
+			label,
 			tabLabel: dispatchMatches ? (lastDispatch.tabName ?? null) : null,
 			color,
 			agentSessionId,

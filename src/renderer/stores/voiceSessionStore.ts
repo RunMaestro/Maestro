@@ -30,6 +30,11 @@ import type {
 import type { VoiceProviderSubstitution } from '../../shared/acappella/providers';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
 import { isContiguousVoiceSeq } from '../../shared/acappella/protocol';
+import {
+	documentScopeName,
+	isDocumentScope,
+	voiceScopeAgentId,
+} from '../../shared/acappella/document-scope';
 import type { VoiceSessionState } from '../../shared/acappella/session-state';
 import { useVoiceDiagnosticsStore } from './voiceDiagnosticsStore';
 
@@ -579,6 +584,10 @@ export const selectVoiceRemoteDevice = (s: VoiceSessionStore): string | null =>
 /** What the HUD binds to, in words. */
 export const selectVoiceScopeLabel = (s: VoiceSessionStore): string => {
 	const scope = s.scope;
-	if (!scope || scope.kind === 'conductor') return 'Conductor';
-	return s.roster.find((a) => a.sessionId === scope.sessionId)?.name ?? 'Agent';
+	// The document comes first: a document conversation is bound to an agent too,
+	// so an agent-id test alone would label it with the agent and lose the file.
+	if (isDocumentScope(scope)) return documentScopeName(scope);
+	const agentSessionId = voiceScopeAgentId(scope);
+	if (!agentSessionId) return 'Conductor';
+	return s.roster.find((a) => a.sessionId === agentSessionId)?.name ?? 'Agent';
 };

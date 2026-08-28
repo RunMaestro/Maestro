@@ -505,6 +505,32 @@ describe('A Cappella IPC handlers - session lifecycle', () => {
 		expect(getVoiceSessionService()).toBeNull();
 	});
 
+	it('binds a document scope, carrying the file the conversation is about', async () => {
+		const result = (await handlerFor('acappella:start-session')(
+			{},
+			{
+				kind: 'document',
+				sessionId: 'agent-backend',
+				path: '/repo/docs/system-overview.md',
+			}
+		)) as VoiceStartSessionResult;
+
+		expect(result.snapshot.scope).toEqual({
+			kind: 'document',
+			sessionId: 'agent-backend',
+			path: '/repo/docs/system-overview.md',
+		});
+	});
+
+	it('rejects a document scope with no path rather than opening one about nothing', async () => {
+		// Same rule as the missing agent id: a document scope with no document
+		// names a file in the HUD and hands the agent nothing.
+		await expect(
+			handlerFor('acappella:start-session')({}, { kind: 'document', sessionId: 'agent-backend' })
+		).rejects.toThrow('InvalidVoiceScope');
+		expect(getVoiceSessionService()).toBeNull();
+	});
+
 	it('returns a live snapshot from get-state once started', async () => {
 		await handlerFor('acappella:start-session')({});
 

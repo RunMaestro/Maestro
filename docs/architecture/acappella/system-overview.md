@@ -128,6 +128,30 @@ The renderer round trip sits behind a `VoiceRendererBridge` interface, for the s
 session service takes its providers injected: the routing rules are testable without an Electron
 window, and the phone leg gets the same executor with a different bridge.
 
+## Scopes
+
+A session is bound to one of three things, and the binding is what decides where the next
+sentence lands. `VoiceScope` is the union; `shared/acappella/document-scope.ts` owns the rules
+that are not obvious from the type.
+
+| Scope       | Bound to               | What is different                                                                                                   |
+| ----------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `conductor` | Nothing                | The Brain picks the agent and the tab per turn. Background completions are announced by default.                    |
+| `agent`     | One agent              | Routing is biased toward that agent; a named agent in the utterance still wins.                                     |
+| `document`  | One agent AND one file | The target and the tab are PINNED after routing. The opening turn hands the agent the document; later turns do not. |
+
+Two rules follow from `document` being a third kind rather than an agent scope with a note on it:
+
+- **Never test `scope.kind === 'agent'` to answer "is this bound to an agent".** Use
+  `voiceScopeAgentId(scope)`. Two of the three kinds carry an agent, and the hand-written test
+  reports a document conversation as an unbound Conductor session - which downgrades the HUD
+  label, drops the Left Bar's talking indicator, and removes the routing bias.
+- **The binding is applied AFTER the router, not before.** The Brain still reads what was said,
+  which is what keeps "and check the tests while you're in there" intact; `applyDocumentScope`
+  only fixes where the result lands. The pinned tab is re-checked against the roster every turn,
+  so a tab the user closed reopens with the document handed over again rather than failing a
+  `recall` of something that is gone.
+
 ## Provider tiers
 
 A Cappella supports two fundamentally different pipeline shapes behind one set of interfaces.

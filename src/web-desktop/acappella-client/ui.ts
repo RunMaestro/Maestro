@@ -82,6 +82,11 @@ export function renderWheel(
 
 export function sameScope(a: VoiceScope, b: VoiceScope): boolean {
 	if (a.kind !== b.kind) return false;
+	if (a.kind === 'document' && b.kind === 'document') {
+		// Two document scopes on the same agent are still different conversations
+		// when they are about different files, so the path is part of the identity.
+		return a.sessionId === b.sessionId && a.path === b.path;
+	}
 	return a.kind === 'agent' && b.kind === 'agent' ? a.sessionId === b.sessionId : true;
 }
 

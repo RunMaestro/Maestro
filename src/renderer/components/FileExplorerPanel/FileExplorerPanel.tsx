@@ -19,7 +19,7 @@ import {
 	ExternalLink,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
@@ -98,6 +98,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
 	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 
@@ -372,6 +373,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenNewFile,
 		handleOpenNewFolder,
 		handleNewAgentHere,
+		handleTalkWithDocument,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
@@ -1062,6 +1064,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
 					onNewAgentHere={handleNewAgentHere}
+					voiceEnabled={voiceEnabled}
+					onTalkWithDocument={handleTalkWithDocument}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					autoRunStagedCount={autoRunStagedDocs.length}

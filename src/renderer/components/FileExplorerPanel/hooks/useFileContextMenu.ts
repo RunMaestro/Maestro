@@ -9,6 +9,7 @@ import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { getModalActions, useModalStore } from '../../../stores/modalStore';
 import { useBatchStore } from '../../../stores/batchStore';
 import { notifyToast } from '../../../stores/notificationStore';
+import { talkWithDocument } from '../../../services/documentVoice';
 import { safeClipboardWrite } from '../../../utils/clipboard';
 import {
 	autoRunDocIdForFile,
@@ -69,6 +70,8 @@ interface UseFileContextMenuResult {
 	handleOpenNewFile: () => void;
 	handleOpenNewFolder: () => void;
 	handleNewAgentHere: () => void;
+	/** Open a voice session about the right-clicked file. A Cappella only. */
+	handleTalkWithDocument: () => void;
 	handleCompressFolder: () => Promise<void>;
 	handleOpenRename: () => void;
 	handleOpenDelete: () => Promise<void>;
@@ -664,6 +667,20 @@ export function useFileContextMenu({
 		});
 	}, [contextMenu, session.fullPath]);
 
+	// Talk with the right-clicked document: a voice session bound to THIS agent
+	// with the file as the subject. The agent is passed explicitly rather than
+	// left to default to the active session, because the Files panel can be
+	// showing a different agent from the one the main panel is on.
+	const handleTalkWithDocument = useCallback(() => {
+		const menu = contextMenu;
+		setContextMenu(null);
+		if (!menu || !menu.node || menu.node.type !== 'file') return;
+		void talkWithDocument({
+			path: joinPath(session.fullPath, menu.path),
+			sessionId: session.id,
+		});
+	}, [contextMenu, session.fullPath, session.id]);
+
 	// Resolve the folder that a "New File"/"New Folder" action should target from
 	// the current menu context. A folder row creates inside that folder; a file
 	// row or the empty-space root menu creates alongside it (the parent dir, which
@@ -771,6 +788,7 @@ export function useFileContextMenu({
 		handleOpenNewFile,
 		handleOpenNewFolder,
 		handleNewAgentHere,
+		handleTalkWithDocument,
 		handleCompressFolder,
 		handleOpenRename,
 		handleOpenDelete,

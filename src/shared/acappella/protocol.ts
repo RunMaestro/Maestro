@@ -16,11 +16,40 @@ import type { VoiceProviderRole, VoiceProviderTier } from './providers';
 import type { RouteDecision } from './route-decision';
 
 /**
- * What a voice session is bound to. The `sessionId` inside an agent scope is an
- * AGENT id; the envelope's `sessionId` is the voice session id. They are never
- * the same value and are never interchangeable.
+ * A conversation about one file, held with the agent whose workspace it is in.
+ *
+ * It is a third binding rather than an agent scope with a note attached, because
+ * it answers a different question. An agent scope says WHO the next sentence
+ * goes to; a document scope also says what it is ABOUT, and that changes three
+ * things the session cannot decide for itself: the HUD names the file rather
+ * than the agent, the opening turn hands the agent the document, and every later
+ * turn stays in the tab that conversation opened in instead of following
+ * whichever tab happens to be on screen.
+ *
+ * `path` is absolute and is the path AS THE AGENT SEES IT, so an agent running
+ * over SSH carries the remote path. `sessionId` is the agent id, exactly as in
+ * an agent scope.
  */
-export type VoiceScope = { kind: 'conductor' } | { kind: 'agent'; sessionId: string };
+export interface DocumentVoiceScope {
+	kind: 'document';
+	sessionId: string;
+	path: string;
+}
+
+/**
+ * What a voice session is bound to. The `sessionId` inside an agent or document
+ * scope is an AGENT id; the envelope's `sessionId` is the voice session id. They
+ * are never the same value and are never interchangeable.
+ *
+ * Use `voiceScopeAgentId()` from `./document-scope` rather than testing for
+ * `kind === 'agent'`: two of the three kinds are bound to an agent, and a test
+ * that only knows about one silently treats a document conversation as an
+ * unbound Conductor session.
+ */
+export type VoiceScope =
+	| { kind: 'conductor' }
+	| { kind: 'agent'; sessionId: string }
+	| DocumentVoiceScope;
 
 /** Every event carries the same three fields. */
 export interface VoiceEventBase {

@@ -16,6 +16,7 @@
 
 import type {
 	DispatchAction,
+	DocumentVoiceScope,
 	InterruptSource,
 	MicState,
 	RosterAgent,
@@ -30,6 +31,12 @@ import type {
 	VoiceWindowId,
 	WakeSource,
 } from '../../shared/acappella/protocol';
+import {
+	applyDocumentScope,
+	documentScopeName,
+	isDocumentScope,
+	voiceScopeAgentId,
+} from '../../shared/acappella/document-scope';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
 import {
 	isClarification,
@@ -1204,9 +1211,11 @@ export class VoiceSessionService {
 			return;
 		}
 
+		const bound = this.bindToDocument(decision, roster);
+
 		let result: VoiceDispatchResult;
 		try {
-			result = await this.executeRoute(decision, {
+			result = await this.executeRoute(bound, {
 				roster,
 				scope: this.scope ?? { kind: 'conductor' },
 			});
@@ -1220,8 +1229,10 @@ export class VoiceSessionService {
 
 		if (!this.isCurrentTurn(turn)) return;
 		// Remembered so "no, the other one" has something to move, and so the HUD
-		// can show where the last thing went.
-		this.lastDispatch = { decision, result };
+		// can show where the last thing went. The BOUND decision, because that is
+		// the one that ran: a correction replays its prompt, and in a document
+		// conversation that prompt is the one carrying the document over.
+		this.lastDispatch = { decision: bound, result };
 		// The discussion that produced this request is finished. Carrying it into
 		// the next one is how "now do the same for the other repo" arrives wearing
 		// the last job's context and becomes a second copy of it.
@@ -1708,7 +1719,10 @@ export class VoiceSessionService {
 		return {
 			roster,
 			scope,
-			activeAgentSessionId: scope.kind === 'agent' ? scope.sessionId : null,
+			activeAgentSessionId: voiceScopeAgentId(scope),
+			document: isDocumentScope(scope)
+				? { path: scope.path, name: documentScopeName(scope) }
+				: undefined,
 			recentUtterances: [...this.recentUtterances],
 			clarification,
 			conversational,
@@ -1718,6 +1732,36 @@ export class VoiceSessionService {
 			// that is not happening.
 			conversation: conversational ? this.conversation.history : undefined,
 		};
+	}
+
+	/**
+	 * Pin a decision to the document conversation, when there is one.
+	 *
+	 * Applied after routing rather than before, so the Brain still reads what was
+	 * said - which is what keeps "and check the tests while you're in there" from
+	 * being flattened - and this only fixes where the result lands. Outside a
+	 * document scope it is the identity function.
+	 */
+	private bindToDocument(decision: RouteDecision, roster: RosterAgent[]): RouteDecision {
+		const scope = this.scope;
+		if (!isDocumentScope(scope)) return decision;
+		return applyDocumentScope(decision, scope, this.documentTabId(scope, roster));
+	}
+
+	/**
+	 * The tab this document conversation is living in, while it still exists.
+	 *
+	 * Re-checked against the roster on every turn rather than trusted from the
+	 * last dispatch: the user can close the tab, and a `recall` of a tab that is
+	 * gone fails the turn. Reporting it as absent instead reopens the
+	 * conversation with the document handed over again, which is the only state a
+	 * fresh tab can honestly be in.
+	 */
+	private documentTabId(scope: DocumentVoiceScope, roster: RosterAgent[]): string | null {
+		const tabId = this.lastDispatch?.result.tabId ?? null;
+		if (!tabId) return null;
+		const agent = roster.find((candidate) => candidate.sessionId === scope.sessionId);
+		return agent?.tabs.some((tab) => tab.id === tabId) ? tabId : null;
 	}
 
 	private rememberUtterance(utterance: string): void {

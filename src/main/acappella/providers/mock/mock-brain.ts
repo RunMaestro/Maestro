@@ -8,6 +8,7 @@
  * cleverer mock would only make that swap harder to trust.
  */
 
+import { voiceScopeAgentId } from '../../../../shared/acappella/document-scope';
 import type { RosterAgent, RosterTab } from '../../../../shared/acappella/protocol';
 import type {
 	BrainProvider,
@@ -95,11 +96,10 @@ export class MockBrainProvider implements BrainProvider {
 	async route(input: string, context: VoiceRouteContext): Promise<RouteDecision> {
 		const normalized = normalize(input);
 		const named = matchAgentByName(normalized, context.roster);
-		const scope = context.scope;
-		const scoped =
-			scope.kind === 'agent'
-				? (context.roster.find((agent) => agent.sessionId === scope.sessionId) ?? null)
-				: null;
+		const boundAgentId = voiceScopeAgentId(context.scope);
+		const scoped = boundAgentId
+			? (context.roster.find((agent) => agent.sessionId === boundAgentId) ?? null)
+			: null;
 
 		// A name in the utterance beats the binding: "ask backend about X" said to
 		// an agent-scoped session means backend, not the agent on screen.

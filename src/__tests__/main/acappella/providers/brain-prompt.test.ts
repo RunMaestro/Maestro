@@ -181,6 +181,34 @@ describe('buildRouteUserPrompt', () => {
 		expect(prompt).toContain('bound to agent agent-backend');
 	});
 
+	it('binds a document scope to its agent, exactly like an agent scope', () => {
+		// Two of the three scope kinds carry an agent. A prompt that only knew about
+		// one would tell the model nothing is bound and drop the routing bias.
+		const prompt = buildRouteUserPrompt('do it', {
+			roster: ROSTER,
+			scope: { kind: 'document', sessionId: 'agent-backend', path: '/repo/api/README.md' },
+		});
+
+		expect(prompt).toContain('bound to agent agent-backend');
+	});
+
+	it('names the document a document conversation is about', () => {
+		const prompt = buildRouteUserPrompt('add a diagram', {
+			roster: ROSTER,
+			scope: { kind: 'document', sessionId: 'agent-backend', path: '/repo/api/README.md' },
+			document: { path: '/repo/api/README.md', name: 'README.md' },
+		});
+
+		expect(prompt).toContain('conversation about the document README.md');
+		expect(prompt).toContain('/repo/api/README.md');
+	});
+
+	it('says nothing about a document outside a document conversation', () => {
+		expect(buildRouteUserPrompt('open auth', CONTEXT)).not.toContain(
+			'conversation about the document'
+		);
+	});
+
 	it('says so plainly when nothing is running', () => {
 		expect(buildRouteUserPrompt('hello', { roster: [], scope: { kind: 'conductor' } })).toContain(
 			'(none)'

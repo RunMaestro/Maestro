@@ -15,6 +15,7 @@
  * anything unrecognised collapses to the conductor rather than to a guess.
  */
 
+import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 import type { RosterAgent, RosterTab } from '../../../shared/acappella/protocol';
 import type { VoiceConverseContext, VoiceRouteContext } from '../../../shared/acappella/providers';
 import type { RouteDecision, RouteTabAction } from '../../../shared/acappella/route-decision';
@@ -132,10 +133,23 @@ export function serializeRoster(agents: readonly RosterAgent[]): string[] {
 export function buildRouteUserPrompt(input: string, context: VoiceRouteContext): string {
 	const lines: string[] = serializeRoster(context.roster);
 
-	if (context.scope.kind === 'agent') {
-		lines.push('', `The user is currently bound to agent ${context.scope.sessionId}.`);
+	const boundAgentId = voiceScopeAgentId(context.scope);
+	if (boundAgentId) {
+		lines.push('', `The user is currently bound to agent ${boundAgentId}.`);
 	} else if (context.activeAgentSessionId) {
 		lines.push('', `The user is looking at agent ${context.activeAgentSessionId}.`);
+	}
+
+	if (context.document) {
+		// The subject of the conversation, not a routing hint: the target and the
+		// tab are pinned by the session service whatever the model answers. What
+		// this changes is the PROMPT - "add a diagram" is useless to an agent, and
+		// "add a diagram of the dispatch flow to system-overview.md" is not.
+		lines.push(
+			'',
+			`This is a conversation about the document ${context.document.name} at ${context.document.path}.`,
+			'Every utterance is about that document unless the user plainly says otherwise. Write "prompt" so it stands on its own, naming what in the document they mean.'
+		);
 	}
 
 	const recent = context.recentUtterances ?? [];

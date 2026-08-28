@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
 	getLanguageFromFilename,
 	isBinaryContent,
-	isBinaryExtension,
 	formatFileSize,
 	formatDateTime,
 	countMarkdownTasks,
@@ -22,6 +21,7 @@ import {
 	canScaleFontForView,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
+import { isBinaryExtension } from '../../../../shared/fileKinds';
 
 describe('filePreviewUtils', () => {
 	describe('getLanguageFromFilename', () => {

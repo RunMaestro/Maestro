@@ -19,8 +19,10 @@ import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsS
 import { beginVoiceSession, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { talkWithDocument } from '../../services/documentVoice';
 import { focusAiTabInSession } from '../../utils/tabHelpers';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
+import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 import type { Session } from '../../types';
 
 export interface VoiceAgentActions {
@@ -41,6 +43,14 @@ export interface VoiceAgentActions {
 	 * exists to prevent.
 	 */
 	talkToAgent: () => Promise<void>;
+	/**
+	 * Open a voice session about one document in this agent's workspace.
+	 *
+	 * The same binding as {@link talkToAgent} plus the file the conversation is
+	 * about: the opening turn hands the agent the document and every later turn
+	 * stays in the tab that opened. See `services/documentVoice.ts`.
+	 */
+	talkToDocument: (path: string) => Promise<void>;
 	/**
 	 * Open a conductor-scoped session, and un-hide the HUD.
 	 *
@@ -88,9 +98,12 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 
 	const agentSessionId = session?.id;
 
+	// A document conversation counts: it IS a session bound to this agent, and a
+	// composer microphone that read as idle during one would offer to start a
+	// second session on top of the one already running.
 	const hasVoiceFloor = useMemo(() => {
 		if (!agentSessionId || !isVoiceSessionActive(state)) return false;
-		return scope?.kind === 'agent' && scope.sessionId === agentSessionId;
+		return voiceScopeAgentId(scope) === agentSessionId;
 	}, [agentSessionId, scope, state]);
 
 	// Speaking is tracked against the last DISPATCH rather than the scope: a
@@ -117,6 +130,14 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 			});
 		}
 	}, [agentSessionId, enabled, setDismissed, setMinimized]);
+
+	const talkToDocument = useCallback(
+		async (path: string) => {
+			if (!enabled || !agentSessionId) return;
+			await talkWithDocument({ path, sessionId: agentSessionId });
+		},
+		[agentSessionId, enabled]
+	);
 
 	const talkToConductor = useCallback(async () => {
 		if (!enabled) return;
@@ -148,6 +169,7 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 		isSpeaking,
 		wakePhrase: agentSessionId ? (wakePhrases[agentSessionId] ?? null) : null,
 		talkToAgent,
+		talkToDocument,
 		talkToConductor,
 		endVoiceSession,
 		showHud,

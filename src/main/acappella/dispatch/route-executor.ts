@@ -21,6 +21,7 @@
 
 import type { BrowserWindow } from 'electron';
 
+import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 import type { RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import { isClarification, routeTargetSessionId } from '../../../shared/acappella/route-decision';
@@ -545,7 +546,7 @@ function resolveAgent(
 		return agent;
 	}
 
-	const scoped = context.scope.kind === 'agent' ? byId(context.scope.sessionId) : undefined;
+	const scoped = byId(voiceScopeAgentId(context.scope));
 	const fallback = scoped ?? byId(activeSessionId) ?? (roster.length === 1 ? roster[0] : undefined);
 	if (!fallback) {
 		throw new VoiceDispatchError(

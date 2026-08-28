@@ -735,6 +735,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			activeSession,
 			activeSessionId,
 			activeTabType,
+			voiceEnabled: voiceActions.enabled,
 			ghCliAvailable,
 			setSessions,
 			setQuickActionOpen,

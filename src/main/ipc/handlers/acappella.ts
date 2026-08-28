@@ -379,17 +379,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** The Encore gate. See `src/shared/acappella/feature-flag.ts`. */
 const requireEnabled = requireACappellaEnabled;
 
-/** An unrecognised scope is conductor scope; a malformed AGENT scope is not. */
+/** An unrecognised scope is conductor scope; a malformed BOUND scope is not. */
 function parseScope(raw: unknown): VoiceScope {
 	if (!isRecord(raw)) return { kind: 'conductor' };
-	if (raw.kind !== 'agent') return { kind: 'conductor' };
+	if (raw.kind !== 'agent' && raw.kind !== 'document') return { kind: 'conductor' };
 	// Falling back to the conductor here would send a spoken instruction to
 	// whichever agent happens to be active, which is the one outcome worse than
 	// an error.
 	if (typeof raw.sessionId !== 'string' || !raw.sessionId) {
 		throw new Error('InvalidVoiceScope');
 	}
-	return { kind: 'agent', sessionId: raw.sessionId };
+	if (raw.kind === 'agent') return { kind: 'agent', sessionId: raw.sessionId };
+	// Same rule for the path: a document scope with no document would open a
+	// session that names a file in the HUD and hands the agent nothing.
+	if (typeof raw.path !== 'string' || !raw.path) {
+		throw new Error('InvalidVoiceScope');
+	}
+	return { kind: 'document', sessionId: raw.sessionId, path: raw.path };
 }
 
 /**

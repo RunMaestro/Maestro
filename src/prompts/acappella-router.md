@@ -30,6 +30,18 @@ Answer with ONE JSON object and nothing else. No prose, no code fence.
 
 A tab marked `snoozed` or `closed` is still a valid `recall` target. It will be woken or reopened.
 
+## Talking about a document
+
+Some sessions are bound to one file. When the prompt you are given includes a
+line saying this is a conversation about a document, that document is the
+subject of every utterance unless the user plainly says otherwise.
+
+Write `prompt` so it stands on its own and names what in the document they
+meant: "add a diagram" is useless to an agent, "add a diagram of the dispatch
+flow" is not. You do not have to pick the target or the tab in that mode - both
+are pinned to the agent whose workspace the document is in, and to the tab the
+conversation opened in - so spend the decision on the prompt instead.
+
 ## When you are not sure
 
 Do not guess between two plausible agents or two plausible tabs. Set `clarify` to one short question naming the alternatives ("the backend agent or the API agent?") and leave `confidence` low. A question costs the user two seconds; a misroute costs them a prompt in the wrong repository.

@@ -283,6 +283,10 @@ export function isReadableTextPreview(filename: string): boolean {
 }
 
 // ─── Binary Detection ─────────────────────────────────────────────────────────
+//
+// The extension list moved to `shared/fileKinds.ts` when the Files panel and the
+// command palette needed the same answer. What stays here is the content sniff,
+// which only this component can run: it needs the bytes.
 
 /** Check if content appears to be binary (null bytes or high non-printable ratio) */
 export const isBinaryContent = (content: string): boolean => {
@@ -300,60 +304,6 @@ export const isBinaryContent = (content: string): boolean => {
 	}
 
 	return nonPrintableCount / sample.length > 0.1;
-};
-
-/** Known binary file extensions (module-scope Set for O(1) lookup) */
-const BINARY_EXTENSIONS = new Set([
-	// macOS/iOS specific
-	'icns',
-	'car',
-	'actool',
-	// Design files
-	'psd',
-	'ai',
-	'sketch',
-	'fig',
-	'xd',
-	// Compiled/object files
-	'o',
-	'a',
-	'so',
-	'dylib',
-	'dll',
-	'class',
-	'pyc',
-	'pyo',
-	'wasm',
-	// Database files
-	'db',
-	'sqlite',
-	'sqlite3',
-	// Fonts
-	'ttf',
-	'otf',
-	'woff',
-	'woff2',
-	'eot',
-	// Archives
-	'zip',
-	'tar',
-	'gz',
-	'7z',
-	'rar',
-	'bz2',
-	'xz',
-	'tgz',
-	// Other binary
-	'exe',
-	'bin',
-	'dat',
-	'pak',
-]);
-
-/** Check if file extension indicates a known binary format */
-export const isBinaryExtension = (filename: string): boolean => {
-	const ext = filename.split('.').pop()?.toLowerCase();
-	return BINARY_EXTENSIONS.has(ext || '');
 };
 
 // ─── Formatting ───────────────────────────────────────────────────────────────

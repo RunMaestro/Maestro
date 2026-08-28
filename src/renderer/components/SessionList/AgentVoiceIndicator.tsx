@@ -33,6 +33,7 @@ import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsS
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { selectWakePhraseFor, useVoiceUiStore } from '../../stores/voiceUiStore';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
+import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 
 export interface AgentVoiceIndicatorProps {
 	/** The agent this row is for. */
@@ -53,8 +54,10 @@ export const AgentVoiceIndicator = memo(function AgentVoiceIndicator({
 
 	if (!enabled) return null;
 
-	const hasFloor =
-		isVoiceSessionActive(state) && scope?.kind === 'agent' && scope.sessionId === sessionId;
+	// A document conversation is bound to this agent too, so it lights the same
+	// indicator: the row is answering "is the microphone pointed at me", and the
+	// subject of the conversation does not change that answer.
+	const hasFloor = isVoiceSessionActive(state) && voiceScopeAgentId(scope) === sessionId;
 	const speaking = state === 'speaking' && lastDispatch?.agentSessionId === sessionId;
 
 	if (!hasFloor && !speaking && !wakePhrase) return null;

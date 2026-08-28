@@ -13,6 +13,7 @@ import {
 	Edit,
 	Share2,
 	GitGraph,
+	Mic,
 	ExternalLink,
 	FolderOpen,
 	WrapText,
@@ -70,6 +71,13 @@ interface FilePreviewHeaderProps {
 	copyPathToClipboard: () => void;
 	/** Open the image annotator to edit the previewed image. Images only. */
 	onEditImage?: () => void;
+	/**
+	 * Start a voice session about this file. Omitted when A Cappella is off, which
+	 * is the Encore rule: a feature nobody turned on adds no buttons anywhere.
+	 */
+	onTalkWithDocument?: () => void;
+	/** True while the live voice session is already about THIS file. */
+	isTalkingAboutDocument?: boolean;
 	headerBtnClass: string;
 	headerIconClass: string;
 	/** Whether the previewed file is HTML (.html / .htm). */
@@ -132,6 +140,8 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	copyContentToClipboard,
 	copyPathToClipboard,
 	onEditImage,
+	onTalkWithDocument,
+	isTalkingAboutDocument = false,
 	headerBtnClass,
 	headerIconClass,
 	isHtml,
@@ -362,6 +372,33 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</HoverTooltip>
 							)}
 						{/* Document Graph button - show for markdown files when callback is available */}
+						{/* Talk with Document - opens a voice session with this file as the
+						    conversation's subject. It doubles as the stop control while that
+						    session is running, matching the composer microphone: one button
+						    that reads as active is what stops a second session being opened
+						    on top of the first. */}
+						{toolbarVisibility.talkWithDocument && onTalkWithDocument && (
+							<HoverTooltip
+								theme={theme}
+								label={
+									isTalkingAboutDocument
+										? 'End the voice session about this document'
+										: 'Talk with this document'
+								}
+							>
+								<button
+									onClick={onTalkWithDocument}
+									className={headerBtnClass}
+									style={{
+										color: isTalkingAboutDocument ? theme.colors.accent : theme.colors.textDim,
+									}}
+									aria-pressed={isTalkingAboutDocument}
+									data-testid="talk-with-document-button"
+								>
+									<Mic className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
 						{toolbarVisibility.documentGraph && isMarkdown && onOpenInGraph && (
 							<HoverTooltip
 								theme={theme}
