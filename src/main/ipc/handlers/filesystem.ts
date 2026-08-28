@@ -34,6 +34,7 @@ import {
 	LOCAL_IGNORE_DEFAULTS,
 } from '../../../shared/globUtils';
 import { isMediaFile } from '../../../shared/mediaTypes';
+import { buildParquetPreviewMarker, isParquetFile } from '../../../shared/parquet/preview';
 import { getImageMimeType } from '../../../shared/gitUtils';
 import { buildLocalMediaStreamUrl } from '../../media/media-stream';
 import {
@@ -329,6 +330,16 @@ export function registerFilesystemHandlers(): void {
 		'fs:readFile',
 		async (_, filePath: string, sshRemoteId?: string, requestId?: string) => {
 			try {
+				// Parquet is binary, columnar, and routinely larger than RAM.
+				// Reading it as text would corrupt it and blow up the IPC
+				// payload for a file the viewer only ever reads a window of, so
+				// hand back a marker and let the ParquetViewer query it through
+				// the `parquet:*` handlers instead. Applies to remote files too:
+				// the parquet reader fetches those into a local cache itself.
+				if (isParquetFile(filePath)) {
+					return buildParquetPreviewMarker(filePath);
+				}
+
 				// SSH remote: dispatch to remote fs operations
 				if (sshRemoteId) {
 					const sshConfig = getSshRemoteById(sshRemoteId);

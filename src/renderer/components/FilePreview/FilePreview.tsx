@@ -48,6 +48,7 @@ import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../Markdown/remarkAlert';
+import { hardBreakInlineFields } from '../Markdown/preprocess';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -58,6 +59,8 @@ import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
+import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
@@ -369,6 +372,14 @@ export const FilePreview = React.memo(
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
+		// Parquet never arrives as content. `fs:readFile` short-circuits it to a
+		// marker (see shared/parquet/preview.ts) and the ParquetViewer queries
+		// the file through its own IPC surface, so this flag is read off the
+		// marker rather than the filename: a tab holding real text must never be
+		// handed to a viewer that would ignore it.
+		const isParquet = file ? isParquetPreviewMarker(file.content) : false;
+		const parquetRef = useRef<ParquetViewerHandle>(null);
+
 		// Playable audio/video never reaches this component: the open path diverts
 		// it to the floating player before a tab can be created. This flag is the
 		// backstop for anything that slips through (a tab restored from a build
@@ -387,11 +398,23 @@ export const FilePreview = React.memo(
 			if (!file) return false;
 			if (isImage) return false;
 			if (isMedia) return true;
+			// Parquet is binary on disk but has its own viewer, so it must never
+			// be classified as binary here.
+			//
+			// This is currently belt-and-braces rather than load-bearing: the
+			// checks below already return false, because the marker is pure
+			// ASCII and `parquet` / `parq` / `pq` are deliberately absent from
+			// BINARY_EXTENSIONS. That absence is the fragile half - adding them
+			// there is the obvious thing to do for a binary format, and doing it
+			// would silently swap the grid for an "Open Externally" card. This
+			// line is what makes that edit safe. See the matching assertion in
+			// filePreviewUtils.test.ts.
+			if (isParquetPreviewMarker(file.content)) return false;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
 		}, [isImage, isMedia, file]);
 
 		// Any non-binary, non-image file can be edited as text
-		const isEditableText = !isImage && !isBinary;
+		const isEditableText = !isImage && !isBinary && !isParquet;
 
 		// Check if file is large (for performance optimizations)
 		const isLargeFile = useMemo(() => {
@@ -420,6 +443,18 @@ export const FilePreview = React.memo(
 		// flip between modes; selection is persisted via onPreviewTierChange.
 		const previewTier = previewTierOverride ?? autoTier;
 
+		// Markdown source both preview tiers render. Only rewrite that both
+		// share: a run of Dataview-style `Key:: value` lines gets a hard break
+		// per line so an Obsidian note's header block does not fold into one
+		// run-on paragraph. It appends trailing spaces only, so line numbers
+		// (and therefore lineSync) are untouched, and the Fast tier's search
+		// offsets stay self-consistent because findHits and buildBlocks both
+		// read this same string.
+		const markdownSource = useMemo(
+			() => (isMarkdown && file?.content ? hardBreakInlineFields(file.content) : ''),
+			[isMarkdown, file?.content]
+		);
+
 		// Offer the font-zoom control only where it moves type (see
 		// canScaleFontForView for which views opt out and why).
 		const canScaleFont =
@@ -431,6 +466,7 @@ export const FilePreview = React.memo(
 				isBinary,
 				isMermaid,
 				isCsv,
+				isParquet,
 				isJsonlView: isJsonl || (isJson && searchMode === 'jq'),
 				isRenderedHtml: isHtml && htmlRenderMode,
 			});
@@ -459,6 +495,9 @@ export const FilePreview = React.memo(
 		//   Fast text/code → textFast handle (page-virtualized hit map)
 		//   Giant any kind → GiantPreview handle (CM6 owns the search panel)
 		const searchAdapter = useMemo<FilePreviewSearchAdapter | undefined>(() => {
+			// The parquet grid owns its own filtering, so Cmd+F must not be
+			// handed a text adapter that would search a 50-character marker.
+			if (isParquet) return undefined;
 			if (previewTier === 'fast' && isMarkdown) {
 				return {
 					findHits: (q) => markdownFastRef.current?.findInContent(q) ?? [],
@@ -478,14 +517,14 @@ export const FilePreview = React.memo(
 				};
 			}
 			return undefined;
-		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary]);
+		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary, isParquet]);
 
 		// Whether the active preview shows line numbers; gates the regex / line
 		// search chip (left of the Cmd+F input). True for the code editor and the
 		// code/text preview tiers; false for rendered markdown, CSV, JSON-jq, HTML
 		// render, and images.
 		const viewHasLineNumbers = useMemo(() => {
-			if (isImage || isBinary) return false;
+			if (isImage || isBinary || isParquet) return false;
 			if (isEditableText && markdownEditMode) return true; // CM6 editor
 			if (markdownEditMode) return false;
 			if (isMarkdown || isCsv || isJsonl) return false;
@@ -500,6 +539,7 @@ export const FilePreview = React.memo(
 		}, [
 			isImage,
 			isBinary,
+			isParquet,
 			isEditableText,
 			markdownEditMode,
 			isMarkdown,
@@ -891,7 +931,10 @@ export const FilePreview = React.memo(
 		// Count tokens when file content changes (skip for images, binary files, and large files)
 		// Large files would freeze the UI during token encoding
 		useEffect(() => {
-			if (!file?.content || isImage || isBinary || isLargeFile) {
+			// Parquet is excluded alongside images and binaries: the tab holds a
+			// handoff marker rather than the file, so tokenizing it would report
+			// "15 tokens" for a two-gigabyte table.
+			if (!file?.content || isImage || isBinary || isParquet || isLargeFile) {
 				setTokenCount(null);
 				return;
 			}
@@ -905,7 +948,7 @@ export const FilePreview = React.memo(
 					logger.error('Failed to count tokens:', undefined, err);
 					setTokenCount(null);
 				});
-		}, [file?.content, isImage, isBinary, isLargeFile]);
+		}, [file?.content, isImage, isBinary, isParquet, isLargeFile]);
 
 		// Sync internal edit content when file changes (only when NOT using external content)
 		// When externalEditContent is provided (file tab mode), the parent manages the state
@@ -923,6 +966,7 @@ export const FilePreview = React.memo(
 			if (isHtml && htmlRenderMode) return null;
 			if (isMermaid) return null;
 			if (isCsv) return null;
+			if (isParquet) return null;
 			if (isJsonl || (isJson && searchMode === 'jq')) return null;
 			if (previewTier === 'giant') return 'giant';
 			// Fast-tier markdown scrolls inside its own virtuoso container, which
@@ -1429,9 +1473,11 @@ export const FilePreview = React.memo(
 				} else {
 					failClipboardToast('Failed to Copy Image');
 				}
-			} else if (isMedia) {
-				// The "content" of a media tab is an internal stream URL, which is
-				// useless on the clipboard. Copy the file path instead.
+			} else if (isMedia || isParquet) {
+				// The "content" of a media tab is an internal stream URL and a
+				// parquet tab's is a handoff marker. Neither is useful on the
+				// clipboard, so copy the file path instead. (Copying parquet ROWS
+				// is what the viewer's own Export does, with the filter applied.)
 				const ok = await safeClipboardWrite(file.path);
 				if (ok) {
 					flashCopiedToClipboard(undefined, 'Path Copied');
@@ -1504,6 +1550,15 @@ export const FilePreview = React.memo(
 			if (e.key.toLowerCase() === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
+				// The parquet grid has no text to find - the tab's content is a
+				// handoff marker, and the rows live in the main process. Its
+				// filter box IS the find affordance, so send the shortcut there
+				// rather than opening a find bar that could only ever report
+				// zero matches.
+				if (isParquet) {
+					parquetRef.current?.focusFilter();
+					return;
+				}
 				// All three tiers (Rich / Fast / Giant) now share the same search
 				// bar. Giant tier exposes findInContent/scrollToMatch through its
 				// adapter so the count + navigation flow through the same UI.
@@ -1815,7 +1870,15 @@ export const FilePreview = React.memo(
 				    zoom is a repaint, not a re-parse. */}
 				<div
 					ref={contentRef}
-					className="flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin"
+					// The parquet viewer is a full-height application pane with its
+					// own virtualized scroller and a pinned footer, so it takes the
+					// content box edge to edge. Every other view is a document that
+					// scrolls inside this padded column.
+					className={
+						isParquet
+							? 'flex-1 min-h-0 overflow-hidden'
+							: 'flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
+					}
 					style={
 						{
 							overscrollBehavior: 'contain',
@@ -2114,6 +2177,19 @@ export const FilePreview = React.memo(
 					)}
 					{isImage ? (
 						<ImageViewer src={file.content} alt={file.name} theme={theme} />
+					) : isParquet ? (
+						// Placed ahead of every text branch on purpose: the tab's
+						// content is a marker, not the file, so anything that tried
+						// to render it as text would show a URL where a table
+						// belongs. The viewer reads the real file over the
+						// `parquet:*` IPC surface using the path.
+						<ParquetViewer
+							ref={parquetRef}
+							filePath={file.path}
+							fileName={file.name}
+							sshRemoteId={sshRemoteId}
+							theme={theme}
+						/>
 					) : isBinary ? (
 						<div className="flex flex-col items-center justify-center h-full gap-4">
 							<FileCode className="w-16 h-16" style={{ color: theme.colors.textDim }} />
@@ -2309,7 +2385,7 @@ export const FilePreview = React.memo(
 						>
 							<MarkdownPreviewFast
 								ref={markdownFastRef}
-								content={file.content}
+								content={markdownSource}
 								theme={theme}
 								markdownContainerRef={markdownContainerRef}
 								fileTreeIndices={fileTreeIndices}
@@ -2362,7 +2438,7 @@ export const FilePreview = React.memo(
 								urlTransform={urlTransformAllowingMaestro}
 								components={markdownComponents}
 							>
-								{file.content}
+								{markdownSource}
 							</ReactMarkdown>
 						</div>
 					) : isReadableText && previewTier === 'fast' && !markdownEditMode ? (

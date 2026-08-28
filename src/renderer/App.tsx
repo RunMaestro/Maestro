@@ -2101,6 +2101,10 @@ function MaestroConsoleInner() {
 	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Sort/nav/starred
 	// come from sidebarNavStore (no App subscription).
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
+	// Arrow nav needs both: the flag to know the section is closed, and the setter
+	// to open it when the cursor crosses into it.
+	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const setUngroupedCollapsed = useSettingsStore((s) => s.setUngroupedCollapsed);
 	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
 	const starredSessionsCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const { setGroupChatsExpanded, setStarredSessionsCollapsed } = useSettingsStore.getState();
@@ -2132,6 +2136,8 @@ function MaestroConsoleInner() {
 		setGroupChatsExpanded,
 		groupChatSortAlphabetical,
 		showUnreadAgentsOnly,
+		ungroupedCollapsed,
+		setUngroupedCollapsed,
 	});
 
 	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads

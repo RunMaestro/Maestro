@@ -168,6 +168,12 @@ import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
+	ParquetFileInfo,
+	ParquetQueryRequest,
+	ParquetQueryResult,
+	ParquetSortSpec,
+} from '../shared/parquet/types';
+import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
 	GitWorktreeRunSetupResult,
@@ -1442,6 +1448,26 @@ interface MaestroAPI {
 		onWorktreeRemoved: (
 			callback: (data: { sessionId: string; worktreePath: string }) => void
 		) => () => void;
+	};
+	/**
+	 * Parquet preview. The file stays open in the main process and only the
+	 * displayed window of rows crosses this bridge - see
+	 * src/shared/parquet/preview.ts for why a parquet read returns a marker
+	 * instead of content.
+	 */
+	parquet: {
+		open: (filePath: string, sshRemoteId?: string) => Promise<ParquetFileInfo>;
+		query: (request: ParquetQueryRequest) => Promise<ParquetQueryResult>;
+		export: (options: {
+			handle: string;
+			filter: string;
+			columns?: string[];
+			sort?: ParquetSortSpec | null;
+			destPath: string;
+			format: 'csv' | 'jsonl';
+			maxRows?: number;
+		}) => Promise<{ path: string; rows: number; truncated: boolean }>;
+		close: (handle: string) => Promise<void>;
 	};
 	fs: {
 		homeDir: () => Promise<string>;
@@ -4144,6 +4170,16 @@ interface MaestroAPI {
 			promptFiles?: Record<string, string>
 		) => Promise<{ changed: boolean }>;
 		deleteYaml: (projectRoot: string) => Promise<boolean>;
+		renamePipeline: (
+			oldName: string,
+			newName: string
+		) => Promise<{
+			renamed: boolean;
+			subscriptionsUpdated: number;
+			filesWritten: string[];
+			reason?: string;
+			warnings: string[];
+		}>;
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
 		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;

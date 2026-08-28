@@ -30,46 +30,47 @@ Tips and gotchas:
 
 ## Global Shortcuts
 
-| Action                      | macOS                 | Windows/Linux          |
-| --------------------------- | --------------------- | ---------------------- |
-| Quick Actions               | `Cmd+K`               | `Ctrl+K`               |
-| Agent Switcher              | `Cmd+O`               | `Ctrl+O`               |
-| Toggle Left Panel           | `Opt+Cmd+Left`        | `Alt+Ctrl+Left`        |
-| Toggle Right Panel          | `Opt+Cmd+Right`       | `Alt+Ctrl+Right`       |
-| New Agent                   | `Cmd+N`               | `Ctrl+N`               |
-| New Agent Wizard            | `Cmd+Shift+N`         | `Ctrl+Shift+N`         |
-| New Group Chat              | `Opt+Cmd+G`           | `Alt+Ctrl+G`           |
-| Remove Agent                | `Cmd+Shift+Backspace` | `Ctrl+Shift+Backspace` |
-| Move Agent to Group         | `Opt+Cmd+M`           | `Alt+Ctrl+M`           |
-| Open Memory Viewer          | `Cmd+Shift+M`         | `Ctrl+Shift+M`         |
-| Previous Agent              | `Cmd+[`               | `Ctrl+[`               |
-| Next Agent                  | `Cmd+]`               | `Ctrl+]`               |
-| Navigate Back               | `Cmd+Shift+,`         | `Ctrl+Shift+,`         |
-| Navigate Forward            | `Cmd+Shift+.`         | `Ctrl+Shift+.`         |
-| Jump to Agent (1-9, 0=10th) | `Opt+Cmd+NUMBER`      | `Alt+Ctrl+NUMBER`      |
-| New Terminal Tab            | `Cmd+J`               | `Ctrl+J`               |
-| Toggle Input/Output Focus   | `Cmd+.`               | `Ctrl+.`               |
-| Focus Left Panel            | `Cmd+Shift+A`         | `Ctrl+Shift+A`         |
-| Show Shortcuts Help         | `Cmd+/`               | `Ctrl+/`               |
-| Open Settings               | `Cmd+,`               | `Ctrl+,`               |
-| Open Agent Settings         | `Opt+Cmd+,`           | `Alt+Ctrl+,`           |
-| View Agent Sessions         | `Cmd+Shift+L`         | `Ctrl+Shift+L`         |
-| System Log Viewer           | `Opt+Cmd+L`           | `Alt+Ctrl+L`           |
-| System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
-| Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
-| View Execution Queue        | `Cmd+Shift+X`         | `Ctrl+Shift+X`         |
-| Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
-| Jump to Bottom              | `Cmd+Shift+J`         | `Ctrl+Shift+J`         |
-| Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
-| Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
-| Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
-| Maestro Cue                 | `Opt+Q`               | `Alt+Q`                |
-| Show/Hide Concerto Stage    | `Opt+Cmd+C`           | `Alt+Ctrl+C`           |
-| Show/Hide All Cadenzas      | `Opt+Cmd+Shift+C`     | `Alt+Ctrl+Shift+C`     |
-| Edit Image from Clipboard   | `Opt+Cmd+E`           | `Alt+Ctrl+E`           |
-| Forced Parallel Send        | `Cmd+Shift+Enter`     | `Ctrl+Shift+Enter`     |
-| Cycle Focus Areas           | `Tab`                 | `Tab`                  |
-| Cycle Focus Backwards       | `Shift+Tab`           | `Shift+Tab`            |
+| Action                        | macOS                   | Windows/Linux             |
+| ----------------------------- | ----------------------- | ------------------------- |
+| Quick Actions                 | `Cmd+K`                 | `Ctrl+K`                  |
+| Agent Switcher                | `Cmd+O`                 | `Ctrl+O`                  |
+| Toggle Left Panel             | `Opt+Cmd+Left`          | `Alt+Ctrl+Left`           |
+| Toggle Right Panel            | `Opt+Cmd+Right`         | `Alt+Ctrl+Right`          |
+| New Agent                     | `Cmd+N`                 | `Ctrl+N`                  |
+| New Agent Wizard              | `Cmd+Shift+N`           | `Ctrl+Shift+N`            |
+| New Group Chat                | `Opt+Cmd+G`             | `Alt+Ctrl+G`              |
+| Remove Agent                  | `Cmd+Shift+Backspace`   | `Ctrl+Shift+Backspace`    |
+| Move Agent to Group           | `Opt+Cmd+M`             | `Alt+Ctrl+M`              |
+| Open Memory Viewer            | `Cmd+Shift+M`           | `Ctrl+Shift+M`            |
+| Jump to Session (1-9, 0=10th) | `Opt+Cmd+1`-`Opt+Cmd+0` | `Alt+Ctrl+1`-`Alt+Ctrl+0` |
+| Previous Agent                | `Cmd+[`                 | `Ctrl+[`                  |
+| Next Agent                    | `Cmd+]`                 | `Ctrl+]`                  |
+| Navigate Back                 | `Cmd+Shift+,`           | `Ctrl+Shift+,`            |
+| Navigate Forward              | `Cmd+Shift+.`           | `Ctrl+Shift+.`            |
+| Jump to Agent (1-9, 0=10th)   | `Opt+Cmd+NUMBER`        | `Alt+Ctrl+NUMBER`         |
+| New Terminal Tab              | `Cmd+J`                 | `Ctrl+J`                  |
+| Toggle Input/Output Focus     | `Cmd+.`                 | `Ctrl+.`                  |
+| Focus Left Panel              | `Cmd+Shift+A`           | `Ctrl+Shift+A`            |
+| Show Shortcuts Help           | `Cmd+/`                 | `Ctrl+/`                  |
+| Open Settings                 | `Cmd+,`                 | `Ctrl+,`                  |
+| Open Agent Settings           | `Opt+Cmd+,`             | `Alt+Ctrl+,`              |
+| View Agent Sessions           | `Cmd+Shift+L`           | `Ctrl+Shift+L`            |
+| System Log Viewer             | `Opt+Cmd+L`             | `Alt+Ctrl+L`              |
+| System Process Monitor        | `Opt+Cmd+P`             | `Alt+Ctrl+P`              |
+| Usage Dashboard               | `Opt+Cmd+U`             | `Alt+Ctrl+U`              |
+| View Execution Queue          | `Cmd+Shift+X`           | `Ctrl+Shift+X`            |
+| Jump to Nearest Terminal      | `Opt+Cmd+J`             | `Alt+Ctrl+J`              |
+| Jump to Bottom                | `Cmd+Shift+J`           | `Ctrl+Shift+J`            |
+| Toggle Bookmark               | `Cmd+Shift+B`           | `Ctrl+Shift+B`            |
+| Maestro Symphony              | `Cmd+Shift+Y`           | `Ctrl+Shift+Y`            |
+| Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
+| Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
+| Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
+| Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
+| Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
+| Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
+| Cycle Focus Areas             | `Tab`                   | `Tab`                     |
+| Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 
 ## Panel Shortcuts
 
@@ -90,18 +91,18 @@ Tips and gotchas:
 
 These shortcuts work in AI Terminal mode and affect the current tab:
 
-| Action                 | macOS            | Windows/Linux     |
-| ---------------------- | ---------------- | ----------------- |
-| Toggle Save to History | `Cmd+S`          | `Ctrl+S`          |
-| Toggle Read-Only Mode  | `Cmd+R`          | `Ctrl+R`          |
-| Toggle Show Thinking   | `Cmd+Shift+K`    | `Ctrl+Shift+K`    |
-| Toggle Tab Star        | `Cmd+Shift+S`    | `Ctrl+Shift+S`    |
-| Toggle Tab Unread      | `Cmd+Shift+U`    | `Ctrl+Shift+U`    |
-| Filter Unread Agents   | `Opt+U`          | `Alt+U`           |
-| Filter Unread Tabs     | `Cmd+U`          | `Ctrl+U`          |
-| Next Unread/Draft Tab  | `Cmd+Shift+Down` | `Ctrl+Shift+Down` |
-| Open Image Carousel    | `Cmd+Y`          | `Ctrl+Y`          |
-| Open Prompt Composer   | `Cmd+Shift+P`    | `Ctrl+Shift+P`    |
+| Action                 | macOS          | Windows/Linux   |
+| ---------------------- | -------------- | --------------- |
+| Toggle Save to History | `Cmd+S`        | `Ctrl+S`        |
+| Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
+| Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
+| Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
+| Toggle Tab Unread      | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
+| Filter Unread Agents   | `Opt+U`        | `Alt+U`         |
+| Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
+| Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
+| Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |
+| Open Prompt Composer   | `Cmd+Shift+P`  | `Ctrl+Shift+P`  |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
@@ -397,7 +398,15 @@ Some actions ship with **no** key assigned and read **Not set** instead of a com
 - Press `Esc` while recording to cancel without changing the shortcut
 - Modifier keys alone (Cmd, Ctrl, Alt, Shift) won't register - you need a final key
 - Some shortcuts are fixed and cannot be remapped (like `Esc` to close modals)
-- Conflicting shortcuts will override the previous binding
+- A combination that another action already uses is refused, and the recorder tells you which action holds it. Clear that one first if you want the combination
+
+**Finding a shortcut by pressing it:** Both the Shortcuts tab and the Shortcuts Help panel (`Cmd+/` / `Ctrl+/`) have a **By Key** button. Click it and press a combination to see what it is bound to. It keeps listening after each press, so you can run through one key after another to explore what your keyboard already does. Press `Esc` or click away to stop. If nothing is bound to what you pressed, the panel says so by name rather than showing a bare "no results".
+
+### Combinations Maestro Will Not Take
+
+`Cmd+Shift+Arrow` (`Ctrl+Shift+Arrow` on Windows and Linux) belongs to the operating system inside a text field: it extends your selection to the top, bottom, start of the line, or end of the line. Maestro refuses to bind these, because a Maestro binding on one of them wins everywhere in the app, so you would lose select-to-end in every input and get an agent jump instead - which looks exactly like a broken text box.
+
+The recorder refuses these with an explanation. If you had one of them bound in an earlier version, Maestro clears it on the next launch and puts that action back on its default combination, so the action keeps working. You'll find it under its default binding in the Shortcuts tab.
 
 **Resetting shortcuts:** There's currently no "reset to default" button - if you need to restore defaults, you can find the original bindings in this documentation or delete the shortcuts from your settings file.
 
@@ -405,11 +414,12 @@ Some actions ship with **no** key assigned and read **Not set** instead of a com
 
 When a default binding has to move to free a combo for a new action, Maestro migrates it for you on the next launch - but only if you were still on the old default. If you had personally rebound that action, your binding is left untouched and you may need to move it yourself.
 
-| Action                    | Was           | Now           | Freed for                        |
-| ------------------------- | ------------- | ------------- | -------------------------------- |
-| Focus Active Tab          | `Opt+Cmd+F`   | `Opt+Cmd+Up`  | Search Messages (All Agent Tabs) |
-| Move Session to Group     | `Cmd+Shift+M` | `Opt+Cmd+M`   | Open Memory Viewer               |
-| Auto Run Expanded Preview | `Cmd+Shift+E` | `Cmd+Shift+3` | Edit Last Queued Message         |
+| Action                    | Was              | Now            | Freed for                             |
+| ------------------------- | ---------------- | -------------- | ------------------------------------- |
+| Focus Active Tab          | `Opt+Cmd+F`      | `Opt+Cmd+Up`   | Search Messages (All Agent Tabs)      |
+| Move Session to Group     | `Cmd+Shift+M`    | `Opt+Cmd+M`    | Open Memory Viewer                    |
+| Auto Run Expanded Preview | `Cmd+Shift+E`    | `Cmd+Shift+3`  | Edit Last Queued Message              |
+| Next Unread / Draft Tab   | `Cmd+Shift+Down` | `Opt+Cmd+Down` | Reserved by the OS (select-to-bottom) |
 
 If `Opt+Cmd+F` still focuses the active tab instead of opening cross-tab search, you had a custom binding on it: open **Settings** → **Shortcuts**, clear it from **Focus Active Tab**, and the new default takes over.
 

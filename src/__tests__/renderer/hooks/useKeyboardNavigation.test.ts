@@ -75,6 +75,8 @@ const createMockDeps = (
 		setGroupChatsExpanded: vi.fn(),
 		groupChatSortAlphabetical: false,
 		showUnreadAgentsOnly: false,
+		ungroupedCollapsed: false,
+		setUngroupedCollapsed: vi.fn(),
 		...overrides,
 	};
 };

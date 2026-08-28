@@ -282,7 +282,9 @@ export function ShortcutsHelpModal({
 				})}
 				{filteredCount === 0 && (
 					<div className="text-center text-sm opacity-50" style={{ color: theme.colors.textDim }}>
-						No shortcuts found
+						{filterShortcutKeys.length > 0
+							? `Nothing is bound to ${formatShortcutKeys(filterShortcutKeys)}`
+							: 'No shortcuts found'}
 					</div>
 				)}
 				{/* Window scope + detach docs, then the read-more link */}

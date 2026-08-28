@@ -119,6 +119,25 @@ export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModa
 		enabled: !checkingOut,
 	});
 
+	/**
+	 * Keep the selected branch in view.
+	 *
+	 * A STABLE ref plus an effect keyed on the selection, not an inline arrow ref
+	 * on the row. An inline arrow is a new identity on every render, so React
+	 * detaches and reattaches it - and therefore re-scrolls - on every render,
+	 * including renders caused by hovering a different row or typing in the
+	 * search box. Deleting the old ref outright was not an option here: unlike
+	 * FileSearchModal there is no virtualizer `scrollToIndex` to fall back on, so
+	 * that would have removed keyboard follow entirely.
+	 *
+	 * `block: 'nearest'` with no smooth animation, so a row already on screen
+	 * does not slide under the pointer.
+	 */
+	const selectedItemRef = useRef<HTMLButtonElement>(null);
+	useEffect(() => {
+		selectedItemRef.current?.scrollIntoView({ block: 'nearest' });
+	}, [selectedIndex]);
+
 	return (
 		<Modal
 			theme={theme}
@@ -190,7 +209,7 @@ export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModa
 					return (
 						<button
 							key={branch}
-							ref={isSelected ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : undefined}
+							ref={isSelected ? selectedItemRef : undefined}
 							onClick={() => void handleCheckout(branch)}
 							onMouseEnter={() => setSelectedIndex(index)}
 							className="w-full text-left px-4 py-2 flex items-center gap-3 transition-colors outline-none"

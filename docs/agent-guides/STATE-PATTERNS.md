@@ -122,6 +122,8 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 | `outputSearchOpen`         | `boolean`                  | `false`      | Output search bar visible                                                 |
 | `outputSearchQuery`        | `string`                   | `''`         | Current search query                                                      |
 | `sessionFilterOpen`        | `boolean`                  | `false`      | Sidebar agent filter visible                                              |
+| `sessionFilter`            | `string`                   | `''`         | Sidebar agent filter text (shared, not local to `useSessionFilterMode`)   |
+| `showArchivedGroupChats`   | `boolean`                  | `false`      | Whether the group chat list draws archived chats                          |
 | `draggingSessionId`        | `string \| null`           | `null`       | Session being dragged                                                     |
 | `editingGroupId`           | `string \| null`           | `null`       | Group being renamed inline                                                |
 | `editingSessionId`         | `string \| null`           | `null`       | Session being renamed inline                                              |
@@ -129,6 +131,10 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 | `hiddenQuotaAccounts`      | `Record<string, string[]>` | `{}`         | Per-provider hidden quota accounts (persisted via settings write-through) |
 
 All actions support functional updaters and have toggle variants where appropriate (e.g., `toggleLeftSidebar`, `toggleRightPanel`, `toggleShowUnreadOnly`).
+
+**`sessionFilter` and `showArchivedGroupChats` are here on purpose.** Both were `useState` inside the component that renders the list, which gave every other caller its own copy. `Cmd+[` / `Cmd+]` could not see either one, so the cycle walked agents and chats the sidebar was not drawing. Anything that decides MEMBERSHIP of a rendered list is a shared question: put it in the store, and read it from both the render path and the navigation path.
+
+A test that renders the Left Bar must reset both in `beforeEach`. They are module-global now, so a test that types into the filter leaves the query behind and every later test in the file renders an empty sidebar.
 
 ---
 

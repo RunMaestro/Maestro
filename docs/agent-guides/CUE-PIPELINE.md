@@ -332,6 +332,27 @@ dispatch 39 agent runs on one click. Multi-trigger pipelines expose a per-trigge
 Run inside the expanded detail instead. Do not "simplify" this back to a
 fire-them-all button.
 
+**Renaming a pipeline** goes through `src/main/cue/cue-pipeline-rename.ts`, NOT
+the editor's save path - the list has no editor state to save. A pipeline is not
+an object on disk, it is the set of subscriptions sharing a `pipeline_name`, so
+the rename rewrites that field on every member in every root the pipeline spans.
+Three invariants:
+
+- **Subscription names are never rewritten.** They are stable identities: the
+  layout store keys trigger positions by them and `source_sub` points at them.
+  So `Old-chain-2` survives a rename to `New`, and that is correct - membership
+  is decided by `pipeline_name`, not by the name suffix.
+- **The handler enumerates roots itself** from `engine.getStatus()`. A caller
+  passing "the root of the agent I clicked" would silently rename half of a
+  cross-agent pipeline.
+- **A layout failure is a warning, not a failure.** The YAML write has already
+  landed by then; reporting the whole rename as failed would send the user
+  looking for a change that is already on disk. The layout re-key exists because
+  the visual id is `pipeline-${name}`, so a rename orphans the old entry.
+
+Note that health history legitimately reads as empty right after a rename: runs
+recorded the name they ran under, and `derivePipelineHealth` matches on it.
+
 **Remembered tab.** `lastOpenCueTab` is module-level state in `CueModal.tsx`,
 resolved in the `useState` lazy initializer (a restore effect double-fires under
 StrictMode and clobbers the saved value). Same shape as `lastOpenSettingsTab` in

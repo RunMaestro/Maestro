@@ -100,3 +100,61 @@ export function normalizeShortcutKeys(keys: readonly string[]): string {
 export function shortcutKeysEqual(a: readonly string[], b: readonly string[]): boolean {
 	return a.length === b.length && normalizeShortcutKeys(a) === normalizeShortcutKeys(b);
 }
+
+/**
+ * Chords the OS owns inside a text field, which Maestro must never bind.
+ *
+ * `Cmd/Ctrl+Shift+Arrow` extends a text selection to the top or bottom of the
+ * field (and to the start or end of the line horizontally). A Maestro binding
+ * on one of these wins over the native behavior everywhere, including in the
+ * composer, so the user loses select-to-end in every input in the app and gets
+ * an agent-navigation jump instead. There is no way to tell that apart from a
+ * broken text box.
+ *
+ * `Meta` here covers `Ctrl` too - `eventMatchesShortcutKeys` treats them as one
+ * modifier, so a single entry reserves the chord on every platform.
+ */
+export const RESERVED_SHORTCUT_COMBOS: readonly { keys: string[]; reason: string }[] = [
+	{ keys: ['Meta', 'Shift', 'ArrowUp'], reason: 'extends the text selection to the top' },
+	{ keys: ['Meta', 'Shift', 'ArrowDown'], reason: 'extends the text selection to the bottom' },
+	{
+		keys: ['Meta', 'Shift', 'ArrowLeft'],
+		reason: 'extends the text selection to the start of the line',
+	},
+	{
+		keys: ['Meta', 'Shift', 'ArrowRight'],
+		reason: 'extends the text selection to the end of the line',
+	},
+];
+
+/**
+ * A chord reduced for reserved-combo comparison: Meta and Ctrl collapse to one
+ * modifier, matching how `eventMatchesShortcutKeys` reads a real event. Without
+ * the collapse, the Windows recording (`Ctrl+Shift+Down`) would slip past a
+ * table written in terms of `Meta`.
+ */
+function canonicalReservedKeys(keys: readonly string[]): string {
+	return [...keys]
+		.map((k) => {
+			const lower = k.toLowerCase();
+			return lower === 'ctrl' || lower === 'control' || lower === 'command' ? 'meta' : lower;
+		})
+		.sort()
+		.join('+');
+}
+
+/**
+ * The reserved combo `keys` collides with, or null when the chord is free.
+ *
+ * Checked at BOTH ends: the recorder refuses a fresh binding, and the settings
+ * migration strips one that is already persisted. The migration is the half
+ * that is easy to skip and the half that matters to anyone who already bound
+ * the chord - a recorder-only guard leaves their input boxes broken forever.
+ */
+export function findReservedShortcutCombo(
+	keys: readonly string[] | undefined
+): { keys: string[]; reason: string } | null {
+	if (!keys?.length) return null;
+	const canonical = canonicalReservedKeys(keys);
+	return RESERVED_SHORTCUT_COMBOS.find((c) => canonicalReservedKeys(c.keys) === canonical) ?? null;
+}

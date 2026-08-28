@@ -279,6 +279,25 @@ export const cueService = {
 		});
 	},
 
+	/** Rename a pipeline across every cue.yaml it spans. Rethrows so the caller
+	 *  can tell the user their rename did not land. */
+	async renamePipeline(
+		oldName: string,
+		newName: string
+	): Promise<{
+		renamed: boolean;
+		subscriptionsUpdated: number;
+		filesWritten: string[];
+		reason?: string;
+		warnings: string[];
+	}> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.renamePipeline(oldName, newName),
+			errorContext: 'Cue renamePipeline',
+			rethrow: true,
+		});
+	},
+
 	async savePipelineLayout(layout: Record<string, unknown>): Promise<void> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.savePipelineLayout(layout),
