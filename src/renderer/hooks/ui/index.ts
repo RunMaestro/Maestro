@@ -82,6 +82,11 @@ export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference'
 // Persisted view toggle (collapsed banners, folded sections)
 export { usePersistedToggle } from './usePersistedToggle';
 export type { UsePersistedToggleReturn } from './usePersistedToggle';
+export { usePersistedPanelWidth } from './usePersistedPanelWidth';
+export type {
+	UsePersistedPanelWidthOptions,
+	UsePersistedPanelWidthReturn,
+} from './usePersistedPanelWidth';
 
 // Client-side pagination for lists already held in memory
 export { usePagination } from './usePagination';

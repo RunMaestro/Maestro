@@ -15,8 +15,12 @@ export interface UseResizablePanelOptions {
 	minWidth: number;
 	/** Max allowed width in px */
 	maxWidth: number;
-	/** Settings key to persist width to */
-	settingsKey: string;
+	/**
+	 * Settings key to persist width to. Omit when the caller's `setWidth`
+	 * already owns persistence (see `usePersistedPanelWidth`) - a second write
+	 * here would store the same number under a key nothing reads back.
+	 */
+	settingsKey?: string;
 	/** React state setter for width */
 	setWidth: (w: number) => void;
 	/** 'left' = left sidebar (drag right to widen), 'right' = right panel (drag left to widen) */
@@ -76,7 +80,9 @@ export function useResizablePanel({
 			const handleMouseUp = () => {
 				setIsResizing(false);
 				setWidth(currentWidth);
-				window.maestro.settings.set(settingsKey, currentWidth);
+				if (settingsKey) {
+					window.maestro.settings.set(settingsKey, currentWidth);
+				}
 				document.removeEventListener('mousemove', handleMouseMove);
 				document.removeEventListener('mouseup', handleMouseUp);
 				cleanupRef.current = null;
