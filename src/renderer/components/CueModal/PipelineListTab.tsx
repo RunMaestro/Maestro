@@ -22,6 +22,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	GitFork,
+	Pencil,
 	Play,
 	Search,
 	Terminal,
@@ -43,6 +44,8 @@ import { validatePipelines } from '../CuePipelineEditor/utils/pipelineValidation
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { HoverTooltip } from '../ui/HoverTooltip';
+import { cueService } from '../../services/cue';
+import { notifyToast } from '../../stores/notificationStore';
 import { PipelineDot } from './StatusDot';
 import { formatDuration, formatRelativeTime } from './cueModalUtils';
 
@@ -59,6 +62,8 @@ export interface PipelineListTabProps {
 	/** Jump to the Pipeline Graph tab with this pipeline selected. */
 	onViewInGraph: (pipelineId: string) => void;
 	onTriggerSubscription: (subscriptionName: string) => void;
+	/** Refetch graph data after a rename lands on disk. */
+	onRenamed: () => void;
 }
 
 type StatusFilter = 'all' | 'attention' | 'running' | 'quiet';
@@ -73,6 +78,10 @@ const HEALTH_RANK: Record<CuePipelineHealthStatus, number> = {
 	disabled: 4,
 	healthy: 5,
 };
+
+/** Stable empty set, so a row without an index entry doesn't get a new identity
+ *  on every render. */
+const EMPTY_NAMES: ReadonlySet<string> = new Set();
 
 function healthColor(status: CuePipelineHealthStatus, theme: Theme): string {
 	switch (status) {
@@ -110,6 +119,7 @@ export function PipelineListTab({
 	onRetry,
 	onViewInGraph,
 	onTriggerSubscription,
+	onRenamed,
 }: PipelineListTabProps) {
 	const [query, setQuery] = useState('');
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -118,6 +128,10 @@ export function PipelineListTab({
 	// two pipelines side by side is the common reason to expand at all.
 	const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
 
+	// At most one row is being renamed at a time - a rename is a short,
+	// committed interaction, unlike expansion which is a comparison aid.
+	const [renamingId, setRenamingId] = useState<string | null>(null);
+
 	const toggleExpanded = useCallback((pipelineId: string) => {
 		setExpandedIds((prev) => {
 			const next = new Set(prev);
@@ -125,6 +139,74 @@ export function PipelineListTab({
 			return next;
 		});
 	}, []);
+
+	const cancelRename = useCallback(() => setRenamingId(null), []);
+
+	const commitRename = useCallback(
+		async (oldName: string, newName: string) => {
+			// Close the editor first: the rename round-trips to disk and then to a
+			// graph-data refetch, and leaving a live input over a row that is about
+			// to be replaced makes the field appear to hang.
+			setRenamingId(null);
+			try {
+				const result = await cueService.renamePipeline(oldName, newName);
+				if (!result.renamed) {
+					notifyToast({
+						type: 'error',
+						title: `Could not rename "${oldName}"`,
+						message: result.reason ?? 'The pipeline was not changed.',
+					});
+					return;
+				}
+				// Warnings mean the YAML rename DID land but something adjacent did
+				// not (a root that could not be read, lost node positions). Report
+				// them without calling the rename a failure.
+				if (result.warnings.length > 0) {
+					notifyToast({
+						type: 'warning',
+						title: `Renamed to "${newName}" with warnings`,
+						message: result.warnings.join('; '),
+					});
+				} else {
+					notifyToast({
+						type: 'success',
+						title: `Renamed to "${newName}"`,
+						message: `Updated ${result.subscriptionsUpdated} subscription${
+							result.subscriptionsUpdated === 1 ? '' : 's'
+						} across ${result.filesWritten.length} file${
+							result.filesWritten.length === 1 ? '' : 's'
+						}.`,
+					});
+				}
+				onRenamed();
+			} catch (err) {
+				notifyToast({
+					type: 'error',
+					title: `Could not rename "${oldName}"`,
+					message: err instanceof Error ? err.message : 'The pipeline was not changed.',
+				});
+			}
+		},
+		[onRenamed]
+	);
+
+	// Per-pipeline set of every OTHER pipeline's name, lowercased, so the rename
+	// editor can reject a duplicate before it reaches disk. Built once for the
+	// whole list rather than per keystroke - the set only changes when the
+	// pipelines do. Excluding the row's own name is what lets a user re-type the
+	// name they already have (or change only its casing) without a false clash.
+	const nameIndex = useMemo(() => {
+		const map = new Map<string, ReadonlySet<string>>();
+		for (const pipeline of pipelines) {
+			map.set(
+				pipeline.id,
+				new Set(
+					pipelines.filter((p) => p.id !== pipeline.id).map((p) => p.name.trim().toLowerCase())
+				)
+			);
+		}
+		return map;
+	}, [pipelines]);
 
 	// On-disk enabled flag per subscription. A pipeline whose every trigger is
 	// switched off in cue.yaml is reported as disabled rather than idle - "it
@@ -338,7 +420,12 @@ export function PipelineListTab({
 							row={row}
 							theme={theme}
 							expanded={expandedIds.has(row.pipeline.id)}
+							renaming={renamingId === row.pipeline.id}
+							takenNames={nameIndex.get(row.pipeline.id) ?? EMPTY_NAMES}
 							onToggleExpanded={toggleExpanded}
+							onStartRename={setRenamingId}
+							onCancelRename={cancelRename}
+							onCommitRename={commitRename}
 							onViewInGraph={onViewInGraph}
 							onTriggerSubscription={onTriggerSubscription}
 						/>
@@ -349,18 +436,110 @@ export function PipelineListTab({
 	);
 }
 
+/**
+ * Inline rename field. Its own component so the draft text lives here and dies
+ * with the editor - keeping it in the parent means every keystroke re-renders
+ * (and re-derives the health of) every pipeline in the list.
+ *
+ * Enter commits, Escape cancels, blur commits. Duplicate and empty names are
+ * rejected before the IPC call rather than after: the backend would refuse
+ * anyway, and catching it here keeps the field open with the bad text still in
+ * it instead of bouncing the user back to a row that silently did not change.
+ */
+function PipelineNameEditor({
+	theme,
+	initialName,
+	takenNames,
+	onCommit,
+	onCancel,
+}: {
+	theme: Theme;
+	initialName: string;
+	/** Every OTHER pipeline's name, lowercased. */
+	takenNames: ReadonlySet<string>;
+	onCommit: (name: string) => void;
+	onCancel: () => void;
+}) {
+	const [draft, setDraft] = useState(initialName);
+	const trimmed = draft.trim();
+	const error =
+		trimmed.length === 0
+			? 'A pipeline needs a name'
+			: takenNames.has(trimmed.toLowerCase()) && trimmed !== initialName
+				? 'Another pipeline already has that name'
+				: null;
+
+	const commit = () => {
+		// An unchanged name is a no-op, not an error - it is what pressing Enter
+		// without typing should do.
+		if (trimmed === initialName) return onCancel();
+		if (error) return;
+		onCommit(trimmed);
+	};
+
+	return (
+		<span className="flex items-center gap-1.5 min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
+			<input
+				autoFocus
+				value={draft}
+				onChange={(e) => setDraft(e.target.value)}
+				onKeyDown={(e) => {
+					// Stop every key here: the row is a button (Space/Enter toggle
+					// it) and the modal's layer stack claims Escape. Without this,
+					// typing a space collapses the row under the caret.
+					e.stopPropagation();
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						commit();
+					} else if (e.key === 'Escape') {
+						e.preventDefault();
+						onCancel();
+					}
+				}}
+				// Blur-commits rather than blur-cancels: clicking away from a field
+				// you have just typed into reads as "keep it", and Escape is right
+				// there for the other intent.
+				onBlur={commit}
+				className="text-sm font-semibold bg-transparent outline-none rounded px-1 py-0.5 min-w-0 flex-1"
+				style={{
+					color: theme.colors.textMain,
+					border: `1px solid ${error ? theme.colors.error : theme.colors.accent}`,
+				}}
+				aria-label="Pipeline name"
+				aria-invalid={error ? true : undefined}
+				data-testid="pipeline-rename-input"
+			/>
+			{error && (
+				<span className="text-[10px] flex-shrink-0" style={{ color: theme.colors.error }}>
+					{error}
+				</span>
+			)}
+		</span>
+	);
+}
+
 function PipelineListRow({
 	row,
 	theme,
 	expanded,
+	renaming,
+	takenNames,
 	onToggleExpanded,
+	onStartRename,
+	onCancelRename,
+	onCommitRename,
 	onViewInGraph,
 	onTriggerSubscription,
 }: {
 	row: PipelineRow;
 	theme: Theme;
 	expanded: boolean;
+	renaming: boolean;
+	takenNames: ReadonlySet<string>;
 	onToggleExpanded: (pipelineId: string) => void;
+	onStartRename: (pipelineId: string) => void;
+	onCancelRename: () => void;
+	onCommitRename: (oldName: string, newName: string) => void;
 	onViewInGraph: (pipelineId: string) => void;
 	onTriggerSubscription: (subscriptionName: string) => void;
 }) {
@@ -412,13 +591,37 @@ function PipelineListRow({
 						/>
 					)}
 					<PipelineDot color={pipeline.color} name={pipeline.name} />
-					<span
-						className="text-sm font-semibold truncate"
-						style={{ color: theme.colors.textMain }}
-						title={pipeline.name}
-					>
-						{pipeline.name}
-					</span>
+					{renaming ? (
+						<PipelineNameEditor
+							theme={theme}
+							initialName={pipeline.name}
+							takenNames={takenNames}
+							onCancel={onCancelRename}
+							onCommit={(name) => onCommitRename(pipeline.name, name)}
+						/>
+					) : (
+						<>
+							<span
+								className="text-sm font-semibold truncate"
+								style={{ color: theme.colors.textMain }}
+								title={pipeline.name}
+							>
+								{pipeline.name}
+							</span>
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									onStartRename(pipeline.id);
+								}}
+								className="p-0.5 rounded hover:opacity-100 opacity-50 transition-opacity flex-shrink-0"
+								style={{ color: theme.colors.textDim }}
+								title={`Rename "${pipeline.name}"`}
+								aria-label={`Rename ${pipeline.name}`}
+							>
+								<Pencil className="w-3 h-3" />
+							</button>
+						</>
+					)}
 					<span
 						className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
 						style={{ backgroundColor: `${badgeColor}20`, color: badgeColor }}

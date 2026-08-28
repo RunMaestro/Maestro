@@ -37,6 +37,7 @@ import {
 } from '../../cue/cue-scheduled-tasks';
 import { getSessionsStore } from '../../stores';
 import { loadPipelineLayout, savePipelineLayout } from '../../cue/pipeline-layout-store';
+import { renamePipelineOnDisk, type RenamePipelineResult } from '../../cue/cue-pipeline-rename';
 import { captureException } from '../../utils/sentry';
 import type { CueEngine } from '../../cue/cue-engine';
 import type {
@@ -605,6 +606,26 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// Collapse .maestro/ itself if nothing else lives there.
 				removeEmptyMaestroDir(options.projectRoot);
 				return deleted;
+			}
+		)
+	);
+
+	// Rename a pipeline in place, across every cue.yaml it spans.
+	//
+	// The roots are enumerated here rather than taken from the caller: a
+	// cross-agent pipeline is physically N files at N project roots, and the
+	// engine is the only side that knows the full set. A caller passing "the
+	// root of the agent I clicked" would silently rename half a pipeline.
+	ipcMain.handle(
+		'cue:renamePipeline',
+		withIpcErrorLogging(
+			handlerOpts('renamePipeline'),
+			async (options: { oldName: string; newName: string }): Promise<RenamePipelineResult> => {
+				const roots = requireEngine()
+					.getStatus()
+					.map((s) => s.projectRoot)
+					.filter((root): root is string => typeof root === 'string' && root.length > 0);
+				return renamePipelineOnDisk(roots, options.oldName, options.newName);
 			}
 		)
 	);

@@ -213,7 +213,18 @@ Health is the default so anything needing a human sits at the top rather than be
 
 **Run now** fires the pipeline on demand. It appears only when the pipeline has exactly one trigger subscription. With several triggers the button would be ambiguous (which event is being simulated? each trigger carries its own prompt) and dangerous - a 39-trigger pipeline would dispatch 39 agent runs on one click. Multi-trigger pipelines instead get a **Run** button next to each trigger in the expanded detail, so you fire exactly the one you meant.
 
-**Graph** jumps to the Pipeline Graph tab with that pipeline selected. The list itself is read-only - editing stays on the graph.
+**Graph** jumps to the Pipeline Graph tab with that pipeline selected.
+
+**Rename** is the pencil beside the pipeline name. Click it (or the name's pencil on hover), type, and press `Enter` to commit or `Escape` to cancel; clicking away also commits, since clicking away from text you just typed reads as "keep it". A blank name, or one another pipeline already uses, is refused in the field rather than after a round-trip, so your text stays put and you can fix it. Changing only the capitalization of the current name is allowed.
+
+A rename rewrites `pipeline_name` on every subscription in the pipeline, across every `cue.yaml` it spans - a cross-agent pipeline is physically several files and all of them are updated together. What it deliberately does not touch:
+
+- **Subscription names** stay exactly as they were. They are stable identities: saved node positions and `source_sub` chain references point at them, and renaming them would strand both. This means a pipeline renamed from `Old` to `New` keeps subscriptions called `Old`, `Old-chain-2`, and so on. That is correct, not a bug - `pipeline_name` is what determines pipeline membership.
+- **Prompt files** under `.maestro/prompts/` are keyed by subscription name, so their paths stay valid.
+
+Two side effects worth knowing. Saved node positions move with the pipeline automatically. And because past runs recorded the name they ran under, the renamed pipeline's **recent run history reads as empty** until it next runs - the old runs are still in the Activity Log under the previous name.
+
+Apart from the rename, the list is read-only. Editing the wiring stays on the graph.
 
 ## Activity Log
 
