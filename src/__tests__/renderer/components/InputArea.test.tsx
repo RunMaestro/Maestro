@@ -766,8 +766,11 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const images = screen.getAllByRole('img');
-			expect(images).toHaveLength(2);
+			// One tile per staged image. The thumbnail <img> is decorative
+			// (alt="") so the accessible name lives on the tile, which is also the
+			// drag source and the click target.
+			const tiles = screen.getAllByRole('button', { name: /^Staged image/ });
+			expect(tiles).toHaveLength(2);
 		});
 
 		it('does NOT show staged images in terminal mode', () => {
@@ -778,7 +781,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			expect(screen.queryByRole('img')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Staged image/ })).not.toBeInTheDocument();
 		});
 
 		it('calls setLightboxImage when clicking staged image', () => {
@@ -791,7 +794,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByRole('img'));
+			fireEvent.click(screen.getByRole('button', { name: /^Staged image/ }));
 
 			expect(setLightboxImage).toHaveBeenCalledWith(
 				'data:image/png;base64,ABC123',

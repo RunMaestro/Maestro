@@ -23,28 +23,26 @@ export function dragCarriesStagedImage(dataTransfer: DataTransfer | null): boole
 }
 
 /**
- * A tile is a drag SOURCE and a drop TARGET, and the two sets go on different
- * elements. The source belongs on the thumbnail itself, because Chromium will
- * not start an ancestor's drag from inside a form control: with `draggable` on
- * the wrapper, pressing the thumbnail `<button>` was consumed as a button press
- * and no drag ever began. The target stays on the wrapper, which is what the
- * drop geometry is measured against.
+ * Spread on the tile WRAPPER, which is both the drag source and the drop target.
  *
- * Keeping the source off the wrapper has a second payoff: the remove and
- * annotate buttons no longer start a drag when you press them.
+ * The element the user presses has to be a plain `<div>`, not a form control.
+ * Blink clears `mouse_down_may_start_drag_` when a control consumes the press
+ * for activation, so a `<button>` under the cursor kills the drag before
+ * `dragstart` - and it kills it whether `draggable` sits on the button or on an
+ * ancestor, which is why the thumbnail could never be dragged out of the strip
+ * while `-webkit-user-drag` on it computed to `element` the whole time. The
+ * thumbnail image is `pointer-events-none` so the press always lands here.
+ *
+ * The remove and annotate buttons carry `draggable={false}` for the same
+ * reason, read from the other direction: their subtree computes
+ * `-webkit-user-drag: none`, so pressing one cannot start a tile drag.
  */
 export interface StagedImageTileDragHandlers {
-	/** Spread on the thumbnail control - the thing the user grabs. */
-	source: {
-		draggable: true;
-		onDragStart: (e: React.DragEvent<HTMLElement>) => void;
-		onDragEnd: () => void;
-	};
-	/** Spread on the tile wrapper - the drop target. */
-	target: {
-		onDragOver: (e: React.DragEvent<HTMLElement>) => void;
-		onDrop: (e: React.DragEvent<HTMLElement>) => void;
-	};
+	draggable: true;
+	onDragStart: (e: React.DragEvent<HTMLElement>) => void;
+	onDragEnd: () => void;
+	onDragOver: (e: React.DragEvent<HTMLElement>) => void;
+	onDrop: (e: React.DragEvent<HTMLElement>) => void;
 }
 
 export interface StagedImageDnd {
@@ -96,38 +94,34 @@ export function useStagedImageDnd(
 
 	const tileHandlers = useCallback(
 		(index: number): StagedImageTileDragHandlers => ({
-			source: {
-				draggable: true,
-				onDragStart: (e) => {
-					e.dataTransfer.setData(STAGED_IMAGE_MIME, String(index));
-					// The plain-text flavor is what a drop outside Maestro (or on a
-					// plain text field) receives, and it matches what handleDrop
-					// inserts into the composer.
-					e.dataTransfer.setData('text/plain', screenshotReferenceLabel(index));
-					e.dataTransfer.effectAllowed = 'copyMove';
-					setDragIndex(index);
-				},
-				onDragEnd: reset,
+			draggable: true,
+			onDragStart: (e) => {
+				e.dataTransfer.setData(STAGED_IMAGE_MIME, String(index));
+				// The plain-text flavor is what a drop outside Maestro (or on a
+				// plain text field) receives, and it matches what handleDrop
+				// inserts into the composer.
+				e.dataTransfer.setData('text/plain', screenshotReferenceLabel(index));
+				e.dataTransfer.effectAllowed = 'copyMove';
+				setDragIndex(index);
 			},
-			target: {
-				onDragOver: (e) => {
-					if (!dragCarriesStagedImage(e.dataTransfer)) return;
-					e.preventDefault();
-					e.dataTransfer.dropEffect = 'move';
-					// Horizontal strip: the cursor's side of the tile's midpoint decides
-					// whether the drop lands before or after it.
-					const rect = e.currentTarget.getBoundingClientRect();
-					const midX = rect.left + rect.width / 2;
-					setDropGap(e.clientX < midX ? index : index + 1);
-				},
-				onDrop: (e) => {
-					if (!dragCarriesStagedImage(e.dataTransfer)) return;
-					e.preventDefault();
-					// Don't let a reorder bubble to the chat drop zone, which would
-					// read it as an attachment drop.
-					e.stopPropagation();
-					commit(e, dropGap);
-				},
+			onDragEnd: reset,
+			onDragOver: (e) => {
+				if (!dragCarriesStagedImage(e.dataTransfer)) return;
+				e.preventDefault();
+				e.dataTransfer.dropEffect = 'move';
+				// Horizontal strip: the cursor's side of the tile's midpoint decides
+				// whether the drop lands before or after it.
+				const rect = e.currentTarget.getBoundingClientRect();
+				const midX = rect.left + rect.width / 2;
+				setDropGap(e.clientX < midX ? index : index + 1);
+			},
+			onDrop: (e) => {
+				if (!dragCarriesStagedImage(e.dataTransfer)) return;
+				e.preventDefault();
+				// Don't let a reorder bubble to the chat drop zone, which would
+				// read it as an attachment drop.
+				e.stopPropagation();
+				commit(e, dropGap);
 			},
 		}),
 		[commit, dropGap, reset]
