@@ -39,6 +39,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { createMockSession } from '../../helpers/mockSession';
 import type { Session, Group } from '../../../renderer/types';
 
@@ -335,6 +336,178 @@ describe('sidebar navigation contract: arrows expand, Cmd+[] skips', () => {
 
 			expect(section.readCollapsed()).toBe(true);
 		});
+	});
+});
+
+/**
+ * Membership: the cycle walks exactly the rows the sidebar draws.
+ *
+ * The text filter and the archived toggle both change which rows exist, and
+ * both used to be a `useState` private to the component that owned them - so
+ * Cmd+[ / Cmd+] could not see either one and happily activated agents that were
+ * not on screen. They now live in `uiStore`, which is what makes this testable
+ * at all: before the lift there was no way to set the filter from outside the
+ * component.
+ */
+describe('sidebar navigation contract: the cycle walks what is drawn', () => {
+	const sessions = [
+		createMockSession({ id: 'alpha', name: 'Alpha', cwd: '/tmp', projectRoot: '/tmp' } as never),
+		createMockSession({ id: 'echo', name: 'Echo', cwd: '/tmp', projectRoot: '/tmp' } as never),
+		createMockSession({ id: 'gamma', name: 'Gamma', cwd: '/tmp', projectRoot: '/tmp' } as never),
+	];
+
+	const deps = (): UseCycleSessionDeps =>
+		({
+			sortedSessions: sessions,
+			handleOpenGroupChat: vi.fn(),
+			starredItems: [],
+			activateStarredItem: vi.fn(),
+			navIndexMap: new Map(sessions.map((s, i) => [`ungrouped:${s.id}`, i])),
+		}) as UseCycleSessionDeps;
+
+	const activeId = () => useSessionStore.getState().activeSessionId;
+
+	beforeEach(() => {
+		useSessionStore.setState({
+			sessions,
+			groups: [],
+			activeSessionId: 'alpha',
+			cyclePosition: -1,
+		} as never);
+		useGroupChatStore.setState({ groupChats: [], activeGroupChatId: null } as never);
+		useUIStore.setState({
+			leftSidebarOpen: true,
+			bookmarksCollapsed: true,
+			sidebarExtraSelection: null,
+			selectedSidebarIndex: 0,
+			sessionFilter: '',
+			showArchivedGroupChats: false,
+			showUnreadAgentsOnly: false,
+		} as never);
+		useSettingsStore.setState({
+			groupChatsExpanded: true,
+			groupChatSortAlphabetical: false,
+			ungroupedCollapsed: false,
+			starredSessionsCollapsed: true,
+		} as never);
+		useCenterFlashStore.setState({ active: null } as never);
+	});
+
+	afterEach(() => {
+		cleanup();
+		vi.clearAllMocks();
+	});
+
+	it('skips agents the filter has hidden', () => {
+		useUIStore.setState({ sessionFilter: 'a' } as never); // Alpha + Gamma match; Echo does not
+		const { result } = renderHook(() => useCycleSession(deps()));
+
+		act(() => {
+			result.current.cycleSession('next');
+		});
+
+		// Echo is not drawn, so the cursor may not land on it.
+		expect(activeId()).toBe('gamma');
+	});
+
+	it('cycles only within the filtered set, wrapping inside it', () => {
+		useUIStore.setState({ sessionFilter: 'a' } as never);
+		const { result } = renderHook(() => useCycleSession(deps()));
+
+		act(() => {
+			result.current.cycleSession('next');
+		});
+		expect(activeId()).toBe('gamma');
+		act(() => {
+			result.current.cycleSession('next');
+		});
+		expect(activeId()).toBe('alpha');
+	});
+
+	it('does not move the cursor when the filter matches nothing, and says why', () => {
+		useUIStore.setState({ sessionFilter: 'kubern' } as never);
+		const { result } = renderHook(() => useCycleSession(deps()));
+
+		act(() => {
+			result.current.cycleSession('next');
+		});
+
+		expect(activeId()).toBe('alpha');
+		// A shortcut that does nothing and explains nothing is indistinguishable
+		// from a broken one, so the inert case has to be audible.
+		expect(useCenterFlashStore.getState().active?.message).toMatch(/no agents match/i);
+	});
+
+	it('stays silent when there is simply nothing to cycle', () => {
+		// No filter, no unread filter: nothing to correct, so no flash. A flash on
+		// every stray Cmd+] in an empty workspace is noise, not help.
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as never);
+		const { result } = renderHook(() => useCycleSession({ ...deps(), sortedSessions: [] }));
+
+		act(() => {
+			result.current.cycleSession('next');
+		});
+
+		expect(useCenterFlashStore.getState().active).toBeNull();
+	});
+
+	it('skips archived group chats until the toggle is on', () => {
+		const live = { id: 'gc-live', name: 'Live Chat' } as never;
+		const archived = { id: 'gc-old', name: 'Old Chat', archived: true } as never;
+		useSessionStore.setState({ sessions: [sessions[0]], activeSessionId: 'alpha' } as never);
+		useGroupChatStore.setState({ groupChats: [live, archived], activeGroupChatId: null } as never);
+
+		// The real handler marks the chat active, and the cycle reads that back to
+		// know where the cursor is. A mock that only records the call leaves the
+		// cursor parked on the agent, so every press re-opens the first chat.
+		const handleOpenGroupChat = vi.fn((id: string) => {
+			useGroupChatStore.setState({ activeGroupChatId: id } as never);
+		});
+		// One act() per press: the hook subscribes to activeGroupChatId, so calls
+		// batched into a single act all run against the pre-render value.
+		const press = (hook: { result: { current: { cycleSession: (d: 'next') => void } } }) =>
+			act(() => {
+				hook.result.current.cycleSession('next');
+			});
+
+		const hidden = renderHook(() =>
+			useCycleSession({ ...deps(), sortedSessions: [sessions[0]], handleOpenGroupChat })
+		);
+		press(hidden);
+		press(hidden);
+		expect(handleOpenGroupChat).not.toHaveBeenCalledWith('gc-old');
+		hidden.unmount();
+
+		// Turning the toggle on draws the archived chat, so the cycle must reach it.
+		useUIStore.setState({ showArchivedGroupChats: true } as never);
+		useGroupChatStore.setState({ activeGroupChatId: null } as never);
+		useSessionStore.setState({ cyclePosition: -1, activeSessionId: 'alpha' } as never);
+		const shown = renderHook(() =>
+			useCycleSession({ ...deps(), sortedSessions: [sessions[0]], handleOpenGroupChat })
+		);
+		press(shown);
+		press(shown);
+		expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-old');
+	});
+
+	it('skips read agents while the unread filter is on', () => {
+		// Echo is the only one with an unread tab; Alpha stays reachable because it
+		// is active, and an active row that vanished would leave the cycle with no
+		// position to move from.
+		const withUnread = sessions.map((s) =>
+			s.id === 'echo' ? { ...s, aiTabs: [{ id: 't', name: 'Main', hasUnread: true }] } : s
+		);
+		useSessionStore.setState({ sessions: withUnread, activeSessionId: 'alpha' } as never);
+		useUIStore.setState({ showUnreadAgentsOnly: true } as never);
+		const { result } = renderHook(() =>
+			useCycleSession({ ...deps(), sortedSessions: withUnread as never })
+		);
+
+		act(() => {
+			result.current.cycleSession('next');
+		});
+
+		expect(activeId()).toBe('echo');
 	});
 });
 

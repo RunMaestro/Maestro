@@ -11,6 +11,7 @@
  */
 
 import { useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { Session } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -19,6 +20,9 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { compareNamesIgnoringEmojis } from '../session/useSortedSessions';
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
+import { passesUnreadFilter, sessionMatchesFilter } from '../../utils/sidebarMembership';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import type { StarredItem } from './useStarredItems';
 
 // ============================================================================
@@ -74,6 +78,15 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
+	// The sidebar's own membership inputs. The cycle must walk exactly the rows
+	// the sidebar draws, and both of these change which rows those are.
+	const sessionFilter = useUIStore((s) => s.sessionFilter);
+	const showArchivedGroupChats = useUIStore((s) => s.showArchivedGroupChats);
+	// `useShallow` is mandatory, not a nicety: the selector builds a fresh array
+	// on every call, so a bare subscription never settles on a stable snapshot
+	// and React re-renders until it throws "Maximum update depth exceeded".
+	// Every other caller of this selector wraps it the same way.
+	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 
 	// --- Store actions (stable via getState) ---
 	const { setActiveSessionIdInternal, setCyclePosition } = useSessionStore.getState();
@@ -135,9 +148,33 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			// keyPrefix selects the navIndexMap namespace for this occurrence
 			// ('bookmark' | `group:${groupId}` | 'ungrouped'), matching the keys built
 			// in useSortedSessions.
+			const batchIds = new Set(activeBatchSessionIds);
+			/**
+			 * Is this agent drawn in the Left Bar right now? Same predicates the
+			 * render path uses, so the two cannot disagree about membership.
+			 */
+			const isDrawn = (session: Session): boolean => {
+				const children = getWorktreeChildren(session.id);
+				if (
+					!passesUnreadFilter(session, {
+						showUnreadAgentsOnly,
+						activeSessionId,
+						worktreeChildren: children,
+						batchSessionIds: batchIds,
+					})
+				) {
+					return false;
+				}
+				return sessionMatchesFilter(session, sessionFilter, children);
+			};
+
 			const addSessionWithWorktrees = (session: Session, keyPrefix: string) => {
 				// Skip worktree children - they're added with their parent
 				if (session.parentSessionId) return;
+				// A filtered-out agent is not on screen, so the cursor must not land
+				// on it. Cmd+[ / Cmd+] had no view of the filter at all until the text
+				// was lifted into uiStore.
+				if (!isDrawn(session)) return;
 
 				visualOrder.push({
 					type: 'session' as const,
@@ -226,11 +263,17 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 				// recency is the DEFAULT (`groupChatSortAlphabetical: false`), so out of
 				// the box Cmd+[ / Cmd+] walked group chats in an order nothing on screen
 				// matched. That is the jumping.
-				const activeGroupChats = groupChats.filter((gc) => !gc.archived);
+				// `showArchivedGroupChats` is the list's own toggle: with it on the
+				// sidebar draws archived chats too, so the cycle has to walk them.
+				// Passed INTO the ordering helper rather than pre-filtered here -
+				// the helper drops archived chats itself, so a caller that filtered
+				// first had them removed again on the way through.
+				const activeGroupChats = groupChats.filter((gc) => showArchivedGroupChats || !gc.archived);
 				if (groupChatsExpanded && activeGroupChats.length > 0) {
 					const sortedGroupChats = orderGroupChatsForDisplay(
 						activeGroupChats,
-						groupChatSortAlphabetical
+						groupChatSortAlphabetical,
+						{ includeArchived: showArchivedGroupChats }
 					);
 					visualOrder.push(
 						...sortedGroupChats.map((gc) => ({
@@ -282,7 +325,27 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 				visualOrder.push(...filteredOrder);
 			}
 
-			if (visualOrder.length === 0) return;
+			if (visualOrder.length === 0) {
+				// A shortcut that does nothing and explains nothing is indistinguishable
+				// from a broken one. When the list is empty BECAUSE OF A FILTER the user
+				// can clear, say so; the center flash is the existing affordance for a
+				// momentary answer to a keypress, so nothing new is invented here.
+				//
+				// Stay silent when there is simply nothing to cycle (no agents at all,
+				// sidebar closed) - there is no misunderstanding to correct, and a flash
+				// on every stray Cmd+] in an empty workspace is noise.
+				const query = sessionFilter.trim();
+				if (query) {
+					notifyCenterFlash({
+						message: 'No agents match the filter',
+						detail: query,
+						color: 'yellow',
+					});
+				} else if (showUnreadAgentsOnly) {
+					notifyCenterFlash({ message: 'No unread agents', color: 'yellow' });
+				}
+				return;
+			}
 
 			// Determine what is currently active (session or group chat)
 			const currentActiveId = activeGroupChatId || activeSessionId;
@@ -386,6 +449,9 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			groupChatSortAlphabetical,
 			ungroupedCollapsed,
 			showUnreadAgentsOnly,
+			sessionFilter,
+			showArchivedGroupChats,
+			activeBatchSessionIds,
 			groupChats,
 			sortedSessions,
 			handleOpenGroupChat,

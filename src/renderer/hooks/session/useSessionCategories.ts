@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { passesUnreadFilter, sessionMatchesFilter } from '../../utils/sidebarMembership';
 import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
@@ -124,56 +125,22 @@ export function useSessionCategories(
 			// Exclude worktree children from main list (they appear under parent)
 			if (s.parentSessionId) continue;
 
-			// Apply unread agents filter (also keep busy/working agents visible)
-			// Always keep the active session (or its parent) visible so user doesn't lose their place
-			const isActiveOrParentOfActive =
-				s.id === activeSessionId ||
-				worktreeChildrenByParentId.get(s.id)?.some((child) => child.id === activeSessionId);
-			if (showUnreadAgentsOnly && !isActiveOrParentOfActive) {
-				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
-				const isBusy = s.state === 'busy';
-				const isAutoRunning = batchSessionIds.has(s.id);
-				// A stuck (auto-retrying) agent needs attention just like an unread
-				// one, so keep it visible under the unread filter.
-				const isStuck = stuckOutageSessionIds.has(s.id);
-				// Also check if any worktree children have unread, are busy, are
-				// auto-running, or are stuck in an outage.
-				const children = worktreeChildrenByParentId.get(s.id);
-				const hasActiveChildren = children?.some(
-					(child) =>
-						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy' ||
-						batchSessionIds.has(child.id) ||
-						stuckOutageSessionIds.has(child.id)
-				);
-				if (!hasUnread && !isBusy && !isAutoRunning && !isStuck && !hasActiveChildren) continue;
+			const children = worktreeChildrenByParentId.get(s.id) ?? [];
+			// Shared with the Cmd+[ / Cmd+] cycle so the two cannot disagree about
+			// which agents are on screen - that disagreement is what made the cycle
+			// walk agents the sidebar was not drawing.
+			if (
+				!passesUnreadFilter(s, {
+					showUnreadAgentsOnly,
+					activeSessionId,
+					worktreeChildren: children,
+					batchSessionIds,
+					stuckOutageIds: stuckOutageSessionIds,
+				})
+			) {
+				continue;
 			}
-
-			if (!query) {
-				filtered.push(s);
-			} else {
-				// Match session name
-				if (s.name.toLowerCase().includes(query)) {
-					filtered.push(s);
-					continue;
-				}
-				// Match any AI tab name
-				if (s.aiTabs?.some((tab) => tab.name?.toLowerCase().includes(query))) {
-					filtered.push(s);
-					continue;
-				}
-				// Match worktree children branch names
-				const worktreeChildren = worktreeChildrenByParentId.get(s.id);
-				if (
-					worktreeChildren?.some(
-						(child) =>
-							child.worktreeBranch?.toLowerCase().includes(query) ||
-							child.name.toLowerCase().includes(query)
-					)
-				) {
-					filtered.push(s);
-				}
-			}
+			if (sessionMatchesFilter(s, query, children)) filtered.push(s);
 		}
 
 		// Step 2: Categorize sessions in a single pass

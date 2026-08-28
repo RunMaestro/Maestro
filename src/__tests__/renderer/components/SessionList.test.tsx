@@ -276,6 +276,12 @@ describe('SessionList', () => {
 			draggingSessionId: null,
 			bookmarksCollapsed: false,
 			sessionFilterOpen: false,
+			// The filter text and the archived-chat toggle live in uiStore now (the
+			// Cmd+[ / Cmd+] cycle has to see them). Reset them here or the "filters
+			// sessions by name" test leaves a query behind and every later test
+			// renders an empty sidebar.
+			sessionFilter: '',
+			showArchivedGroupChats: false,
 		});
 		useSessionStore.setState({
 			sessions: [],
