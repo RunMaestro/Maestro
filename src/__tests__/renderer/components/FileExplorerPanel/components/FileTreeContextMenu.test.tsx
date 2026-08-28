@@ -404,6 +404,16 @@ describe('FileTreeContextMenu', () => {
 		expect(menu.style.opacity).toBe('0');
 	});
 
+	// The menu is shrink-to-fit and positioned by measured width, so letting it
+	// grow is free - a wrapped label just looks broken. Every other context menu
+	// in the app already sets this.
+	it('never wraps a menu label', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+		const menu = document.body.querySelector('.fixed') as HTMLElement;
+		expect(menu.className).toContain('whitespace-nowrap');
+	});
+
 	describe('Auto Run staging', () => {
 		it('offers staging when the folder holds Auto Run documents', () => {
 			const onStageForAutoRun = vi.fn();
