@@ -6,7 +6,7 @@
  * Context Window Warnings, Local Ignore Patterns.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
 	Accessibility,
 	ALargeSmall,
@@ -174,6 +174,9 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
 	const [fontLoading, setFontLoading] = useState(false);
 	const [fontsLoaded, setFontsLoaded] = useState(false);
+	// Guards a write that lands before the initial read resolves, so restoring
+	// the saved list can't clobber a font the user just added.
+	const customFontsDirty = useRef(false);
 	const [showBionifyInfoModal, setShowBionifyInfoModal] = useState(false);
 	const [bionifyAlgorithmDraft, setBionifyAlgorithmDraft] = useState(
 		bionifyAlgorithm ?? DEFAULT_BIONIFY_ALGORITHM
@@ -190,6 +193,27 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		}
 	};
 
+	// The saved custom fonts are loaded on mount rather than with the system
+	// font sweep: the sweep is lazy (it only runs once the user opens the font
+	// dropdown), so gating the pills on it made every added font vanish the
+	// next time the Display tab was opened, and left the <select> unable to
+	// render the current value when that value was a custom font.
+	useEffect(() => {
+		let cancelled = false;
+		void (async () => {
+			try {
+				const saved = (await window.maestro.settings.get('customFonts')) as string[] | undefined;
+				if (cancelled || customFontsDirty.current || !Array.isArray(saved)) return;
+				setCustomFonts(saved);
+			} catch (error) {
+				logger.error('Failed to load custom fonts:', undefined, error);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
 	const loadFonts = async () => {
 		if (fontsLoaded) return; // Don't reload if already loaded
 
@@ -197,13 +221,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		try {
 			const detected = await window.maestro.fonts.detect();
 			setSystemFonts(detected);
-
-			const savedCustomFonts = (await window.maestro.settings.get('customFonts')) as
-				| string[]
-				| undefined;
-			if (savedCustomFonts && Array.isArray(savedCustomFonts)) {
-				setCustomFonts(savedCustomFonts);
-			}
 			setFontsLoaded(true);
 		} catch (error) {
 			logger.error('Failed to load fonts:', undefined, error);
@@ -219,17 +236,24 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 	};
 
 	const addCustomFont = (font: string) => {
-		if (font && !customFonts.includes(font)) {
-			const newCustomFonts = [...customFonts, font];
-			setCustomFonts(newCustomFonts);
-			window.maestro.settings.set('customFonts', newCustomFonts);
-		}
+		if (!font) return;
+		setCustomFonts((prev) => {
+			if (prev.includes(font)) return prev;
+			const next = [...prev, font];
+			customFontsDirty.current = true;
+			window.maestro.settings.set('customFonts', next);
+			return next;
+		});
 	};
 
 	const removeCustomFont = (font: string) => {
-		const newCustomFonts = customFonts.filter((f) => f !== font);
-		setCustomFonts(newCustomFonts);
-		window.maestro.settings.set('customFonts', newCustomFonts);
+		setCustomFonts((prev) => {
+			if (!prev.includes(font)) return prev;
+			const next = prev.filter((f) => f !== font);
+			customFontsDirty.current = true;
+			window.maestro.settings.set('customFonts', next);
+			return next;
+		});
 	};
 
 	return (

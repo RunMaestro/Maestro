@@ -99,6 +99,18 @@ export function FontConfigurationPanel({
 		[normalizedFontsSet]
 	);
 
+	// A <select> whose value matches none of its options silently displays the
+	// first one instead, so a font that isn't in any group (a custom font saved
+	// on a previous run, or one the system sweep doesn't report) made the
+	// dropdown claim the user was on Roboto Mono while the app rendered the
+	// real font. Surface the current value as its own option so the control
+	// can never misreport what is actually set.
+	const unlistedValue = useMemo(() => {
+		if (!fontFamily) return null;
+		const known = [...COMMON_MONOSPACE_FONTS, ...customFonts];
+		return known.includes(fontFamily) ? null : fontFamily;
+	}, [fontFamily, customFonts]);
+
 	const handleAddCustomFont = () => {
 		const trimmedFont = customFontInput.trim();
 		if (trimmedFont && !customFonts.includes(trimmedFont)) {
@@ -128,6 +140,11 @@ export function FontConfigurationPanel({
 						className="w-full p-2 rounded border bg-transparent outline-none mb-3"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
+						{unlistedValue && (
+							<optgroup label="Current">
+								<option value={unlistedValue}>{unlistedValue}</option>
+							</optgroup>
+						)}
 						<optgroup label="Common Monospace Fonts">
 							{COMMON_MONOSPACE_FONTS.map((font) => {
 								const available = fontsLoaded ? isFontAvailable(font) : true;
