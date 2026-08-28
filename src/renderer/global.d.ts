@@ -164,6 +164,7 @@ import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
+	ParquetFetchProgress,
 	ParquetFileInfo,
 	ParquetQueryRequest,
 	ParquetQueryResult,
@@ -1063,6 +1064,7 @@ interface MaestroAPI {
 			maxRows?: number;
 		}) => Promise<{ path: string; rows: number; truncated: boolean }>;
 		close: (handle: string) => Promise<void>;
+		onFetchProgress: (callback: (progress: ParquetFetchProgress) => void) => () => void;
 	};
 	fs: {
 		homeDir: () => Promise<string>;

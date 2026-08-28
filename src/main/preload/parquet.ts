@@ -7,6 +7,7 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	ParquetFetchProgress,
 	ParquetFileInfo,
 	ParquetQueryRequest,
 	ParquetQueryResult,
@@ -48,5 +49,21 @@ export function createParquetApi() {
 
 		/** Release the file handle and its cached scan. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('parquet:close', handle),
+
+		/**
+		 * Subscribe to remote-copy progress, emitted only while `open()` is
+		 * pulling an SSH-backed file across. Returns an unsubscribe function.
+		 *
+		 * Fires with `done: true` exactly once per open, including for a file
+		 * already in the cache, so a listener always sees a terminal event and
+		 * never leaves a progress bar stuck on screen.
+		 */
+		onFetchProgress: (callback: (progress: ParquetFetchProgress) => void): (() => void) => {
+			const listener = (_event: unknown, progress: ParquetFetchProgress) => callback(progress);
+			ipcRenderer.on('parquet:fetchProgress', listener);
+			return () => {
+				ipcRenderer.removeListener('parquet:fetchProgress', listener);
+			};
+		},
 	};
 }
