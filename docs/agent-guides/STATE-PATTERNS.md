@@ -91,13 +91,22 @@ selectIsAnySessionBusy; // (state) => boolean
 ### Non-React Access
 
 ```typescript
-import { getSessionState, getSessionActions } from './stores/sessionStore';
+import {
+	getSessionState,
+	getSessionActions,
+	updateSessionWith,
+	updateAiTab,
+} from './stores/sessionStore';
 
 // Read current state (snapshot)
 const { sessions, activeSessionId } = getSessionState();
 
 // Get stable action references
 const { setSessions, setActiveSessionId } = getSessionActions();
+
+// Patch one agent or one AI tab without walking the sessions array
+updateSessionWith(sessionId, (s) => ({ ...s, batchRunnerPrompt: prompt }));
+updateAiTab(sessionId, tabId, (tab) => ({ ...tab, hasUnread: false }));
 ```
 
 ---

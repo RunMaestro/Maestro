@@ -32,6 +32,16 @@ export default tseslint.config(
 	// TypeScript ESLint recommended rules
 	...tseslint.configs.recommended,
 
+	{
+		languageOptions: {
+			parserOptions: {
+				// Pin this repo. Sibling git worktrees otherwise look like extra
+				// TSConfig roots and the parser refuses to guess.
+				tsconfigRootDir: import.meta.dirname,
+			},
+		},
+	},
+
 	// Prettier config - disables ESLint rules that conflict with Prettier
 	prettierConfig,
 

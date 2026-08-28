@@ -17,7 +17,7 @@
 
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
 import {
 	getActiveTab,
@@ -65,7 +65,6 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 		if (!activeSession) return;
 
 		const { sessionsRef, cancelPendingSynopsis, processQueuedItem } = depsRef.current;
-		const { setSessions } = useSessionStore.getState();
 
 		const currentMode = activeSession.inputMode;
 		const activeTab = getActiveTab(activeSession);
@@ -142,72 +141,19 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 					: null;
 
 			// Set state to idle with full cleanup, or process next queued item
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
+			updateSessionWith(activeSession.id, (s) => {
+				// If there are runnable (non-held) queued items, start the next one
+				const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+					s.executionQueue
+				);
+				if (nextItem) {
+					const target = resolveQueuedItemTarget(s, nextItem);
 
-					// If there are runnable (non-held) queued items, start the next one
-					const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
-						s.executionQueue
-					);
-					if (nextItem) {
-						const target = resolveQueuedItemTarget(s, nextItem);
-
-						if (!target) {
-							return {
-								...s,
-								state: 'busy' as SessionState,
-								busySource: 'ai',
-								executionQueue: remainingQueue,
-								thinkingStartTime: Date.now(),
-								currentCycleTokens: 0,
-								currentCycleBytes: 0,
-							};
-						}
-
-						// Set the interrupted tab(s) to idle (with the canceled log) and the
-						// queued item's target tab to busy. When the target is an orphan (the
-						// user closed it while this message was still queued), it lives in
-						// orphanedThinkingTabs - route busy-state + the user log THERE so the
-						// background send never leaks onto the active tab.
-						const updatedAiTabs = s.aiTabs.map((tab) => {
-							if (tab.id === target.tabId) {
-								return markTabRunningQueuedItem(tab, nextItem, s);
-							}
-							// Set any other busy tabs to idle (they were interrupted) and add canceled log
-							// Also clear any thinking/tool logs since the process was interrupted
-							if (tab.state === 'busy') {
-								const logsWithoutThinkingOrTools = tab.logs.filter(
-									(log) => log.source !== 'thinking' && log.source !== 'tool'
-								);
-								const updatedLogs = canceledLog
-									? [...logsWithoutThinkingOrTools, canceledLog]
-									: logsWithoutThinkingOrTools;
-								return {
-									...tab,
-									state: 'idle' as const,
-									thinkingStartTime: undefined,
-									logs: updatedLogs,
-								};
-							}
-							return tab;
-						});
-
-						const updatedOrphans =
-							target.location === 'orphan' && s.orphanedThinkingTabs
-								? s.orphanedThinkingTabs.map((tab) =>
-										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
-									)
-								: s.orphanedThinkingTabs;
-
+					if (!target) {
 						return {
 							...s,
 							state: 'busy' as SessionState,
 							busySource: 'ai',
-							aiTabs: updatedAiTabs,
-							...(updatedOrphans !== s.orphanedThinkingTabs && {
-								orphanedThinkingTabs: updatedOrphans,
-							}),
 							executionQueue: remainingQueue,
 							thinkingStartTime: Date.now(),
 							currentCycleTokens: 0,
@@ -215,36 +161,85 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						};
 					}
 
-					// No queued items, just go to idle and add canceled log to the active tab
-					// Also clear any thinking/tool logs since the process was interrupted
-					const activeTabForCancel = getActiveTab(s);
-					const updatedAiTabsForIdle = s.aiTabs.map((tab) => {
-						if (tab.id === activeTabForCancel?.id || tab.state === 'busy') {
+					// Set the interrupted tab(s) to idle (with the canceled log) and the
+					// queued item's target tab to busy. When the target is an orphan (the
+					// user closed it while this message was still queued), it lives in
+					// orphanedThinkingTabs - route busy-state + the user log THERE so the
+					// background send never leaks onto the active tab.
+					const updatedAiTabs = s.aiTabs.map((tab) => {
+						if (tab.id === target.tabId) {
+							return markTabRunningQueuedItem(tab, nextItem, s);
+						}
+						// Set any other busy tabs to idle (they were interrupted) and add canceled log
+						// Also clear any thinking/tool logs since the process was interrupted
+						if (tab.state === 'busy') {
 							const logsWithoutThinkingOrTools = tab.logs.filter(
 								(log) => log.source !== 'thinking' && log.source !== 'tool'
 							);
+							const updatedLogs = canceledLog
+								? [...logsWithoutThinkingOrTools, canceledLog]
+								: logsWithoutThinkingOrTools;
 							return {
 								...tab,
 								state: 'idle' as const,
 								thinkingStartTime: undefined,
-								logs:
-									canceledLog && tab.id === activeTabForCancel?.id
-										? [...logsWithoutThinkingOrTools, canceledLog]
-										: logsWithoutThinkingOrTools,
+								logs: updatedLogs,
 							};
 						}
 						return tab;
 					});
 
+					const updatedOrphans =
+						target.location === 'orphan' && s.orphanedThinkingTabs
+							? s.orphanedThinkingTabs.map((tab) =>
+									tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
+								)
+							: s.orphanedThinkingTabs;
+
 					return {
 						...s,
-						state: 'idle',
-						busySource: undefined,
-						thinkingStartTime: undefined,
-						aiTabs: updatedAiTabsForIdle,
+						state: 'busy' as SessionState,
+						busySource: 'ai',
+						aiTabs: updatedAiTabs,
+						...(updatedOrphans !== s.orphanedThinkingTabs && {
+							orphanedThinkingTabs: updatedOrphans,
+						}),
+						executionQueue: remainingQueue,
+						thinkingStartTime: Date.now(),
+						currentCycleTokens: 0,
+						currentCycleBytes: 0,
 					};
-				})
-			);
+				}
+
+				// No queued items, just go to idle and add canceled log to the active tab
+				// Also clear any thinking/tool logs since the process was interrupted
+				const activeTabForCancel = getActiveTab(s);
+				const updatedAiTabsForIdle = s.aiTabs.map((tab) => {
+					if (tab.id === activeTabForCancel?.id || tab.state === 'busy') {
+						const logsWithoutThinkingOrTools = tab.logs.filter(
+							(log) => log.source !== 'thinking' && log.source !== 'tool'
+						);
+						return {
+							...tab,
+							state: 'idle' as const,
+							thinkingStartTime: undefined,
+							logs:
+								canceledLog && tab.id === activeTabForCancel?.id
+									? [...logsWithoutThinkingOrTools, canceledLog]
+									: logsWithoutThinkingOrTools,
+						};
+					}
+					return tab;
+				});
+
+				return {
+					...s,
+					state: 'idle',
+					busySource: undefined,
+					thinkingStartTime: undefined,
+					aiTabs: updatedAiTabsForIdle,
+				};
+			});
 
 			// Process the queued item after state update
 			if (queuedItemToProcess) {
@@ -312,94 +307,44 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						};
 					}
 
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== activeSession.id) return s;
-
-							// Add kill log to the appropriate place and clear thinking/tool logs
-							const updatedSession = { ...s };
-							if (currentMode === 'ai') {
-								const tab = getActiveTab(s);
-								if (tab) {
-									updatedSession.aiTabs = s.aiTabs.map((t) => {
-										if (t.id === tab.id) {
-											const logsWithoutThinkingOrTools = t.logs.filter(
-												(log) => log.source !== 'thinking' && log.source !== 'tool'
-											);
-											return {
-												...t,
-												logs: [...logsWithoutThinkingOrTools, killLog],
-											};
-										}
-										return t;
-									});
-								}
-							} else {
-								// TODO: Remove shellLogs once terminal tabs migration is complete
-								if (!s.terminalTabs?.length) {
-									updatedSession.shellLogs = [...s.shellLogs, killLog];
-								}
-							}
-
-							// If there are runnable (non-held) queued items, start the next one
-							const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
-								s.executionQueue
-							);
-							if (nextItem) {
-								const target = resolveQueuedItemTarget(updatedSession, nextItem);
-
-								if (!target) {
-									return {
-										...updatedSession,
-										state: 'busy' as SessionState,
-										busySource: 'ai',
-										executionQueue: remainingQueue,
-										thinkingStartTime: Date.now(),
-										currentCycleTokens: 0,
-										currentCycleBytes: 0,
-									};
-								}
-
-								// Set tabs appropriately and clear thinking/tool logs from interrupted
-								// tabs. When the target is an orphan (the user closed it while this
-								// message was still queued), route busy-state + the user log to
-								// orphanedThinkingTabs so the background send never leaks onto the
-								// active tab.
-								const updatedAiTabs = updatedSession.aiTabs.map((tab) => {
-									if (tab.id === target.tabId) {
-										return markTabRunningQueuedItem(tab, nextItem, updatedSession);
-									}
-									if (tab.state === 'busy') {
-										const logsWithoutThinkingOrTools = tab.logs.filter(
+					updateSessionWith(activeSession.id, (s) => {
+						// Add kill log to the appropriate place and clear thinking/tool logs
+						const updatedSession = { ...s };
+						if (currentMode === 'ai') {
+							const tab = getActiveTab(s);
+							if (tab) {
+								updatedSession.aiTabs = s.aiTabs.map((t) => {
+									if (t.id === tab.id) {
+										const logsWithoutThinkingOrTools = t.logs.filter(
 											(log) => log.source !== 'thinking' && log.source !== 'tool'
 										);
 										return {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-											logs: logsWithoutThinkingOrTools,
+											...t,
+											logs: [...logsWithoutThinkingOrTools, killLog],
 										};
 									}
-									return tab;
+									return t;
 								});
+							}
+						} else {
+							// TODO: Remove shellLogs once terminal tabs migration is complete
+							if (!s.terminalTabs?.length) {
+								updatedSession.shellLogs = [...s.shellLogs, killLog];
+							}
+						}
 
-								const updatedOrphans =
-									target.location === 'orphan' && updatedSession.orphanedThinkingTabs
-										? updatedSession.orphanedThinkingTabs.map((tab) =>
-												tab.id === target.tabId
-													? markTabRunningQueuedItem(tab, nextItem, updatedSession)
-													: tab
-											)
-										: updatedSession.orphanedThinkingTabs;
+						// If there are runnable (non-held) queued items, start the next one
+						const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+							s.executionQueue
+						);
+						if (nextItem) {
+							const target = resolveQueuedItemTarget(updatedSession, nextItem);
 
+							if (!target) {
 								return {
 									...updatedSession,
 									state: 'busy' as SessionState,
 									busySource: 'ai',
-									aiTabs: updatedAiTabs,
-									...(updatedOrphans !== updatedSession.orphanedThinkingTabs && {
-										orphanedThinkingTabs: updatedOrphans,
-									}),
 									executionQueue: remainingQueue,
 									thinkingStartTime: Date.now(),
 									currentCycleTokens: 0,
@@ -407,37 +352,83 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								};
 							}
 
-							// No queued items, just go to idle and clear thinking logs
-							if (currentMode === 'ai') {
-								return {
-									...updatedSession,
-									state: 'idle',
-									busySource: undefined,
-									thinkingStartTime: undefined,
-									aiTabs: updatedSession.aiTabs.map((t) => {
-										if (t.state === 'busy') {
-											const logsWithoutThinkingOrTools = t.logs.filter(
-												(log) => log.source !== 'thinking' && log.source !== 'tool'
-											);
-											return {
-												...t,
-												state: 'idle' as const,
-												thinkingStartTime: undefined,
-												logs: logsWithoutThinkingOrTools,
-											};
-										}
-										return t;
-									}),
-								};
-							}
+							// Set tabs appropriately and clear thinking/tool logs from interrupted
+							// tabs. When the target is an orphan (the user closed it while this
+							// message was still queued), route busy-state + the user log to
+							// orphanedThinkingTabs so the background send never leaks onto the
+							// active tab.
+							const updatedAiTabs = updatedSession.aiTabs.map((tab) => {
+								if (tab.id === target.tabId) {
+									return markTabRunningQueuedItem(tab, nextItem, updatedSession);
+								}
+								if (tab.state === 'busy') {
+									const logsWithoutThinkingOrTools = tab.logs.filter(
+										(log) => log.source !== 'thinking' && log.source !== 'tool'
+									);
+									return {
+										...tab,
+										state: 'idle' as const,
+										thinkingStartTime: undefined,
+										logs: logsWithoutThinkingOrTools,
+									};
+								}
+								return tab;
+							});
+
+							const updatedOrphans =
+								target.location === 'orphan' && updatedSession.orphanedThinkingTabs
+									? updatedSession.orphanedThinkingTabs.map((tab) =>
+											tab.id === target.tabId
+												? markTabRunningQueuedItem(tab, nextItem, updatedSession)
+												: tab
+										)
+									: updatedSession.orphanedThinkingTabs;
+
+							return {
+								...updatedSession,
+								state: 'busy' as SessionState,
+								busySource: 'ai',
+								aiTabs: updatedAiTabs,
+								...(updatedOrphans !== updatedSession.orphanedThinkingTabs && {
+									orphanedThinkingTabs: updatedOrphans,
+								}),
+								executionQueue: remainingQueue,
+								thinkingStartTime: Date.now(),
+								currentCycleTokens: 0,
+								currentCycleBytes: 0,
+							};
+						}
+
+						// No queued items, just go to idle and clear thinking logs
+						if (currentMode === 'ai') {
 							return {
 								...updatedSession,
 								state: 'idle',
 								busySource: undefined,
 								thinkingStartTime: undefined,
+								aiTabs: updatedSession.aiTabs.map((t) => {
+									if (t.state === 'busy') {
+										const logsWithoutThinkingOrTools = t.logs.filter(
+											(log) => log.source !== 'thinking' && log.source !== 'tool'
+										);
+										return {
+											...t,
+											state: 'idle' as const,
+											thinkingStartTime: undefined,
+											logs: logsWithoutThinkingOrTools,
+										};
+									}
+									return t;
+								}),
 							};
-						})
-					);
+						}
+						return {
+							...updatedSession,
+							state: 'idle',
+							busySource: undefined,
+							thinkingStartTime: undefined,
+						};
+					});
 
 					// Process the queued item after state update
 					if (queuedItemAfterKill) {
@@ -462,45 +453,42 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						source: 'system',
 						text: `Error: Failed to terminate process - ${killErrorMessage}`,
 					};
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== activeSession.id) return s;
-							if (currentMode === 'ai') {
-								const activeTabForError = getActiveTab(s);
-								return {
-									...s,
-									state: 'idle',
-									busySource: undefined,
-									thinkingStartTime: undefined,
-									aiTabs: s.aiTabs.map((t) => {
-										if (t.id === activeTabForError?.id || t.state === 'busy') {
-											const logsWithoutThinkingOrTools = t.logs.filter(
-												(log) => log.source !== 'thinking' && log.source !== 'tool'
-											);
-											return {
-												...t,
-												state: 'idle' as const,
-												thinkingStartTime: undefined,
-												logs:
-													t.id === activeTabForError?.id
-														? [...logsWithoutThinkingOrTools, errorLog]
-														: logsWithoutThinkingOrTools,
-											};
-										}
-										return t;
-									}),
-								};
-							}
+					updateSessionWith(activeSession.id, (s) => {
+						if (currentMode === 'ai') {
+							const activeTabForError = getActiveTab(s);
 							return {
 								...s,
-								// TODO: Remove shellLogs once terminal tabs migration is complete
-								...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, errorLog] }),
 								state: 'idle',
 								busySource: undefined,
 								thinkingStartTime: undefined,
+								aiTabs: s.aiTabs.map((t) => {
+									if (t.id === activeTabForError?.id || t.state === 'busy') {
+										const logsWithoutThinkingOrTools = t.logs.filter(
+											(log) => log.source !== 'thinking' && log.source !== 'tool'
+										);
+										return {
+											...t,
+											state: 'idle' as const,
+											thinkingStartTime: undefined,
+											logs:
+												t.id === activeTabForError?.id
+													? [...logsWithoutThinkingOrTools, errorLog]
+													: logsWithoutThinkingOrTools,
+										};
+									}
+									return t;
+								}),
 							};
-						})
-					);
+						}
+						return {
+							...s,
+							// TODO: Remove shellLogs once terminal tabs migration is complete
+							...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, errorLog] }),
+							state: 'idle',
+							busySource: undefined,
+							thinkingStartTime: undefined,
+						};
+					});
 				}
 			}
 		}
