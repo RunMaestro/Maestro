@@ -36,17 +36,38 @@ describe('DisplayTab hooks', () => {
 			expect(window.maestro.fonts.detect).toHaveBeenCalledTimes(1);
 		});
 
-		it('loads saved custom fonts after font detection succeeds', async () => {
+		it('loads saved custom fonts on mount without waiting for a dropdown click', async () => {
 			vi.mocked(window.maestro.settings.get).mockResolvedValue(['Iosevka', 'Recursive Mono']);
 			const { result } = renderHook(() => useFontConfigurationState());
 
+			await waitFor(() =>
+				expect(result.current.customFonts).toEqual(['Iosevka', 'Recursive Mono'])
+			);
+			expect(window.maestro.settings.get).toHaveBeenCalledWith('customFonts');
+			// The expensive system sweep stays lazy; only the saved list is eager.
+			expect(window.maestro.fonts.detect).not.toHaveBeenCalled();
+		});
+
+		it('keeps a font added before the saved list resolves', async () => {
+			let resolveSaved: (value: string[]) => void = () => {};
+			vi.mocked(window.maestro.settings.get).mockReturnValue(
+				new Promise<string[]>((resolve) => {
+					resolveSaved = resolve;
+				})
+			);
+			const { result } = renderHook(() => useFontConfigurationState());
+
 			act(() => {
-				result.current.handleFontInteraction();
+				result.current.addCustomFont('Berkeley Mono');
+			});
+			act(() => {
+				resolveSaved(['Iosevka']);
 			});
 
-			await waitFor(() => expect(result.current.fontsLoaded).toBe(true));
-			expect(window.maestro.settings.get).toHaveBeenCalledWith('customFonts');
-			expect(result.current.customFonts).toEqual(['Iosevka', 'Recursive Mono']);
+			await waitFor(() =>
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('customFonts', ['Berkeley Mono'])
+			);
+			expect(result.current.customFonts).toEqual(['Berkeley Mono']);
 		});
 
 		it('adds and removes custom fonts while persisting the customFonts setting', () => {
