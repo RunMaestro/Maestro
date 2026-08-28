@@ -193,6 +193,14 @@ describe('EntityTile', () => {
 	});
 
 	describe('size variants', () => {
+		const LONG_STATS = [
+			{ label: 'Queries', value: '848' },
+			{ label: 'Time', value: '142h 5m' },
+			{ label: 'Tokens', value: '220.7M' },
+			{ label: 'Cost', value: '$187.18' },
+		];
+		const renderLarge = () => render(<EntityTile {...baseProps} size="lg" stats={LONG_STATS} />);
+
 		it('defaults to the standard size', () => {
 			render(<EntityTile {...baseProps} />);
 
@@ -224,6 +232,15 @@ describe('EntityTile', () => {
 			const statRow = screen.getByText('Queries').parentElement!.parentElement!;
 			expect(statRow.className).toContain('grid');
 			expect(statRow.className).not.toContain('flex items-end gap-3');
+		});
+
+		it('gives large stat columns enough floor width to not clip a value', () => {
+			// The column, not the card, is what a stat value has to fit into: a
+			// narrower floor clipped "142h 5m" to "142h 5…" inside a roomy tile.
+			renderLarge();
+
+			const statRow = screen.getByText('Queries').parentElement!.parentElement!;
+			expect(statRow.className).toContain('minmax(104px,1fr)');
 		});
 
 		it('keeps the default tile on the compact flex stat row', () => {
