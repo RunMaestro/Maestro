@@ -317,7 +317,7 @@ The field list is focused on open, so these work without clicking first.
 
 ## Memories Viewer
 
-Click a row in the file list first - these act on the focused row. See
+The file list is focused when the viewer opens, so these work right away. See
 [Memories](./memories) for the full walkthrough.
 
 | Action                       | Key                  |

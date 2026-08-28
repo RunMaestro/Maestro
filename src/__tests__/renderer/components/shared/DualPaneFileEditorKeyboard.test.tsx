@@ -105,6 +105,53 @@ describe('DualPaneFileEditor list keyboard navigation', () => {
 		expect(onDeleteItem).not.toHaveBeenCalled();
 	});
 
+	it('does not touch focus without autoFocusList', () => {
+		renderEditor();
+		expect(document.activeElement).not.toBe(row('alpha.md'));
+	});
+
+	it('focuses the selected row on first selection with autoFocusList', () => {
+		renderEditor({ autoFocusList: true });
+		expect(document.activeElement).toBe(row('alpha.md'));
+	});
+
+	it('claims focus once, so a later selection change does not yank it back', () => {
+		const { rerender } = renderEditor({ autoFocusList: true });
+		expect(document.activeElement).toBe(row('alpha.md'));
+
+		// User has moved on to something else in the surface.
+		const outsider = document.createElement('input');
+		document.body.appendChild(outsider);
+		outsider.focus();
+
+		rerender(
+			<DualPaneFileEditor
+				theme={mockTheme}
+				items={ITEMS}
+				selectedId="beta.md"
+				onSelect={vi.fn()}
+				autoFocusList
+				renderEditorBody={() => <textarea readOnly value="" />}
+				primaryAction={{ label: 'Save', onClick: vi.fn() }}
+			/>
+		);
+		expect(document.activeElement).toBe(outsider);
+		outsider.remove();
+	});
+
+	it('defers to whatever already holds focus when the selection arrives', () => {
+		// The list loads async, so a fast user can be typing in a filter box by
+		// the time the first selection lands. Focus must stay where they put it.
+		const outsider = document.createElement('input');
+		document.body.appendChild(outsider);
+		outsider.focus();
+
+		renderEditor({ autoFocusList: true });
+
+		expect(document.activeElement).toBe(outsider);
+		outsider.remove();
+	});
+
 	it('moves focus onto the selected row when listFocusToken changes', () => {
 		const { rerender } = renderEditor({ listFocusToken: 0 });
 		expect(document.activeElement).not.toBe(row('alpha.md'));

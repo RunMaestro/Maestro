@@ -601,6 +601,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						listWidthStorageKey="maestro.memoryViewer.listWidth"
 						onDeleteItem={requestDelete}
 						listFocusToken={listFocusToken}
+						autoFocusList
 						primaryAction={{
 							label: isSaving ? 'Saving…' : 'Save',
 							loading: isSaving,

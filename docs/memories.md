@@ -34,7 +34,9 @@ Press `Esc` once to clear the filter, or click the `x` in the box. A second `Esc
 
 ## Keyboard
 
-Click any row in the left pane, then:
+The viewer opens with the file list already focused, so the keys below work
+immediately - no click needed. (If you go straight for the filter box, the caret
+stays there.)
 
 | Action                       | Key                  |
 | ---------------------------- | -------------------- |

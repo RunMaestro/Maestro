@@ -435,7 +435,7 @@ Losing the whole pane while trying to reset a filter is the bug this prevents. T
 
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 
-The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus - clicking a row is enough, since rows are real `<button>`s and the handler sits on the list container:
+The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus. Rows are real `<button>`s and the handler sits on the list container, so clicking one is enough - or pass `autoFocusList` and the surface opens with the list already focused:
 
 - **Up / Down** walk the **visible** rows. The order comes from `visibleOrder`, which skips collapsed categories: stepping into a collapsed group would move the selection somewhere the user cannot see. The ends do not wrap, and a selection the current filter hides means the keys enter the list from whichever end they point at.
 - **Backspace / Delete** raise `onDeleteItem(selectedId)`. The list only reports the intent; the consumer owns the confirmation. Both keys are ignored unless the event came from a row, so Backspace on the "+ New" button in the same container cannot delete anything.
@@ -443,6 +443,8 @@ The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys o
 Two focus rules the component exists to enforce:
 
 **Selection is chased, not assumed.** `onSelect` may be async or may refuse (unsaved changes), so arrow nav records the requested id and only moves DOM focus once `selectedId` actually lands on it.
+
+**`autoFocusList` claims focus once, and only if nothing else has it.** The list loads async, so it cannot fire on mount - it waits for the first selection, which means a fast user may already be typing in the filter box by then. Focus must stay where they put it, so the effect checks `document.activeElement` first (the same rule the layer stack uses when restoring focus) and gives up if anything outside the list holds it. Only turn it on for a surface whose primary job is walking the list; on an editor-first surface it steals the caret from the textarea.
 
 **After a consumer-driven delete, bump `listFocusToken`.** The row that had focus was just unmounted, so focus falls to `<body>` and the next Backspace does nothing - which reads as the keyboard dying halfway through a cleanup pass. Only the consumer knows when its own async delete settled, hence the token.
 

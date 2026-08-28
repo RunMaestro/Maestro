@@ -195,6 +195,29 @@ describe('MemoryViewer', () => {
 		expect(onClose).toHaveBeenCalled();
 	});
 
+	it('lands keyboard focus on the list so arrows work without clicking first', async () => {
+		renderViewer();
+		await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+		// Opens on MEMORY.md; the row itself must hold focus.
+		await waitFor(() =>
+			expect(document.activeElement).toBe(document.querySelector('[data-item-id="MEMORY.md"]'))
+		);
+
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'ArrowDown' });
+		});
+
+		await waitFor(() =>
+			expect(memoryApi.read).toHaveBeenCalledWith(
+				'/test/project',
+				'project_worktrees.md',
+				'claude-code'
+			)
+		);
+	});
+
 	it('routes a delete through the shared destructive confirm modal', async () => {
 		renderViewer();
 		await waitFor(() => expect(listRowNames()).toHaveLength(3));
