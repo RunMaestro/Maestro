@@ -1,6 +1,10 @@
 import { useCallback, useMemo } from 'react';
 import type { Session, Group } from '../../types';
 import { stripLeadingEmojis, compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import {
+	sessionOrChildrenNeedAttention,
+	type AttentionContext,
+} from '../../utils/sessionAttention';
 
 // Re-export for backwards compatibility with existing imports
 export { stripLeadingEmojis, compareNamesIgnoringEmojis };
@@ -16,14 +20,19 @@ export interface UseSortedSessionsDeps {
 	/** Whether the bookmarks folder is collapsed */
 	bookmarksCollapsed: boolean;
 	/**
-	 * When true, visibleSessions excludes agents that have no unread AI tabs and aren't busy
-	 * (and whose worktree children likewise have none). The active session (or its parent) is
-	 * always kept visible so the user doesn't lose their place. Mirrors the filter applied in
-	 * useSessionCategories so jump numbers and Alt+Cmd+N shortcuts match the rendered list.
+	 * When true, visibleSessions excludes agents that don't need attention (and
+	 * whose worktree children likewise don't). The active session (or its parent)
+	 * is always kept visible so the user doesn't lose their place. Uses the same
+	 * `sessionNeedsAttention` predicate as useSessionCategories so jump numbers
+	 * and Alt+Cmd+N shortcuts match the rendered list.
 	 */
 	showUnreadAgentsOnly?: boolean;
 	/** Active session id - kept visible even when the unread filter would exclude it */
 	activeSessionId?: string | null;
+	/** Agent ids auto-running an Auto Run playbook (the AUTO badge). */
+	activeBatchSessionIds?: string[];
+	/** Agent ids stuck auto-retrying an Agent Resilience outage. */
+	stuckOutageSessionIds?: string[];
 }
 
 /**
@@ -68,7 +77,15 @@ export interface UseSortedSessionsReturn {
  * @returns Sorted and visible session arrays
  */
 export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSessionsReturn {
-	const { sessions, groups, bookmarksCollapsed, showUnreadAgentsOnly, activeSessionId } = deps;
+	const {
+		sessions,
+		groups,
+		bookmarksCollapsed,
+		showUnreadAgentsOnly,
+		activeSessionId,
+		activeBatchSessionIds,
+		stuckOutageSessionIds,
+	} = deps;
 
 	// Memoize worktree children lookup for O(1) access instead of O(n) per parent
 	// This reduces complexity from O(n²) to O(n) when building sorted sessions
@@ -198,26 +215,35 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 	// Reuses the same child list already computed above.
 	const childrenByParentId = worktreeChildrenByParent;
 
-	// Matches the unread-filter logic in useSessionCategories so visibleSessions (used for
-	// jump badges + Alt+Cmd+N shortcuts) stays in sync with the Left Bar's rendered list.
+	// Rebuilt only when the id sets actually change - both arrive as arrays from
+	// their stores, so a fresh Set every render would invalidate the memo below.
+	const batchSignature = activeBatchSessionIds?.join(',') ?? '';
+	const outageSignature = stuckOutageSessionIds?.join(',') ?? '';
+	const attentionCtx = useMemo<AttentionContext>(
+		() => ({
+			batchSessionIds: new Set(batchSignature ? batchSignature.split(',') : []),
+			stuckOutageIds: new Set(outageSignature ? outageSignature.split(',') : []),
+		}),
+		[batchSignature, outageSignature]
+	);
+
+	// Same `sessionNeedsAttention` predicate the Left Bar renders with, so
+	// visibleSessions (jump badges + Alt+Cmd+N) stays in sync with the rendered
+	// list. This used to be a second, narrower copy that knew nothing about error
+	// states, Auto Run batches, or outages, so the two lists disagreed about which
+	// agents the unread filter keeps.
 	const passesUnreadFilter = useCallback(
 		(session: Session): boolean => {
 			if (!showUnreadAgentsOnly) return true;
+			const children = childrenByParentId.get(session.id);
 			const isActiveOrParentOfActive =
 				session.id === activeSessionId ||
-				childrenByParentId.get(session.id)?.some((child) => child.id === activeSessionId) ||
+				children?.some((child) => child.id === activeSessionId) ||
 				false;
 			if (isActiveOrParentOfActive) return true;
-			const hasUnread = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
-			const isBusy = session.state === 'busy';
-			const children = childrenByParentId.get(session.id);
-			const hasUnreadChildren =
-				children?.some(
-					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
-				) ?? false;
-			return hasUnread || isBusy || hasUnreadChildren;
+			return sessionOrChildrenNeedAttention(session, children, attentionCtx);
 		},
-		[showUnreadAgentsOnly, activeSessionId, childrenByParentId]
+		[showUnreadAgentsOnly, activeSessionId, childrenByParentId, attentionCtx]
 	);
 
 	// Create visible sessions array for session jump shortcuts (Opt+Cmd+NUMBER)

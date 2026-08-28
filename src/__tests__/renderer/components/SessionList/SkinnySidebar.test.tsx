@@ -47,6 +47,7 @@ function createProps(overrides: Partial<Parameters<typeof SkinnySidebar>[0]> = {
 		getFileCount: vi.fn(() => 0),
 		setActiveSessionId: vi.fn(),
 		handleContextMenu: vi.fn(),
+		stuckOutageSignature: '',
 		...overrides,
 	};
 }

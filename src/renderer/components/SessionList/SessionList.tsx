@@ -53,6 +53,11 @@ import { CollapsedSessionPillRows } from './CollapsedSessionPill';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { SidebarActions } from './SidebarActions';
 import { SkinnySidebar } from './SkinnySidebar';
+import {
+	sessionNeedsAttention,
+	outageIdsFromSignature,
+	type AttentionContext,
+} from '../../utils/sessionAttention';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
 import { useSessionCategories } from '../../hooks/session/useSessionCategories';
 import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
@@ -554,15 +559,23 @@ function SessionListInner(props: SessionListProps) {
 	// Agent Resilience: agents stuck auto-retrying an outage count as "needs
 	// attention" and surface in the unread filter (see useSessionCategories).
 	const stuckOutageSignature = useActiveOutageSessionSignature();
+	// Shared "needs attention" context (batch + stuck ids) for the unread filter.
+	const attentionCtx = useMemo<AttentionContext>(
+		() => ({
+			batchSessionIds: new Set(activeBatchSessionIds),
+			stuckOutageIds: outageIdsFromSignature(stuckOutageSignature),
+		}),
+		[activeBatchSessionIds, stuckOutageSignature]
+	);
 	// Drives the Bell button's dot. It must agree with what the unread filter
 	// would actually reveal, and that filter keeps unread group chats too - a
-	// dot-less bell that still un-hides a room reads as a bug.
+	// dot-less bell that still un-hides a room reads as a bug. Agents route
+	// through sessionNeedsAttention so this can't drift from the filter itself.
 	const hasUnreadAgents = useMemo(
 		() =>
-			sessions.some((s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy') ||
-			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)) ||
-			stuckOutageSignature !== '',
-		[sessions, groupChats, unreadGroupChatIds, stuckOutageSignature]
+			sessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
+			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)),
+		[sessions, attentionCtx, groupChats, unreadGroupChatIds]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -897,15 +910,12 @@ function SessionListInner(props: SessionListProps) {
 		}
 	) => {
 		const allWorktreeChildren = getWorktreeChildren(session.id);
-		// When filtering unread, only show worktree children that are unread, busy,
-		// or stuck auto-retrying an outage (all "needs attention").
+		// When filtering unread, only show worktree children that need attention:
+		// unread, busy, in an error state, auto-running an Auto Run batch, or stuck
+		// auto-retrying an outage (the shared predicate, plus the active child).
 		const worktreeChildren = showUnreadAgentsOnly
 			? allWorktreeChildren.filter(
-					(child) =>
-						child.id === activeSessionId ||
-						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy' ||
-						stuckOutageSignature.split(',').includes(child.id)
+					(child) => child.id === activeSessionId || sessionNeedsAttention(child, attentionCtx)
 				)
 			: allWorktreeChildren;
 		const hasWorktrees = worktreeChildren.length > 0;
@@ -1893,6 +1903,7 @@ function SessionListInner(props: SessionListProps) {
 					setActiveSessionId={setActiveSessionId}
 					handleContextMenu={handleContextMenu}
 					showUnreadAgentsOnly={showUnreadAgentsOnly}
+					stuckOutageSignature={stuckOutageSignature}
 				/>
 			)}
 

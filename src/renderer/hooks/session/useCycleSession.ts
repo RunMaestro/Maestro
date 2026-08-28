@@ -23,6 +23,8 @@ import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { passesUnreadFilter, sessionMatchesFilter } from '../../utils/sidebarMembership';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { useActiveOutageSessionSignature } from '../../stores/retryStore';
+import { outageIdsFromSignature } from '../../utils/sessionAttention';
 import type { StarredItem } from './useStarredItems';
 
 // ============================================================================
@@ -87,6 +89,9 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	// and React re-renders until it throws "Maximum update depth exceeded".
 	// Every other caller of this selector wraps it the same way.
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	// Stuck (outage) agents stay in the Left Bar under the unread filter, so the
+	// cycle has to see them too or Cmd+[ / Cmd+] skips a row that is on screen.
+	const stuckOutageSignature = useActiveOutageSessionSignature();
 
 	// --- Store actions (stable via getState) ---
 	const { setActiveSessionIdInternal, setCyclePosition } = useSessionStore.getState();
@@ -149,6 +154,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			// ('bookmark' | `group:${groupId}` | 'ungrouped'), matching the keys built
 			// in useSortedSessions.
 			const batchIds = new Set(activeBatchSessionIds);
+			const stuckIds = outageIdsFromSignature(stuckOutageSignature);
 			/**
 			 * Is this agent drawn in the Left Bar right now? Same predicates the
 			 * render path uses, so the two cannot disagree about membership.
@@ -161,6 +167,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 						activeSessionId,
 						worktreeChildren: children,
 						batchSessionIds: batchIds,
+						stuckOutageIds: stuckIds,
 					})
 				) {
 					return false;
@@ -452,6 +459,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			sessionFilter,
 			showArchivedGroupChats,
 			activeBatchSessionIds,
+			stuckOutageSignature,
 			groupChats,
 			sortedSessions,
 			handleOpenGroupChat,

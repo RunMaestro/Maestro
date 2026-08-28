@@ -154,7 +154,7 @@ import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
-import { registerBatchResumer } from './stores/retryStore';
+import { registerBatchResumer, useActiveOutageSessionSignature } from './stores/retryStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -1793,6 +1793,14 @@ function MaestroConsoleInner() {
 
 	// handleToastSessionClick, deep link navigation - now in useSessionSwitchCallbacks hook
 
+	// Agents stuck auto-retrying an Agent Resilience outage. Primitive signature
+	// keeps the memo below referentially stable across unrelated renders.
+	const stuckOutageSignature = useActiveOutageSessionSignature();
+	const stuckOutageSessionIds = useMemo(
+		() => (stuckOutageSignature ? stuckOutageSignature.split(',') : []),
+		[stuckOutageSignature]
+	);
+
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
 	const { sortedSessions, visibleSessions, navSessions, bookmarkNavSize, navIndexMap } =
@@ -1804,6 +1812,11 @@ function MaestroConsoleInner() {
 			bookmarksCollapsed,
 			showUnreadAgentsOnly,
 			activeSessionId,
+			// Auto-running and stuck agents need attention, so the jump-badge
+			// projection has to know about them too - otherwise it hides agents the
+			// Left Bar is still drawing under the same filter.
+			activeBatchSessionIds,
+			stuckOutageSessionIds,
 		});
 
 	// --- KEYBOARD NAVIGATION ---
