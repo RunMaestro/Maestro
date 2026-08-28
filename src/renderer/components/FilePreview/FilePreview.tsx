@@ -65,6 +65,7 @@ import {
 	getLanguageFromFilename,
 	isBinaryContent,
 	isBinaryExtension,
+	isGistPublishableFile,
 	formatFileSize,
 	countMarkdownTasks,
 	extractHeadings,
@@ -399,6 +400,13 @@ export const FilePreview = React.memo(
 
 		// Any non-binary, non-image file can be edited as text
 		const isEditableText = !isImage && !isBinary && !isParquet;
+
+		// A gist body is plain text. Same predicate the file tab's overlay menu
+		// uses, so the toolbar button and the menu entry appear on the same files.
+		const canPublishGist = useMemo(
+			() => (file ? isGistPublishableFile(file.name, file.content) : false),
+			[file]
+		);
 
 		// Check if file is large (for performance optimizations)
 		const isLargeFile = useMemo(() => {
@@ -1729,6 +1737,7 @@ export const FilePreview = React.memo(
 					currentHistoryIndex={currentHistoryIndex}
 					ghCliAvailable={ghCliAvailable}
 					onPublishGist={onPublishGist}
+					canPublishGist={canPublishGist}
 					hasGist={hasGist}
 					onOpenInGraph={onOpenInGraph}
 					onOpenInBrowser={onOpenInBrowser}

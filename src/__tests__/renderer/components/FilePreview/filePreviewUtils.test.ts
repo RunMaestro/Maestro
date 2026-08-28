@@ -20,8 +20,10 @@ import {
 	GIANT_TIER_LINES,
 	LINE_LENGTH_GIANT_THRESHOLD,
 	canScaleFontForView,
+	isGistPublishableFile,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
+import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
 
 describe('filePreviewUtils', () => {
 	describe('getLanguageFromFilename', () => {
@@ -529,6 +531,37 @@ describe('filePreviewUtils', () => {
 		it('offers the zoom for HTML source, not the rendered iframe', () => {
 			expect(canScaleFontForView(view({ isRenderedHtml: false }))).toBe(true);
 			expect(canScaleFontForView(view({ isRenderedHtml: true }))).toBe(false);
+		});
+	});
+
+	describe('isGistPublishableFile', () => {
+		it('accepts plain text, prose, and code', () => {
+			expect(isGistPublishableFile('notes.txt', 'just some notes')).toBe(true);
+			expect(isGistPublishableFile('README.md', '# Title')).toBe(true);
+			expect(isGistPublishableFile('index.ts', 'export const a = 1;')).toBe(true);
+			expect(isGistPublishableFile('Makefile', 'all:\n\techo hi')).toBe(true);
+		});
+
+		// A gist body is text. Everything below would publish garbage or nothing.
+		it('rejects images', () => {
+			expect(isGistPublishableFile('shot.png', 'anything')).toBe(false);
+			expect(isGistPublishableFile('logo.svg', '<svg></svg>')).toBe(false);
+		});
+
+		it('rejects binaries by extension and by content', () => {
+			expect(isGistPublishableFile('app.wasm', 'text-looking')).toBe(false);
+			expect(isGistPublishableFile('mystery', 'abc\u0000def')).toBe(false);
+		});
+
+		it('rejects the parquet marker, which holds a path rather than the file', () => {
+			expect(
+				isGistPublishableFile('data.parquet', buildParquetPreviewMarker('/tmp/data.parquet'))
+			).toBe(false);
+		});
+
+		it('rejects an empty file, which would publish a blank gist', () => {
+			expect(isGistPublishableFile('empty.txt', '')).toBe(false);
+			expect(isGistPublishableFile('blank.txt', '   \n\t ')).toBe(false);
 		});
 	});
 });

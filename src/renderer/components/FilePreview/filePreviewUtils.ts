@@ -1,6 +1,9 @@
 import GithubSlugger from 'github-slugger';
 import type { TocEntry } from './types';
 import { formatSize } from '../../../shared/formatters';
+import { isImageFile } from '../../../shared/gitUtils';
+import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { getOpenedMediaKind } from '../../utils/mediaItems';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -344,6 +347,28 @@ export const isBinaryExtension = (filename: string): boolean => {
 	const ext = filename.split('.').pop()?.toLowerCase();
 	return BINARY_EXTENSIONS.has(ext || '');
 };
+
+// ─── Gist Publishing ──────────────────────────────────────────────────────────
+
+/**
+ * Whether a previewed file can go up as a GitHub Gist. A gist body is plain
+ * text, so images, playable media, binaries, and the parquet marker (which
+ * holds a path rather than the file) are all out, and so is an empty file -
+ * publishing one produces a gist with nothing in it.
+ *
+ * Shared so the FilePreview toolbar button and the file tab's overlay menu
+ * offer the action on exactly the same files. `filename` must carry the
+ * extension (a file tab stores name and extension apart).
+ */
+export function isGistPublishableFile(filename: string, content: string): boolean {
+	if (!content.trim()) return false;
+	if (isImageFile(filename)) return false;
+	if (getOpenedMediaKind(filename, content) !== null) return false;
+	// Parquet is binary on disk but never arrives as content, so it is checked
+	// off the marker before the binary tests below (which the marker passes).
+	if (isParquetPreviewMarker(content)) return false;
+	return !isBinaryExtension(filename) && !isBinaryContent(content);
+}
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
 

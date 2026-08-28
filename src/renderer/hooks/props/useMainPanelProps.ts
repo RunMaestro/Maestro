@@ -35,6 +35,7 @@ import type {
 import type { FileNode } from '../../types/fileTree';
 import type { DocumentGenerationCallbacks } from '../../services/inlineWizardDocumentGeneration';
 import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { PublishTextAsGistOptions } from '../tabs/useTabExportHandlers';
 
 /**
  * Dependencies for computing MainPanel props.
@@ -265,8 +266,12 @@ export interface UseMainPanelPropsDeps {
 	handlePublishTabGist: (tabId: string) => void;
 	/** Copy arbitrary text to the clipboard (used by terminal buffer actions) */
 	handleCopyText: (text: string, subject?: string) => void;
-	/** Queue arbitrary text for the Gist publish modal (used by terminal buffer actions) */
-	handlePublishTextAsGist: (text: string, filenameStem: string) => void;
+	/** Queue arbitrary text for the Gist publish modal (used by terminal buffer and file tab actions) */
+	handlePublishTextAsGist: (
+		text: string,
+		filenameStem: string,
+		options?: PublishTextAsGistOptions
+	) => void;
 	/** Queue arbitrary text for Send to Agent transfer (used by terminal buffer actions) */
 	handleSendTextToAgent: (text: string, sourceName: string) => void;
 	cancelTab: (tabId: string) => void;

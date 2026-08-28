@@ -63,6 +63,8 @@ export interface TabBarProps {
 	onFileTabSelect?: (tabId: string) => void;
 	/** Handler to close a file preview tab */
 	onFileTabClose?: (tabId: string) => void;
+	/** Handler to publish a file preview tab's contents as a GitHub Gist */
+	onPublishFileGist?: (tabId: string) => void;
 	/** Currently active browser tab ID (null if no browser tab is active) */
 	activeBrowserTabId?: string | null;
 	/** Handler to select a browser tab */
