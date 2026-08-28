@@ -47,6 +47,7 @@ import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../Markdown/remarkAlert';
+import { hardBreakInlineFields } from '../Markdown/preprocess';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -425,6 +426,18 @@ export const FilePreview = React.memo(
 		// the auto-picked tier. The PreviewTierChip in the header lets the user
 		// flip between modes; selection is persisted via onPreviewTierChange.
 		const previewTier = previewTierOverride ?? autoTier;
+
+		// Markdown source both preview tiers render. Only rewrite that both
+		// share: a run of Dataview-style `Key:: value` lines gets a hard break
+		// per line so an Obsidian note's header block does not fold into one
+		// run-on paragraph. It appends trailing spaces only, so line numbers
+		// (and therefore lineSync) are untouched, and the Fast tier's search
+		// offsets stay self-consistent because findHits and buildBlocks both
+		// read this same string.
+		const markdownSource = useMemo(
+			() => (isMarkdown && file?.content ? hardBreakInlineFields(file.content) : ''),
+			[isMarkdown, file?.content]
+		);
 
 		// Offer the font-zoom control only where it moves type (see
 		// canScaleFontForView for which views opt out and why).
@@ -2324,7 +2337,7 @@ export const FilePreview = React.memo(
 						>
 							<MarkdownPreviewFast
 								ref={markdownFastRef}
-								content={file.content}
+								content={markdownSource}
 								theme={theme}
 								markdownContainerRef={markdownContainerRef}
 								fileTreeIndices={fileTreeIndices}
@@ -2384,7 +2397,7 @@ export const FilePreview = React.memo(
 								urlTransform={urlTransformAllowingMaestro}
 								components={markdownComponents}
 							>
-								{file.content}
+								{markdownSource}
 							</ReactMarkdown>
 						</div>
 					) : isReadableText && previewTier === 'fast' && !markdownEditMode ? (
