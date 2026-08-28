@@ -95,6 +95,8 @@ export interface UseSettingsReturn {
 	setFilePreviewFontFamily: (value: string) => void;
 	setFileEditorFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
+	typographyPromptSeen: boolean;
+	setTypographyPromptSeen: (value: boolean) => void;
 
 	// UI settings
 	activeThemeId: ThemeId;

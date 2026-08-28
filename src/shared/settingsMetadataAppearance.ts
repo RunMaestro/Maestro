@@ -67,6 +67,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: '',
 		category: 'appearance',
 	},
+	typographyPromptSeen: {
+		description:
+			'Whether the first-run typography chooser has been shown. False on a fresh install and on any install predating the chooser, which is what shows it to existing users once after the update.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	customFonts: {
 		description: 'List of user-installed custom font names available in the font picker.',
 		type: 'array',

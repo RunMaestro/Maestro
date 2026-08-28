@@ -84,6 +84,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	chatFontFamily: '',
 	filePreviewFontFamily: '',
 	fileEditorFontFamily: '',
+	typographyPromptSeen: false,
 	customFonts: [],
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,

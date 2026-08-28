@@ -16,6 +16,7 @@ import { useAppInitialization } from '../../../renderer/hooks/ui/useAppInitializ
 const mockSettingsState: Record<string, unknown> = {
 	settingsLoaded: false,
 	suppressWindowsWarning: false,
+	typographyPromptSeen: false,
 	enableBetaUpdates: false,
 	checkForUpdatesOnStartup: false,
 	leaderboardRegistration: null,
@@ -68,12 +69,14 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 }));
 
 const mockSetWindowsWarningModalOpen = vi.fn();
+const mockSetTypographyChoiceModalOpen = vi.fn();
 const mockSetUpdateCheckModalOpen = vi.fn();
 const mockSetPlaygroundOpen = vi.fn();
 
 vi.mock('../../../renderer/stores/modalStore', () => ({
 	getModalActions: () => ({
 		setWindowsWarningModalOpen: mockSetWindowsWarningModalOpen,
+		setTypographyChoiceModalOpen: mockSetTypographyChoiceModalOpen,
 		setUpdateCheckModalOpen: mockSetUpdateCheckModalOpen,
 		setPlaygroundOpen: mockSetPlaygroundOpen,
 	}),
@@ -159,6 +162,12 @@ vi.mock('../../../renderer/components/WindowsWarningModal', () => ({
 		mockExposeWindowsWarningModalDebug(...args),
 }));
 
+const mockExposeTypographyChoiceModalDebug = vi.fn();
+vi.mock('../../../renderer/components/TypographyChoiceModal', () => ({
+	exposeTypographyChoiceModalDebug: (...args: unknown[]) =>
+		mockExposeTypographyChoiceModalDebug(...args),
+}));
+
 // ============================================================================
 // Mock window.maestro
 // ============================================================================
@@ -225,6 +234,7 @@ function resetStores() {
 		lastAcknowledgedBadgeLevel: 0,
 	};
 
+	mockSettingsState.typographyPromptSeen = false;
 	mockSessionState.sessionsLoaded = false;
 	mockSessionState.initialFileTreeReady = false;
 	mockTabStoreState.fileGistUrls = {};
@@ -432,6 +442,65 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(mockSetWindowsWarningModalOpen).not.toHaveBeenCalledWith(true);
+		});
+	});
+
+	// --- Typography chooser ---
+	describe('typography chooser', () => {
+		function loaded() {
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = true;
+		}
+
+		it('exposes the debug function for the typography chooser', () => {
+			renderHook(() => useAppInitialization());
+
+			expect(mockExposeTypographyChoiceModalDebug).toHaveBeenCalledWith(
+				mockSetTypographyChoiceModalOpen
+			);
+		});
+
+		it('shows the chooser once settings and sessions have loaded', () => {
+			loaded();
+			renderHook(() => useAppInitialization());
+
+			expect(mockSetTypographyChoiceModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('waits for sessions, since that is what tells a returning user apart', () => {
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = false;
+			renderHook(() => useAppInitialization());
+
+			expect(mockSetTypographyChoiceModalOpen).not.toHaveBeenCalledWith(true);
+		});
+
+		it('waits for settings, so a default flag cannot be mistaken for an answer', () => {
+			mockSettingsState.settingsLoaded = false;
+			mockSessionState.sessionsLoaded = true;
+			renderHook(() => useAppInitialization());
+
+			expect(mockSetTypographyChoiceModalOpen).not.toHaveBeenCalledWith(true);
+		});
+
+		it('stays away once the prompt has been seen', () => {
+			loaded();
+			mockSettingsState.typographyPromptSeen = true;
+			renderHook(() => useAppInitialization());
+
+			expect(mockSetTypographyChoiceModalOpen).not.toHaveBeenCalledWith(true);
+		});
+
+		it('opens at most once per mount', () => {
+			// The flag write comes back through the store as a state change, and
+			// the modal must not be re-opened by the re-render that follows.
+			loaded();
+			const { rerender } = renderHook(() => useAppInitialization());
+			rerender();
+			rerender();
+
+			const opens = mockSetTypographyChoiceModalOpen.mock.calls.filter(([open]) => open === true);
+			expect(opens).toHaveLength(1);
 		});
 	});
 

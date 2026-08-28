@@ -28,6 +28,15 @@ export const MONO_FALLBACK_STACK =
 	'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
 /**
+ * Safe proportional fallback chain, the sans counterpart to
+ * {@link MONO_FALLBACK_STACK}. Leads with each platform's own UI face so the
+ * proportional typography preset looks native rather than imported, and ends in
+ * the `sans-serif` generic so no platform can fall through to serif.
+ */
+export const SANS_FALLBACK_STACK =
+	'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+
+/**
  * Ensure a CSS font-family value degrades to monospace rather than the browser's
  * serif default. Returns the value unchanged when it already contains a generic
  * family keyword (`monospace` / `sans-serif` / `serif`), so the built-in default

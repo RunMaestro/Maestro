@@ -20,6 +20,13 @@ export const MODAL_PRIORITIES = {
 	/** Keyboard mastery level-up celebration - high priority celebration */
 	KEYBOARD_MASTERY: 1095,
 
+	/**
+	 * First-run typography chooser. Above the tour because it decides what every
+	 * later surface is drawn in - touring an app whose look is about to change
+	 * shows the user the wrong app.
+	 */
+	TYPOGRAPHY_CHOICE: 1060,
+
 	/** Onboarding tour overlay - above wizard, guides new users */
 	TOUR: 1050,
 

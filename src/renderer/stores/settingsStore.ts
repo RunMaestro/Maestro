@@ -2566,6 +2566,8 @@ export function getSettingsActions() {
 		setChatFontFamily: state.setChatFontFamily,
 		setFilePreviewFontFamily: state.setFilePreviewFontFamily,
 		setFileEditorFontFamily: state.setFileEditorFontFamily,
+		setTypographyPromptSeen: state.setTypographyPromptSeen,
+		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,
 		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,

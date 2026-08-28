@@ -409,6 +409,8 @@ export type ModalId =
 	| 'symphony'
 	// Platform Warnings
 	| 'windowsWarning'
+	// First-run typography chooser
+	| 'typographyChoice'
 	// Director's Notes
 	| 'directorNotes'
 	// Maestro Cue
@@ -1076,6 +1078,10 @@ export function getModalActions() {
 		setWindowsWarningModalOpen: (open: boolean) =>
 			open ? openModal('windowsWarning') : closeModal('windowsWarning'),
 
+		// Typography Choice Modal (first run / first launch after the update)
+		setTypographyChoiceModalOpen: (open: boolean) =>
+			open ? openModal('typographyChoice') : closeModal('typographyChoice'),
+
 		// Director's Notes Modal
 		setDirectorNotesOpen: (open: boolean) =>
 			open ? openModal('directorNotes') : closeModal('directorNotes'),
@@ -1199,6 +1205,7 @@ export function useModalActions() {
 	const tourData = useModalStore(selectModalData('tour'));
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
+	const typographyChoiceModalOpen = useModalStore(selectModalOpen('typographyChoice'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
 	const cueModalOpen = useModalStore(selectModalOpen('cueModal'));
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
@@ -1401,6 +1408,9 @@ export function useModalActions() {
 
 		// Windows Warning Modal
 		windowsWarningModalOpen,
+
+		// Typography Choice Modal
+		typographyChoiceModalOpen,
 
 		// Director's Notes Modal
 		directorNotesOpen,

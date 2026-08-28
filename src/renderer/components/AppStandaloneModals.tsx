@@ -1,10 +1,11 @@
-import { lazy, memo, Suspense, useMemo } from 'react';
+import { lazy, memo, Suspense, useCallback, useMemo } from 'react';
 import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -16,6 +17,7 @@ import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
+import { TypographyChoiceModal } from './TypographyChoiceModal';
 import { AppOverlays } from './AppOverlays';
 import { GitPillModals } from './GitPillModals';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -228,6 +230,9 @@ function AppStandaloneModalsInner({
 		debugPackageModalOpen,
 		windowsWarningModalOpen,
 		setWindowsWarningModalOpen,
+		typographyChoiceModalOpen,
+		setTypographyChoiceModalOpen,
+		openSettings,
 		setDebugPackageModalOpen,
 		debugApplicationStatsOpen,
 		setDebugApplicationStatsOpen,
@@ -273,6 +278,21 @@ function AppStandaloneModalsInner({
 	// Self-source active session
 	const activeSession = useActiveSession();
 
+	// Typography chooser: "does this user already have agents" is what tells a
+	// returning user from a fresh install, and it is the only signal that needs
+	// no new persisted state. A returning user with every agent deleted gets the
+	// new-user copy, which offers the same two choices - harmless either way.
+	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
+	const applyTypographyPreset = useSettingsStore((s) => s.applyTypographyPreset);
+	const setTypographyPromptSeen = useSettingsStore((s) => s.setTypographyPromptSeen);
+	const dismissTypographyChoice = useCallback(() => {
+		// Set the flag on ANY exit, including Escape. The shipped defaults still
+		// produce the Hacker look, so declining changes nothing - but a prompt
+		// that reappeared every launch until answered would be a nag.
+		setTypographyPromptSeen(true);
+		setTypographyChoiceModalOpen(false);
+	}, [setTypographyPromptSeen, setTypographyChoiceModalOpen]);
+
 	// Merge plugin-contributed themes into the picker list through the shared
 	// contribution registry (built-in always wins an id collision). Identical to
 	// THEMES when the plugins Encore flag is off (no contributions).
@@ -300,6 +320,16 @@ function AppStandaloneModalsInner({
 				onOpenDebugPackage={() => setDebugPackageModalOpen(true)}
 				useBetaChannel={enableBetaUpdates}
 				onSetUseBetaChannel={setEnableBetaUpdates}
+			/>
+
+			{/* --- TYPOGRAPHY CHOOSER (first run, and once for existing users) --- */}
+			<TypographyChoiceModal
+				theme={theme}
+				isOpen={typographyChoiceModalOpen}
+				isReturningUser={hasAnySession}
+				onChoose={applyTypographyPreset}
+				onDismiss={dismissTypographyChoice}
+				onOpenDisplaySettings={() => openSettings('display')}
 			/>
 
 			{/* --- CELEBRATION OVERLAYS --- */}

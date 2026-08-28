@@ -92,6 +92,10 @@ export type UsageDashboardViewMode =
 	| 'shortcuts';
 export type SettingsTab =
 	| 'general'
+	// SettingsModal has always rendered a Display tab and accepted it as an
+	// `initialTab`; it was simply missing from this union, so nothing could
+	// deep-link there through openSettings().
+	| 'display'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'

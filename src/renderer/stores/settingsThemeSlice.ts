@@ -9,6 +9,7 @@
 import type { StateCreator } from 'zustand';
 import type { ThemeId, ThemeColors } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
+import { TYPOGRAPHY_PRESETS, type TypographyPresetId } from '../../shared/typographyPresets';
 import type { SettingsStore } from './settingsStore';
 
 export interface ThemeState {
@@ -22,6 +23,12 @@ export interface ThemeState {
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
 	colorBlindMode: boolean;
+	/**
+	 * Whether the typography chooser has been shown. False on a fresh install
+	 * AND on every install that predates the chooser, which is what makes the
+	 * same modal reach existing users once after the update.
+	 */
+	typographyPromptSeen: boolean;
 }
 
 export interface ThemeActions {
@@ -35,6 +42,9 @@ export interface ThemeActions {
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
 	setColorBlindMode: (value: boolean) => void;
+	setTypographyPromptSeen: (value: boolean) => void;
+	/** Write all five font settings at once from a typography preset. */
+	applyTypographyPreset: (id: TypographyPresetId) => void;
 }
 
 export type ThemeSlice = ThemeState & ThemeActions;
@@ -50,6 +60,7 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 	customThemeBaseId: 'dracula',
 	colorBlindMode: false,
+	typographyPromptSeen: false,
 
 	setFontFamily: (value) => {
 		set({ fontFamily: value });
@@ -100,6 +111,21 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		set({ colorBlindMode: value });
 		window.maestro.settings.set('colorBlindMode', value);
 	},
+
+	setTypographyPromptSeen: (value) => {
+		set({ typographyPromptSeen: value });
+		window.maestro.settings.set('typographyPromptSeen', value);
+	},
+
+	applyTypographyPreset: (id) => {
+		const fonts = TYPOGRAPHY_PRESETS[id].fonts;
+		// One `set` for all five so the app repaints once rather than flashing
+		// through four intermediate mixes of the old and new preset.
+		set(fonts);
+		for (const [key, value] of Object.entries(fonts)) {
+			window.maestro.settings.set(key, value);
+		}
+	},
 });
 
 /** Mutates `patch` in place with any persisted Theme/Appearance fields found in `allSettings`. */
@@ -132,6 +158,9 @@ export function hydrateThemeSettings(
 
 	if (allSettings['customThemeBaseId'] !== undefined)
 		patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
+
+	if (allSettings['typographyPromptSeen'] !== undefined)
+		patch.typographyPromptSeen = Boolean(allSettings['typographyPromptSeen']);
 
 	if (allSettings['colorBlindMode'] !== undefined) {
 		// Legacy installs and the mobile/web client persist this as a
