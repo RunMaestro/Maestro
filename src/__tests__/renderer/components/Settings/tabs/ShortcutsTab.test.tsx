@@ -254,6 +254,31 @@ describe('ShortcutsTab', () => {
 		});
 	});
 
+	it('refuses Cmd+Shift+Down, which the OS owns for extending a text selection', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		const shortcutButton = screen.getByText('Meta+n');
+		fireEvent.click(shortcutButton);
+
+		fireEvent.keyDown(shortcutButton, {
+			key: 'ArrowDown',
+			code: 'ArrowDown',
+			metaKey: true,
+			shiftKey: true,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		});
+
+		// Nothing else is bound to it, so the conflict check would have accepted
+		// it. The reserved-combo guard is the only thing standing in the way.
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		expect(screen.getByText(/reserved by the system/)).toBeInTheDocument();
+	});
+
 	it('should record tab shortcuts with setTabShortcuts', async () => {
 		render(<ShortcutsTab theme={mockTheme} />);
 

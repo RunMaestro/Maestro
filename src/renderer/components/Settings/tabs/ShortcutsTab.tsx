@@ -10,7 +10,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
-import { shortcutKeysEqual } from '../../../../shared/shortcutKeys';
+import { shortcutKeysEqual, findReservedShortcutCombo } from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 import type { Theme, Shortcut } from '../../../types';
@@ -59,6 +59,19 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 
 		const keys = buildKeysFromEvent(e);
 		if (!keys) return;
+
+		// Refuse a chord the OS owns inside a text field before checking Maestro's
+		// own table. These never collide with another action, so the conflict
+		// check below would wave them through, and the binding then shadows
+		// select-to-end in every input in the app.
+		const reserved = findReservedShortcutCombo(keys);
+		if (reserved) {
+			setConflictMessage(
+				`${formatShortcutKeys(keys)} is reserved by the system - it ${reserved.reason} in a text field. Pick another combination.`
+			);
+			setRecordingId(null);
+			return;
+		}
 
 		// Refuse a chord that is already spoken for. Scanning FIXED_SHORTCUTS too
 		// is the part that is easy to miss: those cannot be rebound, so a

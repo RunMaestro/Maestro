@@ -35,6 +35,7 @@ import type {
 } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
+import { findReservedShortcutCombo } from '../../shared/shortcutKeys';
 import { getLevelIndex } from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
@@ -2263,6 +2264,24 @@ function migrateShortcuts(
 			migrated[id] = { ...current, keys: remap.toKeys };
 			needsMigration = true;
 		}
+	}
+
+	// Drop any binding on a chord the OS owns inside a text field (see
+	// RESERVED_SHORTCUT_COMBOS). The recorder refuses these now, but a chord
+	// bound before that guard existed is still on disk, and it shadows the
+	// native behavior every time - the user's select-to-end silently jumps
+	// agents instead. Fall back to the bundled default so the action keeps
+	// working rather than going unbound without explanation.
+	for (const [id, shortcut] of Object.entries(migrated)) {
+		if (!findReservedShortcutCombo(shortcut.keys)) continue;
+		const fallback = defaults[id]?.keys;
+		// Only take a default that is itself free, or the next load would strip
+		// it again and re-persist forever through the settings file watcher.
+		migrated[id] = {
+			...shortcut,
+			keys: fallback && !findReservedShortcutCombo(fallback) ? fallback : [],
+		};
+		needsMigration = true;
 	}
 
 	// Merge: use default labels (in case they changed) but preserve user's custom keys

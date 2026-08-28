@@ -739,4 +739,98 @@ describe('ShortcutsHelpModal', () => {
 			unmount();
 		});
 	});
+
+	describe('Filter By Key (rapid-fire exploration)', () => {
+		const keyShortcuts: Record<string, Shortcut> = {
+			newInstance: {
+				id: 'newInstance',
+				label: 'New Agent',
+				keys: ['Meta', 'n'],
+				category: 'general',
+				action: 'createSession',
+				editable: true,
+			},
+			closeTab: {
+				id: 'closeTab',
+				label: 'Close Tab',
+				keys: ['Meta', 'w'],
+				category: 'general',
+				action: 'closeSession',
+				editable: true,
+			},
+		};
+
+		const startRecording = () => {
+			const button = screen.getByText('By Key').closest('button') as HTMLButtonElement;
+			fireEvent.click(button);
+			return button;
+		};
+
+		it('stays in recording mode after a key is captured', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={keyShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			const button = startRecording();
+			fireEvent.keyDown(button, { key: 'n', code: 'KeyN', metaKey: true });
+
+			expect(screen.getByText('New Agent')).toBeInTheDocument();
+			expect(screen.queryByText('Close Tab')).not.toBeInTheDocument();
+
+			// Still live: a second press re-filters without re-clicking the button.
+			fireEvent.keyDown(button, { key: 'w', code: 'KeyW', metaKey: true });
+
+			expect(screen.getByText('Close Tab')).toBeInTheDocument();
+			expect(screen.queryByText('New Agent')).not.toBeInTheDocument();
+		});
+
+		it('names the unbound combination when nothing matches', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={keyShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			const button = startRecording();
+			fireEvent.keyDown(button, { key: 'q', code: 'KeyQ', metaKey: true });
+
+			expect(screen.getByText(/Nothing is bound to/)).toBeInTheDocument();
+		});
+
+		it('Escape stops recording and clears the filter without closing the modal', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={keyShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			const button = startRecording();
+			fireEvent.keyDown(button, { key: 'n', code: 'KeyN', metaKey: true });
+			expect(screen.queryByText('Close Tab')).not.toBeInTheDocument();
+
+			fireEvent.keyDown(button, { key: 'Escape', code: 'Escape' });
+
+			expect(screen.getByText('New Agent')).toBeInTheDocument();
+			expect(screen.getByText('Close Tab')).toBeInTheDocument();
+			expect(screen.getByText('By Key')).toBeInTheDocument();
+			expect(mockOnClose).not.toHaveBeenCalled();
+		});
+
+		it('keeps the captured filter when focus leaves the button', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={keyShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			const button = startRecording();
+			fireEvent.keyDown(button, { key: 'n', code: 'KeyN', metaKey: true });
+			fireEvent.blur(button);
+
+			expect(screen.getByText('New Agent')).toBeInTheDocument();
+			expect(screen.queryByText('Close Tab')).not.toBeInTheDocument();
+		});
+	});
 });

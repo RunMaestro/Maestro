@@ -356,7 +356,15 @@ Most shortcuts can be remapped to fit your workflow:
 - Press `Esc` while recording to cancel without changing the shortcut
 - Modifier keys alone (Cmd, Ctrl, Alt, Shift) won't register - you need a final key
 - Some shortcuts are fixed and cannot be remapped (like `Esc` to close modals)
-- Conflicting shortcuts will override the previous binding
+- A combination that another action already uses is refused, and the recorder tells you which action holds it. Clear that one first if you want the combination
+
+**Finding a shortcut by pressing it:** Both the Shortcuts tab and the Shortcuts Help panel (`Cmd+/` / `Ctrl+/`) have a **By Key** button. Click it and press a combination to see what it is bound to. It keeps listening after each press, so you can run through one key after another to explore what your keyboard already does. Press `Esc` or click away to stop. If nothing is bound to what you pressed, the panel says so by name rather than showing a bare "no results".
+
+### Combinations Maestro Will Not Take
+
+`Cmd+Shift+Arrow` (`Ctrl+Shift+Arrow` on Windows and Linux) belongs to the operating system inside a text field: it extends your selection to the top, bottom, start of the line, or end of the line. Maestro refuses to bind these, because a Maestro binding on one of them wins everywhere in the app, so you would lose select-to-end in every input and get an agent jump instead - which looks exactly like a broken text box.
+
+The recorder refuses these with an explanation. If you had one of them bound in an earlier version, Maestro clears it on the next launch and puts that action back on its default combination, so the action keeps working. You'll find it under its default binding in the Shortcuts tab.
 
 **Resetting shortcuts:** There's currently no "reset to default" button - if you need to restore defaults, you can find the original bindings in this documentation or delete the shortcuts from your settings file.
 

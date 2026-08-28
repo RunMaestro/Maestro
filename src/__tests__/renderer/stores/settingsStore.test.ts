@@ -1951,6 +1951,79 @@ describe('settingsStore', () => {
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
 		});
 
+		it('strips a persisted Cmd+Shift+Down binding and restores the bundled default', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Meta', 'Shift', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			// Cmd+Shift+Down is select-to-end in every text field; Maestro must not
+			// shadow it, so the action falls back to its own default instead.
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'shortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.nextUnreadTab.keys).toEqual(['Alt', 'Meta', 'ArrowDown']);
+		});
+
+		it('strips the Windows Ctrl+Shift+Down spelling of the same reserved chord', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Ctrl', 'Shift', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+		});
+
+		it('strips a reserved chord from tabShortcuts too, which is a separate persist key', async () => {
+			// tabShortcuts runs the same migration through a second call site with
+			// its own defaults table and its own settings key. A guard applied to
+			// only one of the two leaves half the bindings able to shadow the OS.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				tabShortcuts: {
+					closeAllTabs: {
+						id: 'closeAllTabs',
+						label: 'Close All Tabs',
+						keys: ['Meta', 'Shift', 'ArrowUp'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().tabShortcuts.closeAllTabs.keys).toEqual([
+				'Meta',
+				'Shift',
+				'w',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'tabShortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.closeAllTabs.keys).toEqual(['Meta', 'Shift', 'w']);
+		});
+
 		it('leaves a user-customized focusActiveTab binding alone', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {
