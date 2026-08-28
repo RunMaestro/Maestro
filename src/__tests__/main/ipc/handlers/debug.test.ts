@@ -117,7 +117,12 @@ describe('debug IPC handlers', () => {
 
 	describe('registration', () => {
 		it('should register all debug handlers', () => {
-			const expectedChannels = ['debug:createPackage', 'debug:previewPackage', 'debug:getAppStats'];
+			const expectedChannels = [
+				'debug:createPackage',
+				'debug:previewPackage',
+				'debug:getAppStats',
+				'debug:simulateAuthExpiry',
+			];
 
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
@@ -359,6 +364,102 @@ describe('debug IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Preview generation failed');
+		});
+	});
+
+	// The simulated failure has to travel the REAL event channel, because the
+	// whole point is to exercise classification, the outage grouping, the modal,
+	// the login PTY, and the replay. A handler that reached into the renderer's
+	// stores would prove nothing about any of it.
+	describe('debug:simulateAuthExpiry', () => {
+		let send: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			send = vi.fn();
+			mockMainWindow = {
+				isDestroyed: () => false,
+				webContents: { isDestroyed: () => false, send },
+			} as unknown as BrowserWindow;
+		});
+
+		it('emits a recoverable auth_expired agent:error for an interactive tab', async () => {
+			const handler = handlers.get('debug:simulateAuthExpiry');
+			const result = await handler!({} as any, {
+				processSessionId: 'sess-1-ai-tab-1',
+				agentId: 'claude-code',
+			});
+
+			expect(result).toEqual({ success: true });
+			expect(send).toHaveBeenCalledTimes(1);
+			const [channel, processSessionId, error] = send.mock.calls[0];
+			expect(channel).toBe('agent:error');
+			// The full process id is how the failing tab is identified for replay.
+			expect(processSessionId).toBe('sess-1-ai-tab-1');
+			expect(error).toMatchObject({
+				type: 'auth_expired',
+				recoverable: true,
+				agentId: 'claude-code',
+			});
+			expect(error.timestamp).toEqual(expect.any(Number));
+		});
+
+		// A Cue agent is spawned outside the ProcessManager, so its failure
+		// arrives on its own channel carrying the base agent id.
+		it('emits agent:authExpired on the pipeline channel instead', async () => {
+			const handler = handlers.get('debug:simulateAuthExpiry');
+			await handler!({} as any, {
+				processSessionId: 'sess-1',
+				agentId: 'codex',
+				fromPipeline: true,
+			});
+
+			expect(send).toHaveBeenCalledTimes(1);
+			const [channel, payload] = send.mock.calls[0];
+			expect(channel).toBe('agent:authExpired');
+			expect(payload).toMatchObject({
+				sessionId: 'sess-1',
+				agentId: 'codex',
+				fromPipeline: true,
+			});
+		});
+
+		it('carries the ssh remote through, so a remote login is exercised too', async () => {
+			const handler = handlers.get('debug:simulateAuthExpiry');
+			await handler!({} as any, {
+				processSessionId: 'sess-1-ai-tab-1',
+				agentId: 'claude-code',
+				sshRemoteId: 'remote-7',
+			});
+
+			expect(send.mock.calls[0][2]).toMatchObject({ sshRemoteId: 'remote-7' });
+		});
+
+		// The message is what the user reads in the outage card, so it must say
+		// the failure was faked rather than look like a real expired token.
+		it('marks the message as simulated', async () => {
+			const handler = handlers.get('debug:simulateAuthExpiry');
+			await handler!({} as any, {
+				processSessionId: 'sess-1-ai-tab-1',
+				agentId: 'claude-code',
+			});
+
+			expect(send.mock.calls[0][2].message).toContain('[simulated]');
+		});
+
+		it('fails rather than sending into a torn-down window', async () => {
+			mockMainWindow = {
+				isDestroyed: () => true,
+				webContents: { isDestroyed: () => true, send },
+			} as unknown as BrowserWindow;
+
+			const handler = handlers.get('debug:simulateAuthExpiry');
+			const result = await handler!({} as any, {
+				processSessionId: 'sess-1-ai-tab-1',
+				agentId: 'claude-code',
+			});
+
+			expect(send).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
 		});
 	});
 });

@@ -277,6 +277,13 @@ export const MODAL_PRIORITIES = {
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
 	CUE_YAML_EDITOR: 463,
 
+	/** Inline pipeline-rename field in the Cue modal's Pipeline List tab.
+	 *  Registered only while a rename is open, so Escape cancels the rename
+	 *  instead of closing the Cue modal. Same reasoning as
+	 *  CUE_SCHEDULED_TASK_FILTER below - an inline control inside the Cue modal
+	 *  can only claim Escape by outranking it in the layer stack. */
+	CUE_PIPELINE_RENAME: 462,
+
 	/** Fuzzy filter box in the Cue modal's Scheduled Tasks tab. Registered only
 	 *  while the box holds text, so Escape clears the filter before it closes
 	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal. */

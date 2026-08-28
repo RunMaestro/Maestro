@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor, act } from '@testing-library/react';
 import { PipelineListTab } from '../../../../renderer/components/CueModal/PipelineListTab';
 
 const mockRenamePipeline = vi.hoisted(() => vi.fn());
@@ -17,6 +17,37 @@ const mockNotifyToast = vi.hoisted(() => vi.fn());
 vi.mock('../../../../renderer/stores/notificationStore', () => ({
 	notifyToast: mockNotifyToast,
 }));
+
+// The rename claims Escape by registering a layer that outranks CUE_MODAL -
+// an input-local keydown handler could never win, because the layer stack
+// listens on window at capture. Capture the registration so the tests can
+// assert BOTH that it is enabled only during a rename and what it does.
+const layerRegistration = vi.hoisted(() => ({
+	priority: undefined as number | undefined,
+	onEscape: undefined as (() => void) | undefined,
+	options: undefined as { enabled?: boolean } | undefined,
+}));
+vi.mock('../../../../renderer/hooks/ui/useModalLayer', () => ({
+	useModalLayer: (
+		priority: number,
+		_ariaLabel: string | undefined,
+		onEscape: () => void,
+		options?: { enabled?: boolean }
+	) => {
+		layerRegistration.priority = priority;
+		layerRegistration.onEscape = onEscape;
+		layerRegistration.options = options;
+	},
+}));
+
+/** Fire Escape the way the layer stack would - via the registered handler. */
+function pressEscape() {
+	if (!layerRegistration.options?.enabled) {
+		throw new Error('the rename layer is not enabled, so Escape would close the Cue modal');
+	}
+	act(() => layerRegistration.onEscape!());
+}
+import { MODAL_PRIORITIES } from '../../../../renderer/constants/modalPriorities';
 import type { Theme } from '../../../../renderer/types';
 import type { CuePipeline, PipelineNode } from '../../../../shared/cue-pipeline-types';
 import type { CueRunResult } from '../../../../shared/cue/contracts';
@@ -526,11 +557,27 @@ describe('PipelineListTab', () => {
 			renderList();
 			const input = startRename();
 			fireEvent.change(input, { target: { value: 'Discarded' } });
-			fireEvent.keyDown(input, { key: 'Escape' });
+			pressEscape();
 
 			expect(mockRenamePipeline).not.toHaveBeenCalled();
 			expect(screen.queryByTestId('pipeline-rename-input')).not.toBeInTheDocument();
 			expect(screen.getByText('Daily Digest')).toBeInTheDocument();
+		});
+
+		// Escape must reach the rename, not the Cue modal underneath it. The
+		// layer stack listens on window at capture, so this only works if the
+		// rename registers a layer that OUTRANKS the modal - hence asserting the
+		// registration itself, not just that some handler ran.
+		it('claims Escape from the Cue modal only while a rename is open', () => {
+			renderList();
+			expect(layerRegistration.options?.enabled).toBe(false);
+
+			startRename();
+			expect(layerRegistration.options?.enabled).toBe(true);
+			expect(layerRegistration.priority).toBeGreaterThan(MODAL_PRIORITIES.CUE_MODAL);
+
+			pressEscape();
+			expect(layerRegistration.options?.enabled).toBe(false);
 		});
 
 		it('treats an unchanged name as a cancel, not a write', () => {

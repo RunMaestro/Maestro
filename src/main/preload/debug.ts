@@ -118,6 +118,18 @@ export function createDebugApi() {
 
 		stopProfiling: (): Promise<StopProfilingResponse> => ipcRenderer.invoke('debug:stopProfiling'),
 
+		/**
+		 * Fire a synthetic provider credential failure through the real event
+		 * channel, so the whole re-authentication flow can be exercised without
+		 * waiting for a token to actually expire.
+		 */
+		simulateAuthExpiry: (payload: {
+			processSessionId: string;
+			agentId: string;
+			sshRemoteId?: string;
+			fromPipeline?: boolean;
+		}): Promise<{ success: boolean }> => ipcRenderer.invoke('debug:simulateAuthExpiry', payload),
+
 		// Subscribe to capture progress (stopping -> compressing -> done). Returns
 		// an unsubscribe function. Mirrors the documentGraph:filesChanged pattern.
 		onProfilingProgress: (handler: (event: ProfilingProgressEvent) => void) => {

@@ -1306,6 +1306,31 @@ every edit and does exactly that. Wrap it in `useStableCallback()`
 off the content (depend on `file.path`, not `file`). `useAutoRunMarkdown` does
 the wrapping internally, so its callers cannot get this wrong.
 
+#### Preview/edit scroll sync rides the same `data-source-line` tags
+
+`rehypeSourceLine` stamps EVERY block, not just task checkboxes, and the second
+consumer is `lineSync.ts` (`components/FilePreview/lineSync.ts`):
+`domGetTopLineByAttr()` reads the tags to find the source line at the fold so
+the preview -> edit toggle lands where the reader was, and
+`domScrollToLineByAttr()` walks them back the other way.
+
+**A component override in `createMarkdownComponents()` must forward its props.**
+`p`, `li`, and `blockquote` were written as
+`React.createElement('p', null, children)`, which silently eats
+`data-source-line` along with everything else. Headings forwarded theirs, so the
+tags did not disappear - they thinned out to HEADINGS ONLY, and the walk could
+no longer tell "the top of the document" from "the first heading". Destructure
+`node` out (it is react-markdown's mdast node and React warns if it reaches the
+DOM) and spread the rest.
+
+**"Above the first tagged block" is line 1, not the first block's line.** The
+container's own leading padding puts even block one below the fold at
+`scrollTop` 0, so a `blocks[0]` fallback answers with the first block for a
+document scrolled to the very top. `domScrollToLineByAttr()` is the mirror
+image: for a line at or above the first block it writes a hard
+`scrollTop = 0` rather than aligning block one with the scroller edge, which
+would scroll that same padding away and land a few pixels short.
+
 #### Alert callouts
 
 `[!NOTE]`-style callouts need a plugin AND a blockquote renderer. `remarkAlert`

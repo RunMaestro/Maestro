@@ -2380,6 +2380,12 @@ interface MaestroAPI {
 				error?: string;
 			}) => void
 		) => () => void;
+		simulateAuthExpiry: (payload: {
+			processSessionId: string;
+			agentId: string;
+			sshRemoteId?: string;
+			fromPipeline?: boolean;
+		}) => Promise<{ success: boolean }>;
 	};
 	// Sync API (custom storage location)
 	sync: {
