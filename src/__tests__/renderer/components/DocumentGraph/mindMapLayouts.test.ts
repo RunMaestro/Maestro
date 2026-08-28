@@ -13,6 +13,8 @@ import type {
 import {
 	type MindMapLayoutType,
 	LAYOUT_LABELS,
+	MIND_MAP_LAYOUT_TYPES,
+	nextMindMapLayout,
 	calculateLayout,
 	calculateMindMapLayout,
 	calculateRadialLayout,
@@ -143,6 +145,46 @@ describe('mindMapLayouts', () => {
 				expect(LAYOUT_LABELS[type].name).toBeTruthy();
 				expect(LAYOUT_LABELS[type].description).toBeTruthy();
 			}
+		});
+	});
+
+	// ====================================================================
+	// MIND_MAP_LAYOUT_TYPES / nextMindMapLayout
+	// ====================================================================
+
+	describe('nextMindMapLayout', () => {
+		// One order serves the toolbar dropdown and the `L` shortcut, so a key
+		// press and a click cannot disagree about what comes next.
+		it('every listed layout has a label', () => {
+			for (const type of MIND_MAP_LAYOUT_TYPES) {
+				expect(LAYOUT_LABELS[type]).toBeDefined();
+			}
+			expect(MIND_MAP_LAYOUT_TYPES).toHaveLength(Object.keys(LAYOUT_LABELS).length);
+		});
+
+		it('advances through the list in order', () => {
+			expect(nextMindMapLayout('mindmap')).toBe('radial');
+			expect(nextMindMapLayout('radial')).toBe('hierarchical');
+			expect(nextMindMapLayout('hierarchical')).toBe('force');
+		});
+
+		it('wraps at the end of the list', () => {
+			expect(nextMindMapLayout('force')).toBe('mindmap');
+		});
+
+		it('visits every layout exactly once per cycle', () => {
+			const seen: MindMapLayoutType[] = [];
+			let current: MindMapLayoutType = MIND_MAP_LAYOUT_TYPES[0];
+			for (let i = 0; i < MIND_MAP_LAYOUT_TYPES.length; i++) {
+				seen.push(current);
+				current = nextMindMapLayout(current);
+			}
+			expect(new Set(seen).size).toBe(MIND_MAP_LAYOUT_TYPES.length);
+			expect(current).toBe(MIND_MAP_LAYOUT_TYPES[0]);
+		});
+
+		it('restarts the cycle from an unrecognized layout rather than sticking', () => {
+			expect(nextMindMapLayout('nonsense' as MindMapLayoutType)).toBe(MIND_MAP_LAYOUT_TYPES[0]);
 		});
 	});
 
