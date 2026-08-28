@@ -160,6 +160,18 @@ export function createCueApi() {
 		deleteYaml: (projectRoot: string): Promise<boolean> =>
 			ipcRenderer.invoke('cue:deleteYaml', { projectRoot }),
 
+		// Rename a pipeline across every cue.yaml it spans
+		renamePipeline: (
+			oldName: string,
+			newName: string
+		): Promise<{
+			renamed: boolean;
+			subscriptionsUpdated: number;
+			filesWritten: string[];
+			reason?: string;
+			warnings: string[];
+		}> => ipcRenderer.invoke('cue:renamePipeline', { oldName, newName }),
+
 		// Validate YAML content as a Cue configuration
 		validateYaml: (content: string): Promise<{ valid: boolean; errors: string[] }> =>
 			ipcRenderer.invoke('cue:validateYaml', { content }),

@@ -166,6 +166,7 @@ window.maestro = {
 
   // File system
   fs: { readDir, readFile },
+  parquet: { open, query, export, close },  // windowed reads; bytes never cross IPC
 
   // Agent management
   agents: { detect, get, getConfig, setConfig, getConfigValue, setConfigValue },
@@ -1036,7 +1037,7 @@ interface FilePreviewTab {
 	path: string; // Full file path
 	name: string; // Filename without extension (tab display name)
 	extension: string; // File extension with dot (e.g., '.md', '.ts')
-	content: string; // File content (loaded on open)
+	content: string; // File content, OR a handoff sentinel - see below
 	scrollTop: number; // Preserved scroll position
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
@@ -1047,6 +1048,17 @@ interface FilePreviewTab {
 	isLoading?: boolean; // True while content is being fetched
 }
 ```
+
+**`content` is not always content.** Some formats are too large, too binary, or too random-access to cross IPC as a string, so `fs:readFile` short-circuits them to a short sentinel and the viewer fetches the real bytes another way:
+
+| Format         | What `content` holds            | Who reads the file                                    |
+| -------------- | ------------------------------- | ----------------------------------------------------- |
+| Text, code, md | the file, as UTF-8              | the renderer                                          |
+| Images         | a `data:` URL                   | the renderer                                          |
+| Audio / video  | a `maestro-media://` stream URL | Chromium, via range requests over the custom protocol |
+| Parquet        | a `maestro-parquet://` marker   | the main process, over the `parquet:*` IPC surface    |
+
+Anything that inspects `content` must therefore test what kind of tab it is first. `isParquetPreviewMarker()` (`src/shared/parquet/preview.ts`) and `isMediaStreamUrl()` (`src/shared/mediaTypes.ts`) are the checks; both are cheap prefix tests. Getting this wrong is not subtle in behaviour but is silent in review: tokenizing a marker reports "15 tokens" for a two-gigabyte table, and a text search over one reports zero matches on a file full of them.
 
 ### Unified Tab System
 
@@ -1109,7 +1121,8 @@ File tabs display a colored badge based on file extension. Colors are theme-awar
 | File                         | Purpose                                                                                             |
 | ---------------------------- | --------------------------------------------------------------------------------------------------- |
 | `TabBar.tsx`                 | Unified tab rendering with AI and file tabs                                                         |
-| `FilePreview.tsx`            | File content viewer with edit mode                                                                  |
+| `FilePreview.tsx`            | File content viewer with edit mode; routes each format to its viewer                                |
+| `ParquetViewer/`             | Parquet grid, schema rail, and filter bar (client of `src/main/parquet/`)                           |
 | `MainPanel.tsx`              | Coordinates tab display and file loading                                                            |
 | `tabHelpers/`                | Shared tab utilities (`buildUnifiedTabs`, `ensureInUnifiedTabOrder`, `createTab`, `closeTab`, etc.) |
 | `useTabHandlers.ts`          | Tab operation hooks including `handleOpenFileTab`                                                   |

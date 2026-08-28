@@ -7,7 +7,7 @@
  *   - multi-account tab selection
  *   - accessible quota progress bars
  *   - non-authenticated/error rows
- *   - refresh IPC wiring
+ *   - refresh IPC wiring, incl. the Cmd+R hotkey
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -237,6 +237,22 @@ describe('CodexPlanUsage - refresh wiring', () => {
 		await waitFor(() => {
 			expect(screen.getByTestId('codex-plan-row-default')).toBeInTheDocument();
 		});
+	});
+
+	it('re-samples on Cmd+R when the panel owns the hotkey', async () => {
+		render(<CodexPlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		await waitFor(() => {
+			expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('ignores Cmd+R when the panel does not own the hotkey', () => {
+		render(<CodexPlanUsage theme={theme} />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
 	});
 
 	it('disables the refresh button while a refresh is already in flight', () => {

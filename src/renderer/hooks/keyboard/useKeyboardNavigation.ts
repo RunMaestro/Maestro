@@ -59,6 +59,14 @@ export interface UseKeyboardNavigationDeps {
 	setGroupChatsExpanded: (expanded: boolean) => void;
 	groupChatSortAlphabetical: boolean;
 	showUnreadAgentsOnly: boolean;
+	/**
+	 * Ungrouped is a collapsible section like any other. SessionList stops drawing
+	 * its rows while it is collapsed, so the cursor must not treat them as
+	 * landable without expanding the section first.
+	 */
+	ungroupedCollapsed: boolean;
+	/** Setter for the Ungrouped collapsed state. */
+	setUngroupedCollapsed: (collapsed: boolean) => void;
 }
 
 /**
@@ -147,6 +155,8 @@ export function useKeyboardNavigation(
 		setGroupChatsExpanded,
 		groupChatSortAlphabetical,
 		showUnreadAgentsOnly,
+		ungroupedCollapsed,
+		setUngroupedCollapsed,
 	} = deps;
 
 	const navSnap = useSidebarNavStore.getState();
@@ -201,6 +211,9 @@ export function useKeyboardNavigation(
 
 	const showUnreadAgentsOnlyRef = useRef(showUnreadAgentsOnly);
 	showUnreadAgentsOnlyRef.current = showUnreadAgentsOnly;
+
+	const ungroupedCollapsedRef = useRef(ungroupedCollapsed);
+	ungroupedCollapsedRef.current = ungroupedCollapsed;
 
 	// When App omits nav/starred props, keep refs fresh without re-rendering App.
 	// useLayoutEffect: run after SidebarNavSync's layout publish, sync refs before paint.
@@ -298,7 +311,11 @@ export function useKeyboardNavigation(
 					const group = groupsRef.current.find((g) => g.id === entry.session.groupId);
 					return !group?.collapsed;
 				}
-				return true; // ungrouped agents are always visible
+				// Ungrouped is a collapsible section like any other. It used to return
+				// an unconditional `true`, so with the section collapsed the cursor
+				// walked onto rows the sidebar was not drawing (SessionList only
+				// renders them when `!ungroupedCollapsed`) and the highlight vanished.
+				return !ungroupedCollapsedRef.current;
 			}
 		}
 	}, []);
@@ -321,12 +338,24 @@ export function useKeyboardNavigation(
 						setGroups((prev) =>
 							prev.map((g) => (g.id === groupId ? { ...g, collapsed: false } : g))
 						);
+					} else {
+						// Arrows OPEN what they cross into. Skipping on the collapse flag
+						// would make the arrows SKIP the section - which is Cmd+[ / Cmd+]
+						// behaviour on the wrong key. The two paths diverge here on
+						// purpose. See sidebarNavContract.test.ts.
+						if (ungroupedCollapsedRef.current) setUngroupedCollapsed(false);
 					}
 					break;
 				}
 			}
 		},
-		[setStarredSectionCollapsed, setGroupChatsExpanded, setBookmarksCollapsed, setGroups]
+		[
+			setStarredSectionCollapsed,
+			setGroupChatsExpanded,
+			setBookmarksCollapsed,
+			setGroups,
+			setUngroupedCollapsed,
+		]
 	);
 
 	/** Move the keyboard cursor onto a virtual entry (highlight only - no activation). */

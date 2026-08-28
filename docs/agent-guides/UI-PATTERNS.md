@@ -212,7 +212,59 @@ Dialog-style modals can offer persisted, center-anchored drag-to-resize via `use
 
 The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
+- `useResizableModal` (`src/renderer/hooks/ui/useResizableModal.ts`) owns the drag. Like `useResizablePanel` it writes to the DOM during the drag and commits React state once on mouseup. Deltas are doubled because the card is centered: growing the width by W moves the right edge by only W/2, so doubling keeps the grip under the pointer.
+- Sizes persist in one `modalSizes` map in `uiStore`, keyed by `resizeKey`, written through to settings and hydrated by `loadAllSettings` on startup.
+- Minimums default to `MODAL_MIN_WIDTH` (360) / `MODAL_MIN_HEIGHT` (300), never exceeding the modal's declared `width`. Pass higher values when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
+- Sizes are clamped to `MODAL_MAX_VIEWPORT_RATIO` (90%) of the viewport both at drag time and at read time, so a modal sized on a large display still opens sanely on a laptop.
+- `ModalResizeGrip` renders the bottom-right grip; double-clicking it forgets the remembered size and returns the modal to its declared default.
+
+`resizeKey` must be stable across renders - it is the persistence key, not a label.
+
 When two toggleable states of the same modal need independent footprints (e.g. Prompt Composer's compact vs. fullscreen), use two distinct `resizeKey`s (`prompt-composer-compact` / `prompt-composer-fullscreen`) rather than one shared key with a mode-dependent `defaultSize` - `defaultSize` is only consulted before the first saved size exists, so a single key would let one mode's manual resize silently pin the other mode's size too.
+
+**Sizing a canvas modal by the viewport.** A fixed pixel default is right for a
+form or a dialog: its content has a natural width and more room buys nothing.
+It is wrong for a surface the user pans around inside - a graph, a dashboard,
+a map - where the useful default is "as much of the screen as a modal may
+take". A default that reads as generous on a laptop is a postage stamp on a 5K
+display, and the user re-drags it on every machine. Pass
+`viewportModalSize({ width, height })` from `src/renderer/utils/modalSizing.ts`
+as the `defaultSize` instead of a literal (Document Graph is the reference
+caller). Memoize it once per mount rather than recomputing per render: the hook
+already re-clamps the live size on `resize`, and a default that moves under it
+fights that listener. The result still passes through `clampModalSize`, so the
+shared viewport cap and the modal's own `minSize` apply on top.
+
+### Resizable Panes Inside a Surface
+
+`useResizablePanel` (`src/renderer/hooks/ui/useResizablePanel.ts`) is the drag
+for a pane whose width the user sets: the Left Bar, the Right Bar, and the
+Document Graph's preview pane all ride it. It writes to the DOM during the drag
+and commits React state once on mouseup, so a drag costs one render rather than
+sixty.
+
+Who persists the width depends on where the pane lives:
+
+- **A top-level chrome pane** (Left Bar, Right Bar) is a real setting. Pass
+  `settingsKey` and back it with a `settingsStore` field, so it round-trips
+  through settings like any other preference.
+- **A pane inside another surface** (a preview inside a modal, a split inside a
+  panel) is a view preference, not a setting. Pair the hook with
+  `usePersistedPanelWidth(storageKey, { defaultWidth, minWidth, maxWidth })`
+  from `src/renderer/hooks/ui/usePersistedPanelWidth.ts` - the numeric
+  counterpart to `usePersistedToggle` - and **omit `settingsKey`**, or the hook
+  writes the same number a second time under a key nothing reads back.
+
+Stored bounds and the live clamp are two different questions, and conflating
+them is what lets a pane swallow its own container. The stored bounds decide
+what may be written to disk; the `maxWidth` handed to `useResizablePanel` folds
+in the container as it is right now, so a width that was legal on a maximized
+window narrows itself after the modal is resized down. See
+`previewPaneSizing.ts` in `src/renderer/components/DocumentGraph/` for the
+shape: constants plus one pure `previewMaxWidthForContainer()`, which also
+answers the unmeasured case (a `0` container width means the `ResizeObserver`
+has not reported, where clamping to the minimum would paint the remembered
+width narrow and then visibly jump).
 
 ### Modals Opened From Inside the Main Panel
 
@@ -459,6 +511,39 @@ Two rules the hook exists to enforce:
 
 **Put `<Pager>` in the toolbar row, not under the list.** A pager below a long grid inside a scrolling modal forces the user to scroll to the bottom, click, and then scroll back to the top to see the page they asked for. Beside the filter and sort controls, everything that changes what you see sits in one place and stays on screen. Gate it on `pager.isPaginated` so the control is absent entirely when everything fits - and choose a page size that keeps the bounded filters on one page, so the pager appears exactly when it is needed.
 
+### Filtering a List (`<FilterInput>`)
+
+`<FilterInput>` (`components/ui/FilterInput.tsx`) is the "narrow this list" box: search icon, borderless input, optional result count (`resultLabel`), and a clear button that only exists once there is something to clear. Reach for it whenever a pane filters a list it already holds - the Memory Viewer's name-or-content filter is the first caller.
+
+It is **not** a find bar. A find bar walks matches inside one document and owns next/prev plus a match index (`AutoRunSearchBar`, `TerminalSearchBar`); this control has no cursor into the results, it only narrows them. Do not add match navigation to it - pick by question ("which rows do I see?" vs "take me to the next hit").
+
+**Escape is the part that needs care.** The control clears its own query on Escape, but that only fires on an UNLAYERED surface: the layer stack listens on `window` in the capture phase, so inside any modal or registered overlay the key closes the surface before the input ever sees it. The host has to clear the filter from its own `onEscape` first:
+
+```tsx
+onEscapeRef.current = () => {
+	if (filterQuery) {
+		setFilterQuery('');
+		return;
+	}
+	onClose();
+};
+```
+
+Losing the whole pane while trying to reset a filter is the bug this prevents. The clear button is the always-available path either way.
+
+### Keyboard Navigation in a `<DualPaneFileEditor>` List
+
+The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus - clicking a row is enough, since rows are real `<button>`s and the handler sits on the list container:
+
+- **Up / Down** walk the **visible** rows. The order comes from `visibleOrder`, which skips collapsed categories: stepping into a collapsed group would move the selection somewhere the user cannot see. The ends do not wrap, and a selection the current filter hides means the keys enter the list from whichever end they point at.
+- **Backspace / Delete** raise `onDeleteItem(selectedId)`. The list only reports the intent; the consumer owns the confirmation. Both keys are ignored unless the event came from a row, so Backspace on the "+ New" button in the same container cannot delete anything.
+
+Two focus rules the component exists to enforce:
+
+**Selection is chased, not assumed.** `onSelect` may be async or may refuse (unsaved changes), so arrow nav records the requested id and only moves DOM focus once `selectedId` actually lands on it.
+
+**After a consumer-driven delete, bump `listFocusToken`.** The row that had focus was just unmounted, so focus falls to `<body>` and the next Backspace does nothing - which reads as the keyboard dying halfway through a cleanup pass. Only the consumer knows when its own async delete settled, hence the token.
+
 ### Measuring an Element's Width (`useElementWidth`)
 
 `useElementWidth(ref, enabled?)` (`hooks/ui/useElementWidth.ts`) wraps the ResizeObserver boilerplate that was previously inline in `UsageDashboardModal`. Reach for it **only when the number has to exist in JavaScript**: an inline SVG chart needs real pixels for its viewBox, and a responsive breakpoint that switches column counts needs a value to compare. Anything expressible in CSS stays in CSS.
@@ -577,6 +662,30 @@ Reach for it whenever a box has BOTH a capped height and content that arrives ov
 It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same frame as the new content, or the box paints once at the old position and the output visibly jumps afterwards. The 50px bottom threshold matches the transcript's own in `TerminalOutput`, so a card follows its output on the same terms the conversation around it does.
 
 Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
+
+### Scrolling a Virtualized List to the Selection
+
+A virtualized list follows its selection through the virtualizer's own `scrollToIndex`, from an effect keyed on the selected index. Never through a `ref` on the selected row.
+
+```tsx
+// CORRECT - one scroll per real change of selection.
+useEffect(() => {
+	virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
+}, [selectedIndex, virtualizer]);
+
+// WRONG - fires on EVERY render, not on every selection change.
+<button ref={isSelected ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : undefined}>
+```
+
+An inline arrow function is a new identity on every render, so React detaches the old ref and attaches the new one each time, and an attach runs the callback. `@tanstack/react-virtual` re-renders (inside `flushSync`) on every scroll-offset change, so the two form a loop: a wheel tick scrolls the list, the virtualizer re-renders, the row's ref re-attaches, and `scrollIntoView` snaps the list back to the selection inside the same event. The wheel reads as broken; the component is undoing it. This is what `FileSearchModal` did, and the fix was deleting the ref, not touching the wheel handling.
+
+`scrollToIndex` is also the API that understands the virtual window: `scrollIntoView` can only reach a row the virtualizer has actually rendered, so it silently does nothing for a selection outside the current slice.
+
+**No `behavior: 'smooth'` on a long list.** The animation to a distant index runs long enough for the user's next wheel gesture to arrive mid-flight, and the two fight over the scroll offset.
+
+The same identity trap applies to a non-virtualized list, minus the loop - the scroll just fires more often than the user changed anything. Use `useScrollIntoView` (`hooks/ui/useScrollIntoView.ts`) there, which keys on the value rather than on render count.
+
+Testing it needs the virtualizer mocked: jsdom has no layout engine, so the real one measures a zero-height scroll element, yields zero items, and every assertion about row scrolling passes vacuously. `FileSearchModal.render.test.tsx` mocks `useVirtualizer` to emit a fixed window of rows, stubs `Element.prototype.scrollIntoView` (jsdom does not implement it), and asserts it is never called. Lead with a test that the rows exist, or the suite proves nothing.
 
 ### Rendering Raw Terminal Output (`useAnsiConverter`)
 
@@ -843,6 +952,12 @@ grid should copy:
 - **Move DOM focus only when focus is already inside the grid.** An effect that
   focuses on every index change steals the caret out of the search box the
   moment filtering changes the list.
+
+### Surface-Local Chords (`useCommandKeyShortcut`)
+
+`useCommandKeyShortcut(key, handler, enabled)` in `src/renderer/hooks/keyboard/useCommandKeyShortcut.ts` is the primitive for a bare Cmd/Ctrl+`<key>` chord that ONE visible surface claims for as long as it is up: Cmd+S in an editor pane (`useSaveShortcut` is a preset over it), Cmd+R on the Usage Dashboard's Anthropic Usage / OpenAI Usage panels (`useQuotaRefresh`'s `refreshHotkey` option). It listens in the capture phase with `preventDefault`, so it wins against a focused textarea and against the browser's own default for the chord, and it requires the modifier ALONE - a Shift- or Alt-qualified chord falls through to whatever else owns it.
+
+Do NOT reach for it to add a global shortcut. Those belong in `constants/shortcuts.ts` and must be matched through `eventMatchesShortcutKeys` so the user can rebind them. And do NOT let a component claim a chord just because it is mounted: `refreshHotkey` defaults to false and the dashboard opts in only on the tab that renders the panel, because two mounted panels both answering Cmd+R would refresh whichever one registered last. When a surface advertises its chord in a tooltip, gate the hint on the same flag that claims it, and build the label with `formatShortcutKeys()` so it does not read `⌘R` on Windows.
 
 ### Keyboard Mastery Gamification
 
@@ -1898,6 +2013,29 @@ Two things a host must get right:
 
 Escape ordering is the host's call. On a layer-stack modal, delegate to `closeIfOpen()` first and only close the modal when it returns false, so Escape dismisses the panel before the modal.
 
+## Left Bar Header Width Gates
+
+The Left Bar header is a single row that neither wraps nor scrolls, and the user can drag the sidebar down to 256px. Every control added to it (the badge pill, the now-playing pill, the LIVE toggle) takes room from a fixed budget, so the row needs a declared yield order rather than whatever CSS happens to shrink first.
+
+**The MAESTRO wordmark is drawn in full or not at all.** It used to carry `truncate`, which rendered the brand as "MAE..." on a narrow sidebar. A clipped brand reads as a rendering bug, not as a deliberate space saving, so `SessionList` gates it on a width instead:
+
+```ts
+const showWordmark =
+	leftSidebarWidthState >=
+	WORDMARK_MIN_WIDTH + livePillReserve + headerBadgeWidth + nowPlayingReserve;
+```
+
+The wand button stays at every width, so the header never loses its identity or its switch-agent affordance.
+
+**The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. It is therefore `min-w-0` rather than `shrink-0` (a flex item defaults to `min-width: auto` and refuses to go below its content, so both the pill and the button inside it need `min-w-0`), while both transport buttons, both icons, and the divider stay `shrink-0` - they are the entire transport a minimized player has.
+
+Two rules for adding a control here:
+
+- **Reserve for the form the control is actually in, not its widest form.** The now-playing pill sheds its filename below `NOW_PLAYING_LABEL_MIN_WIDTH`, so `NOW_PLAYING_COMPACT_RESERVE` and `NOW_PLAYING_LABEL_RESERVE` are separate numbers. Reserving the wide figure at every width hides the wordmark to make room for a pill that is no longer that wide.
+- **Ask the store whether the control is on screen, once.** `selectNowPlayingVisible` in `mediaPlaybackStore` answers that for the pill, and both the pill and the header's reserve read it. Two copies of "is it visible" is how a width reserve ends up describing a header nobody is looking at.
+
+Testing this drives `leftSidebarWidth` in `useSettingsStore` directly, the same way the LIVE-pill tests do; jsdom measures nothing, so a real-layout test is not available. Assert the wordmark's ABSENCE at narrow widths, not that `truncate` is gone - the latter passes on a wordmark that still renders clipped.
+
 ---
 
 ## Tab System
@@ -2153,6 +2291,30 @@ beforeEach(() => {
 });
 ```
 
+### The Record View for a Table Row (`<RecordDetailModal>`)
+
+`<RecordDetailModal>` in `src/renderer/components/ui/RecordDetailModal.tsx` flips one row of a table into a field/value list: one field per line, values wrapped with their newlines intact, a field filter, prev/next row navigation, and a per-value copy button.
+
+Every tabular preview uses it. `CsvRowDetailModal` is a thin adapter that maps a positional CSV row onto the field list; the parquet viewer maps typed cells through `formatCellExact`. Do NOT hand-roll a second one - the keyboard model here is subtle and easy to get subtly wrong.
+
+Callers supply their own `priority` (a `MODAL_PRIORITIES` entry), `resizeKey` (so each surface remembers its own dragged size), and `testIdPrefix` (so a test can target the surface it opened rather than "whichever record modal is up"). The `fields` prop is the only shape all callers agree on: a CSV row is positional strings and a parquet row is typed values, so the mapping belongs in the caller, not in a union type here.
+
+**Focus starts on the field list, not the filter input.** Left/Right step between rows and Up/Down scroll, and none of that works while a text input owns the caret - `/` is what moves focus to the filter. Escape is deliberately NOT handled locally: the layer stack takes it at capture on `window`, so "Escape clears the filter first" is not implementable here and Escape closing the modal is the app-wide contract anyway.
+
+### The Parquet Viewer (`src/renderer/components/ParquetViewer/`)
+
+The file preview for `.parquet`. Unlike every other preview it is a **client of a query engine**, not a renderer over file content: the file stays open in the main process and only the displayed window of rows crosses IPC. See [Parquet Preview](#parquet-preview-srcmainparquet) in AGENT-INFRA for the engine side.
+
+Three rules for editing it:
+
+- **Never filter or sort locally.** Both round-trip to the engine. Filtering the loaded page would only ever search the first few hundred rows, which on a 100M-row file is a search box that lies.
+- **`matchedRows` is a lower bound until `complete` is true.** Render it as `1,204+`, never as an exact total. A filtered scan stops as soon as it has filled the requested window; a background pass with `countAll: true` converges the number, and that pass is also what warms the scan for the next page.
+- **Hiding a column changes the projection.** It is a real optimization (the engine stops decoding that column), not a CSS toggle, which is why it invalidates the loaded window.
+
+The grid virtualizes with `@tanstack/react-virtual`. **Its "load the next page" effect must not fire for an unmeasured grid**: with no layout, the virtualizer renders a default window and the last rendered index looks like the end of the data, so the viewer pages the entire match set into memory without the user ever scrolling. `ParquetGrid` guards on `scrollRef.current?.clientHeight` and treats "no rendered rows" as `-1` rather than `0` for exactly this reason. jsdom has no layout engine, so this is the failure mode a render test will catch and a manual pass never will.
+
+Column widths are explicit state seeded from each column's type, not measured. Measuring needs cells, cells arrive one page at a time, and a width that jumps when page two lands is worse than one that is merely approximate.
+
 ---
 
 ## Key Files Reference
@@ -2173,3 +2335,5 @@ beforeEach(() => {
 | Markdown renderer | `src/renderer/components/Markdown/` (`<Markdown preset=...>`; `MarkdownRenderer.tsx` wraps the chat preset) |
 | Settings hook     | `src/renderer/hooks/settings/useSettings.ts`                                                                |
 | Settings store    | `src/renderer/stores/settingsStore.ts`                                                                      |
+| Record view       | `src/renderer/components/ui/RecordDetailModal.tsx`                                                          |
+| Parquet viewer    | `src/renderer/components/ParquetViewer/`                                                                    |

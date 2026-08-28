@@ -47,6 +47,7 @@ import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-sta
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
+import { registerParquetHandlers } from './parquet';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
 	registerWebHandlers,
@@ -122,6 +123,7 @@ export type { CueStatsHandlerDependencies };
 export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
+export { registerParquetHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
 export {
@@ -322,6 +324,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register filesystem handlers (no dependencies needed - uses stores directly)
 	registerFilesystemHandlers();
+	registerParquetHandlers();
 	// Register attachments handlers
 	registerAttachmentsHandlers({
 		app: deps.app,

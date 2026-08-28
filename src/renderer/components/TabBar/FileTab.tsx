@@ -12,6 +12,7 @@ import {
 	Clock,
 	ChevronsRight,
 	FileText,
+	Share2,
 } from 'lucide-react';
 import type { FilePreviewTab, Theme } from '../../types';
 import { getExtensionColor } from '../../utils/extensionColors';
@@ -22,6 +23,8 @@ import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ShortcutHint } from './ShortcutHint';
+import { useTabStore } from '../../stores/tabStore';
+import { isGistPublishableFile } from '../FilePreview/filePreviewUtils';
 
 /**
  * Props for the FileTab component.
@@ -57,6 +60,11 @@ export interface FileTabProps {
 	isFirstTab?: boolean;
 	/** Is this the last tab? */
 	isLastTab?: boolean;
+	/**
+	 * Publish this file's contents as a GitHub Gist. Omitted when the gh CLI is
+	 * unavailable; the entry hides itself for files a gist cannot carry.
+	 */
+	onPublishGist?: (tabId: string) => void;
 	/** Stable callback - receives tabId - closes all tabs except this one */
 	onCloseOtherTabs?: (tabId: string) => void;
 	/** Stable callback - receives tabId - closes tabs to the left */
@@ -109,6 +117,7 @@ export const FileTab = memo(function FileTab({
 	onMoveToLast,
 	isFirstTab,
 	isLastTab,
+	onPublishGist,
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
@@ -218,6 +227,15 @@ export const FileTab = memo(function FileTab({
 		[onRename, tab.id, setOverlayOpen]
 	);
 
+	const handlePublishGistClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onPublishGist?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onPublishGist, tab.id, setOverlayOpen]
+	);
+
 	const handleSnoozeClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -321,6 +339,16 @@ export const FileTab = memo(function FileTab({
 		() => getExtensionColor(tab.extension, theme, colorBlindMode),
 		[tab.extension, theme, colorBlindMode]
 	);
+
+	// A gist body is plain text, so the action is offered only for files whose
+	// contents can survive the trip (see isGistPublishableFile).
+	const canPublishGist = useMemo(
+		() => !!onPublishGist && isGistPublishableFile(tab.name + tab.extension, tab.content),
+		[onPublishGist, tab.name, tab.extension, tab.content]
+	);
+	// Already published? The modal opens on its existing-gist view, so the label
+	// has to say so rather than promising a fresh publish.
+	const publishedGist = useTabStore((s) => s.fileGistUrls[tab.path]);
 
 	// Hover background varies by theme mode for proper contrast
 	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
@@ -539,6 +567,25 @@ export const FileTab = memo(function FileTab({
 									>
 										<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										{getRevealLabel(window.maestro.platform)}
+									</button>
+								)}
+
+								{/* Publish as Gist - text files only, and only when the gh CLI is
+									available. Mirrors the FilePreview toolbar button, so a tab that is
+									not the active one can be published without opening it first. */}
+								{canPublishGist && (
+									<button
+										onClick={handlePublishGistClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Share2
+											className="w-3.5 h-3.5"
+											style={{
+												color: publishedGist ? theme.colors.accent : theme.colors.textDim,
+											}}
+										/>
+										{publishedGist ? 'View Published Gist' : 'Publish as GitHub Gist'}
 									</button>
 								)}
 

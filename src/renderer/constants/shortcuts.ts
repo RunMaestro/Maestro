@@ -162,7 +162,10 @@ export const DEFAULT_SHORTCUTS = {
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
 		label: 'Next Unread / Draft Tab',
-		keys: ['Meta', 'Shift', 'ArrowDown'],
+		// NOT Cmd+Shift+Down: that chord is in RESERVED_SHORTCUT_COMBOS (macOS
+		// select-to-bottom inside a text field), so the new load-time guard strips
+		// it and the action would arrive unbound. Alt+Meta+ArrowDown is free.
+		keys: ['Alt', 'Meta', 'ArrowDown'],
 	},
 	jumpToTerminal: {
 		id: 'jumpToTerminal',

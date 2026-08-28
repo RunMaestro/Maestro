@@ -411,6 +411,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								onRetry={handleRetry}
 								onViewInGraph={handleViewInGraph}
 								onTriggerSubscription={triggerSubscription}
+								onRenamed={handleRetry}
 							/>
 						) : activeTab === 'activity' ? (
 							<div className="flex-1 min-h-0 px-5 py-4 select-text">

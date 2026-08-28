@@ -4194,6 +4194,143 @@ describe('FileTab overlay menu', () => {
 
 		vi.useRealTimers();
 	});
+
+	// Gist publishing from a file tab - the file need not be the active tab, so
+	// the menu is the only surface that can reach it without opening it first.
+	describe('Publish as GitHub Gist', () => {
+		const openFileTabOverlay = async () => {
+			const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
+			await act(async () => {
+				fireEvent.mouseEnter(fileTabElement!);
+				vi.advanceTimersByTime(450);
+			});
+		};
+
+		it('offers the entry for a text file when the gh CLI is available', async () => {
+			vi.useFakeTimers();
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={vi.fn()}
+					ghCliAvailable
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			expect(screen.getByText('Publish as GitHub Gist')).toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('hides the entry when the gh CLI is unavailable', async () => {
+			vi.useFakeTimers();
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={vi.fn()}
+					ghCliAvailable={false}
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			expect(screen.queryByText('Publish as GitHub Gist')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		// A gist body is plain text, so a binary tab must not offer the action.
+		it('hides the entry for a file a gist cannot carry', async () => {
+			vi.useFakeTimers();
+
+			const binaryTab: FilePreviewTab = {
+				...fileTab,
+				path: '/path/to/document.wasm',
+				extension: '.wasm',
+			};
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={[
+						{ type: 'ai' as const, id: 'tab-1', data: aiTab },
+						{ type: 'file' as const, id: 'file-tab-1', data: binaryTab },
+					]}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={vi.fn()}
+					ghCliAvailable
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			expect(screen.getByText('Copy File Path')).toBeInTheDocument();
+			expect(screen.queryByText('Publish as GitHub Gist')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('calls onPublishFileGist with the tab id and closes the overlay', async () => {
+			vi.useFakeTimers();
+			const onPublishFileGist = vi.fn();
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={onPublishFileGist}
+					ghCliAvailable
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Publish as GitHub Gist'));
+			});
+
+			expect(onPublishFileGist).toHaveBeenCalledWith('file-tab-1');
+			expect(screen.queryByText('Copy File Path')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+	});
 });
 
 describe('Unified tabs drag and drop', () => {

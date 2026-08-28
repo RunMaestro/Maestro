@@ -141,7 +141,7 @@ export function FileTreeContextMenu({
 	return createPortal(
 		<div
 			ref={contextMenuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden"
+			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden whitespace-nowrap"
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,

@@ -30,6 +30,9 @@ export type { TilingShortcutHandlers } from './useTilingShortcuts';
 export { useListNavigation } from './useListNavigation';
 export type { UseListNavigationOptions, UseListNavigationReturn } from './useListNavigation';
 
+// Surface-local Cmd/Ctrl+<key> chord
+export { useCommandKeyShortcut } from './useCommandKeyShortcut';
+
 // Cmd/Ctrl+S save shortcut
 export { useSaveShortcut } from './useSaveShortcut';
 

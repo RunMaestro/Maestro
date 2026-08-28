@@ -9,8 +9,12 @@
  *
  * Two looks:
  *   - `inline`   bordered square buttons for a toolbar or stats bar
- *   - `floating` frosted pill for overlaying a scrolling pane, matching the
+ *   - `floating` opaque pill for overlaying a scrolling pane, matching the
  *                floating Table of Contents button in the file preview
+ *
+ * The floating pill is fully opaque on purpose: it sits directly over running
+ * text, and any transparency lets the words underneath read straight through
+ * the icons. The Table of Contents button it sits beside is opaque too.
  *
  * A floating control can also be `collapsible`: it rests as a circle the size
  * of that Table of Contents button and expands to the full pill on hover or
@@ -85,9 +89,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 	// buttons are clipped rather than unmounted so a Tab into them expands the
 	// pill, and the whole thing is anchored right by its caller so it grows
 	// leftward - the cursor never falls outside the element it just opened.
-	const groupClass = collapsed
-		? 'group focus-within:opacity-100 gap-0'
-		: `${floating ? 'group focus-within:opacity-100' : ''} gap-1`;
+	const groupClass = collapsed ? 'group gap-0' : `${floating ? 'group' : ''} gap-1`;
 	const revealClass =
 		'flex items-center gap-1 pl-1 overflow-hidden max-w-0 opacity-0 transition-all duration-200 ' +
 		'group-hover:max-w-[10rem] group-hover:opacity-100 ' +
@@ -97,9 +99,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 		<div
 			data-testid={testId}
 			className={`flex items-center ${groupClass} ${
-				floating
-					? 'self-start shrink-0 px-1 py-1 rounded-full shadow-lg opacity-70 hover:opacity-100 transition-opacity'
-					: ''
+				floating ? 'self-start shrink-0 px-1 py-1 rounded-full shadow-lg' : ''
 			} ${className}`.trim()}
 			style={
 				floating

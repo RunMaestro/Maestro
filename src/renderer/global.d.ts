@@ -164,9 +164,15 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
-import type { DurationPercentiles } from '../shared/percentiles';
+import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
+import type {
+	ParquetFileInfo,
+	ParquetQueryRequest,
+	ParquetQueryResult,
+	ParquetSortSpec,
+} from '../shared/parquet/types';
 import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
@@ -1442,6 +1448,26 @@ interface MaestroAPI {
 		onWorktreeRemoved: (
 			callback: (data: { sessionId: string; worktreePath: string }) => void
 		) => () => void;
+	};
+	/**
+	 * Parquet preview. The file stays open in the main process and only the
+	 * displayed window of rows crosses this bridge - see
+	 * src/shared/parquet/preview.ts for why a parquet read returns a marker
+	 * instead of content.
+	 */
+	parquet: {
+		open: (filePath: string, sshRemoteId?: string) => Promise<ParquetFileInfo>;
+		query: (request: ParquetQueryRequest) => Promise<ParquetQueryResult>;
+		export: (options: {
+			handle: string;
+			filter: string;
+			columns?: string[];
+			sort?: ParquetSortSpec | null;
+			destPath: string;
+			format: 'csv' | 'jsonl';
+			maxRows?: number;
+		}) => Promise<{ path: string; rows: number; truncated: boolean }>;
+		close: (handle: string) => Promise<void>;
 	};
 	fs: {
 		homeDir: () => Promise<string>;
@@ -3350,17 +3376,10 @@ interface MaestroAPI {
 	// Stats tracking API (global AI interaction statistics)
 	stats: {
 		// Record a query event (interactive conversation turn)
-		recordQuery: (event: {
-			sessionId: string;
-			agentType: string;
-			source: 'user' | 'auto';
-			startTime: number;
-			duration: number;
-			projectPath?: string;
-			tabId?: string;
-			isRemote?: boolean;
-			isWorktree?: boolean;
-		}) => Promise<string>;
+		// Shaped by the shared type rather than an inline copy - the copy had
+		// already drifted from the real event once, and a field the bridge does
+		// not declare is a field the renderer silently cannot send.
+		recordQuery: (event: Omit<QueryEvent, 'id'>) => Promise<string>;
 		// Start an Auto Run session (returns session ID)
 		startAutoRun: (session: {
 			sessionId: string;
@@ -3439,34 +3458,9 @@ interface MaestroAPI {
 			force?: boolean
 		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
 		// Get aggregated stats for dashboard display
-		getAggregation: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<{
-			totalQueries: number;
-			totalDuration: number;
-			avgDuration: number;
-			queryDurationPercentiles: DurationPercentiles;
-			queryDurationPercentilesByAgent: Record<string, DurationPercentiles>;
-			autoRunTaskDurationPercentiles: DurationPercentiles;
-			byAgent: Record<string, { count: number; duration: number }>;
-			bySource: { user: number; auto: number };
-			byLocation: { local: number; remote: number };
-			byDay: Array<{ date: string; count: number; duration: number }>;
-			byHour: Array<{ hour: number; count: number; duration: number }>;
-			totalSessions: number;
-			sessionsByAgent: Record<string, number>;
-			sessionsByDay: Array<{ date: string; count: number }>;
-			avgSessionDuration: number;
-			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-			bySessionSource: Record<string, { user: number; auto: number }>;
-			bySessionLastQuery: Record<string, number>;
-			worktreeQueries: number;
-			parentQueries: number;
-			byWorktreeStatus: {
-				worktree: { count: number; duration: number };
-				parent: { count: number; duration: number };
-			};
-			imageAnnotations: number;
-		}>;
+		getAggregation: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<StatsAggregation>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
 		// Subscribe to stats updates (for real-time dashboard refresh)
@@ -4176,6 +4170,16 @@ interface MaestroAPI {
 			promptFiles?: Record<string, string>
 		) => Promise<{ changed: boolean }>;
 		deleteYaml: (projectRoot: string) => Promise<boolean>;
+		renamePipeline: (
+			oldName: string,
+			newName: string
+		) => Promise<{
+			renamed: boolean;
+			subscriptionsUpdated: number;
+			filesWritten: string[];
+			reason?: string;
+			warnings: string[];
+		}>;
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
 		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;
@@ -4364,6 +4368,15 @@ interface MaestroAPI {
 			filename: string,
 			agentId?: string
 		) => Promise<{ success: boolean; error?: string }>;
+		search: (
+			projectPath: string,
+			query: string,
+			agentId?: string
+		) => Promise<{
+			success: boolean;
+			matches?: Array<{ name: string; matchedName: boolean; snippet?: string }>;
+			error?: string;
+		}>;
 		getPath: (
 			projectPath: string,
 			agentId?: string

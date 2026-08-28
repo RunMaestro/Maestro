@@ -139,6 +139,7 @@ import { CONCERTO_HTML_SCHEME } from '../shared/concerto-html';
 import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
+import { closeAllParquetFiles } from './parquet/parquet-file';
 import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
@@ -2873,6 +2874,10 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		// Release parquet file descriptors (and their cached scans) on the way
+		// out. The idle reaper would get to them eventually, but a preview tab
+		// left open otherwise holds a descriptor until the process dies.
+		app.on('will-quit', () => void closeAllParquetFiles());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);

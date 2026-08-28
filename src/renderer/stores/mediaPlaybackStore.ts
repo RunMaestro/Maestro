@@ -99,8 +99,9 @@ interface MediaPlaybackStoreState {
 	playing: boolean;
 	/**
 	 * Player minimized to the Left Bar header. Playback continues - minimizing is
-	 * not stopping. Cleared by opening a media file, by the now-playing pill's
-	 * restore button, or by the "Show Floating Media Player" command.
+	 * not stopping. Cleared by opening a media file, by queueing one, by the
+	 * now-playing pill's restore button, or by the "Show Floating Media Player"
+	 * command.
 	 */
 	dismissed: boolean;
 	/**
@@ -158,6 +159,11 @@ interface MediaPlaybackStoreState {
 	openMedia: (request: MediaOpenRequest) => void;
 	/**
 	 * Add files to the end of the queue without interrupting what is playing.
+	 *
+	 * Queueing always brings the widget back, whether it was minimized or is a
+	 * queue restored from disk: adding files is a request to see the queue, and
+	 * doing it into a hidden player produces no visible response anywhere in the
+	 * app. It does not disturb the loaded track - what is playing keeps playing.
 	 *
 	 * The one exception is an idle player: with nothing loaded there is no
 	 * widget on screen, so the first queued file becomes the active one (paused,
@@ -370,11 +376,15 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			// one the user is on, so queueing behind it must not yank the player
 			// away from it.
 			if (state.activeItemId) {
-				// Queueing counts as engaging the player, so a restored queue stops
-				// being dormant here: otherwise adding to a queue whose widget is
-				// hidden would produce no visible response anywhere in the app.
+				// Queueing counts as engaging the player, so the widget comes back
+				// here - a restored queue stops being dormant AND a minimized player
+				// un-hides. Otherwise queueing ten files while the widget is hidden
+				// produces no visible response anywhere in the app, which reads as
+				// the command having done nothing. Un-hiding is not interrupting:
+				// the loaded track is untouched and keeps playing.
 				return {
 					items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId),
+					dismissed: false,
 					dormant: false,
 				};
 			}
@@ -601,4 +611,16 @@ export function selectMediaPlayerTargetId(state: MediaPlaybackStoreState): strin
 export function selectActiveMediaItem(state: MediaPlaybackStoreState): MediaItem | null {
 	if (!state.activeItemId) return null;
 	return state.items.find((item) => item.id === state.activeItemId) ?? null;
+}
+
+/**
+ * Whether the Left Bar header's now-playing pill is actually on screen.
+ *
+ * `NowPlayingIndicator` renders nothing unless BOTH of these hold, and the
+ * header needs the same answer to decide how much width the pill is taking.
+ * One selector because two copies of "is the pill on screen" is how a width
+ * reserve ends up describing a header nobody is looking at.
+ */
+export function selectNowPlayingVisible(state: MediaPlaybackStoreState): boolean {
+	return selectShowNowPlayingIndicator(state) && selectActiveMediaItem(state) !== null;
 }

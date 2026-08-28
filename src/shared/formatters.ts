@@ -58,6 +58,22 @@ export function formatNumber(num: number): string {
 }
 
 /**
+ * Format a count exactly, with locale digit grouping.
+ *
+ * The counterpart to {@link formatNumber}: use this wherever the number IS the
+ * information rather than a rough magnitude on a badge. `1,204,993 of
+ * 8,412,004 rows match` tells a person how selective their filter was;
+ * `1.2M of 8.4M` tells them nothing they did not already assume, and rounds
+ * away exactly the digits they were reading for.
+ *
+ * @param count - The number to format
+ * @returns Formatted string (e.g., "42", "1,204,993")
+ */
+export function formatCount(count: number): string {
+	return count.toLocaleString();
+}
+
+/**
  * Format a token count with K/M/B suffix for compact display.
  * Uses approximate (~) prefix for larger numbers.
  *

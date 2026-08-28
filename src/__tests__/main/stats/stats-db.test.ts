@@ -295,13 +295,14 @@ describe('StatsDB class (mocked)', () => {
 
 			// Migrations v1-v8: initial schema, is_remote column, session_lifecycle
 			// table, compound indexes, is_worktree column, image_annotations table,
-			// shortcut_usage_daily table, multi_window_usage_daily table.
-			expect(db.getTargetVersion()).toBe(8);
+			// shortcut_usage_daily table, multi_window_usage_daily table,
+			// query_events token/cost columns.
+			expect(db.getTargetVersion()).toBe(9);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 8 }];
+				if (sql === 'user_version') return [{ user_version: 9 }];
 				return undefined;
 			});
 
@@ -332,8 +333,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(8);
-			expect(db.getTargetVersion()).toBe(8);
+			expect(db.getCurrentVersion()).toBe(9);
+			expect(db.getTargetVersion()).toBe(9);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 

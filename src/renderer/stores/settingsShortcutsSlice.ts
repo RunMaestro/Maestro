@@ -8,7 +8,7 @@
  */
 
 import type { StateCreator } from 'zustand';
-import { shortcutKeysEqual } from '../../shared/shortcutKeys';
+import { shortcutKeysEqual, findReservedShortcutCombo } from '../../shared/shortcutKeys';
 import type { Shortcut } from '../types';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import type { SettingsStore } from './settingsStore';
@@ -216,6 +216,24 @@ function migrateShortcuts(
 			migrated[id] = { ...current, keys: remap.toKeys };
 			needsMigration = true;
 		}
+	}
+
+	// Drop any binding on a chord the OS owns inside a text field (see
+	// RESERVED_SHORTCUT_COMBOS). The recorder refuses these now, but a chord
+	// bound before that guard existed is still on disk, and it shadows the
+	// native behavior every time - the user's select-to-end silently jumps
+	// agents instead. Fall back to the bundled default so the action keeps
+	// working rather than going unbound without explanation.
+	for (const [id, shortcut] of Object.entries(migrated)) {
+		if (!findReservedShortcutCombo(shortcut.keys)) continue;
+		const fallback = defaults[id]?.keys;
+		// Only take a default that is itself free, or the next load would strip
+		// it again and re-persist forever through the settings file watcher.
+		migrated[id] = {
+			...shortcut,
+			keys: fallback && !findReservedShortcutCombo(fallback) ? fallback : [],
+		};
+		needsMigration = true;
 	}
 
 	// Merge: use default labels (in case they changed) but preserve user's custom keys

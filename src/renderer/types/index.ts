@@ -81,6 +81,7 @@ export type RightPanelTab = 'files' | 'history' | 'autorun';
 export type UsageDashboardViewMode =
 	| 'overview'
 	| 'agents'
+	| 'groups'
 	| 'agent-overview'
 	| 'tokens'
 	| 'activity'

@@ -184,7 +184,8 @@ const selectShortcutsHelpOpen = (s: ReturnType<typeof useModalStore.getState>) =
 export function useModalHandlers(
 	inputRef: React.RefObject<HTMLTextAreaElement | null>,
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>,
-	handleResumeSessionRef?: React.MutableRefObject<((agentSessionId: string) => void) | null>
+	handleResumeSessionRef?: React.MutableRefObject<((agentSessionId: string) => void) | null>,
+	groupChatInputRef?: React.RefObject<HTMLTextAreaElement | null>
 ): ModalHandlersReturn {
 	// --- Reactive subscriptions (for derived state & effects) ---
 	const agentErrorModalSessionId = useModalStore(selectAgentErrorSessionId);
@@ -707,8 +708,14 @@ export function useModalHandlers(
 
 	const handleClosePromptComposer = useCallback(() => {
 		getModalActions().setPromptComposerOpen(false);
-		setTimeout(() => inputRef.current?.focus(), 0);
-	}, [inputRef]);
+		// The composer serves both the agent composer and a group chat room, so
+		// hand the caret back to whichever one is actually on screen. The AI
+		// input isn't rendered while a room is open, so focusing it there lands
+		// the caret nowhere and the next keystroke goes to the document.
+		const inGroupChat = useGroupChatStore.getState().activeGroupChatId !== null;
+		const targetRef = inGroupChat && groupChatInputRef ? groupChatInputRef : inputRef;
+		setTimeout(() => targetRef.current?.focus(), 0);
+	}, [inputRef, groupChatInputRef]);
 
 	const handleCloseCreatePRModal = useCallback(() => {
 		getModalActions().setCreatePRModalOpen(false);

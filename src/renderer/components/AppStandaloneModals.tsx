@@ -454,9 +454,14 @@ function AppStandaloneModalsInner({
 					}}
 					onSuccess={(gistUrl, isPublic) => {
 						const publishedAt = Date.now();
-						// Save gist URL for the file if it's from file preview tab (not tab context)
-						if (activeFileTab && !tabGistContent) {
-							saveFileGistUrl(activeFileTab.path, {
+						// Save gist URL for the file the content came from. The toolbar
+						// button publishes the active file tab directly; a file tab's
+						// overlay menu names its own path, since the tab it was opened
+						// on need not be the active one.
+						const publishedFilePath =
+							tabGistContent?.filePath ?? (tabGistContent ? undefined : activeFileTab?.path);
+						if (publishedFilePath) {
+							saveFileGistUrl(publishedFilePath, {
 								gistUrl,
 								isPublic,
 								publishedAt,
@@ -493,9 +498,11 @@ function AppStandaloneModalsInner({
 					existingGist={
 						tabGistContent?.messageId
 							? useMessageGistStore.getState().published[tabGistContent.messageId]
-							: activeFileTab && !tabGistContent
-								? fileGistUrls[activeFileTab.path]
-								: undefined
+							: tabGistContent?.filePath
+								? fileGistUrls[tabGistContent.filePath]
+								: activeFileTab && !tabGistContent
+									? fileGistUrls[activeFileTab.path]
+									: undefined
 					}
 				/>
 			)}

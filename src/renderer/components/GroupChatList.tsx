@@ -6,6 +6,7 @@
 
 import { memo, useState, useRef, useMemo, useCallback } from 'react';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useUIStore } from '../stores/uiStore';
 import {
 	MessageSquare,
 	ChevronDown,
@@ -203,7 +204,10 @@ function GroupChatListInner({
 	const [internalIsExpanded, setInternalIsExpanded] = useState(groupChats.length > 0);
 	const isExpanded = controlledIsExpanded !== undefined ? controlledIsExpanded : internalIsExpanded;
 
-	const [showArchived, setShowArchived] = useState(false);
+	// Shared, not local: whether archived chats are drawn decides which rows the
+	// list contains, and the Cmd+[ / Cmd+] cycle has to walk exactly that set.
+	const showArchived = useUIStore((s) => s.showArchivedGroupChats);
+	const setShowArchived = useUIStore((s) => s.setShowArchivedGroupChats);
 
 	const setIsExpanded = useCallback(
 		(expanded: boolean) => {

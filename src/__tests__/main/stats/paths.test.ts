@@ -731,7 +731,12 @@ describe('File path normalization in database (forward slashes consistently)', (
 				'C:/Users/TestUser/Projects/MyApp', // normalized path
 				'tab-1',
 				null, // isRemote (undefined → null)
-				null // isWorktree (undefined → null)
+				null, // isWorktree (undefined → null)
+				null, // inputTokens
+				null, // outputTokens
+				null, // cacheReadTokens
+				null, // cacheCreationTokens
+				null // costUsd
 			);
 		});
 
@@ -750,7 +755,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 				tabId: 'tab-1',
 			});
 
-			// insertQueryEvent now has 10 parameters including isRemote and isWorktree
+			// insertQueryEvent binds 15 parameters: identity, timing, flags, tokens.
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -761,7 +766,12 @@ describe('File path normalization in database (forward slashes consistently)', (
 				'/Users/testuser/Projects/MyApp', // unchanged
 				'tab-1',
 				null, // isRemote (undefined → null)
-				null // isWorktree (undefined → null)
+				null, // isWorktree (undefined → null)
+				null, // inputTokens
+				null, // outputTokens
+				null, // cacheReadTokens
+				null, // cacheCreationTokens
+				null // costUsd
 			);
 		});
 
@@ -779,7 +789,8 @@ describe('File path normalization in database (forward slashes consistently)', (
 				// projectPath is undefined
 			});
 
-			// insertQueryEvent now has 10 parameters including isRemote and isWorktree
+			// 15 parameters: identity, timing, flags, then the five token/cost
+			// columns. Everything optional and unreported binds as NULL.
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -790,7 +801,12 @@ describe('File path normalization in database (forward slashes consistently)', (
 				null, // undefined becomes null
 				null, // tabId undefined → null
 				null, // isRemote undefined → null
-				null // isWorktree undefined → null
+				null, // isWorktree undefined → null
+				null, // inputTokens
+				null, // outputTokens
+				null, // cacheReadTokens
+				null, // cacheCreationTokens
+				null // costUsd
 			);
 		});
 	});

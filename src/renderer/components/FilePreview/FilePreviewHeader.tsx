@@ -61,6 +61,8 @@ interface FilePreviewHeaderProps {
 	currentHistoryIndex?: number;
 	ghCliAvailable?: boolean;
 	onPublishGist?: () => void;
+	/** Whether this file's contents can go up as a gist (plain text only) */
+	canPublishGist?: boolean;
 	hasGist?: boolean;
 	onOpenInGraph?: () => void;
 	/** Open this file as a new tab in the embedded Maestro browser. */
@@ -125,6 +127,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	currentHistoryIndex,
 	ghCliAvailable,
 	onPublishGist,
+	canPublishGist,
 	hasGist,
 	onOpenInGraph,
 	onOpenInBrowser,
@@ -342,12 +345,13 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Publish as Gist button - only show if gh CLI is available and not in edit mode */}
+						{/* Publish as Gist button - gh CLI available, not editing, and the
+							file is plain text a gist can carry (see isGistPublishableFile) */}
 						{toolbarVisibility.publishGist &&
 							ghCliAvailable &&
 							!markdownEditMode &&
 							onPublishGist &&
-							!isImage && (
+							canPublishGist && (
 								<HoverTooltip
 									theme={theme}
 									label={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}

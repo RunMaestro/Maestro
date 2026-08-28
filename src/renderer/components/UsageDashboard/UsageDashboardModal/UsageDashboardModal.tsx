@@ -24,6 +24,7 @@ import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
+import { useSessionStore } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useClaudeUsageStore } from '../../../stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../../stores/codexUsageStore';
@@ -47,6 +48,7 @@ import {
 	ActivityView,
 	AgentOverviewView,
 	AgentsView,
+	GroupsView,
 	AutoRunView,
 	DashboardTabPanel,
 	OverviewView,
@@ -103,6 +105,20 @@ export function UsageDashboardModal({
 		});
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
+	// Groups come straight from the store rather than a prop: the dashboard is
+	// the only consumer, and threading them through AppInfoModals would add a
+	// prop to a component that has no other reason to know about groups.
+	const groups = useSessionStore((s) => s.groups);
+	// Group the user drilled into from the Groups tab. Holds the member ids
+	// rather than the group id so the Agents grid stays restricted to exactly
+	// the agents that were in the group when it was clicked - re-deriving from
+	// the live group would silently change the set under a user who is reading
+	// it, and the chip names a group that no longer matches what is shown.
+	const [groupDrillDown, setGroupDrillDown] = useState<{
+		id: string;
+		label: string;
+		sessionIds: string[];
+	} | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -118,6 +134,33 @@ export function UsageDashboardModal({
 		contentRef,
 		onViewModeChanged: handleViewModeChanged,
 	});
+
+	// Drill into a group: jump to the Agents grid restricted to its members.
+	// Reusing that grid is the point - the answer to "which agents made this
+	// group's numbers" is the agent grid, and a second per-group grid would be
+	// the same tiles with a different data source.
+	const handleSelectGroup = useCallback(
+		(rollup: { groupId: string; name: string; sessions: Array<{ id: string }> }) => {
+			setGroupDrillDown({
+				id: rollup.groupId,
+				label: rollup.name,
+				sessionIds: rollup.sessions.map((s) => s.id),
+			});
+			switchViewMode('agents');
+		},
+		[switchViewMode]
+	);
+
+	const clearGroupDrillDown = useCallback(() => setGroupDrillDown(null), []);
+
+	// Leaving the Agents tab by any route drops the restriction. Without this
+	// the user returns to Agents days later still filtered to a group they no
+	// longer remember picking, which reads as agents having disappeared.
+	useEffect(() => {
+		if (viewMode !== 'agents' && viewMode !== 'groups') {
+			setGroupDrillDown(null);
+		}
+	}, [viewMode]);
 
 	// Reset time range to default when modal opens
 	useEffect(() => {
@@ -186,14 +229,18 @@ export function UsageDashboardModal({
 				<DashboardSkeleton
 					theme={theme}
 					viewMode={
-						viewMode === 'cue' ||
-						viewMode === 'agent-overview' ||
-						viewMode === 'shortcuts' ||
-						viewMode === 'tokens' ||
-						viewMode === 'anthropic-usage' ||
-						viewMode === 'codex-usage'
-							? 'overview'
-							: viewMode
+						// Groups is a card grid like Agents, so it borrows that
+						// skeleton; the rest have no skeleton of their own.
+						viewMode === 'groups'
+							? 'agents'
+							: viewMode === 'cue' ||
+								  viewMode === 'agent-overview' ||
+								  viewMode === 'shortcuts' ||
+								  viewMode === 'tokens' ||
+								  viewMode === 'anthropic-usage' ||
+								  viewMode === 'codex-usage'
+								? 'overview'
+								: viewMode
 					}
 					chartGridCols={layout.chartGridCols}
 					summaryCardsCols={layout.summaryCardsCols}
@@ -289,6 +336,24 @@ export function UsageDashboardModal({
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
 						onShowAgentDetails={setDetailSession}
+						restrictToSessionIds={groupDrillDown?.sessionIds ?? null}
+						restrictionLabel={groupDrillDown?.label}
+						onClearRestriction={clearGroupDrillDown}
+					/>
+				);
+			case 'groups':
+				return (
+					<GroupsView
+						key={viewMode}
+						data={data}
+						theme={theme}
+						sessions={sessions}
+						groups={groups}
+						activeGroupId={groupDrillDown?.id ?? null}
+						onSelectGroup={handleSelectGroup}
+						focusedSection={focusedSection}
+						setSectionRef={setSectionRef}
+						handleSectionKeyDown={handleSectionKeyDown}
 					/>
 				);
 			case 'agent-overview':

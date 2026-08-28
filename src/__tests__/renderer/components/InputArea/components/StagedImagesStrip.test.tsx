@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, screen } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StagedImagesStrip } from '../../../../../renderer/components/InputArea/components/StagedImagesStrip';
 import { inputAreaTheme } from '../_fixtures';
@@ -41,7 +41,9 @@ describe('StagedImagesStrip', () => {
 		const setLightboxImage = vi.fn();
 		renderStrip({ setLightboxImage });
 
-		fireEvent.click(screen.getAllByRole('img')[0]);
+		// The tile, not the <img>: the image is decorative and pointer-events-none,
+		// so a real press lands on the wrapper that carries the drag and the click.
+		fireEvent.click(tileOf(0));
 
 		expect(setLightboxImage).toHaveBeenCalledWith(
 			'data:image/png;base64,a',
@@ -86,17 +88,17 @@ describe('StagedImagesStrip', () => {
 	});
 
 	/**
-	 * The drag SOURCE: the thumbnail control. `draggable` lives here rather than
-	 * on the wrapper because Chromium will not promote a press on a form control
-	 * into an ancestor's drag (the img itself carries draggable="false").
+	 * The tile wrapper: drag source, drop target, and click target at once. The
+	 * thumbnail image is `pointer-events-none`, so this is also the element a
+	 * real press hit-tests to.
 	 */
-	function thumbOf(index: number): HTMLElement {
-		return screen.getAllByRole('img')[index].closest('[draggable="true"]') as HTMLElement;
+	function tileOf(index: number): HTMLElement {
+		return screen.getAllByRole('button', { name: /^Staged image/ })[index];
 	}
 
-	/** The drop TARGET: the tile wrapper the drop geometry is measured against. */
-	function tileOf(index: number): HTMLElement {
-		return thumbOf(index).parentElement as HTMLElement;
+	/** Where a drag starts. Same element as the tile now; kept for readability. */
+	function thumbOf(index: number): HTMLElement {
+		return tileOf(index);
 	}
 
 	/** Lay the tiles out as two 100px-wide boxes side by side. */
@@ -190,15 +192,26 @@ describe('StagedImagesStrip', () => {
 		expect(onReorder).not.toHaveBeenCalled();
 	});
 
-	it('starts the drag from the thumbnail control, not the wrapper', () => {
-		// Regression guard: with `draggable` on the wrapper instead, pressing the
-		// thumbnail was consumed as a button press and no drag ever began, so the
-		// strip could not be dragged into the chat at all.
+	it('drags from a plain element, never a form control', () => {
+		// Regression guard for the reason the strip could not be dragged into the
+		// chat at all: the thumbnail was wrapped in a <button>, and Blink drops
+		// the drag when a form control consumes the press for activation. That
+		// held whether `draggable` sat on the button or on an ancestor, so the
+		// test asserts the shape of the DOM rather than which element carries the
+		// attribute.
 		renderStrip();
 
-		const thumb = thumbOf(0);
-		expect(thumb.tagName).toBe('BUTTON');
-		expect(tileOf(0).getAttribute('draggable')).toBeNull();
+		const tile = tileOf(0);
+		expect(tile.tagName).not.toBe('BUTTON');
+		expect(tile.getAttribute('draggable')).toBe('true');
+		// The image must not be hit-testable: its own draggable="false" computes
+		// -webkit-user-drag: none, which would stop the drag if it were the target.
+		const img = screen.getAllByRole('presentation', { hidden: true })[0];
+		expect(img.className).toContain('pointer-events-none');
+		// The per-image controls opt out, so pressing one cannot start a tile drag.
+		for (const control of within(tile).getAllByRole('button')) {
+			expect(control.getAttribute('draggable')).toBe('false');
+		}
 	});
 
 	it('hides the organizer button when only one image is staged', () => {

@@ -18,6 +18,7 @@ import {
 import { buildContextTimelinePoint } from './contextTimelinePoint';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { useContextTimelineStore } from '../../../stores/contextTimelineStore';
+import { recordTurnUsage } from '../../../services/turnUsageLedger';
 import type { BatchedUpdater } from './types';
 
 /**
@@ -44,6 +45,13 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			if (!ownedGate.current?.(sessionId)) return;
 			const parsed = parseSessionId(sessionId);
 			const { actualSessionId, tabId, baseSessionId } = parsed;
+
+			// Fold the delta into the per-turn ledger before anything can bail
+			// out. The exit listener drains it when it records the query event,
+			// and a turn whose agent has already been removed from the store is
+			// still a turn whose tokens were spent - though with nothing left to
+			// drain it, the cap in the ledger is what reclaims the entry.
+			recordTurnUsage(sessionId, usageStats);
 
 			const sessionForUsage = getSessions().find((s) => s.id === baseSessionId);
 			if (!sessionForUsage) return;

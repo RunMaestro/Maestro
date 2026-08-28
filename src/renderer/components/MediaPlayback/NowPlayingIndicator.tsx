@@ -53,20 +53,28 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 
 	// One bordered pill with a divider between the halves, so the two buttons
 	// read as the minimized player rather than as unrelated header icons that
-	// happen to sit together. Never shrinks: the header row neither wraps nor
-	// scrolls, so these controls must not be what gets squeezed - the wordmark
-	// is the row's shrink target.
+	// happen to sit together.
+	//
+	// This pill is the header row's shrink target of last resort. The row
+	// neither wraps nor scrolls, so something has to yield, and the filename
+	// inside is the only thing here that can be clipped without reading as a
+	// bug: a truncated filename is ordinary, a truncated brand is not. The
+	// wordmark drops out whole instead (see SessionList's width gate), so it is
+	// no longer available to squeeze. Both buttons, both icons, and the divider
+	// stay shrink-0 - they are the entire transport a minimized player has.
 	return (
 		<div
 			data-testid="now-playing-indicator"
-			className="flex items-stretch shrink-0 rounded border overflow-hidden"
+			className="flex items-stretch min-w-0 rounded border overflow-hidden"
 			style={{ borderColor: theme.colors.border }}
 		>
 			<button
 				type="button"
 				data-testid="now-playing-toggle"
 				onClick={requestToggle}
-				className={`flex items-center gap-1 text-[10px] font-bold transition-colors hover:bg-white/10 ${
+				// `min-w-0` so the label span below can actually shrink inside it; a
+				// flex item defaults to min-width:auto and would refuse to.
+				className={`flex items-center gap-1 min-w-0 text-[10px] font-bold transition-colors hover:bg-white/10 ${
 					compact ? 'px-1 py-1' : 'pl-1.5 pr-1.5 py-0.5'
 				}`}
 				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
