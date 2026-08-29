@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { RightPanel, RightPanelHandle } from '../../../renderer/components/RightPanel';
+import {
+	RIGHT_PANEL_CHROME_FONT_SIZE,
+	RIGHT_PANEL_CHROME_LINE_HEIGHT,
+} from '../../../renderer/constants/rightPanel';
 import { createRef } from 'react';
 import type { Session, Shortcut, BatchRunState } from '../../../renderer/types';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -234,6 +238,57 @@ describe('RightPanel', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
+	});
+
+	describe('Tab label type scale', () => {
+		/**
+		 * The Files / History / Auto Run labels are rem-based and so grow with the
+		 * interface font and the Cmd+= zoom, while the History entries beneath
+		 * them are pinned at an absolute `text-[10px]` and never grow. At a 16px
+		 * interface font with a 1.2 zoom the labels rendered near 14px against
+		 * 10px content - a header shouting over its own list.
+		 */
+		function tabButton(name: RegExp): HTMLElement {
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+			return screen.getByRole('button', { name });
+		}
+
+		it('sizes the labels from the shared chrome constant', () => {
+			// Same value as the History filter pills directly below, so the two
+			// rows of Right Bar chrome cannot drift apart.
+			expect(tabButton(/^History$/).style.fontSize).toBe(RIGHT_PANEL_CHROME_FONT_SIZE);
+		});
+
+		it('no longer relies on the text-xs class it outgrew', () => {
+			// Leaving the class on would let it win over the inline size.
+			expect(tabButton(/^History$/).className).not.toContain('text-xs');
+		});
+
+		it('states a line height, since dropping text-xs dropped its own', () => {
+			expect(tabButton(/^History$/).style.lineHeight).toBe(RIGHT_PANEL_CHROME_LINE_HEIGHT);
+		});
+
+		it('keeps the labels bold', () => {
+			expect(tabButton(/^History$/).className).toContain('font-bold');
+		});
+
+		it('applies the same size to every tab', () => {
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			for (const name of [/^Files$/, /^History$/]) {
+				expect(screen.getByRole('button', { name }).style.fontSize).toBe(
+					RIGHT_PANEL_CHROME_FONT_SIZE
+				);
+			}
+		});
+
+		it('stays in rem, so the labels still scale with Cmd+=', () => {
+			// A pixel literal would freeze the chrome while everything around it
+			// grew, which is the same class of bug in reverse.
+			expect(RIGHT_PANEL_CHROME_FONT_SIZE.endsWith('rem')).toBe(true);
+		});
 	});
 
 	describe('Render conditions', () => {

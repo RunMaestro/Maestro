@@ -2,6 +2,10 @@ import { memo } from 'react';
 import type { Theme, HistoryEntryType } from '../../types';
 import { getPillColor, getEntryIcon } from './historyConstants';
 import { ALL_HISTORY_ENTRY_TYPES } from '../../../shared/history';
+import {
+	RIGHT_PANEL_CHROME_FONT_SIZE,
+	RIGHT_PANEL_CHROME_LINE_HEIGHT,
+} from '../../constants/rightPanel';
 
 export interface HistoryFilterToggleProps {
 	activeFilters: Set<HistoryEntryType>;
@@ -34,12 +38,11 @@ const ALL_TYPES: readonly HistoryEntryType[] = ALL_HISTORY_ENTRY_TYPES;
  * face is proportional - monospace supplied that spacing for free.
  */
 const PILL_TYPE_STYLE = {
-	fontSize: '0.6875rem',
-	// text-xs carried `line-height: 1rem`; dropping the class drops that too, and
-	// an inherited line-height would resize the pill by whatever happened to be
-	// above it. Restated so the pill keeps exactly the height it had - only the
-	// glyphs shrink, which is the actual complaint.
-	lineHeight: '1rem',
+	// Shared with the Files / History / Auto Run tab labels above these pills, so
+	// the two rows of Right Bar chrome cannot drift apart. See rightPanel.ts for
+	// why it sits below `text-xs`.
+	fontSize: RIGHT_PANEL_CHROME_FONT_SIZE,
+	lineHeight: RIGHT_PANEL_CHROME_LINE_HEIGHT,
 	letterSpacing: '0.01em',
 } as const;
 

@@ -39,7 +39,12 @@ import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
-import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import {
+	RIGHT_PANEL_MIN_WIDTH,
+	RIGHT_PANEL_MAX_WIDTH,
+	RIGHT_PANEL_CHROME_FONT_SIZE,
+	RIGHT_PANEL_CHROME_LINE_HEIGHT,
+} from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
 
@@ -491,8 +496,14 @@ export const RightPanel = memo(
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
-							className="flex-1 text-xs font-bold border-b-2 transition-colors"
+							// Sized from the shared chrome constant rather than `text-xs`:
+							// these labels grow with the interface font while the entries
+							// they sit above are pinned at an absolute 10px, so at a large
+							// interface font the header outgrew its own list.
+							className="flex-1 font-bold border-b-2 transition-colors"
 							style={{
+								fontSize: RIGHT_PANEL_CHROME_FONT_SIZE,
+								lineHeight: RIGHT_PANEL_CHROME_LINE_HEIGHT,
 								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
 								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
 							}}
