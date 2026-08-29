@@ -2571,6 +2571,8 @@ export function getSettingsActions() {
 		setFontZoom: state.setFontZoom,
 		resetTypography: state.resetTypography,
 		setTypographyPromptSeen: state.setTypographyPromptSeen,
+		setThemePromptSeen: state.setThemePromptSeen,
+		setAgentPowersPromptSeen: state.setAgentPowersPromptSeen,
 		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,
 		setMediaPlaybackRate: state.setMediaPlaybackRate,

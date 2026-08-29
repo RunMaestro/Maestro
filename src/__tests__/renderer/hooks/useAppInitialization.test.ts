@@ -17,6 +17,9 @@ const mockSettingsState: Record<string, unknown> = {
 	settingsLoaded: false,
 	suppressWindowsWarning: false,
 	typographyPromptSeen: false,
+	themePromptSeen: false,
+	agentPowersPromptSeen: false,
+	activeThemeId: 'dracula',
 	enableBetaUpdates: false,
 	checkForUpdatesOnStartup: false,
 	leaderboardRegistration: null,
@@ -55,6 +58,8 @@ vi.mock('../../../renderer/stores/settingsStore', () => ({
 const mockSessionState: Record<string, unknown> = {
 	sessionsLoaded: false,
 	initialFileTreeReady: false,
+	// The first-run series reads this to tell a fresh install from an upgrade.
+	sessions: [],
 };
 
 vi.mock('../../../renderer/stores/sessionStore', () => ({
@@ -69,14 +74,12 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 }));
 
 const mockSetWindowsWarningModalOpen = vi.fn();
-const mockSetTypographyChoiceModalOpen = vi.fn();
 const mockSetUpdateCheckModalOpen = vi.fn();
 const mockSetPlaygroundOpen = vi.fn();
 
 vi.mock('../../../renderer/stores/modalStore', () => ({
 	getModalActions: () => ({
 		setWindowsWarningModalOpen: mockSetWindowsWarningModalOpen,
-		setTypographyChoiceModalOpen: mockSetTypographyChoiceModalOpen,
 		setUpdateCheckModalOpen: mockSetUpdateCheckModalOpen,
 		setPlaygroundOpen: mockSetPlaygroundOpen,
 	}),
@@ -162,10 +165,11 @@ vi.mock('../../../renderer/components/WindowsWarningModal', () => ({
 		mockExposeWindowsWarningModalDebug(...args),
 }));
 
-const mockExposeTypographyChoiceModalDebug = vi.fn();
-vi.mock('../../../renderer/components/TypographyChoiceModal', () => ({
-	exposeTypographyChoiceModalDebug: (...args: unknown[]) =>
-		mockExposeTypographyChoiceModalDebug(...args),
+const mockExposeOnboardingSeriesDebug = vi.fn();
+const mockStartOnboardingSeries = vi.fn();
+vi.mock('../../../renderer/stores/onboardingSeriesStore', () => ({
+	exposeOnboardingSeriesDebug: (...args: unknown[]) => mockExposeOnboardingSeriesDebug(...args),
+	startOnboardingSeries: (...args: unknown[]) => mockStartOnboardingSeries(...args),
 }));
 
 // ============================================================================
@@ -235,8 +239,12 @@ function resetStores() {
 	};
 
 	mockSettingsState.typographyPromptSeen = false;
+	mockSettingsState.themePromptSeen = false;
+	mockSettingsState.agentPowersPromptSeen = false;
+	mockSettingsState.activeThemeId = 'dracula';
 	mockSessionState.sessionsLoaded = false;
 	mockSessionState.initialFileTreeReady = false;
+	mockSessionState.sessions = [];
 	mockTabStoreState.fileGistUrls = {};
 }
 
@@ -445,26 +453,24 @@ describe('useAppInitialization', () => {
 		});
 	});
 
-	// --- Typography chooser ---
-	describe('typography chooser', () => {
+	// --- First-run modal series ---
+	describe('first-run series', () => {
 		function loaded() {
 			mockSettingsState.settingsLoaded = true;
 			mockSessionState.sessionsLoaded = true;
 		}
 
-		it('exposes the debug function for the typography chooser', () => {
+		it('exposes the debug entry point', () => {
 			renderHook(() => useAppInitialization());
 
-			expect(mockExposeTypographyChoiceModalDebug).toHaveBeenCalledWith(
-				mockSetTypographyChoiceModalOpen
-			);
+			expect(mockExposeOnboardingSeriesDebug).toHaveBeenCalled();
 		});
 
-		it('shows the chooser once settings and sessions have loaded', () => {
+		it('starts the series once settings and sessions have loaded', () => {
 			loaded();
 			renderHook(() => useAppInitialization());
 
-			expect(mockSetTypographyChoiceModalOpen).toHaveBeenCalledWith(true);
+			expect(mockStartOnboardingSeries).toHaveBeenCalledTimes(1);
 		});
 
 		it('waits for sessions, since that is what tells a returning user apart', () => {
@@ -472,7 +478,7 @@ describe('useAppInitialization', () => {
 			mockSessionState.sessionsLoaded = false;
 			renderHook(() => useAppInitialization());
 
-			expect(mockSetTypographyChoiceModalOpen).not.toHaveBeenCalledWith(true);
+			expect(mockStartOnboardingSeries).not.toHaveBeenCalled();
 		});
 
 		it('waits for settings, so a default flag cannot be mistaken for an answer', () => {
@@ -480,27 +486,62 @@ describe('useAppInitialization', () => {
 			mockSessionState.sessionsLoaded = true;
 			renderHook(() => useAppInitialization());
 
-			expect(mockSetTypographyChoiceModalOpen).not.toHaveBeenCalledWith(true);
+			expect(mockStartOnboardingSeries).not.toHaveBeenCalled();
 		});
 
-		it('stays away once the prompt has been seen', () => {
+		it('passes every seen flag, so each step can be gated on its own', () => {
+			// One flag for the whole series would stop a later step from ever
+			// reaching users who answered the earlier ones.
 			loaded();
 			mockSettingsState.typographyPromptSeen = true;
 			renderHook(() => useAppInitialization());
 
-			expect(mockSetTypographyChoiceModalOpen).not.toHaveBeenCalledWith(true);
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({
+					seen: { typography: true, theme: false, agentPowers: false },
+				})
+			);
 		});
 
-		it('opens at most once per mount', () => {
-			// The flag write comes back through the store as a state change, and
-			// the modal must not be re-opened by the re-render that follows.
+		it('reports a fresh install as a new user', () => {
+			loaded();
+			mockSessionState.sessions = [];
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ audience: 'new' })
+			);
+		});
+
+		it('reports an install that already has agents as returning', () => {
+			loaded();
+			mockSessionState.sessions = [{ id: 'a' }];
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ audience: 'returning' })
+			);
+		});
+
+		it('passes the active theme, which gates the theme step', () => {
+			loaded();
+			mockSettingsState.activeThemeId = 'nord';
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ activeThemeId: 'nord' })
+			);
+		});
+
+		it('starts at most once per mount', () => {
+			// The flag writes come back through the store as state changes, and
+			// the series must not restart on the re-render that follows.
 			loaded();
 			const { rerender } = renderHook(() => useAppInitialization());
 			rerender();
 			rerender();
 
-			const opens = mockSetTypographyChoiceModalOpen.mock.calls.filter(([open]) => open === true);
-			expect(opens).toHaveLength(1);
+			expect(mockStartOnboardingSeries).toHaveBeenCalledTimes(1);
 		});
 	});
 

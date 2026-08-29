@@ -109,6 +109,19 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	themePromptSeen: {
+		description:
+			'Whether the first-run theme chooser has been shown. Its own flag rather than one for the whole first-run series, so a later step can be added without re-showing this one.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	agentPowersPromptSeen: {
+		description: 'Whether the "your agents can drive Maestro" first-run step has been shown.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	customFonts: {
 		description: 'List of user-installed custom font names available in the font picker.',
 		type: 'array',

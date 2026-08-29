@@ -53,6 +53,10 @@ export interface ThemeState {
 	 * same modal reach existing users once after the update.
 	 */
 	typographyPromptSeen: boolean;
+	/** Whether the first-run theme chooser has been shown. See onboardingSeries. */
+	themePromptSeen: boolean;
+	/** Whether the "your agents can drive Maestro" step has been shown. */
+	agentPowersPromptSeen: boolean;
 }
 
 export interface ThemeActions {
@@ -72,6 +76,8 @@ export interface ThemeActions {
 	setCustomThemeBaseId: (value: ThemeId) => void;
 	setColorBlindMode: (value: boolean) => void;
 	setTypographyPromptSeen: (value: boolean) => void;
+	setThemePromptSeen: (value: boolean) => void;
+	setAgentPowersPromptSeen: (value: boolean) => void;
 	/** Write all five font settings at once from a typography preset. */
 	applyTypographyPreset: (id: TypographyPresetId) => void;
 }
@@ -95,6 +101,8 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	customThemeBaseId: 'dracula',
 	colorBlindMode: false,
 	typographyPromptSeen: false,
+	themePromptSeen: false,
+	agentPowersPromptSeen: false,
 
 	setFontFamily: (value) => {
 		set({ fontFamily: value });
@@ -200,6 +208,16 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		window.maestro.settings.set('typographyPromptSeen', value);
 	},
 
+	setThemePromptSeen: (value) => {
+		set({ themePromptSeen: value });
+		window.maestro.settings.set('themePromptSeen', value);
+	},
+
+	setAgentPowersPromptSeen: (value) => {
+		set({ agentPowersPromptSeen: value });
+		window.maestro.settings.set('agentPowersPromptSeen', value);
+	},
+
 	applyTypographyPreset: (id) => {
 		const fonts = TYPOGRAPHY_PRESETS[id].fonts;
 		// One `set` for all five so the app repaints once rather than flashing
@@ -255,6 +273,12 @@ export function hydrateThemeSettings(
 
 	if (allSettings['typographyPromptSeen'] !== undefined)
 		patch.typographyPromptSeen = Boolean(allSettings['typographyPromptSeen']);
+
+	if (allSettings['themePromptSeen'] !== undefined)
+		patch.themePromptSeen = Boolean(allSettings['themePromptSeen']);
+
+	if (allSettings['agentPowersPromptSeen'] !== undefined)
+		patch.agentPowersPromptSeen = Boolean(allSettings['agentPowersPromptSeen']);
 
 	if (allSettings['colorBlindMode'] !== undefined) {
 		// Legacy installs and the mobile/web client persist this as a

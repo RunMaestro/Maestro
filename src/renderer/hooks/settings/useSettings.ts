@@ -109,6 +109,10 @@ export interface UseSettingsReturn {
 	resetTypography: (id: TypographyPresetId) => void;
 	typographyPromptSeen: boolean;
 	setTypographyPromptSeen: (value: boolean) => void;
+	themePromptSeen: boolean;
+	setThemePromptSeen: (value: boolean) => void;
+	agentPowersPromptSeen: boolean;
+	setAgentPowersPromptSeen: (value: boolean) => void;
 
 	// UI settings
 	activeThemeId: ThemeId;

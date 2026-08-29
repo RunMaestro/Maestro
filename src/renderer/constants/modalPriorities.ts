@@ -27,6 +27,14 @@ export const MODAL_PRIORITIES = {
 	 */
 	TYPOGRAPHY_CHOICE: 1060,
 
+	/**
+	 * First-run theme chooser and the "your agents can drive Maestro" step.
+	 * They run in sequence after the typography chooser, one at a time, so they
+	 * share its band - only one of the three is ever mounted.
+	 */
+	THEME_CHOICE: 1059,
+	AGENT_POWERS: 1058,
+
 	/** Onboarding tour overlay - above wizard, guides new users */
 	TOUR: 1050,
 

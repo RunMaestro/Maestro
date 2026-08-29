@@ -90,6 +90,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	fileEditorFontSize: 0,
 	fontZoom: 1,
 	typographyPromptSeen: false,
+	themePromptSeen: false,
+	agentPowersPromptSeen: false,
 	customFonts: [],
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,

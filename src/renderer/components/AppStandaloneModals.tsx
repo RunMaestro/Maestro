@@ -17,7 +17,7 @@ import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
-import { TypographyChoiceModal } from './TypographyChoiceModal';
+import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
 import { GitPillModals } from './GitPillModals';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -230,8 +230,6 @@ function AppStandaloneModalsInner({
 		debugPackageModalOpen,
 		windowsWarningModalOpen,
 		setWindowsWarningModalOpen,
-		typographyChoiceModalOpen,
-		setTypographyChoiceModalOpen,
 		openSettings,
 		setDebugPackageModalOpen,
 		debugApplicationStatsOpen,
@@ -285,16 +283,6 @@ function AppStandaloneModalsInner({
 	// no new persisted state. A returning user with every agent deleted gets the
 	// new-user copy, which offers the same two choices - harmless either way.
 	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
-	const applyTypographyPreset = useSettingsStore((s) => s.applyTypographyPreset);
-	const setTypographyPromptSeen = useSettingsStore((s) => s.setTypographyPromptSeen);
-	const dismissTypographyChoice = useCallback(() => {
-		// Set the flag on ANY exit, including Escape. The shipped defaults still
-		// produce the Hacker look, so declining changes nothing - but a prompt
-		// that reappeared every launch until answered would be a nag.
-		setTypographyPromptSeen(true);
-		setTypographyChoiceModalOpen(false);
-	}, [setTypographyPromptSeen, setTypographyChoiceModalOpen]);
-
 	// Merge plugin-contributed themes into the picker list through the shared
 	// contribution registry (built-in always wins an id collision). Identical to
 	// THEMES when the plugins Encore flag is off (no contributions).
@@ -324,14 +312,14 @@ function AppStandaloneModalsInner({
 				onSetUseBetaChannel={setEnableBetaUpdates}
 			/>
 
-			{/* --- TYPOGRAPHY CHOOSER (first run, and once for existing users) --- */}
-			<TypographyChoiceModal
+			{/* --- FIRST-RUN SERIES: typography -> theme -> agent powers ---
+			    One step on screen at a time; see OnboardingSeriesHost. */}
+			<OnboardingSeriesHost
 				theme={theme}
-				isOpen={typographyChoiceModalOpen}
+				themes={mergedThemes}
 				isReturningUser={hasAnySession}
-				onChoose={applyTypographyPreset}
-				onDismiss={dismissTypographyChoice}
-				onOpenDisplaySettings={() => openSettings('display')}
+				onOpenSettings={(tab) => openSettings(tab)}
+				hasActiveAgent={Boolean(activeSession)}
 			/>
 
 			{/* --- CELEBRATION OVERLAYS --- */}
