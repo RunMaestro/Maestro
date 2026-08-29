@@ -30,7 +30,9 @@ The filter box at the right of the stats bar narrows the list as you type. It ma
 
 The counter beside the box reads `matches/total`. Hovering a result row shows the line that matched. If the file you were reading is not among the matches, the viewer moves you to the top hit - unless you have unsaved edits, in which case it leaves you where you are.
 
-Press `Esc` once to clear the filter, or click the `x` in the box. A second `Esc` closes the viewer.
+Press `/` or `Cmd+F` (`Ctrl+F` on Windows/Linux) to jump straight to the box from anywhere in the viewer. `/` steps aside while you are typing, so a slash inside a memory stays a slash; `Cmd+F` works even from the editor.
+
+`Esc` walks back out one step at a time. From the filter box it returns you to the list **with your query intact**, which is the point: filter down, `Esc`, then arrow through the hits. Press it again to clear the filter, and once more to close the viewer. (If your filter matched nothing there is no row to return to, so that first `Esc` clears instead.) The `x` in the box clears it at any time.
 
 ## Graphing Your Memories
 
@@ -71,11 +73,12 @@ The viewer opens with the file list already focused, so the keys below work
 immediately - no click needed. (If you go straight for the filter box, the caret
 stays there.)
 
-| Action                       | Key                  |
-| ---------------------------- | -------------------- |
-| Previous / next memory       | `Up/Down Arrow`      |
-| Delete the selected memory   | `Backspace` or `Del` |
-| Clear the filter, then close | `Esc`                |
+| Action                     | Key                  |
+| -------------------------- | -------------------- |
+| Previous / next memory     | `Up/Down Arrow`      |
+| Delete the selected memory | `Backspace` or `Del` |
+| Jump to the filter box     | `/` or `Cmd+F`       |
+| Step back out              | `Esc`                |
 
 This is the fast path for an audit pass: filter down to what you suspect is stale, then arrow through the results and press `Backspace` on the ones that should go.
 

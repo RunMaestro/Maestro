@@ -323,14 +323,20 @@ The field list is focused on open, so these work without clicking first.
 The file list is focused when the viewer opens, so these work right away. See
 [Memories](./memories) for the full walkthrough.
 
-| Action                       | Key                  |
-| ---------------------------- | -------------------- |
-| Previous / next memory       | `Up/Down Arrow`      |
-| Delete the selected memory   | `Backspace` or `Del` |
-| Clear the filter, then close | `Esc`                |
+| Action                     | macOS                | Windows/Linux        |
+| -------------------------- | -------------------- | -------------------- |
+| Previous / next memory     | `Up/Down Arrow`      | `Up/Down Arrow`      |
+| Delete the selected memory | `Backspace` or `Del` | `Backspace` or `Del` |
+| Jump to the filter box     | `/` or `Cmd+F`       | `/` or `Ctrl+F`      |
+| Step back out              | `Esc`                | `Esc`                |
 
-The filter box in the stats bar matches both filenames and the text inside each
-memory, so `Esc` clears it before it closes the viewer.
+`/` only jumps to the filter when you are not already typing, so a slash typed
+into a memory stays a slash. `Cmd+F` works from anywhere, including the editor.
+
+`Esc` climbs back out one rung at a time rather than closing straight away:
+from the filter box it returns you to the list **keeping your query**, so you
+can filter and then arrow through the hits; pressing it again clears the
+filter, and once more closes the viewer.
 
 ## Document Graph
 

@@ -320,6 +320,121 @@ describe('MemoryViewer', () => {
 		);
 	});
 
+	describe('filter focus shortcuts', () => {
+		function filterBox(): HTMLElement {
+			return screen.getByLabelText('Filter memories by name or content');
+		}
+		function row(name: string): HTMLElement {
+			const node = document.querySelector<HTMLElement>(`[data-item-id="${name}"]`);
+			if (!node) throw new Error(`No row for ${name}`);
+			return node;
+		}
+
+		it('jumps to the filter box on "/"', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent } = await import('@testing-library/react');
+			fireEvent.keyDown(window, { key: '/' });
+
+			expect(document.activeElement).toBe(filterBox());
+		});
+
+		it('jumps to the filter box on Cmd+F', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent } = await import('@testing-library/react');
+			fireEvent.keyDown(window, { key: 'f', metaKey: true });
+
+			expect(document.activeElement).toBe(filterBox());
+		});
+
+		it('lets "/" type a literal slash while editing a memory', async () => {
+			// A path or a regex in the memory body contains slashes; flinging focus
+			// into the filter mid-word would be unusable.
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent } = await import('@testing-library/react');
+			const editor = document.querySelector('textarea');
+			expect(editor).toBeTruthy();
+			editor!.focus();
+			fireEvent.keyDown(editor!, { key: '/' });
+
+			expect(document.activeElement).toBe(editor);
+		});
+
+		it('still honors Cmd+F from inside the editor, since it means nothing else', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent } = await import('@testing-library/react');
+			const editor = document.querySelector('textarea')!;
+			editor.focus();
+			fireEvent.keyDown(editor, { key: 'f', metaKey: true });
+
+			expect(document.activeElement).toBe(filterBox());
+		});
+
+		it('hands focus back to the list on Escape, keeping the query', async () => {
+			// The whole point: filter down, Escape out of the box, then arrow
+			// through the hits. A query that vanished here would take the results
+			// with it.
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent, act } = await import('@testing-library/react');
+			fireEvent.keyDown(window, { key: '/' });
+			await typeFilter('node_modules');
+			await waitFor(() => expect(listRowNames()).toEqual(['project_worktrees.md']));
+
+			await act(async () => {
+				registeredOnEscape?.();
+			});
+
+			await waitFor(() => expect(document.activeElement).toBe(row('project_worktrees.md')));
+			expect((filterBox() as HTMLInputElement).value).toBe('node_modules');
+		});
+
+		it('clears the filter on the next Escape, then closes on the one after', async () => {
+			const { onClose } = renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			fireEventKeyDownSlash();
+			await typeFilter('node_modules');
+			await waitFor(() => expect(listRowNames()).toHaveLength(1));
+
+			const { act } = await import('@testing-library/react');
+			// 1: out of the box, back to the list.
+			await act(async () => registeredOnEscape?.());
+			// 2: clear the query.
+			await act(async () => registeredOnEscape?.());
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+			expect(onClose).not.toHaveBeenCalled();
+			// 3: close.
+			await act(async () => registeredOnEscape?.());
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('clears instead of blurring when the filter matched nothing', async () => {
+			// There is no row to hand focus to, so blurring would strand focus on
+			// <body> and the arrow keys would silently die.
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { act } = await import('@testing-library/react');
+			fireEventKeyDownSlash();
+			await typeFilter('zzz-no-such-memory');
+			await waitFor(() => expect(listRowNames()).toHaveLength(0));
+
+			await act(async () => registeredOnEscape?.());
+
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+			expect((filterBox() as HTMLInputElement).value).toBe('');
+		});
+	});
+
 	it('routes a delete through the shared destructive confirm modal', async () => {
 		renderViewer();
 		await waitFor(() => expect(listRowNames()).toHaveLength(3));
@@ -412,4 +527,9 @@ async function confirmLastModal(): Promise<void> {
 	await act(async () => {
 		(call[1] as { onConfirm: () => void }).onConfirm();
 	});
+}
+
+/** Presses `/` on window, the way the viewer's global handler sees it. */
+function fireEventKeyDownSlash(): void {
+	window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }));
 }
