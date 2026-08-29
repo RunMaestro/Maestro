@@ -539,8 +539,16 @@ export function GroupChatHistoryPanel({
 	});
 
 	// Keeps the cursor on screen: block 'nearest' only scrolls once the selected
-	// entry has left the top or bottom of the list box.
-	const entryRefs = useScrollIntoView<HTMLDivElement>(true, selectedIndex, filteredEntries.length);
+	// entry has left the top or bottom of the list box. Scrolling is INSTANT
+	// rather than smooth because a held arrow key repeats faster than a smooth
+	// scroll animates - each repeat would cancel the animation in flight, so the
+	// list lurches instead of stepping.
+	const entryRefs = useScrollIntoView<HTMLDivElement>(
+		true,
+		selectedIndex,
+		filteredEntries.length,
+		'auto'
+	);
 
 	// Take focus when the right panel is the focused area - otherwise the arrow
 	// keys land on whatever held focus before the tab switch.
@@ -673,7 +681,10 @@ export function GroupChatHistoryPanel({
 						? `gc-history-${filteredEntries[selectedIndex].id}`
 						: undefined
 				}
-				className="flex-1 overflow-y-auto space-y-2 scrollbar-thin"
+				// scroll-p-2 leaves a sliver of the next entry visible when the
+				// selection reaches an edge, so holding an arrow reads as scrolling
+				// through a list rather than pinning a row against the boundary.
+				className="flex-1 overflow-y-auto space-y-2 scrollbar-thin scroll-p-2"
 			>
 				{isLoading ? (
 					<div className="text-center py-8 text-xs opacity-50">Loading history...</div>
