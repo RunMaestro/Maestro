@@ -34,7 +34,7 @@ function renderHost(overrides: Partial<React.ComponentProps<typeof OnboardingSer
 }
 
 beforeEach(() => {
-	useOnboardingSeriesStore.setState({ queue: [], audience: null, forced: false });
+	useOnboardingSeriesStore.setState({ queue: [], history: [], audience: null, forced: false });
 	useSettingsStore.setState({
 		typographyPromptSeen: false,
 		themePromptSeen: false,
@@ -79,6 +79,56 @@ describe('OnboardingSeriesHost', () => {
 
 		fireEvent.click(screen.getByTestId('agent-powers-confirm'));
 		expect(screen.queryByTestId('agent-powers-modal')).not.toBeInTheDocument();
+	});
+
+	describe('back', () => {
+		it('offers no way back on the first step', () => {
+			// A disabled Back would claim a history the series does not have.
+			startOnboardingSeries({ audience: 'new', seen: {}, activeThemeId: DEFAULT_THEME_ID });
+			renderHost();
+
+			expect(screen.queryByTestId('typography-choice-back')).not.toBeInTheDocument();
+		});
+
+		it('reopens the previous step from every later step', () => {
+			startOnboardingSeries({ audience: 'new', seen: {}, activeThemeId: DEFAULT_THEME_ID });
+			renderHost();
+
+			fireEvent.click(screen.getByTestId('typography-choice-confirm'));
+			fireEvent.click(screen.getByTestId('theme-choice-back'));
+			expect(screen.getByTestId('typography-choice-modal')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('typography-choice-confirm'));
+			fireEvent.click(screen.getByTestId('theme-choice-confirm'));
+			fireEvent.click(screen.getByTestId('agent-powers-back'));
+			expect(screen.getByTestId('theme-choice-modal')).toBeInTheDocument();
+		});
+
+		it('does not mark the step it leaves as seen', () => {
+			// Going back says the question is not settled yet, so recording an
+			// answer on the way out would record one still being changed.
+			startOnboardingSeries({ audience: 'new', seen: {}, activeThemeId: DEFAULT_THEME_ID });
+			renderHost();
+
+			fireEvent.click(screen.getByTestId('typography-choice-confirm'));
+			fireEvent.click(screen.getByTestId('theme-choice-back'));
+
+			expect(useSettingsStore.getState().themePromptSeen).toBe(false);
+		});
+
+		it('reverts a previewed theme on the way back', () => {
+			// Browsing has to cost nothing. Back is not an answer, so the theme
+			// the pointer last passed over must not stick.
+			startOnboardingSeries({ audience: 'new', seen: {}, activeThemeId: DEFAULT_THEME_ID });
+			renderHost();
+
+			fireEvent.click(screen.getByTestId('typography-choice-confirm'));
+			fireEvent.click(screen.getByTestId('theme-choice-nord'));
+			expect(useSettingsStore.getState().activeThemeId).toBe('nord');
+
+			fireEvent.click(screen.getByTestId('theme-choice-back'));
+			expect(useSettingsStore.getState().activeThemeId).toBe(DEFAULT_THEME_ID);
+		});
 	});
 
 	describe('seen flags', () => {

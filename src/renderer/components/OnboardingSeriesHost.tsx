@@ -19,6 +19,7 @@ import { AgentPowersModal } from './AgentPowersModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useComposerInputStore } from '../stores/composerInputStore';
 import {
+	selectCanGoBackInOnboarding,
 	selectCurrentOnboardingStep,
 	useOnboardingSeriesStore,
 } from '../stores/onboardingSeriesStore';
@@ -46,6 +47,8 @@ export function OnboardingSeriesHost({
 	const step = useOnboardingSeriesStore(selectCurrentOnboardingStep);
 	const forced = useOnboardingSeriesStore((s) => s.forced);
 	const advance = useOnboardingSeriesStore((s) => s.advance);
+	const back = useOnboardingSeriesStore((s) => s.back);
+	const canGoBack = useOnboardingSeriesStore(selectCanGoBackInOnboarding);
 	// The store's audience wins when a series is running, so a forced replay can
 	// show returning-user copy on an install with no agents. Falls back to the
 	// prop once the series ends and the audience clears.
@@ -85,6 +88,14 @@ export function OnboardingSeriesHost({
 		[forced, advance]
 	);
 
+	/**
+	 * Step back WITHOUT marking anything seen. Going back is the user saying
+	 * they have not settled the question yet, so recording an answer on the way
+	 * out would be recording one they are still in the middle of changing.
+	 * Undefined on the first step, which is what hides the control there.
+	 */
+	const onBack = useMemo(() => (canGoBack ? () => back() : undefined), [canGoBack, back]);
+
 	const onTryExample = useMemo(
 		() =>
 			hasActiveAgent
@@ -107,6 +118,7 @@ export function OnboardingSeriesHost({
 				isReturningUser={showReturningCopy}
 				onChoose={applyTypographyPreset}
 				onDismiss={() => finishStep(setTypographyPromptSeen)}
+				onBack={onBack}
 				onOpenDisplaySettings={() => onOpenSettings('display')}
 			/>
 		);
@@ -122,6 +134,7 @@ export function OnboardingSeriesHost({
 				activeThemeId={activeThemeId}
 				onSelectTheme={(id: ThemeId) => setActiveThemeId(id)}
 				onDismiss={() => finishStep(setThemePromptSeen)}
+				onBack={onBack}
 				onOpenThemeSettings={() => onOpenSettings('theme')}
 			/>
 		);
@@ -132,6 +145,7 @@ export function OnboardingSeriesHost({
 			theme={theme}
 			isOpen
 			onDismiss={() => finishStep(setAgentPowersPromptSeen)}
+			onBack={onBack}
 			onTryExample={onTryExample}
 		/>
 	);

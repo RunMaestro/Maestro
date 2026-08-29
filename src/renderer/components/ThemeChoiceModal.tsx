@@ -23,6 +23,7 @@ import { Check, Palette } from 'lucide-react';
 import type { Theme, ThemeId } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { ModalBackButton } from './ui/ModalBackButton';
 import { logger } from '../utils/logger';
 
 export interface ThemeChoiceModalProps {
@@ -38,6 +39,12 @@ export interface ThemeChoiceModalProps {
 	onSelectTheme: (id: ThemeId) => void;
 	/** Mark the step seen and advance the series. */
 	onDismiss: () => void;
+	/**
+	 * Reopen the previous step of the series. Omitted when this is the first
+	 * step, in which case no Back control is drawn - a disabled one would claim
+	 * a history that does not exist.
+	 */
+	onBack?: () => void;
 	/** Open Settings on the Themes tab, where a theme can be customized. */
 	onOpenThemeSettings: () => void;
 }
@@ -115,6 +122,7 @@ export function ThemeChoiceModal({
 	activeThemeId,
 	onSelectTheme,
 	onDismiss,
+	onBack,
 	onOpenThemeSettings,
 }: ThemeChoiceModalProps) {
 	const confirmRef = useRef<HTMLButtonElement>(null);
@@ -132,7 +140,6 @@ export function ThemeChoiceModal({
 		}
 		// Deliberately keyed on `isOpen` alone: including activeThemeId would
 		// re-capture on every preview click and defeat the revert.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [isOpen]);
 
 	const sections = useMemo(() => {
@@ -150,7 +157,11 @@ export function ThemeChoiceModal({
 		onDismiss();
 	}, [onDismiss]);
 
-	const handleDismiss = useCallback(() => {
+	// Leaving without confirming throws the preview away. Shared by "Not now"
+	// and Back, because neither is an answer: browsing has to cost nothing, and
+	// a Back that quietly kept the last theme the pointer passed over would
+	// apply a choice the user never made.
+	const revertPreview = useCallback(() => {
 		if (!confirmed && activeThemeId !== originalThemeId.current) {
 			logger.info('[ThemeChoiceModal] Reverting previewed theme', undefined, {
 				from: activeThemeId,
@@ -158,8 +169,17 @@ export function ThemeChoiceModal({
 			});
 			onSelectTheme(originalThemeId.current as ThemeId);
 		}
+	}, [confirmed, activeThemeId, onSelectTheme]);
+
+	const handleDismiss = useCallback(() => {
+		revertPreview();
 		onDismiss();
-	}, [confirmed, activeThemeId, onSelectTheme, onDismiss]);
+	}, [revertPreview, onDismiss]);
+
+	const handleBack = useCallback(() => {
+		revertPreview();
+		onBack?.();
+	}, [revertPreview, onBack]);
 
 	const handleOpenSettings = useCallback(() => {
 		// Keeps the previewed theme rather than reverting: the user is going to
@@ -187,6 +207,9 @@ export function ThemeChoiceModal({
 			testId="theme-choice-modal"
 			footer={
 				<div className="flex items-center gap-3 w-full">
+					{onBack && (
+						<ModalBackButton theme={theme} onBack={handleBack} testId="theme-choice-back" />
+					)}
 					<button
 						type="button"
 						onClick={handleOpenSettings}

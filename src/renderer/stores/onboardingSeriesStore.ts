@@ -22,6 +22,12 @@ import {
 interface OnboardingSeriesState {
 	/** Steps still to run, current one first. Empty when idle. */
 	queue: OnboardingStep[];
+	/**
+	 * Steps already left behind, oldest first. Exists so `back` can reopen the
+	 * previous step: a series that only moves forward makes the first answer
+	 * unchangeable the instant the second step opens.
+	 */
+	history: OnboardingStep[];
 	/** Who the copy is addressed to. Null when idle. */
 	audience: OnboardingAudience | null;
 	/**
@@ -38,30 +44,50 @@ interface OnboardingSeriesState {
 	}) => void;
 	/** Finish the current step and open the next, or end the series. */
 	advance: () => void;
+	/** Reopen the previous step. A no-op on the first step. */
+	back: () => void;
 	/** Abandon the whole series without running the remaining steps. */
 	stop: () => void;
 }
 
 export const useOnboardingSeriesStore = create<OnboardingSeriesState>((set) => ({
 	queue: [],
+	history: [],
 	audience: null,
 	forced: false,
 
 	start: ({ audience, queue, forced = false }) => {
 		if (queue.length === 0) return;
-		set({ queue, audience, forced });
+		set({ queue, history: [], audience, forced });
 	},
 
 	advance: () =>
 		set((state) => {
+			const current = state.queue[0];
 			const next = state.queue.slice(1);
 			// Clearing the audience with the queue keeps "idle" a single
 			// observable state, so a stale audience cannot outlive its series and
 			// address the next one with the wrong copy.
-			return next.length === 0 ? { queue: next, audience: null, forced: false } : { queue: next };
+			if (next.length === 0) {
+				return { queue: next, history: [], audience: null, forced: false };
+			}
+			return {
+				queue: next,
+				history: current ? [...state.history, current] : state.history,
+			};
 		}),
 
-	stop: () => set({ queue: [], audience: null, forced: false }),
+	back: () =>
+		set((state) => {
+			const previous = state.history[state.history.length - 1];
+			if (!previous) return state;
+			return {
+				queue: [previous, ...state.queue],
+				history: state.history.slice(0, -1),
+			};
+		}),
+
+	stop: () => set({ queue: [], history: [], audience: null, forced: false }),
 }));
 
 /** The step currently on screen, or null when no series is running. */
@@ -69,10 +95,15 @@ export function selectCurrentOnboardingStep(state: OnboardingSeriesState): Onboa
 	return state.queue[0] ?? null;
 }
 
+/** Whether the current step has a step before it to go back to. */
+export function selectCanGoBackInOnboarding(state: OnboardingSeriesState): boolean {
+	return state.queue.length > 0 && state.history.length > 0;
+}
+
 /** Imperative access for the debug palette entries and the startup effect. */
 export function getOnboardingSeriesActions() {
-	const { start, advance, stop } = useOnboardingSeriesStore.getState();
-	return { start, advance, stop };
+	const { start, advance, back, stop } = useOnboardingSeriesStore.getState();
+	return { start, advance, back, stop };
 }
 
 /**

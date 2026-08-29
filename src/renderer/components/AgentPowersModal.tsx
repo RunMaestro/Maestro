@@ -17,12 +17,19 @@ import { Bot, Palette, Type, Users, FileText, Sparkles } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { ModalBackButton } from './ui/ModalBackButton';
 
 export interface AgentPowersModalProps {
 	theme: Theme;
 	isOpen: boolean;
 	/** Mark the step seen and end the series. */
 	onDismiss: () => void;
+	/**
+	 * Reopen the previous step of the series. Omitted when this ran on its own,
+	 * in which case no Back control is drawn - a disabled one would claim a
+	 * history that does not exist.
+	 */
+	onBack?: () => void;
 	/**
 	 * Drop a ready-made request into the active agent's composer, so the user
 	 * can try this without inventing the phrasing. Omitted when there is no
@@ -68,6 +75,7 @@ export function AgentPowersModal({
 	theme,
 	isOpen,
 	onDismiss,
+	onBack,
 	onTryExample,
 }: AgentPowersModalProps) {
 	const confirmRef = useRef<HTMLButtonElement>(null);
@@ -95,13 +103,14 @@ export function AgentPowersModal({
 			initialFocusRef={confirmRef}
 			testId="agent-powers-modal"
 			footer={
-				<div className="flex items-center justify-end w-full">
+				<div className="flex items-center gap-3 w-full">
+					{onBack && <ModalBackButton theme={theme} onBack={onBack} testId="agent-powers-back" />}
 					<button
 						ref={confirmRef}
 						type="button"
 						onClick={onDismiss}
 						data-testid="agent-powers-confirm"
-						className="px-3 py-1.5 rounded text-xs font-bold"
+						className="ml-auto px-3 py-1.5 rounded text-xs font-bold"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,

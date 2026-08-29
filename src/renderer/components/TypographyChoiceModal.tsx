@@ -24,6 +24,7 @@ import { Check, Sparkles, Terminal, Type } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { ModalBackButton } from './ui/ModalBackButton';
 import {
 	TYPOGRAPHY_PRESETS,
 	TYPOGRAPHY_PRESET_IDS,
@@ -44,6 +45,12 @@ export interface TypographyChoiceModalProps {
 	onChoose: (id: TypographyPresetId) => void;
 	/** Mark the prompt seen and close, with or without a choice. */
 	onDismiss: () => void;
+	/**
+	 * Reopen the previous step of the series. Omitted when this is the first
+	 * step, in which case no Back control is drawn - a disabled one would claim
+	 * a history that does not exist.
+	 */
+	onBack?: () => void;
 	/** Open Settings on the Display tab, where the individual pickers live. */
 	onOpenDisplaySettings: () => void;
 }
@@ -161,6 +168,7 @@ export function TypographyChoiceModal({
 	isReturningUser,
 	onChoose,
 	onDismiss,
+	onBack,
 	onOpenDisplaySettings,
 }: TypographyChoiceModalProps) {
 	// A returning user is already ON Hacker, so that card starts selected and
@@ -199,6 +207,9 @@ export function TypographyChoiceModal({
 			testId="typography-choice-modal"
 			footer={
 				<div className="flex items-center gap-3 w-full">
+					{onBack && (
+						<ModalBackButton theme={theme} onBack={onBack} testId="typography-choice-back" />
+					)}
 					<button
 						type="button"
 						onClick={handleOpenSettings}
