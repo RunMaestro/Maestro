@@ -3025,8 +3025,6 @@ function MaestroConsoleInner() {
 			<PluginModalPanelMount theme={theme} />
 			<AppShell
 				theme={theme}
-				fontFamily={fontFamily}
-				fontSize={fontSize}
 				keyboardShellOffset={keyboardShellOffset}
 				isMobileLandscape={isMobileLandscape}
 				useNativeTitleBar={useNativeTitleBar}

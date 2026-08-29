@@ -520,6 +520,13 @@ export const TerminalOutput = memo(
 					className="flex-1 overflow-y-auto scrollbar-thin"
 					style={{
 						overflowAnchor: session.inputMode === 'ai' && autoScrollPaused ? 'none' : undefined,
+						// The AI Chat surface's own size. Set here and inherited by every
+						// log row rather than threaded as a prop: the transcript is DOM,
+						// so the CSS variable reaches the whole subtree - including the
+						// markdown, tool cards, and code fences nested several
+						// components deep - without touching any of them. The family
+						// still arrives as a prop because individual rows override it.
+						fontSize: 'var(--maestro-size-chat, inherit)',
 					}}
 					onScroll={handleScroll}
 				>

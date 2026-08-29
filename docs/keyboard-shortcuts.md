@@ -205,13 +205,19 @@ A freshly tiled pane takes the keyboard, and the caret lands in whatever that pa
 | Page Up/Down             | `Alt+Up/Down Arrow` while in output               |
 | Jump to Top/Bottom       | `Cmd+Up/Down Arrow` while in output               |
 
-## Font Size
+## Font Zoom
 
-| Action             | macOS         | Windows/Linux  |
-| ------------------ | ------------- | -------------- |
-| Increase Font Size | `Cmd+=`       | `Ctrl+=`       |
-| Decrease Font Size | `Cmd+-`       | `Ctrl+-`       |
-| Reset Font Size    | `Cmd+Shift+0` | `Ctrl+Shift+0` |
+| Action     | macOS         | Windows/Linux  |
+| ---------- | ------------- | -------------- |
+| Zoom In    | `Cmd+=`       | `Ctrl+=`       |
+| Zoom Out   | `Cmd+-`       | `Ctrl+-`       |
+| Reset Zoom | `Cmd+Shift+0` | `Ctrl+Shift+0` |
+
+Zoom is a multiplier over every surface at once, so the sizes you set for the
+interface, AI chat, terminal, file preview, and file editor keep their relative
+proportions as you scale. Reset returns the zoom to 100% and leaves those
+per-surface sizes exactly as you set them - to restore the sizes themselves, use
+**Factory Reset Fonts** at the top of Settings -> Display.
 
 ## Command Terminal
 
@@ -331,7 +337,7 @@ the full walkthrough.
 | Close                               | `Esc`           | `Esc`           |
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
-`Cmd+=` / `Cmd+-` in [Font Size](#font-size), which resizes the whole interface.
+`Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom), which scales the whole interface.
 They apply only where the zoom moves type (markdown, code, and text views), and
 they never fire while you are typing, so the find bar and the markdown editor
 keep those keys. The same steps are available from the zoom pill that rests in

@@ -10,6 +10,17 @@ import type { StateCreator } from 'zustand';
 import type { ThemeId, ThemeColors } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { TYPOGRAPHY_PRESETS, type TypographyPresetId } from '../../shared/typographyPresets';
+import {
+	BASE_FONT_SIZE_DEFAULT,
+	FONT_ZOOM_DEFAULT,
+	SURFACE_FONT_SIZE_MAX,
+	SURFACE_FONT_SIZE_MIN,
+	TYPOGRAPHY_SURFACE_LIST,
+	TYPOGRAPHY_SURFACE_SPECS,
+	clampFontZoom,
+	clampSurfaceFontSize,
+	type TypographySurface,
+} from '../../shared/typography';
 import type { SettingsStore } from './settingsStore';
 
 export interface ThemeState {
@@ -18,7 +29,20 @@ export interface ThemeState {
 	chatFontFamily: string;
 	filePreviewFontFamily: string;
 	fileEditorFontFamily: string;
+	/**
+	 * Interface font size in px, before zoom. The base every other surface
+	 * inherits when its own size is 0.
+	 */
 	fontSize: number;
+	chatFontSize: number;
+	terminalFontSize: number;
+	filePreviewFontSize: number;
+	fileEditorFontSize: number;
+	/**
+	 * Cmd+= / Cmd+- multiplier, applied to every surface equally so zooming
+	 * preserves whatever proportions the user set between them.
+	 */
+	fontZoom: number;
 	activeThemeId: ThemeId;
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
@@ -38,6 +62,11 @@ export interface ThemeActions {
 	setFilePreviewFontFamily: (value: string) => void;
 	setFileEditorFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
+	setSurfaceFontFamily: (surface: TypographySurface, value: string) => void;
+	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
+	setFontZoom: (value: number) => void;
+	/** Restore both fonts and sizes to a preset. The Factory Reset control. */
+	resetTypography: (id: TypographyPresetId) => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
@@ -55,7 +84,12 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	chatFontFamily: '',
 	filePreviewFontFamily: '',
 	fileEditorFontFamily: '',
-	fontSize: 14,
+	fontSize: BASE_FONT_SIZE_DEFAULT,
+	chatFontSize: 0,
+	terminalFontSize: 0,
+	filePreviewFontSize: 0,
+	fileEditorFontSize: 0,
+	fontZoom: FONT_ZOOM_DEFAULT,
 	activeThemeId: 'dracula',
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 	customThemeBaseId: 'dracula',
@@ -90,6 +124,55 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	setFontSize: (value) => {
 		set({ fontSize: value });
 		window.maestro.settings.set('fontSize', value);
+	},
+
+	setSurfaceFontFamily: (surface, value) => {
+		// Writes through the registry rather than a switch, so a new surface is
+		// settable the moment it is registered.
+		const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
+		set({ [spec.fontKey]: value } as Partial<ThemeState>);
+		window.maestro.settings.set(spec.fontKey, value);
+	},
+
+	setSurfaceFontSize: (surface, value) => {
+		const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
+		// The interface surface is the base of the inheritance chain, so a 0
+		// there would mean "inherit from myself". Route it to setFontSize,
+		// which clamps against the base bounds instead.
+		if (!spec.inheritable) {
+			const clamped = Math.max(
+				SURFACE_FONT_SIZE_MIN,
+				Math.min(SURFACE_FONT_SIZE_MAX, Math.round(value) || BASE_FONT_SIZE_DEFAULT)
+			);
+			set({ fontSize: clamped });
+			window.maestro.settings.set('fontSize', clamped);
+			return;
+		}
+		const clamped = clampSurfaceFontSize(value);
+		set({ [spec.sizeKey]: clamped } as Partial<ThemeState>);
+		window.maestro.settings.set(spec.sizeKey, clamped);
+	},
+
+	setFontZoom: (value) => {
+		const zoom = clampFontZoom(value);
+		set({ fontZoom: zoom });
+		window.maestro.settings.set('fontZoom', zoom);
+	},
+
+	resetTypography: (id) => {
+		const preset = TYPOGRAPHY_PRESETS[id];
+		// Sizes go back with the fonts: a preset that restored only families
+		// would leave a proportional face rendering at a size that was tuned
+		// for a monospace one, which is exactly the mismatch Factory Reset
+		// exists to undo. Zoom is deliberately NOT reset - it is an
+		// accessibility accommodation, not part of the look.
+		const patch = { ...preset.fonts, ...preset.sizes };
+		// One `set` so the app repaints once instead of flashing through nine
+		// intermediate states.
+		set(patch);
+		for (const [key, value] of Object.entries(patch)) {
+			window.maestro.settings.set(key, value);
+		}
 	},
 
 	setActiveThemeId: (value) => {
@@ -158,6 +241,17 @@ export function hydrateThemeSettings(
 
 	if (allSettings['customThemeBaseId'] !== undefined)
 		patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
+
+	for (const spec of TYPOGRAPHY_SURFACE_LIST) {
+		if (!spec.inheritable) continue;
+		const raw = allSettings[spec.sizeKey];
+		if (raw !== undefined) {
+			(patch as Record<string, unknown>)[spec.sizeKey] = clampSurfaceFontSize(Number(raw));
+		}
+	}
+
+	if (allSettings['fontZoom'] !== undefined)
+		patch.fontZoom = clampFontZoom(Number(allSettings['fontZoom']));
 
 	if (allSettings['typographyPromptSeen'] !== undefined)
 		patch.typographyPromptSeen = Boolean(allSettings['typographyPromptSeen']);

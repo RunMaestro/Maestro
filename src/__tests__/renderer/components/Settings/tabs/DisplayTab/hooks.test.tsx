@@ -103,9 +103,12 @@ describe('DisplayTab hooks', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledTimes(1);
 		});
 
-		it('logs font detection failures and keeps the selector retryable', async () => {
-			const error = new Error('font scan failed');
-			vi.mocked(window.maestro.fonts.detect).mockRejectedValue(error);
+		it('degrades to an unreliable list rather than an error when detection fails', async () => {
+			// On stock macOS and Windows there is no fontconfig, so a failed
+			// enumeration is the EXPECTED path. Reporting it as an error would
+			// cry wolf on the majority platform; instead the result is flagged
+			// unreliable and the picker suppresses availability annotations.
+			vi.mocked(window.maestro.fonts.detect).mockRejectedValue(new Error('font scan failed'));
 			const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useFontConfigurationState());
 
@@ -114,11 +117,23 @@ describe('DisplayTab hooks', () => {
 			});
 
 			await waitFor(() => expect(result.current.fontLoading).toBe(false));
-			expect(result.current.fontsLoaded).toBe(false);
-			expect(result.current.systemFonts).toEqual([]);
-			expect(loggerSpy).toHaveBeenCalledWith('Failed to load fonts:', undefined, error);
+			expect(result.current.fontsLoaded).toBe(true);
+			expect(result.current.fontsReliable).toBe(false);
+			expect(result.current.systemFonts.length).toBeGreaterThan(0);
+			expect(loggerSpy).not.toHaveBeenCalled();
 
 			loggerSpy.mockRestore();
+		});
+
+		it('reports a successful enumeration as reliable', async () => {
+			const { result } = renderHook(() => useFontConfigurationState());
+
+			act(() => {
+				result.current.handleFontInteraction();
+			});
+
+			await waitFor(() => expect(result.current.fontsLoaded).toBe(true));
+			expect(result.current.fontsReliable).toBe(true);
 		});
 	});
 

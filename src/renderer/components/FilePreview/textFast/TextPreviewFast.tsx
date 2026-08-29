@@ -30,8 +30,8 @@ const SYNC_PARSE_BYTES = 64 * 1024;
  * `DEFAULT_LINES_PER_PAGE` lines × base font × line-height, times the reader's
  * font zoom. Fixed-size virtualization means we don't need real measurement,
  * but it does mean this must track the font size the stylesheet paints. */
-function pageHeightFor(fontScale: number): number {
-	return Math.ceil(DEFAULT_LINES_PER_PAGE * TEXT_BASE_FONT_PX * fontScale * TEXT_LINE_HEIGHT);
+function pageHeightFor(fontScale: number, baseFontPx: number): number {
+	return Math.ceil(DEFAULT_LINES_PER_PAGE * baseFontPx * fontScale * TEXT_LINE_HEIGHT);
 }
 
 /** Pixels of overscan above/below the viewport - TanStack Virtual unit is
@@ -64,7 +64,15 @@ function escapeHtmlForPre(value: string): string {
  */
 export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFastProps>(
 	function TextPreviewFast(
-		{ content, language, theme, containerRef, filePath: _filePath, fontScale = 1 },
+		{
+			content,
+			language,
+			theme,
+			containerRef,
+			filePath: _filePath,
+			fontScale = 1,
+			baseFontPx = TEXT_BASE_FONT_PX,
+		},
 		ref
 	) {
 		const isCode = isCodeLanguage(language);
@@ -74,7 +82,11 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 		// Page height follows the zoom. Mirrored into a ref so the (deliberately
 		// stable) imperative handle's line ⇄ pixel math reads the current value
 		// instead of the one captured when the handle was built.
-		const pageHeightPx = pageHeightFor(fontScale);
+		// MUST use the same base size the stylesheet paints with. Fixed-size
+		// virtualization trusts this number, so a stylesheet at 16px and a
+		// virtualizer still assuming 13px drift apart by three pixels a line and
+		// the scrollbar stops matching the content.
+		const pageHeightPx = pageHeightFor(fontScale, baseFontPx);
 		const pageHeightRef = useRef(pageHeightPx);
 		pageHeightRef.current = pageHeightPx;
 
@@ -197,7 +209,10 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 			[containerRef]
 		);
 
-		const proseCss = useMemo(() => generateTextProseCss(theme, fontScale), [theme, fontScale]);
+		const proseCss = useMemo(
+			() => generateTextProseCss(theme, fontScale, baseFontPx),
+			[theme, fontScale, baseFontPx]
+		);
 
 		// Pre-compute the gutter contents per page once per parse - line
 		// numbers are stable so we don't need to do this in render.

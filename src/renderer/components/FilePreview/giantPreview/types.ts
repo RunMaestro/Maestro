@@ -51,4 +51,6 @@ export interface GiantPreviewProps {
 	 * built-in monospace stack.
 	 */
 	fontFamily?: string;
+	/** File Preview size setting in px, before the pane's own zoom. */
+	baseFontPx?: number;
 }

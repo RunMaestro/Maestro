@@ -29,6 +29,10 @@ import { mockTheme } from '../../../../helpers/mockTheme';
 // --- Mock setters (module-level for assertion access) ---
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
+const mockSetSurfaceFontFamily = vi.fn();
+const mockSetSurfaceFontSize = vi.fn();
+const mockSetFontZoom = vi.fn();
+const mockResetTypography = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
 const mockSetBionifyReadingMode = vi.fn();
@@ -145,6 +149,19 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 			delete: true,
 		},
 		setFilePreviewToolbarButtonVisibility: mockSetFilePreviewToolbarButtonVisibility,
+		chatFontFamily: '',
+		terminalFontFamily: '',
+		filePreviewFontFamily: '',
+		fileEditorFontFamily: '',
+		chatFontSize: 0,
+		terminalFontSize: 0,
+		filePreviewFontSize: 0,
+		fileEditorFontSize: 0,
+		fontZoom: 1,
+		setSurfaceFontFamily: mockSetSurfaceFontFamily,
+		setSurfaceFontSize: mockSetSurfaceFontSize,
+		setFontZoom: mockSetFontZoom,
+		resetTypography: mockResetTypography,
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -428,7 +445,9 @@ describe('DisplayTab', () => {
 			const fontSelect = screen.getAllByRole('combobox')[0];
 			fireEvent.change(fontSelect, { target: { value: 'Monaco' } });
 
-			expect(mockSetFontFamily).toHaveBeenCalledWith('Monaco');
+			// Pickers are generated from the surface registry, so the setter names
+			// the surface rather than being one of five near-identical functions.
+			expect(mockSetSurfaceFontFamily).toHaveBeenCalledWith('interface', 'Monaco');
 		});
 
 		it('should render font select with current fontFamily value', async () => {
@@ -653,82 +672,69 @@ describe('DisplayTab', () => {
 	// Font Size
 	// =========================================================================
 
-	describe('Font Size', () => {
-		it('should render Font Size label', async () => {
+	describe('Per-surface sizes and zoom', () => {
+		// The single Small/Medium/Large/X-Large global size is gone: each surface
+		// now carries its own size, and Cmd+= drives a separate zoom multiplier
+		// so scaling preserves the proportions between them.
+		async function renderTab(overrides: Record<string, unknown> = {}) {
+			mockUseSettingsOverrides = overrides;
 			render(<DisplayTab theme={mockTheme} />);
-
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
+		}
 
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+		it('renders a size stepper for every surface', async () => {
+			await renderTab();
+
+			for (const surface of ['interface', 'chat', 'terminal', 'filePreview', 'fileEditor']) {
+				expect(screen.getByTestId(`font-size-${surface}-value`)).toBeInTheDocument();
+			}
 		});
 
-		it('should call setFontSize with 12 when Small is clicked', async () => {
-			render(<DisplayTab theme={mockTheme} />);
+		it('steps a surface size by one pixel', async () => {
+			await renderTab({ fontSize: 14 });
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: 'Small' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(12);
+			fireEvent.click(screen.getByTestId('font-size-interface-increase'));
+			expect(mockSetSurfaceFontSize).toHaveBeenCalledWith('interface', 15);
 		});
 
-		it('should call setFontSize with 14 when Medium is clicked', async () => {
-			render(<DisplayTab theme={mockTheme} />);
+		it('shows an unset surface as inheriting the interface size', async () => {
+			await renderTab({ fontSize: 16, chatFontSize: 0 });
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: 'Medium' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(14);
+			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('Inherit (16px)');
 		});
 
-		it('should call setFontSize with 16 when Large is clicked', async () => {
-			render(<DisplayTab theme={mockTheme} />);
+		it('shows a customized surface as its own size', async () => {
+			await renderTab({ fontSize: 16, terminalFontSize: 12 });
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: 'Large' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(16);
+			expect(screen.getByTestId('font-size-terminal-value')).toHaveTextContent('12px');
 		});
 
-		it('should call setFontSize with 18 when X-Large is clicked', async () => {
-			render(<DisplayTab theme={mockTheme} />);
+		it('sets the zoom rather than any surface size', async () => {
+			await renderTab();
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: 'X-Large' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(18);
+			const zoom = within(
+				document.querySelector('[data-setting-id="display-font-zoom"]') as HTMLElement
+			);
+			fireEvent.click(zoom.getByRole('button', { name: '150%' }));
+			expect(mockSetFontZoom).toHaveBeenCalledWith(1.5);
+			expect(mockSetSurfaceFontSize).not.toHaveBeenCalled();
 		});
+	});
 
-		it('should highlight selected font size (Medium when fontSize=14)', async () => {
+	describe('Factory Reset Fonts', () => {
+		it('needs two clicks, because it overwrites ten settings', async () => {
 			render(<DisplayTab theme={mockTheme} />);
-
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const mediumButton = screen.getByText('Medium');
-			expect(mediumButton).toHaveClass('ring-2');
-		});
+			fireEvent.click(screen.getByTestId('typography-reset-default'));
+			expect(mockResetTypography).not.toHaveBeenCalled();
 
-		it('should highlight Small when fontSize is 12', async () => {
-			mockUseSettingsOverrides = { fontSize: 12 };
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			const smallButton = screen.getByText('Small');
-			expect(smallButton).toHaveClass('ring-2');
+			fireEvent.click(screen.getByTestId('typography-reset-default'));
+			expect(mockResetTypography).toHaveBeenCalledWith('default');
 		});
 	});
 
@@ -1498,10 +1504,15 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Yellow warning threshold')).toBeInTheDocument();
-			expect(screen.getByText('60%')).toBeInTheDocument();
-			expect(screen.getByText('Red warning threshold')).toBeInTheDocument();
-			expect(screen.getByText('80%')).toBeInTheDocument();
+			// Scope to the section: the Zoom row also renders 80% and 90%, so an
+			// unscoped query is ambiguous.
+			const warnings = within(
+				document.querySelector('[data-setting-id="display-context-warnings"]') as HTMLElement
+			);
+			expect(warnings.getByText('Yellow warning threshold')).toBeInTheDocument();
+			expect(warnings.getByText('60%')).toBeInTheDocument();
+			expect(warnings.getByText('Red warning threshold')).toBeInTheDocument();
+			expect(warnings.getByText('80%')).toBeInTheDocument();
 		});
 
 		it('should update yellow threshold when slider changes', async () => {
@@ -1733,11 +1744,13 @@ describe('DisplayTab', () => {
 			// After the rejection resolves, the select should reappear (fontLoading goes false)
 			const fontSelectAfter = screen.getAllByRole('combobox')[0];
 			expect(fontSelectAfter).toBeInTheDocument();
-			expect(consoleSpy).toHaveBeenCalledWith(
-				'Failed to load fonts:',
-				undefined,
-				expect.any(Error)
-			);
+			// No error is logged: on stock macOS and Windows there is no
+			// fontconfig, so a failed enumeration is the EXPECTED path, not an
+			// anomaly. It degrades to a result flagged unreliable, and the picker
+			// then suppresses availability annotations instead of claiming that
+			// installed fonts are missing.
+			expect(consoleSpy).not.toHaveBeenCalled();
+			expect(screen.queryByText(/\(Not Found\)/)).not.toBeInTheDocument();
 
 			consoleSpy.mockRestore();
 		});
@@ -1783,10 +1796,13 @@ describe('DisplayTab', () => {
 			const options = fontSelect.querySelectorAll('option');
 			const optionTexts = Array.from(options).map((o) => o.textContent?.trim());
 
-			// Verify common monospace fonts are present
-			expect(optionTexts).toContain('Roboto Mono');
-			expect(optionTexts).toContain('JetBrains Mono');
-			expect(optionTexts).toContain('Fira Code');
+			// Bundled families (Roboto Mono, JetBrains Mono, Fira Code) render in
+			// the "Bundled with Maestro" group and are deduplicated out of the
+			// system group, so their option text carries a note. The system-only
+			// faces below still appear verbatim.
+			expect(optionTexts.some((t) => t?.startsWith('Roboto Mono'))).toBe(true);
+			expect(optionTexts.some((t) => t?.startsWith('JetBrains Mono'))).toBe(true);
+			expect(optionTexts.some((t) => t?.startsWith('Fira Code'))).toBe(true);
 			expect(optionTexts).toContain('Monaco');
 			expect(optionTexts).toContain('Menlo');
 			expect(optionTexts).toContain('Consolas');
@@ -1901,7 +1917,8 @@ describe('DisplayTab', () => {
 			// Font
 			expect(screen.getByText('Interface Font')).toBeInTheDocument();
 			// Font Size
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+			expect(screen.getByText('Zoom')).toBeInTheDocument();
+			expect(screen.getByText('Factory Reset Fonts')).toBeInTheDocument();
 			// Max Log Buffer
 			expect(screen.getByText('Maximum Log Buffer')).toBeInTheDocument();
 			// Max Output Lines

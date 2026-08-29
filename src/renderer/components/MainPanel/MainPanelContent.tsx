@@ -33,7 +33,7 @@ import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { resolveSurfaceFont } from '../../../shared/fontStack';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
@@ -470,18 +470,15 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onEffortChange,
 	} = props;
 
-	// Self-sourced from settingsStore. Each surface can carry its own font; an
-	// empty setting means "inherit the UI font", which is what resolveSurfaceFont
-	// resolves. It also guarantees the result degrades to monospace instead of
-	// the browser's serif default when the stored font (a bare name from the
-	// picker) isn't installed.
-	const chatFontFamily = useSettingsStore((s) =>
-		resolveSurfaceFont(s.chatFontFamily, s.fontFamily)
-	);
+	// Chat and terminal each carry their own font and size; an unset value means
+	// "inherit the interface setting". Resolved through useSurfaceTypography so
+	// these agree with the CSS custom properties the rest of the app reads -
+	// xterm paints to a canvas and cannot use a CSS variable.
+	const chat = useSurfaceTypography('chat');
+	const chatFontFamily = chat.fontFamily;
 	// The command terminal can use its own font (issue #1228).
-	const terminalFontFamily = useSettingsStore((s) =>
-		resolveSurfaceFont(s.terminalFontFamily, s.fontFamily)
-	);
+	const terminal = useSurfaceTypography('terminal');
+	const terminalFontFamily = terminal.fontFamily;
 	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
@@ -1208,7 +1205,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							session={session}
 							theme={theme}
 							fontFamily={terminalFontFamily}
-							fontSize={Math.round(fontSize * 0.85)}
+							// The terminal's own resolved size. This used to be a
+							// hard-coded 0.85 of the interface size, which is exactly
+							// the per-surface ratio the terminal size setting now
+							// expresses explicitly and lets the user change.
+							fontSize={terminal.fontSize}
 							defaultShell={defaultShell}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}
 							onTabPidChange={createTabPidChangeHandler(sessionId)}

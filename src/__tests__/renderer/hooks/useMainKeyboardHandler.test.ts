@@ -2,6 +2,7 @@ import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -1731,11 +1732,11 @@ describe('useMainKeyboardHandler', () => {
 				expect(useSettingsStore.getState().fontSize).toBe(20);
 			});
 
-			it('should reset font size on Cmd+Shift+0', () => {
+			it('should reset the font zoom on Cmd+Shift+0', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				// Set font size to non-default
-				useSettingsStore.setState({ fontSize: 20 });
+				// The shortcut resets the zoom multiplier, not the stored sizes.
+				useSettingsStore.setState({ fontSize: 20, fontZoom: 1.5 });
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
@@ -1753,8 +1754,8 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Cmd+Shift+0 should reset font size
-				expect(useSettingsStore.getState().fontSize).toBe(14);
+				expect(useSettingsStore.getState().fontZoom).toBe(1);
+				expect(useSettingsStore.getState().fontSize).toBe(20);
 			});
 		});
 
@@ -2869,10 +2870,13 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
-	describe('font size shortcuts', () => {
+	describe('font zoom shortcuts', () => {
+		// Cmd+= / Cmd+- move `fontZoom`, a multiplier over every surface size,
+		// rather than the interface size directly. Each surface now carries its
+		// own size, and pushing the base around would compress those differences
+		// on the way up and lose them at the clamp.
 		beforeEach(() => {
-			// Reset font size to default before each test
-			useSettingsStore.setState({ fontSize: 14 });
+			useSettingsStore.setState({ fontSize: 14, fontZoom: 1, terminalFontSize: 0 });
 		});
 
 		it('should increase font size with Cmd+=', () => {
@@ -2894,7 +2898,10 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
+			// The stored size is untouched, which is what makes the zoom
+			// perfectly reversible.
+			expect(useSettingsStore.getState().fontSize).toBe(14);
 		});
 
 		it('should increase font size with Cmd++', () => {
@@ -2914,7 +2921,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
 		});
 
 		it('should decrease font size with Cmd+-', () => {
@@ -2936,14 +2943,37 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(12);
+			expect(useSettingsStore.getState().fontZoom).toBe(0.9);
 		});
 
-		it('should reset font size to default (14) with Cmd+Shift+0', () => {
+		it('should keep the proportions between surfaces while zooming', () => {
+			// The whole reason zoom is a multiplier: a user who set the terminal
+			// smaller than the interface keeps that relationship.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			useSettingsStore.setState({ fontSize: 16, terminalFontSize: 12, fontZoom: 1 });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: '=', metaKey: true, bubbles: true })
+				);
+			});
+
+			const state = useSettingsStore.getState();
+			expect(state.fontSize).toBe(16);
+			expect(state.terminalFontSize).toBe(12);
+			expect(state.fontZoom).toBeGreaterThan(1);
+		});
+
+		it('should reset the zoom with Cmd+Shift+0, keeping custom surface sizes', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			// Set font size to something other than default
-			useSettingsStore.setState({ fontSize: 20 });
+			// Custom sizes are a Settings preference, not zoom state - wiping
+			// them from a keystroke would be unrecoverable.
+			useSettingsStore.setState({ fontSize: 20, terminalFontSize: 11, fontZoom: 1.5 });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
@@ -2963,13 +2993,15 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(14);
+			expect(useSettingsStore.getState().fontZoom).toBe(1);
+			expect(useSettingsStore.getState().fontSize).toBe(20);
+			expect(useSettingsStore.getState().terminalFontSize).toBe(11);
 		});
 
-		it('should not exceed maximum font size (24)', () => {
+		it('should not exceed the maximum zoom', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			useSettingsStore.setState({ fontSize: 24 });
+			useSettingsStore.setState({ fontZoom: FONT_ZOOM_MAX });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
@@ -2985,13 +3017,13 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(24);
+			expect(useSettingsStore.getState().fontZoom).toBe(FONT_ZOOM_MAX);
 		});
 
-		it('should not go below minimum font size (10)', () => {
+		it('should not go below the minimum zoom', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			useSettingsStore.setState({ fontSize: 10 });
+			useSettingsStore.setState({ fontZoom: FONT_ZOOM_MIN });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
@@ -3007,10 +3039,10 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(10);
+			expect(useSettingsStore.getState().fontZoom).toBe(FONT_ZOOM_MIN);
 		});
 
-		it('should work when modal is open (font size is a benign viewing preference)', () => {
+		it('should work when a modal is open (zoom is a benign viewing preference)', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
 			result.current.keyboardHandlerRef.current = createMockContext({
@@ -3029,7 +3061,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
 		});
 
 		it('should not trigger with Alt modifier (avoids conflict with session jump)', () => {

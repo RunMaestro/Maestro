@@ -55,6 +55,14 @@ import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
+import {
+	displayFont,
+	displayFontList,
+	displayFontSize,
+	displayFontsCatalog,
+	displayPreset,
+	displayZoom,
+} from './commands/display-font';
 import { settingsReset } from './commands/settings-reset';
 import {
 	settingsAgentList,
@@ -1156,6 +1164,53 @@ program
 	.description('Remove an SSH remote configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeSshRemote);
+
+// Display / typography commands
+//
+// Addressed by SURFACE rather than by settings key: `settings set` can already
+// write these ten keys, but only if you know their names and the
+// empty-string-means-inherit convention. These validate against the shared
+// registry, so a scripted setup can put the app in a known typographic state.
+const display = program
+	.command('display')
+	.description('View and manage typography (fonts, sizes, zoom)');
+
+display
+	.command('font [surface] [value]')
+	.description(
+		'Get or set a surface font. Surfaces: interface, chat, terminal, filePreview, fileEditor. Pass "inherit" to follow the interface font. Omit the surface to list all.'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((surface: string | undefined, value: string | undefined, options: { json?: boolean }) => {
+		if (!surface) displayFontList(options);
+		else displayFont(surface, value, options);
+	});
+
+display
+	.command('size <surface> [value]')
+	.description('Get or set a surface font size in px. Pass "inherit" to follow the interface size.')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontSize);
+
+display
+	.command('zoom [level]')
+	.description('Get or set the global zoom applied to every surface (e.g. 125% or 1.25)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayZoom);
+
+display
+	.command('preset [name]')
+	.description(
+		'Get the active typography preset, or reset every font and size to one (default | hacker)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayPreset);
+
+display
+	.command('fonts')
+	.description('List the fonts bundled with Maestro (guaranteed available on any machine)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontsCatalog);
 
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');

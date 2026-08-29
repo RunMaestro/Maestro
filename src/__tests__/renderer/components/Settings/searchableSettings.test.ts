@@ -73,8 +73,8 @@ describe('searchableSettings', () => {
 		});
 
 		it('should match by label', () => {
-			const results = searchSettings('Font Size');
-			expect(results.some((s) => s.id === 'display-font-size')).toBe(true);
+			const results = searchSettings('Font Family');
+			expect(results.some((s) => s.id === 'display-font-family')).toBe(true);
 		});
 
 		it('should match by description', () => {
@@ -159,9 +159,16 @@ describe('searchableSettings', () => {
 			['spelling', 'general-spell-check'],
 			['typo', 'general-spell-check'],
 
-			// Display tab
-			['x-large', 'display-font-size'],
-			['medium', 'display-font-size'],
+			// Display tab. The single Small/Medium/Large global size was replaced
+			// by a per-surface stepper plus a global zoom, so "font size" now
+			// leads to Zoom and to the individual surface pickers.
+			['zoom', 'display-font-zoom'],
+			['bigger', 'display-font-zoom'],
+			['factory reset', 'display-typography-reset'],
+			['hacker', 'display-typography-reset'],
+			['ai chat font', 'display-chat-font-family'],
+			['file preview font', 'display-file-preview-font-family'],
+			['file editor font', 'display-file-editor-font-family'],
 			['ai response', 'display-message-alignment'],
 			['file indexing', 'display-file-indexing'],
 			['file panel', 'display-file-indexing'],

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '../../../../../utils/logger';
+import { detectSystemFonts } from '../../../../../services/fontDetection';
 import type { FontConfigurationState } from '../types';
 
 export function useFontConfigurationState(): FontConfigurationState {
@@ -7,6 +8,7 @@ export function useFontConfigurationState(): FontConfigurationState {
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
 	const [fontLoading, setFontLoading] = useState(false);
 	const [fontsLoaded, setFontsLoaded] = useState(false);
+	const [fontsReliable, setFontsReliable] = useState(true);
 	// Guards a write that lands before the initial read resolves, so restoring
 	// the saved list can't clobber a font the user just added.
 	const customFontsDirty = useRef(false);
@@ -35,11 +37,18 @@ export function useFontConfigurationState(): FontConfigurationState {
 	const loadFonts = useCallback(async () => {
 		setFontLoading(true);
 		try {
-			const detected = await window.maestro.fonts.detect();
-			setSystemFonts(detected);
+			// detectSystemFonts never rejects - a total failure still returns a
+			// result flagged unreliable, which is what the picker gates its
+			// "(Not Found)" annotations on.
+			const detected = await detectSystemFonts();
+			setSystemFonts(detected.fonts);
+			setFontsReliable(detected.reliable);
 			setFontsLoaded(true);
-		} catch (error) {
-			logger.error('Failed to load fonts:', undefined, error);
+			if (!detected.reliable) {
+				logger.info('Font detection degraded; availability will not be annotated', undefined, {
+					reason: detected.reason,
+				});
+			}
 		} finally {
 			setFontLoading(false);
 		}
@@ -77,6 +86,7 @@ export function useFontConfigurationState(): FontConfigurationState {
 		customFonts,
 		fontLoading,
 		fontsLoaded,
+		fontsReliable,
 		handleFontInteraction,
 		addCustomFont,
 		removeCustomFont,

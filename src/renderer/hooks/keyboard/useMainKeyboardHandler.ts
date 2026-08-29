@@ -15,6 +15,7 @@ import { stepMediaItem } from '../../utils/mediaItems';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { FONT_ZOOM_DEFAULT, FONT_ZOOM_STEP, clampFontZoom } from '../../../shared/typography';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
@@ -53,12 +54,6 @@ function stepMediaFromShortcut(direction: 1 | -1): void {
 	const next = stepMediaItem(state.items, state.activeItemId, direction);
 	if (next) state.setActiveItem(next.id, { autoplay: true });
 }
-
-// Font size keyboard shortcut constants
-const FONT_SIZE_STEP = 2;
-const FONT_SIZE_MIN = 10;
-const FONT_SIZE_MAX = 24;
-const FONT_SIZE_DEFAULT = 14;
 
 /**
  * Context object passed to the main keyboard handler via ref.
@@ -1126,30 +1121,44 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			// Font size shortcuts: Cmd+= (zoom in), Cmd+- (zoom out), Cmd+Shift+0 (reset)
+			// Zoom shortcuts: Cmd+= (in), Cmd+- (out), Cmd+Shift+0 (reset).
+			//
+			// These move `fontZoom`, a multiplier applied to every surface size
+			// equally, NOT the interface size directly. Each surface now carries
+			// its own size, and pushing the base around would have compressed
+			// those differences on the way up and lost them entirely at the
+			// clamp - so a user who set the terminal smaller than the chat would
+			// watch that distinction dissolve after a few keypresses. A pure
+			// multiplier preserves the ratios exactly and is perfectly
+			// reversible, which is what makes the reset below able to restore
+			// custom sizes rather than flatten them.
 			if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
 				if (e.key === '=' || e.key === '+') {
 					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					const newSize = Math.min(fontSize + FONT_SIZE_STEP, FONT_SIZE_MAX);
-					if (newSize !== fontSize) setFontSize(newSize);
+					const { fontZoom, setFontZoom } = useSettingsStore.getState();
+					const next = clampFontZoom(fontZoom + FONT_ZOOM_STEP);
+					if (next !== fontZoom) setFontZoom(next);
 					trackShortcut('fontSizeIncrease');
 					return;
 				}
 				if (e.key === '-') {
 					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					const newSize = Math.max(fontSize - FONT_SIZE_STEP, FONT_SIZE_MIN);
-					if (newSize !== fontSize) setFontSize(newSize);
+					const { fontZoom, setFontZoom } = useSettingsStore.getState();
+					const next = clampFontZoom(fontZoom - FONT_ZOOM_STEP);
+					if (next !== fontZoom) setFontZoom(next);
 					trackShortcut('fontSizeDecrease');
 					return;
 				}
 			}
-			// Cmd+Shift+0: Reset font size (Cmd+0 is reserved for "Go to Last Tab")
+			// Cmd+Shift+0: reset the zoom (Cmd+0 is reserved for "Go to Last Tab").
+			// Resets ONLY the zoom, deliberately: the per-surface sizes are a
+			// preference the user set in Settings, not zoom state, and wiping
+			// them from a keystroke would be unrecoverable. Settings -> Display
+			// has Factory Reset Fonts for that.
 			if (ctx.isShortcut(e, 'fontSizeReset')) {
 				e.preventDefault();
-				const { fontSize, setFontSize } = useSettingsStore.getState();
-				if (fontSize !== FONT_SIZE_DEFAULT) setFontSize(FONT_SIZE_DEFAULT);
+				const { fontZoom, setFontZoom } = useSettingsStore.getState();
+				if (fontZoom !== FONT_ZOOM_DEFAULT) setFontZoom(FONT_ZOOM_DEFAULT);
 				trackShortcut('fontSizeReset');
 				return;
 			}

@@ -48,6 +48,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			onKeyDown,
 			fontScale = 1,
 			fontFamily,
+			baseFontPx,
 			className,
 		},
 		ref
@@ -111,7 +112,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				doc: value,
 				extensions: [
 					compartments.base.of(baseExt),
-					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily)),
+					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
 					updateListener,
@@ -166,9 +167,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			const view = viewRef.current;
 			if (!view) return;
 			view.dispatch({
-				effects: compartments.theme.reconfigure(buildEditorTheme(theme, fontScale, fontFamily)),
+				effects: compartments.theme.reconfigure(
+					buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)
+				),
 			});
-		}, [theme, fontScale, fontFamily, compartments.theme]);
+		}, [theme, fontScale, fontFamily, baseFontPx, compartments.theme]);
 
 		// Language change → reload + reconfigure. Plain-text falls through to
 		// an empty extension so the previously loaded grammar is cleared.

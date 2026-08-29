@@ -88,6 +88,12 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 }));
 
 // Mock execFile utility
+vi.mock('../../../../main/runtime/getShellPath', () => ({
+	peekShellPath: vi.fn(() => '/opt/homebrew/bin:/usr/bin:/bin'),
+}));
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
@@ -130,6 +136,7 @@ import { logger } from '../../../../main/utils/logger';
 import { detectShells } from '../../../../main/utils/shellDetector';
 import { isCloudflaredInstalled } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { captureException } from '../../../../main/utils/sentry';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
@@ -439,7 +446,20 @@ describe('system IPC handlers', () => {
 	});
 
 	describe('fonts:detect', () => {
-		it('should return array of system fonts using fc-list', async () => {
+		// The handler returns a RESULT rather than a bare array now: the caller
+		// has to be able to tell "here is what is installed" from "we could not
+		// look", or it annotates real fonts "(Not Found)".
+		const FALLBACK = [
+			'Monaco',
+			'Menlo',
+			'Courier New',
+			'Consolas',
+			'Roboto Mono',
+			'Fira Code',
+			'JetBrains Mono',
+		];
+
+		it('should return the installed fonts, flagged reliable', async () => {
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'Arial\nHelvetica\nMonaco\nCourier New',
 				stderr: '',
@@ -449,8 +469,51 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('fc-list', [':', 'family']);
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco', 'Courier New']);
+			expect(result).toEqual({
+				fonts: ['Arial', 'Helvetica', 'Monaco', 'Courier New'],
+				source: 'fc-list',
+				reliable: true,
+			});
+		});
+
+		it('should run fc-list with the login-shell PATH', async () => {
+			// The GUI process PATH excludes /opt/homebrew/bin, so a packaged app
+			// could not find fc-list even where it was installed.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'Arial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'fc-list',
+				[':', 'family'],
+				undefined,
+				expect.objectContaining({ env: expect.anything() })
+			);
+		});
+
+		it('should split comma-separated family aliases', async () => {
+			// fc-list prints "DejaVu Sans,DejaVu Sans Book" for one family. The
+			// previous parse kept the whole line, so an aliased family could
+			// never match a picker entry by name.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'DejaVu Sans,DejaVu Sans Book\nArial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			const result = await handler!({} as any);
+
+			expect((result as { fonts: string[] }).fonts).toEqual([
+				'DejaVu Sans',
+				'DejaVu Sans Book',
+				'Arial',
+			]);
 		});
 
 		it('should deduplicate fonts', async () => {
@@ -463,7 +526,7 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica']);
 		});
 
 		it('should filter empty lines', async () => {
@@ -476,10 +539,13 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica', 'Monaco']);
 		});
 
-		it('should return fallback fonts when fc-list fails', async () => {
+		it('should flag the fallback list unreliable when fc-list is absent', async () => {
+			// This is the majority case: fontconfig ships with neither macOS nor
+			// Windows. The seven names are a placeholder so the picker has
+			// something to show, NOT a claim about what is installed.
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: '',
 				stderr: 'command not found',
@@ -489,32 +555,36 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+			expect((result as { reason?: string }).reason).toBeTruthy();
 		});
 
-		it('should return fallback fonts on error', async () => {
+		it('should flag the fallback list unreliable on error', async () => {
 			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('Command failed'));
 
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+		});
+
+		it('should not report a missing fc-list to Sentry', async () => {
+			// It is the EXPECTED path off Linux, so reporting it would bury real
+			// crashes under noise from the majority platform.
+			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('ENOENT'));
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(captureException).not.toHaveBeenCalled();
 		});
 	});
 

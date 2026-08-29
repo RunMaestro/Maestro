@@ -19,6 +19,7 @@
  */
 
 import { SANS_FALLBACK_STACK } from './fontStack';
+import { BASE_FONT_SIZE_DEFAULT } from './typography';
 
 /** The interface font that produces Maestro's original all-monospace look. */
 export const MONO_INTERFACE_FONT = 'Roboto Mono, Menlo, "Courier New", monospace';
@@ -29,6 +30,21 @@ export const MONO_INTERFACE_FONT = 'Roboto Mono, Menlo, "Courier New", monospace
  * platform without depending on what the font sweep happens to find.
  */
 export const MONO_SURFACE_FONT = MONO_INTERFACE_FONT;
+
+/**
+ * The proportional interface font for the Default preset. Inter leads because
+ * it BUNDLES with the app (see bundledFonts.ts), so the preset renders
+ * identically on a machine with no fonts installed; the platform UI faces
+ * follow for anyone who prefers the native look, and the generic anchors the
+ * chain.
+ */
+export const DEFAULT_INTERFACE_FONT = `Inter, ${SANS_FALLBACK_STACK}`;
+
+/**
+ * The monospace face for the Default preset's code surfaces. JetBrains Mono is
+ * bundled, so this is guaranteed to resolve rather than silently degrading.
+ */
+export const DEFAULT_CODE_FONT = 'JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace';
 
 export type TypographyPresetId = 'default' | 'hacker';
 
@@ -45,6 +61,23 @@ export interface TypographyPresetFonts {
 	fileEditorFontFamily: string;
 }
 
+/**
+ * The size settings a preset writes, in px before zoom. `0` on an inheritable
+ * surface means "follow the interface size".
+ *
+ * A preset carries sizes as well as families because the two are one decision:
+ * a proportional face at 14px reads visibly smaller than a monospace face at
+ * 14px (smaller x-height, tighter advance), so switching families without
+ * retuning sizes makes the whole app look like it shrank.
+ */
+export interface TypographyPresetSizes {
+	fontSize: number;
+	chatFontSize: number;
+	terminalFontSize: number;
+	filePreviewFontSize: number;
+	fileEditorFontSize: number;
+}
+
 export interface TypographyPreset {
 	id: TypographyPresetId;
 	/** Title shown on the preset's card. */
@@ -54,6 +87,7 @@ export interface TypographyPreset {
 	/** Per-surface summary rendered as a small table on the card. */
 	surfaces: Array<{ label: string; kind: 'mono' | 'proportional' }>;
 	fonts: TypographyPresetFonts;
+	sizes: TypographyPresetSizes;
 }
 
 export const TYPOGRAPHY_PRESETS: Record<TypographyPresetId, TypographyPreset> = {
@@ -65,18 +99,34 @@ export const TYPOGRAPHY_PRESETS: Record<TypographyPresetId, TypographyPreset> = 
 			{ label: 'Interface', kind: 'proportional' },
 			{ label: 'AI chat', kind: 'proportional' },
 			{ label: 'Terminal', kind: 'mono' },
-			{ label: 'File preview', kind: 'mono' },
+			{ label: 'File preview', kind: 'proportional' },
 			{ label: 'File editor', kind: 'mono' },
 		],
 		fonts: {
-			fontFamily: SANS_FALLBACK_STACK,
-			// Empty means "inherit the interface font", so chat follows the
+			fontFamily: DEFAULT_INTERFACE_FONT,
+			// Empty means "inherit the interface font", so these follow the
 			// proportional face without pinning a second copy of it that would
 			// stop tracking a later interface-font change.
 			chatFontFamily: '',
-			terminalFontFamily: MONO_SURFACE_FONT,
-			filePreviewFontFamily: MONO_SURFACE_FONT,
-			fileEditorFontFamily: MONO_SURFACE_FONT,
+			// Reading a document is prose, so the preview is proportional too.
+			// Only the two surfaces where character alignment carries meaning -
+			// the terminal's box drawing and column output, and the editor's
+			// line-number gutter - stay monospace.
+			filePreviewFontFamily: '',
+			terminalFontFamily: DEFAULT_CODE_FONT,
+			fileEditorFontFamily: DEFAULT_CODE_FONT,
+		},
+		sizes: {
+			// A proportional face needs roughly one more pixel to match the
+			// apparent size of a monospace face, which is why this is 15 rather
+			// than the historical 14.
+			fontSize: 15,
+			chatFontSize: 0,
+			filePreviewFontSize: 0,
+			// The code surfaces keep the tighter size they were tuned at, so
+			// they do not balloon alongside the larger reading base.
+			terminalFontSize: 13,
+			fileEditorFontSize: 13,
 		},
 	},
 	hacker: {
@@ -99,6 +149,14 @@ export const TYPOGRAPHY_PRESETS: Record<TypographyPresetId, TypographyPreset> = 
 			filePreviewFontFamily: '',
 			fileEditorFontFamily: '',
 		},
+		sizes: {
+			// One size everywhere, inherited, matching the single-font idea.
+			fontSize: BASE_FONT_SIZE_DEFAULT,
+			chatFontSize: 0,
+			terminalFontSize: 0,
+			filePreviewFontSize: 0,
+			fileEditorFontSize: 0,
+		},
 	},
 };
 
@@ -112,13 +170,23 @@ export const TYPOGRAPHY_PRESET_IDS: TypographyPresetId[] = ['default', 'hacker']
  * settings match `hacker` exactly (that was the only look Maestro had), so
  * gating the prompt on this would mean never prompting anyone.
  */
-export function matchTypographyPreset(fonts: TypographyPresetFonts): TypographyPresetId | null {
+export function matchTypographyPreset(
+	fonts: TypographyPresetFonts,
+	sizes?: TypographyPresetSizes
+): TypographyPresetId | null {
 	for (const id of TYPOGRAPHY_PRESET_IDS) {
-		const preset = TYPOGRAPHY_PRESETS[id].fonts;
-		const same = (Object.keys(preset) as Array<keyof TypographyPresetFonts>).every(
-			(key) => (fonts[key] ?? '').trim() === preset[key]
+		const preset = TYPOGRAPHY_PRESETS[id];
+		const fontsMatch = (Object.keys(preset.fonts) as Array<keyof TypographyPresetFonts>).every(
+			(key) => (fonts[key] ?? '').trim() === preset.fonts[key]
 		);
-		if (same) return id;
+		if (!fontsMatch) continue;
+		// Sizes are optional so a caller that only cares about families (the
+		// picker's "which preset am I on?" label) need not thread them through.
+		if (!sizes) return id;
+		const sizesMatch = (Object.keys(preset.sizes) as Array<keyof TypographyPresetSizes>).every(
+			(key) => Number(sizes[key] ?? 0) === preset.sizes[key]
+		);
+		if (sizesMatch) return id;
 	}
 	return null;
 }

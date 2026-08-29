@@ -32,7 +32,12 @@ export const EDITOR_BASE_FONT_PX = 13;
  *
  * Pure: theme in, extension out. No side effects, no DOM.
  */
-export function buildEditorTheme(theme: Theme, fontScale = 1, fontFamily?: string): Extension {
+export function buildEditorTheme(
+	theme: Theme,
+	fontScale = 1,
+	fontFamily?: string,
+	baseFontPx: number = EDITOR_BASE_FONT_PX
+): Extension {
 	const c = theme.colors;
 	const isDark = theme.mode !== 'light';
 
@@ -51,7 +56,11 @@ export function buildEditorTheme(theme: Theme, fontScale = 1, fontFamily?: strin
 				fontFamily:
 					fontFamily ??
 					'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-				fontSize: `${EDITOR_BASE_FONT_PX * fontScale}px`,
+				// `baseFontPx` is the File Preview / File Editor size setting; the
+				// hard-coded constant survives only as its default. `fontScale` is
+				// the pane's own zoom control, which multiplies on top - two
+				// independent knobs, and the surface size is the one that persists.
+				fontSize: `${Math.round(baseFontPx * fontScale * 10) / 10}px`,
 				lineHeight: '1.6',
 			},
 			'.cm-content': {

@@ -58,5 +58,7 @@ export interface MarkdownEditorProps {
 	 * inherit the pane's. Undefined keeps the built-in monospace stack.
 	 */
 	fontFamily?: string;
+	/** File Editor size setting in px, before the pane's own zoom. */
+	baseFontPx?: number;
 	className?: string;
 }

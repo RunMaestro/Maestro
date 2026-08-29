@@ -3,10 +3,12 @@ import {
 	TYPOGRAPHY_PRESETS,
 	TYPOGRAPHY_PRESET_IDS,
 	MONO_INTERFACE_FONT,
+	DEFAULT_INTERFACE_FONT,
 	matchTypographyPreset,
 	type TypographyPresetFonts,
 } from '../../shared/typographyPresets';
 import { SANS_FALLBACK_STACK } from '../../shared/fontStack';
+import { isBundledFont } from '../../shared/bundledFonts';
 
 const FONT_KEYS: Array<keyof TypographyPresetFonts> = [
 	'fontFamily',
@@ -40,19 +42,56 @@ describe('typography presets', () => {
 		expect(fonts.fileEditorFontFamily).toBe('');
 	});
 
-	it('makes Default proportional for reading and monospace for work', () => {
+	it('makes Default proportional for reading and monospace only where alignment matters', () => {
 		const { fonts } = TYPOGRAPHY_PRESETS.default;
-		expect(fonts.fontFamily).toBe(SANS_FALLBACK_STACK);
-		// Chat inherits rather than pinning a second copy of the sans stack, so it
-		// keeps tracking a later interface-font change.
+		expect(fonts.fontFamily).toBe(DEFAULT_INTERFACE_FONT);
+		expect(fonts.fontFamily).toContain(SANS_FALLBACK_STACK);
+		// Chat and file preview inherit rather than pinning a second copy of the
+		// sans stack, so they keep tracking a later interface-font change.
+		// Reading a document is prose, so the preview is proportional too.
 		expect(fonts.chatFontFamily).toBe('');
-		for (const key of [
-			'terminalFontFamily',
-			'filePreviewFontFamily',
-			'fileEditorFontFamily',
-		] as const) {
+		expect(fonts.filePreviewFontFamily).toBe('');
+		// Only the surfaces where character alignment carries meaning stay mono:
+		// the terminal's column output and the editor's line-number gutter.
+		for (const key of ['terminalFontFamily', 'fileEditorFontFamily'] as const) {
 			expect(fonts[key]).not.toBe('');
 			expect(fonts[key].toLowerCase()).toContain('monospace');
+		}
+	});
+
+	it('leads Default with bundled faces so it renders on a bare machine', () => {
+		// A preset that named only system faces would degrade to the generic
+		// fallback on a machine without them, which is exactly the failure the
+		// bundled fonts exist to prevent.
+		const { fonts } = TYPOGRAPHY_PRESETS.default;
+		expect(isBundledFont(fonts.fontFamily.split(',')[0].trim())).toBe(true);
+		expect(isBundledFont(fonts.terminalFontFamily.split(',')[0].trim())).toBe(true);
+		expect(isBundledFont(fonts.fileEditorFontFamily.split(',')[0].trim())).toBe(true);
+	});
+
+	it('gives Default a larger base than Hacker to offset the smaller x-height', () => {
+		// A proportional face at 14px reads visibly smaller than a monospace one
+		// at 14px, so switching families without retuning sizes makes the whole
+		// app look like it shrank.
+		expect(TYPOGRAPHY_PRESETS.default.sizes.fontSize).toBeGreaterThan(
+			TYPOGRAPHY_PRESETS.hacker.sizes.fontSize
+		);
+		// The code surfaces keep their tighter size rather than following it up.
+		expect(TYPOGRAPHY_PRESETS.default.sizes.terminalFontSize).toBeLessThan(
+			TYPOGRAPHY_PRESETS.default.sizes.fontSize
+		);
+	});
+
+	it('makes every Hacker surface inherit one size', () => {
+		const { sizes } = TYPOGRAPHY_PRESETS.hacker;
+		expect(sizes.fontSize).toBeGreaterThan(0);
+		for (const key of [
+			'chatFontSize',
+			'terminalFontSize',
+			'filePreviewFontSize',
+			'fileEditorFontSize',
+		] as const) {
+			expect(sizes[key]).toBe(0);
 		}
 	});
 
@@ -74,7 +113,7 @@ describe('typography presets', () => {
 			Interface: 'proportional',
 			'AI chat': 'proportional',
 			Terminal: 'mono',
-			'File preview': 'mono',
+			'File preview': 'proportional',
 			'File editor': 'mono',
 		});
 		expect(TYPOGRAPHY_PRESETS.hacker.surfaces.every((s) => s.kind === 'mono')).toBe(true);

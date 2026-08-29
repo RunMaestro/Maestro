@@ -13,6 +13,8 @@ interface FontFamilySectionProps {
 	description?: string;
 	/** Optional leading "inherit" option (value should be an empty string). */
 	inheritOption?: { value: string; label: string };
+	/** Per-surface size control rendered beside the picker. */
+	sizeControl?: React.ReactNode;
 }
 
 export function FontFamilySection({
@@ -23,6 +25,7 @@ export function FontFamilySection({
 	heading,
 	description,
 	inheritOption,
+	sizeControl,
 }: FontFamilySectionProps) {
 	return (
 		<FontConfigurationPanel
@@ -30,6 +33,7 @@ export function FontFamilySection({
 			setFontFamily={setFontFamily}
 			systemFonts={fontConfiguration.systemFonts}
 			fontsLoaded={fontConfiguration.fontsLoaded}
+			fontsReliable={fontConfiguration.fontsReliable}
 			fontLoading={fontConfiguration.fontLoading}
 			customFonts={fontConfiguration.customFonts}
 			onAddCustomFont={fontConfiguration.addCustomFont}
@@ -39,6 +43,7 @@ export function FontFamilySection({
 			heading={heading}
 			description={description}
 			inheritOption={inheritOption}
+			sizeControl={sizeControl}
 		/>
 	);
 }

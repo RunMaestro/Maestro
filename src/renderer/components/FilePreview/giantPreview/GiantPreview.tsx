@@ -33,7 +33,16 @@ import type { GiantPreviewHandle, GiantPreviewProps } from './types';
  * for huge documents the rebuild cost is negligible and the code is simpler.
  */
 export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(function GiantPreview(
-	{ content, language, theme, containerRef, filePath: _filePath, fontScale = 1, fontFamily },
+	{
+		content,
+		language,
+		theme,
+		containerRef,
+		filePath: _filePath,
+		fontScale = 1,
+		fontFamily,
+		baseFontPx,
+	},
 	ref
 ) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
@@ -42,8 +51,8 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 
 	// Base extensions don't depend on content - memoize to avoid rebuilding on each render.
 	const baseExtensions = useMemo<Extension[]>(
-		() => [buildBaseExtensions(), buildEditorTheme(theme, fontScale, fontFamily)],
-		[theme, fontScale, fontFamily]
+		() => [buildBaseExtensions(), buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)],
+		[theme, fontScale, fontFamily, baseFontPx]
 	);
 
 	// Soft-wrap pathologically long lines so CM6's per-line measurement pass

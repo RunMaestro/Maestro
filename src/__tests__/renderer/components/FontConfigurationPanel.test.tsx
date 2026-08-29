@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FontConfigurationPanel } from '../../../renderer/components/FontConfigurationPanel';
+import { BUNDLED_FONT_NAMES } from '../../../shared/bundledFonts';
 import { mockTheme } from '../../helpers/mockTheme';
 
 function renderPanel(overrides: Partial<React.ComponentProps<typeof FontConfigurationPanel>> = {}) {
@@ -72,26 +73,30 @@ describe('FontConfigurationPanel', () => {
 	});
 	describe('arrow-key preview', () => {
 		it('steps to the next and previous font without opening the dropdown', () => {
+			// Ordering follows the rendered groups, which now lead with the
+			// bundled fonts: JetBrains Mono -> Fira Code -> Roboto Mono ...
 			const setFontFamily = vi.fn();
-			renderPanel({ fontFamily: 'JetBrains Mono', setFontFamily });
+			renderPanel({ fontFamily: 'Fira Code', setFontFamily });
 			const select = screen.getByRole('combobox');
 
 			fireEvent.keyDown(select, { key: 'ArrowDown' });
-			expect(setFontFamily).toHaveBeenLastCalledWith('Fira Code');
+			expect(setFontFamily).toHaveBeenLastCalledWith('Roboto Mono');
 
 			fireEvent.keyDown(select, { key: 'ArrowUp' });
-			expect(setFontFamily).toHaveBeenLastCalledWith('Roboto Mono');
+			expect(setFontFamily).toHaveBeenLastCalledWith('JetBrains Mono');
 		});
 
 		it('walks out of one group and into the next', () => {
 			const setFontFamily = vi.fn();
 			renderPanel({
-				fontFamily: 'Source Code Pro', // last common monospace font
+				// Last bundled font; the next group is Common Monospace.
+				fontFamily: BUNDLED_FONT_NAMES[BUNDLED_FONT_NAMES.length - 1],
 				setFontFamily,
 			});
 
 			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
-			expect(setFontFamily).toHaveBeenCalledWith('Arial'); // first proportional font
+			// The first system monospace face that is not also bundled.
+			expect(setFontFamily).toHaveBeenCalledWith('Monaco');
 		});
 
 		it('reaches the installed fonts once the system sweep has run', () => {
@@ -110,7 +115,8 @@ describe('FontConfigurationPanel', () => {
 
 		it('stops at the ends instead of wrapping', () => {
 			const setFontFamily = vi.fn();
-			const { rerender } = renderPanel({ fontFamily: 'Roboto Mono', setFontFamily });
+			// The first entry overall is now the first bundled font.
+			const { rerender } = renderPanel({ fontFamily: BUNDLED_FONT_NAMES[0], setFontFamily });
 
 			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowUp' });
 			expect(setFontFamily).not.toHaveBeenCalled();
@@ -142,7 +148,7 @@ describe('FontConfigurationPanel', () => {
 			});
 
 			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
-			expect(setFontFamily).toHaveBeenCalledWith('Roboto Mono');
+			expect(setFontFamily).toHaveBeenCalledWith(BUNDLED_FONT_NAMES[0]);
 		});
 
 		it('leaves other keys to the browser', () => {
@@ -153,5 +159,63 @@ describe('FontConfigurationPanel', () => {
 			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'a' });
 			expect(setFontFamily).not.toHaveBeenCalled();
 		});
+	});
+	describe('bundled fonts', () => {
+		it('lists the fonts that ship with the app', () => {
+			renderPanel();
+			expect(screen.getByRole('group', { name: /Bundled with Maestro/ })).toBeInTheDocument();
+		});
+
+		it('never marks a bundled font missing, even when detection found nothing', () => {
+			// A bundled font's presence is a fact, not a guess - it is inside the
+			// app bundle. Annotating one "(Not Found)" would be false.
+			renderPanel({ systemFonts: [], fontsLoaded: true, fontsReliable: true });
+
+			// Read the group directly rather than by option name: several bundled
+			// families share a prefix ("Roboto" / "Roboto Mono"), so a name regex
+			// matches more than one.
+			const group = screen.getByRole('group', { name: /Bundled with Maestro/ });
+			const options = [...group.querySelectorAll('option')];
+			expect(options).toHaveLength(BUNDLED_FONT_NAMES.length);
+			for (const option of options) {
+				expect(option.textContent).not.toContain('(Not Found)');
+			}
+		});
+
+		it('names the proprietary face a substitute matches', () => {
+			renderPanel();
+			expect(screen.getByRole('option', { name: /Arimo - like Arial/ })).toBeInTheDocument();
+		});
+	});
+
+	describe('unreliable detection', () => {
+		it('suppresses availability annotations when the font list is a guess', () => {
+			// This is the bug that made Arial read "(Not Found)" on a stock Mac:
+			// fc-list is absent there, detection fell back to a seven-font list,
+			// and every real font was then declared missing.
+			renderPanel({
+				systemFonts: ['Monaco', 'Menlo'],
+				fontsLoaded: true,
+				fontsReliable: false,
+			});
+
+			expect(screen.queryByText(/\(Not Found\)/)).not.toBeInTheDocument();
+			expect(screen.getByText(/Installed fonts couldn't be listed/)).toBeInTheDocument();
+		});
+
+		it('still annotates when detection actually enumerated the machine', () => {
+			renderPanel({
+				systemFonts: ['Monaco', 'Menlo'],
+				fontsLoaded: true,
+				fontsReliable: true,
+			});
+
+			expect(screen.getAllByText(/\(Not Found\)/).length).toBeGreaterThan(0);
+		});
+	});
+
+	it('renders a size control beside the picker when given one', () => {
+		renderPanel({ sizeControl: <span data-testid="size-slot">size</span> });
+		expect(screen.getByTestId('size-slot')).toBeInTheDocument();
 	});
 });

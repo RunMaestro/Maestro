@@ -13,6 +13,25 @@ const META_KEY_NAME = formatMetaKeyName();
 
 export const DISPLAY_SETTINGS: SearchableSetting[] = [
 	{
+		id: 'display-typography-reset',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Factory Reset Fonts',
+		description: 'Restore every font and size at once to Default or Hacker',
+		keywords: [
+			'font',
+			'typography',
+			'reset',
+			'factory reset',
+			'default',
+			'hacker',
+			'preset',
+			'restore',
+			'monospace',
+			'proportional',
+		],
+	},
+	{
 		id: 'display-font-family',
 		tab: 'display',
 		tabLabel: 'Display',
@@ -63,12 +82,22 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		keywords: ['font', 'typeface', 'file editor', 'editor', 'edit mode', 'code', 'codemirror'],
 	},
 	{
-		id: 'display-font-size',
+		id: 'display-font-zoom',
 		tab: 'display',
 		tabLabel: 'Display',
-		label: 'Font Size',
-		description: 'Small, Medium, Large, or X-Large',
-		keywords: ['font', 'size', 'text', 'small', 'medium', 'large', 'x-large', 'xl', 'zoom'],
+		label: 'Zoom',
+		description: 'Scale every surface font size together, without losing their relative sizes',
+		keywords: [
+			'font',
+			'size',
+			'zoom',
+			'text',
+			'bigger',
+			'smaller',
+			'scale',
+			'accessibility',
+			'magnify',
+		],
 	},
 	{
 		id: 'display-max-log-buffer',

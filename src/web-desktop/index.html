@@ -20,17 +20,6 @@
 		     + onload swap trick: mobile Safari defers fetching print-media
 		     stylesheets until an actual print, so onload never fires and the font
 		     never loads, leaving the app in a serifed Courier fallback. -->
-		<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-		<link
-			rel="preload"
-			as="style"
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-		/>
-		<link
-			rel="stylesheet"
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-		/>
 		<style>
 			html,
 			body,
@@ -40,9 +29,20 @@
 				height: 100%;
 				background: #0a0a0a;
 				color: #eee;
-				font-family:
-					'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco,
-					'Courier New', monospace;
+				/* Follows the interface font setting, same as the desktop shell.
+				   The literals are only the pre-React fallback for the splash. */
+				font-family: var(
+					--maestro-font-interface,
+					'JetBrains Mono',
+					'Fira Code',
+					ui-monospace,
+					'SF Mono',
+					SFMono-Regular,
+					Menlo,
+					Monaco,
+					'Courier New',
+					monospace
+				);
 				-webkit-font-smoothing: antialiased;
 				-moz-osx-font-smoothing: grayscale;
 			}

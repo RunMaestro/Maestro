@@ -36,14 +36,18 @@ export const TEXT_LINE_HEIGHT = 1.6;
  * Lives in its own module so the styling decisions are independently
  * unit-testable (string-contains assertions against the generated CSS).
  */
-export function generateTextProseCss(theme: Theme, fontScale = 1): string {
+export function generateTextProseCss(
+	theme: Theme,
+	fontScale = 1,
+	baseFontPx: number = TEXT_BASE_FONT_PX
+): string {
 	const c = theme.colors;
 	return `
 		.${TEXT_PAGE_CLASS} {
 			display: grid;
 			grid-template-columns: auto 1fr;
 			font-family: inherit;
-			font-size: ${TEXT_BASE_FONT_PX * fontScale}px;
+			font-size: ${Math.round(baseFontPx * fontScale * 10) / 10}px;
 			line-height: ${TEXT_LINE_HEIGHT};
 			color: ${c.textMain};
 		}

@@ -67,6 +67,41 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: '',
 		category: 'appearance',
 	},
+	chatFontSize: {
+		description:
+			'Font size in px for the AI chat transcript, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	terminalFontSize: {
+		description:
+			'Font size in px for the command terminal, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	filePreviewFontSize: {
+		description:
+			'Font size in px for a file being read, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	fileEditorFontSize: {
+		description:
+			'Font size in px for a file being edited, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	fontZoom: {
+		description:
+			'Zoom multiplier applied to every surface font size equally, moved by Cmd/Ctrl+= and Cmd/Ctrl+-. Preserves the relative proportions between surfaces.',
+		type: 'number',
+		default: 1,
+		category: 'appearance',
+	},
 	typographyPromptSeen: {
 		description:
 			'Whether the first-run typography chooser has been shown. False on a fresh install and on any install predating the chooser, which is what shows it to existing users once after the update.',

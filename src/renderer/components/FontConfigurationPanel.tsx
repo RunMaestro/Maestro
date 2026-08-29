@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { Type } from 'lucide-react';
 import type { Theme } from '../types';
 import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
+import { BUNDLED_FONTS, BUNDLED_FONT_NAMES, isBundledFont } from '../../shared/bundledFonts';
 
 /**
  * Common monospace fonts that are typically available across different systems.
@@ -48,6 +49,14 @@ export interface FontConfigurationPanelProps {
 	systemFonts: string[];
 	/** Whether fonts have been loaded from the system */
 	fontsLoaded: boolean;
+	/**
+	 * Whether the loaded list actually reflects this machine. False when
+	 * detection fell back to a hard-coded guess, in which case availability
+	 * annotations are suppressed entirely: labelling an installed Arial
+	 * "(Not Found)" reads as a broken feature, and the fallback list mentions
+	 * seven faces out of hundreds.
+	 */
+	fontsReliable?: boolean;
 	/** Whether fonts are currently loading */
 	fontLoading: boolean;
 	/** List of user-added custom fonts */
@@ -69,6 +78,8 @@ export interface FontConfigurationPanelProps {
 	 * Its `value` should be the empty string so it maps to the stored default.
 	 */
 	inheritOption?: { value: string; label: string };
+	/** Per-surface size control rendered beside the picker. */
+	sizeControl?: React.ReactNode;
 }
 
 /**
@@ -86,6 +97,7 @@ export function FontConfigurationPanel({
 	setFontFamily,
 	systemFonts,
 	fontsLoaded,
+	fontsReliable = true,
 	fontLoading,
 	customFonts,
 	onAddCustomFont,
@@ -95,6 +107,7 @@ export function FontConfigurationPanel({
 	heading = 'Interface Font',
 	description,
 	inheritOption,
+	sizeControl,
 }: FontConfigurationPanelProps) {
 	const [customFontInput, setCustomFontInput] = useState('');
 
@@ -109,6 +122,23 @@ export function FontConfigurationPanel({
 		});
 		return fontSet;
 	}, [systemFonts]);
+
+	// Only annotate availability when detection actually enumerated the machine.
+	const canAnnotateAvailability = fontsLoaded && fontsReliable;
+
+	// The common groups list SYSTEM faces. Several are also bundled (JetBrains
+	// Mono, Fira Code, Roboto Mono, Source Code Pro, Arial's substitute), and a
+	// family in two groups renders two rows that mean different things - one
+	// guaranteed, one only maybe present. Drop the duplicates from the system
+	// groups, since the bundled row is the stronger claim.
+	const systemMonospaceFonts = useMemo(
+		() => COMMON_MONOSPACE_FONTS.filter((font) => !isBundledFont(font)),
+		[]
+	);
+	const systemProportionalFonts = useMemo(
+		() => COMMON_PROPORTIONAL_FONTS.filter((font) => !isBundledFont(font)),
+		[]
+	);
 
 	const isFontAvailable = useCallback(
 		(fontName: string) => {
@@ -135,9 +165,12 @@ export function FontConfigurationPanel({
 	const installedFonts = useMemo(() => {
 		const normalize = (str: string) => str.toLowerCase().replace(/[\s-]/g, '');
 		const shown = new Set(
-			[...COMMON_MONOSPACE_FONTS, ...COMMON_PROPORTIONAL_FONTS, ...customFonts].map((f) =>
-				normalize(f)
-			)
+			[
+				...BUNDLED_FONT_NAMES,
+				...COMMON_MONOSPACE_FONTS,
+				...COMMON_PROPORTIONAL_FONTS,
+				...customFonts,
+			].map((f) => normalize(f))
 		);
 		return [...systemFonts]
 			.filter((font) => !shown.has(normalize(font)))
@@ -154,6 +187,7 @@ export function FontConfigurationPanel({
 		if (!fontFamily) return null;
 		if (inheritOption && fontFamily === inheritOption.value) return null;
 		const known = [
+			...BUNDLED_FONT_NAMES,
 			...COMMON_MONOSPACE_FONTS,
 			...COMMON_PROPORTIONAL_FONTS,
 			...customFonts,
@@ -169,13 +203,21 @@ export function FontConfigurationPanel({
 		if (inheritOption) values.push(inheritOption.value);
 		if (unlistedValue) values.push(unlistedValue);
 		values.push(
-			...COMMON_MONOSPACE_FONTS,
-			...COMMON_PROPORTIONAL_FONTS,
+			...BUNDLED_FONT_NAMES,
+			...systemMonospaceFonts,
+			...systemProportionalFonts,
 			...customFonts,
 			...installedFonts
 		);
 		return values;
-	}, [inheritOption, unlistedValue, customFonts, installedFonts]);
+	}, [
+		inheritOption,
+		unlistedValue,
+		systemMonospaceFonts,
+		systemProportionalFonts,
+		customFonts,
+		installedFonts,
+	]);
 
 	const stepFont = (delta: number) => {
 		if (orderedFontValues.length === 0) return;
@@ -238,22 +280,34 @@ export function FontConfigurationPanel({
 						<option value={unlistedValue}>{unlistedValue}</option>
 					</optgroup>
 				)}
+				{/* Bundled fonts ship inside the app, so they are never annotated
+				    "(Not Found)" - unlike a system font, their presence is a fact
+				    rather than a guess. Listed first for that reason. */}
+				<optgroup label="Bundled with Maestro (always available)">
+					{BUNDLED_FONTS.map((font) => (
+						<option key={font.name} value={font.name}>
+							{font.name}
+							{font.substituteFor ? ` - like ${font.substituteFor}` : ''}
+							{font.note ? ` (${font.note})` : ''}
+						</option>
+					))}
+				</optgroup>
 				<optgroup label="Common Monospace Fonts">
-					{COMMON_MONOSPACE_FONTS.map((font) => {
-						const available = fontsLoaded ? isFontAvailable(font) : true;
+					{systemMonospaceFonts.map((font) => {
+						const available = canAnnotateAvailability ? isFontAvailable(font) : true;
 						return (
 							<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>
-								{font} {fontsLoaded && !available && '(Not Found)'}
+								{font} {canAnnotateAvailability && !available && '(Not Found)'}
 							</option>
 						);
 					})}
 				</optgroup>
 				<optgroup label="Common Proportional Fonts">
-					{COMMON_PROPORTIONAL_FONTS.map((font) => {
-						const available = fontsLoaded ? isFontAvailable(font) : true;
+					{systemProportionalFonts.map((font) => {
+						const available = canAnnotateAvailability ? isFontAvailable(font) : true;
 						return (
 							<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>
-								{font} {fontsLoaded && !available && '(Not Found)'}
+								{font} {canAnnotateAvailability && !available && '(Not Found)'}
 							</option>
 						);
 					})}
@@ -277,8 +331,15 @@ export function FontConfigurationPanel({
 					</optgroup>
 				)}
 			</select>
-			<div className="h-4 mb-2 text-xs opacity-50">
-				{fontLoading ? 'Loading installed fonts...' : 'Press Up/Down to preview each font.'}
+			<div className="flex items-center justify-between gap-3 min-h-[1.5rem] mb-2">
+				<span className="text-xs opacity-50">
+					{fontLoading
+						? 'Loading installed fonts...'
+						: canAnnotateAvailability || !fontsLoaded
+							? 'Press Up/Down to preview each font.'
+							: "Installed fonts couldn't be listed, so none are marked missing."}
+				</span>
+				{sizeControl}
 			</div>
 
 			<div className="space-y-2">
