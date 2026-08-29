@@ -10,7 +10,7 @@ import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panel
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useNotificationStore } from '../../stores/notificationStore';
-import { useMediaPlaybackStore, selectMediaPlayerTargetId } from '../../stores/mediaPlaybackStore';
+import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { stepMediaItem } from '../../utils/mediaItems';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
@@ -31,18 +31,13 @@ import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 /**
  * Open the floating media player on whatever it should be showing.
  *
- * Mirrors the palette command rather than duplicating its reasoning: restore the
- * widget, and land on the loaded item, else the most recent thing played. Reads
- * the store at press time so a queue that advanced since the last render cannot
- * strand the shortcut on a finished file.
+ * The store owns the reasoning, so this key and the palette command cannot
+ * disagree about what "open the player" means. Read at press time, so a queue
+ * that advanced since the last render cannot strand the shortcut on a finished
+ * file.
  */
 function openMediaPlayerFromShortcut(): void {
-	const state = useMediaPlaybackStore.getState();
-	const targetId = selectMediaPlayerTargetId(state);
-	state.restore();
-	if (targetId && targetId !== state.activeItemId) {
-		state.setActiveItem(targetId, { autoplay: false });
-	}
+	useMediaPlaybackStore.getState().openPlayer();
 }
 
 /**

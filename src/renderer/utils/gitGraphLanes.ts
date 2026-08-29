@@ -13,6 +13,10 @@
  * - A lane's x position is its order of first appearance in the oldest-first
  *   commit list (`BranchesOrder` in @gitgraph/core), so `laneOrder` below reads
  *   left to right.
+ *
+ * Vertical movement walks ONE LANE (`commitsOnLane`), never the global row
+ * order: the two axes have to mean different things, or Up/Down drifts sideways
+ * across branches on its own and Left/Right has nothing left to do.
  */
 
 import type { GitGraphNode } from '../services/git';
@@ -26,6 +30,10 @@ export interface GitGraphLanes {
 	laneOrder: string[];
 	/** Row index (position in `ordered`) of each commit hash. */
 	rowOfCommit: Map<string, number>;
+	/** Hashes on each lane, oldest first. This is what Up/Down walks. */
+	commitsOnLane: Map<string, string[]>;
+	/** Each commit's position within its own lane's list. */
+	indexOnLane: Map<string, number>;
 }
 
 /**
@@ -54,8 +62,9 @@ export function computeGitGraphLanes(nodes: GitGraphNode[]): GitGraphLanes {
 
 	const laneOfCommit = new Map<string, string>();
 	const rowOfCommit = new Map<string, number>();
+	const commitsOnLane = new Map<string, string[]>();
+	const indexOnLane = new Map<string, number>();
 	const laneOrder: string[] = [];
-	const seenLanes = new Set<string>();
 	let laneCounter = 0;
 
 	ordered.forEach((node, row) => {
@@ -66,56 +75,92 @@ export function computeGitGraphLanes(nodes: GitGraphNode[]): GitGraphLanes {
 
 		laneOfCommit.set(node.hash, lane);
 		rowOfCommit.set(node.hash, row);
-		if (!seenLanes.has(lane)) {
-			seenLanes.add(lane);
+
+		let members = commitsOnLane.get(lane);
+		if (!members) {
+			members = [];
+			commitsOnLane.set(lane, members);
 			laneOrder.push(lane);
 		}
+		indexOnLane.set(node.hash, members.length);
+		members.push(node.hash);
 	});
 
-	return { ordered, laneOfCommit, laneOrder, rowOfCommit };
+	return { ordered, laneOfCommit, laneOrder, rowOfCommit, commitsOnLane, indexOnLane };
+}
+
+/** The lane a commit sits on plus its position along it, or null if off-graph. */
+function locate(
+	lanes: GitGraphLanes,
+	hash: string | undefined
+): { members: string[]; index: number } | null {
+	if (!hash) return null;
+	const lane = lanes.laneOfCommit.get(hash);
+	if (!lane) return null;
+	const members = lanes.commitsOnLane.get(lane);
+	const index = lanes.indexOnLane.get(hash);
+	if (!members || index === undefined) return null;
+	return { members, index };
 }
 
 /**
- * Step one row up (`+1`, visually up = newer) or down (`-1` = older) from
- * `fromHash`. Returns the target commit hash, or null when there is nowhere to
- * go (the anchor is off-graph, or the cursor is already at an end).
+ * Step one commit along the CURRENT lane: `+1` is the next commit up the same
+ * line (newer), `-1` the next one down it (older). Commits sitting between them
+ * on other branches are skipped, because the user asked to follow one line.
+ *
+ * Returns null at either end of the lane rather than wrapping or spilling onto
+ * a neighbour - crossing branches is what Left/Right is for.
  */
-export function stepGitGraphRow(
+export function stepGitGraphAlongLane(
 	lanes: GitGraphLanes,
 	fromHash: string | undefined,
 	direction: 1 | -1
 ): string | null {
-	if (lanes.ordered.length === 0) return null;
-	if (!fromHash) return null;
-	const row = lanes.rowOfCommit.get(fromHash);
-	if (row === undefined) return null;
-	const target = row + direction;
-	if (target < 0 || target >= lanes.ordered.length) return null;
-	return lanes.ordered[target].hash;
+	const at = locate(lanes, fromHash);
+	if (!at) return null;
+	const target = at.index + direction;
+	if (target < 0 || target >= at.members.length) return null;
+	return at.members[target];
 }
 
 /**
- * The commit at `row`, clamped into range. Use it for the jumps that are meant
- * to land somewhere definite (a page, the top, the bottom) rather than to step:
- * a page jump near an end should reach the end, not refuse to move.
+ * Move `delta` commits along the current lane, CLAMPED to its ends. Use it for
+ * the jumps that are meant to land somewhere definite (a page, the tip, the
+ * root): a page jump near an end should reach the end rather than refuse to
+ * move, which is the opposite of what a single step should do.
  */
-export function gitGraphHashAtRow(lanes: GitGraphLanes, row: number): string | null {
-	if (lanes.ordered.length === 0) return null;
-	const clamped = Math.min(Math.max(row, 0), lanes.ordered.length - 1);
-	return lanes.ordered[clamped].hash;
+export function jumpGitGraphAlongLane(
+	lanes: GitGraphLanes,
+	fromHash: string | undefined,
+	delta: number
+): string | null {
+	const at = locate(lanes, fromHash);
+	if (!at) return null;
+	const clamped = Math.min(Math.max(at.index + delta, 0), at.members.length - 1);
+	return at.members[clamped];
+}
+
+/** The newest ('tip') or oldest ('root') commit on the anchor's own lane. */
+export function gitGraphLaneEdge(
+	lanes: GitGraphLanes,
+	fromHash: string | undefined,
+	edge: 'tip' | 'root'
+): string | null {
+	const at = locate(lanes, fromHash);
+	if (!at) return null;
+	return edge === 'tip' ? at.members[at.members.length - 1] : at.members[0];
 }
 
 /**
  * Jump to the neighbouring lane, `direction` +1 moving right and -1 left.
  *
- * The landing commit is the one nearest the current row on that lane, so a
- * horizontal jump keeps the user roughly where they were in history instead of
- * throwing them to the tip of another branch. Lanes are skipped rather than
- * refused when they hold no commits (they cannot, but the search stays total),
- * and the ends do not wrap: wrapping across the whole graph reads as a jump to
- * a random branch rather than as a step.
+ * The landing commit is the one nearest the current ROW on that lane (rows are
+ * the shared vertical coordinate across lanes), so a horizontal jump keeps the
+ * user roughly where they were in history instead of throwing them to the tip
+ * of another branch. The ends do not wrap: wrapping across the whole graph
+ * reads as a jump to a random branch rather than as a step.
  */
-export function stepGitGraphLane(
+export function stepGitGraphAcrossLanes(
 	lanes: GitGraphLanes,
 	fromHash: string | undefined,
 	direction: 1 | -1
@@ -128,12 +173,12 @@ export function stepGitGraphLane(
 	const currentRow = lanes.rowOfCommit.get(fromHash) ?? 0;
 
 	for (let i = laneIndex + direction; i >= 0 && i < lanes.laneOrder.length; i += direction) {
-		const targetLane = lanes.laneOrder[i];
+		const members = lanes.commitsOnLane.get(lanes.laneOrder[i]);
+		if (!members || members.length === 0) continue;
 		let best: { hash: string; distance: number } | null = null;
-		for (const node of lanes.ordered) {
-			if (lanes.laneOfCommit.get(node.hash) !== targetLane) continue;
-			const distance = Math.abs((lanes.rowOfCommit.get(node.hash) ?? 0) - currentRow);
-			if (!best || distance < best.distance) best = { hash: node.hash, distance };
+		for (const hash of members) {
+			const distance = Math.abs((lanes.rowOfCommit.get(hash) ?? 0) - currentRow);
+			if (!best || distance < best.distance) best = { hash, distance };
 		}
 		if (best) return best.hash;
 	}

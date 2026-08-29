@@ -390,14 +390,16 @@ Graph, and remembers which one you left it on.
 | Previous / next view           | `Cmd+Shift+[` / `]`        | `Ctrl+Shift+[` / `]` |
 | Previous / next commit         | `Up/Down Arrow` or `j`/`k` | same                 |
 | Jump a page of commits         | `PageUp` / `PageDown`      | same                 |
-| First / last commit            | `Home` / `End`             | same                 |
+| Newest / oldest commit         | `Home` / `End`             | same                 |
 | Previous / next branch (Graph) | `Left/Right Arrow`         | same                 |
 | Close the viewer               | `Esc`                      | `Esc`                |
 
-In Graph view the arrows read as the graph is drawn: `Up`/`Down` step one row
-along the lane you are on, and `Left`/`Right` cross to the nearest commit on the
-neighbouring lane. The graph is built from every branch, so the arrows reach
-commits the List view does not hold.
+In Graph view each axis answers one question. `Up`/`Down` follow the line the
+selected commit is on, skipping commits that belong to other branches, and stop
+at that branch's newest and oldest commit. `Left`/`Right` are the only keys that
+cross to another branch, landing on the commit nearest the one you were on.
+`Home`/`End` and the page keys also stay on the current branch. The graph is
+built from every branch, so these reach commits the List view does not hold.
 
 ## Document Graph
 

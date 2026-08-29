@@ -1562,20 +1562,42 @@ this is not valid diff`,
 			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
 		});
 
-		it('walks graph rows with Up/Down, including commits the list never holds', async () => {
+		// Up/Down follow the line the cursor is on. Wandering onto a neighbouring
+		// branch by itself would leave Left/Right with nothing to do.
+		it('walks Up/Down along the current lane, skipping other branches', async () => {
 			const graph = await renderGraphView();
 
-			// Down is older: m1 (row 4) -> f2 (row 3), which is not in `entries`.
+			// m1 -> c2 down the main lane, stepping over f2 (feature, one row nearer).
 			fireEvent.keyDown(window, { key: 'ArrowDown' });
-			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c2'));
+
+			// And again over f1, to main's root.
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c1'));
 
 			fireEvent.keyDown(window, { key: 'ArrowUp' });
-			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c2'));
+		});
+
+		// Commits off the current branch are still reachable - via Left/Right, and
+		// once there Up/Down walks that branch instead.
+		it('walks the branch it was moved onto, including commits the list never holds', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f1'));
+
+			// f1 is the feature lane's root; Down holds rather than falling onto main.
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f1'));
 		});
 
 		// Left to the list handler these would move an index the graph is not
 		// showing, so the key would look dead.
-		it('answers Home/End and the page keys in graph rows', async () => {
+		it('answers Home/End and the page keys along the current lane', async () => {
 			const graph = await renderGraphView();
 
 			fireEvent.keyDown(window, { key: 'End' });
@@ -1584,13 +1606,28 @@ this is not valid diff`,
 			fireEvent.keyDown(window, { key: 'Home' });
 			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
 
-			// A page is larger than this graph, so it clamps to the oldest commit
-			// instead of refusing to move.
+			// A page is larger than this lane, so it clamps to its root instead of
+			// refusing to move.
 			fireEvent.keyDown(window, { key: 'PageDown' });
 			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c1'));
 
 			fireEvent.keyDown(window, { key: 'PageUp' });
 			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+		});
+
+		// These are lane ends, not graph ends: on the feature branch they must stop
+		// at f2/f1 rather than at main's tip and root.
+		it('bounds Home/End by the lane the cursor is on', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+
+			fireEvent.keyDown(window, { key: 'End' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f1'));
+
+			fireEvent.keyDown(window, { key: 'Home' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
 		});
 
 		it('loads the diff for a commit reached by keyboard', async () => {

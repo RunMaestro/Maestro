@@ -111,6 +111,8 @@ The pill names the file it is holding, and drops to just the two buttons on a na
 
 **Close** (the `x` button) stops playback and puts the player away. The rest of your queue is left intact, so opening any media file brings the player back with the playlist still there.
 
+**Open Media Player** in the Command Palette brings the player back on whatever it should be showing: the loaded track if there is one, otherwise the last thing you played. A track you closed comes back in the queue, paused, at the position you stopped at, so closing the player is never how you lose your place.
+
 You can also reopen a minimized player from the Command Palette with **Show Floating Media Player**. Adding files to the queue brings it back too, so a batch you just queued never lands somewhere you cannot see it - including when every file you picked was already in the queue. What is loaded keeps playing either way.
 
 ## Tips

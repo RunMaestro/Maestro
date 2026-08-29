@@ -214,6 +214,22 @@ interface MediaPlaybackStoreState {
 	/** Bring the player back. */
 	restore: () => void;
 	/**
+	 * Put the player on screen, loaded on whatever it should be showing.
+	 *
+	 * What the command palette's "Open Media Player" and its shortcut both call,
+	 * so there is one answer to "open the player" instead of copies that drift.
+	 * It lands on the loaded item, else the most recently played one, else the
+	 * head of the queue, and it loads PAUSED at the remembered position: opening
+	 * the player is a request to see it, not a request to start listening.
+	 *
+	 * Re-queues a target that only survives in history. History outlives the
+	 * queue, so the most recent thing played is routinely something the user
+	 * closed, and only queue entries are ever drawn - without the re-queue the
+	 * command resolved a target, activated nothing, and rendered nothing, which
+	 * is indistinguishable from the feature being broken.
+	 */
+	openPlayer: () => void;
+	/**
 	 * Remember where the user put the player, and how wide they made it for this
 	 * kind of media.
 	 */
@@ -472,8 +488,15 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			if (!state.items.some((item) => item.id === itemId)) return state;
 			changed = true;
 			const items = state.items.filter((item) => item.id !== itemId);
+			const wasActive = state.activeItemId === itemId;
+			const historyPatch = wasActive ? historyForActiveChange(state, null) : undefined;
+			const history = historyPatch?.history ?? state.history;
+			// Keep the position of anything that survives in "recently played":
+			// reopening it from the history menu or from "Open Media Player" has to
+			// land where the user stopped, not back at zero. Only a track leaving
+			// BOTH lists loses its bookmark.
 			const resumeTimes = { ...state.resumeTimes };
-			delete resumeTimes[itemId];
+			if (!history.some((entry) => entry.id === itemId)) delete resumeTimes[itemId];
 
 			return {
 				items,
@@ -483,12 +506,12 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				// the player, so it lands in history the same as if the next one had
 				// started - otherwise playing something and then closing it would
 				// lose it from "recently played" entirely.
-				...(state.activeItemId === itemId
+				...(wasActive
 					? {
 							activeItemId: null,
 							playing: false,
 							pendingAutoplay: false,
-							...historyForActiveChange(state, null),
+							...historyPatch,
 						}
 					: {}),
 			};
@@ -526,6 +549,42 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 		set((state) =>
 			state.dismissed || state.dormant ? { dismissed: false, dormant: false } : state
 		),
+
+	openPlayer: () => {
+		set((state) => {
+			const targetId = selectMediaPlayerTargetId(state);
+			if (!targetId) return state;
+
+			// A target that is not in the queue was closed out of it and lives only
+			// in history. Only queue entries are rendered, so put it back rather
+			// than activating an id nothing will draw.
+			const queued = state.items.some((item) => item.id === targetId);
+			const fromHistory = queued ? null : state.history.find((item) => item.id === targetId);
+			if (!queued && !fromHistory) return state;
+
+			const items = fromHistory
+				? trimMediaQueue([...state.items, fromHistory], MEDIA_QUEUE_LIMIT, targetId)
+				: state.items;
+
+			return {
+				items,
+				// Never autoplay: this opens the widget, and the transport is right
+				// there. It resumes from `resumeTimes`, so the file comes back where
+				// the user left it.
+				pendingAutoplay: false,
+				dismissed: false,
+				dormant: false,
+				...(state.activeItemId === targetId
+					? {}
+					: {
+							activeItemId: targetId,
+							...historyForActiveChange(state, targetId),
+							playing: false,
+						}),
+			};
+		});
+		persistQueue();
+	},
 
 	setFloatGeometry: (kind, rect) => {
 		set((state) => {
@@ -571,6 +630,7 @@ export function getMediaPlaybackActions() {
 		setPlaying: state.setPlaying,
 		dismiss: state.dismiss,
 		restore: state.restore,
+		openPlayer: state.openPlayer,
 		closeItem: state.closeItem,
 	};
 }

@@ -19,9 +19,10 @@ import { gitService, type GitGraphNode } from '../services/git';
 import { GitGraphView } from './GitGraphView';
 import {
 	computeGitGraphLanes,
-	gitGraphHashAtRow,
-	stepGitGraphLane,
-	stepGitGraphRow,
+	gitGraphLaneEdge,
+	jumpGitGraphAlongLane,
+	stepGitGraphAcrossLanes,
+	stepGitGraphAlongLane,
 } from '../utils/gitGraphLanes';
 import 'react-diff-view/style/index.css';
 
@@ -43,9 +44,9 @@ function viewModeStepFromKey(e: KeyboardEvent): -1 | 1 | null {
 
 const VIEW_MODES: ViewMode[] = ['list', 'graph'];
 
-// Rows a PageUp/PageDown covers in graph view. Matches the list view's own page
-// size so the two views scroll history at the same rate.
-const GRAPH_PAGE_ROWS = 10;
+// Commits a PageUp/PageDown covers along the current lane in graph view.
+// Matches the list view's own page size so the two views move at the same rate.
+const GRAPH_PAGE_COMMITS = 10;
 
 interface GitLogEntry {
 	hash: string;
@@ -284,12 +285,17 @@ export const GitLogViewer = memo(function GitLogViewer({
 		}
 	}, [selectedIndex]);
 
-	// Graph-mode keyboard model: Up/Down walk one graph ROW (visually up is newer,
-	// matching @gitgraph's default orientation) and Left/Right jump to the nearest
-	// commit on the neighbouring LANE. Rows are used instead of the list's index
-	// because the graph is built from `git log --all` while the list only holds the
-	// current branch, so a commit selected off a side branch would otherwise leave
-	// the arrow keys doing nothing visible.
+	// Graph-mode keyboard model, with one axis per question. Up/Down FOLLOW THE
+	// LANE the selected commit is on (up is newer, matching @gitgraph's default
+	// orientation, where row 0 is drawn at the bottom), skipping over commits
+	// that belong to other branches; Left/Right are the only keys that cross to
+	// another branch. Vertical movement is deliberately not the global row order:
+	// that drifts sideways on its own and leaves Left/Right with nothing to do.
+	//
+	// Lanes are used instead of the list's index because the graph is built from
+	// `git log --all` while the list only holds the current branch, so a commit
+	// selected off a side branch would otherwise leave the arrow keys doing
+	// nothing visible.
 	const handleGraphKeyDown = useCallback(
 		(e: KeyboardEvent): boolean => {
 			if (viewMode !== 'graph' || e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -303,40 +309,36 @@ export const GitLogViewer = memo(function GitLogViewer({
 					? selected
 					: graphLanes.ordered[graphLanes.ordered.length - 1]?.hash;
 
-			// Row of the anchor, for the jumps that move by more than one step.
-			const row = anchor ? (graphLanes.rowOfCommit.get(anchor) ?? 0) : 0;
-			const lastRow = graphLanes.ordered.length - 1;
-
 			let target: string | null = null;
 			switch (e.key) {
 				case 'ArrowRight':
-					target = stepGitGraphLane(graphLanes, anchor, 1);
+					target = stepGitGraphAcrossLanes(graphLanes, anchor, 1);
 					break;
 				case 'ArrowLeft':
-					target = stepGitGraphLane(graphLanes, anchor, -1);
+					target = stepGitGraphAcrossLanes(graphLanes, anchor, -1);
 					break;
 				case 'ArrowUp':
 				case 'k':
-					target = stepGitGraphRow(graphLanes, anchor, 1);
+					target = stepGitGraphAlongLane(graphLanes, anchor, 1);
 					break;
 				case 'ArrowDown':
 				case 'j':
-					target = stepGitGraphRow(graphLanes, anchor, -1);
+					target = stepGitGraphAlongLane(graphLanes, anchor, -1);
 					break;
-				// The page and end keys are answered here too, matching the list's own
-				// page size. Left to the list handler they would move an index the
-				// graph is not showing, which reads as the key having died.
+				// The page and end keys are answered here too, and stay on the lane for
+				// the same reason. Left to the list handler they would move an index
+				// the graph is not showing, which reads as the key having died.
 				case 'PageUp':
-					target = gitGraphHashAtRow(graphLanes, row + GRAPH_PAGE_ROWS);
+					target = jumpGitGraphAlongLane(graphLanes, anchor, GRAPH_PAGE_COMMITS);
 					break;
 				case 'PageDown':
-					target = gitGraphHashAtRow(graphLanes, row - GRAPH_PAGE_ROWS);
+					target = jumpGitGraphAlongLane(graphLanes, anchor, -GRAPH_PAGE_COMMITS);
 					break;
 				case 'Home':
-					target = gitGraphHashAtRow(graphLanes, lastRow);
+					target = gitGraphLaneEdge(graphLanes, anchor, 'tip');
 					break;
 				case 'End':
-					target = gitGraphHashAtRow(graphLanes, 0);
+					target = gitGraphLaneEdge(graphLanes, anchor, 'root');
 					break;
 				default:
 					return false;

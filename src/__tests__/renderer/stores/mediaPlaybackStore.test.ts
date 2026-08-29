@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	flushMediaQueuePersist,
 	selectActiveMediaItem,
+	selectCanOpenMediaPlayer,
 	selectCanRestoreFloatingPlayer,
 	selectShowNowPlayingIndicator,
 	useMediaPlaybackStore,
@@ -300,6 +301,58 @@ describe('mediaPlaybackStore', () => {
 		});
 	});
 
+	describe('openPlayer', () => {
+		it('re-queues a target that only survives in history', () => {
+			const r = request();
+			initial.openMedia(r);
+			initial.rememberTime(idOf(r), 12);
+			initial.closeItem(idOf(r));
+
+			// The palette still offers the command, so it has to do something.
+			expect(selectCanOpenMediaPlayer(useMediaPlaybackStore.getState())).toBe(true);
+
+			initial.openPlayer();
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.activeItemId).toBe(idOf(r));
+			expect(state.items.map((i) => i.id)).toEqual([idOf(r)]);
+			// Back where the user stopped, and paused: opening is not "play".
+			expect(state.resumeTimes[idOf(r)]).toBe(12);
+			expect(state.pendingAutoplay).toBe(false);
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			// The loaded track is never in history.
+			expect(state.history.map((h) => h.id)).not.toContain(idOf(r));
+		});
+
+		it('wakes a dormant restored queue without restarting it', () => {
+			const r = request();
+			useMediaPlaybackStore.setState({
+				items: [{ ...r, id: idOf(r) }],
+				activeItemId: idOf(r),
+				resumeTimes: { [idOf(r)]: 30 },
+				dismissed: true,
+				dormant: true,
+			});
+
+			initial.openPlayer();
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			expect(state.activeItemId).toBe(idOf(r));
+			expect(state.resumeTimes[idOf(r)]).toBe(30);
+			expect(state.pendingAutoplay).toBe(false);
+		});
+
+		it('does nothing when there is nothing to open', () => {
+			initial.openPlayer();
+			const state = useMediaPlaybackStore.getState();
+			expect(state.activeItemId).toBeNull();
+			expect(state.items).toHaveLength(0);
+		});
+	});
+
 	describe('toggle requests', () => {
 		it('increments a nonce so the pill can drive the element', () => {
 			initial.requestToggle();
@@ -332,7 +385,24 @@ describe('mediaPlaybackStore', () => {
 			// Closing drops it from the queue but not from what was played: history
 			// is a record, not a view onto the queue.
 			expect(state.history.map((h) => h.id)).toEqual([idOf(r)]);
-			expect(state.resumeTimes[idOf(r)]).toBeUndefined();
+			// And it keeps its position, because history is how the user gets back
+			// to it - reopening from "recently played" must resume, not restart.
+			expect(state.resumeTimes[idOf(r)]).toBe(10);
+		});
+
+		it('forgets the position of an item that leaves the queue without entering history', () => {
+			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			initial.openMedia(a);
+			initial.enqueueMedia([b]);
+			initial.rememberTime(idOf(b), 42);
+
+			// `b` was never loaded, so closing it drops it from both lists.
+			initial.closeItem(idOf(b));
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.history.map((h) => h.id)).not.toContain(idOf(b));
+			expect(state.resumeTimes[idOf(b)]).toBeUndefined();
 		});
 
 		it('closing is stop, not skip - it does not auto-advance', () => {
