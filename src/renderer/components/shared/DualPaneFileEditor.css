@@ -231,6 +231,35 @@
 	outline: none;
 }
 
+/**
+ * Backdrop for TextareaHighlightOverlay. Only the box geometry lives here -
+ * every type metric is copied from the textarea's computed style at runtime,
+ * because a font rule restated in two places drifts the moment one is edited.
+ */
+.dual-pane-highlight-backdrop {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+	margin: 0;
+	/* The textarea sits on top and owns the visible glyphs. */
+	z-index: 0;
+}
+
+/* Raise the editable layer above the backdrop so the caret is never occluded. */
+.dual-pane-highlight-wrap > .dual-pane-textarea {
+	position: relative;
+	z-index: 1;
+}
+
+.dual-pane-highlight-wrap {
+	position: relative;
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	width: 100%;
+}
+
 .dual-pane-textarea-preview {
 	cursor: default;
 }

@@ -28,6 +28,8 @@ The **Open in Finder** button (bottom right) reveals the underlying directory on
 
 The filter box at the right of the stats bar narrows the list as you type. It matches **both the filename and the text inside every memory**, so you can find an entry you only half-remember the contents of - type `worktree` and you get every file that mentions worktrees, whatever it happens to be called.
 
+Hits are highlighted as you type: in the file list the matching part of each filename is marked, and in the editor every occurrence in the open memory gets a wash behind it. The text stays fully editable while highlighted - you are looking at the real document, not a preview of it.
+
 The counter beside the box reads `matches/total`. Hovering a result row shows the line that matched. If the file you were reading is not among the matches, the viewer moves you to the top hit - unless you have unsaved edits, in which case it leaves you where you are.
 
 Press `/` or `Cmd+F` (`Ctrl+F` on Windows/Linux) to jump straight to the box from anywhere in the viewer. `/` steps aside while you are typing, so a slash inside a memory stays a slash; `Cmd+F` works even from the editor.
