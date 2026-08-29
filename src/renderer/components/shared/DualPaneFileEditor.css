@@ -1,5 +1,19 @@
 /* DualPaneFileEditor - shared split-pane editor chrome */
 
+/*
+ * Type sizes here are in `rem`, not px.
+ *
+ * They were px literals, chosen when the app root was always 14px monospace.
+ * That froze this panel: the root is the interface font size now, so every
+ * neighbouring surface grew with it (and with Cmd+=) while these did not, and
+ * the list and editor ended up reading small next to the Settings chrome around
+ * them. Being px, they had also never responded to zoom at all.
+ *
+ * The values below are each rounded to the nearest 1/16rem from their old
+ * pixel size at that 14px baseline, so the panel is within a couple of percent
+ * of its old self on the monospace preset and scales properly from there.
+ */
+
 .dual-pane-file-editor {
 	display: flex;
 	flex-direction: column;
@@ -49,7 +63,7 @@
 	padding: 6px 10px;
 	border: none;
 	border-radius: 4px;
-	font-size: 12px;
+	font-size: 0.875rem;
 	font-weight: 600;
 	text-align: center;
 	cursor: pointer;
@@ -72,7 +86,7 @@
 	padding: 4px 12px;
 	border: none;
 	background: transparent;
-	font-size: 11px;
+	font-size: 0.8125rem;
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
@@ -92,7 +106,7 @@
 	padding: 6px 12px;
 	border: none;
 	background: transparent;
-	font-size: 12px;
+	font-size: 0.875rem;
 	text-align: left;
 	cursor: pointer;
 	transition: background 0.1s;
@@ -117,7 +131,7 @@
 }
 
 .dual-pane-modified-indicator {
-	font-size: 16px;
+	font-size: 1.125rem;
 	line-height: 1;
 }
 
@@ -157,7 +171,7 @@
 
 .dual-pane-editor-header h3 {
 	margin: 0 0 4px 0;
-	font-size: 14px;
+	font-size: 1rem;
 	font-weight: 600;
 	display: flex;
 	align-items: baseline;
@@ -166,14 +180,14 @@
 }
 
 .dual-pane-editor-token-count {
-	font-size: 11px;
+	font-size: 0.8125rem;
 	font-weight: 500;
 	font-variant-numeric: tabular-nums;
 }
 
 .dual-pane-editor-description {
 	margin: 0;
-	font-size: 12px;
+	font-size: 0.875rem;
 }
 
 .dual-pane-badge-row {
@@ -187,7 +201,7 @@
 	display: inline-block;
 	padding: 2px 8px;
 	color: white;
-	font-size: 10px;
+	font-size: 0.75rem;
 	font-weight: 600;
 	border-radius: 4px;
 	text-transform: uppercase;
@@ -198,7 +212,7 @@
 	padding: 8px 12px;
 	margin-bottom: 12px;
 	border-radius: 4px;
-	font-size: 12px;
+	font-size: 0.875rem;
 	flex-shrink: 0;
 }
 
@@ -220,8 +234,12 @@
 	padding: 12px;
 	border: 1px solid;
 	border-radius: 4px;
-	font-family: Monaco, Menlo, Consolas, monospace;
-	font-size: 12px;
+	/* This IS a file editor - prompt and memory markdown - so it follows the
+	   File Editor font setting like every other editing surface. The literals
+	   are the fallback for the first paint, before the renderer publishes the
+	   variable. */
+	font-family: var(--maestro-font-file-editor, Monaco, Menlo, Consolas, monospace);
+	font-size: 0.875rem;
 	line-height: 1.5;
 	resize: none;
 	min-height: 0;
@@ -248,7 +266,7 @@
 	padding: 8px 16px;
 	border: none;
 	border-radius: 4px;
-	font-size: 12px;
+	font-size: 0.875rem;
 	font-weight: 500;
 	cursor: pointer;
 	transition: opacity 0.1s;
@@ -267,7 +285,7 @@
 	border: 1px solid;
 	border-radius: 4px;
 	background: transparent;
-	font-size: 12px;
+	font-size: 0.875rem;
 	font-weight: 500;
 	cursor: pointer;
 	transition: opacity 0.1s;
@@ -284,7 +302,7 @@
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	font-size: 13px;
+	font-size: 0.9375rem;
 }
 
 /* Help Panel */
