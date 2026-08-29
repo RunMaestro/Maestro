@@ -575,6 +575,97 @@ async function materializeRemoteFile(
 }
 
 /**
+ * Turn a reader-internal failure into something a person can act on.
+ *
+ * hyparquet reports structural damage in terms of its own parsing state -
+ * "thrift unhandled type: 11", "Offset is outside the bounds of the DataView",
+ * "Cannot read properties of undefined (reading 'map')". Those are precise for
+ * a maintainer and useless in a UI: they describe where the parser gave up, not
+ * what is wrong with the file. Every one of them means the same thing to a
+ * user, so say that, and keep the original as the cause for a bug report.
+ */
+function describeOpenFailure(error: unknown): Error {
+	const message = error instanceof Error ? error.message : String(error);
+	const corrupt =
+		/thrift|DataView|bounds|undefined \(reading|invalid \(footer|metadata length|Cannot read propert/i.test(
+			message
+		);
+	if (!corrupt) return error instanceof Error ? error : new Error(message);
+
+	const friendly = new Error(
+		`This file is not a readable parquet file. It may be truncated, corrupt, ` +
+			`or a different format that happens to be named .parquet. (${message})`
+	);
+	(friendly as Error & { cause?: unknown }).cause = error;
+	return friendly;
+}
+
+/**
+ * Confirm the file's compression codecs can actually be decoded, at OPEN time.
+ *
+ * Reading the footer proves nothing about the data pages: a file compressed
+ * with a codec the reader cannot handle opens perfectly, reports a full schema,
+ * and then fails on every single page read. The user gets a table header, a
+ * spinner, and an error - repeatedly - for a file that was never going to work.
+ * pyarrow-written LZ4 does exactly this today.
+ *
+ * So one row is decoded per distinct (codec, physical type) pair before the
+ * handle is published. Per CODEC alone is not enough, and that is not a
+ * hypothetical: in a pyarrow LZ4 file the INT64 column decodes cleanly while
+ * the BYTE_ARRAY column in the same file fails, so a codec-only probe picks the
+ * integer column, passes, and publishes a handle that cannot read half its own
+ * data.
+ *
+ * This is a probe rather than an allowlist on purpose: a hard-coded list of
+ * "bad" codecs goes stale the moment the reader improves, whereas a probe
+ * simply starts passing. It is a smoke test, not a proof - a failure that only
+ * appears in a later page still gets through - but it converts the common,
+ * whole-column case from "opens then fails forever" into one clear refusal.
+ */
+async function verifyCodecsDecodable(
+	hyparquet: HyparquetModule,
+	buffer: CountingAsyncBuffer,
+	metadata: FileMetaData,
+	compressors: Compressors
+): Promise<void> {
+	if (Number(metadata.num_rows) === 0) return;
+
+	// One representative column per (codec, physical type). Decoding every
+	// column would make opening a 500-column file needlessly slow, while
+	// decoding one per codec misses the type-dependent failures above.
+	const probes = new Map<string, { codec: string; column: string }>();
+	for (const rowGroup of metadata.row_groups) {
+		for (const chunk of rowGroup.columns) {
+			const meta = chunk.meta_data;
+			if (!meta || meta.codec === 'UNCOMPRESSED') continue;
+			// Leaf path only: a nested column cannot be read on its own.
+			if (meta.path_in_schema.length !== 1) continue;
+			const key = `${meta.codec}:${meta.type}`;
+			if (!probes.has(key)) probes.set(key, { codec: meta.codec, column: meta.path_in_schema[0] });
+		}
+	}
+
+	for (const { codec, column } of probes.values()) {
+		try {
+			await hyparquet.parquetReadObjects({
+				file: buffer,
+				metadata,
+				compressors,
+				columns: [column],
+				rowStart: 0,
+				rowEnd: 1,
+			});
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			throw new Error(
+				`This parquet file uses ${codec} compression, which Maestro cannot decode. ` +
+					`Re-write it with SNAPPY, ZSTD, GZIP, or no compression to view it here. (${detail})`
+			);
+		}
+	}
+}
+
+/**
  * Open a parquet file and read its footer.
  *
  * Re-opens the same path when the file has changed on disk, so a tab left open
@@ -610,8 +701,17 @@ export async function openParquetFile(
 
 	try {
 		const buffer = createCountingAsyncBuffer(fileHandle, stat.size);
-		const metadata = await hyparquet.parquetMetadataAsync(buffer);
-		const schema = hyparquet.parquetSchema(metadata);
+		let metadata: FileMetaData;
+		let schema: SchemaTree;
+		try {
+			metadata = await hyparquet.parquetMetadataAsync(buffer);
+			schema = hyparquet.parquetSchema(metadata);
+		} catch (error) {
+			throw describeOpenFailure(error);
+		}
+
+		// Fail here rather than on every page read. See verifyCodecsDecodable.
+		await verifyCodecsDecodable(hyparquet, buffer, metadata, compressors);
 
 		const id = randomUUID();
 		const info: ParquetFileInfo = {

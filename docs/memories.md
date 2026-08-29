@@ -32,6 +32,29 @@ The counter beside the box reads `matches/total`. Hovering a result row shows th
 
 Press `Esc` once to clear the filter, or click the `x` in the box. A second `Esc` closes the viewer.
 
+## Unlinked Memories
+
+Claude reads `MEMORY.md` to decide which entries to load. A memory the index
+does not list, and no other memory links to, is therefore **never recalled** -
+it costs disk and reads as remembered while being, in practice, forgotten.
+
+When any exist, an **N unlinked** button appears beside the filter box. Click it
+to narrow the list to exactly those entries; the row tooltip says
+`unlinked - nothing points at this`. It composes with the filter box rather than
+replacing it, so "unlinked memories mentioning worktrees" is one question you
+can ask.
+
+A memory counts as linked when another entry points at it by `[[wiki link]]` or
+by a `[markdown](link.md)`, matching either its **filename** or its frontmatter
+**`name:` slug** - both spellings are in active use. Hyphens and underscores are
+treated as the same character, because `[[my-note]]` and `[[my_note]]` are one
+character apart, the difference is invisible in rendered markdown, and treating
+them as different targets is exactly how a correct-looking index ends up
+pointing nowhere.
+
+`MEMORY.md` is never listed as unlinked - it is the index, so nothing is
+expected to point at it.
+
 ## Keyboard
 
 The viewer opens with the file list already focused, so the keys below work

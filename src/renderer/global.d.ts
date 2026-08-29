@@ -467,6 +467,14 @@ interface MaestroAPI {
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
 		) => () => void;
+		onRemoteOpenDocumentGraph: (
+			callback: (params: {
+				sessionId: string;
+				files?: string[];
+				directory?: string;
+				focusPath?: string;
+			}) => void
+		) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
 		onRemoteNotifyToast: (
 			callback: (params: {
@@ -4383,6 +4391,15 @@ interface MaestroAPI {
 		) => Promise<{
 			success: boolean;
 			matches?: Array<{ name: string; matchedName: boolean; snippet?: string }>;
+			error?: string;
+		}>;
+		orphans: (
+			projectPath: string,
+			agentId?: string
+		) => Promise<{
+			success: boolean;
+			orphans?: string[];
+			brokenLinks?: { source: string; target: string }[];
 			error?: string;
 		}>;
 		getPath: (

@@ -118,6 +118,28 @@ export function createTabRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to a remote request to render the Document Graph over an
+		 * explicit set of documents (from `maestro-cli open-graph`). Paths are
+		 * ABSOLUTE - the renderer relativizes them against the graph's own root,
+		 * which is not always the cwd the caller resolved against.
+		 */
+		onRemoteOpenDocumentGraph: (
+			callback: (params: {
+				sessionId: string;
+				files?: string[];
+				directory?: string;
+				focusPath?: string;
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				params: { sessionId: string; files?: string[]; directory?: string; focusPath?: string }
+			) => callback(params);
+			ipcRenderer.on('remote:openDocumentGraph', handler);
+			return () => ipcRenderer.removeListener('remote:openDocumentGraph', handler);
+		},
+
+		/**
 		 * Subscribe to remote refresh file tree from web interface
 		 */
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void): (() => void) => {

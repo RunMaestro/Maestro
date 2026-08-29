@@ -301,10 +301,13 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 			) : (
 				<div
 					className="grid gap-3"
-					// Wider than the agent grid's 220px on purpose: a group tile is
-					// larger than the agents it contains, and it carries a fourth stat
-					// (cost) that has to fit beside the others without colliding.
-					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}
+					// Twice the agent grid's 220px. A group tile is larger than the
+					// agents it contains, and it carries four stats whose values are
+					// the long ones - "142h 5m", "220.7M", "$187.18" - so the width
+					// buys legible numbers rather than whitespace. Trading a column
+					// for extra rows is the right way round here: the grid scrolls
+					// vertically, so a row costs nothing a clipped value does not.
+					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))' }}
 					data-testid="group-overview-cards"
 					role="region"
 					aria-label="Group usage overview"

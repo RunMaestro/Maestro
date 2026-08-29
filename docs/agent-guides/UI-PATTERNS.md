@@ -169,6 +169,8 @@ function SettingsModal({ theme, onClose }: Props) {
 - `initialFocusRef` - element to auto-focus on mount
 - `layerOptions` - pass-through to `useModalLayer`
 
+**A modal body must never focus its own input.** `<Modal>` always claims focus on mount, inside a `requestAnimationFrame`: it focuses `initialFocusRef` when one is passed and its own overlay container when one is not. That frame lands AFTER the body's own effects, so a child that calls `inputRef.current.focus()` itself is silently handed back to a `div` one frame later and the surface swallows every keystroke - the failure looks like a dead text box, not a focus bug. Pass `initialFocusRef` and let Modal do it. A body effect stays correct for things focus does not undo, such as putting the caret at the end of a textarea (`QueuedItemEditModal`).
+
 `<ModalFooter>` provides a standard cancel/confirm button pair with optional `destructive` styling (red confirm button).
 
 ### Modal Sizing (max footprint)
@@ -208,15 +210,29 @@ Both render `<ModalSubtitle theme={theme} subtitle={name} />` directly, exported
 
 Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
 
+```tsx
+<Modal
+	theme={theme}
+	title="About Maestro"
+	priority={MODAL_PRIORITIES.ABOUT}
+	onClose={onClose}
+	resizeKey="about" // stable, unique; enables the resize handles
+	defaultSize={{ width: 560, height: 480 }} // size before any resize
+	minSize={{ width: 460, height: 420 }} // floor for this modal's layout
+>
+```
+
 **Resetting a size.** Double-clicking any resize handle forgets that one modal's remembered size and snaps it back to its declared `defaultSize`. Pass the hook's `onResetSize`/`canReset` through to `ResizeHandles` to enable it - `<Modal>` already does, and every bespoke shell that renders `ResizeHandles` directly should too, so the gesture is uniform. `canReset` only gates the tooltip wording (the handles are invisible until hover, so the native `title` is the gesture's only discoverability), and `resetModalSize` skips the settings write when nothing was stored, so an idle double-click is free. Settings -> Display -> Modal Layout still offers the reset-every-modal escape hatch (`resetModalSizes`).
 
 The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
 - `useResizableModal` (`src/renderer/hooks/ui/useResizableModal.ts`) owns the drag. Like `useResizablePanel` it writes to the DOM during the drag and commits React state once on mouseup. Deltas are doubled because the card is centered: growing the width by W moves the right edge by only W/2, so doubling keeps the grip under the pointer.
 - Sizes persist in one `modalSizes` map in `uiStore`, keyed by `resizeKey`, written through to settings and hydrated by `loadAllSettings` on startup.
-- Minimums default to `MODAL_MIN_WIDTH` (360) / `MODAL_MIN_HEIGHT` (300), never exceeding the modal's declared `width`. Pass higher values when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
+- `defaultSize` is the size before any drag: its width falls back to the `width` prop and its height to 320, so a modal that opts in without declaring one opens far shorter than its old `maxHeight` let it grow. Declare both.
+- Minimums default to `DEFAULT_MODAL_MIN_SIZE` (320 x 240) in `src/renderer/utils/modalSizing.ts`. Pass a higher `minSize` when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
 - Sizes are clamped to `MODAL_MAX_VIEWPORT_RATIO` (90%) of the viewport both at drag time and at read time, so a modal sized on a large display still opens sanely on a laptop.
-- `ModalResizeGrip` renders the bottom-right grip; double-clicking it forgets the remembered size and returns the modal to its declared default.
+- `ResizeHandles` renders all eight edges and corners; double-clicking any of them forgets the remembered size and returns the modal to its declared default.
+- The frame is a flex column with a fixed header and footer, so **the body must be told to fill it**: a scroll container still carrying `max-h-[400px]` (or any fixed height) leaves dead space below the list no matter how far the user drags. Pass `contentClassName="p-6 flex-1 min-h-0 flex flex-col"` and give the scrolling child `flex-1 min-h-0 overflow-y-auto` instead of a height cap. `ShortcutsHelpModal` is the reference caller.
 
 `resizeKey` must be stable across renders - it is the persistence key, not a label.
 

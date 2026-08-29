@@ -248,6 +248,10 @@ describe('useRemoteIntegration', () => {
 		onRemoteOpenModal: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		// Same story for `maestro-cli open-graph`.
+		onRemoteOpenDocumentGraph: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
 		sendRemoteSetSettingResponse: vi.fn(),
 		onRemoteCreateSession: vi.fn().mockImplementation(() => {
 			return () => {};

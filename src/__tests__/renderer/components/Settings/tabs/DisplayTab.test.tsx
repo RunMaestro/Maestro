@@ -208,9 +208,31 @@ vi.mock('../../../../../renderer/components/Settings/IgnorePatternsSection', () 
 	),
 }));
 
+// The real Modal needs the layer stack and the settings store, so it is stubbed
+// here. The stub still reflects the sizing props back as data attributes: those
+// are the only thing a resizable call site contributes, and a stub that drops
+// them silently passes whatever the caller sends, including nothing.
 vi.mock('../../../../../renderer/components/ui/Modal', () => ({
-	Modal: ({ title, children }: { title: string; children: React.ReactNode }) => (
-		<div role="dialog" aria-label={title}>
+	Modal: ({
+		title,
+		children,
+		resizeKey,
+		defaultSize,
+		minSize,
+	}: {
+		title: string;
+		children: React.ReactNode;
+		resizeKey?: string;
+		defaultSize?: { width?: number; height?: number };
+		minSize?: { width?: number; height?: number };
+	}) => (
+		<div
+			role="dialog"
+			aria-label={title}
+			data-modal-resize-key={resizeKey}
+			data-default-size={defaultSize ? `${defaultSize.width}x${defaultSize.height}` : undefined}
+			data-min-size={minSize ? `${minSize.width}x${minSize.height}` : undefined}
+		>
 			{children}
 		</div>
 	),
@@ -303,6 +325,20 @@ describe('DisplayTab', () => {
 			const panel = screen.getByText('Intensity').closest('.space-y-4') as HTMLElement;
 			expect(panel.style.opacity).toBe('1');
 			expect(panel.style.pointerEvents).toBe('auto');
+		});
+
+		it('opens the algorithm reference as a resizable modal', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Info' }));
+
+			const dialog = screen.getByRole('dialog', { name: 'Bionify Algorithm Reference' });
+			// Without a resizeKey the shared Modal falls back to fixed sizing and
+			// renders no resize handles, so the key is what makes it draggable.
+			expect(dialog).toHaveAttribute('data-modal-resize-key', 'bionify-reference');
+			expect(dialog).toHaveAttribute('data-default-size', '520x560');
+			expect(dialog).toHaveAttribute('data-min-size', '380x320');
 		});
 
 		it('updates Bionify intensity when a new value is chosen', async () => {

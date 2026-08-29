@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Plus, X, Database, FileText, Clock, Zap } from 'lucide-react';
+import { Brain, Plus, X, Database, FileText, Clock, Zap, Unlink } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { formatSize, formatRelativeTime, formatNumber } from '../utils/formatters';
 import { estimateTokenCount } from '../../shared/formatters';
@@ -116,6 +116,12 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const [filterQuery, setFilterQuery] = useState('');
 	const debouncedFilter = useDebouncedValue(filterQuery, 150);
 	const [matches, setMatches] = useState<Map<string, string | undefined> | null>(null);
+
+	// Memories nothing points at. Claude reads MEMORY.md to decide what to load,
+	// so an unreferenced entry is written but never recalled - the filter exists
+	// to make that visible, since nothing else in the app shows it.
+	const [orphans, setOrphans] = useState<string[]>([]);
+	const [showOnlyOrphans, setShowOnlyOrphans] = useState(false);
 
 	// Bumped after a delete so focus returns to the list and the next Backspace
 	// keeps working (the row that had focus was just unmounted).
@@ -250,23 +256,34 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		}
 		let cancelled = false;
 		void (async () => {
-			const result = await window.maestro.memory.search(projectPath, query, agentId);
-			if (cancelled) return;
-			if (!result.success) {
-				setActionError(result.error || 'Failed to search memory');
-				return;
+			try {
+				const result = await window.maestro.memory.search(projectPath, query, agentId);
+				if (cancelled) return;
+				if (!result.success) {
+					setActionError(result.error || 'Failed to search memory');
+					return;
+				}
+				setMatches(new Map((result.matches || []).map((m) => [m.name, m.snippet])));
+			} catch (err) {
+				// Report it rather than leaving the list silently unfiltered - the
+				// user typed a query and is owed an answer either way.
+				if (!cancelled) setActionError(String(err));
 			}
-			setMatches(new Map((result.matches || []).map((m) => [m.name, m.snippet])));
 		})();
 		return () => {
 			cancelled = true;
 		};
 	}, [debouncedFilter, projectPath, agentId, entries]);
 
-	const filteredEntries = useMemo(
-		() => (matches ? entries.filter((e) => matches.has(e.name)) : entries),
-		[entries, matches]
-	);
+	const orphanSet = useMemo(() => new Set(orphans), [orphans]);
+
+	// The two filters compose rather than override: "unlinked entries mentioning
+	// worktrees" is a real question, and making the chip clear the search box
+	// would answer a different one.
+	const filteredEntries = useMemo(() => {
+		const byQuery = matches ? entries.filter((e) => matches.has(e.name)) : entries;
+		return showOnlyOrphans ? byQuery.filter((e) => orphanSet.has(e.name)) : byQuery;
+	}, [entries, matches, showOnlyOrphans, orphanSet]);
 
 	// Read at delete time to pick the next selection; a ref keeps the delete
 	// callbacks off the filtered list's identity.
@@ -282,6 +299,31 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		const first = filteredEntries[0];
 		if (first) void loadEntry(first.name);
 	}, [matches, filteredEntries, selectedName, hasUnsavedChanges, loadEntry]);
+
+	// Recomputed whenever the file set changes: every create, delete, and save
+	// goes through reloadList, and each of those can make or break a reference.
+	useEffect(() => {
+		if (!projectPath || entries.length === 0) {
+			setOrphans([]);
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			try {
+				const result = await window.maestro.memory.orphans(projectPath, agentId);
+				if (cancelled || !result.success) return;
+				setOrphans(result.orphans ?? []);
+			} catch {
+				// The chip is purely additive, so losing it is a safe degradation -
+				// and an unguarded await here surfaces as an unhandled rejection
+				// rather than anything the user could act on.
+				if (!cancelled) setOrphans([]);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [projectPath, agentId, entries]);
 
 	const handleSelect = useCallback(
 		async (name: string) => {
@@ -424,14 +466,16 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				const isCurrent = e.name === selectedName;
 				const snippet = matches?.get(e.name);
 				const meta = `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`;
+				const orphaned = orphanSet.has(e.name);
+				const description = orphaned ? `${meta}\nunlinked - nothing points at this` : meta;
 				return {
 					id: e.name,
 					label: e.name,
-					description: snippet ? `${meta}\nmatch: ${snippet}` : meta,
+					description: snippet ? `${description}\nmatch: ${snippet}` : description,
 					isModified: isCurrent && hasUnsavedChanges,
 				};
 			}),
-		[filteredEntries, matches, selectedName, hasUnsavedChanges]
+		[filteredEntries, matches, selectedName, hasUnsavedChanges, orphanSet]
 	);
 
 	const editorTokenCount = useMemo(
@@ -535,6 +579,27 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					</span>
 				)}
 				<div className="flex-1" />
+				{orphans.length > 0 && (
+					<button
+						onClick={() => setShowOnlyOrphans((v) => !v)}
+						className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors shrink-0"
+						style={{
+							backgroundColor: showOnlyOrphans
+								? `${theme.colors.warning}25`
+								: `${theme.colors.warning}10`,
+							color: showOnlyOrphans ? theme.colors.warning : theme.colors.textDim,
+						}}
+						title={
+							showOnlyOrphans
+								? 'Show all memories'
+								: `Show only the ${orphans.length} ${orphans.length === 1 ? 'memory' : 'memories'} nothing links to - Claude never loads these`
+						}
+						data-testid="memory-orphan-filter"
+					>
+						<Unlink className="w-3.5 h-3.5" />
+						{orphans.length} unlinked
+					</button>
+				)}
 				<FilterInput
 					theme={theme}
 					value={filterQuery}
@@ -588,9 +653,11 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						selectedId={selectedName}
 						onSelect={handleSelect}
 						emptyStateMessage={
-							matches && filteredEntries.length === 0
-								? `No memory matches "${debouncedFilter.trim()}"`
-								: 'Select a memory file to view'
+							filteredEntries.length === 0 && showOnlyOrphans
+								? 'No unlinked memories match'
+								: matches && filteredEntries.length === 0
+									? `No memory matches "${debouncedFilter.trim()}"`
+									: 'Select a memory file to view'
 						}
 						editorTitle={selectedName ?? undefined}
 						editorTokenCount={editorTokenCount}

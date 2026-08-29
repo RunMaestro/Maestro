@@ -377,6 +377,24 @@ export type OpenFileTabCallback = (
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
+ * Scope for a Document Graph opened from outside the renderer.
+ *
+ * Paths are ABSOLUTE. The renderer roots the graph at the agent's
+ * `projectRoot || cwd`, which is not always the `cwd` a CLI caller resolved
+ * against (worktrees differ), so it relativizes them itself.
+ *
+ * Exactly one of `files` / `directory` carries the scope. A directory is kept
+ * as a directory rather than expanded here so the app scans it at render time
+ * and picks up documents written since the command was issued.
+ */
+export type OpenDocumentGraphParams = {
+	sessionId: string;
+	files?: string[];
+	directory?: string;
+	focusPath?: string;
+};
+export type OpenDocumentGraphCallback = (params: OpenDocumentGraphParams) => Promise<boolean>;
+/**
  * Open one of the app's modals/dashboards (see `shared/uiSurfaces.ts` for the
  * registry). `surface` is a `UiSurface.id`; `tab` is an optional tab id within
  * it, already validated against that surface.

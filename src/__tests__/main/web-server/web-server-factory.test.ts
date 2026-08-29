@@ -82,6 +82,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			// Added with `maestro-cli open`: the factory wires this on every build,
 			// so omitting it makes every test in this file throw.
 			setOpenModalCallback = vi.fn();
+			setOpenDocumentGraphCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();
 			broadcastSettingsChanged = vi.fn();
 			setCreateGroupCallback = vi.fn();
@@ -489,6 +490,7 @@ describe('web-server/web-server-factory', () => {
 
 		it('should register file and auto-run callbacks', () => {
 			expect(server.setOpenFileTabCallback).toHaveBeenCalled();
+			expect(server.setOpenDocumentGraphCallback).toHaveBeenCalled();
 			expect(server.setRefreshFileTreeCallback).toHaveBeenCalled();
 			expect(server.setRefreshAutoRunDocsCallback).toHaveBeenCalled();
 			expect(server.setConfigureAutoRunCallback).toHaveBeenCalled();

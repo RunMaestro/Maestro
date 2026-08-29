@@ -133,6 +133,13 @@ export interface MessageHandlerCallbacks {
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
+	/** Render the Document Graph over an explicit file set or directory. */
+	openDocumentGraph: (params: {
+		sessionId: string;
+		files?: string[];
+		directory?: string;
+		focusPath?: string;
+	}) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
 		config: { cwd?: string; shell?: string; name?: string | null; command?: string },

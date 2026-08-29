@@ -75,7 +75,8 @@ type LayoutFunction = (
 	canvasHeight: number,
 	showExternalLinks: boolean,
 	previewCharLimit: number,
-	spacingScale?: number
+	spacingScale?: number,
+	showOrphans?: boolean
 ) => LayoutResult;
 
 /** Clamp range and step for the user-adjustable node spacing multiplier. */
@@ -134,6 +135,12 @@ const FORCE_COLLIDE_PADDING = 30;
 const EXTERNAL_CLUSTER_OFFSET = 160;
 const FORCE_TICK_COUNT = 300;
 const FORCE_EXTERNAL_RING_PADDING = 250;
+
+// Orphan band: gap below the rest of the graph, spacing between orphan tiles,
+// and how many fit on a row before wrapping.
+const ORPHAN_CLUSTER_OFFSET = 220;
+const ORPHAN_GAP = 32;
+const ORPHAN_ROW_MAX = 6;
 
 // ============================================================================
 // Shared Utilities
@@ -201,6 +208,14 @@ interface LayoutInput {
 	centerWidth: number;
 	centerHeight: number;
 	allLinks: MindMapLink[];
+	/**
+	 * Document nodes the center cannot reach. Empty unless `showOrphans` is on.
+	 *
+	 * Deliberately NOT merged into `visibleDocumentNodes`: those are placed by
+	 * BFS depth ring, and an unreachable node has no depth. Giving one a
+	 * borrowed depth would draw it as a child of the center it has no link to.
+	 */
+	orphanNodes: MindMapNode[];
 	showExternalLinks: boolean;
 	previewCharLimit: number;
 	maxDepth: number;
@@ -221,7 +236,8 @@ function prepareLayoutInput(
 	canvasWidth: number,
 	canvasHeight: number,
 	showExternalLinks: boolean,
-	previewCharLimit: number
+	previewCharLimit: number,
+	showOrphans: boolean = false
 ): LayoutInput | null {
 	// Find center node - try multiple path variations
 	let centerNode: MindMapNode | undefined;
@@ -321,6 +337,14 @@ function prepareLayoutInput(
 	const visibleDocumentNodes = nodesInRange.filter((n) => n.nodeType === 'document');
 	const externalNodes = nodesInRange.filter((n) => n.nodeType === 'external');
 
+	// Documents the BFS above could not reach. This covers both a truly
+	// unlinked file and a disconnected cluster that links only within itself -
+	// both are invisible from the center, and both are what the user means by
+	// "the ones that aren't interlinked".
+	const orphanNodes = showOrphans
+		? allNodes.filter((n) => n.nodeType === 'document' && !visited.has(n.id))
+		: [];
+
 	// Center position
 	const centerX = canvasWidth / 2;
 	const centerY = canvasHeight / 2 - (showExternalLinks && externalNodes.length > 0 ? 50 : 0);
@@ -334,6 +358,7 @@ function prepareLayoutInput(
 		visited,
 		visibleDocumentNodes,
 		externalNodes,
+		orphanNodes,
 		centerX,
 		centerY,
 		centerWidth,
@@ -424,7 +449,8 @@ export const calculateMindMapLayout: LayoutFunction = (
 	canvasHeight,
 	showExternalLinks,
 	previewCharLimit,
-	spacingScale
+	spacingScale,
+	showOrphans
 ) => {
 	const input = prepareLayoutInput(
 		allNodes,
@@ -435,7 +461,8 @@ export const calculateMindMapLayout: LayoutFunction = (
 		canvasWidth,
 		canvasHeight,
 		showExternalLinks,
-		previewCharLimit
+		previewCharLimit,
+		showOrphans
 	);
 
 	if (!input) {
@@ -452,6 +479,7 @@ export const calculateMindMapLayout: LayoutFunction = (
 		visited,
 		visibleDocumentNodes,
 		externalNodes,
+		orphanNodes,
 		centerX,
 		centerY,
 		centerWidth,
@@ -554,6 +582,8 @@ export const calculateMindMapLayout: LayoutFunction = (
 		positionExternalNodesBottom(externalNodes, positionedNodes, centerX, centerY);
 	}
 
+	positionOrphanNodesBottom(orphanNodes, positionedNodes, centerX, centerY, previewCharLimit);
+
 	const usedLinks = filterLinks(allLinks, positionedNodes, true);
 	const bounds = calculateBounds(positionedNodes, previewCharLimit);
 	return { nodes: positionedNodes, links: usedLinks, bounds };
@@ -578,7 +608,8 @@ export const calculateRadialLayout: LayoutFunction = (
 	canvasHeight,
 	showExternalLinks,
 	previewCharLimit,
-	spacingScale
+	spacingScale,
+	showOrphans
 ) => {
 	const input = prepareLayoutInput(
 		allNodes,
@@ -589,7 +620,8 @@ export const calculateRadialLayout: LayoutFunction = (
 		canvasWidth,
 		canvasHeight,
 		showExternalLinks,
-		previewCharLimit
+		previewCharLimit,
+		showOrphans
 	);
 
 	if (!input) {
@@ -606,6 +638,7 @@ export const calculateRadialLayout: LayoutFunction = (
 		visited,
 		visibleDocumentNodes,
 		externalNodes,
+		orphanNodes,
 		centerX,
 		centerY,
 		centerWidth,
@@ -706,6 +739,8 @@ export const calculateRadialLayout: LayoutFunction = (
 	}
 
 	// Radial uses adjacent-depth link filtering like mind map
+	positionOrphanNodesBottom(orphanNodes, positionedNodes, centerX, centerY, previewCharLimit);
+
 	const usedLinks = filterLinks(allLinks, positionedNodes, true);
 	const bounds = calculateBounds(positionedNodes, previewCharLimit);
 	return { nodes: positionedNodes, links: usedLinks, bounds };
@@ -731,7 +766,8 @@ export const calculateHierarchicalLayout: LayoutFunction = (
 	canvasHeight,
 	showExternalLinks,
 	previewCharLimit,
-	spacingScale
+	spacingScale,
+	showOrphans
 ) => {
 	const input = prepareLayoutInput(
 		allNodes,
@@ -742,7 +778,8 @@ export const calculateHierarchicalLayout: LayoutFunction = (
 		canvasWidth,
 		canvasHeight,
 		showExternalLinks,
-		previewCharLimit
+		previewCharLimit,
+		showOrphans
 	);
 
 	if (!input) {
@@ -759,6 +796,7 @@ export const calculateHierarchicalLayout: LayoutFunction = (
 		visited,
 		visibleDocumentNodes,
 		externalNodes,
+		orphanNodes,
 		centerX,
 		centerY,
 		centerWidth,
@@ -844,6 +882,8 @@ export const calculateHierarchicalLayout: LayoutFunction = (
 		});
 	}
 
+	positionOrphanNodesBottom(orphanNodes, positionedNodes, centerX, centerY, previewCharLimit);
+
 	const usedLinks = filterLinks(allLinks, positionedNodes, true);
 	const bounds = calculateBounds(positionedNodes, previewCharLimit);
 	return { nodes: positionedNodes, links: usedLinks, bounds };
@@ -880,7 +920,8 @@ export const calculateForceLayout: LayoutFunction = (
 	canvasHeight,
 	showExternalLinks,
 	previewCharLimit,
-	spacingScale
+	spacingScale,
+	showOrphans
 ) => {
 	const forceLinkDistance = FORCE_LINK_DISTANCE * (spacingScale ?? 1);
 	const input = prepareLayoutInput(
@@ -892,7 +933,8 @@ export const calculateForceLayout: LayoutFunction = (
 		canvasWidth,
 		canvasHeight,
 		showExternalLinks,
-		previewCharLimit
+		previewCharLimit,
+		showOrphans
 	);
 
 	if (!input) {
@@ -909,6 +951,7 @@ export const calculateForceLayout: LayoutFunction = (
 		visited,
 		visibleDocumentNodes,
 		externalNodes,
+		orphanNodes,
 		centerX,
 		centerY,
 		centerWidth,
@@ -1061,6 +1104,8 @@ export const calculateForceLayout: LayoutFunction = (
 	}
 
 	// Force layout shows all links between visible nodes (no depth filtering)
+	positionOrphanNodesBottom(orphanNodes, positionedNodes, centerX, centerY, previewCharLimit);
+
 	const usedLinks = filterLinks(allLinks, positionedNodes, false);
 	const bounds = calculateBounds(positionedNodes, previewCharLimit);
 	return { nodes: positionedNodes, links: usedLinks, bounds };
@@ -1073,6 +1118,62 @@ export const calculateForceLayout: LayoutFunction = (
 /**
  * Position external nodes in a horizontal row at the bottom (used by mind map layout).
  */
+/**
+ * Lay the unreachable documents out in a band below everything else.
+ *
+ * Mirrors `positionExternalNodesBottom`: both handle nodes that have no place
+ * in the depth rings, and both must sit clear of the positioned graph rather
+ * than overlap it. Orphans go BELOW the external band when both are shown,
+ * because an orphan is still a document and reads better nearest the documents.
+ *
+ * Rows wrap at ORPHAN_ROW_MAX so a 60-orphan scope does not render as one
+ * strip several screens wide.
+ */
+function positionOrphanNodesBottom(
+	orphanNodes: MindMapNode[],
+	positionedNodes: MindMapNode[],
+	centerX: number,
+	centerY: number,
+	previewCharLimit: number
+): void {
+	if (orphanNodes.length === 0) return;
+
+	const sorted = [...orphanNodes].sort((a, b) => a.label.localeCompare(b.label));
+
+	// Clear the lowest thing already placed, external band included.
+	const maxYDistance = positionedNodes.reduce((max, n) => {
+		const dist = n.y - centerY + n.height / 2;
+		return dist > max ? dist : max;
+	}, 0);
+	const bandTop = centerY + maxYDistance + ORPHAN_CLUSTER_OFFSET;
+
+	const perRow = Math.min(ORPHAN_ROW_MAX, sorted.length);
+	const columnWidth = NODE_WIDTH + ORPHAN_GAP;
+	const rowStartX = centerX - ((perRow - 1) * columnWidth) / 2;
+
+	let rowY = bandTop;
+	for (let start = 0; start < sorted.length; start += perRow) {
+		const row = sorted.slice(start, start + perRow);
+		const heights = row.map((node) =>
+			calculateNodeHeight(node.description || node.contentPreview, previewCharLimit)
+		);
+		const rowHeight = Math.max(...heights);
+		row.forEach((node, index) => {
+			positionedNodes.push({
+				...node,
+				x: rowStartX + index * columnWidth,
+				y: rowY + rowHeight / 2,
+				width: NODE_WIDTH,
+				height: heights[index],
+				depth: 1,
+				side: 'orphan',
+				isOrphan: true,
+			});
+		});
+		rowY += rowHeight + ORPHAN_GAP;
+	}
+}
+
 function positionExternalNodesBottom(
 	externalNodes: MindMapNode[],
 	positionedNodes: MindMapNode[],
@@ -1129,7 +1230,8 @@ export function calculateLayout(
 	canvasHeight: number,
 	showExternalLinks: boolean,
 	previewCharLimit: number,
-	spacingScale: number = SPACING_SCALE_DEFAULT
+	spacingScale: number = SPACING_SCALE_DEFAULT,
+	showOrphans: boolean = false
 ): LayoutResult {
 	const algorithm = LAYOUT_ALGORITHMS[layoutType] || calculateMindMapLayout;
 	return algorithm(
@@ -1142,6 +1244,7 @@ export function calculateLayout(
 		canvasHeight,
 		showExternalLinks,
 		previewCharLimit,
-		spacingScale
+		spacingScale,
+		showOrphans
 	);
 }

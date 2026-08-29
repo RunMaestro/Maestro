@@ -60,7 +60,12 @@ const SIZE_TOKENS = {
 		statValue: 'text-xl',
 		// auto-fit rather than a fixed column count: three stats stay on one
 		// row, four wrap to 2x2, and neither has to be special-cased here.
-		statLayout: 'grid gap-x-4 gap-y-2 grid-cols-[repeat(auto-fit,minmax(72px,1fr))]',
+		//
+		// The 104px floor is what stops a value being clipped rather than the
+		// tile width alone - a cell narrower than this truncated "142h 5m" to
+		// "142h 5…" even inside a roomy tile, because the column, not the card,
+		// is what a stat value has to fit into.
+		statLayout: 'grid gap-x-4 gap-y-2 grid-cols-[repeat(auto-fit,minmax(104px,1fr))]',
 		sparkline: { width: 96, height: 30 },
 	},
 } as const;
