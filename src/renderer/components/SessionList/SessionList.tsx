@@ -130,8 +130,8 @@ const LIVE_PILL_RESERVE = 48;
  * figure at every width would hide the wordmark for a pill that is no longer
  * that wide.
  */
-const NOW_PLAYING_COMPACT_RESERVE = 51;
-const NOW_PLAYING_LABEL_RESERVE = 171;
+const NOW_PLAYING_COMPACT_RESERVE = 59;
+const NOW_PLAYING_LABEL_RESERVE = 181;
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items

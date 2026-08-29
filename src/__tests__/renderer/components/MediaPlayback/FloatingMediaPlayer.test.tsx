@@ -91,6 +91,82 @@ describe('FloatingMediaPlayer', () => {
 		expect(state.items).toHaveLength(1);
 	});
 
+	describe('Escape', () => {
+		it('minimizes rather than closing, so playback survives a reflex', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(true);
+			// The whole reason Escape is wired to minimize and not to close: this is
+			// the one surface whose close button stops something the user is
+			// listening to.
+			expect(state.playing).toBe(true);
+			expect(state.activeItemId).toBe(a.id);
+		});
+
+		it('closes an open list first, leaving the player up', () => {
+			const a = item();
+			const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: b.id });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('leaves a fullscreen video alone', () => {
+			// Escape is already spoken for: it is how the user gets back OUT of
+			// fullscreen. Minimizing on the way would hide the player they were only
+			// trying to un-maximize.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+			Object.defineProperty(document, 'fullscreenElement', {
+				configurable: true,
+				value: frame(),
+			});
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+			Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+		});
+
+		it('ignores a modified Escape', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id });
+			renderPlayer();
+
+			fireEvent.keyDown(frame(), { key: 'Escape', metaKey: true });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('is reachable after grabbing the title bar', () => {
+			// The drag handler calls preventDefault, which suppresses the click's own
+			// focus. Without the widget claiming focus itself, Escape after a drag
+			// would go to whatever surface is behind the player instead.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+
+			fireEvent.mouseDown(frame().firstElementChild!, { button: 0, clientX: 300, clientY: 300 });
+			fireEvent.mouseUp(window);
+			expect(document.activeElement).toBe(frame());
+
+			fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+			expect(useMediaPlaybackStore.getState().playing).toBe(true);
+		});
+	});
+
 	it('closing stops playback and releases the player', () => {
 		const a = item();
 		useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });

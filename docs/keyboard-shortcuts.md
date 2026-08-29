@@ -396,12 +396,15 @@ Graph, and remembers which one you left it on.
 | Previous / next branch (Graph) | `Left/Right Arrow`         | same                 |
 | Close the viewer               | `Esc`                      | `Esc`                |
 
-In Graph view each axis answers one question. `Up`/`Down` follow the line the
-selected commit is on, skipping commits that belong to other branches, and stop
-at that branch's newest and oldest commit. `Left`/`Right` are the only keys that
-cross to another branch, landing on the commit nearest the one you were on.
-`Home`/`End` and the page keys also stay on the current branch. The graph is
-built from every branch, so these reach commits the List view does not hold.
+In Graph view each axis answers one question, and both read off what is drawn.
+`Up`/`Down` follow the branch line the selected commit sits on, skipping commits
+drawn beside it on other branches, and stop at that branch's newest and oldest
+commit. `Left`/`Right` are the only keys that cross branches: they move to the
+line drawn immediately left or right, landing at the height you were already at,
+so the selection slides sideways instead of jumping to another branch's tip.
+`Home`/`End` and the page keys also stay on the current branch. Clicking a commit
+message selects it, the same as clicking its dot. The graph is built from every
+branch, so all of this reaches commits the List view does not hold.
 
 ## Document Graph
 

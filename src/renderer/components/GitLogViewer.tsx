@@ -18,12 +18,13 @@ import { useSessionStore } from '../stores/sessionStore';
 import { gitService, type GitGraphNode } from '../services/git';
 import { GitGraphView } from './GitGraphView';
 import {
-	computeGitGraphLanes,
-	gitGraphLaneEdge,
-	jumpGitGraphAlongLane,
-	stepGitGraphAcrossLanes,
-	stepGitGraphAlongLane,
-} from '../utils/gitGraphLanes';
+	computeGitGraphGeometry,
+	gitGraphColumnEdge,
+	gitGraphTopCommit,
+	jumpGitGraphVertical,
+	stepGitGraphHorizontal,
+	stepGitGraphVertical,
+} from '../utils/gitGraphLayout';
 import 'react-diff-view/style/index.css';
 
 const VIEW_MODE_STORAGE_KEY = 'maestro:gitLogViewer:viewMode';
@@ -44,7 +45,7 @@ function viewModeStepFromKey(e: KeyboardEvent): -1 | 1 | null {
 
 const VIEW_MODES: ViewMode[] = ['list', 'graph'];
 
-// Commits a PageUp/PageDown covers along the current lane in graph view.
+// Commits a PageUp/PageDown covers down the current branch line in graph view.
 // Matches the list view's own page size so the two views move at the same rate.
 const GRAPH_PAGE_COMMITS = 10;
 
@@ -220,9 +221,13 @@ export const GitLogViewer = memo(function GitLogViewer({
 		[cwd, sshRemoteId]
 	);
 
-	// Same lane assignment GitGraphView draws with, so a horizontal arrow lands in
-	// the column the user is looking at rather than in a lane derived twice.
-	const graphLanes = useMemo(() => computeGitGraphLanes(graphNodes), [graphNodes]);
+	// Where each commit is actually DRAWN, read back from the same @gitgraph
+	// construction the view renders. Navigation is visual, so it has to move by
+	// the layout on screen rather than by an order re-derived beside it.
+	const graphGeometry = useMemo(
+		() => computeGitGraphGeometry(graphNodes, theme),
+		[graphNodes, theme]
+	);
 
 	// Memoised so GitGraphView's `useMemo` (which lists onCommitClick in its deps)
 	// doesn't rebuild the entire GitgraphCore on every parent render.
@@ -285,17 +290,17 @@ export const GitLogViewer = memo(function GitLogViewer({
 		}
 	}, [selectedIndex]);
 
-	// Graph-mode keyboard model, with one axis per question. Up/Down FOLLOW THE
-	// LANE the selected commit is on (up is newer, matching @gitgraph's default
-	// orientation, where row 0 is drawn at the bottom), skipping over commits
-	// that belong to other branches; Left/Right are the only keys that cross to
-	// another branch. Vertical movement is deliberately not the global row order:
-	// that drifts sideways on its own and leaves Left/Right with nothing to do.
+	// Graph-mode keyboard model, with one axis per question, both answered in
+	// SCREEN terms. Up/Down follow the branch line the selected commit is drawn
+	// on, skipping commits that belong to other columns; Left/Right move to the
+	// branch line drawn immediately beside it, landing at the same height. Moving
+	// vertically by the global commit order instead would drift sideways on its
+	// own, leaving Left/Right with nothing to do.
 	//
-	// Lanes are used instead of the list's index because the graph is built from
-	// `git log --all` while the list only holds the current branch, so a commit
-	// selected off a side branch would otherwise leave the arrow keys doing
-	// nothing visible.
+	// Columns are used instead of the list's index because the graph is built
+	// from `git log --all` while the list only holds the current branch, so a
+	// commit selected off a side branch would otherwise leave the arrow keys
+	// doing nothing visible.
 	const handleGraphKeyDown = useCallback(
 		(e: KeyboardEvent): boolean => {
 			if (viewMode !== 'graph' || e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -305,53 +310,53 @@ export const GitLogViewer = memo(function GitLogViewer({
 			// (an empty log, or an entry outside the graph's range). Keys that answer
 			// with nothing read as broken, so give them somewhere to start.
 			const anchor =
-				selected && graphLanes.rowOfCommit.has(selected)
+				selected && graphGeometry.positionOfCommit.has(selected)
 					? selected
-					: graphLanes.ordered[graphLanes.ordered.length - 1]?.hash;
+					: gitGraphTopCommit(graphGeometry);
 
 			let target: string | null = null;
 			switch (e.key) {
 				case 'ArrowRight':
-					target = stepGitGraphAcrossLanes(graphLanes, anchor, 1);
+					target = stepGitGraphHorizontal(graphGeometry, anchor, 'right');
 					break;
 				case 'ArrowLeft':
-					target = stepGitGraphAcrossLanes(graphLanes, anchor, -1);
+					target = stepGitGraphHorizontal(graphGeometry, anchor, 'left');
 					break;
 				case 'ArrowUp':
 				case 'k':
-					target = stepGitGraphAlongLane(graphLanes, anchor, 1);
+					target = stepGitGraphVertical(graphGeometry, anchor, 'up');
 					break;
 				case 'ArrowDown':
 				case 'j':
-					target = stepGitGraphAlongLane(graphLanes, anchor, -1);
+					target = stepGitGraphVertical(graphGeometry, anchor, 'down');
 					break;
-				// The page and end keys are answered here too, and stay on the lane for
-				// the same reason. Left to the list handler they would move an index
-				// the graph is not showing, which reads as the key having died.
+				// The page and end keys are answered here too, and stay in the column
+				// for the same reason. Left to the list handler they would move an
+				// index the graph is not showing, which reads as the key having died.
 				case 'PageUp':
-					target = jumpGitGraphAlongLane(graphLanes, anchor, GRAPH_PAGE_COMMITS);
+					target = jumpGitGraphVertical(graphGeometry, anchor, -GRAPH_PAGE_COMMITS);
 					break;
 				case 'PageDown':
-					target = jumpGitGraphAlongLane(graphLanes, anchor, -GRAPH_PAGE_COMMITS);
+					target = jumpGitGraphVertical(graphGeometry, anchor, GRAPH_PAGE_COMMITS);
 					break;
 				case 'Home':
-					target = gitGraphLaneEdge(graphLanes, anchor, 'tip');
+					target = gitGraphColumnEdge(graphGeometry, anchor, 'top');
 					break;
 				case 'End':
-					target = gitGraphLaneEdge(graphLanes, anchor, 'root');
+					target = gitGraphColumnEdge(graphGeometry, anchor, 'bottom');
 					break;
 				default:
 					return false;
 			}
 
 			e.preventDefault();
-			// A step off the end of a lane (or of the graph) holds the selection
+			// A step off the end of a column (or of the graph) holds the selection
 			// rather than falling through to the list handler, which would move the
 			// cursor somewhere the graph never showed it going.
 			if (target) handleGraphCommitClick(target);
 			return true;
 		},
-		[viewMode, displayedCommit?.hash, graphLanes, handleGraphCommitClick]
+		[viewMode, displayedCommit?.hash, graphGeometry, handleGraphCommitClick]
 	);
 
 	// Handle keyboard navigation via global listener

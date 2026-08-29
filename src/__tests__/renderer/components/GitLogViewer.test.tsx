@@ -1543,19 +1543,21 @@ this is not valid diff`,
 			await waitFor(() => expect(graphPressed()).toBe('true'));
 		});
 
-		it('jumps to the neighbouring lane with Left/Right', async () => {
+		it('jumps to the branch line drawn beside it with Left/Right', async () => {
 			const graph = await renderGraphView();
 
-			// m1 sits on main at row 4; the nearest feature commit is f2 (row 3).
+			// m1 is drawn at the top of the main column; the feature commit nearest
+			// that height is f2.
 			fireEvent.keyDown(window, { key: 'ArrowRight' });
 			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
 
-			// Back to main, nearest row to f2: c2 (row 2).
+			// And back. Landing at the nearest height in each direction is what makes
+			// a jump and a jump back return the user to where they started.
 			fireEvent.keyDown(window, { key: 'ArrowLeft' });
-			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c2'));
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
 		});
 
-		it('holds the selection at the outermost lane', async () => {
+		it('holds the selection at the outermost column', async () => {
 			const graph = await renderGraphView();
 
 			fireEvent.keyDown(window, { key: 'ArrowLeft' });
@@ -1564,7 +1566,7 @@ this is not valid diff`,
 
 		// Up/Down follow the line the cursor is on. Wandering onto a neighbouring
 		// branch by itself would leave Left/Right with nothing to do.
-		it('walks Up/Down along the current lane, skipping other branches', async () => {
+		it('walks Up/Down along the current column, skipping other branches', async () => {
 			const graph = await renderGraphView();
 
 			// m1 -> c2 down the main lane, stepping over f2 (feature, one row nearer).
@@ -1597,7 +1599,7 @@ this is not valid diff`,
 
 		// Left to the list handler these would move an index the graph is not
 		// showing, so the key would look dead.
-		it('answers Home/End and the page keys along the current lane', async () => {
+		it('answers Home/End and the page keys along the current column', async () => {
 			const graph = await renderGraphView();
 
 			fireEvent.keyDown(window, { key: 'End' });
@@ -1617,7 +1619,7 @@ this is not valid diff`,
 
 		// These are lane ends, not graph ends: on the feature branch they must stop
 		// at f2/f1 rather than at main's tip and root.
-		it('bounds Home/End by the lane the cursor is on', async () => {
+		it('bounds Home/End by the column the cursor is on', async () => {
 			const graph = await renderGraphView();
 
 			fireEvent.keyDown(window, { key: 'ArrowRight' });
