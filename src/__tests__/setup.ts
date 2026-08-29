@@ -319,6 +319,7 @@ const mockMaestro = {
 		worktreeInfo: vi.fn().mockResolvedValue({ success: true, exists: false, isWorktree: false }),
 		getRepoRoot: vi.fn().mockResolvedValue({ success: true, root: '/path/to/project' }),
 		log: vi.fn().mockResolvedValue({ entries: [], error: undefined }),
+		graph: vi.fn().mockResolvedValue({ nodes: [], error: undefined }),
 		commitCount: vi.fn().mockResolvedValue({ count: 0, error: null }),
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),

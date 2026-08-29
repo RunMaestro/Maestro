@@ -380,6 +380,25 @@ The file list is focused when the viewer opens, so these work right away. See
 The filter box in the stats bar matches both filenames and the text inside each
 memory, so `Esc` clears it before it closes the viewer.
 
+## Git Log
+
+Open it with `Cmd+Shift+G` (`Ctrl+Shift+G`). The viewer has two views, List and
+Graph, and remembers which one you left it on.
+
+| Action                         | macOS                      | Windows/Linux        |
+| ------------------------------ | -------------------------- | -------------------- |
+| Previous / next view           | `Cmd+Shift+[` / `]`        | `Ctrl+Shift+[` / `]` |
+| Previous / next commit         | `Up/Down Arrow` or `j`/`k` | same                 |
+| Jump a page of commits         | `PageUp` / `PageDown`      | same                 |
+| First / last commit            | `Home` / `End`             | same                 |
+| Previous / next branch (Graph) | `Left/Right Arrow`         | same                 |
+| Close the viewer               | `Esc`                      | `Esc`                |
+
+In Graph view the arrows read as the graph is drawn: `Up`/`Down` step one row
+along the lane you are on, and `Left`/`Right` cross to the nearest commit on the
+neighbouring lane. The graph is built from every branch, so the arrows reach
+commits the List view does not hold.
+
 ## Document Graph
 
 | Action                        | Key          |

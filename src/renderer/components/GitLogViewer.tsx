@@ -9,6 +9,7 @@ import { parseGitDiff } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { useListNavigation } from '../hooks';
+import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -16,11 +17,35 @@ import { ModalSubtitle } from './ui/Modal';
 import { useSessionStore } from '../stores/sessionStore';
 import { gitService, type GitGraphNode } from '../services/git';
 import { GitGraphView } from './GitGraphView';
+import {
+	computeGitGraphLanes,
+	gitGraphHashAtRow,
+	stepGitGraphLane,
+	stepGitGraphRow,
+} from '../utils/gitGraphLanes';
 import 'react-diff-view/style/index.css';
 
 const VIEW_MODE_STORAGE_KEY = 'maestro:gitLogViewer:viewMode';
 const COMMIT_FETCH_LIMIT = 200;
 type ViewMode = 'list' | 'graph';
+
+// Cmd/Ctrl+Shift+[ / ] steps between the List and Graph views. On macOS Shift+[
+// arrives as '{' and Shift+] as '}', so both spellings have to be matched (the
+// same pair the app-level handler checks). This chord cannot collide with the
+// app's tab cycling: `useMainKeyboardHandler` blocks it outright whenever a true
+// modal is open, precisely so a modal can claim it for its own views.
+function viewModeStepFromKey(e: KeyboardEvent): -1 | 1 | null {
+	if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return null;
+	if (e.key === '[' || e.key === '{') return -1;
+	if (e.key === ']' || e.key === '}') return 1;
+	return null;
+}
+
+const VIEW_MODES: ViewMode[] = ['list', 'graph'];
+
+// Rows a PageUp/PageDown covers in graph view. Matches the list view's own page
+// size so the two views scroll history at the same rate.
+const GRAPH_PAGE_ROWS = 10;
 
 interface GitLogEntry {
 	hash: string;
@@ -194,6 +219,10 @@ export const GitLogViewer = memo(function GitLogViewer({
 		[cwd, sshRemoteId]
 	);
 
+	// Same lane assignment GitGraphView draws with, so a horizontal arrow lands in
+	// the column the user is looking at rather than in a lane derived twice.
+	const graphLanes = useMemo(() => computeGitGraphLanes(graphNodes), [graphNodes]);
+
 	// Memoised so GitGraphView's `useMemo` (which lists onCommitClick in its deps)
 	// doesn't rebuild the entire GitgraphCore on every parent render.
 	const handleGraphCommitClick = useCallback(
@@ -255,15 +284,95 @@ export const GitLogViewer = memo(function GitLogViewer({
 		}
 	}, [selectedIndex]);
 
+	// Graph-mode keyboard model: Up/Down walk one graph ROW (visually up is newer,
+	// matching @gitgraph's default orientation) and Left/Right jump to the nearest
+	// commit on the neighbouring LANE. Rows are used instead of the list's index
+	// because the graph is built from `git log --all` while the list only holds the
+	// current branch, so a commit selected off a side branch would otherwise leave
+	// the arrow keys doing nothing visible.
+	const handleGraphKeyDown = useCallback(
+		(e: KeyboardEvent): boolean => {
+			if (viewMode !== 'graph' || e.metaKey || e.ctrlKey || e.altKey) return false;
+
+			const selected = displayedCommit?.hash;
+			// Fall back to the newest commit when the selection is not on the graph
+			// (an empty log, or an entry outside the graph's range). Keys that answer
+			// with nothing read as broken, so give them somewhere to start.
+			const anchor =
+				selected && graphLanes.rowOfCommit.has(selected)
+					? selected
+					: graphLanes.ordered[graphLanes.ordered.length - 1]?.hash;
+
+			// Row of the anchor, for the jumps that move by more than one step.
+			const row = anchor ? (graphLanes.rowOfCommit.get(anchor) ?? 0) : 0;
+			const lastRow = graphLanes.ordered.length - 1;
+
+			let target: string | null = null;
+			switch (e.key) {
+				case 'ArrowRight':
+					target = stepGitGraphLane(graphLanes, anchor, 1);
+					break;
+				case 'ArrowLeft':
+					target = stepGitGraphLane(graphLanes, anchor, -1);
+					break;
+				case 'ArrowUp':
+				case 'k':
+					target = stepGitGraphRow(graphLanes, anchor, 1);
+					break;
+				case 'ArrowDown':
+				case 'j':
+					target = stepGitGraphRow(graphLanes, anchor, -1);
+					break;
+				// The page and end keys are answered here too, matching the list's own
+				// page size. Left to the list handler they would move an index the
+				// graph is not showing, which reads as the key having died.
+				case 'PageUp':
+					target = gitGraphHashAtRow(graphLanes, row + GRAPH_PAGE_ROWS);
+					break;
+				case 'PageDown':
+					target = gitGraphHashAtRow(graphLanes, row - GRAPH_PAGE_ROWS);
+					break;
+				case 'Home':
+					target = gitGraphHashAtRow(graphLanes, lastRow);
+					break;
+				case 'End':
+					target = gitGraphHashAtRow(graphLanes, 0);
+					break;
+				default:
+					return false;
+			}
+
+			e.preventDefault();
+			// A step off the end of a lane (or of the graph) holds the selection
+			// rather than falling through to the list handler, which would move the
+			// cursor somewhere the graph never showed it going.
+			if (target) handleGraphCommitClick(target);
+			return true;
+		},
+		[viewMode, displayedCommit?.hash, graphLanes, handleGraphCommitClick]
+	);
+
 	// Handle keyboard navigation via global listener
 	// Store handleKeyDown in a ref to avoid stale closure issues
 	// The ref is updated synchronously on every render, before any events can fire
 	const handleKeyDownRef = useRef(handleKeyDown);
 	handleKeyDownRef.current = handleKeyDown;
+	const handleGraphKeyDownRef = useRef(handleGraphKeyDown);
+	handleGraphKeyDownRef.current = handleGraphKeyDown;
 
 	useEffect(() => {
 		// Wrapper function that always calls the current handler from the ref
 		const handler = (e: KeyboardEvent) => {
+			const step = viewModeStepFromKey(e);
+			if (step !== null) {
+				e.preventDefault();
+				setViewMode((prev) => {
+					const next = VIEW_MODES.indexOf(prev) + step;
+					return VIEW_MODES[Math.min(Math.max(next, 0), VIEW_MODES.length - 1)];
+				});
+				return;
+			}
+			if (handleGraphKeyDownRef.current(e)) return;
 			handleKeyDownRef.current(e);
 		};
 		window.addEventListener('keydown', handler);
@@ -400,6 +509,11 @@ export const GitLogViewer = memo(function GitLogViewer({
 		dialogRef.current?.focus();
 	}, []);
 
+	// Platform-correct spelling of the view-switch chord for the toggle tooltips
+	// and the footer hint (⌘ ⇧ [ on macOS, Ctrl+Shift+[ elsewhere).
+	const viewToggleHint = useMemo(() => formatShortcutKeys(['Meta', 'Shift', '[']), []);
+	const viewToggleHintForward = useMemo(() => formatShortcutKeys(['Meta', 'Shift', ']']), []);
+
 	return (
 		<div
 			className="fixed inset-0 z-[9999] flex items-center justify-center modal-overlay"
@@ -466,7 +580,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 									backgroundColor: viewMode === 'list' ? theme.colors.bgActivity : 'transparent',
 									color: viewMode === 'list' ? theme.colors.textMain : theme.colors.textDim,
 								}}
-								title="List view"
+								title={`List view (${viewToggleHint})`}
 								aria-pressed={viewMode === 'list'}
 							>
 								<List className="w-3.5 h-3.5" />
@@ -479,7 +593,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 									backgroundColor: viewMode === 'graph' ? theme.colors.bgActivity : 'transparent',
 									color: viewMode === 'graph' ? theme.colors.textMain : theme.colors.textDim,
 								}}
-								title="Graph view"
+								title={`Graph view (${viewToggleHintForward})`}
 								aria-pressed={viewMode === 'graph'}
 							>
 								<Network className="w-3.5 h-3.5" />
@@ -767,6 +881,33 @@ export const GitLogViewer = memo(function GitLogViewer({
 								j/k
 							</kbd>{' '}
 							navigate
+						</span>
+						{viewMode === 'graph' && (
+							<span>
+								<kbd
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									←→
+								</kbd>{' '}
+								switch branch
+							</span>
+						)}
+						<span>
+							<kbd
+								className="px-1 py-0.5 rounded"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{viewToggleHint}
+							</kbd>{' '}
+							/{' '}
+							<kbd
+								className="px-1 py-0.5 rounded"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								]
+							</kbd>{' '}
+							switch view
 						</span>
 						<span>
 							<kbd

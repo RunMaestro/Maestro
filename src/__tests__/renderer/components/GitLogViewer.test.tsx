@@ -33,6 +33,15 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+// Mock GitGraphView - @gitgraph renders real SVG and measures it with getBBox,
+// which jsdom does not implement. The stub reports what the viewer told it to
+// highlight, which is exactly what the keyboard navigation is supposed to move.
+vi.mock('../../../renderer/components/GitGraphView', () => ({
+	GitGraphView: ({ selectedHash }: { selectedHash?: string }) => (
+		<div data-testid="graph-view" data-selected={selectedHash ?? ''} />
+	),
+}));
+
 // Mock parseGitDiff
 vi.mock('../../../renderer/utils/gitDiffParser', () => ({
 	parseGitDiff: vi.fn((diff: string) => {
@@ -1427,6 +1436,185 @@ this is not valid diff`,
 			const firstShortHash = screen.getByText('first1');
 			const firstCommitRow = firstShortHash.closest('div[class*="cursor-pointer"]');
 			expect(firstCommitRow).toHaveStyle({ backgroundColor: theme.colors.bgActivity });
+		});
+	});
+
+	// The graph is built from `git log --all`, so it holds commits the list view
+	// never shows. Its keyboard model is two-dimensional: Up/Down walk rows,
+	// Left/Right jump lanes.
+	describe('Graph view', () => {
+		// main:    c1 --- c2 ------ m1 (HEAD)
+		//                    \     /
+		// feature:  f1 ------ f2 --
+		// Rows oldest-first: c1=0, f1=1, c2=2, f2=3, m1=4.
+		const graphNode = (
+			hash: string,
+			minute: number,
+			parents: string[] = [],
+			refs: string[] = []
+		) => ({
+			hash,
+			shortHash: hash,
+			parents,
+			refs,
+			author: 'Test Author',
+			date: `2026-08-28T10:0${minute}:00Z`,
+			subject: `commit ${hash}`,
+		});
+
+		const gitGraphMock = () => vi.mocked(window.maestro.git.graph);
+
+		const renderGraphView = async () => {
+			gitGraphMock().mockResolvedValue({
+				nodes: [
+					graphNode('m1', 5, ['c2', 'f2'], ['HEAD -> main']),
+					graphNode('c1', 1, [], ['main']),
+					graphNode('f2', 4, ['f1']),
+					graphNode('f1', 2, ['c1'], ['feature']),
+					graphNode('c2', 3, ['c1']),
+				],
+				error: undefined,
+			});
+			// The list only knows the current branch, and its newest commit (m1) is
+			// the default selection the arrows start from.
+			gitLogMock().mockResolvedValue({
+				entries: [
+					createGitLogEntry({ hash: 'm1', shortHash: 'm1' }),
+					createGitLogEntry({ hash: 'c2', shortHash: 'c2' }),
+					createGitLogEntry({ hash: 'c1', shortHash: 'c1' }),
+				],
+				error: undefined,
+			});
+
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			await waitFor(() => {
+				expect(screen.getByTestId('graph-view')).toHaveAttribute('data-selected', 'm1');
+			});
+			return screen.getByTestId('graph-view');
+		};
+
+		// The toggle's pressed state is the assertion rather than the rendered
+		// graph, because an empty repo shows "No commits found" in graph mode and
+		// would make a mode switch look like it never happened.
+		const graphPressed = () =>
+			screen.getByRole('button', { name: /Graph/ }).getAttribute('aria-pressed');
+
+		it('switches List <-> Graph with Cmd+Shift+] and Cmd+Shift+[', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+			expect(graphPressed()).toBe('false');
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('true'));
+
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('false'));
+		});
+
+		// macOS reports Shift+[ as '{' and Shift+] as '}', so the chord has to be
+		// matched by both spellings or it dies on the platform it was asked for.
+		it('accepts the shifted brace spellings of the view chord', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(window, { key: '}', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('true'));
+
+			fireEvent.keyDown(window, { key: '{', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('false'));
+		});
+
+		// Ctrl+Shift+] is the same chord on Windows/Linux.
+		it('accepts the Ctrl spelling of the view chord', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(window, { key: ']', ctrlKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('true'));
+		});
+
+		it('jumps to the neighbouring lane with Left/Right', async () => {
+			const graph = await renderGraphView();
+
+			// m1 sits on main at row 4; the nearest feature commit is f2 (row 3).
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+
+			// Back to main, nearest row to f2: c2 (row 2).
+			fireEvent.keyDown(window, { key: 'ArrowLeft' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c2'));
+		});
+
+		it('holds the selection at the outermost lane', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'ArrowLeft' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+		});
+
+		it('walks graph rows with Up/Down, including commits the list never holds', async () => {
+			const graph = await renderGraphView();
+
+			// Down is older: m1 (row 4) -> f2 (row 3), which is not in `entries`.
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+
+			fireEvent.keyDown(window, { key: 'ArrowUp' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+		});
+
+		// Left to the list handler these would move an index the graph is not
+		// showing, so the key would look dead.
+		it('answers Home/End and the page keys in graph rows', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'End' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c1'));
+
+			fireEvent.keyDown(window, { key: 'Home' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+
+			// A page is larger than this graph, so it clamps to the oldest commit
+			// instead of refusing to move.
+			fireEvent.keyDown(window, { key: 'PageDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c1'));
+
+			fireEvent.keyDown(window, { key: 'PageUp' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+		});
+
+		it('loads the diff for a commit reached by keyboard', async () => {
+			await renderGraphView();
+			gitShowMock().mockClear();
+
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => {
+				expect(gitShowMock()).toHaveBeenCalledWith('/test/project', 'f2', undefined);
+			});
+		});
+
+		it('shows the branch-jump hint only in graph view', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+			expect(screen.queryByText(/switch branch/)).not.toBeInTheDocument();
+			expect(screen.getByText(/switch view/)).toBeInTheDocument();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			await waitFor(() => {
+				expect(screen.getByText(/switch branch/)).toBeInTheDocument();
+			});
 		});
 	});
 

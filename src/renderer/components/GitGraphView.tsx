@@ -3,6 +3,7 @@ import { Gitgraph, templateExtend, TemplateName } from '@gitgraph/react';
 import { GitgraphCore } from '@gitgraph/core';
 import type { Theme } from '../types';
 import type { GitGraphNode } from '../services/git';
+import { computeGitGraphLanes } from '../utils/gitGraphLanes';
 
 // `@gitgraph/react`'s public Gitgraph component is parameterised on
 // `ReactElement<SVGElement>` (its internal `ReactSvgElement`). The library
@@ -19,17 +20,6 @@ interface GitGraphViewProps {
 	theme: Theme;
 	onCommitClick?: (hash: string) => void;
 	selectedHash?: string;
-}
-
-// Pull a branch label out of a commit's refs (e.g. "HEAD -> main, origin/main, tag: v1").
-// Prefers local branches over remote-tracking refs; ignores tag: entries.
-function pickBranchFromRefs(refs: string[]): string | null {
-	const cleaned = refs
-		.map((r) => r.replace(/^HEAD -> /, '').trim())
-		.filter((r) => r && !r.startsWith('tag:'));
-	if (cleaned.length === 0) return null;
-	const local = cleaned.find((r) => !r.includes('/'));
-	return local || cleaned[0];
 }
 
 // Branch/lane color palette. Every branch line, dot, message and label pill
@@ -101,11 +91,9 @@ export const GitGraphView = memo(function GitGraphView({
 }: GitGraphViewProps) {
 	const template = useMemo(() => buildGitGraphTemplate(theme), [theme]);
 
-	// Sort oldest → newest so we can build branches forward.
-	const ordered = useMemo(
-		() => [...nodes].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
-		[nodes]
-	);
+	// Lane assignment is shared with GitLogViewer's keyboard navigation, so an
+	// arrow key can never disagree with the column a commit is drawn in.
+	const { ordered, laneOfCommit } = useMemo(() => computeGitGraphLanes(nodes), [nodes]);
 
 	// Build the GitgraphCore imperatively here (not via the children-callback API).
 	// The callback API populates the graph during componentDidMount, which under
@@ -119,7 +107,6 @@ export const GitGraphView = memo(function GitGraphView({
 
 		const branches = new Map<string, ReturnType<typeof api.branch>>();
 		const commitToBranch = new Map<string, ReturnType<typeof api.branch>>();
-		let laneCounter = 0;
 
 		const ensureBranch = (name: string, parentHash?: string) => {
 			const existing = branches.get(name);
@@ -131,14 +118,8 @@ export const GitGraphView = memo(function GitGraphView({
 		};
 
 		for (const node of ordered) {
-			const refBranch = pickBranchFromRefs(node.refs);
 			const firstParent = node.parents[0];
-			const inheritedBranchName = firstParent
-				? ([...branches.entries()].find(([, br]) => commitToBranch.get(firstParent) === br)?.[0] ??
-					null)
-				: null;
-
-			const branchName = refBranch ?? inheritedBranchName ?? `lane-${++laneCounter}`;
+			const branchName = laneOfCommit.get(node.hash) ?? 'lane-0';
 			const branch = ensureBranch(branchName, firstParent);
 
 			const subject = node.subject || '(no message)';
@@ -182,7 +163,7 @@ export const GitGraphView = memo(function GitGraphView({
 		}
 
 		return core;
-	}, [ordered, template, onCommitClick, selectedHash, theme.colors.accent]);
+	}, [ordered, laneOfCommit, template, onCommitClick, selectedHash, theme.colors.accent]);
 
 	// `<Gitgraph>` reads `props.graph` once in its constructor, so swapping in a
 	// fresh GitgraphCore (e.g. when `selectedHash` changes) requires a remount.
