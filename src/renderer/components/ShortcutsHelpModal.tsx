@@ -223,8 +223,12 @@ export function ShortcutsHelpModal({
 			footer={footer}
 			initialFocusRef={searchInputRef}
 			layerOptions={{ onBeforeClose: handleBeforeClose }}
+			resizeKey="shortcuts-help"
+			defaultSize={{ width: 620, height: 640 }}
+			minSize={{ width: 420, height: 360 }}
+			contentClassName="p-6 flex-1 min-h-0 flex flex-col"
 		>
-			<div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-track-transparent -mr-6 pr-6 -my-2">
+			<div className="space-y-2 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent -mr-6 pr-6 -my-2">
 				{filteredShortcuts.map((sc, i) => {
 					const isUsed = usedShortcutIds.has(sc.id);
 					return (

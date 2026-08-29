@@ -271,7 +271,7 @@ describe('ShortcutsHelpModal', () => {
 					<ShortcutsHelpModal theme={mockTheme} shortcuts={mockShortcuts} onClose={mockOnClose} />
 				</TestWrapper>
 			);
-			const modalContent = container.querySelector('[style*="width: min(calc(400px"]');
+			const modalContent = container.querySelector('[data-modal-resize-key="shortcuts-help"]');
 			expect(modalContent).toHaveStyle({
 				backgroundColor: mockTheme.colors.bgSidebar,
 				borderColor: mockTheme.colors.border,
@@ -347,9 +347,10 @@ describe('ShortcutsHelpModal', () => {
 			const backdrop = container.querySelector('.fixed.inset-0');
 			expect(backdrop).toBeInTheDocument();
 
-			// Check dialog width (Modal component uses inline style instead of Tailwind class)
-			const dialogBox = container.querySelector('[style*="width: min(calc(400px"]');
+			// The dialog is a resizable frame keyed by resizeKey, not a fixed-width box
+			const dialogBox = container.querySelector('[data-modal-resize-key="shortcuts-help"]');
 			expect(dialogBox).toBeInTheDocument();
+			expect(dialogBox).toHaveStyle({ width: '620px' });
 		});
 
 		it('has scrollable shortcuts container', () => {
@@ -359,9 +360,11 @@ describe('ShortcutsHelpModal', () => {
 				</TestWrapper>
 			);
 
-			const scrollContainer = container.querySelector('.max-h-\\[400px\\]');
+			// The list fills the resizable frame rather than capping at a fixed height,
+			// so a taller modal shows more shortcuts instead of dead space.
+			const scrollContainer = container.querySelector('.overflow-y-auto.flex-1');
 			expect(scrollContainer).toBeInTheDocument();
-			expect(scrollContainer).toHaveClass('overflow-y-auto');
+			expect(scrollContainer).toHaveClass('min-h-0');
 		});
 	});
 

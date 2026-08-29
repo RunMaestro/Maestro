@@ -6,7 +6,7 @@
  * the textarea where plain Enter must stay a newline.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueuedItemEditModal } from '../../../renderer/components/QueuedItemEditModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -58,5 +58,19 @@ describe('QueuedItemEditModal keyboard', () => {
 		fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
 		expect(onSave).not.toHaveBeenCalled();
 		expect(onClose).not.toHaveBeenCalled();
+	});
+});
+
+describe('QueuedItemEditModal focus', () => {
+	// Regression: Modal auto-focuses on mount inside a requestAnimationFrame, and
+	// with no initialFocusRef it focuses its own overlay container. That frame
+	// lands AFTER the modal body's own effect, so a locally-focused textarea was
+	// silently handed back to a div one frame later and Cmd+Shift+E dropped the
+	// user on a surface that swallowed every keystroke.
+	it('lands focus in the textarea with the caret at the end', async () => {
+		const { textarea } = setup();
+		await waitFor(() => expect(document.activeElement).toBe(textarea));
+		expect((textarea as HTMLTextAreaElement).selectionStart).toBe('a queued message'.length);
+		expect((textarea as HTMLTextAreaElement).selectionEnd).toBe('a queued message'.length);
 	});
 });

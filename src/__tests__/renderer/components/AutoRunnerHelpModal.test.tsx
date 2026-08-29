@@ -239,8 +239,8 @@ describe('AutoRunnerHelpModal', () => {
 		it('should apply theme background color to modal', () => {
 			render(<AutoRunnerHelpModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Modal component uses inline width style
-			const modal = document.querySelector('[style*="width: min(calc(1008px"]');
+			// Modal renders a resizable frame keyed by resizeKey
+			const modal = document.querySelector('[data-modal-resize-key="auto-run-guide"]');
 			expect(modal).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
 		});
 
@@ -441,20 +441,20 @@ describe('AutoRunnerHelpModal', () => {
 	});
 
 	describe('Responsive Design', () => {
-		it('should have max-width constraint on modal', () => {
+		it('should render a resizable frame with a persisted size key', () => {
 			render(<AutoRunnerHelpModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Modal component uses inline width style
-			const modal = document.querySelector('[style*="width: min(calc(1008px"]');
+			const modal = document.querySelector('[data-modal-resize-key="auto-run-guide"]');
 			expect(modal).toBeInTheDocument();
+			// Height is clamped to the viewport, so only the width is deterministic here.
+			expect(modal).toHaveStyle({ width: '880px' });
 		});
 
-		it('should have max-height constraint for scrolling', () => {
+		it('should cap the frame to the viewport so it can never grow off screen', () => {
 			render(<AutoRunnerHelpModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Modal component uses inline max-height style
-			const modal = document.querySelector('[style*="max-height: 85vh"]');
-			expect(modal).toBeInTheDocument();
+			const modal = document.querySelector('[data-modal-resize-key="auto-run-guide"]');
+			expect(modal).toHaveStyle({ maxWidth: '90vw', maxHeight: '90vh' });
 		});
 
 		it('should use flex layout for modal structure', () => {
