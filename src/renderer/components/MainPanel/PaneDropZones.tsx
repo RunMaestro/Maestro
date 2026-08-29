@@ -130,7 +130,19 @@ export function PaneDropZones({
 
 	React.useEffect(() => {
 		const onDragStart = (e: DragEvent) => {
-			dragPayloadRef.current = e.dataTransfer ? readTabTilePayload(e.dataTransfer) : null;
+			const payload = e.dataTransfer ? readTabTilePayload(e.dataTransfer) : null;
+			dragPayloadRef.current = payload;
+			// Only a TILING drag arms the zones. This listener is on `window`, so it
+			// sees every native drag in the app, and an armed overlay spans the whole
+			// panel at z-30 - above the composer. Arming for an unrelated drag makes
+			// the overlay swallow its `dragover`/`drop`, and the intended target
+			// never hears about the drop: staged-image thumbnails could not be
+			// reordered because every event meant for a tile landed here instead.
+			//
+			// The payload is read during `dragstart` because that is the one phase
+			// where reading dataTransfer is allowed - `dragover` can only see the
+			// MIME list.
+			if (!payload) return;
 			// Arming MUST NOT happen synchronously inside `dragstart`. Chromium has
 			// not committed the drag session yet at this point, and the re-render
 			// this triggers mounts the overlay over the whole panel, which
@@ -139,12 +151,10 @@ export function PaneDropZones({
 			// `dragstart` fires, then `dragend` immediately, with no drag session
 			// and no `dragover`/`drop` anywhere.
 			//
-			// Because this listener is on `window`, it armed on EVERY native drag in
-			// the app, so one rc-only feature silently killed unrelated drags - the
-			// staged-image thumbnails could not be dragged out of the composer at
-			// all. Deferring to the next macrotask lets the drag commit first; a
-			// user cannot reach a drop zone within a tick, so the overlay is live
-			// long before it can be aimed at.
+			// That killed the drag outright for anything armed here, which is how
+			// the staged-image thumbnails became undraggable. Deferring to the next
+			// macrotask lets the drag commit first; a user cannot reach a drop zone
+			// within a tick, so the overlay is live long before it can be aimed at.
 			if (armTimerRef.current !== null) window.clearTimeout(armTimerRef.current);
 			armTimerRef.current = window.setTimeout(() => {
 				armTimerRef.current = null;
