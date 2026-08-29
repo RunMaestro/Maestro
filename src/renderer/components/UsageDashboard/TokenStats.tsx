@@ -443,17 +443,6 @@ export const TokenStats = memo(function TokenStats({
 					/>
 				</ChartErrorBoundary>
 
-				<ChartErrorBoundary theme={theme} chartName="Tokens by Model">
-					<Breakdown
-						title="By Model"
-						groups={data.byModel}
-						theme={theme}
-						colorBlindMode={colorBlindMode}
-						emptyNote="No model data in this range."
-						testId="token-by-model"
-					/>
-				</ChartErrorBoundary>
-
 				<ChartErrorBoundary theme={theme} chartName="Tokens by Account">
 					<Breakdown
 						title="By Account"
@@ -462,6 +451,17 @@ export const TokenStats = memo(function TokenStats({
 						colorBlindMode={colorBlindMode}
 						emptyNote="No provider accounts detected."
 						testId="token-by-account"
+					/>
+				</ChartErrorBoundary>
+
+				<ChartErrorBoundary theme={theme} chartName="Tokens by Model">
+					<Breakdown
+						title="By Model"
+						groups={data.byModel}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						emptyNote="No model data in this range."
+						testId="token-by-model"
 					/>
 				</ChartErrorBoundary>
 
