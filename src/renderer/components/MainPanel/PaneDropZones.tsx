@@ -124,13 +124,38 @@ export function PaneDropZones({
 	// allowed) because dragover can only see the type list, not the payload - yet the
 	// hover hint must already know whether this drag is a self-drop.
 	const dragPayloadRef = React.useRef<TabTilePayload | null>(null);
+	// Pending handle for the deferred arm below, so a drag that ends immediately
+	// cannot be re-armed by a timer that was already in flight.
+	const armTimerRef = React.useRef<number | null>(null);
 
 	React.useEffect(() => {
 		const onDragStart = (e: DragEvent) => {
 			dragPayloadRef.current = e.dataTransfer ? readTabTilePayload(e.dataTransfer) : null;
-			setDragActive(true);
+			// Arming MUST NOT happen synchronously inside `dragstart`. Chromium has
+			// not committed the drag session yet at this point, and the re-render
+			// this triggers mounts the overlay over the whole panel, which
+			// invalidates the drag source's paint before the browser can snapshot a
+			// drag image. The browser's response is to cancel the drag outright:
+			// `dragstart` fires, then `dragend` immediately, with no drag session
+			// and no `dragover`/`drop` anywhere.
+			//
+			// Because this listener is on `window`, it armed on EVERY native drag in
+			// the app, so one rc-only feature silently killed unrelated drags - the
+			// staged-image thumbnails could not be dragged out of the composer at
+			// all. Deferring to the next macrotask lets the drag commit first; a
+			// user cannot reach a drop zone within a tick, so the overlay is live
+			// long before it can be aimed at.
+			if (armTimerRef.current !== null) window.clearTimeout(armTimerRef.current);
+			armTimerRef.current = window.setTimeout(() => {
+				armTimerRef.current = null;
+				setDragActive(true);
+			}, 0);
 		};
 		const onDragEnd = () => {
+			if (armTimerRef.current !== null) {
+				window.clearTimeout(armTimerRef.current);
+				armTimerRef.current = null;
+			}
 			dragPayloadRef.current = null;
 			setDragActive(false);
 			setHover(null);
@@ -141,6 +166,10 @@ export function PaneDropZones({
 		// case a drop is handled elsewhere and dragend is missed on some platforms.
 		window.addEventListener('drop', onDragEnd);
 		return () => {
+			if (armTimerRef.current !== null) {
+				window.clearTimeout(armTimerRef.current);
+				armTimerRef.current = null;
+			}
 			window.removeEventListener('dragstart', onDragStart);
 			window.removeEventListener('dragend', onDragEnd);
 			window.removeEventListener('drop', onDragEnd);

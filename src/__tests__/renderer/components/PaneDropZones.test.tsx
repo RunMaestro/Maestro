@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, waitFor } from '@testing-library/react';
 import { PaneDropZones } from '../../../renderer/components/MainPanel/PaneDropZones';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { TAB_TILE_MIME } from '../../../renderer/utils/tabDragPayload';
@@ -179,5 +179,44 @@ describe('PaneDropZones drop', () => {
 		expect(leafCount).toBe(3);
 		// The dragged tab moved out of the standalone strip into the group.
 		expect(out.unifiedTabOrder.some((r) => r.id === 'c')).toBe(false);
+	});
+	it('does not arm the overlay synchronously inside dragstart', async () => {
+		// Regression guard. Arming re-renders this component, and doing that
+		// synchronously inside `dragstart` cancels the drag Chromium is still
+		// setting up: the browser fires `dragstart`, then `dragend`, with no drag
+		// session at all. Because the listener is on `window`, that killed EVERY
+		// native drag in the app - a staged-image thumbnail could not be dragged
+		// out of the composer while tab tiling was on screen.
+		//
+		// So the overlay must still be click-through when `dragstart` returns, and
+		// only become a live drop target on a later task.
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [{ id: 'a', name: 'Alpha', logs: [] }] as never,
+			activeTabId: 'a',
+			unifiedTabOrder: [{ type: 'ai', id: 'a' }],
+		});
+		useSessionStore.getState().setSessions([session]);
+
+		const { container } = render(
+			<PaneDropZones
+				session={session}
+				activeGroup={null}
+				activeStandaloneRef={{ type: 'ai', id: 'a' }}
+				activeStandaloneTitle="Alpha"
+				theme={theme}
+				onGroupActivated={vi.fn()}
+			/>
+		);
+		const overlay = container.firstChild as HTMLElement;
+		expect(overlay.className).toContain('pointer-events-none');
+
+		startDrag(mockDataTransfer({ ref: { type: 'ai', id: 'a' }, source: 'tab-bar' }));
+
+		// Synchronously after dragstart the overlay is still inert.
+		expect(overlay.className).toContain('pointer-events-none');
+
+		// ...and it arms on the next macrotask, long before a pointer could reach it.
+		await waitFor(() => expect(overlay.className).not.toContain('pointer-events-none'));
 	});
 });
