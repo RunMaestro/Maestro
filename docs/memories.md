@@ -32,6 +32,16 @@ The counter beside the box reads `matches/total`. Hovering a result row shows th
 
 Press `Esc` once to clear the filter, or click the `x` in the box. A second `Esc` closes the viewer.
 
+## Graphing Your Memories
+
+The **Graph** button in the header opens the Document Graph over the memory
+directory, showing how the entries link to each other. `MEMORY.md` sits in the
+middle, since it is the index every other entry hangs off.
+
+Memories that link to nothing appear in the **Unlinked** band at the bottom -
+the same set the filter chip below narrows to, seen as a picture instead of a
+list. The viewer closes when the graph opens; both are full-window views.
+
 ## Unlinked Memories
 
 Claude reads `MEMORY.md` to decide which entries to load. A memory the index

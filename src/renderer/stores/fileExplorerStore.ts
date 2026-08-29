@@ -55,6 +55,15 @@ export interface FileExplorerStoreState {
 	 * so this is checked with `!== undefined`, never for truthiness.
 	 */
 	graphScopeDirectory: string | undefined;
+	/**
+	 * Directory the graph resolves its paths against, overriding the agent's
+	 * project root.
+	 *
+	 * Needed because not every graphable set lives under the project. Claude's
+	 * per-project memory sits in `~/.claude/projects/<encoded>/memory/`, so
+	 * rooting at the agent's cwd would resolve every scoped path to nothing.
+	 */
+	graphRootPath: string | undefined;
 }
 
 export interface FileExplorerStoreActions {
@@ -86,7 +95,13 @@ export interface FileExplorerStoreActions {
 	 * specific row inside the selection; omit it to let the builder center on
 	 * the most-connected file.
 	 */
-	openGraphScope: (scope: { files?: string[]; directory?: string; focusPath?: string }) => void;
+	openGraphScope: (scope: {
+		files?: string[];
+		directory?: string;
+		focusPath?: string;
+		/** Root to resolve against, when the set lives outside the project. */
+		rootPath?: string;
+	}) => void;
 	/** Re-open the last document graph. No-op if no previous path exists. */
 	openLastDocumentGraph: () => void;
 	/** Close the graph view. Preserves lastGraphFocusFilePath for re-open. */
@@ -126,6 +141,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	lastGraphFocusFilePath: undefined,
 	graphScopeFiles: undefined,
 	graphScopeDirectory: undefined,
+	graphRootPath: undefined,
 
 	// --- Actions ---
 	setSelectedFileIndex: (v) => set((s) => ({ selectedFileIndex: resolve(v, s.selectedFileIndex) })),
@@ -148,9 +164,10 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			// leftover scope would silently narrow it.
 			graphScopeFiles: undefined,
 			graphScopeDirectory: undefined,
+			graphRootPath: undefined,
 		}),
 
-	openGraphScope: ({ files, directory, focusPath }) =>
+	openGraphScope: ({ files, directory, focusPath, rootPath }) =>
 		set({
 			// The builder auto-centers when this is empty. `lastGraphFocusFilePath`
 			// is deliberately not written here - "re-open the last graph" means the
@@ -158,6 +175,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphFocusFilePath: focusPath ?? '',
 			graphScopeFiles: files,
 			graphScopeDirectory: directory,
+			graphRootPath: rootPath,
 			isGraphViewOpen: true,
 		}),
 
@@ -177,6 +195,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphFocusFilePath: undefined,
 			graphScopeFiles: undefined,
 			graphScopeDirectory: undefined,
+			graphRootPath: undefined,
 		}),
 
 	setIsGraphViewOpen: (open) => set({ isGraphViewOpen: open }),

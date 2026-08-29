@@ -1166,7 +1166,7 @@ describe('ExecutionQueueBrowser', () => {
 
 			expect(
 				screen.getByText(
-					'Drag and drop to reorder, or Send Now to run one out of turn. Items are otherwise processed sequentially per agent to prevent file conflicts.'
+					'Up/Down selects a message, Enter opens its actions. Drag and drop to reorder, or Send Now to run one out of turn. Items are otherwise processed sequentially per agent to prevent file conflicts.'
 				)
 			).toBeInTheDocument();
 		});
@@ -1213,9 +1213,11 @@ describe('ExecutionQueueBrowser', () => {
 		});
 
 		it('should apply theme colors to queue item rows', () => {
+			// Two items so the assertion lands on an UNSELECTED row - the keyboard
+			// cursor starts on the first one and paints it with the accent.
 			const session = createSession({
 				id: 'active-session',
-				executionQueue: [createQueuedItem()],
+				executionQueue: [createQueuedItem(), createQueuedItem()],
 			});
 			const { container } = render(
 				<ExecutionQueueBrowser
@@ -1229,7 +1231,7 @@ describe('ExecutionQueueBrowser', () => {
 				/>
 			);
 
-			const itemRow = container.querySelector('.rounded-lg.border.group');
+			const itemRow = container.querySelectorAll('.rounded-lg.border.group')[1];
 			expect(itemRow).toHaveStyle({
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -2096,6 +2098,167 @@ describe('ExecutionQueueBrowser', () => {
 
 			fireEvent.click(screen.getByText('Force Send'));
 			expect(onForceSendItem).toHaveBeenCalledWith('active-session', 'item-1');
+		});
+	});
+	describe('keyboard navigation', () => {
+		const rows = (container: HTMLElement) =>
+			Array.from(container.querySelectorAll('.rounded-lg.border.group'));
+		const selectedIndexOf = (container: HTMLElement) =>
+			rows(container).findIndex((row) => row.getAttribute('data-selected') === 'true');
+
+		const renderWithQueue = (extraProps: Record<string, unknown> = {}) => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'first' }),
+					createQueuedItem({ id: 'item-2', text: 'second' }),
+					createQueuedItem({ id: 'item-3', text: 'third' }),
+				],
+			});
+			return render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					{...extraProps}
+				/>
+			);
+		};
+
+		it('starts with the first row selected', () => {
+			const { container } = renderWithQueue();
+			expect(selectedIndexOf(container)).toBe(0);
+		});
+
+		it('moves the selection with Down and Up without wrapping', () => {
+			const { container } = renderWithQueue();
+
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			expect(selectedIndexOf(container)).toBe(1);
+
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			expect(selectedIndexOf(container)).toBe(2);
+
+			fireEvent.keyDown(window, { key: 'ArrowUp' });
+			expect(selectedIndexOf(container)).toBe(1);
+
+			fireEvent.keyDown(window, { key: 'ArrowUp' });
+			fireEvent.keyDown(window, { key: 'ArrowUp' });
+			expect(selectedIndexOf(container)).toBe(0);
+		});
+
+		it('walks across agents in the global view', () => {
+			const sessionA = createSession({
+				id: 'session-a',
+				name: 'Agent A',
+				executionQueue: [createQueuedItem({ id: 'a-1' })],
+			});
+			const sessionB = createSession({
+				id: 'session-b',
+				name: 'Agent B',
+				executionQueue: [createQueuedItem({ id: 'b-1' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[sessionA, sessionB]}
+					activeSessionId="session-a"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('All Agents'));
+			expect(selectedIndexOf(container)).toBe(0);
+
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			expect(selectedIndexOf(container)).toBe(1);
+		});
+
+		it('clicking a row moves the selection to it', () => {
+			const { container } = renderWithQueue();
+
+			fireEvent.click(rows(container)[2]);
+			expect(selectedIndexOf(container)).toBe(2);
+		});
+
+		it('Enter opens the action menu for the selected row', () => {
+			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			fireEvent.keyDown(window, { key: 'Enter' });
+
+			expect(screen.getByText('Message #2')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-edit')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-pause')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-copy')).toBeInTheDocument();
+		});
+
+		it('omits actions the item does not support', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1', type: 'command', command: '/test' })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onEditItem={vi.fn()}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Enter' });
+
+			// A command has no editable text, and no pause handler was wired.
+			expect(screen.queryByTestId('queue-action-edit')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('queue-action-pause')).not.toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
+		});
+
+		it('runs the highlighted action on Enter and closes the menu', () => {
+			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+
+			fireEvent.keyDown(window, { key: 'Enter' });
+			// Edit, Delete, Hold, Copy - step down to Delete.
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			expect(screen.getByTestId('queue-action-delete')).toHaveAttribute('data-selected', 'true');
+
+			fireEvent.keyDown(window, { key: 'Enter' });
+			expect(mockOnRemoveItem).toHaveBeenCalledWith('active-session', 'item-1');
+			expect(screen.queryByTestId('queue-action-delete')).not.toBeInTheDocument();
+		});
+
+		it('clicking an action runs it', () => {
+			const onToggleItemPause = vi.fn();
+			renderWithQueue({ onToggleItemPause });
+
+			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.click(screen.getByTestId('queue-action-pause'));
+
+			expect(onToggleItemPause).toHaveBeenCalledWith('active-session', 'item-1');
+			expect(screen.queryByTestId('queue-action-pause')).not.toBeInTheDocument();
+		});
+
+		it('arrow keys stop moving the row cursor while the action menu is open', () => {
+			const { container } = renderWithQueue();
+
+			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+
+			expect(selectedIndexOf(container)).toBe(0);
 		});
 	});
 });

@@ -2,6 +2,7 @@ import React, { RefObject } from 'react';
 import { ChevronLeft, Star, Edit3, Play, X } from 'lucide-react';
 import { GhostIconButton } from '../../ui/GhostIconButton';
 import type { Theme } from '../../../types';
+import { HeaderActionButton } from '../../ui/HeaderActionButton';
 import type { AgentSession } from '../../../hooks/agent/useSessionViewer';
 import { formatRelativeTime } from '../../../utils/formatters';
 
@@ -146,14 +147,9 @@ export const SessionDetailHeader = React.memo(function SessionDetailHeader({
 				</div>
 			</div>
 			<div className="flex items-center gap-2">
-				<button
-					onClick={onResume}
-					className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-				>
-					<Play className="w-4 h-4" />
+				<HeaderActionButton theme={theme} onClick={onResume} icon={<Play />}>
 					Resume
-				</button>
+				</HeaderActionButton>
 				<button
 					onClick={onClose}
 					className="p-2 rounded hover:bg-white/5 transition-colors"

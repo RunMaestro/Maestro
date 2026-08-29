@@ -271,6 +271,7 @@ function AppStandaloneModalsInner({
 	const graphFocusFilePath = useFileExplorerStore((s) => s.graphFocusFilePath);
 	const graphScopeFiles = useFileExplorerStore((s) => s.graphScopeFiles);
 	const graphScopeDirectory = useFileExplorerStore((s) => s.graphScopeDirectory);
+	const graphRootPath = useFileExplorerStore((s) => s.graphRootPath);
 
 	// Self-source tab gist content
 	const tabGistContent = useTabStore((s) => s.tabGistContent);
@@ -547,10 +548,14 @@ function AppStandaloneModalsInner({
 							});
 						}}
 						theme={theme}
-						rootPath={activeSession?.projectRoot || activeSession?.cwd || ''}
+						rootPath={graphRootPath || activeSession?.projectRoot || activeSession?.cwd || ''}
 						onDocumentOpen={async (filePath) => {
-							// Open the document in a file tab (migrated from legacy setPreviewFile overlay)
-							const treeRoot = activeSession?.projectRoot || activeSession?.cwd || '';
+							// Resolve against the SAME root the graph was built with. A scoped
+							// graph can be rooted outside the project (memory lives under
+							// ~/.claude), and rebuilding the project root here would open a
+							// path that does not exist.
+							const treeRoot =
+								graphRootPath || activeSession?.projectRoot || activeSession?.cwd || '';
 							const fullPath = `${treeRoot}/${filePath}`;
 							const filename = filePath.split('/').pop() || filePath;
 							// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,

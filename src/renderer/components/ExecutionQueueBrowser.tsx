@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
 	X,
 	MessageSquare,
@@ -20,6 +20,7 @@ import { useEventListener } from '../hooks/utils/useEventListener';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
 	getForceSendEligibility,
@@ -90,6 +91,10 @@ export function ExecutionQueueBrowser({
 	// layer stack (edit < lightbox < annotator) resolves Escape correctly - the
 	// browser sits at a much higher priority (670) than the edit modal (145).
 	const [editing, setEditing] = useState<{ sessionId: string; item: QueuedItem } | null>(null);
+	// Keyboard cursor over the flattened list of visible rows. Up/Down walk it,
+	// Enter opens the action menu for whatever it is sitting on.
+	const [selectedIndex, setSelectedIndex] = useState(0);
+	const [actionMenuOpen, setActionMenuOpen] = useState(false);
 	// Drag-to-reorder orchestration shared with the inline queued-items list.
 	// The group key is the sessionId so each session's queue reorders independently.
 	const { dragState, dropIndicator, isAnyDragging, startDrag, overDrag, endDrag, cancelDrag } =
@@ -105,20 +110,6 @@ export function ExecutionQueueBrowser({
 		{ enabled: isOpen && !editing }
 	);
 
-	// Cmd/Ctrl+Shift+[ / ] cycles between the Current Agent / All Agents tabs
-	// (matches the app-wide prev/next-tab shortcut). Use e.code so it works
-	// regardless of the brace characters Shift produces on macOS.
-	useEventListener(
-		'keydown',
-		(e) => {
-			const ke = e as KeyboardEvent;
-			if (!(ke.metaKey || ke.ctrlKey) || !ke.shiftKey) return;
-			if (ke.code !== 'BracketLeft' && ke.code !== 'BracketRight') return;
-			ke.preventDefault();
-			setViewMode((prev) => (prev === 'current' ? 'global' : 'current'));
-		},
-		{ enabled: isOpen && !editing }
-	);
 	const resizableModal = useResizableModal({
 		resizeKey: 'execution-queue',
 		defaultSize: { width: 672, height: 640 },
@@ -127,28 +118,99 @@ export function ExecutionQueueBrowser({
 		externalRef: modalRef,
 	});
 
-	if (!isOpen) return null;
-
-	// Get sessions with queued items
-	const sessionsWithQueues = sessions.filter(
-		(s) => s.executionQueue && s.executionQueue.length > 0
+	// Sessions with queued items, and the subset this view mode draws.
+	const sessionsWithQueues = useMemo(
+		() => sessions.filter((s) => s.executionQueue && s.executionQueue.length > 0),
+		[sessions]
 	);
-
-	// Filter based on view mode
-	const filteredSessions =
-		viewMode === 'current'
-			? sessionsWithQueues.filter((s) => s.id === activeSessionId)
-			: sessionsWithQueues;
+	const filteredSessions = useMemo(
+		() =>
+			viewMode === 'current'
+				? sessionsWithQueues.filter((s) => s.id === activeSessionId)
+				: sessionsWithQueues,
+		[sessionsWithQueues, viewMode, activeSessionId]
+	);
+	// Every visible row, flattened in RENDER order - arrow-key navigation walks
+	// this, so it has to be built from the same list the body maps over or the
+	// cursor moves somewhere the user is not looking.
+	const flatItems = useMemo(
+		() =>
+			filteredSessions.flatMap((session) =>
+				(session.executionQueue ?? []).map((item) => ({ session, item }))
+			),
+		[filteredSessions]
+	);
+	const flatIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		flatItems.forEach((entry, i) => map.set(entry.item.id, i));
+		return map;
+	}, [flatItems]);
 
 	// Get total queue count for display
-	const totalQueuedItems = sessionsWithQueues.reduce(
-		(sum, s) => sum + (s.executionQueue?.length || 0),
-		0
+	const totalQueuedItems = useMemo(
+		() => sessionsWithQueues.reduce((sum, s) => sum + (s.executionQueue?.length || 0), 0),
+		[sessionsWithQueues]
 	);
 
 	const currentSessionItems = activeSessionId
 		? sessions.find((s) => s.id === activeSessionId)?.executionQueue?.length || 0
 		: 0;
+
+	// Clamp at read time rather than in an effect: an item removed from the
+	// queue must not leave the cursor pointing past the end for a render.
+	const activeIndex = flatItems.length === 0 ? -1 : Math.min(selectedIndex, flatItems.length - 1);
+	const selectedEntry = activeIndex >= 0 ? flatItems[activeIndex] : undefined;
+	// The listener is registered once, so it reads the live cursor from a ref
+	// instead of closing over a stale one.
+	const navRef = useRef<{ count: number; index: number }>({ count: 0, index: -1 });
+	navRef.current = { count: flatItems.length, index: activeIndex };
+
+	// Reopening the browser, or switching between Current Agent / All Agents,
+	// puts the cursor back on the first row of what is now on screen.
+	useEffect(() => {
+		setSelectedIndex(0);
+		if (!isOpen) setActionMenuOpen(false);
+	}, [isOpen, viewMode]);
+
+	// One keydown listener for the whole browser - view cycling and row
+	// navigation - so opening it never grows the window's listener set per row.
+	useEventListener(
+		'keydown',
+		(e) => {
+			const ke = e as KeyboardEvent;
+			// Cmd/Ctrl+Shift+[ / ] cycles between the Current Agent / All Agents
+			// tabs (matches the app-wide prev/next-tab shortcut). Use e.code so it
+			// works regardless of the brace characters Shift produces on macOS.
+			if ((ke.metaKey || ke.ctrlKey) && ke.shiftKey) {
+				if (ke.code !== 'BracketLeft' && ke.code !== 'BracketRight') return;
+				ke.preventDefault();
+				setViewMode((prev) => (prev === 'current' ? 'global' : 'current'));
+				return;
+			}
+			if (ke.metaKey || ke.ctrlKey || ke.altKey) return;
+			const { count, index } = navRef.current;
+			if (ke.key === 'ArrowDown' || ke.key === 'ArrowUp') {
+				if (count === 0) return;
+				ke.preventDefault();
+				setSelectedIndex(
+					index < 0
+						? 0
+						: ke.key === 'ArrowDown'
+							? Math.min(index + 1, count - 1)
+							: Math.max(index - 1, 0)
+				);
+				return;
+			}
+			if (ke.key === 'Enter') {
+				if (index < 0) return;
+				ke.preventDefault();
+				setActionMenuOpen(true);
+			}
+		},
+		{ enabled: isOpen && !editing && !actionMenuOpen && !forceSendConfirm }
+	);
+
+	if (!isOpen) return null;
 
 	// Send now. A plain queue jump goes straight through; running alongside
 	// another tab's in-flight turn asks first, since that is the case that can
@@ -174,6 +236,63 @@ export function ExecutionQueueBrowser({
 		confirmSession && forceSendConfirm
 			? getForceSendEligibility(confirmSession, forceSendConfirm.item, { forcedParallelEnabled })
 			: null;
+
+	// Actions for the Enter menu, built from the same availability rules the
+	// row's own buttons use so the menu can never offer something the card
+	// does not.
+	const menuActions: QueueItemAction[] = [];
+	if (actionMenuOpen && selectedEntry) {
+		const { session, item } = selectedEntry;
+		const eligibility = onForceSendItem
+			? getForceSendEligibility(session, item, { forcedParallelEnabled })
+			: null;
+		if (onForceSendItem && eligibility?.canForce) {
+			menuActions.push({
+				id: 'send',
+				label: 'Send Now',
+				icon: <Hammer className="w-4 h-4" />,
+				color: theme.colors.warning,
+				run: () => requestForceSend(session, item, eligibility),
+			});
+		}
+		if (onEditItem && item.type !== 'command') {
+			menuActions.push({
+				id: 'edit',
+				label: 'Edit',
+				icon: <Pencil className="w-4 h-4" />,
+				run: () => setEditing({ sessionId: session.id, item }),
+			});
+		}
+		menuActions.push({
+			id: 'delete',
+			label: 'Delete',
+			icon: <Trash2 className="w-4 h-4" />,
+			color: theme.colors.error,
+			run: () => onRemoveItem(session.id, item.id),
+		});
+		if (onToggleItemPause) {
+			menuActions.push({
+				id: 'pause',
+				label: item.paused ? 'Resume' : 'Hold',
+				icon: item.paused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />,
+				run: () => onToggleItemPause(session.id, item.id),
+			});
+		}
+		menuActions.push({
+			id: 'copy',
+			label: 'Copy',
+			icon: <Copy className="w-4 h-4" />,
+			run: () => {
+				const text =
+					item.type === 'command'
+						? [item.command, item.commandArgs].filter(Boolean).join(' ')
+						: (item.text ?? '');
+				safeClipboardWrite(text).then((ok) => {
+					if (ok) flashCopiedToClipboard();
+				});
+			},
+		});
+	}
 
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
@@ -303,6 +422,7 @@ export function ExecutionQueueBrowser({
 										const forceSend = onForceSendItem
 											? getForceSendEligibility(session, item, { forcedParallelEnabled })
 											: null;
+										const flatIndex = flatIndexById.get(item.id) ?? -1;
 										return (
 											<React.Fragment key={item.id}>
 												{/* Drop indicator before this item */}
@@ -317,6 +437,8 @@ export function ExecutionQueueBrowser({
 													item={item}
 													index={index}
 													theme={theme}
+													isSelected={flatIndex >= 0 && flatIndex === activeIndex}
+													onSelect={() => setSelectedIndex(flatIndex)}
 													tabLabel={resolveQueuedItemTabName(session, item)}
 													forceSend={forceSend}
 													onForceSend={
@@ -373,8 +495,9 @@ export function ExecutionQueueBrowser({
 					className="px-4 py-3 border-t text-xs"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					Drag and drop to reorder, or Send Now to run one out of turn. Items are otherwise
-					processed sequentially per agent to prevent file conflicts.
+					Up/Down selects a message, Enter opens its actions. Drag and drop to reorder, or Send Now
+					to run one out of turn. Items are otherwise processed sequentially per agent to prevent
+					file conflicts.
 				</div>
 			</div>
 
@@ -436,6 +559,20 @@ export function ExecutionQueueBrowser({
 				</div>
 			)}
 
+			{/* Action menu for the keyboard cursor. Sits at CONFIRM priority, above
+			    this browser, so Escape resolves to it without suspending the
+			    browser's own layer. */}
+			{actionMenuOpen && selectedEntry && (
+				<div onClick={(e) => e.stopPropagation()}>
+					<QueueItemActionMenu
+						theme={theme}
+						position={activeIndex + 1}
+						actions={menuActions}
+						onClose={() => setActionMenuOpen(false)}
+					/>
+				</div>
+			)}
+
 			{/* Edit modal - rendered outside the card so a click inside it doesn't
 			    bubble to the backdrop's onClick (which would close the browser).
 			    Stops propagation so backdrop clicks behind it are also contained. */}
@@ -457,6 +594,10 @@ interface QueueItemRowProps {
 	item: QueuedItem;
 	index: number;
 	theme: Theme;
+	/** Row the keyboard cursor is on - Enter opens its action menu */
+	isSelected?: boolean;
+	/** Clicking the card moves the cursor here */
+	onSelect?: () => void;
 	/** Live tab name, resolved now rather than read off the item's stale snapshot */
 	tabLabel?: string;
 	/** Null when the browser has no Force Send handler wired */
@@ -481,6 +622,8 @@ function QueueItemRow({
 	item,
 	index,
 	theme,
+	isSelected = false,
+	onSelect,
 	tabLabel,
 	forceSend,
 	onForceSend,
@@ -547,6 +690,11 @@ function QueueItemRow({
 		};
 	}, []);
 
+	// Keep the keyboard cursor on screen as it walks past the visible window.
+	useEffect(() => {
+		if (isSelected) rowRef.current?.scrollIntoView({ block: 'nearest' });
+	}, [isSelected, rowRef]);
+
 	return (
 		<div
 			ref={rowRef}
@@ -558,13 +706,18 @@ function QueueItemRow({
 		>
 			<div
 				className="flex items-start gap-3 px-3 py-2.5 rounded-lg border group select-none"
+				data-selected={isSelected ? 'true' : undefined}
+				onClick={() => onSelect?.()}
 				style={{
 					backgroundColor: isDragging ? theme.colors.bgMain : theme.colors.bgSidebar,
 					borderColor: isDragging
 						? theme.colors.accent
 						: showGrabbed
 							? theme.colors.accent + '80'
-							: theme.colors.border,
+							: isSelected
+								? theme.colors.accent
+								: theme.colors.border,
+					boxShadow: isSelected && !isDragging ? `0 0 0 1px ${theme.colors.accent}` : undefined,
 					cursor: canDrag ? (isDragging ? 'grabbing' : 'grab') : 'default',
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
 					opacity: isDragging ? 0.95 : isPaused ? 0.45 : isDimmed ? 0.5 : 1,
@@ -770,5 +923,99 @@ function QueueItemRow({
 			{/* Shimmer effect when grabbed */}
 			<QueueDragShimmer theme={theme} visible={showGrabbed} />
 		</div>
+	);
+}
+
+interface QueueItemAction {
+	id: string;
+	label: string;
+	icon: ReactNode;
+	/** Accent for the row (destructive red, Send Now amber). Defaults to body text. */
+	color?: string;
+	run: () => void;
+}
+
+/**
+ * Small action list for the queued item under the keyboard cursor. Up/Down
+ * choose, Enter runs, Escape closes (via the layer stack). Keys are read off
+ * the window rather than a focused element so the menu works no matter where
+ * focus landed when it opened.
+ */
+function QueueItemActionMenu({
+	theme,
+	position,
+	actions,
+	onClose,
+}: {
+	theme: Theme;
+	/** 1-based position of the item in the visible list, for the title */
+	position: number;
+	actions: QueueItemAction[];
+	onClose: () => void;
+}) {
+	const [index, setIndex] = useState(0);
+	const activeIndex = actions.length === 0 ? -1 : Math.min(index, actions.length - 1);
+	const stateRef = useRef<{ index: number; actions: QueueItemAction[] }>({ index: -1, actions });
+	stateRef.current = { index: activeIndex, actions };
+
+	const runAction = (action: QueueItemAction) => {
+		onClose();
+		action.run();
+	};
+
+	useEventListener('keydown', (e) => {
+		const ke = e as KeyboardEvent;
+		if (ke.metaKey || ke.ctrlKey || ke.altKey) return;
+		const { index: i, actions: list } = stateRef.current;
+		if (ke.key === 'ArrowDown' || ke.key === 'ArrowUp') {
+			if (list.length === 0) return;
+			ke.preventDefault();
+			setIndex(ke.key === 'ArrowDown' ? Math.min(i + 1, list.length - 1) : Math.max(i - 1, 0));
+			return;
+		}
+		if (ke.key === 'Enter') {
+			if (i < 0) return;
+			ke.preventDefault();
+			runAction(list[i]);
+		}
+	});
+
+	return (
+		<Modal
+			theme={theme}
+			title={`Message #${position}`}
+			priority={MODAL_PRIORITIES.CONFIRM}
+			onClose={onClose}
+			width={280}
+			closeOnBackdropClick
+			contentClassName="p-2 overflow-y-auto flex-1"
+			testId="queue-item-action-menu"
+			footer={
+				<div className="text-xs w-full text-center" style={{ color: theme.colors.textDim }}>
+					Up/Down to choose, Enter to run
+				</div>
+			}
+		>
+			<div className="flex flex-col gap-0.5" role="menu">
+				{actions.map((action, i) => (
+					<button
+						key={action.id}
+						role="menuitem"
+						data-testid={`queue-action-${action.id}`}
+						data-selected={i === activeIndex ? 'true' : undefined}
+						onClick={() => runAction(action)}
+						onMouseEnter={() => setIndex(i)}
+						className="flex items-center gap-2 px-2.5 py-2 rounded text-sm text-left transition-colors"
+						style={{
+							backgroundColor: i === activeIndex ? theme.colors.accent + '25' : 'transparent',
+							color: action.color ?? theme.colors.textMain,
+						}}
+					>
+						{action.icon}
+						{action.label}
+					</button>
+				))}
+			</div>
+		</Modal>
 	);
 }
