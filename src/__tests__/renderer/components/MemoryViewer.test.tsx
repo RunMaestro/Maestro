@@ -42,6 +42,13 @@ vi.mock('../../../renderer/contexts/LayerStackContext', async () => {
 	};
 });
 
+const mockOpenGraphScope = vi.fn();
+vi.mock('../../../renderer/stores/fileExplorerStore', () => ({
+	useFileExplorerStore: Object.assign(() => undefined, {
+		getState: () => ({ openGraphScope: mockOpenGraphScope }),
+	}),
+}));
+
 const mockOpenModal = vi.fn();
 vi.mock('../../../renderer/stores/modalStore', () => ({
 	useModalStore: Object.assign(() => undefined, { getState: () => ({ openModal: mockOpenModal }) }),
@@ -274,6 +281,43 @@ describe('MemoryViewer', () => {
 
 		await waitFor(() => expect(listRowNames()).toHaveLength(3));
 		expect(screen.queryByTestId('memory-orphan-filter')).not.toBeInTheDocument();
+	});
+
+	it('graphs the memory directory, rooted outside the project', async () => {
+		// Memory lives under ~/.claude, so the graph has to be told its root
+		// explicitly - the agent's project root would resolve every path to
+		// nothing.
+		const { onClose } = renderViewer();
+		const button = await screen.findByTestId('memory-open-graph');
+
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.click(button);
+		});
+
+		expect(mockOpenGraphScope).toHaveBeenCalledWith({
+			directory: '',
+			rootPath: '/home/.claude/projects/-test-project/memory',
+			focusPath: 'MEMORY.md',
+		});
+		// Both are full-window views on the same agent, so the viewer must not
+		// stay mounted behind the graph.
+		expect(onClose).toHaveBeenCalled();
+	});
+
+	it('lets the graph auto-center when there is no MEMORY.md index', async () => {
+		files = [{ name: 'a_note.md', body: 'body' }];
+		renderViewer();
+		const button = await screen.findByTestId('memory-open-graph');
+
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.click(button);
+		});
+
+		expect(mockOpenGraphScope).toHaveBeenCalledWith(
+			expect.objectContaining({ focusPath: undefined })
+		);
 	});
 
 	it('routes a delete through the shared destructive confirm modal', async () => {

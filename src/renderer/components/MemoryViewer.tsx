@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Plus, X, Database, FileText, Clock, Zap, Unlink } from 'lucide-react';
+import { Brain, Plus, X, Database, FileText, Clock, Zap, Unlink, Network } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { formatSize, formatRelativeTime, formatNumber } from '../utils/formatters';
 import { estimateTokenCount } from '../../shared/formatters';
@@ -18,6 +18,8 @@ import { DualPaneFileEditor, type DualPaneFileEditorItem } from './shared/DualPa
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import { FilterInput } from './ui/FilterInput';
+import { HeaderActionButton } from './ui/HeaderActionButton';
+import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { useModalStore } from '../stores/modalStore';
 
@@ -407,6 +409,29 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		[performDelete]
 	);
 
+	/**
+	 * Graph how the memories link to each other.
+	 *
+	 * Scoped to the memory directory and rooted there explicitly: memory lives
+	 * under `~/.claude/projects/<encoded>/memory/`, outside the project, so the
+	 * graph's usual project root would resolve every path to nothing.
+	 *
+	 * The viewer closes on the way out. Both are full-window views on the same
+	 * agent, so leaving this one mounted underneath would strand it behind a
+	 * surface the user cannot see past.
+	 */
+	const handleOpenGraph = useCallback(() => {
+		if (!directoryPath) return;
+		useFileExplorerStore.getState().openGraphScope({
+			directory: '',
+			rootPath: directoryPath,
+			// Center on MEMORY.md when it exists - it is the index every other
+			// entry hangs off, so it is the hub a reader expects in the middle.
+			focusPath: entries.some((e) => e.name === 'MEMORY.md') ? 'MEMORY.md' : undefined,
+		});
+		onClose();
+	}, [directoryPath, entries, onClose]);
+
 	const handleCreate = useCallback(() => {
 		if (!projectPath) return;
 		if (hasUnsavedChanges) {
@@ -521,18 +546,26 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					</span>
 				</div>
 				<div className="flex items-center gap-2">
-					<button
+					{entries.length > 0 && (
+						<HeaderActionButton
+							theme={theme}
+							onClick={handleOpenGraph}
+							variant="ghost"
+							icon={<Network />}
+							title="Graph how these memories link to each other"
+							testId="memory-open-graph"
+						>
+							Graph
+						</HeaderActionButton>
+					)}
+					<HeaderActionButton
+						theme={theme}
 						onClick={handleCreate}
-						className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
+						icon={<Plus />}
 						title="Create a new memory file"
 					>
-						<Plus className="w-4 h-4" />
 						New Memory
-					</button>
+					</HeaderActionButton>
 					<button
 						onClick={onClose}
 						className="p-2 rounded hover:bg-white/5 transition-colors"
@@ -634,17 +667,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					>
 						<Brain className="w-10 h-10 opacity-30" />
 						<div>No memory files yet for this project.</div>
-						<button
-							onClick={handleCreate}
-							className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-							style={{
-								backgroundColor: theme.colors.accent,
-								color: theme.colors.accentForeground,
-							}}
-						>
-							<Plus className="w-4 h-4" />
+						<HeaderActionButton theme={theme} onClick={handleCreate} icon={<Plus />}>
 							Create first memory
-						</button>
+						</HeaderActionButton>
 					</div>
 				) : (
 					<DualPaneFileEditor
