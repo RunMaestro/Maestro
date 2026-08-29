@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { FloatingMediaPlayer } from '../../../../renderer/components/MediaPlayback/FloatingMediaPlayer';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import {
@@ -60,6 +60,7 @@ describe('FloatingMediaPlayer', () => {
 			dismissed: false,
 			pendingAutoplay: false,
 			toggleRequest: 0,
+			focusRequest: 0,
 			resumeTimes: {},
 			durations: {},
 			floatPosition: null,
@@ -89,6 +90,57 @@ describe('FloatingMediaPlayer', () => {
 		expect(state.activeItemId).toBe(item().id);
 		// The queue entry survives, so restoring finds the same file loaded.
 		expect(state.items).toHaveLength(1);
+	});
+
+	describe('focus', () => {
+		it('takes the caret when something asks for the player to be shown', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+			expect(document.activeElement).not.toBe(frame());
+
+			// What the palette entry and the header pill's restore button both do.
+			act(() => useMediaPlaybackStore.getState().restore());
+
+			// Landing focused is what makes Escape and the transport keys work
+			// without a click first - a keyboard-opened surface must not be
+			// keyboard-dead.
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('does not grab focus on the first render', () => {
+			// A queue restored from disk renders the widget without anyone asking
+			// for it, so mounting must not pull the caret out of the composer.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+			expect(document.activeElement).not.toBe(frame());
+		});
+
+		it('re-focuses on a second request', () => {
+			// The widget is never unmounted, so the nonce is what lets "show the
+			// player" fire twice; a boolean would latch after the first.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id });
+			renderPlayer();
+			act(() => useMediaPlaybackStore.getState().restore());
+			(document.activeElement as HTMLElement).blur();
+
+			act(() => useMediaPlaybackStore.getState().restore());
+
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('opening then pressing Escape minimizes, with no click in between', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+
+			act(() => useMediaPlaybackStore.getState().restore());
+			fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+		});
 	});
 
 	describe('Escape', () => {

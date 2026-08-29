@@ -66,7 +66,7 @@ Playback speed is global and persists: pick 1.5x once and every file after it st
 
 ### Keyboard
 
-Click the player to focus it, then:
+The player takes focus when you bring it up from the Command Palette or the Left Bar pill, so these work straight away. Click it to focus it if you got there another way.
 
 | Key                   | Action                    |
 | --------------------- | ------------------------- |
@@ -116,7 +116,7 @@ The pill names the file it is holding, and drops to just the two buttons on a na
 
 `Esc` minimizes rather than closes, so a reflexive press can never stop what you are listening to. It closes the queue or history list first if one is open, and it leaves a fullscreen video alone, since Escape is already how you come back out of fullscreen.
 
-You can also reopen a minimized player from the Command Palette with **Show Floating Media Player**. Adding files to the queue brings it back too, so a batch you just queued never lands somewhere you cannot see it - including when every file you picked was already in the queue. What is loaded keeps playing either way.
+The same **Open Media Player** command brings a minimized player back, focused, so `Esc` puts it away again without a click first. Adding files to the queue brings it back too, so a batch you just queued never lands somewhere you cannot see it - including when every file you picked was already in the queue. What is loaded keeps playing either way.
 
 ## Tips
 

@@ -43,11 +43,7 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
-import {
-	selectCanRestoreFloatingPlayer,
-	selectCanOpenMediaPlayer,
-	useMediaPlaybackStore,
-} from '../../stores/mediaPlaybackStore';
+import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
@@ -232,8 +228,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
-	const canRestoreFloatingPlayer = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
-	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
@@ -489,8 +483,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...sessionActions,
 		...groupChatActions,
 		...buildMediaPlayerCommands({
-			canRestoreFloatingPlayer,
-			restoreFloatingPlayer,
 			canOpenMediaPlayer,
 			openMediaPlayer,
 			setQuickActionOpen,

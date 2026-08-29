@@ -2209,8 +2209,8 @@ export async function loadAllSettings(): Promise<void> {
 		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
 		// what was queued should not start a podcast at launch, and it should not
 		// put media controls in the Left Bar header either, since the user has not
-		// played anything yet. The command palette's "Show Floating Media Player"
-		// is what reaches a dormant queue, and the first thing the user opens or
+		// played anything yet. The command palette's "Open Media Player" is what
+		// reaches a dormant queue, and the first thing the user opens or
 		// queues wakes it. Recently played is NOT restored - it is per-session by
 		// design.
 		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {

@@ -144,14 +144,38 @@ export function assignGitGraphBranches(nodes: GitGraphNode[]): {
 	return { ordered, branchOfCommit };
 }
 
-export interface BuildGitGraphCoreOptions {
+/**
+ * What a custom dot renderer is told about the commit it is drawing.
+ *
+ * `style.dot.size` is not decoration: @gitgraph draws the branch lines through
+ * `(size, size)` inside each commit's own translate (see `renderBranchesPaths`,
+ * which offsets the paths by exactly `template.commit.dot.size`), so a dot
+ * centered anywhere else floats off its own branch line.
+ */
+export interface GitGraphDotInfo {
+	hash: string;
+	style: { dot: { size: number; color?: string } };
+}
+
+export interface BuildGitGraphCoreOptions<TNode> {
 	template: GitGraphTemplate;
-	/** Called with the commit hash when its dot or its message is clicked. */
+	/**
+	 * Called with the commit hash when its dot or its message is clicked. Wrap it
+	 * so its identity is stable (`useStableCallback`) - it is baked into the core,
+	 * and rebuilding the core to pick up a new closure tears down the whole SVG.
+	 */
 	onCommitClick?: (hash: string) => void;
-	/** Commit to draw with an enlarged, outlined dot. */
-	selectedHash?: string;
-	/** Stroke color for that outline. */
-	selectionColor?: string;
+	/**
+	 * Draw a commit's dot. The view supplies this so it can give the dot a hit
+	 * area far larger than the 5px circle and paint the selection ring itself.
+	 *
+	 * Selection deliberately does NOT live in the core: baking it in means a new
+	 * core, and therefore a fresh `<Gitgraph>`, on every arrow keypress. The
+	 * remounted SVG is momentarily empty, which clamps the scroll container back
+	 * to the top - the graph appears to jump to the newest commit and the
+	 * keypress reads as broken. See `GitGraphView`.
+	 */
+	renderDot?: (commit: GitGraphDotInfo) => TNode;
 }
 
 /**
@@ -164,7 +188,7 @@ export interface BuildGitGraphCoreOptions {
  */
 export function buildGitGraphCore<TNode = SVGElement>(
 	nodes: GitGraphNode[],
-	{ template, onCommitClick, selectedHash, selectionColor }: BuildGitGraphCoreOptions
+	{ template, onCommitClick, renderDot }: BuildGitGraphCoreOptions<TNode>
 ): GitgraphCore<TNode> {
 	const core = new GitgraphCore<TNode>({ template });
 	const api = core.getUserApi();
@@ -201,10 +225,7 @@ export function buildGitGraphCore<TNode = SVGElement>(
 			// clickable, and clicking the text a user is reading does nothing.
 			onClick: onCommitClick ? () => onCommitClick(node.hash) : undefined,
 			onMessageClick: onCommitClick ? () => onCommitClick(node.hash) : undefined,
-			style:
-				selectedHash && selectedHash === node.hash
-					? { dot: { size: 10, strokeWidth: 2, strokeColor: selectionColor } }
-					: undefined,
+			renderDot,
 		};
 
 		if (node.parents.length >= 2) {

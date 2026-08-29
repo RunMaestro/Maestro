@@ -100,8 +100,7 @@ interface MediaPlaybackStoreState {
 	/**
 	 * Player minimized to the Left Bar header. Playback continues - minimizing is
 	 * not stopping. Cleared by opening a media file, by queueing one, by the
-	 * now-playing pill's restore button, or by the "Show Floating Media Player"
-	 * command.
+	 * now-playing pill's restore button, or by the palette's "Open Media Player".
 	 */
 	dismissed: boolean;
 	/**
@@ -127,6 +126,23 @@ interface MediaPlaybackStoreState {
 	 * without anyone holding a ref across the frame boundary.
 	 */
 	toggleRequest: number;
+	/**
+	 * Incremented to ask the widget to take keyboard focus.
+	 *
+	 * Bringing the player up is a request to USE it, so it must land focused -
+	 * Escape minimizes it and the transport has its own keys, and none of that
+	 * works until something claims the caret. Requiring a click first makes a
+	 * keyboard-opened surface keyboard-dead, which in a keyboard-first app reads
+	 * as the shortcut half-working.
+	 *
+	 * A nonce rather than a boolean flag, for the same reason `toggleRequest` is:
+	 * the widget is never unmounted, so there is no mount to hang focus off, and
+	 * reopening it twice in a row has to fire twice. Raised only by the deliberate
+	 * "show me the player" gestures (`openPlayer`, `restore`) - never by opening
+	 * or queueing a file, which would pull the caret out of whatever the user was
+	 * typing in.
+	 */
+	focusRequest: number;
 	/** Item ID -> last playback position, so coming back resumes. Persisted. */
 	resumeTimes: Record<string, number>;
 	/**
@@ -341,6 +357,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	dormant: false,
 	pendingAutoplay: false,
 	toggleRequest: 0,
+	focusRequest: 0,
 	resumeTimes: {},
 	durations: {},
 	floatPosition: null,
@@ -546,9 +563,13 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	dismiss: () => set((state) => (state.dismissed ? state : { dismissed: true })),
 
 	restore: () =>
-		set((state) =>
-			state.dismissed || state.dormant ? { dismissed: false, dormant: false } : state
-		),
+		// Always bumps the focus nonce, even when the widget was already on
+		// screen: this is only ever called by the header pill's restore button and
+		// the palette, and both are the user saying "put me in the player".
+		set((state) => ({
+			...(state.dismissed || state.dormant ? { dismissed: false, dormant: false } : {}),
+			focusRequest: state.focusRequest + 1,
+		})),
 
 	openPlayer: () => {
 		set((state) => {
@@ -574,6 +595,9 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				pendingAutoplay: false,
 				dismissed: false,
 				dormant: false,
+				// Opened from the palette or its shortcut, so the user's hands are on
+				// the keyboard. Land focused or none of the player's keys work.
+				focusRequest: state.focusRequest + 1,
 				...(state.activeItemId === targetId
 					? {}
 					: {
@@ -638,8 +662,9 @@ export function getMediaPlaybackActions() {
 /**
  * Whether a hidden player could be brought back right now.
  *
- * True for a dormant restored queue as well, so the command palette can always
- * reopen one. The header pill uses the stricter check below.
+ * True for a dormant restored queue as well. The header pill uses the stricter
+ * check below; the palette asks the looser `selectCanOpenMediaPlayer`, since
+ * "open the player" covers more than un-hiding a loaded one.
  */
 export function selectCanRestoreFloatingPlayer(state: MediaPlaybackStoreState): boolean {
 	return state.dismissed && state.activeItemId !== null;

@@ -42,6 +42,7 @@ function reset() {
 		dormant: false,
 		pendingAutoplay: false,
 		toggleRequest: 0,
+		focusRequest: 0,
 		resumeTimes: {},
 		durations: {},
 		floatPosition: null,
@@ -298,6 +299,41 @@ describe('mediaPlaybackStore', () => {
 			expect(selectCanRestoreFloatingPlayer(useMediaPlaybackStore.getState())).toBe(false);
 			initial.dismiss();
 			expect(selectCanRestoreFloatingPlayer(useMediaPlaybackStore.getState())).toBe(true);
+		});
+	});
+
+	describe('focusRequest', () => {
+		const focus = () => useMediaPlaybackStore.getState().focusRequest;
+
+		it('rises on the two gestures that mean "show me the player"', () => {
+			initial.openMedia(request());
+			const before = focus();
+
+			initial.restore();
+			expect(focus()).toBe(before + 1);
+
+			initial.openPlayer();
+			expect(focus()).toBe(before + 2);
+		});
+
+		it('rises on restore even when the widget was already up', () => {
+			// The header pill and the palette are the only callers, and both are the
+			// user asking to be put in the player - not a state reconciliation.
+			initial.openMedia(request());
+			const before = focus();
+			initial.restore();
+			expect(focus()).toBe(before + 1);
+		});
+
+		it('stays put when a file is opened or queued', () => {
+			// Opening media is a request to HEAR something, often from a file tree
+			// the user is still navigating. Stealing the caret there would be a
+			// keystroke landing somewhere they were not looking.
+			const before = focus();
+			initial.openMedia(request());
+			initial.enqueueMedia([request({ path: '/files/b.mp3', name: 'b.mp3' })]);
+			initial.setActiveItem(mediaItemId('s1', '/files/b.mp3'));
+			expect(focus()).toBe(before);
 		});
 	});
 

@@ -129,7 +129,7 @@ widget that stays on top of whatever you are doing:
   file's tab, which re-docks the player into it.
 - **Close** it to get it out of the way. This hides the controls only - the audio
   keeps playing. Bring it back by opening a media file again, or with
-  **Show Floating Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
+  **Open Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
 
 Audio-only files get just the controls, since there is no picture to show.
 

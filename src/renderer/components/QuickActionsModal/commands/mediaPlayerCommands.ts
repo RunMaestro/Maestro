@@ -1,9 +1,6 @@
 import type { QuickAction } from '../types';
 
 interface BuildMediaPlayerCommandsArgs {
-	/** True when media is loaded but the user has hidden the floating widget. */
-	canRestoreFloatingPlayer: boolean;
-	restoreFloatingPlayer: () => void;
 	/** True when there is anything to open: a loaded item, a queue, or history. */
 	canOpenMediaPlayer: boolean;
 	/** Open the player on its target item (loaded item, else most recent). */
@@ -12,21 +9,21 @@ interface BuildMediaPlayerCommandsArgs {
 }
 
 /**
- * Recovery command for a hidden media player.
+ * The one way to reach the media player from the palette.
  *
- * Dismissing the floating widget keeps playback going, so there has to be a way
- * back to the controls without hunting for the file's tab. Only offered when
- * there is actually something to restore, so the palette does not carry a
- * dead entry for users who never open media.
+ * There used to be a second entry, "Show Floating Media Player", which appeared
+ * alongside this one whenever the widget happened to be minimized. Two commands
+ * a word apart, both meaning "put the player on screen", is a choice the user
+ * has to stop and read - and the distinction they encoded (restore a hidden
+ * widget vs. open one on a target) is internal bookkeeping, not something
+ * anyone forms an intention about. `openPlayer` already covers both cases.
  */
 export function buildMediaPlayerCommands({
-	canRestoreFloatingPlayer,
-	restoreFloatingPlayer,
 	canOpenMediaPlayer,
 	openMediaPlayer,
 	setQuickActionOpen,
 }: BuildMediaPlayerCommandsArgs): QuickAction[] {
-	const commands: QuickAction[] = [
+	return [
 		{
 			id: 'open-media-player',
 			label: 'Open Media Player',
@@ -42,18 +39,4 @@ export function buildMediaPlayerCommands({
 			},
 		},
 	];
-
-	if (!canRestoreFloatingPlayer) return commands;
-
-	commands.push({
-		id: 'show-floating-media-player',
-		label: 'Show Floating Media Player',
-		subtext: 'Bring back the hidden now-playing controls',
-		action: () => {
-			restoreFloatingPlayer();
-			setQuickActionOpen(false);
-		},
-	});
-
-	return commands;
 }

@@ -146,17 +146,26 @@ describe('buildGitGraphCore click targets', () => {
 		expect(onCommitClick).toHaveBeenCalledWith('c2');
 	});
 
-	it('outlines the selected commit in the given color', () => {
-		const core = buildGitGraphCore(FIXTURE, {
+	// Selection is drawn by the view's own dot renderer, never baked into the
+	// core: a core rebuilt per keypress remounts the SVG, and the momentarily
+	// empty scroll container resets to the top of the graph.
+	it('hands every commit to the view dot renderer, with the size the line is drawn through', () => {
+		const seen: Array<{ hash: string; size: number }> = [];
+		const core = buildGitGraphCore<string>(FIXTURE, {
 			template: buildGitGraphTemplate(theme),
-			selectedHash: 'f1',
-			selectionColor: 'rgb(9, 9, 9)',
+			renderDot: (commit) => {
+				seen.push({ hash: commit.hash, size: commit.style.dot.size });
+				return commit.hash;
+			},
 		});
 		const commits = core.getRenderedData().commits;
-		const selected = commits.find((c) => c.hash === 'f1')!;
-		const other = commits.find((c) => c.hash === 'f2')!;
-		expect(selected.style.dot.strokeColor).toBe('rgb(9, 9, 9)');
-		expect(selected.style.dot.size).toBeGreaterThan(other.style.dot.size!);
+
+		expect(commits.every((c) => typeof c.renderDot === 'function')).toBe(true);
+		commits.forEach((c) => c.renderDot!(c));
+		expect(seen.map((s) => s.hash).sort()).toEqual(['c1', 'c2', 'f1', 'f2', 'm1']);
+		// @gitgraph offsets the branch paths by exactly this, so a dot centered
+		// anywhere else floats off its own line.
+		expect(new Set(seen.map((s) => s.size))).toEqual(new Set([5]));
 	});
 });
 
@@ -278,6 +287,60 @@ describe('stepGitGraphHorizontal', () => {
 	it('returns null for an anchor that is not on the graph', () => {
 		expect(stepGitGraphHorizontal(geometry, 'nope', 'right')).toBeNull();
 		expect(stepGitGraphHorizontal(geometry, undefined, 'left')).toBeNull();
+	});
+});
+
+// Pixel-level check on a busier graph: whichever commit a horizontal step lands
+// on, no commit in that column may be drawn nearer the anchor's height. Computed
+// here straight from the raw positions, so a regression in how the impl groups
+// or orders a column shows up as a worse landing rather than as a passing test.
+describe('a horizontal step lands on the nearest dot in that column', () => {
+	// Two side branches cut in at different depths, so the nearest neighbour is a
+	// different commit depending on where the anchor sits.
+	const nodes: GitGraphNode[] = [
+		node('a1', 1, [], ['main']),
+		node('a2', 2, ['a1']),
+		node('b1', 3, ['a2'], ['topic']),
+		node('a3', 4, ['a2']),
+		node('a4', 5, ['a3']),
+		node('b2', 6, ['b1']),
+		node('a5', 7, ['a4']),
+		node('c1', 8, ['a5'], ['spike']),
+		node('a6', 9, ['a5']),
+	];
+	const geometry = computeGitGraphGeometry(nodes, theme);
+
+	const nearestIn = (column: number, y: number) => {
+		let best = Infinity;
+		for (const [hash, position] of geometry.positionOfCommit) {
+			if (position.x !== column) continue;
+			best = Math.min(best, Math.abs(position.y - y));
+		}
+		return best;
+	};
+
+	it('never leaves a nearer dot behind, from any commit, in either direction', () => {
+		expect(geometry.columns.length).toBeGreaterThan(2);
+
+		for (const [hash, position] of geometry.positionOfCommit) {
+			const columnIndex = geometry.columns.indexOf(position.x);
+			for (const direction of ['left', 'right'] as const) {
+				const neighbour = geometry.columns[columnIndex + (direction === 'right' ? 1 : -1)];
+				const landed = stepGitGraphHorizontal(geometry, hash, direction);
+
+				if (neighbour === undefined) {
+					// Nothing drawn that way, so the selection must hold.
+					expect(landed).toBeNull();
+					continue;
+				}
+
+				expect(landed).not.toBeNull();
+				const landedAt = geometry.positionOfCommit.get(landed!)!;
+				// It moved exactly one column over, and to the closest dot there.
+				expect(landedAt.x).toBe(neighbour);
+				expect(Math.abs(landedAt.y - position.y)).toBe(nearestIn(neighbour, position.y));
+			}
+		}
 	});
 });
 
