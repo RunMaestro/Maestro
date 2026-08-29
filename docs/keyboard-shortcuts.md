@@ -84,6 +84,22 @@ Tips and gotchas:
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
 | Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
 
+## Group Chat
+
+A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
+
+| Action                       | macOS                          | Windows/Linux                    |
+| ---------------------------- | ------------------------------ | -------------------------------- |
+| Cycle Participants / History | `Cmd+Shift+[` or `Cmd+Shift+]` | `Ctrl+Shift+[` or `Ctrl+Shift+]` |
+| Go to Participants Tab       | `Cmd+Shift+F`                  | `Ctrl+Shift+F`                   |
+| Go to History Tab            | `Cmd+Shift+H`                  | `Ctrl+Shift+H`                   |
+| Move Through History Entries | `Up` / `Down`                  | `Up` / `Down`                    |
+| Jump to the Selected Entry   | `Enter`                        | `Enter`                          |
+| Filter History               | `Cmd+F`                        | `Ctrl+F`                         |
+
+Cycling to History gives the list keyboard focus, so `Up` / `Down` walk the entries
+right away and the list scrolls to keep the selected entry on screen.
+
 ## AI Tab Shortcuts
 
 These shortcuts work in AI Terminal mode and affect the current tab:
@@ -407,6 +423,11 @@ Maestro tracks your keyboard shortcut usage and rewards you for becoming a power
 - Each shortcut displays a checkmark once you've used it
 - A progress bar shows how many shortcuts you've mastered out of the total
 - When you reach a new level, you'll see a celebration with confetti
+
+Only shortcuts that have a chord bound count toward mastery. Actions listed as
+**Unassigned**, and any shortcut whose keys you clear in **Settings** -> **Shortcuts**,
+sit outside the total, so 100% stays reachable. Give an unassigned action a chord and it
+joins the count.
 
 ![Keyboard Shortcuts Modal](./screenshots/shortcuts-modal.png)
 

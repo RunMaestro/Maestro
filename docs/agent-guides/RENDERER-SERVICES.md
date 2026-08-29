@@ -592,7 +592,7 @@ Used by AchievementCard, LeaderboardRegistrationModal, PlaygroundPanel, SessionL
 
 ---
 
-### keyboardMastery.ts (~47 lines)
+### keyboardMastery.ts (~87 lines)
 
 Keyboard shortcut mastery progression system.
 
@@ -610,8 +610,12 @@ Keyboard shortcut mastery progression system.
 
 - `getLevelForPercentage(percentage)` - Returns highest matching level
 - `getLevelIndex(percentage)` - Returns index 0-4
+- `collectBoundShortcuts(...maps)` - Merges shortcut maps (later maps win on id) and keeps only the entries with a chord bound. This is the mastery DENOMINATOR everywhere: an unbound shortcut cannot be fired, so counting one pins the user below 100% forever and lists a chord that does not exist under "Unused Shortcuts". Pass the LIVE maps (`shortcuts`, `tabShortcuts` off the settings store) plus `FIXED_SHORTCUTS`, so a binding cleared in Settings -> Shortcuts leaves the denominator too.
+- `countUsedBoundShortcuts(bound, usedShortcutIds)` - The NUMERATOR. Not `usedShortcuts.length`: that list keeps ids whose binding was later cleared or that were removed from the app, which would push the count past the total and report over 100%.
 
-Used by ShortcutsHelpModal, KeyboardMasteryCelebration, LeaderboardRegistrationModal, PlaygroundPanel, settingsStore.
+Do NOT hand-roll another `Object.keys(DEFAULT_SHORTCUTS).length + ...` total - `settingsStore` and `LeaderboardRegistrationModal` each had their own copy, and they disagreed with the two surfaces that render the figure.
+
+Used by ShortcutsHelpModal, KeyboardStats, KeyboardMasteryCelebration, LeaderboardRegistrationModal, PlaygroundPanel, settingsStore.
 
 ---
 

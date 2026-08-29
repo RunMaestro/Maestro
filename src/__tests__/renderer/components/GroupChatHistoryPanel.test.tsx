@@ -12,6 +12,7 @@
  * - Bar click scrolls to entries
  * - Entry rendering (participant color, timestamp, summary, cost)
  * - onJumpToMessage callback
+ * - Arrow-key selection, Enter to jump, and scroll-into-view
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -58,7 +59,7 @@ const defaultProps = {
 describe('GroupChatHistoryPanel', () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
-		useUIStore.setState({ groupChatHistorySearchFilterOpen: false });
+		useUIStore.setState({ groupChatHistorySearchFilterOpen: false, activeFocus: 'main' });
 		Element.prototype.scrollIntoView = vi.fn();
 	});
 
@@ -578,6 +579,134 @@ describe('GroupChatHistoryPanel', () => {
 			// Activity graph should use w-full for full width
 			const graphContainer = container.querySelector('.w-full.flex.flex-col.relative');
 			expect(graphContainer).toBeInTheDocument();
+		});
+	});
+	// ===== KEYBOARD NAVIGATION =====
+	describe('keyboard navigation', () => {
+		const navEntries = [
+			createMockEntry({ id: 'e1', summary: 'First entry', timestamp: 3000 }),
+			createMockEntry({ id: 'e2', summary: 'Second entry', timestamp: 2000 }),
+			createMockEntry({ id: 'e3', summary: 'Third entry', timestamp: 1000 }),
+		];
+
+		const selectedId = (container: HTMLElement) =>
+			container.querySelector('[data-selected]')?.getAttribute('data-entry-id');
+
+		it('should move the selection down with ArrowDown', () => {
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+			const panel = container.querySelector('[tabIndex="0"]')!;
+
+			// Nothing is selected until the first key, so it lands on the first entry.
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			expect(selectedId(container)).toBe('e1');
+
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			expect(selectedId(container)).toBe('e2');
+		});
+
+		it('should move the selection up with ArrowUp', () => {
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+			const panel = container.querySelector('[tabIndex="0"]')!;
+
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			fireEvent.keyDown(panel, { key: 'ArrowUp' });
+			expect(selectedId(container)).toBe('e2');
+		});
+
+		it('should stop at the ends of the list instead of wrapping', () => {
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+			const panel = container.querySelector('[tabIndex="0"]')!;
+
+			fireEvent.keyDown(panel, { key: 'ArrowUp' });
+			expect(selectedId(container)).toBe('e1');
+
+			for (let i = 0; i < 5; i++) fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			expect(selectedId(container)).toBe('e3');
+		});
+
+		it('should scroll the selected entry into view', () => {
+			const scrollIntoView = vi.fn();
+			Element.prototype.scrollIntoView = scrollIntoView;
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+			const panel = container.querySelector('[tabIndex="0"]')!;
+			scrollIntoView.mockClear();
+
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+
+			expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' });
+		});
+
+		it('should jump to the selected entry on Enter', () => {
+			const onJumpToMessage = vi.fn();
+			const { container } = render(
+				<GroupChatHistoryPanel
+					{...defaultProps}
+					entries={navEntries}
+					onJumpToMessage={onJumpToMessage}
+				/>
+			);
+			const panel = container.querySelector('[tabIndex="0"]')!;
+
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			fireEvent.keyDown(panel, { key: 'Enter' });
+
+			expect(onJumpToMessage).toHaveBeenCalledWith(2000);
+		});
+
+		it('should continue arrow navigation from a clicked entry', () => {
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+			const panel = container.querySelector('[tabIndex="0"]')!;
+
+			fireEvent.click(screen.getByText('Third entry'));
+			expect(selectedId(container)).toBe('e3');
+
+			fireEvent.keyDown(panel, { key: 'ArrowUp' });
+			expect(selectedId(container)).toBe('e2');
+		});
+
+		it('should navigate only the entries left after filtering', () => {
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+			const panel = container.querySelector('[tabIndex="0"]')!;
+
+			fireEvent.keyDown(panel, { key: 'f', metaKey: true });
+			const searchInput = screen.getByPlaceholderText('Filter group chat history...');
+			fireEvent.change(searchInput, { target: { value: 'Third' } });
+
+			fireEvent.keyDown(panel, { key: 'ArrowDown' });
+			expect(selectedId(container)).toBe('e3');
+		});
+
+		it('should take focus when the right panel is the active focus area', () => {
+			useUIStore.setState({ activeFocus: 'right' });
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+
+			expect(document.activeElement).toBe(container.querySelector('[tabIndex="0"]'));
+		});
+
+		it('should not take focus when another area is focused', () => {
+			useUIStore.setState({ activeFocus: 'main' });
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+
+			expect(document.activeElement).not.toBe(container.querySelector('[tabIndex="0"]'));
 		});
 	});
 });

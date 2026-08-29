@@ -1629,6 +1629,91 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
+		describe('Cmd+Shift+[ / ] in group chat cycles the right panel tabs', () => {
+			function createGroupChatContext(overrides: Record<string, unknown> = {}) {
+				return createUnifiedTabContext({
+					activeGroupChatId: 'group-chat-123',
+					setRightPanelOpen: vi.fn(),
+					setGroupChatRightTab: vi.fn(),
+					setActiveFocus: vi.fn(),
+					...overrides,
+				});
+			}
+
+			it('should toggle History <-> Participants and focus the right panel', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const ctx = createGroupChatContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
+				});
+				result.current.keyboardHandlerRef.current = ctx;
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: ']',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(ctx.setRightPanelOpen).toHaveBeenCalledWith(true);
+				expect(ctx.setActiveFocus).toHaveBeenCalledWith('right');
+				const cycle = (ctx.setGroupChatRightTab as ReturnType<typeof vi.fn>).mock.calls[0][0];
+				expect(cycle('participants')).toBe('history');
+				expect(cycle('history')).toBe('participants');
+			});
+
+			it('should cycle on the previous-tab chord too', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const ctx = createGroupChatContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'prevTab',
+				});
+				result.current.keyboardHandlerRef.current = ctx;
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: '[',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(ctx.setGroupChatRightTab).toHaveBeenCalled();
+			});
+
+			it('should leave the chord alone outside a group chat', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const setGroupChatRightTab = vi.fn();
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
+					setGroupChatRightTab,
+					setSessions: vi.fn(),
+					navigateToNextUnifiedTab: vi.fn().mockReturnValue(null),
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: ']',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(setGroupChatRightTab).not.toHaveBeenCalled();
+			});
+		});
+
 		describe('tab shortcuts in terminal mode', () => {
 			it('Cmd+T creates a new AI tab even when in terminal mode', () => {
 				vi.useFakeTimers();
@@ -2018,6 +2103,11 @@ describe('useMainKeyboardHandler', () => {
 					handleCloseCurrentTab: mockHandleCloseCurrentTab,
 					setSessions: mockSetSessions,
 					activeGroupChatId: 'group-1',
+					// The next/prev-tab chord is the one exception: it cycles the right
+					// panel's tabs instead of doing nothing.
+					setRightPanelOpen: vi.fn(),
+					setGroupChatRightTab: vi.fn(),
+					setActiveFocus: vi.fn(),
 				});
 
 				act(() => {

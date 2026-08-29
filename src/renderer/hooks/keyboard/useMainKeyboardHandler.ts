@@ -1002,6 +1002,23 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				return;
 			}
 
+			// A group chat has no tab strip, so the tab-cycle chord is free there and
+			// cycles the right panel's Participants <-> History tabs instead. Focus
+			// moves with it so the landed tab answers the arrow keys immediately.
+			if (ctx.activeGroupChatId) {
+				const wantsNextTab = ctx.isTabShortcut(e, 'nextTab');
+				if (wantsNextTab || ctx.isTabShortcut(e, 'prevTab')) {
+					e.preventDefault();
+					ctx.setRightPanelOpen(true);
+					ctx.setGroupChatRightTab((prev: 'participants' | 'history') =>
+						prev === 'history' ? 'participants' : 'history'
+					);
+					ctx.setActiveFocus('right');
+					trackShortcut(wantsNextTab ? 'nextTab' : 'prevTab');
+					return;
+				}
+			}
+
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).
 			// Terminal tabs are part of unifiedTabOrder and the navigation functions
 			// (navigateToNextUnifiedTab, etc.) handle inputMode switching automatically.

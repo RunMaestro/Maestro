@@ -36,7 +36,11 @@ import type {
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { findReservedShortcutCombo } from '../../shared/shortcutKeys';
-import { getLevelIndex } from '../constants/keyboardMastery';
+import {
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+	getLevelIndex,
+} from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
@@ -200,11 +204,6 @@ const DEFAULT_KEYBOARD_MASTERY_STATS: KeyboardMasteryStats = {
 	lastLevelUpTimestamp: 0,
 	lastAcknowledgedLevel: 0,
 };
-
-const TOTAL_SHORTCUTS_COUNT =
-	Object.keys(DEFAULT_SHORTCUTS).length +
-	Object.keys(TAB_SHORTCUTS).length +
-	Object.keys(FIXED_SHORTCUTS).length;
 
 const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	wizardStartCount: 0,
@@ -2101,8 +2100,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			// Add new shortcut to the list
 			const updatedShortcuts = [...currentStats.usedShortcuts, shortcutId];
 
-			// Calculate new percentage and level
-			const percentage = (updatedShortcuts.length / TOTAL_SHORTCUTS_COUNT) * 100;
+			// Calculate new percentage and level over the BOUND shortcuts only - an
+			// unbound one can never be fired, so counting it would make the top
+			// level unreachable. Read from the live maps so a binding the user
+			// cleared in Settings leaves the denominator too.
+			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const percentage =
+				bound.length > 0
+					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
+					: 0;
 			const newLevelIndex = getLevelIndex(percentage);
 
 			// Check if user leveled up

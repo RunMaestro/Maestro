@@ -14,7 +14,15 @@ import {
 	useMediaPlaybackStore,
 } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import {
+	DEFAULT_SHORTCUTS,
+	TAB_SHORTCUTS,
+	FIXED_SHORTCUTS,
+} from '../../../renderer/constants/shortcuts';
+import {
+	KEYBOARD_MASTERY_LEVELS,
+	collectBoundShortcuts,
+} from '../../../renderer/constants/keyboardMastery';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 
 // Pull defaults from a freshly-initialized store so tests don't need to re-import them.
@@ -1357,39 +1365,69 @@ describe('settingsStore', () => {
 			]);
 		});
 
+		// The denominator is the shortcuts that actually have a chord bound, so the
+		// ids used here have to be real ones - made-up ids count for nothing.
+		const boundShortcutIds = () =>
+			collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS).map((s) => s.id);
+
 		it('recordShortcutUsage detects level-up', () => {
-			// To trigger level 1 (student), we need >= 25% of total shortcuts
-			// Total = DEFAULT_SHORTCUTS + TAB_SHORTCUTS + FIXED_SHORTCUTS keys
-			const totalShortcuts =
-				Object.keys(DEFAULT_SHORTCUTS).length + Object.keys(TAB_SHORTCUTS).length + 8; // FIXED_SHORTCUTS has 8 entries
+			const bound = boundShortcutIds();
+			// Level 1 (Student) starts at 25% of the bound shortcuts.
+			const needed = Math.ceil(bound.length * 0.25);
 
-			const needed = Math.ceil(totalShortcuts * 0.25);
-
-			// Pre-populate with enough shortcuts to be just below level 1
-			const fakeShortcuts: string[] = [];
-			for (let i = 0; i < needed - 1; i++) {
-				fakeShortcuts.push(`fake-shortcut-${i}`);
-			}
+			// Pre-populate to one short of the threshold.
 			useSettingsStore.setState({
 				keyboardMasteryStats: {
 					...DEFAULT_KEYBOARD_MASTERY_STATS,
-					usedShortcuts: fakeShortcuts,
+					usedShortcuts: bound.slice(0, needed - 1),
 					currentLevel: 0,
 				},
 			});
 
-			const result = useSettingsStore
-				.getState()
-				.recordShortcutUsage(`shortcut-that-triggers-level-up`);
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[needed - 1]);
 
-			// The new shortcut should have been added
 			expect(useSettingsStore.getState().keyboardMasteryStats.usedShortcuts).toHaveLength(needed);
+			expect(result.newLevel).toBe(1);
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(1);
+		});
 
-			// If this crossed the threshold, newLevel should be 1
-			if (result.newLevel !== null) {
-				expect(result.newLevel).toBeGreaterThan(0);
-				expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBeGreaterThan(0);
-			}
+		it('recordShortcutUsage ignores ids that have no chord bound', () => {
+			const bound = boundShortcutIds();
+			const needed = Math.ceil(bound.length * 0.25);
+
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, needed - 1),
+					currentLevel: 0,
+				},
+			});
+
+			// An unbound action can never be fired, so recording one must not move
+			// the level - otherwise the numerator outruns its own denominator.
+			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => s.keys.length === 0);
+			expect(unbound).toBeDefined();
+			const result = useSettingsStore.getState().recordShortcutUsage(unbound!.id);
+
+			expect(result.newLevel).toBeNull();
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(0);
+		});
+
+		it('reaches 100% once every bound shortcut has been used', () => {
+			const bound = boundShortcutIds();
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, -1),
+					currentLevel: 3,
+				},
+			});
+
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[bound.length - 1]);
+
+			// Unbound shortcuts used to sit in the denominator, which made the top
+			// level unreachable no matter how many chords the user learned.
+			expect(result.newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
 		});
 
 		it('acknowledgeKeyboardMasteryLevel updates level', () => {
