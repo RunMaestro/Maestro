@@ -426,7 +426,7 @@ export function ExecutionQueueBrowser({
 												className="inline-block w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.warning }}
 											/>
-											<span className="font-mono">{tab.displayName}</span>
+											<span>{tab.displayName}</span>
 										</li>
 									))}
 								</ul>
@@ -576,6 +576,8 @@ function QueueItemRow({
 
 				{/* Position indicator */}
 				<span
+					// Monospace on purpose: these are #1..#N in a fixed 5px-wide slot,
+					// and proportional digits would make the column ragged.
 					className="text-xs font-mono mt-0.5 w-5 text-center transition-all duration-200"
 					style={{
 						color: theme.colors.textDim,
@@ -609,7 +611,8 @@ function QueueItemRow({
 									e.stopPropagation();
 									onSwitchToSession();
 								}}
-								className="text-xs px-1.5 py-0.5 rounded font-mono hover:opacity-80 transition-opacity cursor-pointer"
+								// Prose label, not code - see ExecutionQueueIndicator.
+								className="text-xs px-1.5 py-0.5 rounded hover:opacity-80 transition-opacity cursor-pointer"
 								style={{
 									backgroundColor: theme.colors.accent + '25',
 									color: theme.colors.textMain,

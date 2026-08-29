@@ -48,6 +48,9 @@ const ElapsedTimeDisplay = memo(
 		}, [startTime]);
 
 		return (
+			// Monospace on purpose, unlike the name slots around it: this counts up
+			// once a second, and proportional digits change width as they tick, so
+			// the pill would twitch on every frame.
 			<span className="font-mono text-xs" style={{ color: textColor }}>
 				{formatElapsedTicker(elapsedSeconds * 1000)}
 			</span>
@@ -124,9 +127,7 @@ const ThinkingItemRow = memo(
 					<span className="text-xs truncate">
 						<span className="font-medium">{maestroName}</span>
 						<span style={{ color: theme.colors.textDim }}> / </span>
-						<span className="font-mono" style={{ color: theme.colors.textDim }}>
-							{tabDisplayName}
-						</span>
+						<span style={{ color: theme.colors.textDim }}>{tabDisplayName}</span>
 					</span>
 				</div>
 				<div
@@ -579,6 +580,10 @@ function ThinkingStatusPillInner({
 	// prefer namedSessions, then tab name, then UUID octet (NOT session name - that's already shown)
 	const displayClaudeId =
 		customName || tabName || (agentSessionId ? agentSessionId.substring(0, 8).toUpperCase() : null);
+	// True only when the two name sources were empty and this fell through to the
+	// raw session id. A name is prose and belongs in the interface font; a hex
+	// octet is an identifier and reads better in the code face.
+	const displayIsSessionId = !customName && !tabName && Boolean(agentSessionId);
 
 	// For tooltip, show all available info
 	const tooltipParts = [maestroSessionName];
@@ -665,7 +670,9 @@ function ThinkingStatusPillInner({
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
 							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
-							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
+							className={`text-xs hover:underline cursor-pointer truncate min-w-0${
+								displayIsSessionId ? ' font-mono' : ''
+							}`}
 							style={{ color: theme.colors.accent }}
 							title={
 								agentSessionId

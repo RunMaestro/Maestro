@@ -390,7 +390,7 @@ export const QueuedItemsList = memo(
 												className="inline-block w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.warning }}
 											/>
-											<span className="font-mono">{tab.displayName}</span>
+											<span>{tab.displayName}</span>
 										</li>
 									))}
 								</ul>
