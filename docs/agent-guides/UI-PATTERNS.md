@@ -580,6 +580,8 @@ This matters for any resizable modal that draws a chart: a hard-coded SVG width 
 
 `useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage, scrollIntoView }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
 
+**A strip is for the sets that do not fit, not for every set.** The same wizard drops back to a centered wrapping block whenever the tiles fit in two rows - see [Two Shapes for One Tile Set](#two-shapes-for-one-tile-set-agentgridlayout) below. Four tiles pinned to the left edge of a wide scrolling row read as a layout that forgot to reflow, and the affordances the hook exists to provide (fades, arrows) have nothing to point at.
+
 Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
 
 - **Silence at the edge.** Nothing tells the user more content exists past the right edge. Use the flags to render an honest affordance - a gradient fade plus an arrow button. Do not render the arrows unconditionally: an arrow that cannot move is worse than no arrow.
@@ -613,6 +615,38 @@ useEffect(() => {
 `scrollIntoView(child, edgePaddingPx?)` scrolls the minimum that reveals the child, and only for the edge it is actually past. Pass the width of whatever floats over the strip's ends as `edgePaddingPx` - share one constant with the fade's own `width` so the two cannot drift. It measures from `getBoundingClientRect()` rather than `offsetLeft`, which is relative to the nearest positioned ancestor (the wrapper, not the strip) and would silently drift by the wrapper's padding. An item wider than the viewport overflows both edges at once; the left edge wins, since a visible leading edge beats a visible trailing one.
 
 It no-ops without `ResizeObserver`, so jsdom component tests render without a polyfill (and both flags read `false`, since jsdom reports zero for every measurement).
+
+### Two Shapes for One Tile Set (`agentGridLayout`)
+
+The New Agent Wizard draws the same provider tiles two ways, and which one it
+picks is derived from the count rather than authored:
+`resolveAgentGridLayout(tileCount, containerWidth)` in
+`components/Wizard/screens/AgentSelectionScreen/utils/agentGridLayout.ts`.
+
+- **More tiles than fit in two rows -> the scrolling strip.** A third row pushes
+  the Continue button below the fold, which is the whole reason the strip exists.
+- **Two rows or fewer -> a centered wrapping block.** This is the everyday case
+  once the user filters to the providers they actually have. A handful of tiles
+  pinned to the left edge of a wide scrolling row reads as a layout that forgot
+  to reflow.
+
+Two rules that are easy to get wrong:
+
+- **Balance the rows, do not fill them.** Five tiles across a four-wide row draws
+  4 + 1, which looks like a mistake; `ceil(n / 2)` columns draws 3 + 2, which
+  reads as an arrangement. The block then caps its own `maxWidth` at that many
+  tiles, which is what forces the break - `flex-wrap` alone would fill the row.
+- **Measure the OUTER wrapper, never the block itself.** The block's width is an
+  output of the layout, so measuring it feeds the cap back in and it shrinks a
+  step on every pass. `useElementWidth` on the full-width parent is the input.
+
+The column count is also what up/down arrow movement steps by, so the component
+reports it upward (`onColumnsChange`) rather than letting the keyboard handler
+assume a shape. A handler moving by an assumed row width jumps the focus ring to
+a tile that is not above or below the one the user is on, and the same width cap
+that keeps the block from spreading wider than the strip is what keeps the two
+in agreement. Fall back to a fixed column count until the first measurement
+lands, since `useElementWidth` reports 0 on the first frame and in jsdom.
 
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
@@ -1386,12 +1420,21 @@ weight.
 
 ### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
 
-"4 providers available locally of 11 supported", plus the toggle that brings the
-other 7 back. Most of the providers Maestro supports are not installed on any
-given machine, so listing all of them buries the two or three a user can pick
-behind a wall of dimmed rows. Both provider pickers - the wizard's tile strip
-and the New Agent modal's list - hide the rest by default and show this one bar,
-so the count and the toggle cannot disagree about what is being filtered.
+"4 providers available locally of 11 supported", plus the toggle that switches
+between the two lists. Most of the providers Maestro supports are not installed
+on any given machine, so listing all of them buries the two or three a user can
+pick behind a wall of dimmed rows. Both provider pickers - the wizard's tile
+strip and the New Agent modal's list - show this one bar, so the count and the
+toggle cannot disagree about what is being filtered.
+
+**Which way the toggle starts is per-picker, and deliberately not the same.**
+The New Agent modal opens FILTERED, because it is the everyday path and its user
+already knows what they have installed. The wizard opens on ALL supported
+providers, because it is a first-run screen: someone whose provider is installed
+but undetected (a custom path, an SSH host detection could not probe) would
+otherwise open the wizard, not see it, and conclude Maestro does not support it.
+The filtering RULES below are shared regardless, so the two can only differ in
+where they start, never in what "available" means.
 
 The filtering rules themselves live in `src/renderer/utils/providerAvailability.ts`
 (`filterToAvailableProviders`, `providerLocationLabel`) rather than in either
