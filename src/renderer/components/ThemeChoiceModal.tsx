@@ -193,6 +193,12 @@ export function ThemeChoiceModal({
 
 	const activeName = themes[activeThemeId]?.name ?? 'this theme';
 
+	// "Keep" is only honest about a theme the user already had. A new install
+	// has not chosen anything yet, and a returning user who clicks a different
+	// swatch is not keeping that one either - they are adopting it - so the
+	// verb follows whether the previewed theme is the one the modal opened on.
+	const confirmVerb = isReturningUser && activeThemeId === originalThemeId.current ? 'Keep' : 'Use';
+
 	return (
 		<Modal
 			theme={theme}
@@ -239,7 +245,7 @@ export function ThemeChoiceModal({
 								color: theme.colors.accentForeground,
 							}}
 						>
-							Keep {activeName}
+							{confirmVerb} {activeName}
 						</button>
 					</div>
 				</div>

@@ -146,6 +146,83 @@ describe('ThemeChoiceModal', () => {
 		});
 	});
 
+	describe('confirm label', () => {
+		it('offers to USE a theme a new user has not chosen yet', () => {
+			// Nothing is being kept on a fresh install - there is no prior choice.
+			renderModal({ isReturningUser: false, activeThemeId: 'dracula' });
+
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Use Dracula');
+		});
+
+		it('offers to KEEP the theme a returning user arrived with', () => {
+			renderModal({ isReturningUser: true, activeThemeId: 'dracula' });
+
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Keep Dracula');
+		});
+
+		it('switches a returning user to USE once they preview something else', () => {
+			// Adopting Monokai is not keeping it, and the button naming the wrong
+			// verb is the user's only readout of what the click will do.
+			const onSelectTheme = vi.fn();
+			const { view } = renderModal({
+				isReturningUser: true,
+				activeThemeId: 'dracula',
+				onSelectTheme,
+			});
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Keep Dracula');
+
+			view.rerender(
+				<ThemeChoiceModal
+					theme={mockTheme}
+					isOpen
+					isReturningUser
+					themes={THEMES as unknown as Record<string, typeof mockTheme>}
+					activeThemeId="monokai"
+					onSelectTheme={onSelectTheme}
+					onDismiss={vi.fn()}
+					onOpenThemeSettings={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Use Monokai');
+		});
+
+		it('says KEEP again when a returning user browses back to where they started', () => {
+			const onSelectTheme = vi.fn();
+			const { view } = renderModal({
+				isReturningUser: true,
+				activeThemeId: 'dracula',
+				onSelectTheme,
+			});
+
+			const rerenderWith = (activeThemeId: string) =>
+				view.rerender(
+					<ThemeChoiceModal
+						theme={mockTheme}
+						isOpen
+						isReturningUser
+						themes={THEMES as unknown as Record<string, typeof mockTheme>}
+						activeThemeId={activeThemeId}
+						onSelectTheme={onSelectTheme}
+						onDismiss={vi.fn()}
+						onOpenThemeSettings={vi.fn()}
+					/>
+				);
+
+			rerenderWith('monokai');
+			rerenderWith('dracula');
+
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Keep Dracula');
+		});
+
+		it('measures KEEP against the theme it opened on, not the shipped default', () => {
+			// A returning user who already moved to Nord is keeping Nord.
+			renderModal({ isReturningUser: true, activeThemeId: 'nord' });
+
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Keep Nord');
+		});
+	});
+
 	describe('copy', () => {
 		it('tells a returning user they have been on the default', () => {
 			renderModal({ isReturningUser: true });
