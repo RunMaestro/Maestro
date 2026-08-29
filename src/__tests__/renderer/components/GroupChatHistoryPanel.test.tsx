@@ -643,7 +643,22 @@ describe('GroupChatHistoryPanel', () => {
 
 			fireEvent.keyDown(panel, { key: 'ArrowDown' });
 
-			expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' });
+			// Instant, not smooth: a held arrow key repeats faster than a smooth
+			// scroll animates, so smooth makes the list lurch instead of step.
+			expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest' });
+		});
+
+		it('should pad the scroll container so an edge selection is not pinned flat', () => {
+			// block: 'nearest' stops as soon as the row is inside the box, so
+			// without scroll padding the selection sits flush against the edge and
+			// a held arrow reads as the list having stopped moving.
+			const { container } = render(
+				<GroupChatHistoryPanel {...defaultProps} entries={navEntries} />
+			);
+
+			const scroller = container.querySelector('.overflow-y-auto');
+			expect(scroller).not.toBeNull();
+			expect(scroller!.className).toContain('scroll-p-2');
 		});
 
 		it('should jump to the selected entry on Enter', () => {

@@ -23,6 +23,7 @@ import { ExternalLink, ChevronDown, ChevronRight } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { formatTokensCompact } from '../../../shared/formatters';
+import { highlightMatches } from '../../utils/highlightMatches';
 import './DualPaneFileEditor.css';
 
 export interface DualPaneFileEditorItem {
@@ -162,6 +163,16 @@ export interface DualPaneFileEditorProps {
 	 * a user who went straight for the filter box keeps the caret there.
 	 */
 	autoFocusList?: boolean;
+
+	/**
+	 * Active filter text. When set, the matching run inside each row's label is
+	 * marked, so a filtered list shows WHY each row survived rather than leaving
+	 * the reader to scan for it.
+	 *
+	 * Purely presentational - filtering itself stays the consumer's job, since
+	 * only it knows whether a row matched on its name or somewhere in its body.
+	 */
+	highlightQuery?: string;
 }
 
 const DEFAULT_LIST_WIDTH = 220;
@@ -208,6 +219,7 @@ export function DualPaneFileEditor({
 	onDeleteItem,
 	listFocusToken,
 	autoFocusList,
+	highlightQuery,
 }: DualPaneFileEditorProps): JSX.Element {
 	const selectedItem = items.find((i) => i.id === selectedId) ?? null;
 
@@ -605,7 +617,11 @@ export function DualPaneFileEditor({
 					color: theme.colors.textMain,
 				}}
 			>
-				<span className="dual-pane-list-item-name">{item.label}</span>
+				<span className="dual-pane-list-item-name">
+					{highlightQuery
+						? highlightMatches(item.label, highlightQuery, theme.colors.accent)
+						: item.label}
+				</span>
 				<span className="dual-pane-list-item-meta">
 					{item.isModified && (
 						<span

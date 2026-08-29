@@ -19,6 +19,7 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import { FilterInput } from './ui/FilterInput';
 import { HeaderActionButton } from './ui/HeaderActionButton';
+import { TextareaHighlightOverlay } from './ui/TextareaHighlightOverlay';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { useEventListener } from '../hooks/utils/useEventListener';
@@ -137,6 +138,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const [isCreating, setIsCreating] = useState(false);
 	const createInputRef = useRef<HTMLInputElement>(null);
 	const filterInputRef = useRef<HTMLInputElement>(null);
+	const editorRef = useRef<HTMLTextAreaElement>(null);
 
 	/** Move keyboard focus back to the file list (see `listFocusToken`). */
 	const focusList = useCallback(() => setListFocusToken((t) => t + 1), []);
@@ -566,23 +568,39 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	);
 
 	const renderEditorBody = useCallback(() => {
+		// The highlight layer sits BEHIND the textarea and paints only the wash
+		// under each hit, so the glyphs on screen are always the real, editable
+		// ones. When it is active the textarea goes transparent and the backdrop
+		// carries the editor's fill; with no query there is no layer at all and
+		// the textarea paints its own background as before.
+		const highlighting = debouncedFilter.trim().length > 0;
 		return (
-			<textarea
-				className="dual-pane-textarea"
-				value={editedContent}
-				onChange={(e) => {
-					setEditedContent(e.target.value);
-					setHasUnsavedChanges(e.target.value !== originalContent);
-				}}
-				spellCheck={false}
-				style={{
-					borderColor: theme.colors.border,
-					backgroundColor: theme.colors.bgMain,
-					color: theme.colors.textMain,
-				}}
-			/>
+			<div className="dual-pane-highlight-wrap">
+				<TextareaHighlightOverlay
+					textareaRef={editorRef}
+					value={editedContent}
+					query={debouncedFilter.trim()}
+					theme={theme}
+					backgroundColor={theme.colors.bgMain}
+				/>
+				<textarea
+					ref={editorRef}
+					className="dual-pane-textarea"
+					value={editedContent}
+					onChange={(e) => {
+						setEditedContent(e.target.value);
+						setHasUnsavedChanges(e.target.value !== originalContent);
+					}}
+					spellCheck={false}
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: highlighting ? 'transparent' : theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+				/>
+			</div>
 		);
-	}, [editedContent, originalContent, theme]);
+	}, [editedContent, originalContent, theme, debouncedFilter]);
 
 	// Cheap estimate: ~4 bytes/token for English text (matches estimateTokenCount from shared/formatters).
 	const estimatedTokens = useMemo(() => Math.ceil(stats.totalBytes / 4), [stats.totalBytes]);
@@ -748,6 +766,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						renderEditorBody={renderEditorBody}
 						successMessage={successMessage}
 						errorMessage={actionError}
+						highlightQuery={debouncedFilter.trim()}
 						listWidthStorageKey="maestro.memoryViewer.listWidth"
 						onDeleteItem={requestDelete}
 						listFocusToken={listFocusToken}

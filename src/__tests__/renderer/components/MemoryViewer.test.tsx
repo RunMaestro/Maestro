@@ -320,6 +320,58 @@ describe('MemoryViewer', () => {
 		);
 	});
 
+	describe('search highlighting', () => {
+		it('marks the query inside the open memory', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			await typeFilter('Memory');
+
+			await waitFor(() => {
+				const backdrop = document.querySelector('.dual-pane-highlight-backdrop');
+				expect(backdrop).toBeTruthy();
+				expect(backdrop!.querySelectorAll('mark').length).toBeGreaterThan(0);
+			});
+		});
+
+		it('marks the query inside the matching filenames', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			await typeFilter('worktrees');
+
+			await waitFor(() => {
+				const row = document.querySelector('[data-item-id="project_worktrees.md"]');
+				expect(row?.querySelector('mark')?.textContent?.toLowerCase()).toBe('worktrees');
+			});
+		});
+
+		it('paints no highlight layer while the filter is empty', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			expect(document.querySelector('.dual-pane-highlight-backdrop')).toBeNull();
+			expect(document.querySelector('[data-item-id="MEMORY.md"] mark')).toBeNull();
+		});
+
+		it('drops the highlight layer again when the filter is cleared', async () => {
+			// The layer only exists to answer a live query; leaving it behind would
+			// keep an invisible copy of the document stacked under the editor.
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			await typeFilter('Memory');
+			await waitFor(() =>
+				expect(document.querySelector('.dual-pane-highlight-backdrop')).toBeTruthy()
+			);
+
+			await typeFilter('');
+			await waitFor(() =>
+				expect(document.querySelector('.dual-pane-highlight-backdrop')).toBeNull()
+			);
+		});
+	});
+
 	describe('filter focus shortcuts', () => {
 		function filterBox(): HTMLElement {
 			return screen.getByLabelText('Filter memories by name or content');
