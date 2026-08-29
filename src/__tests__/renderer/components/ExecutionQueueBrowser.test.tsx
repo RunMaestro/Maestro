@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQueueBrowser';
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
@@ -2105,6 +2105,10 @@ describe('ExecutionQueueBrowser', () => {
 			Array.from(container.querySelectorAll('.rounded-lg.border.group'));
 		const selectedIndexOf = (container: HTMLElement) =>
 			rows(container).findIndex((row) => row.getAttribute('data-selected') === 'true');
+		// The browser handles nav on its own card, not on window - see
+		// handleCardKeyDown.
+		const card = () => screen.getByLabelText('Execution Queue');
+		const menuList = () => screen.getByTestId('queue-action-list');
 
 		const renderWithQueue = (extraProps: Record<string, unknown> = {}) => {
 			const session = createSession({
@@ -2137,18 +2141,18 @@ describe('ExecutionQueueBrowser', () => {
 		it('moves the selection with Down and Up without wrapping', () => {
 			const { container } = renderWithQueue();
 
-			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
 			expect(selectedIndexOf(container)).toBe(1);
 
-			fireEvent.keyDown(window, { key: 'ArrowDown' });
-			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
 			expect(selectedIndexOf(container)).toBe(2);
 
-			fireEvent.keyDown(window, { key: 'ArrowUp' });
+			fireEvent.keyDown(card(), { key: 'ArrowUp' });
 			expect(selectedIndexOf(container)).toBe(1);
 
-			fireEvent.keyDown(window, { key: 'ArrowUp' });
-			fireEvent.keyDown(window, { key: 'ArrowUp' });
+			fireEvent.keyDown(card(), { key: 'ArrowUp' });
+			fireEvent.keyDown(card(), { key: 'ArrowUp' });
 			expect(selectedIndexOf(container)).toBe(0);
 		});
 
@@ -2178,7 +2182,7 @@ describe('ExecutionQueueBrowser', () => {
 			fireEvent.click(screen.getByText('All Agents'));
 			expect(selectedIndexOf(container)).toBe(0);
 
-			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
 			expect(selectedIndexOf(container)).toBe(1);
 		});
 
@@ -2192,10 +2196,10 @@ describe('ExecutionQueueBrowser', () => {
 		it('Enter opens the action menu for the selected row', () => {
 			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
 
-			fireEvent.keyDown(window, { key: 'ArrowDown' });
-			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'Enter' });
 
-			expect(screen.getByText('Message #2')).toBeInTheDocument();
+			expect(screen.getByText('Test Session \u00b7 Tab 1')).toBeInTheDocument();
 			expect(screen.getByTestId('queue-action-edit')).toBeInTheDocument();
 			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
 			expect(screen.getByTestId('queue-action-pause')).toBeInTheDocument();
@@ -2220,7 +2224,7 @@ describe('ExecutionQueueBrowser', () => {
 				/>
 			);
 
-			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.keyDown(card(), { key: 'Enter' });
 
 			// A command has no editable text, and no pause handler was wired.
 			expect(screen.queryByTestId('queue-action-edit')).not.toBeInTheDocument();
@@ -2231,12 +2235,12 @@ describe('ExecutionQueueBrowser', () => {
 		it('runs the highlighted action on Enter and closes the menu', () => {
 			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
 
-			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.keyDown(card(), { key: 'Enter' });
 			// Edit, Delete, Hold, Copy - step down to Delete.
-			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			fireEvent.keyDown(menuList(), { key: 'ArrowDown' });
 			expect(screen.getByTestId('queue-action-delete')).toHaveAttribute('data-selected', 'true');
 
-			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.keyDown(menuList(), { key: 'Enter' });
 			expect(mockOnRemoveItem).toHaveBeenCalledWith('active-session', 'item-1');
 			expect(screen.queryByTestId('queue-action-delete')).not.toBeInTheDocument();
 		});
@@ -2245,18 +2249,76 @@ describe('ExecutionQueueBrowser', () => {
 			const onToggleItemPause = vi.fn();
 			renderWithQueue({ onToggleItemPause });
 
-			fireEvent.keyDown(window, { key: 'Enter' });
+			fireEvent.keyDown(card(), { key: 'Enter' });
 			fireEvent.click(screen.getByTestId('queue-action-pause'));
 
 			expect(onToggleItemPause).toHaveBeenCalledWith('active-session', 'item-1');
 			expect(screen.queryByTestId('queue-action-pause')).not.toBeInTheDocument();
 		});
 
+		it('titles the action menu with the agent and tab, not a queue position', () => {
+			const session = createSession({
+				id: 'active-session',
+				name: 'Payments API',
+				executionQueue: [createQueuedItem({ id: 'item-1', tabId: 'tab-1', tabName: 'Refactor' })],
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Refactor',
+						logs: [],
+						inputValue: '',
+						isProcessing: false,
+					},
+				] as Session['aiTabs'],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+
+			expect(screen.getByText('Payments API \u00b7 Refactor')).toBeInTheDocument();
+			expect(screen.queryByText('Message #1')).not.toBeInTheDocument();
+		});
+
+		it('leaves Enter to a focused button instead of opening the menu', () => {
+			renderWithQueue();
+
+			const allAgents = screen.getByText('All Agents').closest('button') as HTMLElement;
+			fireEvent.keyDown(allAgents, { key: 'Enter' });
+
+			expect(screen.queryByTestId('queue-action-list')).not.toBeInTheDocument();
+		});
+
+		it('focuses the card on open so the arrows work without clicking first', async () => {
+			renderWithQueue();
+
+			await waitFor(() => expect(card()).toHaveFocus());
+		});
+
+		it('focuses the action list when the menu opens, and the card again when it closes', async () => {
+			renderWithQueue();
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+			await waitFor(() => expect(menuList()).toHaveFocus());
+
+			fireEvent.click(screen.getByTestId('queue-action-copy'));
+			await waitFor(() => expect(card()).toHaveFocus());
+		});
+
 		it('arrow keys stop moving the row cursor while the action menu is open', () => {
 			const { container } = renderWithQueue();
 
-			fireEvent.keyDown(window, { key: 'Enter' });
-			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'Enter' });
+			fireEvent.keyDown(menuList(), { key: 'ArrowDown' });
 
 			expect(selectedIndexOf(container)).toBe(0);
 		});

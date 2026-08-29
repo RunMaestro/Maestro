@@ -1162,7 +1162,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// A group chat has no AI tabs, so the tab-cycling chord is free there and
 			// walks the Right Bar's two panels (Participants / History) instead. It
 			// opens the Right Bar when it is closed: switching a pane the user cannot
-			// see is indistinguishable from the shortcut doing nothing.
+			// see is indistinguishable from the shortcut doing nothing. Focus moves
+			// with it so the panel it lands on answers the arrow keys straight away,
+			// rather than needing a click first.
 			if (ctx.activeGroupChatId) {
 				const wantsTabCycle = ctx.isTabShortcut(e, 'nextTab') || ctx.isTabShortcut(e, 'prevTab');
 				if (wantsTabCycle) {
@@ -1170,6 +1172,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					const { rightPanelOpen, setRightPanelOpen } = useUIStore.getState();
 					if (!rightPanelOpen) setRightPanelOpen(true);
 					toggleGroupChatRightTab();
+					ctx.setActiveFocus('right');
 					trackShortcut(ctx.isTabShortcut(e, 'nextTab') ? 'nextTab' : 'prevTab');
 					return;
 				}

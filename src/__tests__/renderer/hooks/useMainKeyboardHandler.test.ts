@@ -93,6 +93,13 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		// a tiled group, so it must exist even for tests that only care about a
 		// non-pane shortcut.
 		isPaneShortcut: () => false,
+		// Same reason: a shortcut that moves focus as part of its action calls this
+		// on the way through, so it has to exist even for tests that only assert on
+		// what the action changed. Missing, it throws inside the dispatched
+		// listener - which jsdom turns into an uncaught exception rather than a
+		// failure, so the test still reports pass while the rest of the handler
+		// (the trackShortcut call) silently never runs.
+		setActiveFocus: vi.fn(),
 		sessions: [],
 		activeSessionId: '',
 		activeGroupChatId: null,
@@ -2238,6 +2245,11 @@ describe('useMainKeyboardHandler', () => {
 					handleCloseCurrentTab: mockHandleCloseCurrentTab,
 					setSessions: mockSetSessions,
 					activeGroupChatId: 'group-1',
+					// The next/prev-tab chord is the one exception: it cycles the right
+					// panel's tabs instead of doing nothing.
+					setRightPanelOpen: vi.fn(),
+					setGroupChatRightTab: vi.fn(),
+					setActiveFocus: vi.fn(),
 				});
 
 				act(() => {
@@ -4450,6 +4462,14 @@ describe('group chat right panel cycling', () => {
 		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
 
 		expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatRightTab:chat-1', 'history');
+	});
+
+	it('moves focus with the panel, so it answers the arrows straight away', () => {
+		const setActiveFocus = vi.fn();
+
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1', setActiveFocus });
+
+		expect(setActiveFocus).toHaveBeenCalledWith('right');
 	});
 
 	it('opens the Right Bar when it is closed - a hidden switch reads as a dead key', () => {

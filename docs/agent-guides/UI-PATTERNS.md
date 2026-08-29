@@ -443,6 +443,12 @@ The `ESC` pill is that exit. Use `<EscCloseButton>` (`src/renderer/components/ui
 
 Tests: query the pill by role, not by index. It is a real `<button>` now, so `getAllByRole('button')[n]` in a modal test counts it - scope list assertions to the rows themselves (e.g. `[data-action-label]`).
 
+### Arrow-Key Navigation Inside a Modal Belongs on the Element, Not `window`
+
+A `useEventListener('keydown', ...)` on `window` never sees a key pressed inside a `<Modal>`: the overlay stops keydown before it reaches the window, and whatever held focus when the surface opened (a composer textarea, a tab strip) can swallow the key first. Put the handler on the scrolling container or the card itself with `onKeyDown`, give it `tabIndex={-1}` plus `outline-none`, and make sure something focuses it - `initialFocusRef` for a `<Modal>`, a mount effect for a card. `ExecutionQueueBrowser` handles rows on its card and menu items on the action list for exactly this reason.
+
+Two rules go with it. **Let a focused control keep its own keys**: bail out when the event target is inside an `input`, `textarea`, or `[contenteditable]`, and leave `Enter` to a focused `<button>`, or the list steals the key from the control the user is actually on. And **take focus back when a child surface closes** (`useFocusOnClose`), because the focused element was just unmounted, focus falls to `<body>`, and the next arrow key silently does nothing - which reads as the keyboard dying halfway through.
+
 ### Segmented Toolbars (`<SegmentedControl>`)
 
 A horizontal row of mutually exclusive options rendered as one joined pill bar - the "Sort by: [Name][Created][Queries]" control above a grid or chart. Use `<SegmentedControl>` (`src/renderer/components/ui/SegmentedControl.tsx`), not a hand-rolled `.map()` over buttons with `borderLeft` seams.
@@ -980,6 +986,8 @@ Do NOT reach for it to add a global shortcut. Those belong in `constants/shortcu
 ### Keyboard Mastery Gamification
 
 Shortcut usage is tracked for a gamification system (`keyboardMasteryStats`). The `recordShortcutUsage` function in settings increments counters and can trigger level-up celebrations.
+
+The percentage is `countUsedBoundShortcuts(bound, used) / bound.length`, where `bound` comes from `collectBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`. Every surface that shows a mastery figure (the help modal's bar, the Usage Dashboard ring and its Unused Shortcuts list, the leaderboard payload, the store's level-up check) runs its maps through that one helper, so they cannot disagree about the total. Unbound shortcuts are excluded from BOTH ends: they still appear in the help modal's list marked `Unassigned` (the user should know the action exists and can bind it), but they carry no progress circle, never appear as "unused", and never sit in the denominator. See [RENDERER-SERVICES.md -> keyboardMastery.ts](RENDERER-SERVICES.md#keyboardmasteryts-87-lines).
 
 ---
 

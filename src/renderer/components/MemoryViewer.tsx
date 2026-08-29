@@ -21,6 +21,8 @@ import { FilterInput } from './ui/FilterInput';
 import { HeaderActionButton } from './ui/HeaderActionButton';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import { isTextInputTarget } from '../utils/messageScrollNavigation';
 import { useModalStore } from '../stores/modalStore';
 
 interface MemoryViewerProps {
@@ -134,19 +136,74 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const [createError, setCreateError] = useState<string | null>(null);
 	const [isCreating, setIsCreating] = useState(false);
 	const createInputRef = useRef<HTMLInputElement>(null);
+	const filterInputRef = useRef<HTMLInputElement>(null);
+
+	/** Move keyboard focus back to the file list (see `listFocusToken`). */
+	const focusList = useCallback(() => setListFocusToken((t) => t + 1), []);
 
 	const layerIdRef = useRef<string>();
-	// Escape clears an active filter before it closes the viewer: the layer
-	// stack handles the key at capture, so an input-local handler would never
-	// see it and the user would lose the whole pane while resetting a filter.
+	/**
+	 * Escape is a LADDER, climbed one rung per press, never skipping to close.
+	 *
+	 *   1. caret in the filter box -> hand focus back to the list, query intact
+	 *   2. filter still has text    -> clear it
+	 *   3. otherwise                -> close the viewer
+	 *
+	 * Rung 1 is what makes "filter, then arrow through the hits" work: the
+	 * query has to survive the key that gets you out of the text box, or the
+	 * results you were about to walk vanish as you reach for them.
+	 *
+	 * It all lives here because the layer stack handles Escape at CAPTURE on
+	 * `window`, so `FilterInput`'s own Escape handler never sees the key inside
+	 * a registered surface - and without this ladder the whole pane would close
+	 * while the user was only trying to leave the filter box.
+	 */
 	const onEscapeRef = useRef<() => void>(() => {});
 	onEscapeRef.current = () => {
+		// `visibleNamesRef` guards the hand-off: a filter that matched nothing has
+		// no row to focus, so blurring would drop focus on <body> and the arrows
+		// the user just reached for would do nothing. In that case fall through
+		// to clearing the filter, which is the useful move anyway.
+		if (document.activeElement === filterInputRef.current && visibleNamesRef.current.length > 0) {
+			filterInputRef.current?.blur();
+			focusList();
+			return;
+		}
 		if (filterQuery) {
 			setFilterQuery('');
 			return;
 		}
 		onClose();
 	};
+
+	/**
+	 * Jump to the filter box: Cmd/Ctrl+F, or bare `/`.
+	 *
+	 * The two guards differ on purpose. `/` is a legal character, so it only
+	 * takes effect when the caret is NOT in a text field - otherwise typing a
+	 * path into the memory editor would fling focus into the filter mid-word.
+	 * Cmd+F carries a modifier and means nothing else here, so it works from
+	 * anywhere including the editor.
+	 *
+	 * Skipped entirely while the New Memory dialog is up: it sits on top, and a
+	 * surface the user cannot see should not be stealing their keystrokes.
+	 */
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			const isFindChord = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f';
+			const isSlash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey;
+			if (!isFindChord && !isSlash) return;
+			if (isSlash && isTextInputTarget(e.target)) return;
+
+			e.preventDefault();
+			e.stopPropagation();
+			filterInputRef.current?.focus();
+			filterInputRef.current?.select();
+		},
+		{ enabled: !createModalOpen }
+	);
 
 	const { registerLayer, unregisterLayer } = useLayerStack();
 
@@ -634,6 +691,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					</button>
 				)}
 				<FilterInput
+					ref={filterInputRef}
 					theme={theme}
 					value={filterQuery}
 					onChange={setFilterQuery}

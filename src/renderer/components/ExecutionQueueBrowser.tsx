@@ -17,6 +17,7 @@ import {
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -172,43 +173,63 @@ export function ExecutionQueueBrowser({
 		if (!isOpen) setActionMenuOpen(false);
 	}, [isOpen, viewMode]);
 
-	// One keydown listener for the whole browser - view cycling and row
-	// navigation - so opening it never grows the window's listener set per row.
+	// Cmd/Ctrl+Shift+[ / ] cycles between the Current Agent / All Agents tabs
+	// (matches the app-wide prev/next-tab shortcut). Use e.code so it works
+	// regardless of the brace characters Shift produces on macOS.
 	useEventListener(
 		'keydown',
 		(e) => {
 			const ke = e as KeyboardEvent;
-			// Cmd/Ctrl+Shift+[ / ] cycles between the Current Agent / All Agents
-			// tabs (matches the app-wide prev/next-tab shortcut). Use e.code so it
-			// works regardless of the brace characters Shift produces on macOS.
-			if ((ke.metaKey || ke.ctrlKey) && ke.shiftKey) {
-				if (ke.code !== 'BracketLeft' && ke.code !== 'BracketRight') return;
-				ke.preventDefault();
-				setViewMode((prev) => (prev === 'current' ? 'global' : 'current'));
-				return;
-			}
-			if (ke.metaKey || ke.ctrlKey || ke.altKey) return;
-			const { count, index } = navRef.current;
-			if (ke.key === 'ArrowDown' || ke.key === 'ArrowUp') {
-				if (count === 0) return;
-				ke.preventDefault();
-				setSelectedIndex(
-					index < 0
-						? 0
-						: ke.key === 'ArrowDown'
-							? Math.min(index + 1, count - 1)
-							: Math.max(index - 1, 0)
-				);
-				return;
-			}
-			if (ke.key === 'Enter') {
-				if (index < 0) return;
-				ke.preventDefault();
-				setActionMenuOpen(true);
-			}
+			if (!(ke.metaKey || ke.ctrlKey) || !ke.shiftKey) return;
+			if (ke.code !== 'BracketLeft' && ke.code !== 'BracketRight') return;
+			ke.preventDefault();
+			setViewMode((prev) => (prev === 'current' ? 'global' : 'current'));
 		},
-		{ enabled: isOpen && !editing && !actionMenuOpen && !forceSendConfirm }
+		{ enabled: isOpen && !editing }
 	);
+
+	// Row navigation is handled on the card itself, not on `window`: whatever
+	// had focus when the browser opened (the composer textarea, a tab strip)
+	// may stop arrow keys from ever reaching the window, and React's own
+	// modals stop keydown at their overlay. Focusing the card and listening
+	// there makes the keys work no matter what is underneath.
+	const handleCardKeyDown = (e: React.KeyboardEvent) => {
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		const target = e.target as HTMLElement | null;
+		// A control the user is actually on keeps its own keys: Enter belongs to
+		// the focused button, and every key belongs to a text field.
+		if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+		if (e.key === 'Enter' && target?.closest('button')) return;
+		const { count, index } = navRef.current;
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			if (count === 0) return;
+			e.preventDefault();
+			setSelectedIndex(
+				index < 0
+					? 0
+					: e.key === 'ArrowDown'
+						? Math.min(index + 1, count - 1)
+						: Math.max(index - 1, 0)
+			);
+			return;
+		}
+		if (e.key === 'Enter') {
+			if (index < 0) return;
+			e.preventDefault();
+			setActionMenuOpen(true);
+		}
+	};
+
+	// Land on the card when the browser opens so the arrow keys work without a
+	// click first, and take focus back when a child surface (action menu, edit
+	// modal, force-send confirm) closes - otherwise focus falls to <body> and
+	// the next arrow key silently does nothing.
+	useEffect(() => {
+		if (!isOpen) return;
+		const id = setTimeout(() => modalRef.current?.focus(), 0);
+		return () => clearTimeout(id);
+	}, [isOpen]);
+	useFocusOnClose(modalRef, actionMenuOpen || !!editing || !!forceSendConfirm);
 
 	if (!isOpen) return null;
 
@@ -302,7 +323,9 @@ export function ExecutionQueueBrowser({
 			{/* Modal */}
 			<div
 				ref={modalRef}
-				className="relative rounded-lg border shadow-2xl flex flex-col select-none"
+				tabIndex={-1}
+				onKeyDown={handleCardKeyDown}
+				className="relative rounded-lg border shadow-2xl flex flex-col select-none outline-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
@@ -566,7 +589,10 @@ export function ExecutionQueueBrowser({
 				<div onClick={(e) => e.stopPropagation()}>
 					<QueueItemActionMenu
 						theme={theme}
-						position={activeIndex + 1}
+						title={queueItemActionMenuTitle(
+							selectedEntry.session,
+							resolveQueuedItemTabName(selectedEntry.session, selectedEntry.item)
+						)}
 						actions={menuActions}
 						onClose={() => setActionMenuOpen(false)}
 					/>
@@ -926,6 +952,15 @@ function QueueItemRow({
 	);
 }
 
+/**
+ * Title for the action menu: which agent owns the message and which tab it
+ * will run in. A queue position means nothing to the user - two agents both
+ * have a #1 - so name the thing instead of numbering it.
+ */
+function queueItemActionMenuTitle(session: Session, tabLabel?: string): string {
+	return tabLabel ? `${session.name} \u00b7 ${tabLabel}` : session.name;
+}
+
 interface QueueItemAction {
 	id: string;
 	label: string;
@@ -943,60 +978,73 @@ interface QueueItemAction {
  */
 function QueueItemActionMenu({
 	theme,
-	position,
+	title,
 	actions,
 	onClose,
 }: {
 	theme: Theme;
-	/** 1-based position of the item in the visible list, for the title */
-	position: number;
+	/** Which message this is: the owning agent and the tab it will run in */
+	title: string;
 	actions: QueueItemAction[];
 	onClose: () => void;
 }) {
 	const [index, setIndex] = useState(0);
+	const listRef = useRef<HTMLDivElement>(null);
 	const activeIndex = actions.length === 0 ? -1 : Math.min(index, actions.length - 1);
-	const stateRef = useRef<{ index: number; actions: QueueItemAction[] }>({ index: -1, actions });
-	stateRef.current = { index: activeIndex, actions };
 
 	const runAction = (action: QueueItemAction) => {
 		onClose();
 		action.run();
 	};
 
-	useEventListener('keydown', (e) => {
-		const ke = e as KeyboardEvent;
-		if (ke.metaKey || ke.ctrlKey || ke.altKey) return;
-		const { index: i, actions: list } = stateRef.current;
-		if (ke.key === 'ArrowDown' || ke.key === 'ArrowUp') {
-			if (list.length === 0) return;
-			ke.preventDefault();
-			setIndex(ke.key === 'ArrowDown' ? Math.min(i + 1, list.length - 1) : Math.max(i - 1, 0));
+	// Keys are handled on the list element rather than on `window`: Modal stops
+	// keydown at its overlay, so a window listener never sees an arrow key
+	// pressed inside a modal. The list takes initial focus, so the keys work
+	// the moment the menu opens.
+	const handleKeyDown = (e: React.KeyboardEvent) => {
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			if (actions.length === 0) return;
+			e.preventDefault();
+			setIndex(
+				e.key === 'ArrowDown'
+					? Math.min(activeIndex + 1, actions.length - 1)
+					: Math.max(activeIndex - 1, 0)
+			);
 			return;
 		}
-		if (ke.key === 'Enter') {
-			if (i < 0) return;
-			ke.preventDefault();
-			runAction(list[i]);
+		if (e.key === 'Enter') {
+			if (activeIndex < 0) return;
+			e.preventDefault();
+			runAction(actions[activeIndex]);
 		}
-	});
+	};
 
 	return (
 		<Modal
 			theme={theme}
-			title={`Message #${position}`}
+			title={title}
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={280}
+			width={320}
 			closeOnBackdropClick
 			contentClassName="p-2 overflow-y-auto flex-1"
 			testId="queue-item-action-menu"
+			initialFocusRef={listRef}
 			footer={
 				<div className="text-xs w-full text-center" style={{ color: theme.colors.textDim }}>
 					Up/Down to choose, Enter to run
 				</div>
 			}
 		>
-			<div className="flex flex-col gap-0.5" role="menu">
+			<div
+				ref={listRef}
+				tabIndex={-1}
+				onKeyDown={handleKeyDown}
+				data-testid="queue-action-list"
+				className="flex flex-col gap-0.5 outline-none"
+				role="menu"
+			>
 				{actions.map((action, i) => (
 					<button
 						key={action.id}
