@@ -59,6 +59,12 @@
 				gap: 20px;
 			}
 			.md-splash__wordmark {
+				/* The brand mark never follows the interface font. Without this it
+				   inherits `body`, which resolves --maestro-font-interface, so the
+				   logo changed shape with the user's reading preference. Kept in
+				   sync by hand with WORDMARK_FONT_STACK in src/shared/fontStack.ts;
+				   this paints before any JavaScript runs and cannot import it. */
+				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 				font-weight: 700;
 				font-size: 22px;
 				letter-spacing: 0.35em;

@@ -37,6 +37,28 @@ export const SANS_FALLBACK_STACK =
 	'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
 /**
+ * The MAESTRO wordmark's font. Fixed, and deliberately NOT derived from any
+ * setting.
+ *
+ * The wordmark is a brand mark, not text: it is the one string in the app whose
+ * shape is the point. Letting it inherit the interface font meant the logo
+ * changed identity whenever the user changed their reading font, and the boot
+ * splash and the Left Bar header could disagree about what Maestro looks like
+ * depending on how far startup had progressed.
+ *
+ * JetBrains Mono leads because it BUNDLES with the app (see bundledFonts.ts),
+ * so this resolves identically on every machine rather than depending on what
+ * happens to be installed. The rest of the chain is the pre-bundle fallback,
+ * kept so the mark still renders during the first paint of the boot splash,
+ * before the webfont has loaded.
+ *
+ * Kept in sync by hand with `.splash-title` in src/renderer/index.html and
+ * `.md-splash__wordmark` in src/web-desktop/index.html, which paint before any
+ * JavaScript runs and so cannot import this.
+ */
+export const WORDMARK_FONT_STACK = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+
+/**
  * Ensure a CSS font-family value degrades to monospace rather than the browser's
  * serif default. Returns the value unchanged when it already contains a generic
  * family keyword (`monospace` / `sans-serif` / `serif`), so the built-in default

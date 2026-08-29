@@ -78,6 +78,7 @@ import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
 import { useHeaderTextDelta } from '../../hooks/ui/useHeaderTextDelta';
+import { Wordmark } from '../ui/Wordmark';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
@@ -1382,12 +1383,11 @@ function SessionListInner(props: SessionListProps) {
 								/>
 							</button>
 							{showWordmark && (
-								<h1
-									className="font-bold tracking-widest text-lg shrink-0 whitespace-nowrap"
+								<Wordmark
+									as="h1"
+									className="text-lg shrink-0 whitespace-nowrap"
 									style={{ color: theme.colors.textMain }}
-								>
-									MAESTRO
-								</h1>
+								/>
 							)}
 							{/* Badge Level Indicator */}
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (

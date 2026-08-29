@@ -64,13 +64,23 @@ describe('useHeaderTextDelta', () => {
 		expect(result.current.liveLabel).toBe(0);
 	});
 
-	it('reports extra width for a proportional face', () => {
+	it('reports extra width for the LIVE label under a proportional face', () => {
 		installCanvasStub();
 		useSettingsStore.setState({ fontFamily: 'Inter' });
 		const { result } = renderHook(() => useHeaderTextDelta());
 
-		expect(result.current.wordmark).toBeGreaterThan(0);
 		expect(result.current.liveLabel).toBeGreaterThan(0);
+	});
+
+	it('does NOT widen the wordmark for a proportional face', () => {
+		// The wordmark is pinned to the brand font (see Wordmark.tsx), so the
+		// interface font cannot change its width. Reserving for a widening that
+		// cannot happen would hide the wordmark earlier than necessary.
+		installCanvasStub();
+		useSettingsStore.setState({ fontFamily: 'Inter' });
+		const { result } = renderHook(() => useHeaderTextDelta());
+
+		expect(result.current.wordmark).toBe(0);
 	});
 
 	it('grows the wordmark delta with the root size', () => {

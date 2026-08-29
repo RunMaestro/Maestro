@@ -93,6 +93,10 @@
 			}
 
 			.splash-title {
+				/* Fixed on purpose: the brand mark never follows the interface font.
+				   Kept in sync by hand with WORDMARK_FONT_STACK in
+				   src/shared/fontStack.ts - this paints before any JavaScript runs
+				   and cannot import it. Do not swap this for the CSS variable. */
 				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 				font-weight: 700;
 				font-size: 36px;

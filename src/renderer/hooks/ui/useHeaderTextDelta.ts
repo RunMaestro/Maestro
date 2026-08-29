@@ -18,7 +18,7 @@
 import { useMemo } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { measureTextWidth } from '../../utils/measureTextWidth';
-import { withMonoFallback } from '../../../shared/fontStack';
+import { withMonoFallback, WORDMARK_FONT_STACK } from '../../../shared/fontStack';
 import { resolveSurfaceFontSize } from '../../../shared/typography';
 
 /**
@@ -87,10 +87,16 @@ export function useHeaderTextDelta(): HeaderTextDelta {
 		const baselineWordmarkPx = BASELINE_ROOT_PX * WORDMARK_SIZE_EM;
 
 		return {
+			// Measured in the BRAND font on both sides, not the interface font.
+			// The wordmark is pinned to WORDMARK_FONT_STACK (see Wordmark.tsx), so
+			// changing the interface font no longer changes its width - only the
+			// root size does, since `text-lg` is a rem size. Measuring it against
+			// the interface family would reserve header width for a widening that
+			// cannot happen, and would hide the wordmark earlier than necessary.
 			wordmark: widthDelta(
 				WORDMARK_TEXT,
-				`bold ${wordmarkPx}px ${family}`,
-				`bold ${baselineWordmarkPx}px ${BASELINE_FONT_FAMILY}`,
+				`bold ${wordmarkPx}px ${WORDMARK_FONT_STACK}`,
+				`bold ${baselineWordmarkPx}px ${WORDMARK_FONT_STACK}`,
 				wordmarkPx * WORDMARK_TRACKING_EM,
 				baselineWordmarkPx * WORDMARK_TRACKING_EM
 			),
