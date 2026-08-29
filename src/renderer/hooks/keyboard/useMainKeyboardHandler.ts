@@ -20,6 +20,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
@@ -1161,6 +1162,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (fontZoom !== FONT_ZOOM_DEFAULT) setFontZoom(FONT_ZOOM_DEFAULT);
 				trackShortcut('fontSizeReset');
 				return;
+			}
+
+			// A group chat has no AI tabs, so the tab-cycling chord is free there and
+			// walks the Right Bar's two panels (Participants / History) instead. It
+			// opens the Right Bar when it is closed: switching a pane the user cannot
+			// see is indistinguishable from the shortcut doing nothing.
+			if (ctx.activeGroupChatId) {
+				const wantsTabCycle = ctx.isTabShortcut(e, 'nextTab') || ctx.isTabShortcut(e, 'prevTab');
+				if (wantsTabCycle) {
+					e.preventDefault();
+					const { rightPanelOpen, setRightPanelOpen } = useUIStore.getState();
+					if (!rightPanelOpen) setRightPanelOpen(true);
+					toggleGroupChatRightTab();
+					trackShortcut(ctx.isTabShortcut(e, 'nextTab') ? 'nextTab' : 'prevTab');
+					return;
+				}
 			}
 
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).

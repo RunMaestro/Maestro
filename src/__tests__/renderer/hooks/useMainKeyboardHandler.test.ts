@@ -7,6 +7,7 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 
 // Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
 // wiring rather than re-running the layout transform (covered in tileNewTab.test).
@@ -4387,5 +4388,93 @@ describe('useMainKeyboardHandler - openPromptComposer', () => {
 		press({ activeSession: { id: 'agent-1', inputMode: 'terminal' } });
 
 		expect(useModalStore.getState().isOpen('promptComposer')).toBe(false);
+	});
+});
+
+// ============================================================================
+// Group chat Right Bar: Cmd+Shift+[ / Cmd+Shift+]
+// ============================================================================
+
+/**
+ * A group chat has no AI tabs, so the tab-cycling chord is dead there. It walks
+ * the Right Bar's two panels instead - the only two views a room has.
+ */
+describe('group chat right panel cycling', () => {
+	const pressTabCycle = (shortcutId: 'nextTab' | 'prevTab', overrides: Record<string, unknown>) => {
+		// The store is what the app itself reads back to persist the choice, so it
+		// has to agree with the context object the handler is gated on.
+		useGroupChatStore.setState({
+			activeGroupChatId: (overrides.activeGroupChatId as string | null) ?? null,
+		} as never);
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
+			activeSessionId: 'agent-1',
+			activeSession: { id: 'agent-1', name: 'Agent', inputMode: 'ai' },
+			...overrides,
+		});
+
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: shortcutId === 'nextTab' ? ']' : '[',
+					metaKey: true,
+					shiftKey: true,
+					bubbles: true,
+					cancelable: true,
+				})
+			);
+		});
+	};
+
+	beforeEach(() => {
+		useGroupChatStore.setState({ groupChatRightTab: 'participants' } as never);
+		useUIStore.setState({ rightPanelOpen: true } as never);
+	});
+
+	it('switches Participants -> History on Cmd+Shift+]', () => {
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
+	});
+
+	it('switches back on Cmd+Shift+[ - two panels, so either direction flips', () => {
+		useGroupChatStore.setState({ groupChatRightTab: 'history' } as never);
+
+		pressTabCycle('prevTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('participants');
+	});
+
+	it('remembers the panel for that chat', () => {
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatRightTab:chat-1', 'history');
+	});
+
+	it('opens the Right Bar when it is closed - a hidden switch reads as a dead key', () => {
+		useUIStore.setState({ rightPanelOpen: false } as never);
+
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
+	});
+
+	it('leaves the chord to the agent tabs when no room is open', () => {
+		const navigateToNextUnifiedTab = vi.fn().mockReturnValue(null);
+
+		pressTabCycle('nextTab', {
+			activeGroupChatId: null,
+			setSessions: vi.fn((updater: unknown) =>
+				typeof updater === 'function'
+					? (updater as (p: unknown[]) => unknown)([{ id: 'agent-1' }])
+					: undefined
+			),
+			navigateToNextUnifiedTab,
+		});
+
+		expect(navigateToNextUnifiedTab).toHaveBeenCalled();
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('participants');
 	});
 });

@@ -135,6 +135,10 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
 | Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
 
+In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
+Right Bar instead, switching between the Participants and History panels. The Right
+Bar opens if it was closed.
+
 ### Tab Switcher
 
 The Tab Switcher provides fuzzy search across all open tabs with quick navigation:
