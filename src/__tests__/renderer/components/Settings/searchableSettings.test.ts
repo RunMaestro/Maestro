@@ -73,8 +73,8 @@ describe('searchableSettings', () => {
 		});
 
 		it('should match by label', () => {
-			const results = searchSettings('Font Family');
-			expect(results.some((s) => s.id === 'display-font-family')).toBe(true);
+			const results = searchSettings('Fonts');
+			expect(results.some((s) => s.id === 'display-fonts')).toBe(true);
 		});
 
 		it('should match by description', () => {
@@ -166,9 +166,13 @@ describe('searchableSettings', () => {
 			['bigger', 'display-font-zoom'],
 			['factory reset', 'display-typography-reset'],
 			['hacker', 'display-typography-reset'],
-			['ai chat font', 'display-chat-font-family'],
-			['file preview font', 'display-file-preview-font-family'],
-			['file editor font', 'display-file-editor-font-family'],
+			// The five per-surface pickers are one grouped section now, so every
+			// surface's name has to surface that one entry.
+			['ai chat font', 'display-fonts'],
+			['file preview font', 'display-fonts'],
+			['file editor font', 'display-fonts'],
+			['terminal font', 'display-fonts'],
+			['custom font', 'display-fonts'],
 			['ai response', 'display-message-alignment'],
 			['file indexing', 'display-file-indexing'],
 			['file panel', 'display-file-indexing'],

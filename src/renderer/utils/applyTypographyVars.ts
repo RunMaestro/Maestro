@@ -24,6 +24,8 @@
 import {
 	MONO_ACCENT_VAR,
 	TYPOGRAPHY_SURFACE_LIST,
+	canInherit,
+	resolveInheritedFont,
 	resolveSurfaceFontSize,
 	type TypographySurface,
 } from '../../shared/typography';
@@ -47,16 +49,20 @@ export function computeTypographyVars(input: TypographyVarInput): Record<string,
 	const vars: Record<string, string> = {};
 	const interfaceFont = input.fonts.interface;
 
+	// The two roots every other surface may follow, resolved once.
+	const roots = { interface: interfaceFont, terminal: input.fonts.terminal };
+
 	for (const spec of TYPOGRAPHY_SURFACE_LIST) {
-		// `resolveSurfaceFont` applies the inherit-then-fallback chain, so an
-		// unset surface lands on the interface font and a bare family name
-		// still degrades to monospace rather than the browser's serif default.
-		vars[spec.fontVar] = spec.inheritable
-			? resolveSurfaceFont(input.fonts[spec.id], interfaceFont)
+		// `resolveInheritedFont` walks at most one hop of inheritance (a surface
+		// may follow the terminal, which may itself follow the interface), and
+		// `resolveSurfaceFont` then appends the fallback chain so a bare family
+		// name degrades to monospace rather than the browser's serif default.
+		vars[spec.fontVar] = canInherit(spec)
+			? resolveSurfaceFont(resolveInheritedFont(input.fonts[spec.id], roots), interfaceFont)
 			: withMonoFallback(interfaceFont);
 
 		vars[spec.sizeVar] = `${resolveSurfaceFontSize(
-			spec.inheritable ? input.sizes[spec.id] : input.baseSize,
+			canInherit(spec) ? input.sizes[spec.id] : input.baseSize,
 			input.baseSize,
 			input.zoom
 		)}px`;
@@ -66,7 +72,10 @@ export function computeTypographyVars(input: TypographyVarInput): Record<string,
 	// `font-mono` marks the places that want a code face specifically, and the
 	// terminal font is the user's explicit answer to "what should code look
 	// like". Falls through to the interface font when the terminal inherits.
-	vars[MONO_ACCENT_VAR] = resolveSurfaceFont(input.fonts.terminal, interfaceFont);
+	vars[MONO_ACCENT_VAR] = resolveSurfaceFont(
+		resolveInheritedFont(input.fonts.terminal, roots),
+		interfaceFont
+	);
 
 	// Drives the .modal-w-* utilities so fixed-width modals grow with the zoom.
 	// 14px is the design baseline the widths were drawn against.

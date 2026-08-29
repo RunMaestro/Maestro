@@ -17,6 +17,7 @@ import {
 	SURFACE_FONT_SIZE_MIN,
 	TYPOGRAPHY_SURFACE_LIST,
 	TYPOGRAPHY_SURFACE_SPECS,
+	canInherit,
 	clampFontZoom,
 	clampSurfaceFontSize,
 	type TypographySurface,
@@ -147,7 +148,7 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		// The interface surface is the base of the inheritance chain, so a 0
 		// there would mean "inherit from myself". Route it to setFontSize,
 		// which clamps against the base bounds instead.
-		if (!spec.inheritable) {
+		if (!canInherit(spec)) {
 			const clamped = Math.max(
 				SURFACE_FONT_SIZE_MIN,
 				Math.min(SURFACE_FONT_SIZE_MAX, Math.round(value) || BASE_FONT_SIZE_DEFAULT)
@@ -261,7 +262,7 @@ export function hydrateThemeSettings(
 		patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
 
 	for (const spec of TYPOGRAPHY_SURFACE_LIST) {
-		if (!spec.inheritable) continue;
+		if (!canInherit(spec)) continue;
 		const raw = allSettings[spec.sizeKey];
 		if (raw !== undefined) {
 			(patch as Record<string, unknown>)[spec.sizeKey] = clampSurfaceFontSize(Number(raw));

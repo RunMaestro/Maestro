@@ -54,7 +54,7 @@ describe('FontConfigurationPanel', () => {
 	it('leaves the inherit option selectable without a Current group', () => {
 		renderPanel({
 			fontFamily: '',
-			inheritOption: { value: '', label: 'Same as interface font' },
+			inheritOptions: [{ value: '', label: 'Same as interface font' }],
 		});
 
 		expect(screen.getByRole('combobox')).toHaveValue('');
@@ -144,7 +144,7 @@ describe('FontConfigurationPanel', () => {
 			renderPanel({
 				fontFamily: '',
 				setFontFamily,
-				inheritOption: { value: '', label: 'Same as interface font' },
+				inheritOptions: [{ value: '', label: 'Same as interface font' }],
 			});
 
 			fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });

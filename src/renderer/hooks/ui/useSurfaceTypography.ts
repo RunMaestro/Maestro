@@ -19,6 +19,8 @@
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	TYPOGRAPHY_SURFACE_SPECS,
+	canInherit,
+	resolveInheritedFont,
 	resolveSurfaceFontSize,
 	type TypographySurface,
 } from '../../../shared/typography';
@@ -36,9 +38,12 @@ export function useSurfaceFontFamily(surface: TypographySurface): string {
 	return useSettingsStore((s) => {
 		const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
 		const interfaceFont = s.fontFamily;
-		if (!spec.inheritable) return withMonoFallback(interfaceFont);
+		if (!canInherit(spec)) return withMonoFallback(interfaceFont);
+		const stored = (s as unknown as Record<string, string | undefined>)[spec.fontKey];
+		// One hop of inheritance first (a surface may follow the terminal), then
+		// the fallback chain.
 		return resolveSurfaceFont(
-			(s as unknown as Record<string, string | undefined>)[spec.fontKey],
+			resolveInheritedFont(stored, { interface: interfaceFont, terminal: s.terminalFontFamily }),
 			interfaceFont
 		);
 	});
@@ -48,7 +53,7 @@ export function useSurfaceFontFamily(surface: TypographySurface): string {
 export function useSurfaceFontSize(surface: TypographySurface): number {
 	return useSettingsStore((s) => {
 		const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
-		const own = spec.inheritable
+		const own = canInherit(spec)
 			? Number((s as unknown as Record<string, number | undefined>)[spec.sizeKey] ?? 0)
 			: s.fontSize;
 		return resolveSurfaceFontSize(own, s.fontSize, s.fontZoom);

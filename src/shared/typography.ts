@@ -23,13 +23,40 @@
 /** Ordered so the Settings tab and the CLI list surfaces the same way. */
 export const TYPOGRAPHY_SURFACES = [
 	'interface',
-	'chat',
 	'terminal',
+	'chat',
 	'filePreview',
 	'fileEditor',
 ] as const;
 
 export type TypographySurface = (typeof TYPOGRAPHY_SURFACES)[number];
+
+/**
+ * The two surfaces another surface may follow.
+ *
+ * They are the two typographic jobs the app actually has: `interface` is the
+ * proportional reading face, `terminal` is the fixed-width working face. Every
+ * other surface is one or the other, so pointing it at a root means the user
+ * picks a face once and it propagates - rather than setting the same monospace
+ * font in three places and keeping them in sync by hand.
+ */
+export const TYPOGRAPHY_ROOTS = ['interface', 'terminal'] as const;
+export type TypographyRoot = (typeof TYPOGRAPHY_ROOTS)[number];
+
+/**
+ * Sentinel stored in a surface's font setting to mean "follow the terminal".
+ *
+ * Deliberately NOT a bare empty string, which already means "follow the
+ * interface" and must keep meaning that - every existing install stores `''`
+ * on surfaces it has never customized, so re-pointing that value would silently
+ * move them all onto the terminal font. Prefixed with `@` because a CSS
+ * font-family can never begin with one, so this cannot collide with a real
+ * font name a user types into the custom-font box.
+ */
+export const INHERIT_TERMINAL = '@terminal';
+
+/** Stored value meaning "follow the interface font". The historical default. */
+export const INHERIT_INTERFACE = '';
 
 export interface TypographySurfaceSpec {
 	id: TypographySurface;
@@ -48,10 +75,15 @@ export interface TypographySurfaceSpec {
 	/** CSS custom property carrying the resolved size in px, zoom applied. */
 	sizeVar: string;
 	/**
-	 * Whether this surface may inherit from the interface surface. False only
-	 * for `interface` itself, which is the root of the chain.
+	 * Which surfaces this one may inherit from, in the order the picker offers
+	 * them. Empty for `interface`, the root of everything.
+	 *
+	 * Exactly two levels by construction: `interface` inherits from nothing,
+	 * `terminal` may only inherit `interface`, and every other surface may
+	 * inherit either root. A cycle is therefore impossible without a graph walk
+	 * to detect one - the type simply cannot express a third level.
 	 */
-	inheritable: boolean;
+	inheritsFrom: readonly TypographyRoot[];
 	/** CLI alias accepted in addition to the id (`preview` for `filePreview`). */
 	aliases: string[];
 	/** One-line description for `maestro-cli display font --list` and Settings. */
@@ -66,9 +98,9 @@ export const TYPOGRAPHY_SURFACE_SPECS: Record<TypographySurface, TypographySurfa
 		sizeKey: 'fontSize',
 		fontVar: '--maestro-font-interface',
 		sizeVar: '--maestro-size-interface',
-		inheritable: false,
+		inheritsFrom: [],
 		aliases: ['ui', 'app'],
-		description: 'The whole app, and the default every other surface inherits.',
+		description: 'The whole app, and the proportional face other surfaces can follow.',
 	},
 	chat: {
 		id: 'chat',
@@ -77,7 +109,7 @@ export const TYPOGRAPHY_SURFACE_SPECS: Record<TypographySurface, TypographySurfa
 		sizeKey: 'chatFontSize',
 		fontVar: '--maestro-font-chat',
 		sizeVar: '--maestro-size-chat',
-		inheritable: true,
+		inheritsFrom: ['interface', 'terminal'],
 		aliases: ['ai', 'transcript'],
 		description: 'The AI transcript, in the main panel and in tiled panes.',
 	},
@@ -88,9 +120,12 @@ export const TYPOGRAPHY_SURFACE_SPECS: Record<TypographySurface, TypographySurfa
 		sizeKey: 'terminalFontSize',
 		fontVar: '--maestro-font-terminal',
 		sizeVar: '--maestro-size-terminal',
-		inheritable: true,
+		// Only the interface. Terminal is itself a root, so letting it follow
+		// another surface is what would open the door to a cycle.
+		inheritsFrom: ['interface'],
 		aliases: ['shell', 'command'],
-		description: 'The command terminal. A Nerd Font here gets shell prompt glyphs.',
+		description:
+			'The command terminal, and the fixed-width face other surfaces can follow. A Nerd Font here gets shell prompt glyphs.',
 	},
 	filePreview: {
 		id: 'filePreview',
@@ -99,7 +134,7 @@ export const TYPOGRAPHY_SURFACE_SPECS: Record<TypographySurface, TypographySurfa
 		sizeKey: 'filePreviewFontSize',
 		fontVar: '--maestro-font-file-preview',
 		sizeVar: '--maestro-size-file-preview',
-		inheritable: true,
+		inheritsFrom: ['interface', 'terminal'],
 		aliases: ['preview', 'reader'],
 		description: 'A file being read.',
 	},
@@ -110,7 +145,7 @@ export const TYPOGRAPHY_SURFACE_SPECS: Record<TypographySurface, TypographySurfa
 		sizeKey: 'fileEditorFontSize',
 		fontVar: '--maestro-font-file-editor',
 		sizeVar: '--maestro-size-file-editor',
-		inheritable: true,
+		inheritsFrom: ['interface', 'terminal'],
 		aliases: ['editor', 'edit'],
 		description: 'A file being edited. Monospace keeps the gutter aligned with the text.',
 	},
@@ -171,6 +206,83 @@ export function resolveSurfaceFontSize(
 	const base = baseSize > 0 ? baseSize : BASE_FONT_SIZE_DEFAULT;
 	const own = surfaceSize && surfaceSize > 0 ? surfaceSize : base;
 	return Math.round(own * clampFontZoom(zoom) * 10) / 10;
+}
+
+/** Whether a surface may follow another - false only for `interface`. */
+export function canInherit(spec: TypographySurfaceSpec): boolean {
+	return spec.inheritsFrom.length > 0;
+}
+
+/** Whether a stored font value is the "follow the terminal" sentinel. */
+export function isTerminalInherit(value: string | undefined | null): boolean {
+	return (value ?? '').trim() === INHERIT_TERMINAL;
+}
+
+/** Whether a stored font value means "follow the interface" (the empty default). */
+export function isInterfaceInherit(value: string | undefined | null): boolean {
+	return (value ?? '').trim() === '';
+}
+
+/**
+ * Which root a surface is currently following, or null when it carries a font
+ * of its own. Drives the picker's selected option and the CLI's readout.
+ */
+export function resolveInheritRoot(value: string | undefined | null): TypographyRoot | null {
+	if (isTerminalInherit(value)) return 'terminal';
+	if (isInterfaceInherit(value)) return 'interface';
+	return null;
+}
+
+/**
+ * The raw font value a surface should use, following at most one hop of
+ * inheritance.
+ *
+ * Returns the STORED value, not a CSS stack - `resolveSurfaceFont` in
+ * fontStack.ts still owns appending the fallback chain. Split that way because
+ * the CLI and the Settings picker want to know which font was chosen, while
+ * only the renderer needs it turned into something CSS can use.
+ *
+ * One hop is all that is needed and all that is allowed: `terminal` may only
+ * follow `interface`, so a surface pointing at the terminal resolves in two
+ * steps at most and can never revisit a surface it has already passed through.
+ */
+export function resolveInheritedFont(
+	surfaceFont: string | undefined | null,
+	roots: { interface: string | undefined | null; terminal: string | undefined | null }
+): string {
+	const value = (surfaceFont ?? '').trim();
+	if (value && !isTerminalInherit(value)) return value;
+
+	if (isTerminalInherit(value)) {
+		const terminal = (roots.terminal ?? '').trim();
+		// The terminal may itself be following the interface, which is the second
+		// and final hop. Falling through to the interface here rather than
+		// returning empty is what stops a surface from losing its font entirely
+		// when the terminal has not been customized.
+		if (terminal && !isTerminalInherit(terminal)) return terminal;
+	}
+
+	return (roots.interface ?? '').trim();
+}
+
+/** The stored value that points a surface at a given root. */
+export function inheritValueForRoot(root: TypographyRoot): string {
+	return root === 'terminal' ? INHERIT_TERMINAL : INHERIT_INTERFACE;
+}
+
+/**
+ * The "follow another surface" entries a surface's picker should offer, in
+ * order. Built here rather than in the component so the Settings picker and
+ * the CLI cannot disagree about which roots a surface may follow.
+ */
+export function inheritOptionsForSurface(
+	spec: TypographySurfaceSpec
+): Array<{ value: string; label: string; root: TypographyRoot }> {
+	return spec.inheritsFrom.map((root) => ({
+		value: inheritValueForRoot(root),
+		label: `Same as ${TYPOGRAPHY_SURFACE_SPECS[root].label.toLowerCase()} font`,
+		root,
+	}));
 }
 
 /** Resolve a CLI/user-supplied surface name, accepting ids and aliases. */

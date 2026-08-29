@@ -1191,7 +1191,7 @@ const display = program
 display
 	.command('font [surface] [value]')
 	.description(
-		'Get or set a surface font. Surfaces: interface, chat, terminal, filePreview, fileEditor. Pass "inherit" to follow the interface font. Omit the surface to list all.'
+		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((surface: string | undefined, value: string | undefined, options: { json?: boolean }) => {

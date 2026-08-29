@@ -5,7 +5,12 @@ import {
 	FONT_ZOOM_MIN,
 	SURFACE_FONT_SIZE_MAX,
 	SURFACE_FONT_SIZE_MIN,
+	INHERIT_TERMINAL,
+	TYPOGRAPHY_ROOTS,
 	TYPOGRAPHY_SURFACES,
+	inheritOptionsForSurface,
+	resolveInheritRoot,
+	resolveInheritedFont,
 	TYPOGRAPHY_SURFACE_LIST,
 	TYPOGRAPHY_SURFACE_SPECS,
 	clampFontZoom,
@@ -23,12 +28,36 @@ describe('typography surface registry', () => {
 		expect(new Set(vars).size).toBe(vars.length);
 	});
 
-	it('makes exactly one surface the non-inheriting base', () => {
-		// Inheritance resolves toward the interface surface, so a second root
-		// would be unreachable and a zero-root would be a cycle.
-		const roots = TYPOGRAPHY_SURFACE_LIST.filter((s) => !s.inheritable);
-		expect(roots).toHaveLength(1);
-		expect(roots[0].id).toBe('interface');
+	it('makes exactly one surface inherit from nothing', () => {
+		// `interface` is the base of the whole graph. `terminal` is a root others
+		// may follow, but it still follows the interface itself.
+		const bases = TYPOGRAPHY_SURFACE_LIST.filter((s) => s.inheritsFrom.length === 0);
+		expect(bases).toHaveLength(1);
+		expect(bases[0].id).toBe('interface');
+	});
+
+	it('keeps the inheritance graph exactly two levels deep', () => {
+		// This is what makes a cycle impossible without a graph walk to detect
+		// one: every surface a root can follow must itself follow nothing.
+		for (const root of TYPOGRAPHY_ROOTS) {
+			for (const parent of TYPOGRAPHY_SURFACE_SPECS[root].inheritsFrom) {
+				expect(TYPOGRAPHY_SURFACE_SPECS[parent].inheritsFrom).toEqual([]);
+			}
+		}
+	});
+
+	it('only ever points a surface at a declared root', () => {
+		for (const spec of TYPOGRAPHY_SURFACE_LIST) {
+			for (const parent of spec.inheritsFrom) {
+				expect(TYPOGRAPHY_ROOTS).toContain(parent);
+			}
+		}
+	});
+
+	it('never lets a surface inherit from itself', () => {
+		for (const spec of TYPOGRAPHY_SURFACE_LIST) {
+			expect(spec.inheritsFrom).not.toContain(spec.id);
+		}
 	});
 
 	it('keeps the ordered list and the spec map in agreement', () => {
@@ -136,5 +165,80 @@ describe('resolveSurfaceFontSize', () => {
 
 	it('survives a zero or corrupted base', () => {
 		expect(resolveSurfaceFontSize(0, 0, 1)).toBeGreaterThan(0);
+	});
+});
+
+describe('two-root inheritance', () => {
+	const roots = { interface: 'Inter', terminal: 'JetBrains Mono' };
+
+	it('treats the empty string as "follow the interface"', () => {
+		// Every existing install stores '' on surfaces it never customized, so
+		// this meaning must not move.
+		expect(resolveInheritedFont('', roots)).toBe('Inter');
+		expect(resolveInheritRoot('')).toBe('interface');
+	});
+
+	it('follows the terminal when pointed at it', () => {
+		expect(resolveInheritedFont(INHERIT_TERMINAL, roots)).toBe('JetBrains Mono');
+		expect(resolveInheritRoot(INHERIT_TERMINAL)).toBe('terminal');
+	});
+
+	it('prefers a font of its own over either root', () => {
+		expect(resolveInheritedFont('Georgia', roots)).toBe('Georgia');
+		expect(resolveInheritRoot('Georgia')).toBeNull();
+	});
+
+	it('falls through to the interface when the terminal itself inherits', () => {
+		// The second and final hop. Returning empty here would leave the surface
+		// with no font at all.
+		expect(resolveInheritedFont(INHERIT_TERMINAL, { interface: 'Inter', terminal: '' })).toBe(
+			'Inter'
+		);
+	});
+
+	it('cannot loop, even if the terminal somehow stored the sentinel itself', () => {
+		// Defensive: the UI cannot produce this, but a hand-edited settings file
+		// could, and it must terminate rather than recurse.
+		expect(
+			resolveInheritedFont(INHERIT_TERMINAL, { interface: 'Inter', terminal: INHERIT_TERMINAL })
+		).toBe('Inter');
+	});
+
+	it('ignores surrounding whitespace on a stored value', () => {
+		expect(resolveInheritedFont('   ', roots)).toBe('Inter');
+		expect(resolveInheritedFont(` ${INHERIT_TERMINAL} `, roots)).toBe('JetBrains Mono');
+	});
+
+	it('uses a sentinel no real font name can collide with', () => {
+		// A CSS font-family cannot begin with '@', so a user typing a name into
+		// the custom-font box can never accidentally produce this value.
+		expect(INHERIT_TERMINAL.startsWith('@')).toBe(true);
+	});
+
+	describe('picker options', () => {
+		it('offers both roots to a dependent surface', () => {
+			const options = inheritOptionsForSurface(TYPOGRAPHY_SURFACE_SPECS.chat);
+			expect(options.map((o) => o.root)).toEqual(['interface', 'terminal']);
+			expect(options.map((o) => o.value)).toEqual(['', INHERIT_TERMINAL]);
+		});
+
+		it('offers only the interface to the terminal', () => {
+			// Terminal is a root; letting it follow another surface is what would
+			// open the door to a cycle.
+			const options = inheritOptionsForSurface(TYPOGRAPHY_SURFACE_SPECS.terminal);
+			expect(options.map((o) => o.root)).toEqual(['interface']);
+		});
+
+		it('offers nothing to the interface', () => {
+			expect(inheritOptionsForSurface(TYPOGRAPHY_SURFACE_SPECS.interface)).toEqual([]);
+		});
+
+		it('labels each option after the surface it follows', () => {
+			const options = inheritOptionsForSurface(TYPOGRAPHY_SURFACE_SPECS.fileEditor);
+			expect(options.map((o) => o.label)).toEqual([
+				'Same as interface font',
+				'Same as terminal font',
+			]);
+		});
 	});
 });

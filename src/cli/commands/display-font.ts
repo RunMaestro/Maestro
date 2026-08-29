@@ -15,7 +15,11 @@ import {
 	clampFontZoom,
 	clampSurfaceFontSize,
 	resolveSurfaceFontSize,
+	resolveInheritRoot,
 	resolveTypographySurface,
+	canInherit,
+	inheritValueForRoot,
+	TYPOGRAPHY_ROOTS,
 	SURFACE_FONT_SIZE_MAX,
 	SURFACE_FONT_SIZE_MIN,
 } from '../../shared/typography';
@@ -71,10 +75,13 @@ export function displayFontList(options: DisplayFontOptions): void {
 				font: rawFont,
 				// What actually renders, so the output answers "what am I looking
 				// at" rather than only "what is stored".
-				effectiveFont: rawFont || (spec.inheritable ? '(inherits interface)' : rawFont),
+				effectiveFont:
+					resolveInheritRoot(rawFont) && canInherit(spec)
+						? `(inherits ${resolveInheritRoot(rawFont)})`
+						: rawFont,
 				size: rawSize,
 				effectiveSize: resolveSurfaceFontSize(
-					spec.inheritable ? rawSize : baseSize,
+					canInherit(spec) ? rawSize : baseSize,
 					baseSize,
 					zoom
 				),
@@ -117,21 +124,39 @@ export function displayFont(
 
 		if (value === undefined) {
 			const current = String(readSettingValue(spec.fontKey) ?? '');
+			const root = resolveInheritRoot(current);
 			if (options.json) {
-				emitJsonl({ type: 'display-font', surface: spec.id, font: current });
+				emitJsonl({ type: 'display-font', surface: spec.id, font: current, inheritsFrom: root });
 			} else {
-				console.log(current || '(inherits the interface font)');
+				console.log(root ? `(inherits the ${root} font)` : current);
 			}
 			return;
 		}
 
-		// `inherit` is the spelling of the empty string, which is otherwise
-		// awkward to pass through a shell and easy to confuse with "unset".
-		const normalized = value.trim().toLowerCase() === 'inherit' ? '' : value.trim();
-		if (normalized === '' && !spec.inheritable) {
-			throw new Error(
-				`The ${spec.label} font is the base every other surface inherits, so it cannot itself inherit.`
-			);
+		// `inherit` and `inherit:<root>` are the spellings of the sentinels, which
+		// are otherwise awkward to pass through a shell: the empty string is easy
+		// to confuse with "unset", and `@terminal` needs quoting in most shells.
+		// Bare `inherit` keeps meaning the interface, so existing scripts are
+		// unaffected.
+		const raw = value.trim();
+		const inheritMatch = /^inherit(?::(.+))?$/i.exec(raw);
+		let normalized = raw;
+		if (inheritMatch) {
+			const requested = (inheritMatch[1] ?? 'interface').toLowerCase();
+			const root = TYPOGRAPHY_ROOTS.find((candidate) => candidate === requested);
+			if (!root) {
+				throw new Error(
+					`Unknown inherit source "${inheritMatch[1]}". Expected one of: ${TYPOGRAPHY_ROOTS.join(', ')}.`
+				);
+			}
+			if (!spec.inheritsFrom.includes(root)) {
+				throw new Error(
+					spec.inheritsFrom.length === 0
+						? `The ${spec.label} font is a root every other surface can follow, so it cannot itself inherit.`
+						: `The ${spec.label} font cannot follow the ${root} font. It may follow: ${spec.inheritsFrom.join(', ')}.`
+				);
+			}
+			normalized = inheritValueForRoot(root);
 		}
 
 		writeSettingValue(spec.fontKey, normalized);
@@ -144,7 +169,7 @@ export function displayFont(
 			formatSuccess(
 				normalized
 					? `${spec.label} font set to "${normalized}"`
-					: `${spec.label} font now inherits the interface font`
+					: `${spec.label} font now inherits the ${resolveInheritRoot(normalized)} font`
 			)
 		);
 		// A bundled font is guaranteed to render; anything else may silently
@@ -190,7 +215,7 @@ export function displayFontSize(
 		}
 
 		const wantsInherit = value.trim().toLowerCase() === 'inherit';
-		if (wantsInherit && !spec.inheritable) {
+		if (wantsInherit && !canInherit(spec)) {
 			throw new Error(
 				`The ${spec.label} size is the base every other surface inherits, so it cannot itself inherit.`
 			);

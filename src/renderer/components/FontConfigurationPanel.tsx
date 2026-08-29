@@ -74,12 +74,23 @@ export interface FontConfigurationPanelProps {
 	/** Optional helper text rendered under the heading. */
 	description?: string;
 	/**
-	 * Extra option rendered at the top of the dropdown, e.g. an "inherit" entry.
-	 * Its `value` should be the empty string so it maps to the stored default.
+	 * Options rendered above the font groups, for the roots this surface may
+	 * follow. A list rather than a single entry because a surface can follow
+	 * either the interface or the terminal, and the picker has to offer both.
 	 */
-	inheritOption?: { value: string; label: string };
+	inheritOptions?: ReadonlyArray<{ value: string; label: string }>;
 	/** Per-surface size control rendered beside the picker. */
 	sizeControl?: React.ReactNode;
+	/**
+	 * Drop the section heading and the custom-font manager, leaving just the
+	 * dropdown and its size control.
+	 *
+	 * The custom-font list is global, so rendering its input once per surface
+	 * showed five controls editing one list. In compact mode it is hoisted to a
+	 * single row above the surfaces (see CustomFontsRow) and the pickers below
+	 * become small enough to sit two across.
+	 */
+	compact?: boolean;
 }
 
 /**
@@ -106,8 +117,9 @@ export function FontConfigurationPanel({
 	theme,
 	heading = 'Interface Font',
 	description,
-	inheritOption,
+	inheritOptions,
 	sizeControl,
+	compact = false,
 }: FontConfigurationPanelProps) {
 	const [customFontInput, setCustomFontInput] = useState('');
 
@@ -185,7 +197,7 @@ export function FontConfigurationPanel({
 	// can never misreport what is actually set.
 	const unlistedValue = useMemo(() => {
 		if (!fontFamily) return null;
-		if (inheritOption && fontFamily === inheritOption.value) return null;
+		if (inheritOptions?.some((option) => option.value === fontFamily)) return null;
 		const known = [
 			...BUNDLED_FONT_NAMES,
 			...COMMON_MONOSPACE_FONTS,
@@ -194,13 +206,13 @@ export function FontConfigurationPanel({
 			...installedFonts,
 		];
 		return known.includes(fontFamily) ? null : fontFamily;
-	}, [fontFamily, customFonts, installedFonts, inheritOption]);
+	}, [fontFamily, customFonts, installedFonts, inheritOptions]);
 
 	// Every value the dropdown offers, in the order it is rendered, so Up/Down
 	// can walk the whole list rather than just one group.
 	const orderedFontValues = useMemo(() => {
 		const values: string[] = [];
-		if (inheritOption) values.push(inheritOption.value);
+		if (inheritOptions) values.push(...inheritOptions.map((option) => option.value));
 		if (unlistedValue) values.push(unlistedValue);
 		values.push(
 			...BUNDLED_FONT_NAMES,
@@ -211,7 +223,7 @@ export function FontConfigurationPanel({
 		);
 		return values;
 	}, [
-		inheritOption,
+		inheritOptions,
 		unlistedValue,
 		systemMonospaceFonts,
 		systemProportionalFonts,
@@ -256,8 +268,12 @@ export function FontConfigurationPanel({
 
 	return (
 		<div>
-			<SettingsSectionHeading icon={Type}>{heading}</SettingsSectionHeading>
-			{description && <p className="text-xs opacity-60 mb-2 -mt-1">{description}</p>}
+			{!compact && (
+				<>
+					<SettingsSectionHeading icon={Type}>{heading}</SettingsSectionHeading>
+					{description && <p className="text-xs opacity-60 mb-2 -mt-1">{description}</p>}
+				</>
+			)}
 			{/*
 			 * Keep the <select> mounted while fonts lazy-load. Swapping it for a
 			 * "Loading fonts..." placeholder mid-click unmounts the element that
@@ -274,7 +290,11 @@ export function FontConfigurationPanel({
 				className="w-full p-2 rounded border bg-transparent outline-none mb-1"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 			>
-				{inheritOption && <option value={inheritOption.value}>{inheritOption.label}</option>}
+				{inheritOptions?.map((option) => (
+					<option key={option.value} value={option.value}>
+						{option.label}
+					</option>
+				))}
 				{unlistedValue && (
 					<optgroup label="Current">
 						<option value={unlistedValue}>{unlistedValue}</option>
@@ -332,63 +352,72 @@ export function FontConfigurationPanel({
 				)}
 			</select>
 			<div className="flex items-center justify-between gap-3 min-h-[1.5rem] mb-2">
-				<span className="text-xs opacity-50">
-					{fontLoading
-						? 'Loading installed fonts...'
-						: canAnnotateAvailability || !fontsLoaded
-							? 'Press Up/Down to preview each font.'
-							: "Installed fonts couldn't be listed, so none are marked missing."}
-				</span>
+				{/* The hint is one line for the whole group in compact mode, printed
+				    once above the grid rather than repeated under every picker. */}
+				{!compact && (
+					<span className="text-xs opacity-50">
+						{fontLoading
+							? 'Loading installed fonts...'
+							: canAnnotateAvailability || !fontsLoaded
+								? 'Press Up/Down to preview each font.'
+								: "Installed fonts couldn't be listed, so none are marked missing."}
+					</span>
+				)}
 				{sizeControl}
 			</div>
 
-			<div className="space-y-2">
-				<div className="flex gap-2">
-					<input
-						type="text"
-						value={customFontInput}
-						onChange={(e) => setCustomFontInput(e.target.value)}
-						onKeyDown={handleKeyDown}
-						placeholder="Add custom font name..."
-						className="flex-1 p-2 rounded border bg-transparent outline-none text-sm"
-						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-					/>
-					<button
-						onClick={handleAddCustomFont}
-						className="px-3 py-2 rounded text-xs font-bold"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
-					>
-						Add
-					</button>
-				</div>
-
-				{customFonts.length > 0 && (
-					<div className="flex flex-wrap gap-2">
-						{customFonts.map((font) => (
-							<div
-								key={font}
-								className="flex items-center gap-2 px-2 py-1 rounded text-xs"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-								}}
-							>
-								<span style={{ color: theme.colors.textMain }}>{font}</span>
-								<button
-									onClick={() => onRemoveCustomFont(font)}
-									className="hover:opacity-70"
-									style={{ color: theme.colors.error }}
-								>
-									×
-								</button>
-							</div>
-						))}
+			{/* Hoisted out of the per-surface pickers in compact mode: the list is
+			    global, so one manager sits above the whole group instead of five
+			    identical copies all editing the same array. */}
+			{!compact && (
+				<div className="space-y-2">
+					<div className="flex gap-2">
+						<input
+							type="text"
+							value={customFontInput}
+							onChange={(e) => setCustomFontInput(e.target.value)}
+							onKeyDown={handleKeyDown}
+							placeholder="Add custom font name..."
+							className="flex-1 p-2 rounded border bg-transparent outline-none text-sm"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						/>
+						<button
+							onClick={handleAddCustomFont}
+							className="px-3 py-2 rounded text-xs font-bold"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.accentForeground,
+							}}
+						>
+							Add
+						</button>
 					</div>
-				)}
-			</div>
+
+					{customFonts.length > 0 && (
+						<div className="flex flex-wrap gap-2">
+							{customFonts.map((font) => (
+								<div
+									key={font}
+									className="flex items-center gap-2 px-2 py-1 rounded text-xs"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+									}}
+								>
+									<span style={{ color: theme.colors.textMain }}>{font}</span>
+									<button
+										onClick={() => onRemoveCustomFont(font)}
+										className="hover:opacity-70"
+										style={{ color: theme.colors.error }}
+									>
+										×
+									</button>
+								</div>
+							))}
+						</div>
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

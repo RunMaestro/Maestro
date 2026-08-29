@@ -7,7 +7,7 @@ import {
 	DocumentGraphSection,
 	FileEditPreviewSection,
 	FileIndexingSection,
-	FontFamilySection,
+	FontsSection,
 	FontZoomSection,
 	GroupChatSection,
 	IconThemeSection,
@@ -21,73 +21,12 @@ import {
 	TypographyResetSection,
 	WindowChromeSection,
 } from './components';
-import { FontSizeStepper } from '../../../ui/FontSizeStepper';
-import { TYPOGRAPHY_SURFACE_SPECS, type TypographySurface } from '../../../../../shared/typography';
-import type { FontConfigurationState } from './types';
 import { useBionifyAlgorithmState, useFontConfigurationState } from './hooks';
 import type { DisplayTabProps } from './types';
 import { PluginPanelSlot } from '../../../plugins/PluginPanelSlot';
 import { PluginUiItemsSlot } from '../../../plugins/PluginUiItemsSlot';
 
 export type { DisplayTabProps } from './types';
-
-/** Section headings. Longer than the registry labels, which the CLI also uses. */
-const SURFACE_HEADINGS: Record<TypographySurface, string> = {
-	interface: 'Interface Font',
-	chat: 'AI Chat Font',
-	terminal: 'Terminal Font',
-	filePreview: 'File Preview Font',
-	fileEditor: 'File Editor Font',
-};
-
-/**
- * One surface's font picker plus its size stepper.
- *
- * The prop forwarding lives here rather than in five copies, but each setting
- * id stays a literal attribute at the CALL SITEs below. The searchableSettings
- * parity guard is a STATIC scan of the source for that attribute, so building
- * it from a lookup table would make every one of these controls invisible to
- * the guard - and that guard is what stops a settings entry from silently
- * becoming unfindable by search.
- */
-function SurfaceFontSection({
-	theme,
-	settings,
-	fontConfiguration,
-	surface,
-}: {
-	theme: DisplayTabProps['theme'];
-	settings: ReturnType<typeof useSettings>;
-	fontConfiguration: FontConfigurationState;
-	surface: TypographySurface;
-}) {
-	const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
-	const store = settings as unknown as Record<string, number | string | undefined>;
-	const baseSize = settings.fontSize;
-	const storedSize = Number(store[spec.sizeKey] ?? 0);
-
-	return (
-		<FontFamilySection
-			theme={theme}
-			heading={SURFACE_HEADINGS[surface]}
-			description={spec.description}
-			fontFamily={String(store[spec.fontKey] ?? '')}
-			setFontFamily={(value) => settings.setSurfaceFontFamily(surface, value)}
-			fontConfiguration={fontConfiguration}
-			inheritOption={spec.inheritable ? { value: '', label: 'Same as interface font' } : undefined}
-			sizeControl={
-				<FontSizeStepper
-					theme={theme}
-					value={spec.inheritable ? storedSize : baseSize}
-					inheritedSize={baseSize}
-					allowInherit={spec.inheritable}
-					testId={`font-size-${surface}`}
-					onChange={(value) => settings.setSurfaceFontSize(surface, value)}
-				/>
-			}
-		/>
-	);
-}
 
 export function DisplayTab({ theme }: DisplayTabProps) {
 	const settings = useSettings();
@@ -97,9 +36,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		bionifyAlgorithm: settings.bionifyAlgorithm,
 		setBionifyAlgorithm: settings.setBionifyAlgorithm,
 	});
-
-	// Shared by the five pickers below, so their prop wiring cannot drift.
-	const surfaceProps = { theme, settings, fontConfiguration };
 
 	return (
 		<div className="space-y-5">
@@ -121,21 +57,13 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				}}
 				onReset={settings.resetTypography}
 			/>
-			<div data-setting-id="display-font-family">
-				<SurfaceFontSection {...surfaceProps} surface="interface" />
-			</div>
-			<div data-setting-id="display-chat-font-family">
-				<SurfaceFontSection {...surfaceProps} surface="chat" />
-			</div>
-			<div data-setting-id="display-terminal-font-family">
-				<SurfaceFontSection {...surfaceProps} surface="terminal" />
-			</div>
-			<div data-setting-id="display-file-preview-font-family">
-				<SurfaceFontSection {...surfaceProps} surface="filePreview" />
-			</div>
-			<div data-setting-id="display-file-editor-font-family">
-				<SurfaceFontSection {...surfaceProps} surface="fileEditor" />
-			</div>
+			<FontsSection
+				theme={theme}
+				settings={settings as unknown as Record<string, unknown>}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
+			/>
 			<FontZoomSection
 				theme={theme}
 				fontZoom={settings.fontZoom}

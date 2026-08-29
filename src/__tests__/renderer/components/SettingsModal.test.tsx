@@ -819,7 +819,7 @@ describe('SettingsModal', () => {
 			});
 
 			// Font selector should exist
-			expect(screen.getByText('Interface Font')).toBeInTheDocument();
+			expect(screen.getByText('Fonts')).toBeInTheDocument();
 		});
 
 		it('should set the interface font when the first picker changes', async () => {
@@ -2747,7 +2747,7 @@ describe('SettingsModal', () => {
 			// Text may be split by highlight spans, so use a function matcher
 			expect(
 				screen.getByText(
-					(_content, element) => element?.textContent === 'Font Family' && element.tagName === 'DIV'
+					(_content, element) => element?.textContent === 'Fonts' && element.tagName === 'DIV'
 				)
 			).toBeInTheDocument();
 			expect(

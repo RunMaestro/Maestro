@@ -392,14 +392,17 @@ describe('DisplayTab', () => {
 	// =========================================================================
 
 	describe('Font Family', () => {
-		it('should render the Interface Font label', async () => {
+		it('should render the grouped Fonts section', async () => {
 			render(<DisplayTab theme={mockTheme} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Interface Font')).toBeInTheDocument();
+			// One "Fonts" heading now, with each surface labelled inside the card.
+			expect(screen.getByText('Fonts')).toBeInTheDocument();
+			expect(screen.getByText('Interface')).toBeInTheDocument();
+			expect(screen.getByText('Terminal')).toBeInTheDocument();
 		});
 
 		it('should keep the font select mounted while fonts are being detected', async () => {
@@ -1951,7 +1954,10 @@ describe('DisplayTab', () => {
 			});
 
 			// Font
-			expect(screen.getByText('Interface Font')).toBeInTheDocument();
+			// One "Fonts" heading now, with each surface labelled inside the card.
+			expect(screen.getByText('Fonts')).toBeInTheDocument();
+			expect(screen.getByText('Interface')).toBeInTheDocument();
+			expect(screen.getByText('Terminal')).toBeInTheDocument();
 			// Font Size
 			expect(screen.getByText('Zoom')).toBeInTheDocument();
 			expect(screen.getByText('Factory Reset Fonts')).toBeInTheDocument();
