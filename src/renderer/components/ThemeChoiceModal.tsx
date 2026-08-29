@@ -12,6 +12,12 @@
  * reverts to whatever was applied on open, so browsing costs nothing. Confirm
  * keeps what is on screen.
  *
+ * There is deliberately no "Not now". A theme is always applied, so declining
+ * is not available - whatever is on screen when this closes IS the answer, and
+ * offering a decline button would imply an outcome where no theme is chosen.
+ * The close button and Escape still work, and both mean "leave it as I found
+ * it" rather than "no theme".
+ *
  * Who sees it is decided by `planOnboardingSeries`, not here: a new user
  * always, a returning user only while still on the default theme. Anyone who
  * has already moved off Dracula found the picker on their own, and reopening
@@ -128,9 +134,9 @@ export function ThemeChoiceModal({
 	const confirmRef = useRef<HTMLButtonElement>(null);
 
 	// The theme in effect when the modal opened. Browsing applies themes live,
-	// so this is what "Not now" has to restore - captured once, on the open
-	// edge, rather than tracked, or it would follow the user's browsing and
-	// revert to nothing.
+	// so this is what closing without confirming has to restore - captured once,
+	// on the open edge, rather than tracked, or it would follow the user's
+	// browsing and revert to nothing.
 	const originalThemeId = useRef(activeThemeId);
 	const [confirmed, setConfirmed] = useState(false);
 	useEffect(() => {
@@ -157,10 +163,10 @@ export function ThemeChoiceModal({
 		onDismiss();
 	}, [onDismiss]);
 
-	// Leaving without confirming throws the preview away. Shared by "Not now"
-	// and Back, because neither is an answer: browsing has to cost nothing, and
-	// a Back that quietly kept the last theme the pointer passed over would
-	// apply a choice the user never made.
+	// Leaving without confirming throws the preview away. Shared by the close
+	// button, Escape, and Back, because none of them is an answer: browsing has
+	// to cost nothing, and an exit that quietly kept the last theme the pointer
+	// passed over would apply a choice the user never made.
 	const revertPreview = useCallback(() => {
 		if (!confirmed && activeThemeId !== originalThemeId.current) {
 			logger.info('[ThemeChoiceModal] Reverting previewed theme', undefined, {
@@ -193,11 +199,16 @@ export function ThemeChoiceModal({
 
 	const activeName = themes[activeThemeId]?.name ?? 'this theme';
 
-	// "Keep" is only honest about a theme the user already had. A new install
-	// has not chosen anything yet, and a returning user who clicks a different
-	// swatch is not keeping that one either - they are adopting it - so the
-	// verb follows whether the previewed theme is the one the modal opened on.
-	const confirmVerb = isReturningUser && activeThemeId === originalThemeId.current ? 'Keep' : 'Use';
+	// The verb has to describe what the click actually does, because the theme
+	// is ALREADY live - the button is the user's only readout of whether they
+	// are settling on something new or leaving things as they found them.
+	// A new install has no prior theme, so nothing can be kept or switched
+	// from; a returning user is keeping theirs only while they are still on it.
+	const confirmVerb = !isReturningUser
+		? 'Choose'
+		: activeThemeId === originalThemeId.current
+			? 'Keep'
+			: 'Switch to';
 
 	return (
 		<Modal
@@ -225,15 +236,6 @@ export function ThemeChoiceModal({
 						Customize in Settings
 					</button>
 					<div className="ml-auto flex items-center gap-2">
-						<button
-							type="button"
-							onClick={handleDismiss}
-							data-testid="theme-choice-dismiss"
-							className="px-3 py-1.5 rounded text-xs font-bold border hover:bg-white/5 transition-colors"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-						>
-							Not now
-						</button>
 						<button
 							ref={confirmRef}
 							type="button"

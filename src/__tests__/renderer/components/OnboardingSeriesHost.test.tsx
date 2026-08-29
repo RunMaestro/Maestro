@@ -156,7 +156,7 @@ describe('OnboardingSeriesHost', () => {
 			});
 			renderHost();
 
-			fireEvent.click(screen.getByTestId('theme-choice-dismiss'));
+			fireEvent.click(screen.getByLabelText('Close modal'));
 			expect(useSettingsStore.getState().themePromptSeen).toBe(true);
 		});
 

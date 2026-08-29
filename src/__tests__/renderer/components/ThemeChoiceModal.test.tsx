@@ -80,6 +80,14 @@ describe('ThemeChoiceModal', () => {
 	});
 
 	describe('exits', () => {
+		it('offers no way to decline, because a theme is always applied', () => {
+			// "Not now" would imply an outcome where no theme is chosen. Whatever
+			// is on screen when this closes IS the answer.
+			renderModal();
+
+			expect(screen.queryByText('Not now')).not.toBeInTheDocument();
+		});
+
 		it('keeps the previewed theme on confirm', () => {
 			// The theme is already live, so confirming is the ABSENCE of a revert.
 			const { onSelectTheme, onDismiss } = renderModal({ activeThemeId: 'nord' });
@@ -106,7 +114,7 @@ describe('ThemeChoiceModal', () => {
 					onOpenThemeSettings={vi.fn()}
 				/>
 			);
-			fireEvent.click(screen.getByTestId('theme-choice-dismiss'));
+			fireEvent.click(screen.getByLabelText('Close modal'));
 
 			expect(onSelectTheme).toHaveBeenCalledWith('dracula');
 		});
@@ -114,7 +122,7 @@ describe('ThemeChoiceModal', () => {
 		it('does not revert when nothing was previewed', () => {
 			const { onSelectTheme } = renderModal({ activeThemeId: 'dracula' });
 
-			fireEvent.click(screen.getByTestId('theme-choice-dismiss'));
+			fireEvent.click(screen.getByLabelText('Close modal'));
 			expect(onSelectTheme).not.toHaveBeenCalled();
 		});
 
@@ -147,11 +155,17 @@ describe('ThemeChoiceModal', () => {
 	});
 
 	describe('confirm label', () => {
-		it('offers to USE a theme a new user has not chosen yet', () => {
-			// Nothing is being kept on a fresh install - there is no prior choice.
+		it('asks a new user to CHOOSE, having no prior theme to keep or leave', () => {
 			renderModal({ isReturningUser: false, activeThemeId: 'dracula' });
 
-			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Use Dracula');
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Choose Dracula');
+		});
+
+		it('still says CHOOSE after a new user browses to another theme', () => {
+			// There is nothing to switch FROM on a fresh install.
+			renderModal({ isReturningUser: false, activeThemeId: 'monokai' });
+
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Choose Monokai');
 		});
 
 		it('offers to KEEP the theme a returning user arrived with', () => {
@@ -160,7 +174,7 @@ describe('ThemeChoiceModal', () => {
 			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Keep Dracula');
 		});
 
-		it('switches a returning user to USE once they preview something else', () => {
+		it('offers to SWITCH TO a theme a returning user previews', () => {
 			// Adopting Monokai is not keeping it, and the button naming the wrong
 			// verb is the user's only readout of what the click will do.
 			const onSelectTheme = vi.fn();
@@ -184,7 +198,7 @@ describe('ThemeChoiceModal', () => {
 				/>
 			);
 
-			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Use Monokai');
+			expect(screen.getByTestId('theme-choice-confirm')).toHaveTextContent('Switch to Monokai');
 		});
 
 		it('says KEEP again when a returning user browses back to where they started', () => {
