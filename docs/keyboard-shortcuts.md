@@ -254,6 +254,8 @@ In AI mode, use `@` to reference files in your prompts:
 | Search System Logs               | `Cmd+F`                            | `Ctrl+F`                           |
 | Search Director's Notes          | `Cmd+F`                            | `Ctrl+F`                           |
 | Open File Preview                | `Enter` on selected file           | `Enter` on selected file           |
+| Navigate Queued Messages         | `Up/Down Arrow` in Execution Queue | `Up/Down Arrow` in Execution Queue |
+| Queued Message Actions           | `Enter` in Execution Queue         | `Enter` in Execution Queue         |
 | Close Preview/Filter/Modal       | `Esc`                              | `Esc`                              |
 
 ### Searching Message History

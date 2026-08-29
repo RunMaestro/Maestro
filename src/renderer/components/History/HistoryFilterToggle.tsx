@@ -32,7 +32,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 					<button
 						key={type}
 						onClick={() => onToggleFilter(type)}
-						className={`flex items-center gap-1.5 ${compact ? 'px-2' : 'px-3'} py-1.5 rounded-full text-xs font-bold uppercase transition-all ${
+						className={`flex items-center gap-1 ${compact ? 'px-2' : 'px-2.5'} py-1 rounded-full text-[10px] font-bold uppercase transition-all ${
 							isActive ? 'opacity-100' : 'opacity-40'
 						}`}
 						style={{
