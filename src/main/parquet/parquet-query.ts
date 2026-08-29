@@ -54,6 +54,7 @@ import type {
 	ParquetValueKind,
 } from '../../shared/parquet/types';
 import { getParquetFile, loadParquetReader, type OpenParquetFile } from './parquet-file';
+import { withHeapGuard } from '../utils/heap-guard';
 
 /**
  * Most matching row indexes the engine will retain.
@@ -93,6 +94,66 @@ const MAX_SORT_ROWS = 200_000;
  * read of a giant row group is cheap as well as safe.
  */
 const MAX_READ_SPAN_ROWS = 8_192;
+
+/**
+ * Decoded bytes one read batch may hold.
+ *
+ * A row cap alone is the wrong unit, because memory is driven by BYTES and a
+ * row can be any size. 8,192 rows of a narrow table is a rounding error;
+ * 8,192 rows of the 117-column file that started this was 1.7 GB in a single
+ * window, and scanning it peaked at 3.36 GB against a 4.19 GB heap ceiling -
+ * survivable on this machine, fatal on one with less headroom or against a
+ * slightly wider file.
+ *
+ * So the window is sized from the footer, which reports uncompressed bytes per
+ * column chunk and therefore bytes per row. Narrow tables still get the full
+ * row window (fast); fat ones get proportionally fewer rows (safe). The row cap
+ * remains as the ceiling for tables so narrow the byte budget would allow an
+ * absurd window.
+ *
+ * 64 MB comes from measuring the file that caused the crash, not from taste.
+ * Peak RSS for a full bare-term scan of it: 192 MB budget -> 2,907 MB, 96 ->
+ * 2,268 MB, 64 -> 2,029 MB, 48 -> 1,974 MB, against a 4,192 MB heap ceiling.
+ * The returns flatten below ~64 MB because the remaining footprint is not the
+ * window at all - hyparquet caches a decode per column, so a 117-column scan
+ * retains 117 of them regardless of how small each one is. Shrinking further
+ * buys little and costs proportionally more round trips, so 64 MB is where the
+ * curve levels off. Note also that parquet bytes UNDERSTATE JS heap: a decoded
+ * string carries object overhead and UTF-16 storage, so the real footprint runs
+ * several times the footer's number. The budget is a lever, not a promise, and
+ * the heap guard covers what it misses.
+ */
+const MAX_DECODE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Rows to decode at once for a given set of columns.
+ *
+ * Uses the footer's uncompressed sizes, so this is the decoded footprint rather
+ * than the on-disk one - compression ratios of 20x are ordinary in parquet, and
+ * sizing against compressed bytes would under-count by exactly that factor.
+ *
+ * Always returns at least 1: a single row wider than the whole budget still has
+ * to be readable, and refusing it would be worse than a brief spike.
+ */
+export function computeReadSpanRows(
+	columns: readonly ParquetColumnInfo[],
+	names: readonly string[],
+	totalRows: number
+): number {
+	if (totalRows <= 0) return MAX_READ_SPAN_ROWS;
+
+	const wanted = new Set(names);
+	let bytesPerRow = 0;
+	for (const column of columns) {
+		if (wanted.has(column.name)) bytesPerRow += column.uncompressedBytes / totalRows;
+	}
+
+	// No size information (a writer that omitted it) means no basis to narrow
+	// the window, so fall back to the row cap rather than inventing a number.
+	if (!Number.isFinite(bytesPerRow) || bytesPerRow <= 0) return MAX_READ_SPAN_ROWS;
+
+	return Math.max(1, Math.min(MAX_READ_SPAN_ROWS, Math.floor(MAX_DECODE_BYTES / bytesPerRow)));
+}
 
 /** Bytes of a binary cell rendered as hex before it is elided. */
 const MAX_BINARY_PREVIEW_BYTES = 24;
@@ -145,6 +206,12 @@ interface ScanSession {
 	rowsExamined: number;
 	fullyPushedDown: boolean;
 	filterColumns: string[];
+	/**
+	 * Rows per decode window for this session's filter columns, sized from the
+	 * footer so a wide table reads fewer rows at a time. Computed once: the
+	 * filter column set is fixed for the life of the session.
+	 */
+	spanRows: number;
 	/** Sorted view of the match set, keyed by `column:direction`. */
 	sorted: Map<string, number[]>;
 }
@@ -284,6 +351,11 @@ async function getSession(file: OpenParquetFile, filterSource: string): Promise<
 		rowsExamined: 0,
 		fullyPushedDown: node !== null && pushdown.complete,
 		filterColumns: bound.scansAllColumns ? readableColumns : bound.columns,
+		spanRows: computeReadSpanRows(
+			file.info.columns,
+			bound.scansAllColumns ? readableColumns : bound.columns,
+			file.info.totalRows
+		),
 		sorted: new Map(),
 	};
 
@@ -336,7 +408,7 @@ async function extendMatches(
 		// a given row), so the peak is columns x window, and the window is the
 		// only half of that product we control.
 		const windowStart = session.nextRowInRange;
-		const windowEnd = Math.min(windowStart + MAX_READ_SPAN_ROWS, range.rowEnd);
+		const windowEnd = Math.min(windowStart + session.spanRows, range.rowEnd);
 
 		// Phase one: decode only the columns the predicate mentions. A window
 		// where nothing matches never reaches phase two, so the wide columns
@@ -437,7 +509,12 @@ async function sortedMatches(
 		? Array.from({ length: Math.min(file.info.totalRows, MAX_SORT_ROWS) }, (_, i) => i)
 		: session.matched.slice(0, MAX_SORT_ROWS);
 
-	const values = await readColumnForRows(session, sort.column, indexes);
+	const values = await readColumnForRows(
+		session,
+		sort.column,
+		indexes,
+		computeReadSpanRows(file.info.columns, [sort.column], file.info.totalRows)
+	);
 	const order = indexes
 		.map((rowIndex, position) => ({ rowIndex, value: values[position] }))
 		.sort((a, b) => compareForSort(a.value, b.value, sort.direction))
@@ -472,7 +549,8 @@ function findRange(ranges: ScanRange[], rowIndex: number): number {
 async function readColumnForRows(
 	session: ScanSession,
 	column: string,
-	rowIndexes: number[]
+	rowIndexes: number[],
+	spanRows: number
 ): Promise<unknown[]> {
 	const out = new Array<unknown>(rowIndexes.length);
 	const byRange = new Map<number, number[]>();
@@ -509,7 +587,7 @@ async function readColumnForRows(
 		let cursor = 0;
 		while (cursor < positions.length) {
 			const windowStart = rowIndexes[positions[cursor]];
-			const limit = windowStart + MAX_READ_SPAN_ROWS;
+			const limit = windowStart + spanRows;
 			let last = cursor;
 			while (last + 1 < positions.length && rowIndexes[positions[last + 1]] < limit) last++;
 
@@ -534,6 +612,32 @@ async function readColumnForRows(
 /** Run one windowed query against an open parquet file. */
 export function queryParquet(request: ParquetQueryRequest): Promise<ParquetQueryResult> {
 	return runExclusive(request.handle, async () => {
+		// Guarded because this is the only path that decodes data pages, and a
+		// decode that outgrows the heap aborts the process without an exception
+		// for anything to catch. See src/main/utils/heap-guard.ts.
+		const guarded = getParquetFile(request.handle);
+		return withHeapGuard(
+			{
+				operation: 'parquet:query',
+				detail: {
+					// Shape only - never the path. This describes the class of
+					// file, which is what a report needs to be actionable.
+					totalRows: guarded.info.totalRows,
+					columns: guarded.info.columns.length,
+					rowGroups: guarded.info.rowGroups.length,
+					projectedColumns: request.columns?.length ?? guarded.info.columns.length,
+					hasFilter: Boolean(request.filter?.trim()),
+					sorted: Boolean(request.sort),
+				},
+			},
+			() => runQuery(request)
+		);
+	});
+}
+
+/** The query itself. Split out so the heap guard wraps exactly the decode. */
+async function runQuery(request: ParquetQueryRequest): Promise<ParquetQueryResult> {
+	{
 		const started = Date.now();
 		const deadline = started + MAX_QUERY_MS;
 		const file = getParquetFile(request.handle);
@@ -585,7 +689,14 @@ export function queryParquet(request: ParquetQueryRequest): Promise<ParquetQuery
 		// hit the same already-open file handle).
 		const columnValues: unknown[][] = [];
 		for (const column of projection) {
-			columnValues.push(await readColumnForRows(session, column, rowIndexes));
+			columnValues.push(
+				await readColumnForRows(
+					session,
+					column,
+					rowIndexes,
+					computeReadSpanRows(file.info.columns, [column], file.info.totalRows)
+				)
+			);
 		}
 
 		const rows: ParquetCellValue[][] = rowIndexes.map((_, rowPosition) =>
@@ -620,7 +731,7 @@ export function queryParquet(request: ParquetQueryRequest): Promise<ParquetQuery
 			stats,
 			...(session.problem ? { filterError: session.problem } : {}),
 		};
-	});
+	}
 }
 
 /** Escape one CSV field, quoting only when the content forces it. */
