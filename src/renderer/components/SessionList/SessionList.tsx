@@ -77,6 +77,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
+import { useHeaderTextDelta } from '../../hooks/ui/useHeaderTextDelta';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
@@ -90,6 +91,14 @@ import { buildVirtualGrouping } from '../../utils/pluginGroupings';
  * more chrome (two buttons and a divider, none of which are ever dropped -
  * they are the whole transport a minimized player has). Its tooltip names the
  * file at any width.
+ */
+/**
+ * All of these are measured against the BASELINE font - Roboto Mono at a 14px
+ * root, which is what Maestro always rendered in before the interface font
+ * became a setting. They are corrected for the font actually in use by
+ * `useHeaderTextDelta`, which adds however much wider each label got. Do not
+ * re-measure them against whatever font you happen to be running: the delta
+ * would then be applied on top of a correction already baked in.
  */
 const LIVE_LABEL_MIN_WIDTH = 256;
 const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
@@ -285,12 +294,21 @@ function SessionListInner(props: SessionListProps) {
 		: nowPlayingCompact
 			? NOW_PLAYING_COMPACT_RESERVE
 			: NOW_PLAYING_LABEL_RESERVE;
+	// How much wider the header's own labels render in the current interface font
+	// than in the one the thresholds below were measured against. Zero when the
+	// user is on the original monospace face.
+	const headerTextDelta = useHeaderTextDelta();
 	// Constant on this build. The indirection is deliberate: a build that hides
 	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
-	const livePillReserve = LIVE_PILL_RESERVE;
+	// The label's own delta rides with it, since the reserve exists to hold it.
+	const livePillReserve = LIVE_PILL_RESERVE + headerTextDelta.liveLabel;
 	const showWordmark =
 		leftSidebarWidthState >=
-		WORDMARK_MIN_WIDTH + livePillReserve + headerBadgeWidth + nowPlayingReserve;
+		WORDMARK_MIN_WIDTH +
+			headerTextDelta.wordmark +
+			livePillReserve +
+			headerBadgeWidth +
+			nowPlayingReserve;
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -1416,8 +1434,11 @@ function SessionListInner(props: SessionListProps) {
 										}
 									>
 										<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
-										{leftSidebarWidthState >= LIVE_LABEL_MIN_WIDTH + headerBadgeWidth &&
-											(isLiveMode ? 'LIVE' : 'OFFLINE')}
+										{leftSidebarWidthState >=
+											LIVE_LABEL_MIN_WIDTH +
+												headerTextDelta.liveLabel +
+												headerTextDelta.wordmark +
+												headerBadgeWidth && (isLiveMode ? 'LIVE' : 'OFFLINE')}
 									</button>
 
 									{/* LIVE Overlay with URL and QR Code */}
