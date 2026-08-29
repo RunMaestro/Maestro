@@ -248,4 +248,49 @@ describe('HistoryFilterToggle', () => {
 		expect(screen.getByText('USER')).toBeInTheDocument();
 		expect(screen.getByText('CUE')).toBeInTheDocument();
 	});
+	describe('type scale', () => {
+		/**
+		 * These pills sit beside the search button and the activity graph as
+		 * secondary chrome. `text-xs` was tuned when the root font was always 14px
+		 * monospace; the root is now the interface font size, which under the
+		 * Default preset is a proportional face at 15px - bigger, and with much
+		 * wider uppercase glyphs per em. Left alone they read as a headline in a
+		 * row of controls.
+		 */
+		function pill(): HTMLElement {
+			render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+				/>
+			);
+			return screen.getByText('AUTO');
+		}
+
+		it('sits a step below text-xs', () => {
+			expect(pill().style.fontSize).toBe('0.6875rem');
+		});
+
+		it('sizes in rem, so the pills still scale with Cmd+=', () => {
+			// A pixel literal would freeze them at one zoom level while everything
+			// around them grew, which is the same class of bug in reverse.
+			const style = pill().style;
+			expect(style.fontSize).toBeTruthy();
+			expect(style.fontSize.endsWith('rem')).toBe(true);
+			expect(style.lineHeight.endsWith('rem')).toBe(true);
+		});
+
+		it('restates the line-height text-xs used to supply', () => {
+			// Dropping the class drops its line-height too; without this the pill
+			// would resize to whatever line-height it happened to inherit.
+			expect(pill().style.lineHeight).toBe('1rem');
+		});
+
+		it('keeps the uppercase bold treatment', () => {
+			const button = pill();
+			expect(button.className).toContain('uppercase');
+			expect(button.className).toContain('font-bold');
+		});
+	});
 });
