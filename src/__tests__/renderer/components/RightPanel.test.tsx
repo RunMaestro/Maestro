@@ -259,6 +259,16 @@ describe('RightPanel', () => {
 			expect(tabButton(/^History$/).style.fontSize).toBe(RIGHT_PANEL_TAB_FONT_SIZE);
 		});
 
+		it('stays close to the Left Bar section headers across the window', () => {
+			// Those are `text-xs` (0.75rem) with uppercase + wide tracking, which
+			// reads quieter than the tabs' mixed case at the same measured size.
+			// A large gap here makes the two panels look like different systems.
+			const tabRem = parseFloat(RIGHT_PANEL_TAB_FONT_SIZE);
+			const leftHeaderRem = 0.75;
+			expect(tabRem).toBeGreaterThan(leftHeaderRem);
+			expect(tabRem / leftHeaderRem).toBeLessThan(1.15);
+		});
+
 		it('renders larger than the filter pills beneath it', () => {
 			// These name which of three views you are in, so they are the panel's
 			// heading. An earlier pass shared one constant with the pills, which

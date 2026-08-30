@@ -56,6 +56,14 @@ export const RIGHT_PANEL_PILL_LINE_HEIGHT = '1rem';
  * The rule these two constants encode: a heading sits ABOVE its content, a
  * control that labels rows sits BELOW them. They are different jobs and
  * therefore different sizes, which is why sharing one value was wrong.
+ *
+ * 13/16rem, not 14/16. These tabs sit opposite the Left Bar's section headers
+ * (BOOKMARKS, STARRED SESSIONS), which are `text-xs` - and those are uppercase
+ * with wide tracking, a treatment that reads quieter than the tabs' mixed case
+ * at the same measured size. At 14/16 the tabs were 17% larger by measurement
+ * and further apart than that by eye, so the two panels did not read as one
+ * system. One step down leaves them clearly the heading without the two sides
+ * of the window disagreeing.
  */
-export const RIGHT_PANEL_TAB_FONT_SIZE = '0.875rem';
+export const RIGHT_PANEL_TAB_FONT_SIZE = '0.8125rem';
 export const RIGHT_PANEL_TAB_LINE_HEIGHT = '1.25rem';
