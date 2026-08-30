@@ -18,12 +18,11 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-	ensureMonospaceFallback,
 	isFixedPitchStack,
 	resolveTerminalFontFamily,
-	FIXED_PITCH_FALLBACK_STACK,
 	type MeasureAdvance,
 } from '../../../renderer/components/XTerminal';
+import { MONO_FALLBACK_STACK, withMonoFallback } from '../../../shared/fontStack';
 
 /** Advances in font units, keyed by the first family in the stack. */
 const REAL_FONT_METRICS: Record<string, { unitsPerEm: number; advances: Record<string, number> }> =
@@ -57,39 +56,13 @@ function measureWith(knownFamilies = REAL_FONT_METRICS): MeasureAdvance {
 
 const measure = measureWith();
 
-describe('ensureMonospaceFallback', () => {
-	it('leaves a stack that already ends in monospace untouched', () => {
-		const stack = 'Roboto Mono, Menlo, "Courier New", monospace';
-		expect(ensureMonospaceFallback(stack)).toBe(stack);
-	});
-
-	it('appends the generic family to a bare font name', () => {
-		expect(ensureMonospaceFallback('Roboto Mono')).toBe('Roboto Mono, monospace');
-	});
-
-	it('accepts ui-monospace as a sufficient terminator', () => {
-		const stack = 'SF Mono, ui-monospace';
-		expect(ensureMonospaceFallback(stack)).toBe(stack);
-	});
-
-	it('recognises a generic that is quoted or oddly cased', () => {
-		expect(ensureMonospaceFallback('Menlo, "monospace"')).toBe('Menlo, "monospace"');
-		expect(ensureMonospaceFallback('Menlo, MONOSPACE')).toBe('Menlo, MONOSPACE');
-	});
-
-	it('normalises whitespace and empty entries', () => {
-		expect(ensureMonospaceFallback('  Menlo ,, ')).toBe('Menlo, monospace');
-	});
-
-	it('falls back to the generic alone when the setting is empty', () => {
-		expect(ensureMonospaceFallback('')).toBe('monospace');
-	});
-
+describe('withMonoFallback, as the terminal uses it', () => {
 	// Documents WHY appending a fallback was not enough on its own: the broken
-	// font resolved fine, so the appended generic was never reached.
+	// font resolved fine, so the appended chain was never reached. The helper's
+	// own behaviour is covered by src/__tests__/shared/fontStack.test.ts.
 	it('cannot rescue a proportional font that resolves', () => {
-		const patched = ensureMonospaceFallback('Avenir Next');
-		expect(patched).toBe('Avenir Next, monospace');
+		const patched = withMonoFallback('Avenir Next');
+		expect(patched).toBe(`Avenir Next, ${MONO_FALLBACK_STACK}`);
 		expect(isFixedPitchStack(patched, 13, measure)).toBe(false);
 	});
 });
@@ -129,7 +102,7 @@ describe('resolveTerminalFontFamily', () => {
 	// The exact reported bug: fontFamily was "Avenir Next", shared with the app
 	// chrome, and every terminal rendered on a broken grid.
 	it('overrides the configured proportional font with a fixed-pitch stack', () => {
-		expect(resolveTerminalFontFamily('Avenir Next', 13, measure)).toBe(FIXED_PITCH_FALLBACK_STACK);
+		expect(resolveTerminalFontFamily('Avenir Next', 13, measure)).toBe(MONO_FALLBACK_STACK);
 	});
 
 	it('produces a stack that is itself fixed pitch', () => {
@@ -138,7 +111,7 @@ describe('resolveTerminalFontFamily', () => {
 	});
 
 	it('leaves a monospace choice alone rather than forcing its own', () => {
-		expect(resolveTerminalFontFamily('Menlo', 13, measure)).toBe('Menlo, monospace');
+		expect(resolveTerminalFontFamily('Menlo', 13, measure)).toBe(`Menlo, ${MONO_FALLBACK_STACK}`);
 	});
 
 	// A missing font is already handled by the appended generic - the browser
@@ -146,13 +119,15 @@ describe('resolveTerminalFontFamily', () => {
 	// two mechanisms cover different failures and compose.
 	it('lets the appended generic rescue a stack whose fonts are all missing', () => {
 		const resolved = resolveTerminalFontFamily('No Such Font', 13, measure);
-		expect(resolved).toBe('No Such Font, monospace');
+		expect(resolved).toBe(`No Such Font, ${MONO_FALLBACK_STACK}`);
 		expect(isFixedPitchStack(resolved, 13, measure)).toBe(true);
 	});
 
 	// Without a canvas (jsdom, a locked-down renderer) there is no evidence, so
 	// the user's configured font is kept rather than silently replaced.
 	it('keeps the configured stack when it cannot measure', () => {
-		expect(resolveTerminalFontFamily('Avenir Next', 13, null)).toBe('Avenir Next, monospace');
+		expect(resolveTerminalFontFamily('Avenir Next', 13, null)).toBe(
+			`Avenir Next, ${MONO_FALLBACK_STACK}`
+		);
 	});
 });
