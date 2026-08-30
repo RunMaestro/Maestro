@@ -2624,7 +2624,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false);
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false, undefined);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -2640,7 +2640,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false);
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined);
 			});
 		});
 
@@ -2684,6 +2684,51 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('create_gist_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('boom');
+		});
+
+		it('forwards agentSessionId so a headless session can be published', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				agentSessionId: 'provider-session-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith(
+					'session-1',
+					'',
+					false,
+					'provider-session-9'
+				);
+			});
+		});
+
+		it('rejects a blank agentSessionId instead of publishing the open tabs', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				agentSessionId: '',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('agentSessionId');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
+		});
+
+		it('rejects a non-string agentSessionId', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				agentSessionId: 42,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('agentSessionId');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
 		});
 
 		it('replies with create_gist_result when createGist callback is unconfigured', () => {

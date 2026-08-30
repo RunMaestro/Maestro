@@ -767,12 +767,13 @@ export class CallbackRegistry {
 	async createGist(
 		sessionId: string,
 		description: string,
-		isPublic: boolean
+		isPublic: boolean,
+		agentSessionId?: string
 	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
 		if (!this.callbacks.createGist) {
 			return { success: false, error: 'Gist creation not configured' };
 		}
-		return this.callbacks.createGist(sessionId, description, isPublic);
+		return this.callbacks.createGist(sessionId, description, isPublic, agentSessionId);
 	}
 
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
