@@ -2,7 +2,7 @@
  * useInterruptHandler - extracted from App.tsx
  *
  * Handles interrupting/stopping running AI processes:
- *   - Sends SIGINT to active process (AI or terminal mode)
+ *   - Sends SIGINT to every process this agent still has in flight (AI or terminal mode)
  *   - Cancels pending synopsis before interrupting
  *   - Cleans up thinking/tool logs from interrupted tabs
  *   - Processes execution queue after interruption
@@ -17,6 +17,7 @@ import { useSessionStore, selectActiveSession } from '../../stores/sessionStore'
 import { generateId } from '../../utils/ids';
 import {
 	getActiveTab,
+	getBusyTabs,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
 } from '../../utils/tabHelpers';
@@ -43,6 +44,63 @@ export interface UseInterruptHandlerDeps {
 export interface UseInterruptHandlerReturn {
 	/** Interrupt the active session's running process */
 	handleInterrupt: () => Promise<void>;
+}
+
+// ============================================================================
+// Target resolution
+// ============================================================================
+
+/**
+ * Every process id Stop must signal for this agent.
+ *
+ * Stop is an AGENT-level action, not a tab-level one: `handleInterrupt` idles
+ * EVERY busy tab, so signalling only the active tab left the other tabs'
+ * agent processes running while the store recorded them as idle. Once a tab is
+ * recorded idle, `closeTab` no longer parks it in `orphanedThinkingTabs`, so
+ * closing it dropped the last reference to a live agent process and left no UI
+ * path to stop it (issue #1448).
+ *
+ * Orphans are included for the same reason: a closed-but-still-draining tab is
+ * still writing under this agent, and Stop is the only control the user has.
+ *
+ * The primary target is always first so callers can tell a failed primary
+ * interrupt (which escalates to force-kill) from a non-critical secondary one.
+ *
+ * @param session - The agent whose processes should be signalled
+ * @param primaryTargetId - Process id for the active tab / terminal
+ * @param includeAiTabs - False in terminal mode, where AI tabs are not the target
+ * @returns Deduped process ids, primary first
+ */
+async function collectInterruptTargets(
+	session: Session,
+	primaryTargetId: string,
+	includeAiTabs: boolean
+): Promise<string[]> {
+	const targets = [primaryTargetId];
+	if (!includeAiTabs) return targets;
+
+	for (const tab of getBusyTabs(session, { includeOrphans: true })) {
+		const tabTargetId = `${session.id}-ai-${tab.id}`;
+		if (!targets.includes(tabTargetId)) targets.push(tabTargetId);
+	}
+
+	// Forced-parallel spawns append `-fp-{timestamp}` to their tab's process id,
+	// so they have to be discovered from the live process list rather than derived.
+	try {
+		const activeProcesses = await window.maestro.process.getActiveProcesses();
+		for (const base of [...targets]) {
+			const fpPrefix = `${base}-fp-`;
+			for (const proc of activeProcesses) {
+				if (proc.sessionId.startsWith(fpPrefix) && !targets.includes(proc.sessionId)) {
+					targets.push(proc.sessionId);
+				}
+			}
+		}
+	} catch {
+		// Non-critical - forced parallel lookup failure shouldn't block interrupt
+	}
+
+	return targets;
 }
 
 // ============================================================================
@@ -82,30 +140,20 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 			);
 		}
 
+		// Every in-flight process for this agent, not just the active tab's. Resolved
+		// once and reused by the force-kill fallback below.
+		const targetSessionIds = await collectInterruptTargets(
+			activeSession,
+			targetSessionId,
+			currentMode === 'ai'
+		);
+
 		try {
-			// Interrupt the primary process and any forced-parallel processes for this tab.
-			// Forced parallel spawns append `-fp-{timestamp}` to the session ID, so we need
-			// to find and interrupt those as well.
-			const interruptPromises: Promise<void>[] = [
-				(window as any).maestro.process.interrupt(targetSessionId),
-			];
-
-			if (currentMode === 'ai') {
-				try {
-					const activeProcesses = await window.maestro.process.getActiveProcesses();
-					const fpPrefix = `${targetSessionId}-fp-`;
-					const fpProcesses = activeProcesses.filter((p) => p.sessionId.startsWith(fpPrefix));
-					for (const fp of fpProcesses) {
-						interruptPromises.push((window as any).maestro.process.interrupt(fp.sessionId));
-					}
-				} catch {
-					// Non-critical - forced parallel lookup failure shouldn't block interrupt
-				}
-			}
-
-			const results = await Promise.allSettled(interruptPromises);
+			const results = await Promise.allSettled(
+				targetSessionIds.map((id) => window.maestro.process.interrupt(id))
+			);
 			// If the primary interrupt failed, throw to trigger force-kill fallback.
-			// Secondary (forced-parallel) failures are non-critical.
+			// Secondary (other busy tabs, forced-parallel) failures are non-critical.
 			if (results[0].status === 'rejected') {
 				throw results[0].reason;
 			}
@@ -263,24 +311,12 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 
 			if (shouldKill) {
 				try {
-					// Kill primary process and any forced-parallel processes
-					const killPromises: Promise<void>[] = [
-						(window as any).maestro.process.kill(targetSessionId),
-					];
-					if (currentMode === 'ai') {
-						try {
-							const activeProcesses = await window.maestro.process.getActiveProcesses();
-							const fpPrefix = `${targetSessionId}-fp-`;
-							for (const fp of activeProcesses.filter((p) => p.sessionId.startsWith(fpPrefix))) {
-								killPromises.push((window as any).maestro.process.kill(fp.sessionId));
-							}
-						} catch {
-							// Non-critical
-						}
-					}
-					const killResults = await Promise.allSettled(killPromises);
+					// Kill the same set the interrupt targeted (primary first).
+					const killResults = await Promise.allSettled(
+						targetSessionIds.map((id) => window.maestro.process.kill(id))
+					);
 					// If the primary kill failed, throw to trigger kill error handling.
-					// Secondary (forced-parallel) failures are non-critical.
+					// Secondary (other busy tabs, forced-parallel) failures are non-critical.
 					if (killResults[0].status === 'rejected') {
 						throw killResults[0].reason;
 					}

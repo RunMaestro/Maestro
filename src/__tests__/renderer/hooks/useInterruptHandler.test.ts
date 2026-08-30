@@ -45,6 +45,7 @@ const mockMaestro = {
 	process: {
 		interrupt: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
+		getActiveProcesses: vi.fn().mockResolvedValue([]),
 	},
 };
 
@@ -359,6 +360,162 @@ describe('useInterruptHandler', () => {
 			const sessions = useSessionStore.getState().sessions;
 			expect(sessions[0].state).toBe('idle'); // active - interrupted
 			expect(sessions[1].state).toBe('busy'); // other - unchanged
+		});
+	});
+
+	// ========================================================================
+	// Stop targets every in-flight process for the agent (issue #1448)
+	//
+	// The state update idles EVERY busy tab, so signalling only the active tab
+	// left a live agent process recorded as idle. Once recorded idle, closing
+	// that tab no longer parks it in orphanedThinkingTabs, dropping the last
+	// reference to a running process with no UI path left to stop it.
+	// ========================================================================
+	describe('stops every busy tab, not just the active one', () => {
+		it('interrupts a busy background tab while a different tab is active', async () => {
+			const backgroundTab = createTab({ id: 'tab-a', state: 'busy' });
+			const activeTab = createTab({ id: 'tab-b', state: 'busy' });
+			const session = createSession({
+				id: 'sess-multi',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [backgroundTab, activeTab],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-multi' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-multi-ai-tab-b');
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-multi-ai-tab-a');
+		});
+
+		it('interrupts a busy orphaned tab (closed while its turn was running)', async () => {
+			const activeTab = createTab({ id: 'tab-b', state: 'busy' });
+			const orphan = createTab({ id: 'tab-orphan', state: 'busy' });
+			const session = createSession({
+				id: 'sess-orphan',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [activeTab],
+				activeTabId: 'tab-b',
+				orphanedThinkingTabs: [orphan],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-orphan' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-orphan-ai-tab-orphan');
+		});
+
+		it('signals the active tab exactly once when it is also busy', async () => {
+			const tab = createTab({ id: 'tab-solo', state: 'busy' });
+			const session = createSession({
+				id: 'sess-dedupe',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-solo',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-dedupe' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			const calls = mockMaestro.process.interrupt.mock.calls.filter(
+				([id]) => id === 'sess-dedupe-ai-tab-solo'
+			);
+			expect(calls).toHaveLength(1);
+		});
+
+		it('leaves idle background tabs alone', async () => {
+			const idleTab = createTab({ id: 'tab-idle', state: 'idle' });
+			const activeTab = createTab({ id: 'tab-b', state: 'busy' });
+			const session = createSession({
+				id: 'sess-idle-bg',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [idleTab, activeTab],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-idle-bg' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-idle-bg-ai-tab-idle');
+		});
+
+		it('interrupts forced-parallel processes of a busy background tab', async () => {
+			mockMaestro.process.getActiveProcesses.mockResolvedValueOnce([
+				{ sessionId: 'sess-fp-ai-tab-a-fp-1700000000' },
+				{ sessionId: 'sess-fp-ai-tab-unrelated' },
+			]);
+
+			const backgroundTab = createTab({ id: 'tab-a', state: 'busy' });
+			const activeTab = createTab({ id: 'tab-b', state: 'busy' });
+			const session = createSession({
+				id: 'sess-fp',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [backgroundTab, activeTab],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-fp' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-fp-ai-tab-a-fp-1700000000');
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-fp-ai-tab-unrelated');
+		});
+
+		it('force-kills every target when the primary interrupt fails', async () => {
+			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('interrupt failed'));
+			window.confirm = vi.fn(() => true);
+
+			const backgroundTab = createTab({ id: 'tab-a', state: 'busy' });
+			const activeTab = createTab({ id: 'tab-b', state: 'busy' });
+			const session = createSession({
+				id: 'sess-kill-all',
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [backgroundTab, activeTab],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-kill-all' });
+
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.process.kill).toHaveBeenCalledWith('sess-kill-all-ai-tab-b');
+			expect(mockMaestro.process.kill).toHaveBeenCalledWith('sess-kill-all-ai-tab-a');
 		});
 	});
 
