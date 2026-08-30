@@ -273,22 +273,45 @@ export function applyCadenzaHtmlPayload(payload: CadenzaPayload): void {
 	if (isHtml && payload.body !== undefined) setDocument('cadenza', payload.id, payload.body);
 }
 
+/**
+ * Response headers every served Concerto document carries. The CSP (including
+ * its `sandbox` directive) is what keeps an agent-authored document from
+ * reaching the network or the embedding page, so the custom-scheme handler and
+ * the web server's HTTP route MUST send the identical set - a browser client
+ * served without these would run the same document unsandboxed.
+ */
+export const CONCERTO_HTML_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
+	'content-type': 'text/html; charset=utf-8',
+	'cache-control': 'no-store',
+	'content-security-policy': CONCERTO_HTML_CSP,
+	'permissions-policy':
+		'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=(), fullscreen=(), payment=(), usb=()',
+	'x-dns-prefetch-control': 'off',
+	'x-content-type-options': 'nosniff',
+};
+
+/**
+ * The registered document for a surface/id, with the designer harness injected,
+ * or null when nothing is registered under that key. Shared by the Electron
+ * protocol handler and the web server's HTTP route so both serve one body.
+ */
+export function getConcertoHtmlDocumentBody(
+	surface: ConcertoHtmlSurface,
+	id: string
+): string | null {
+	const document = documents.get(documentKey(surface, id));
+	if (document === undefined) return null;
+	return injectConcertoDesignerBootstrap(document.html);
+}
+
 export function createConcertoHtmlResponse(requestUrl: string): Response {
 	const target = parseConcertoHtmlUrl(requestUrl);
 	if (!target) return new Response('bad request', { status: 400 });
-	const document = documents.get(documentKey(target.surface, target.id));
-	if (document === undefined) return new Response('not found', { status: 404 });
-	return new Response(injectConcertoDesignerBootstrap(document.html), {
+	const body = getConcertoHtmlDocumentBody(target.surface, target.id);
+	if (body === null) return new Response('not found', { status: 404 });
+	return new Response(body, {
 		status: 200,
-		headers: {
-			'content-type': 'text/html; charset=utf-8',
-			'cache-control': 'no-store',
-			'content-security-policy': CONCERTO_HTML_CSP,
-			'permissions-policy':
-				'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=(), fullscreen=(), payment=(), usb=()',
-			'x-dns-prefetch-control': 'off',
-			'x-content-type-options': 'nosniff',
-		},
+		headers: { ...CONCERTO_HTML_RESPONSE_HEADERS },
 	});
 }
 

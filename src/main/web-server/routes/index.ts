@@ -18,6 +18,8 @@ export {
 
 // Note: HistoryEntry type is exported from shared/types.ts (canonical location)
 
+export { ConcertoRoutes } from './concertoRoutes';
+
 export { StaticRoutes } from './staticRoutes';
 
 export {

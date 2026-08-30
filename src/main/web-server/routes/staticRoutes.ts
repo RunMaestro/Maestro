@@ -79,11 +79,21 @@ export class StaticRoutes {
 	// Web-desktop bundle root - the default browser interface, served at the
 	// token root and at /<token>/desktop. Null when the bundle hasn't been built.
 	private webDesktopPath: string | null;
+	// Read-only token for the Concerto HTML document route, handed to the page so
+	// the renderer can point a Movement's iframe at an HTTP URL the browser can
+	// actually load (the desktop app uses the maestro-concerto:// scheme instead).
+	private concertoToken: string;
 
-	constructor(securityToken: string, webAssetsPath: string | null, webDesktopPath: string | null) {
+	constructor(
+		securityToken: string,
+		webAssetsPath: string | null,
+		webDesktopPath: string | null,
+		concertoToken: string
+	) {
 		this.securityToken = securityToken;
 		this.webAssetsPath = webAssetsPath;
 		this.webDesktopPath = webDesktopPath;
+		this.concertoToken = concertoToken;
 	}
 
 	/**
@@ -138,7 +148,8 @@ export class StaticRoutes {
           sessionId: null,
           tabId: null,
           apiBase: "/${token}/api",
-          wsUrl: "/${token}/ws"
+          wsUrl: "/${token}/ws",
+          concertoToken: ${JSON.stringify(this.concertoToken)}
         };
       </script>`;
 
