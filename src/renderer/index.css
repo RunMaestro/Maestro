@@ -1365,3 +1365,61 @@ html[data-theme-mode='light'] .chrome-raised-active {
 	box-shadow: none;
 	background-image: none;
 }
+
+/* ============================================================================
+   LEFT BAR ROW REDESIGN (temporary; branch gloss-demo only)
+
+   The row spends its width on the constant and clips the variable. The agent
+   name is the only thing that differs between rows and the only thing anyone
+   scans for, yet it truncates around fourteen characters; the provider label
+   underneath reads the same string on nine rows out of ten and gets a full
+   uncontested line at almost the same weight.
+
+   Driven by html[data-rowdesign] so the shipped row and the redesign can be
+   compared in one running app:
+     a  - shipped
+     b  - name is allowed to wrap to two lines, provider demoted to a chip
+   ============================================================================ */
+
+html[data-rowdesign='b'] .row-name {
+	/* The variable gets the room. Two lines is enough for every real agent name
+	   without letting one pathological name push the row to five. */
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	white-space: normal;
+	overflow: hidden;
+	text-overflow: unset;
+	line-height: 1.25;
+}
+
+html[data-rowdesign='b'] .row-provider {
+	/* The constant stops competing: same information, a fraction of the visual
+	   weight. Deliberately NOT uppercased - caps plus letter-spacing is an
+	   emphasis treatment, and the first pass at this made the label MORE
+	   prominent while trying to demote it. It must also never wrap: the
+	   two-line "CLAUDE-/CODE" it produced took more room than the name it was
+	   supposed to yield to. */
+	font-size: 9px;
+	opacity: 0.5;
+	white-space: nowrap;
+}
+
+html[data-rowdesign='b'] .row-provider-icon {
+	opacity: 0.45;
+}
+
+html[data-rowdesign='b'] .row-group-chip {
+	/* The chip sits on the NAME's line and holds width, which is why a
+	   bookmarked row still truncated after the name was allowed to wrap. The
+	   group is recoverable - the same agent appears under its group heading
+	   further down the list, and the full name is on the chip's tooltip - while
+	   the agent name is recoverable from nothing. So the chip yields first. */
+	max-width: 64px;
+	flex-shrink: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	opacity: 0.7;
+}

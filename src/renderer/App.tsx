@@ -1214,6 +1214,7 @@ function MaestroConsoleInner() {
 		const root = document.documentElement;
 		root.dataset.themeMode = theme.mode;
 		if (!root.dataset.gloss) root.dataset.gloss = 'off';
+		if (!root.dataset.rowdesign) root.dataset.rowdesign = 'a';
 	}, [theme.mode]);
 
 	// Get capabilities for the active session's agent type

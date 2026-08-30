@@ -358,7 +358,7 @@ export const SessionItem = memo(function SessionItem({
 							</span>
 						)}
 						<span
-							className={`font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
+							className={`row-name font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
 							style={{ color: theme.colors.textMain }}
 						>
 							{session.name}
@@ -413,8 +413,11 @@ export const SessionItem = memo(function SessionItem({
 								{jumpNumber}
 							</div>
 						)}
-						<Activity className="w-3 h-3" /> {session.toolType}
-						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
+						<Activity className="row-provider-icon w-3 h-3" />{' '}
+						<span className="row-provider">
+							{session.toolType}
+							{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
+						</span>
 					</div>
 				)}
 			</div>
@@ -427,7 +430,7 @@ export const SessionItem = memo(function SessionItem({
 				    name, truncated with the complete value available on hover. */}
 				{variant === 'bookmark' && group && showGroupLabelInBookmarks && (
 					<span
-						className={`text-[9px] px-1 py-0.5 rounded${
+						className={`row-group-chip text-[9px] px-1 py-0.5 rounded${
 							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
 						}`}
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
