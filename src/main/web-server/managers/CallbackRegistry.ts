@@ -39,6 +39,9 @@ import type {
 	WriteTerminalTabResult,
 	ListTerminalTabsCallback,
 	TerminalTabInfo,
+	ReadTerminalTabCallback,
+	ReadTerminalTabPayload,
+	ReadTerminalTabResult,
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
@@ -158,6 +161,7 @@ export interface WebServerCallbacks {
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
+	readTerminalTab: ReadTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
@@ -247,6 +251,7 @@ export class CallbackRegistry {
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
+		readTerminalTab: null,
 		newAITabWithPrompt: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
@@ -459,6 +464,16 @@ export class CallbackRegistry {
 	async listTerminalTabs(sessionId?: string): Promise<TerminalTabInfo[]> {
 		if (!this.callbacks.listTerminalTabs) return [];
 		return this.callbacks.listTerminalTabs(sessionId);
+	}
+
+	async readTerminalTab(
+		sessionId: string,
+		payload: ReadTerminalTabPayload
+	): Promise<ReadTerminalTabResult> {
+		if (!this.callbacks.readTerminalTab) {
+			return { success: false, error: 'Terminal reads not configured' };
+		}
+		return this.callbacks.readTerminalTab(sessionId, payload);
 	}
 
 	async newAITabWithPrompt(
@@ -988,6 +1003,10 @@ export class CallbackRegistry {
 
 	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
 		this.callbacks.listTerminalTabs = callback;
+	}
+
+	setReadTerminalTabCallback(callback: ReadTerminalTabCallback): void {
+		this.callbacks.readTerminalTab = callback;
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {

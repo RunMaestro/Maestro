@@ -76,6 +76,8 @@ import type {
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
 	ListTerminalTabsCallback,
+	ReadTerminalTabCallback,
+	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
@@ -494,6 +496,10 @@ export class WebServer {
 
 	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
 		this.callbackRegistry.setListTerminalTabsCallback(callback);
+	}
+
+	setReadTerminalTabCallback(callback: ReadTerminalTabCallback): void {
+		this.callbackRegistry.setReadTerminalTabCallback(callback);
 	}
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
@@ -923,6 +929,8 @@ export class WebServer {
 				this.callbackRegistry.writeTerminalTab(sessionId, payload),
 			listTerminalTabs: async (sessionId?: string) =>
 				this.callbackRegistry.listTerminalTabs(sessionId),
+			readTerminalTab: async (sessionId: string, payload: ReadTerminalTabPayload) =>
+				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			refreshAutoRunDocs: async (sessionId: string) =>
