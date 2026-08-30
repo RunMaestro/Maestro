@@ -83,6 +83,8 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 		root.setProperty('--scrollbar-thumb-hover', themeColors.textDim);
 		root.setProperty('--scrollbar-thumb-active', themeColors.accent);
 		root.setProperty('--scrollbar-track', themeColors.bgActivity);
+		// Quiet/secondary control colour, consumed by the Files toolbar hierarchy.
+		root.setProperty('--fx-quiet', themeColors.textDim);
 	}, [themeColors.accent, themeColors.border, themeColors.textDim, themeColors.bgActivity]);
 
 	// Add scroll listeners to highlight scrollbars during active scrolling

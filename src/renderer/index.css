@@ -1495,3 +1495,41 @@ html[data-rowdesign='b'] .row-group-chip {
 	white-space: nowrap;
 	opacity: 0.7;
 }
+
+/* ---------------------------------------------------------------------------
+   Files toolbar hierarchy (rowdesign 'c', same flag as the sidebar row).
+
+   The same defect the Left Bar had, in another panel: Find, Open, .files and
+   Refresh are rendered from an identical class string, so four buttons plus
+   two icon controls all carry the accent colour, the accent border and the
+   accent fill at equal weight. Six controls shout in unison and the eye has
+   nowhere to land.
+
+   Find is the primary: it is the one with a keyboard shortcut and the one used
+   constantly. It keeps the accent. The other three are utilities and drop to
+   the panel's own text colour with a hairline edge, so they read as available
+   rather than as urgent. Inline styles set the colour, so these need
+   !important to win - the alternative is threading a variant prop through the
+   component, which is not worth it for a comparison build.
+   --------------------------------------------------------------------------- */
+
+html[data-rowdesign='c'] .fx-btn:not(.fx-primary) {
+	color: var(--fx-quiet, #98a0bd) !important;
+	border-color: rgba(255, 255, 255, 0.09) !important;
+	background-color: transparent !important;
+	font-weight: 400 !important;
+}
+
+html[data-rowdesign='c'] .fx-btn:not(.fx-primary):hover {
+	border-color: rgba(255, 255, 255, 0.18) !important;
+	background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* The primary earns a solid fill rather than the same 15% wash as everything
+   else, so "the thing you came here to do" is unambiguous. */
+html[data-rowdesign='c'] .fx-btn.fx-primary {
+	background-color: var(--accent-color) !important;
+	border-color: var(--accent-color) !important;
+	color: #16171f !important;
+	font-weight: 600 !important;
+}

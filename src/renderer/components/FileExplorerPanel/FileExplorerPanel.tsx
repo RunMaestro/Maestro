@@ -532,7 +532,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								setTimeout(() => fileTreeFilterInputRef?.current?.focus(), 0);
 							}
 						}}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="fx-btn fx-primary flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: fileTreeFilterOpen ? theme.colors.accent : theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
@@ -551,7 +551,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							onClick={() =>
 								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)
 							}
-							className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
@@ -567,7 +567,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					{!dotfilesToggleHidden && (
 						<button
 							onClick={() => setShowHiddenFiles(!showHiddenFiles)}
-							className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
@@ -588,7 +588,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						onClick={handleRefresh}
 						onMouseEnter={handleRefreshMouseEnter}
 						onMouseLeave={handleRefreshMouseLeave}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
