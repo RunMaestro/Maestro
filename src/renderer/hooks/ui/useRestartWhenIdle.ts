@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { useSessionStore, selectIsAnySessionBusy } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectIsAnySessionBusy,
+	selectHasAnyRunnableQueuedWork,
+} from '../../stores/sessionStore';
 import { selectHasAnyActiveBatch, useBatchStore } from '../../stores/batchStore';
 import { useRestartPendingStore } from '../../stores/restartPendingStore';
 
@@ -9,8 +13,11 @@ import { useRestartPendingStore } from '../../stores/restartPendingStore';
  * fires `updates.install()` so the app restarts and applies the downloaded
  * update without further user input.
  *
- * Activity matches `useIdleNotification`: any session busy OR any Auto Run
- * batch running. Cue tasks are intentionally excluded.
+ * Activity matches `useIdleNotification`, reading the SAME selectors so the two
+ * cannot drift on what counts as idle: any session busy, any session holding
+ * runnable queued work, OR any Auto Run batch running. Cue tasks are
+ * intentionally excluded. Restarting the app out from under a full queue is the
+ * same mistake as announcing idle over one, only louder.
  *
  * If the flag is set while the app is *already* idle (user clicked the
  * deferred-restart button without anything running), we fire on the next
@@ -18,12 +25,13 @@ import { useRestartPendingStore } from '../../stores/restartPendingStore';
  */
 export function useRestartWhenIdle(): void {
 	const anySessionBusy = useSessionStore(selectIsAnySessionBusy);
+	const anyQueuedWork = useSessionStore(selectHasAnyRunnableQueuedWork);
 	const anyBatchRunning = useBatchStore(selectHasAnyActiveBatch);
 	const pending = useRestartPendingStore((s) => s.pending);
 	const setPending = useRestartPendingStore((s) => s.setPending);
 
-	const wasActiveRef = useRef(anySessionBusy || anyBatchRunning);
-	const isActive = anySessionBusy || anyBatchRunning;
+	const wasActiveRef = useRef(anySessionBusy || anyQueuedWork || anyBatchRunning);
+	const isActive = anySessionBusy || anyQueuedWork || anyBatchRunning;
 
 	useEffect(() => {
 		if (!pending) {
