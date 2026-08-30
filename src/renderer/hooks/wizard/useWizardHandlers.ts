@@ -205,7 +205,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		if (
 			currentSession.toolType !== 'claude-code' &&
 			currentSession.toolType !== 'opencode' &&
-			currentSession.toolType !== 'copilot-cli'
+			currentSession.toolType !== 'copilot-cli' &&
+			currentSession.toolType !== 'codex'
 		)
 			return;
 		if (currentSession.agentCommands && currentSession.agentCommands.length > 0) return;
