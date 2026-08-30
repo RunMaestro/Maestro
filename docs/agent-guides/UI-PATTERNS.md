@@ -553,6 +553,15 @@ onEscapeRef.current = () => {
 
 Losing the whole pane while trying to reset a filter is the bug this prevents. The clear button is the always-available path either way.
 
+**`collapsible` is for a row that cannot wrap.** A stats bar or toolbar that lays out on one line has no room for a permanently-open 280px box, and the box is usually the widest thing on it. Pass `collapsible` and the control shrinks to its magnifier until it is focused or holds a query; a live query keeps it open even unfocused, because collapsing then would hide the reason the list is short.
+
+Two details make it safe:
+
+- The input stays **mounted** when collapsed, squeezed to zero width. A host that focuses the box by hotkey holds a ref to that element, and unmounting it would null the ref - the key would silently do nothing, which reads as a broken shortcut rather than a closed box.
+- The open-on-click handler sits on the **wrapper**, not on a button around the icon. A second focusable element would carry the same accessible name as the input it fronts, so "the filter box" would match two nodes.
+
+Pair it with `onExpandedChange` when the host has a neighbour to stand down while the box is wide. The Memory Viewer hides its unlinked chip that way: the chip is a filter too, so the two never need to be reachable at the same instant.
+
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 
 The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus. Rows are real `<button>`s and the handler sits on the list container, so clicking one is enough - or pass `autoFocusList` and the surface opens with the list already focused:

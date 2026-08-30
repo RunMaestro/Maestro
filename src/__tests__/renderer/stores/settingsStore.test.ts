@@ -976,9 +976,15 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().documentGraphMaxNodes).toBe(500);
 		});
 
-		it('setDocumentGraphPreviewCharLimit clamps to 50-500', () => {
-			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(10);
-			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(50);
+		it('setDocumentGraphPreviewCharLimit clamps to 0-500, keeping 0 as "previews off"', () => {
+			// 0 is a mode, not a floor violation: it draws each graph node as a
+			// filename pill. Clamping it up to 50 would make the setting
+			// unreachable and snap the graph back to full cards.
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(0);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
+
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(-10);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
 
 			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(1000);
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(500);
@@ -2794,6 +2800,19 @@ describe('settingsStore', () => {
 
 			// Invalid value rejected, keeps default
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(100);
+		});
+
+		it('keeps a saved documentGraphPreviewCharLimit of 0 on load', async () => {
+			// The "previews off" choice round-trips through settings on every
+			// launch. A floor of 50 in the load validator would discard it
+			// silently and the graph would come back as full cards each time.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				documentGraphPreviewCharLimit: 0,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
 		});
 
 		it('validates documentGraphLayoutType on load (rejects invalid)', async () => {

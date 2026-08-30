@@ -73,17 +73,18 @@ The Document Graph is designed for keyboard-first navigation:
 | Action                        | Key                               |
 | ----------------------------- | --------------------------------- |
 | Navigate between nodes        | `Arrow Keys` (spatial detection)  |
-| Recenter view on node         | `Enter` (for document nodes)      |
+| Preview document in-graph     | `Enter` (for document nodes)      |
 | Open external URL             | `Enter` (for external link nodes) |
+| Recenter view on node         | `Space`                           |
 | Open document in File Preview | `O`                               |
-| Preview document in-graph     | `P`                               |
 | Cycle layout                  | `L`                               |
 | Widen neighbor depth          | `D`                               |
+| Cycle preview length          | `P`                               |
 | Adjust node spacing           | `+` / `-`                         |
 | Focus search                  | `Cmd/Ctrl+F`                      |
 | Close graph or help panel     | `Esc`                             |
 
-`L` steps through Mind Map, Radial, Hierarchical, and Force, in the same order as the layout dropdown. `D` widens the depth one level per press (1 through 5, then All, then back to 1).
+`L` steps through Mind Map, Radial, Hierarchical, and Force, in the same order as the layout dropdown. `D` widens the depth one level per press (1 through 5, then All, then back to 1). `P` steps the preview length through Off, 50, 100, 200, 350, and 500 characters.
 
 ### Mouse Controls
 
@@ -114,6 +115,12 @@ Lower depth values keep the graph focused and improve performance; higher values
 ### Layout
 
 The **layout** dropdown switches how nodes are arranged: Mind Map (tree columns), Radial (concentric rings), Hierarchical (top-down rows), and Force (physics simulation). Press `L` to step through them in that order. Switching layouts clears any nodes you dragged, since those positions belong to the layout they were set in.
+
+### Preview Length
+
+The **Preview** slider sets how much of each document's opening text is drawn inside its node, from 0 up to 500 characters. Press `P` to step through Off, 50, 100, 200, 350, and 500 without opening the slider.
+
+At **Off** a document is drawn as a filename pill - no body box, no preview text, no folder path. That is the densest reading of a large graph: many more nodes fit on screen at once, and the shape of the link structure is what you see instead of the content. Raise the limit again when you want to read what a document is about without opening it.
 
 ### External Links
 
@@ -168,6 +175,8 @@ Each document node displays:
 - **Folder indicator** - Shows the parent directory (e.g., "docs")
 - **Content preview** - A snippet of the document's content
 
+With the Preview slider at **Off** (or after pressing `P` around to Off), only the filename remains and each node is drawn as a compact pill.
+
 ## Tips for Effective Use
 
 ### Workflow Integration
@@ -204,11 +213,12 @@ The Document Graph is especially useful for:
 | Re-open last graph        | Via `Cmd+K` menu | Via `Ctrl+K` menu |
 | Go to File (fuzzy finder) | `Cmd+G`          | `Ctrl+G`          |
 | Navigate nodes            | `Arrow Keys`     | `Arrow Keys`      |
-| Recenter on node          | `Enter`          | `Enter`           |
+| Preview document in-graph | `Enter`          | `Enter`           |
+| Recenter on node          | `Space`          | `Space`           |
 | Open document in preview  | `O`              | `O`               |
-| Preview document in-graph | `P`              | `P`               |
 | Cycle layout              | `L`              | `L`               |
 | Widen neighbor depth      | `D`              | `D`               |
+| Cycle preview length      | `P`              | `P`               |
 | Adjust node spacing       | `+` / `-`        | `+` / `-`         |
 | Focus search              | `Cmd+F`          | `Ctrl+F`          |
 | Close graph               | `Esc`            | `Esc`             |

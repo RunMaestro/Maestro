@@ -5,6 +5,7 @@ import type { Theme } from '../../../types';
 import { HeaderActionButton } from '../../ui/HeaderActionButton';
 import type { AgentSession } from '../../../hooks/agent/useSessionViewer';
 import { formatRelativeTime } from '../../../utils/formatters';
+import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 
 interface SessionDetailHeaderProps {
 	viewingSession: AgentSession;
@@ -147,7 +148,12 @@ export const SessionDetailHeader = React.memo(function SessionDetailHeader({
 				</div>
 			</div>
 			<div className="flex items-center gap-2">
-				<HeaderActionButton theme={theme} onClick={onResume} icon={<Play />}>
+				<HeaderActionButton
+					theme={theme}
+					onClick={onResume}
+					icon={<Play />}
+					title={`Resume this session (${formatShortcutKeys(['Meta', 'r'])})`}
+				>
 					Resume
 				</HeaderActionButton>
 				<button

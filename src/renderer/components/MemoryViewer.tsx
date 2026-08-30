@@ -140,6 +140,14 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const filterInputRef = useRef<HTMLInputElement>(null);
 	const editorRef = useRef<HTMLTextAreaElement>(null);
 
+	/**
+	 * The stats bar is one non-wrapping row, and the filter box is the widest
+	 * thing on it. It collapses to its magnifier until used, and the unlinked
+	 * pill stands down while it is open - the pill is a filter too, so the two
+	 * never need to be reachable at the same instant.
+	 */
+	const [filterExpanded, setFilterExpanded] = useState(false);
+
 	/** Move keyboard focus back to the file list (see `listFocusToken`). */
 	const focusList = useCallback(() => setListFocusToken((t) => t + 1), []);
 
@@ -657,20 +665,20 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				className="px-6 py-3 border-b shrink-0 flex items-center gap-6 text-xs"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 			>
-				<span className="flex items-center gap-1.5">
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
 					<FileText className="w-3.5 h-3.5" />
 					{stats.fileCount} {stats.fileCount === 1 ? 'file' : 'files'}
 				</span>
-				<span className="flex items-center gap-1.5">
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
 					<Database className="w-3.5 h-3.5" />
 					{formatSize(stats.totalBytes)}
 				</span>
-				<span className="flex items-center gap-1.5">
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
 					<Zap className="w-3.5 h-3.5" />~{formatNumber(estimatedTokens)} tokens
 				</span>
 				{stats.firstCreatedAt && (
 					<span
-						className="flex items-center gap-1.5"
+						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
 						title={new Date(stats.firstCreatedAt).toLocaleString()}
 					>
 						<Clock className="w-3.5 h-3.5" />
@@ -679,7 +687,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				)}
 				{stats.lastModifiedAt && (
 					<span
-						className="flex items-center gap-1.5"
+						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
 						title={new Date(stats.lastModifiedAt).toLocaleString()}
 					>
 						<Clock className="w-3.5 h-3.5" />
@@ -687,7 +695,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					</span>
 				)}
 				<div className="flex-1" />
-				{orphans.length > 0 && (
+				{orphans.length > 0 && !filterExpanded && (
 					<button
 						onClick={() => setShowOnlyOrphans((v) => !v)}
 						className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors shrink-0"
@@ -717,6 +725,8 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					ariaLabel="Filter memories by name or content"
 					width={280}
 					resultLabel={matches ? `${filteredEntries.length}/${entries.length}` : undefined}
+					collapsible
+					onExpandedChange={setFilterExpanded}
 				/>
 			</div>
 

@@ -2367,6 +2367,65 @@ describe('AgentSessionsBrowser', () => {
 
 			expect(onResumeSession).toHaveBeenCalled();
 		});
+
+		it('resumes session with Cmd+R in detail view', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onResumeSession = vi.fn();
+			const props = createDefaultProps({ onResumeSession });
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			// The chord is claimed at the window level, so it fires wherever focus is
+			await act(async () => {
+				fireEvent.keyDown(window, { key: 'r', metaKey: true });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(onResumeSession).toHaveBeenCalled();
+		});
+
+		it('ignores Cmd+R in the list view', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onResumeSession = vi.fn();
+			const props = createDefaultProps({ onResumeSession });
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.keyDown(window, { key: 'r', metaKey: true });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(onResumeSession).not.toHaveBeenCalled();
+		});
 	});
 
 	// ============================================================================

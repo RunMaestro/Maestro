@@ -273,6 +273,51 @@ describe('MemoryViewer', () => {
 		await waitFor(() => expect(listRowNames()).toEqual(['user_role.md']));
 	});
 
+	it('yields the unlinked chip to the filter box while it is open', async () => {
+		// The stats bar is one non-wrapping row. The filter box is the widest
+		// thing on it, so it stays collapsed until used and the chip stands down
+		// while it is open rather than letting the row wrap.
+		memoryApi.orphans.mockResolvedValueOnce({
+			success: true,
+			orphans: ['user_role.md'],
+			brokenLinks: [],
+		});
+		renderViewer();
+
+		await screen.findByTestId('memory-orphan-filter');
+
+		const { act } = await import('@testing-library/react');
+		const input = screen.getByLabelText('Filter memories by name or content');
+		await act(async () => {
+			(input as HTMLInputElement).focus();
+		});
+		expect(screen.queryByTestId('memory-orphan-filter')).not.toBeInTheDocument();
+
+		await act(async () => {
+			(input as HTMLInputElement).blur();
+		});
+		expect(screen.getByTestId('memory-orphan-filter')).toBeInTheDocument();
+	});
+
+	it('keeps the filter box open on a live query so the chip stays out of the way', async () => {
+		// Collapsing over a live query would hide why the list is short.
+		memoryApi.orphans.mockResolvedValueOnce({
+			success: true,
+			orphans: ['user_role.md'],
+			brokenLinks: [],
+		});
+		renderViewer();
+
+		await screen.findByTestId('memory-orphan-filter');
+		await typeFilter('macOS');
+
+		const { act } = await import('@testing-library/react');
+		await act(async () => {
+			(screen.getByLabelText('Filter memories by name or content') as HTMLInputElement).blur();
+		});
+		expect(screen.queryByTestId('memory-orphan-filter')).not.toBeInTheDocument();
+	});
+
 	it('survives an orphan lookup that throws', async () => {
 		// The chip is additive, so a failed lookup must degrade to "no chip"
 		// rather than leaving an unhandled rejection behind.

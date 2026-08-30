@@ -26,6 +26,7 @@ import {
 	NODE_HEADER_HEIGHT,
 	NODE_SUBHEADER_HEIGHT,
 	NODE_HEIGHT_BASE,
+	NODE_PILL_HEIGHT,
 	DESC_LINE_HEIGHT,
 	CHARS_PER_LINE,
 	DESC_PADDING,
@@ -215,6 +216,15 @@ describe('mindMapLayouts', () => {
 			const a = calculateNodeHeight('Test text here', 100);
 			const b = calculateNodeHeight('Test text here', 100);
 			expect(a).toBe(b);
+		});
+
+		it('collapses to a pill when previews are off, however long the text', () => {
+			// Off is a mode, not a zero-length preview: the body box and the folder
+			// sub-header both go away, so the height cannot depend on the content.
+			expect(calculateNodeHeight('A'.repeat(500), 0)).toBe(NODE_PILL_HEIGHT);
+			expect(calculateNodeHeight('short', 0)).toBe(NODE_PILL_HEIGHT);
+			expect(calculateNodeHeight(undefined, 0)).toBe(NODE_PILL_HEIGHT);
+			expect(NODE_PILL_HEIGHT).toBeLessThan(NODE_HEIGHT_BASE);
 		});
 	});
 
