@@ -27,6 +27,7 @@ import {
 	EXTERNAL_NODE_WIDTH,
 	EXTERNAL_NODE_HEIGHT,
 } from './mindMapLayouts';
+import { isPreviewOff } from './previewCharLimit';
 import { logger } from '../../utils/logger';
 import { GraphMiniMap } from './GraphMiniMap';
 
@@ -150,6 +151,27 @@ const NODE_BORDER_RADIUS = 12;
 const OPEN_ICON_SIZE = 14;
 /** Open icon padding from node edge */
 const OPEN_ICON_PADDING = 8;
+
+/**
+ * Where the open-file icon sits inside a document node, in canvas space.
+ *
+ * Shared by the renderer and the click hit test so the two cannot drift: the
+ * icon is centred in the title band, which is the header strip on a full card
+ * and the whole node once previews are off and the node is a pill.
+ */
+export function openIconRect(
+	node: Pick<MindMapNode, 'x' | 'y' | 'width' | 'height'>,
+	previewCharLimit: number
+): { x: number; y: number; size: number } {
+	const bandHeight = isPreviewOff(previewCharLimit)
+		? node.height
+		: Math.min(node.height, NODE_HEADER_HEIGHT);
+	return {
+		x: node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING,
+		y: node.y - node.height / 2 + (bandHeight - OPEN_ICON_SIZE) / 2,
+		size: OPEN_ICON_SIZE,
+	};
+}
 
 // ============================================================================
 // Utility Functions
@@ -403,6 +425,61 @@ function renderDocumentNode(
 	const nodeLeft = x - width / 2;
 	const nodeTop = y - height / 2;
 
+	// Header fill, shared by the full card and the pill form below.
+	const headerFill =
+		isFocused || isSelected
+			? theme.colors.accent
+			: isHovered
+				? `${theme.colors.accent}CC`
+				: `${theme.colors.accent}99`;
+	const borderStroke =
+		isFocused || isSelected
+			? theme.colors.accent
+			: isOrphan
+				? theme.colors.warning
+				: isHovered
+					? `${theme.colors.accent}80`
+					: theme.colors.border;
+
+	// Previews off: the node is a filename pill. No body box, no folder
+	// sub-header, no preview text - just enough to read the graph's shape.
+	if (isPreviewOff(previewCharLimit)) {
+		const radius = height / 2;
+		ctx.fillStyle = headerFill;
+		roundRect(ctx, nodeLeft, nodeTop, width, height, radius);
+		ctx.fill();
+
+		ctx.strokeStyle = borderStroke;
+		ctx.lineWidth = isFocused || isSelected ? 2 : 1;
+		if (isOrphan && !isFocused && !isSelected) ctx.setLineDash([6, 4]);
+		roundRect(ctx, nodeLeft, nodeTop, width, height, radius);
+		ctx.stroke();
+		ctx.setLineDash([]);
+
+		ctx.fillStyle = '#FFFFFF';
+		ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'middle';
+		const pillTitleWidth = width - OPEN_ICON_SIZE - OPEN_ICON_PADDING * 3 - 12;
+		ctx.fillText(
+			truncateText(label, Math.floor(pillTitleWidth / 7)),
+			nodeLeft + 14,
+			nodeTop + height / 2
+		);
+
+		const pillIcon = openIconRect(node, previewCharLimit);
+		drawOpenIcon(
+			ctx,
+			pillIcon.x,
+			pillIcon.y,
+			pillIcon.size,
+			isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)'
+		);
+
+		ctx.globalAlpha = 1;
+		return;
+	}
+
 	// Draw body background first
 	const bodyColor = theme.colors.bgActivity;
 	ctx.fillStyle = bodyColor;
@@ -410,13 +487,7 @@ function renderDocumentNode(
 	ctx.fill();
 
 	// Draw header background (accent colored)
-	const headerColor =
-		isFocused || isSelected
-			? theme.colors.accent
-			: isHovered
-				? `${theme.colors.accent}CC`
-				: `${theme.colors.accent}99`;
-	ctx.fillStyle = headerColor;
+	ctx.fillStyle = headerFill;
 
 	// Draw header with rounded top corners only
 	ctx.beginPath();
@@ -440,14 +511,7 @@ function renderDocumentNode(
 	// border: it sits in its own band already, but the band alone reads as "a
 	// row at the bottom" rather than "these connect to nothing", and the two
 	// must stay distinguishable once the user pans away from the layout.
-	ctx.strokeStyle =
-		isFocused || isSelected
-			? theme.colors.accent
-			: isOrphan
-				? theme.colors.warning
-				: isHovered
-					? `${theme.colors.accent}80`
-					: theme.colors.border;
+	ctx.strokeStyle = borderStroke;
 	ctx.lineWidth = isFocused || isSelected ? 2 : 1;
 	if (isOrphan && !isFocused && !isSelected) ctx.setLineDash([6, 4]);
 	roundRect(ctx, nodeLeft, nodeTop, width, height, NODE_BORDER_RADIUS);
@@ -464,9 +528,14 @@ function renderDocumentNode(
 	ctx.fillText(titleText, nodeLeft + 12, nodeTop + NODE_HEADER_HEIGHT / 2);
 
 	// Open file icon (in header, right side)
-	const iconX = nodeLeft + width - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
-	const iconY = nodeTop + (NODE_HEADER_HEIGHT - OPEN_ICON_SIZE) / 2;
-	drawOpenIcon(ctx, iconX, iconY, OPEN_ICON_SIZE, isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)');
+	const headerIcon = openIconRect(node, previewCharLimit);
+	drawOpenIcon(
+		ctx,
+		headerIcon.x,
+		headerIcon.y,
+		headerIcon.size,
+		isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)'
+	);
 
 	// Sub-header: folder icon and path
 	const subHeaderY = nodeTop + NODE_HEADER_HEIGHT;
@@ -757,17 +826,16 @@ export function MindMap({
 		(node: MindMapNode, canvasX: number, canvasY: number): boolean => {
 			if (node.nodeType !== 'document') return false;
 
-			const iconX = node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
-			const iconY = node.y - node.height / 2 + OPEN_ICON_PADDING;
+			const icon = openIconRect(node, previewCharLimit);
 
 			return (
-				canvasX >= iconX &&
-				canvasX <= iconX + OPEN_ICON_SIZE &&
-				canvasY >= iconY &&
-				canvasY <= iconY + OPEN_ICON_SIZE
+				canvasX >= icon.x &&
+				canvasX <= icon.x + icon.size &&
+				canvasY >= icon.y &&
+				canvasY <= icon.y + icon.size
 			);
 		},
-		[]
+		[previewCharLimit]
 	);
 
 	// Recenter the main view on a canvas-space point (used by the minimap).
@@ -1227,14 +1295,10 @@ export function MindMap({
 					e.preventDefault();
 					break;
 
-				case 'p':
-				case 'P':
-					// Open in-graph preview for focused document node
-					if (focusedNode.nodeType === 'document' && onNodePreview) {
-						onNodePreview(focusedNode);
-					}
-					e.preventDefault();
-					break;
+				// `P` is deliberately NOT handled here. It used to be a second
+				// spelling of Enter (open the in-graph preview), which spent a
+				// letter key on a duplicate; it now cycles the preview length in
+				// DocumentGraphView, so this handler must let it bubble.
 			}
 
 			if (nextNode) {

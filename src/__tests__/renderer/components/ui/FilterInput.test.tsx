@@ -7,7 +7,8 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { createRef } from 'react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { FilterInput } from '../../../../renderer/components/ui/FilterInput';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -92,6 +93,83 @@ describe('FilterInput', () => {
 
 		rerender(<FilterInput theme={mockTheme} value="tree" onChange={vi.fn()} resultLabel="3/77" />);
 		expect(screen.getByText('3/77')).toBeInTheDocument();
+	});
+
+	describe('collapsible', () => {
+		it('keeps the input mounted while collapsed so a host hotkey can focus it', () => {
+			const ref = createRef<HTMLInputElement>();
+			render(
+				<FilterInput
+					ref={ref}
+					theme={mockTheme}
+					value=""
+					onChange={vi.fn()}
+					collapsible
+					ariaLabel="Filter memories"
+				/>
+			);
+
+			// Unmounting the input when closed would null the ref, and the host's
+			// `/` and Cmd+F would silently do nothing.
+			expect(ref.current).toBeInstanceOf(HTMLInputElement);
+			act(() => ref.current?.focus());
+			expect(document.activeElement).toBe(ref.current);
+		});
+
+		it('reports expansion so the host can yield the space', () => {
+			const onExpandedChange = vi.fn();
+			const ref = createRef<HTMLInputElement>();
+			render(
+				<FilterInput
+					ref={ref}
+					theme={mockTheme}
+					value=""
+					onChange={vi.fn()}
+					collapsible
+					onExpandedChange={onExpandedChange}
+				/>
+			);
+
+			expect(onExpandedChange).toHaveBeenLastCalledWith(false);
+
+			act(() => ref.current?.focus());
+			expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+
+			act(() => ref.current?.blur());
+			expect(onExpandedChange).toHaveBeenLastCalledWith(false);
+		});
+
+		it('stays open while a query is live, even unfocused', () => {
+			const onExpandedChange = vi.fn();
+			// Collapsing over a live query would hide the reason the list is short.
+			render(
+				<FilterInput
+					theme={mockTheme}
+					value="tree"
+					onChange={vi.fn()}
+					collapsible
+					onExpandedChange={onExpandedChange}
+					resultLabel="3/77"
+				/>
+			);
+
+			expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+			expect(screen.getByText('3/77')).toBeInTheDocument();
+		});
+
+		it('does not report expansion at all when not collapsible', () => {
+			const onExpandedChange = vi.fn();
+			render(
+				<FilterInput
+					theme={mockTheme}
+					value=""
+					onChange={vi.fn()}
+					onExpandedChange={onExpandedChange}
+				/>
+			);
+
+			expect(onExpandedChange).not.toHaveBeenCalled();
+		});
 	});
 });
 

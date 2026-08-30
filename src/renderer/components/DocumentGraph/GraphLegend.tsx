@@ -118,6 +118,10 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 		keys: 'D',
 		description: 'Widen neighbor depth',
 	},
+	{
+		keys: 'P',
+		description: 'Cycle preview length (ends at Off)',
+	},
 ];
 
 /**

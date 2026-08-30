@@ -354,15 +354,41 @@ from the filter box it returns you to the list **keeping your query**, so you
 can filter and then arrow through the hits; pressing it again clears the
 filter, and once more closes the viewer.
 
+## Agent Sessions Browser
+
+Opened with `Cmd+Shift+L`. The list view walks sessions; the detail view adds a
+one-key resume.
+
+| Action                           | macOS             | Windows/Linux      |
+| -------------------------------- | ----------------- | ------------------ |
+| Previous / next session (list)   | `Up/Down`         | `Up/Down`          |
+| Open the selected session (list) | `Enter`           | `Enter`            |
+| Search sessions (list)           | `Cmd+F`           | `Ctrl+F`           |
+| Resume the open session (detail) | `Cmd+R` / `Enter` | `Ctrl+R` / `Enter` |
+| Back to the list / close         | `Esc`             | `Esc`              |
+
+`Cmd+R` is off while you are renaming a session, so it cannot discard a name
+you are half-way through typing.
+
 ## Document Graph
 
-| Action                        | Key          |
-| ----------------------------- | ------------ |
-| Navigate to connected nodes   | `Arrow Keys` |
-| Re-center on node (document)  | `Enter`      |
-| Open URL (external link)      | `Enter`      |
-| Open document in File Preview | `O`          |
-| Close the graph               | `Esc`        |
+| Action                            | Key          |
+| --------------------------------- | ------------ |
+| Navigate to connected nodes       | `Arrow Keys` |
+| Preview document in-graph         | `Enter`      |
+| Open URL (external link)          | `Enter`      |
+| Re-center the graph on a node     | `Space`      |
+| Open document in File Preview     | `O`          |
+| Focus the search box              | `Cmd+F`      |
+| Cycle layout                      | `L`          |
+| Widen neighbor depth              | `D`          |
+| Cycle preview length              | `P`          |
+| Increase / decrease node spacing  | `+` / `-`    |
+| Close the preview, then the graph | `Esc`        |
+
+`P` walks the node preview length through Off, 50, 100, 200, 350, and 500
+characters. At **Off** each document is drawn as a filename pill with no body
+box, which is the densest way to read the shape of a large graph.
 
 ## Customizing Shortcuts
 

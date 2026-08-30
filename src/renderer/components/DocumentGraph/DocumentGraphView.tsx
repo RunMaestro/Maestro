@@ -84,6 +84,15 @@ import {
 	NEIGHBOR_DEPTH_MAX,
 	nextNeighborDepth,
 } from './neighborDepth';
+import {
+	clampPreviewCharLimit,
+	formatPreviewCharLimit,
+	isPreviewOff,
+	nextPreviewCharLimit,
+	PREVIEW_CHAR_LIMIT_MAX,
+	PREVIEW_CHAR_LIMIT_MIN,
+	PREVIEW_CHAR_LIMIT_STEP,
+} from './previewCharLimit';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
@@ -272,6 +281,9 @@ export function DocumentGraphView({
 	const [showDepthSlider, setShowDepthSlider] = useState(false);
 	const [previewCharLimit, setPreviewCharLimit] = useState(defaultPreviewCharLimit);
 	const [showPreviewSlider, setShowPreviewSlider] = useState(false);
+	// The toolbar pill reads "active" whenever previews are not at the shipped
+	// 100-character default - Off is as deliberate a choice as 500 is.
+	const previewNonDefault = previewCharLimit !== 100;
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
@@ -1029,13 +1041,20 @@ export function DocumentGraphView({
 	/**
 	 * Handle preview character limit change
 	 */
-	const handlePreviewCharLimitChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newLimit = parseInt(e.target.value, 10);
-			setPreviewCharLimit(newLimit);
-			onPreviewCharLimitChange?.(newLimit);
+	const applyPreviewCharLimit = useCallback(
+		(newLimit: number) => {
+			const clamped = clampPreviewCharLimit(newLimit);
+			setPreviewCharLimit(clamped);
+			onPreviewCharLimitChange?.(clamped);
 		},
 		[onPreviewCharLimitChange]
+	);
+
+	const handlePreviewCharLimitChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			applyPreviewCharLimit(parseInt(e.target.value, 10));
+		},
+		[applyPreviewCharLimit]
 	);
 
 	/**
@@ -1389,7 +1408,7 @@ export function DocumentGraphView({
 
 	/**
 	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
-	 * +/- node spacing)
+	 * P preview length; +/- node spacing)
 	 */
 	const handleContainerKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -1422,6 +1441,14 @@ export function DocumentGraphView({
 				applyNeighborDepth(nextNeighborDepth(neighborDepth));
 				return;
 			}
+			// P cycles preview length, ending at Off (filename pills). It used to
+			// be a second spelling of Enter's in-graph preview, which spent a key
+			// on a duplicate of a binding the user already has.
+			if (e.key === 'p' || e.key === 'P') {
+				e.preventDefault();
+				applyPreviewCharLimit(nextPreviewCharLimit(previewCharLimit));
+				return;
+			}
 
 			// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
 			const isIncrease = e.key === '+' || e.key === '=';
@@ -1436,7 +1463,14 @@ export function DocumentGraphView({
 				return Math.round(clamped * 10) / 10;
 			});
 		},
-		[applyNeighborDepth, handleLayoutTypeChange, layoutType, neighborDepth]
+		[
+			applyNeighborDepth,
+			applyPreviewCharLimit,
+			handleLayoutTypeChange,
+			layoutType,
+			neighborDepth,
+			previewCharLimit,
+		]
 	);
 	// The graph is a canvas the user pans around in, so its useful default is
 	// "as much of the screen as a modal may take" rather than a fixed box - the
@@ -1745,25 +1779,27 @@ export function DocumentGraphView({
 								onClick={() => openDropdown('preview')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
-									backgroundColor:
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`,
-									color: previewCharLimit > 100 ? theme.colors.accent : theme.colors.textDim,
+									backgroundColor: previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+									color: previewNonDefault ? theme.colors.accent : theme.colors.textDim,
 								}}
 								onMouseEnter={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
 								}
 								onMouseLeave={(e) =>
-									(e.currentTarget.style.backgroundColor =
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`)
+									(e.currentTarget.style.backgroundColor = previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`)
 								}
-								title={`Preview text limit: ${previewCharLimit} characters`}
+								title={
+									isPreviewOff(previewCharLimit)
+										? 'Previews off - nodes are filename pills (P to cycle)'
+										: `Preview text limit: ${previewCharLimit} characters (P to cycle)`
+								}
 							>
 								<Type className="w-4 h-4" />
-								Preview: {previewCharLimit}
+								Preview: {formatPreviewCharLimit(previewCharLimit)}
 							</button>
 
 							{showPreviewSlider && (
@@ -1780,14 +1816,14 @@ export function DocumentGraphView({
 											Preview Characters
 										</span>
 										<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-											{previewCharLimit}
+											{formatPreviewCharLimit(previewCharLimit)}
 										</span>
 									</div>
 									<input
 										type="range"
-										min="50"
-										max="500"
-										step="50"
+										min={PREVIEW_CHAR_LIMIT_MIN}
+										max={PREVIEW_CHAR_LIMIT_MAX}
+										step={PREVIEW_CHAR_LIMIT_STEP}
 										value={previewCharLimit}
 										onChange={handlePreviewCharLimitChange}
 										className="w-full"
@@ -1797,13 +1833,17 @@ export function DocumentGraphView({
 										className="flex justify-between text-xs mt-1"
 										style={{ color: theme.colors.textDim }}
 									>
-										<span>50</span>
+										<span>Off</span>
+										<span>100</span>
 										<span>200</span>
-										<span>350</span>
+										<span>300</span>
+										<span>400</span>
 										<span>500</span>
 									</div>
 									<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-										Characters shown in document previews
+										{isPreviewOff(previewCharLimit)
+											? 'Nodes render as filename pills, with no preview text'
+											: 'Characters shown in document previews'}
 									</p>
 								</div>
 							)}

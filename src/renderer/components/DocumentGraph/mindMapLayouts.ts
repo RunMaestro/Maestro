@@ -23,6 +23,7 @@ import {
 	type SimulationLinkDatum,
 } from 'd3-force';
 import type { MindMapNode, MindMapLink } from './MindMap';
+import { isPreviewOff } from './previewCharLimit';
 
 // ============================================================================
 // Types
@@ -97,6 +98,11 @@ export const NODE_HEADER_HEIGHT = 32;
 export const NODE_SUBHEADER_HEIGHT = 22;
 /** Minimum node height (title + folder path, no description) */
 export const NODE_HEIGHT_BASE = 56 + NODE_SUBHEADER_HEIGHT;
+/**
+ * Height of a document node with previews turned off: the title bar alone,
+ * drawn as a filename pill with no body box and no folder sub-header.
+ */
+export const NODE_PILL_HEIGHT = NODE_HEADER_HEIGHT;
 /** Line height for description text */
 export const DESC_LINE_HEIGHT = 14;
 /** Approximate characters per line in description */
@@ -159,6 +165,13 @@ export function calculateNodeHeight(
 	previewText: string | undefined,
 	previewCharLimit: number
 ): number {
+	// Off is not "a zero-character preview" - the node loses its body and its
+	// folder sub-header and draws as a filename pill, so it has its own height
+	// regardless of how much text the document has.
+	if (isPreviewOff(previewCharLimit)) {
+		return NODE_PILL_HEIGHT;
+	}
+
 	if (!previewText) {
 		return NODE_HEIGHT_BASE;
 	}
