@@ -17,6 +17,7 @@ import { create } from 'zustand';
 import type { Session, Group, LogEntry, AITab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
+import { hasRunnableQueueItem } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
 
@@ -359,6 +360,25 @@ export const selectSessionById =
 
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');
+
+/**
+ * Whether any agent still has queued work that would actually run.
+ *
+ * `selectIsAnySessionBusy` only answers "is a turn in flight right now", which
+ * is a different question from "is there anything left to do". An agent that
+ * finishes a turn with items still queued sits at `state: 'idle'`, and since
+ * `e5acfd47f` a pending Agent Resilience retry parks it there for the whole
+ * countdown while the queue is deliberately held. Anything that reads idle as
+ * "all work is done" (the idle notification, restart-when-idle) has to ask this
+ * too, or it fires on an agent with a full queue.
+ *
+ * Paused items do NOT count: a held item is waiting on the user, not on us, so
+ * a queue holding only paused items is genuinely finished. That rule lives in
+ * `hasRunnableQueueItem` and is reused rather than restated here - a second copy
+ * of the paused check is exactly how these two ideas drift apart.
+ */
+export const selectHasAnyRunnableQueuedWork = (state: SessionStore): boolean =>
+	state.sessions.some((s) => hasRunnableQueueItem(s.executionQueue ?? []));
 
 // ============================================================================
 // Non-React Access
