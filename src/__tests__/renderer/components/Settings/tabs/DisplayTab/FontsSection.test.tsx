@@ -1,7 +1,11 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FontsSection } from '../../../../../../renderer/components/Settings/tabs/DisplayTab/components/FontsSection';
-import { INHERIT_TERMINAL } from '../../../../../../shared/typography';
+import {
+	INHERIT_TERMINAL,
+	TYPOGRAPHY_SURFACES,
+	TYPOGRAPHY_SURFACE_SPECS,
+} from '../../../../../../shared/typography';
 import { mockTheme } from '../../../../../helpers/mockTheme';
 
 /** Drives the responsive grid, which reads a measured width. */
@@ -165,6 +169,82 @@ describe('FontsSection', () => {
 			mockWidth = 0;
 			renderSection();
 			expect(screen.getByTestId('font-surfaces')).toHaveAttribute('data-columns', '2');
+		});
+	});
+	describe('row alignment', () => {
+		/**
+		 * Descriptions differ in length, so two cells in the same row have
+		 * different natural heights and their pickers used to sit at different
+		 * vertical positions. Grid rows stretch their items to equal height, and
+		 * the description claims the slack, so the controls land on one baseline.
+		 *
+		 * Solved in the layout rather than by measuring text: the descriptions
+		 * re-wrap with the pane width, the interface font, and the zoom, so any
+		 * padding computed once would be wrong at the next width.
+		 */
+		it('stretches every cell to the height of its row', () => {
+			renderSection();
+			expect(screen.getByTestId('font-surfaces').className).toContain('items-stretch');
+		});
+
+		it('lays each cell out as a flex column', () => {
+			renderSection();
+			const cell = screen.getByTestId('font-surface-interface');
+
+			expect(cell.className).toContain('flex');
+			expect(cell.className).toContain('flex-col');
+		});
+
+		it('lets the description absorb the height difference', () => {
+			// This is the piece that does the aligning: without flex-1 the extra
+			// height pools below the control instead of above it.
+			renderSection();
+			const cell = screen.getByTestId('font-surface-interface');
+			const description = within(cell).getByText(TYPOGRAPHY_SURFACE_SPECS.interface.description);
+
+			expect(description.className).toContain('flex-1');
+		});
+
+		it('gives every cell the same structure, so no row can be a special case', () => {
+			renderSection();
+			for (const surface of TYPOGRAPHY_SURFACES) {
+				const cell = screen.getByTestId(`font-surface-${surface}`);
+				expect(cell.className).toContain('flex-col');
+				expect(
+					within(cell).getByText(TYPOGRAPHY_SURFACE_SPECS[surface].description).className
+				).toContain('flex-1');
+			}
+		});
+	});
+
+	describe('picker type scale', () => {
+		it('sizes the dropdown down to its own label', () => {
+			// The select inherits the interface font size otherwise, so at a 16px
+			// setting with a 1.2 zoom it rendered near 19px - larger than the
+			// heading above it, and truncating long font stacks that much sooner.
+			renderSection();
+			const select = within(screen.getByTestId('font-surface-interface')).getByRole('combobox');
+
+			expect(select.className).toContain('text-xs');
+		});
+
+		it('exposes the full value as a tooltip, since the control truncates it', () => {
+			renderSection({ fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif' });
+			const select = within(screen.getByTestId('font-surface-interface')).getByRole('combobox');
+
+			expect(select).toHaveAttribute(
+				'title',
+				'Inter, -apple-system, BlinkMacSystemFont, sans-serif'
+			);
+		});
+
+		it('omits the tooltip for a surface that is following a root', () => {
+			// "Same as interface font" is already fully visible; a tooltip
+			// repeating an empty stored value would be noise.
+			renderSection();
+			const select = within(screen.getByTestId('font-surface-chat')).getByRole('combobox');
+
+			expect(select).not.toHaveAttribute('title');
 		});
 	});
 });

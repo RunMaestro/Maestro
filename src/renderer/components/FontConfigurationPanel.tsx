@@ -287,8 +287,18 @@ export function FontConfigurationPanel({
 				onFocus={onFontInteraction}
 				onClick={onFontInteraction}
 				onKeyDown={handleSelectKeyDown}
-				className="w-full p-2 rounded border bg-transparent outline-none mb-1"
+				// Sized down in compact mode to match its own label. The select
+				// otherwise inherits the interface font size, so at a 16px setting
+				// with a 1.2 zoom it rendered near 19px - larger than the "Interface"
+				// heading above it, which inverts the hierarchy and truncates long
+				// font stacks that much sooner.
+				className={`w-full rounded border bg-transparent outline-none mb-1 ${
+					compact ? 'px-2 py-1.5 text-xs' : 'p-2'
+				}`}
 				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+				// The visible text truncates at the control's width; the tooltip is
+				// how a user reads a long stack without opening the menu.
+				title={fontFamily || undefined}
 			>
 				{inheritOptions?.map((option) => (
 					<option key={option.value} value={option.value}>

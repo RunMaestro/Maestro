@@ -77,13 +77,27 @@ export function FontsSection({
 		const inheritable = canInherit(spec);
 
 		return (
-			<div key={surface} className="min-w-0 space-y-1" data-testid={`font-surface-${surface}`}>
+			// A flex column, not a plain block, so the pickers line up across the
+			// row. Grid rows stretch their items to equal height by default, and
+			// the description below claims the slack with `flex-1` - so a cell
+			// whose description runs to one line grows that gap by exactly the
+			// height of the extra line its neighbour needed, and both controls
+			// land on the same baseline.
+			//
+			// Done in the layout rather than by measuring text: the descriptions
+			// re-wrap with the pane width, the interface font, and the zoom, so any
+			// padding computed once would be wrong at the next width.
+			<div
+				key={surface}
+				className="min-w-0 flex flex-col gap-1"
+				data-testid={`font-surface-${surface}`}
+			>
 				<div className="flex items-baseline justify-between gap-2">
 					<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 						{spec.label}
 					</span>
 				</div>
-				<p className="text-[11px] leading-snug opacity-60">{spec.description}</p>
+				<p className="text-[11px] leading-snug opacity-60 flex-1">{spec.description}</p>
 				<FontConfigurationPanel
 					compact
 					fontFamily={storedFont}
@@ -144,7 +158,13 @@ export function FontsSection({
 					    is too narrow for two dropdowns side by side. */}
 					<div
 						ref={gridRef}
-						className={`grid gap-x-6 gap-y-5 ${singleColumn ? 'grid-cols-1' : 'grid-cols-2'}`}
+						// `items-stretch` is the grid default, stated explicitly because
+						// the row alignment above depends on it: without equal-height
+						// cells the description's `flex-1` has no slack to claim and the
+						// pickers drift apart again.
+						className={`grid items-stretch gap-x-6 gap-y-5 ${
+							singleColumn ? 'grid-cols-1' : 'grid-cols-2'
+						}`}
 						data-testid="font-surfaces"
 						data-columns={singleColumn ? '1' : '2'}
 					>
