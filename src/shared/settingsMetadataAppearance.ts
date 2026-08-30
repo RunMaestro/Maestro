@@ -95,6 +95,20 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 0,
 		category: 'appearance',
 	},
+	documentGraphFontFamily: {
+		description:
+			'Font family for node titles and previews in the document graph. Empty inherits the interface font; "@terminal" follows the terminal font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	documentGraphFontSize: {
+		description:
+			'Font size in px for document graph node titles, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
 	fontZoom: {
 		description:
 			'Zoom multiplier applied to every surface font size equally, moved by Cmd/Ctrl+= and Cmd/Ctrl+-. Preserves the relative proportions between surfaces.',

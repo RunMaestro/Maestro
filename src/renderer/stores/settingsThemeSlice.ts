@@ -30,6 +30,7 @@ export interface ThemeState {
 	chatFontFamily: string;
 	filePreviewFontFamily: string;
 	fileEditorFontFamily: string;
+	documentGraphFontFamily: string;
 	/**
 	 * Interface font size in px, before zoom. The base every other surface
 	 * inherits when its own size is 0.
@@ -39,6 +40,7 @@ export interface ThemeState {
 	terminalFontSize: number;
 	filePreviewFontSize: number;
 	fileEditorFontSize: number;
+	documentGraphFontSize: number;
 	/**
 	 * Cmd+= / Cmd+- multiplier, applied to every surface equally so zooming
 	 * preserves whatever proportions the user set between them.
@@ -91,11 +93,13 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	chatFontFamily: '',
 	filePreviewFontFamily: '',
 	fileEditorFontFamily: '',
+	documentGraphFontFamily: '',
 	fontSize: BASE_FONT_SIZE_DEFAULT,
 	chatFontSize: 0,
 	terminalFontSize: 0,
 	filePreviewFontSize: 0,
 	fileEditorFontSize: 0,
+	documentGraphFontSize: 0,
 	fontZoom: FONT_ZOOM_DEFAULT,
 	activeThemeId: 'dracula',
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -249,6 +253,9 @@ export function hydrateThemeSettings(
 
 	if (allSettings['fileEditorFontFamily'] !== undefined)
 		patch.fileEditorFontFamily = allSettings['fileEditorFontFamily'] as string;
+
+	if (allSettings['documentGraphFontFamily'] !== undefined)
+		patch.documentGraphFontFamily = allSettings['documentGraphFontFamily'] as string;
 
 	if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 

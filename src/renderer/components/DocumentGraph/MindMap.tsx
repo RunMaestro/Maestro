@@ -29,6 +29,7 @@ import {
 } from './mindMapLayouts';
 import { logger } from '../../utils/logger';
 import { GraphMiniMap } from './GraphMiniMap';
+import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
 
 // ============================================================================
 // Types
@@ -330,6 +331,12 @@ function drawLink(
 // ============================================================================
 
 /**
+ * The graph's historical font stack, and the default when the Document Graph
+ * font setting is unset. Kept so an untouched install renders unchanged.
+ */
+const DEFAULT_GRAPH_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+/**
  * Wrap text to fit within a maximum width, returning lines
  */
 function wrapText(
@@ -378,7 +385,12 @@ function renderDocumentNode(
 	isHovered: boolean,
 	matchesSearch: boolean,
 	searchActive: boolean,
-	previewCharLimit: number = 100
+	previewCharLimit: number = 100,
+	// The Document Graph font setting. Canvas needs a real family string - it
+	// cannot read a CSS variable - so it is threaded in rather than inherited.
+	// The historical stack is the default, so an unset setting renders exactly
+	// as before.
+	fontFamily: string = DEFAULT_GRAPH_FONT
 ): void {
 	const {
 		x,
@@ -456,7 +468,7 @@ function renderDocumentNode(
 
 	// Title text (in header, white or light colored for contrast)
 	ctx.fillStyle = '#FFFFFF';
-	ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+	ctx.font = `600 12px ${fontFamily}`;
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'middle';
 	const maxTitleWidth = width - OPEN_ICON_SIZE - OPEN_ICON_PADDING * 3 - 12;
@@ -483,7 +495,7 @@ function renderDocumentNode(
 		const folderPath = pathParts.length > 0 ? pathParts.join('/') : './';
 
 		ctx.fillStyle = theme.colors.textDim;
-		ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.font = `10px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
 
@@ -499,7 +511,7 @@ function renderDocumentNode(
 	// Preview text (description or content preview, in body, if present)
 	if (previewText) {
 		ctx.fillStyle = theme.colors.textDim;
-		ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.font = `11px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'top';
 
@@ -537,7 +549,8 @@ function renderExternalNode(
 	theme: Theme,
 	isHovered: boolean,
 	matchesSearch: boolean,
-	searchActive: boolean
+	searchActive: boolean,
+	fontFamily: string = DEFAULT_GRAPH_FONT
 ): void {
 	const { x, y, width, height, domain, isSelected, isFocused } = node;
 
@@ -564,7 +577,7 @@ function renderExternalNode(
 
 	// Domain text
 	ctx.fillStyle = theme.colors.textDim;
-	ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+	ctx.font = `11px ${fontFamily}`;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	ctx.fillText(truncateText(domain || '', 18), x, y);
@@ -604,6 +617,10 @@ export function MindMap({
 	containerRef: externalContainerRef,
 	legendExpanded = false,
 }: MindMapProps) {
+	// Canvas measures and paints glyphs itself, so it needs a resolved family
+	// string rather than the CSS variable the DOM surfaces inherit.
+	const graphFontFamily = useSurfaceFontFamily('documentGraph');
+
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const internalContainerRef = useRef<HTMLDivElement>(null);
 	// Use external ref if provided, otherwise use internal ref
@@ -863,10 +880,19 @@ export function MindMap({
 					isHovered,
 					matchesSearch,
 					searchActive,
-					previewCharLimit
+					previewCharLimit,
+					graphFontFamily
 				);
 			} else {
-				renderExternalNode(ctx, node, theme, isHovered, matchesSearch, searchActive);
+				renderExternalNode(
+					ctx,
+					node,
+					theme,
+					isHovered,
+					matchesSearch,
+					searchActive,
+					graphFontFamily
+				);
 			}
 		});
 
@@ -910,6 +936,9 @@ export function MindMap({
 		focusedNodeId,
 		searchQuery,
 		nodeMatchesSearch,
+		// The canvas paints its own glyphs, so a font change has to force a
+		// redraw explicitly - nothing about it is reactive on its own.
+		graphFontFamily,
 	]);
 
 	// Render on changes

@@ -3,8 +3,8 @@ import type { Theme, HistoryEntryType } from '../../types';
 import { getPillColor, getEntryIcon } from './historyConstants';
 import { ALL_HISTORY_ENTRY_TYPES } from '../../../shared/history';
 import {
-	RIGHT_PANEL_CHROME_FONT_SIZE,
-	RIGHT_PANEL_CHROME_LINE_HEIGHT,
+	RIGHT_PANEL_PILL_FONT_SIZE,
+	RIGHT_PANEL_PILL_LINE_HEIGHT,
 } from '../../constants/rightPanel';
 
 export interface HistoryFilterToggleProps {
@@ -38,11 +38,11 @@ const ALL_TYPES: readonly HistoryEntryType[] = ALL_HISTORY_ENTRY_TYPES;
  * face is proportional - monospace supplied that spacing for free.
  */
 const PILL_TYPE_STYLE = {
-	// Shared with the Files / History / Auto Run tab labels above these pills, so
-	// the two rows of Right Bar chrome cannot drift apart. See rightPanel.ts for
-	// why it sits below `text-xs`.
-	fontSize: RIGHT_PANEL_CHROME_FONT_SIZE,
-	lineHeight: RIGHT_PANEL_CHROME_LINE_HEIGHT,
+	// Deliberately NOT the tab labels' size. These are controls that label the
+	// rows beneath them, so they sit below their own content; the tabs above are
+	// the panel's heading and sit above theirs. See rightPanel.ts.
+	fontSize: RIGHT_PANEL_PILL_FONT_SIZE,
+	lineHeight: RIGHT_PANEL_PILL_LINE_HEIGHT,
 	letterSpacing: '0.01em',
 } as const;
 

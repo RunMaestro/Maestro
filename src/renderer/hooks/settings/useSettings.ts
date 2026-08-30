@@ -91,6 +91,7 @@ export interface UseSettingsReturn {
 	chatFontFamily: string;
 	filePreviewFontFamily: string;
 	fileEditorFontFamily: string;
+	documentGraphFontFamily: string;
 	fontSize: number;
 	setFontFamily: (value: string) => void;
 	setTerminalFontFamily: (value: string) => void;
@@ -102,6 +103,7 @@ export interface UseSettingsReturn {
 	terminalFontSize: number;
 	filePreviewFontSize: number;
 	fileEditorFontSize: number;
+	documentGraphFontSize: number;
 	fontZoom: number;
 	setSurfaceFontFamily: (surface: TypographySurface, value: string) => void;
 	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
@@ -594,6 +596,7 @@ export function useSettings(): UseSettingsReturn {
 				terminal: store.terminalFontFamily,
 				filePreview: store.filePreviewFontFamily,
 				fileEditor: store.fileEditorFontFamily,
+				documentGraph: store.documentGraphFontFamily,
 			},
 			sizes: {
 				interface: store.fontSize,
@@ -601,6 +604,7 @@ export function useSettings(): UseSettingsReturn {
 				terminal: store.terminalFontSize,
 				filePreview: store.filePreviewFontSize,
 				fileEditor: store.fileEditorFontSize,
+				documentGraph: store.documentGraphFontSize,
 			},
 			baseSize: store.fontSize,
 			zoom: store.fontZoom,
@@ -612,11 +616,13 @@ export function useSettings(): UseSettingsReturn {
 		store.terminalFontFamily,
 		store.filePreviewFontFamily,
 		store.fileEditorFontFamily,
+		store.documentGraphFontFamily,
 		store.fontSize,
 		store.chatFontSize,
 		store.terminalFontSize,
 		store.filePreviewFontSize,
 		store.fileEditorFontSize,
+		store.documentGraphFontSize,
 		store.fontZoom,
 	]);
 

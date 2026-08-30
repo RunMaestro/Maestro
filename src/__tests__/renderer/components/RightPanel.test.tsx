@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { RightPanel, RightPanelHandle } from '../../../renderer/components/RightPanel';
 import {
-	RIGHT_PANEL_CHROME_FONT_SIZE,
-	RIGHT_PANEL_CHROME_LINE_HEIGHT,
+	RIGHT_PANEL_PILL_FONT_SIZE,
+	RIGHT_PANEL_TAB_FONT_SIZE,
+	RIGHT_PANEL_TAB_LINE_HEIGHT,
 } from '../../../renderer/constants/rightPanel';
 import { createRef } from 'react';
 import type { Session, Shortcut, BatchRunState } from '../../../renderer/types';
@@ -254,10 +255,17 @@ describe('RightPanel', () => {
 			return screen.getByRole('button', { name });
 		}
 
-		it('sizes the labels from the shared chrome constant', () => {
-			// Same value as the History filter pills directly below, so the two
-			// rows of Right Bar chrome cannot drift apart.
-			expect(tabButton(/^History$/).style.fontSize).toBe(RIGHT_PANEL_CHROME_FONT_SIZE);
+		it('sizes the labels as a heading', () => {
+			expect(tabButton(/^History$/).style.fontSize).toBe(RIGHT_PANEL_TAB_FONT_SIZE);
+		});
+
+		it('renders larger than the filter pills beneath it', () => {
+			// These name which of three views you are in, so they are the panel's
+			// heading. An earlier pass shared one constant with the pills, which
+			// inverted the hierarchy and made the title read as a footnote.
+			expect(parseFloat(RIGHT_PANEL_TAB_FONT_SIZE)).toBeGreaterThan(
+				parseFloat(RIGHT_PANEL_PILL_FONT_SIZE)
+			);
 		});
 
 		it('no longer relies on the text-xs class it outgrew', () => {
@@ -266,7 +274,7 @@ describe('RightPanel', () => {
 		});
 
 		it('states a line height, since dropping text-xs dropped its own', () => {
-			expect(tabButton(/^History$/).style.lineHeight).toBe(RIGHT_PANEL_CHROME_LINE_HEIGHT);
+			expect(tabButton(/^History$/).style.lineHeight).toBe(RIGHT_PANEL_TAB_LINE_HEIGHT);
 		});
 
 		it('keeps the labels bold', () => {
@@ -278,16 +286,14 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} />);
 
 			for (const name of [/^Files$/, /^History$/]) {
-				expect(screen.getByRole('button', { name }).style.fontSize).toBe(
-					RIGHT_PANEL_CHROME_FONT_SIZE
-				);
+				expect(screen.getByRole('button', { name }).style.fontSize).toBe(RIGHT_PANEL_TAB_FONT_SIZE);
 			}
 		});
 
 		it('stays in rem, so the labels still scale with Cmd+=', () => {
 			// A pixel literal would freeze the chrome while everything around it
 			// grew, which is the same class of bug in reverse.
-			expect(RIGHT_PANEL_CHROME_FONT_SIZE.endsWith('rem')).toBe(true);
+			expect(RIGHT_PANEL_TAB_FONT_SIZE.endsWith('rem')).toBe(true);
 		});
 	});
 

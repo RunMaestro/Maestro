@@ -27,6 +27,7 @@ export const TYPOGRAPHY_SURFACES = [
 	'chat',
 	'filePreview',
 	'fileEditor',
+	'documentGraph',
 ] as const;
 
 export type TypographySurface = (typeof TYPOGRAPHY_SURFACES)[number];
@@ -137,6 +138,17 @@ export const TYPOGRAPHY_SURFACE_SPECS: Record<TypographySurface, TypographySurfa
 		inheritsFrom: ['interface', 'terminal'],
 		aliases: ['preview', 'reader'],
 		description: 'A file being read.',
+	},
+	documentGraph: {
+		id: 'documentGraph',
+		label: 'Document Graph',
+		fontKey: 'documentGraphFontFamily',
+		sizeKey: 'documentGraphFontSize',
+		fontVar: '--maestro-font-document-graph',
+		sizeVar: '--maestro-size-document-graph',
+		inheritsFrom: ['interface', 'terminal'],
+		aliases: ['graph', 'mindmap', 'docgraph'],
+		description: 'Node titles and previews in the document graph.',
 	},
 	fileEditor: {
 		id: 'fileEditor',

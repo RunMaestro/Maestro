@@ -21,36 +21,41 @@ export const RIGHT_PANEL_MAX_WIDTH = 800;
 export const RIGHT_PANEL_COMPACT_THRESHOLD = 420;
 
 /**
- * Type size for the Right Bar's own chrome: the Files / History / Auto Run tab
- * labels and the History filter pills.
+ * Type size for the History filter pills (USER / AGENT / AUTO / CUE).
  *
- * One constant for both because they sit in the same visual band, directly
- * above the content they label - if they drift apart the header reads as two
- * unrelated rows.
+ * These are CONTROLS that label the rows beneath them, so they sit below their
+ * own content. They are rem-based and grow with the interface font and the
+ * Cmd+= zoom, while the History entries are pinned at an absolute
+ * `text-[10px]` and never grow - at a 16px interface font with a 1.2 zoom the
+ * pills were rendering near 13px against 10px content, reading as the chrome
+ * shouting over its own list.
  *
- * Sized DOWN from Tailwind's `text-xs` on purpose. These labels are rem-based
- * and so grow with the interface font and the Cmd+= zoom, while the History
- * entries beneath them are pinned at an absolute `text-[10px]` and never grow.
- * At a 16px interface font with a 1.2 zoom the chrome was rendering near 14px
- * against 10px content - a header 40% larger than the rows it describes, which
- * reads as the labels shouting over their own list.
- *
- * Deliberately still in `rem` rather than a pixel literal: these must keep
- * scaling with Cmd+=. Only the STEP moves, so the chrome sits below the content
- * at every zoom level rather than only at one.
- *
- * 9/16rem. Against the sizes these replaced that is roughly -18% for the pills
- * (previously 0.6875rem) and -25% for the tab labels (previously `text-xs`),
- * landing both just above the 10px entry rows instead of well above them. One
- * value for both rather than two exact percentages: a header whose two rows are
- * a hair different in size looks like a mistake, not a hierarchy.
+ * Deliberately still in `rem` rather than a pixel literal: a frozen size would
+ * stop responding to Cmd+= while everything around it kept scaling, which is
+ * the same class of bug in reverse. Only the STEP moves.
  */
-export const RIGHT_PANEL_CHROME_FONT_SIZE = '0.5625rem';
+export const RIGHT_PANEL_PILL_FONT_SIZE = '0.5625rem';
 
 /**
- * Line height for that chrome. Stated explicitly because dropping Tailwind's
- * `text-xs` also drops the `line-height: 1rem` it carried: without this the
- * pills would resize to whatever line height they happened to inherit, and the
- * point is to shrink the glyphs, not the controls.
+ * Line height for the pills. Stated explicitly because dropping Tailwind's
+ * `text-xs` also drops the `line-height: 1rem` it carried: without this they
+ * would resize to whatever line height they happened to inherit, and the point
+ * is to shrink the glyphs, not the controls.
  */
-export const RIGHT_PANEL_CHROME_LINE_HEIGHT = '1rem';
+export const RIGHT_PANEL_PILL_LINE_HEIGHT = '1rem';
+
+/**
+ * Type size for the Files / History / Auto Run tab labels.
+ *
+ * Deliberately NOT the pill size. These are the panel's HEADING - they name
+ * which of three views you are looking at, and are the largest thing in the
+ * Right Bar's header by design. Sizing them like the filter pills below them
+ * (an earlier pass shared one constant between the two) inverted the hierarchy
+ * and made the panel's title read as a footnote.
+ *
+ * The rule these two constants encode: a heading sits ABOVE its content, a
+ * control that labels rows sits BELOW them. They are different jobs and
+ * therefore different sizes, which is why sharing one value was wrong.
+ */
+export const RIGHT_PANEL_TAB_FONT_SIZE = '0.875rem';
+export const RIGHT_PANEL_TAB_LINE_HEIGHT = '1.25rem';

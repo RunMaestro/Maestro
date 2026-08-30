@@ -32,6 +32,14 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'display-custom-fonts',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Custom Fonts',
+		description: 'Add font names installed on this machine, offered in every font picker',
+		keywords: ['font', 'fonts', 'custom font', 'add font', 'typeface', 'install', 'family'],
+	},
+	{
 		id: 'display-fonts',
 		tab: 'display',
 		tabLabel: 'Display',
@@ -52,6 +60,8 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'ai chat font',
 			'file preview font',
 			'file editor font',
+			'document graph font',
+			'graph font',
 			'nerd font',
 			'font size',
 		],

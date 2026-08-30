@@ -42,8 +42,8 @@ import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import {
 	RIGHT_PANEL_MIN_WIDTH,
 	RIGHT_PANEL_MAX_WIDTH,
-	RIGHT_PANEL_CHROME_FONT_SIZE,
-	RIGHT_PANEL_CHROME_LINE_HEIGHT,
+	RIGHT_PANEL_TAB_FONT_SIZE,
+	RIGHT_PANEL_TAB_LINE_HEIGHT,
 } from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
@@ -496,14 +496,15 @@ export const RightPanel = memo(
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
-							// Sized from the shared chrome constant rather than `text-xs`:
-							// these labels grow with the interface font while the entries
-							// they sit above are pinned at an absolute 10px, so at a large
-							// interface font the header outgrew its own list.
+							// This is the panel's HEADING - it names which of three views
+							// you are looking at - so it is the largest thing in the Right
+							// Bar header, not the smallest. Deliberately a different
+							// constant from the filter pills below it: a heading sits above
+							// its content, a control that labels rows sits below them.
 							className="flex-1 font-bold border-b-2 transition-colors"
 							style={{
-								fontSize: RIGHT_PANEL_CHROME_FONT_SIZE,
-								lineHeight: RIGHT_PANEL_CHROME_LINE_HEIGHT,
+								fontSize: RIGHT_PANEL_TAB_FONT_SIZE,
+								lineHeight: RIGHT_PANEL_TAB_LINE_HEIGHT,
 								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
 								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
 							}}

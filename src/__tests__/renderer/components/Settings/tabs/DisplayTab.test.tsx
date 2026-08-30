@@ -1333,7 +1333,11 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Document Graph')).toBeInTheDocument();
+			// Also the label of the Document Graph font surface now, so scope this
+			// to the graph settings section rather than matching on text alone.
+			const section = document.querySelector('[data-setting-id="display-document-graph"]');
+			expect(section).not.toBeNull();
+			expect(within(section as HTMLElement).getByText('Document Graph')).toBeInTheDocument();
 		});
 
 		it('should render show external links toggle', async () => {
@@ -1969,8 +1973,8 @@ describe('DisplayTab', () => {
 			expect(screen.getByText('User Message Alignment')).toBeInTheDocument();
 			// Window Chrome
 			expect(screen.getByText('Window Chrome')).toBeInTheDocument();
-			// Document Graph
-			expect(screen.getByText('Document Graph')).toBeInTheDocument();
+			// Document Graph (the settings section, not the font surface label)
+			expect(document.querySelector('[data-setting-id="display-document-graph"]')).not.toBeNull();
 			// Context Window Warnings
 			expect(screen.getByText('Context Window Warnings')).toBeInTheDocument();
 			// Local Ignore Patterns

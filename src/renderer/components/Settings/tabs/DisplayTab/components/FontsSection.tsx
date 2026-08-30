@@ -8,7 +8,6 @@ import { FontConfigurationPanel } from '../../../../FontConfigurationPanel';
 import { FontSizeStepper } from '../../../../ui/FontSizeStepper';
 import { useElementWidth } from '../../../../../hooks/ui/useElementWidth';
 import {
-	TYPOGRAPHY_ROOTS,
 	TYPOGRAPHY_SURFACE_LIST,
 	TYPOGRAPHY_SURFACE_SPECS,
 	canInherit,
@@ -46,12 +45,14 @@ const TWO_COLUMN_MIN_WIDTH = 560;
  *
  * The structure now states the model instead of repeating it:
  *
- *   - The custom-font list is global, so it appears once, at the top.
- *   - Interface and Terminal are the two ROOTS - the proportional reading face
- *     and the fixed-width working face. They get full-width rows because
- *     everything below can follow them.
- *   - The three dependent surfaces sit in a 2-up grid, each offering "same as
- *     interface" and "same as terminal" alongside a font of its own.
+ *   - The custom-font list is global, so it is its own section above this one
+ *     rather than a control repeated inside every picker.
+ *   - Interface and Terminal lead the grid as the two ROOTS - the proportional
+ *     reading face and the fixed-width working face - and the four surfaces
+ *     that may follow them come after, so reading order matches inheritance
+ *     order.
+ *   - Six surfaces at two across is three even rows, which is why the grid
+ *     does not need a full-width exception for the roots.
  */
 export function FontsSection({
 	theme,
@@ -112,48 +113,45 @@ export function FontsSection({
 		);
 	};
 
-	const dependents = TYPOGRAPHY_SURFACE_LIST.filter(
-		(spec) => !TYPOGRAPHY_ROOTS.includes(spec.id as (typeof TYPOGRAPHY_ROOTS)[number])
-	);
-
 	return (
-		<div data-setting-id="display-fonts">
-			<SettingsSectionHeading icon={Type}>Fonts</SettingsSectionHeading>
-			<p className="text-xs opacity-60 mb-2 -mt-1">
-				Interface is the proportional face and Terminal the fixed-width one. Everything else can
-				follow either, or carry a font of its own. Press Up/Down on any picker to preview.
-			</p>
-			<SectionCard theme={theme} className="space-y-4">
-				<CustomFontsRow
-					theme={theme}
-					customFonts={fontConfiguration.customFonts}
-					onAddCustomFont={fontConfiguration.addCustomFont}
-					onRemoveCustomFont={fontConfiguration.removeCustomFont}
-				/>
+		<>
+			<div data-setting-id="display-custom-fonts">
+				<SettingsSectionHeading icon={Type}>Custom Fonts</SettingsSectionHeading>
+				<p className="text-xs opacity-60 mb-2 -mt-1">
+					Names of fonts installed on this machine that aren&apos;t in the lists below. Added once
+					here, then offered in every picker.
+				</p>
+				<SectionCard theme={theme}>
+					<CustomFontsRow
+						theme={theme}
+						customFonts={fontConfiguration.customFonts}
+						onAddCustomFont={fontConfiguration.addCustomFont}
+						onRemoveCustomFont={fontConfiguration.removeCustomFont}
+					/>
+				</SectionCard>
+			</div>
 
-				{/* The two roots, full width. They are not peers of the surfaces
-				    below - everything below can point at them - so putting them in
-				    the same grid would misstate the model. */}
-				<div
-					className="space-y-4 pt-4 border-t"
-					style={{ borderColor: theme.colors.border }}
-					data-testid="font-roots"
-				>
-					{TYPOGRAPHY_ROOTS.map((root) => renderSurface(root))}
-				</div>
-
-				<div
-					ref={gridRef}
-					className={`grid gap-x-6 gap-y-4 pt-4 border-t ${
-						singleColumn ? 'grid-cols-1' : 'grid-cols-2'
-					}`}
-					style={{ borderColor: theme.colors.border }}
-					data-testid="font-dependents"
-					data-columns={singleColumn ? '1' : '2'}
-				>
-					{dependents.map((spec) => renderSurface(spec.id))}
-				</div>
-			</SectionCard>
-		</div>
+			<div data-setting-id="display-fonts">
+				<SettingsSectionHeading icon={Type}>Fonts</SettingsSectionHeading>
+				<p className="text-xs opacity-60 mb-2 -mt-1">
+					Interface is the proportional face and Terminal the fixed-width one. Everything else can
+					follow either, or carry a font of its own. Press Up/Down on any picker to preview.
+				</p>
+				<SectionCard theme={theme}>
+					{/* All six surfaces in one grid: the two roots lead, and the four
+					    that may follow them come after, so reading order matches the
+					    inheritance order. Collapses to a single column when the pane
+					    is too narrow for two dropdowns side by side. */}
+					<div
+						ref={gridRef}
+						className={`grid gap-x-6 gap-y-5 ${singleColumn ? 'grid-cols-1' : 'grid-cols-2'}`}
+						data-testid="font-surfaces"
+						data-columns={singleColumn ? '1' : '2'}
+					>
+						{TYPOGRAPHY_SURFACE_LIST.map((spec) => renderSurface(spec.id))}
+					</div>
+				</SectionCard>
+			</div>
+		</>
 	);
 }

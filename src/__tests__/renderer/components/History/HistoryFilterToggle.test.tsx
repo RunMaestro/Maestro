@@ -4,7 +4,10 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { HistoryFilterToggle } from '../../../../renderer/components/History';
 import type { HistoryEntryType } from '../../../../renderer/types';
 import { ALL_HISTORY_ENTRY_TYPES } from '../../../../shared/history';
-import { RIGHT_PANEL_CHROME_FONT_SIZE } from '../../../../renderer/constants/rightPanel';
+import {
+	RIGHT_PANEL_PILL_FONT_SIZE,
+	RIGHT_PANEL_TAB_FONT_SIZE,
+} from '../../../../renderer/constants/rightPanel';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
@@ -269,11 +272,15 @@ describe('HistoryFilterToggle', () => {
 			return screen.getByText('AUTO');
 		}
 
-		it('uses the shared Right Bar chrome size', () => {
-			// Same constant as the Files / History / Auto Run tab labels above
-			// these pills: a header whose two rows differ slightly in size looks
-			// like a mistake rather than a hierarchy.
-			expect(pill().style.fontSize).toBe(RIGHT_PANEL_CHROME_FONT_SIZE);
+		it('uses the pill size', () => {
+			expect(pill().style.fontSize).toBe(RIGHT_PANEL_PILL_FONT_SIZE);
+		});
+
+		it('stays smaller than the tab heading above it', () => {
+			// These are controls labelling the rows beneath them, not a heading.
+			expect(parseFloat(RIGHT_PANEL_PILL_FONT_SIZE)).toBeLessThan(
+				parseFloat(RIGHT_PANEL_TAB_FONT_SIZE)
+			);
 		});
 
 		it('stays below the 10px entry rows it labels', () => {
@@ -281,7 +288,7 @@ describe('HistoryFilterToggle', () => {
 			// while the History entries beneath them are pinned at an absolute
 			// text-[10px]. At a 16px interface font with a 1.2 zoom the chrome was
 			// rendering near 14px against 10px content.
-			const rem = parseFloat(RIGHT_PANEL_CHROME_FONT_SIZE);
+			const rem = parseFloat(RIGHT_PANEL_PILL_FONT_SIZE);
 			expect(rem).toBeLessThan(0.625); // 10px at a 16px root
 		});
 

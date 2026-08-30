@@ -242,3 +242,29 @@ describe('two-root inheritance', () => {
 		});
 	});
 });
+
+describe('document graph surface', () => {
+	it('is registered like any other surface', () => {
+		// The canvas cannot read a CSS variable, but the SETTING is ordinary: the
+		// registry is what makes the picker, the CLI verb, and the CSS variable
+		// appear without touching any of them individually.
+		const spec = TYPOGRAPHY_SURFACE_SPECS.documentGraph;
+		expect(spec.fontKey).toBe('documentGraphFontFamily');
+		expect(spec.sizeKey).toBe('documentGraphFontSize');
+	});
+
+	it('may follow either root', () => {
+		expect(TYPOGRAPHY_SURFACE_SPECS.documentGraph.inheritsFrom).toEqual(['interface', 'terminal']);
+	});
+
+	it('makes six surfaces, which fills a two-column grid evenly', () => {
+		expect(TYPOGRAPHY_SURFACES).toHaveLength(6);
+		expect(TYPOGRAPHY_SURFACES.length % 2).toBe(0);
+	});
+
+	it('is reachable from the CLI by its aliases', () => {
+		for (const name of ['documentGraph', 'graph', 'mindmap', 'docgraph', 'document-graph']) {
+			expect(resolveTypographySurface(name)?.id).toBe('documentGraph');
+		}
+	});
+});

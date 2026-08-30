@@ -33,11 +33,13 @@ function renderSection(settingsOverrides: Record<string, unknown> = {}) {
 				chatFontFamily: '',
 				filePreviewFontFamily: '',
 				fileEditorFontFamily: '',
+				documentGraphFontFamily: '',
 				fontSize: 15,
 				chatFontSize: 0,
 				terminalFontSize: 13,
 				filePreviewFontSize: 0,
 				fileEditorFontSize: 0,
+				documentGraphFontSize: 0,
 				...settingsOverrides,
 			}}
 			fontConfiguration={fontConfiguration}
@@ -65,28 +67,43 @@ describe('FontsSection', () => {
 		expect(screen.getAllByTestId('custom-font-input')).toHaveLength(1);
 	});
 
-	it('puts both roots above the dependent surfaces', () => {
-		// Interface and Terminal are not peers of what follows them, so they are
-		// not in the grid.
+	it('renders every surface in one grid', () => {
+		// Six surfaces at two across is three even rows, so the roots no longer
+		// need a full-width exception.
 		renderSection();
-		const roots = within(screen.getByTestId('font-roots'));
+		const grid = within(screen.getByTestId('font-surfaces'));
 
-		expect(roots.getByText('Interface')).toBeInTheDocument();
-		expect(roots.getByText('Terminal')).toBeInTheDocument();
+		for (const label of [
+			'Interface',
+			'Terminal',
+			'AI Chat',
+			'File Preview',
+			'File Editor',
+			'Document Graph',
+		]) {
+			expect(grid.getByText(label)).toBeInTheDocument();
+		}
 	});
 
-	it('puts the three dependent surfaces in the grid', () => {
+	it('leads with the two roots, so reading order matches inheritance order', () => {
 		renderSection();
-		const grid = within(screen.getByTestId('font-dependents'));
+		const labels = [
+			...screen.getByTestId('font-surfaces').querySelectorAll('[data-testid^="font-surface-"]'),
+		].map((el) => el.getAttribute('data-testid'));
 
-		expect(grid.getByText('AI Chat')).toBeInTheDocument();
-		expect(grid.getByText('File Preview')).toBeInTheDocument();
-		expect(grid.getByText('File Editor')).toBeInTheDocument();
+		expect(labels.slice(0, 2)).toEqual(['font-surface-interface', 'font-surface-terminal']);
 	});
 
 	it('renders a size stepper for every surface', () => {
 		renderSection();
-		for (const surface of ['interface', 'terminal', 'chat', 'filePreview', 'fileEditor']) {
+		for (const surface of [
+			'interface',
+			'terminal',
+			'chat',
+			'filePreview',
+			'fileEditor',
+			'documentGraph',
+		]) {
 			expect(screen.getByTestId(`font-size-${surface}-value`)).toBeInTheDocument();
 		}
 	});
@@ -131,7 +148,7 @@ describe('FontsSection', () => {
 		it('uses two columns when there is room', () => {
 			mockWidth = 700;
 			renderSection();
-			expect(screen.getByTestId('font-dependents')).toHaveAttribute('data-columns', '2');
+			expect(screen.getByTestId('font-surfaces')).toHaveAttribute('data-columns', '2');
 		});
 
 		it('collapses to one column when the pane is narrow', () => {
@@ -139,7 +156,7 @@ describe('FontsSection', () => {
 			// width, which cannot fit two dropdowns plus their steppers.
 			mockWidth = 400;
 			renderSection();
-			expect(screen.getByTestId('font-dependents')).toHaveAttribute('data-columns', '1');
+			expect(screen.getByTestId('font-surfaces')).toHaveAttribute('data-columns', '1');
 		});
 
 		it('assumes two columns before the first measurement', () => {
@@ -147,7 +164,7 @@ describe('FontsSection', () => {
 			// is the right answer, so the common case must not flash one column.
 			mockWidth = 0;
 			renderSection();
-			expect(screen.getByTestId('font-dependents')).toHaveAttribute('data-columns', '2');
+			expect(screen.getByTestId('font-surfaces')).toHaveAttribute('data-columns', '2');
 		});
 	});
 });
