@@ -116,11 +116,18 @@ describe('TypographyChoiceModal', () => {
 			expect(onDismiss).toHaveBeenCalled();
 		});
 
-		it('closes without applying anything on "Not now"', () => {
-			// The shipped defaults still produce the Hacker look, so declining has
+		it('offers no way to decline, because a preset is always in effect', () => {
+			// "Not now" would imply an outcome where no typography is chosen.
+			renderModal();
+
+			expect(screen.queryByText('Not now')).not.toBeInTheDocument();
+		});
+
+		it('closes without applying anything when dismissed', () => {
+			// The shipped defaults still produce the Hacker look, so leaving has
 			// to leave the fonts exactly as they were.
 			const { onChoose, onDismiss } = renderModal();
-			fireEvent.click(screen.getByText('Not now'));
+			fireEvent.click(screen.getByLabelText('Close modal'));
 			expect(onChoose).not.toHaveBeenCalled();
 			expect(onDismiss).toHaveBeenCalled();
 		});

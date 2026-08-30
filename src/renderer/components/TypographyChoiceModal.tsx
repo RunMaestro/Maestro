@@ -13,10 +13,12 @@
  * copy that names the look they already have rather than new-user copy that
  * would read as if their preference were being ignored.
  *
- * Dismissing without choosing is allowed and changes nothing: the shipped
- * defaults still produce the Hacker look, so a user who hits Escape keeps
- * exactly what they had. The flag is set either way, so the modal cannot come
- * back and nag.
+ * There is deliberately no "Not now". A preset is always in effect, so
+ * declining is not an available outcome - whichever card is selected when this
+ * closes IS the answer. The close button and Escape still work and change
+ * nothing: the shipped defaults produce the Hacker look, so a user who leaves
+ * keeps exactly what they had. The flag is set on any exit, so the modal
+ * cannot come back and nag.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -219,14 +221,6 @@ export function TypographyChoiceModal({
 						Fine-tune in Settings
 					</button>
 					<div className="ml-auto flex items-center gap-2">
-						<button
-							type="button"
-							onClick={onDismiss}
-							className="px-3 py-1.5 rounded text-xs font-bold border hover:bg-white/5 transition-colors"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-						>
-							Not now
-						</button>
 						<button
 							ref={confirmRef}
 							type="button"
