@@ -1435,14 +1435,18 @@ html[data-rowdesign='c'] .row-actions {
 	justify-self: end;
 }
 
+/* The provider label deliberately keeps its SHIPPED weight.
+   An earlier draft demoted it to 9px at opacity .5, which was wrong twice
+   over. CSS opacity nests: `.row-meta` already carries `opacity-70`, so the
+   effective alpha was .70 * .50 = .35, not .50. Measured on the shipped
+   palettes that put the label at 1.46:1 on Dracula and 2.34:1 on Olive
+   Nights, against 2.18:1 and 6.13:1 today. At 9px nothing there qualifies as
+   large text, so the 3:1 floor is the kindest reading and every theme misses
+   it. The layout below is what fixes truncation; dimming the label was taste,
+   it was never measured, and it made the row less legible. Do not reintroduce
+   it without running the contrast numbers on more than one theme. */
 html[data-rowdesign='c'] .row-provider {
-	font-size: 9px;
-	opacity: 0.5;
 	white-space: nowrap;
-}
-
-html[data-rowdesign='c'] .row-provider-icon {
-	opacity: 0.45;
 }
 
 html[data-rowdesign='c'] .row-group-chip {
