@@ -234,6 +234,27 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		// Regression (MAESTRO-MR): MarketplaceFetchError carries the original failure
+		// as its `cause`, so Sentry's LinkedErrors integration ships TWO exception
+		// values ordered root-cause-first. The classifier used to read values[0]
+		// only, saw the bare `TypeError: fetch failed`, and let the event through -
+		// the rule above looked correct but never fired in the field.
+		it('drops marketplace fetch failures when Sentry expanded the cause chain', () => {
+			expect(
+				shouldDropSentryEvent({
+					exception: {
+						values: [
+							{ type: 'TypeError', value: 'fetch failed' },
+							{
+								type: 'MarketplaceFetchError',
+								value: 'Network error fetching document: fetch failed',
+							},
+						],
+					},
+				})
+			).toBe(true);
+		});
+
 		it('drops GitHub CLI network failures when the user is offline', () => {
 			expect(
 				shouldDropSentryEvent(
