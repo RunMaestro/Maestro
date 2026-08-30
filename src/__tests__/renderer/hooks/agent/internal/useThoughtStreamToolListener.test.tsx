@@ -147,6 +147,40 @@ describe('useThoughtStreamToolListener', () => {
 		expect(toolEvents()[0].tool.status).toBe('failed');
 	});
 
+	it('marks a Codex shell failure as failed even though it reports `completed`', () => {
+		// The end-to-end shape of the regression: codex-output-parser reports a
+		// non-zero shell exit as `status: 'completed'` and puts the outcome in
+		// exit_code, so a listener reading the word alone drew a check mark next
+		// to a failed build - in the one feed built for spotting that.
+		renderHook(() => useThoughtStreamToolListener());
+
+		act(() => {
+			toolHandler?.(BATCH, {
+				toolName: 'shell',
+				state: { status: 'completed', input: { command: 'npm test' }, exitCode: 1 },
+				timestamp: 1000,
+			});
+		});
+
+		const event = toolEvents()[0];
+		expect(event.tool.status).toBe('failed');
+		expect(event.tool.label).toEqual({ verb: 'Ran', target: 'npm test' });
+	});
+
+	it('leaves a clean Codex shell run a success', () => {
+		renderHook(() => useThoughtStreamToolListener());
+
+		act(() => {
+			toolHandler?.(BATCH, {
+				toolName: 'shell',
+				state: { status: 'completed', input: { command: 'npm test' }, exitCode: 0 },
+				timestamp: 1000,
+			});
+		});
+
+		expect(toolEvents()[0].tool.status).toBe('completed');
+	});
+
 	it('treats a missing status as still running', () => {
 		// An unfinished call is the reading that cannot mislead: it resolves
 		// itself the moment a completion arrives.

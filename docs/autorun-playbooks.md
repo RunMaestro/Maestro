@@ -199,16 +199,18 @@ While a run is active, you can watch what the agent is doing without changing an
 
 Every tool call is reduced to one short line in plain language, interleaved with the reasoning that produced it:
 
-```
+```text
 3:42:07 PM  ⟳ Ran npm test
 3:42:04 PM  ✓ Read src/renderer/components/ThoughtStreamPanel.tsx
 3:42:01 PM  ✓ Searched for THOUGHT_BLOCK_GAP_MS
 3:41:58 PM  ! Edited src/renderer/constants/themes.ts
 ```
 
-A spinner marks a call still in flight; a check or a warning marks how it ended. The full inputs and outputs stay in the chat transcript - this feed is built to be _scanned_, so that an agent stuck in a loop or grinding on an unproductive task is obvious at a glance and you can stop it before it burns more tokens.
+A spinner marks a call still in flight; a check or a warning marks how it ended. A shell command that exits non-zero gets the warning even when the provider calls it "completed". The full inputs and outputs stay in the chat transcript - this feed is built to be _scanned_, so that an agent stuck in a loop or grinding on an unproductive task is obvious at a glance and you can stop it before it burns more tokens.
 
 Tool names are normalized across providers (Claude Code, Codex, OpenCode, Copilot, and MCP servers), so the lines read the same no matter which agent is running.
+
+The **wrench** button in the panel header turns the tool-call lines off and on, and the panel remembers your choice. It is a display filter, not a capture switch: actions keep buffering while they are hidden, the header keeps counting them (`14 actions hidden`), and turning them back on shows everything that happened in the meantime. Turn them off when you only want to follow the agent's reasoning; leave them on when you are watching for a loop.
 
 Thoughts and tool calls are buffered from the moment the agent starts working, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
 

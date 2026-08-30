@@ -8,7 +8,10 @@
  * and an unrecognized tool must still produce a usable line rather than nothing.
  */
 import { describe, it, expect } from 'vitest';
-import { describeToolActivity } from '../../../renderer/utils/toolActivityLabel';
+import {
+	describeToolActivity,
+	describeToolActivityStatus,
+} from '../../../renderer/utils/toolActivityLabel';
 
 describe('describeToolActivity', () => {
 	describe('file reads', () => {
@@ -174,5 +177,67 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('Read', undefined)).toEqual({ verb: 'Read', target: '' });
 			expect(describeToolActivity('Bash', [1, 2, 3])).toEqual({ verb: 'Ran', target: '' });
 		});
+	});
+});
+
+/**
+ * The status half. A supervision feed exists to make a failure obvious, so the
+ * one thing it must never do is draw a check mark beside a command that broke -
+ * and the provider's own `status` word is not enough to prevent that.
+ */
+describe('describeToolActivityStatus', () => {
+	it('reads a Codex shell failure, which arrives as `completed` with a non-zero exit code', () => {
+		// codex-output-parser.ts maps item.status 'failed' -> 'completed' and
+		// carries the real outcome in exit_code. This is THE regression: the feed
+		// used to show a check mark next to a failed build.
+		expect(
+			describeToolActivityStatus({
+				status: 'completed',
+				input: { command: 'npm test' },
+				exitCode: 1,
+			})
+		).toBe('failed');
+	});
+
+	it('accepts the snake_case spelling of the exit code', () => {
+		expect(describeToolActivityStatus({ status: 'completed', exit_code: 127 })).toBe('failed');
+	});
+
+	it('keeps a zero exit code a success', () => {
+		expect(describeToolActivityStatus({ status: 'completed', exitCode: 0 })).toBe('completed');
+	});
+
+	it('treats a zero exit code as finished even when the provider sent no status word', () => {
+		expect(describeToolActivityStatus({ exitCode: 0 })).toBe('completed');
+	});
+
+	it('reads the boolean spelling other providers use', () => {
+		expect(describeToolActivityStatus({ status: 'completed', isError: true })).toBe('failed');
+		expect(describeToolActivityStatus({ status: 'completed', is_error: true })).toBe('failed');
+		expect(describeToolActivityStatus({ status: 'completed', isError: false })).toBe('completed');
+	});
+
+	it('maps the status words providers actually send', () => {
+		expect(describeToolActivityStatus({ status: 'running' })).toBe('running');
+		expect(describeToolActivityStatus({ status: 'completed' })).toBe('completed');
+		expect(describeToolActivityStatus({ status: 'success' })).toBe('completed');
+		expect(describeToolActivityStatus({ status: 'failed' })).toBe('failed');
+		expect(describeToolActivityStatus({ status: 'error' })).toBe('failed');
+		expect(describeToolActivityStatus({ status: 'FAILED' })).toBe('failed');
+	});
+
+	it('falls back to running for an absent or unrecognized status', () => {
+		// The reading that cannot mislead: it resolves itself the moment the
+		// completion event arrives.
+		expect(describeToolActivityStatus({})).toBe('running');
+		expect(describeToolActivityStatus({ status: 'in_progress' })).toBe('running');
+		expect(describeToolActivityStatus({ status: 'something-new' })).toBe('running');
+	});
+
+	it('never throws on a missing or non-object payload', () => {
+		expect(describeToolActivityStatus(undefined)).toBe('running');
+		expect(describeToolActivityStatus(null)).toBe('running');
+		expect(describeToolActivityStatus('completed')).toBe('running');
+		expect(describeToolActivityStatus({ exitCode: Number.NaN })).toBe('running');
 	});
 });

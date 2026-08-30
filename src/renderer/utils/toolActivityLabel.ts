@@ -236,3 +236,71 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		}
 	}
 }
+
+/**
+ * How a tool call ended, as the activity feed renders it. `running` is also
+ * what we show when a provider sends no status at all - an unfinished call is
+ * the honest reading of "we saw it start and never saw it end".
+ *
+ * Lives here rather than in the store because it is decided from the same raw
+ * provider payload `describeToolActivity` reads, and the two must be derived
+ * together: a row's glyph and its text describe one event.
+ */
+export type ToolActivityStatus = 'running' | 'completed' | 'failed';
+
+/** The tool lifecycle payload, as providers deliver it over IPC. */
+interface ToolActivityState {
+	status?: unknown;
+	/** Codex `command_execution` carries the shell's exit code here. */
+	exitCode?: unknown;
+	exit_code?: unknown;
+	/** Claude/Pi/Oh My Pi spell the same outcome as a boolean. */
+	isError?: unknown;
+	is_error?: unknown;
+}
+
+/** A finished-and-fine wording, in the spellings providers actually send. */
+const COMPLETED_STATUSES = new Set(['completed', 'complete', 'success', 'succeeded', 'done']);
+/** A finished-and-broken wording. */
+const FAILED_STATUSES = new Set(['failed', 'failure', 'error', 'errored', 'cancelled', 'canceled']);
+
+/** The first numeric exit code the payload carries, in either spelling. */
+function exitCodeOf(state: ToolActivityState): number | undefined {
+	for (const value of [state.exitCode, state.exit_code]) {
+		if (typeof value === 'number' && Number.isFinite(value)) return value;
+	}
+	return undefined;
+}
+
+/**
+ * Decide how a tool call ended from its raw provider payload.
+ *
+ * The provider's `status` word is NOT enough on its own. Codex reports a shell
+ * command that exited non-zero as `status: 'completed'` and puts the failure in
+ * `exit_code` (see `transformItemCompleted` in `codex-output-parser.ts`), so a
+ * feed that trusted the word alone drew a check mark next to a failed build.
+ * That is precisely the row an operator is scanning for: the whole reason to
+ * watch an Auto Run is to catch it grinding on something that is not working.
+ *
+ * So the failure signals win over the status word, in this order:
+ *  1. a non-zero exit code, or an `isError` flag;
+ *  2. an explicitly failed status word;
+ *  3. an explicitly completed status word, or a zero exit code from a provider
+ *     that sent no word at all;
+ *  4. otherwise still running - the reading that cannot mislead, because it
+ *     resolves itself the moment a completion arrives.
+ */
+export function describeToolActivityStatus(state: unknown): ToolActivityStatus {
+	const record: ToolActivityState =
+		state && typeof state === 'object' ? (state as ToolActivityState) : {};
+
+	const exitCode = exitCodeOf(record);
+	if (exitCode !== undefined && exitCode !== 0) return 'failed';
+	if (record.isError === true || record.is_error === true) return 'failed';
+
+	const status = typeof record.status === 'string' ? record.status.trim().toLowerCase() : '';
+	if (FAILED_STATUSES.has(status)) return 'failed';
+	if (COMPLETED_STATUSES.has(status)) return 'completed';
+	if (exitCode === 0) return 'completed';
+	return 'running';
+}

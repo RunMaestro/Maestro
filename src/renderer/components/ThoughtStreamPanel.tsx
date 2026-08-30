@@ -21,7 +21,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Brain, Check, Loader2, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Brain, Check, Loader2, Search, Trash2, Wrench, X } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useThoughtStreamStore,
@@ -37,9 +37,18 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { usePersistedToggle } from '../hooks/ui/usePersistedToggle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { GhostIconButton } from './ui/GhostIconButton';
 import { Markdown } from './Markdown';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+
+/**
+ * localStorage key for the tool-call display toggle. A view preference, not a
+ * setting: it belongs to the panel, a user flips it by clicking, and it has to
+ * survive the panel unmounting (closing it, or the Right Panel folding away).
+ */
+export const SHOW_TOOL_ACTIVITY_KEY = 'thoughtStream.showToolActivity';
 
 interface ThoughtStreamPanelProps {
 	theme: Theme;
@@ -180,20 +189,47 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		return () => clearTimeout(timer);
 	}, [lastAppendAt]);
 
+	// Tool-call display is a VIEW filter, never a capture switch - the same rule
+	// the panel itself follows. Turning actions off while a run grinds must not
+	// lose the actions it took while they were hidden, so the timeline keeps
+	// filling and turning them back on shows all of it.
+	const { value: showToolActivity, toggle: toggleToolActivity } = usePersistedToggle(
+		SHOW_TOOL_ACTIVITY_KEY,
+		true
+	);
+
+	// Hiding actions REMOVES them from the timeline the feed is built from
+	// rather than hiding the rendered rows. A tool call closes the open thought
+	// block, so dropping the row alone would leave the reasoning fragmented into
+	// mystery blocks split by an event the user can no longer see. Filtering
+	// first lets the reasoning coalesce exactly as if the agent had never called
+	// a tool, and the 3s gap rule still splits where a long call actually paused
+	// the thinking.
+	const timeline: StreamEvent[] = useMemo(
+		() => (showToolActivity ? entries : entries.filter((event) => !isToolEvent(event))),
+		[entries, showToolActivity]
+	);
+
 	// One walk of the session's timeline produces the whole feed: granular
 	// thinking flushes coalesced into timestamped blocks, tool calls sitting
 	// between the reasoning they interrupted. Displayed newest-first (the live
 	// row sits at the top; older rows scroll down into history).
-	const feed: ActivityFeedItem[] = useMemo(() => buildActivityFeed(entries), [entries]);
+	const feed: ActivityFeedItem[] = useMemo(() => buildActivityFeed(timeline), [timeline]);
 
 	// Header counts. Tool calls and reasoning are counted separately because
 	// they answer different questions: "is it still thinking" vs "is it actually
 	// doing anything", and a run stuck in a loop shows a climbing action count
-	// against flat reasoning.
+	// against flat reasoning. The action count is read off the WHOLE buffer, so
+	// it keeps climbing while the rows are hidden - that loop signal is the one
+	// thing the toggle must not take away.
 	const thoughtCount = useMemo(() => feed.filter((i) => i.kind === 'thought').length, [feed]);
 	const actionCount = useMemo(() => entries.filter(isToolEvent).length, [entries]);
 
 	const searching = query.trim().length > 0;
+
+	// The feed is empty ONLY because the toggle is off: the agent did work, we
+	// are just not drawing it.
+	const hiddenActionsOnly = !showToolActivity && feed.length === 0 && actionCount > 0;
 
 	// Compact, theme-aware prose styling for the rendered thought markdown,
 	// scoped so it can't bleed into other prose containers (shared generator).
@@ -291,24 +327,44 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					>
 						{label} · {thoughtCount} thought{thoughtCount === 1 ? '' : 's'} · {actionCount} action
 						{actionCount === 1 ? '' : 's'}
+						{showToolActivity ? '' : ' hidden'}
 						{trimmed ? ' (trimmed)' : ''}
 						{live ? ' · live' : ''}
 					</span>
 				</div>
-				<button
+				<GhostIconButton
+					onClick={toggleToolActivity}
+					pressed={showToolActivity}
+					title={
+						showToolActivity
+							? `Hide tool calls (${actionCount} captured - they keep buffering)`
+							: `Show tool calls (${actionCount} captured while hidden)`
+					}
+					ariaLabel="Show tool calls"
+					testId="thought-stream-tool-toggle"
+					className="shrink-0"
+					color={showToolActivity ? theme.colors.accent : theme.colors.textDim}
+				>
+					<Wrench className="w-3.5 h-3.5" />
+				</GhostIconButton>
+				<GhostIconButton
 					onClick={() => clearBuffer(panelSessionId)}
 					title="Discard buffered thoughts"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+					ariaLabel="Discard buffered thoughts"
+					className="shrink-0"
+					color={theme.colors.textDim}
 				>
-					<Trash2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-				</button>
-				<button
+					<Trash2 className="w-3.5 h-3.5" />
+				</GhostIconButton>
+				<GhostIconButton
 					onClick={closePanel}
 					title="Close (thoughts keep buffering)"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+					ariaLabel="Close Thought Stream"
+					className="shrink-0"
+					color={theme.colors.textDim}
 				>
-					<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-				</button>
+					<X className="w-4 h-4" />
+				</GhostIconButton>
 			</div>
 
 			{/* Search */}
@@ -353,7 +409,12 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					<p className="text-xs italic mt-2" style={{ color: theme.colors.textDim }}>
 						{searching
 							? 'Nothing matches your search.'
-							: 'Nothing captured yet. Thinking and tool calls are buffered as the agent works, so this fills in on its own.'}
+							: // An empty feed with actions in the buffer is the toggle's
+								// doing, not an idle agent. Saying "nothing captured yet"
+								// there would be a flat lie about a run that is working.
+								hiddenActionsOnly
+								? `${actionCount} tool call${actionCount === 1 ? '' : 's'} captured and hidden. Turn tool calls back on to read them.`
+								: 'Nothing captured yet. Thinking and tool calls are buffered as the agent works, so this fills in on its own.'}
 					</p>
 				) : (
 					<div className="flex flex-col gap-3">

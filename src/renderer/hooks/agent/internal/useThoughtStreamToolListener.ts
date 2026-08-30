@@ -37,29 +37,15 @@
  */
 
 import { useEffect } from 'react';
-import { useThoughtStreamStore, type ToolActivityStatus } from '../../../stores/thoughtStreamStore';
+import { useThoughtStreamStore } from '../../../stores/thoughtStreamStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
-import { describeToolActivity } from '../../../utils/toolActivityLabel';
+import { describeToolActivity, describeToolActivityStatus } from '../../../utils/toolActivityLabel';
 import { AUTO_RUN_SESSION_TYPES } from './useThoughtStreamCaptureListener';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 
 /** The tool lifecycle payload, as providers deliver it over IPC. */
 interface ToolEventState {
-	status?: string;
 	input?: unknown;
-	output?: unknown;
-}
-
-/**
- * Normalize provider status wording onto the three states the feed renders.
- * `error` and `failed` are the same outcome spelled two ways; anything absent
- * or unrecognized means the call is still in flight, which is the reading that
- * cannot mislead - it resolves itself the moment a completion arrives.
- */
-function normalizeStatus(status: string | undefined): ToolActivityStatus {
-	if (status === 'completed') return 'completed';
-	if (status === 'failed' || status === 'error') return 'failed';
-	return 'running';
 }
 
 export function useThoughtStreamToolListener(): void {
@@ -95,7 +81,11 @@ export function useThoughtStreamToolListener(): void {
 				useThoughtStreamStore.getState().appendToolActivity(parsed.baseSessionId, tabId, {
 					toolName: toolEvent.toolName,
 					label: describeToolActivity(toolEvent.toolName, state?.input),
-					status: normalizeStatus(state?.status),
+					// The whole payload, not just its `status` word: Codex reports a
+					// failed shell command as `completed` and hides the failure in
+					// `exit_code`, and a check mark beside a broken build is the one
+					// thing this feed exists to not do.
+					status: describeToolActivityStatus(state),
 					toolCallId: toolEvent.toolCallId,
 					// Use the provider's own timestamp so a call's position on the
 					// timeline reflects when it happened, not when we processed it.

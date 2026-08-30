@@ -44,7 +44,14 @@
 
 import { create } from 'zustand';
 import { generateId } from '../utils/ids';
-import type { ToolActivityLabel } from '../utils/toolActivityLabel';
+import type { ToolActivityLabel, ToolActivityStatus } from '../utils/toolActivityLabel';
+
+/**
+ * Re-exported so consumers of the timeline get the status vocabulary from the
+ * store they already import. It is DEFINED next to `describeToolActivity`,
+ * because a row's glyph and its text are read off one raw provider payload.
+ */
+export type { ToolActivityStatus } from '../utils/toolActivityLabel';
 
 /** A single captured unit of thinking (one coalesced stream flush). */
 export interface ThoughtEntry {
@@ -54,13 +61,6 @@ export interface ThoughtEntry {
 	tabId: string;
 	text: string;
 }
-
-/**
- * How a tool call ended. `running` is also what we show when a provider sends
- * no status at all - an unfinished call is the honest reading of "we saw it
- * start and never saw it end".
- */
-export type ToolActivityStatus = 'running' | 'completed' | 'failed';
 
 /**
  * A single tool call on the timeline, already reduced to one plain-language
@@ -275,33 +275,55 @@ function evictColdSessions(
 }
 
 /**
- * Append one event to a buffer and enforce both caps. Shared by the thinking
- * and tool-call paths so a timeline cannot be trimmed by two different rules.
+ * Enforce both per-session caps on a timeline, dropping oldest-first.
+ *
+ * Shared by every path that changes a buffer's contents - the append paths AND
+ * the completion merge - so a timeline cannot be trimmed by two different
+ * rules, and so the running `chars` total can never drift from what the
+ * entries actually hold.
  */
-function pushEvent(prev: ThoughtBuffer, event: StreamEvent): ThoughtBuffer {
-	let entries = prev.entries.concat(event);
-	let chars = prev.chars + eventCharCost(event);
-	let trimmed = prev.trimmed;
+function enforceCaps(
+	entries: StreamEvent[],
+	chars: number,
+	trimmed: boolean,
+	lastAppendAt: number
+): ThoughtBuffer {
+	let kept = entries;
+	let total = chars;
+	let didTrim = trimmed;
 
-	if (entries.length > MAX_THOUGHTS_PER_SESSION) {
-		const dropCount = entries.length - MAX_THOUGHTS_PER_SESSION;
-		for (let i = 0; i < dropCount; i++) chars -= eventCharCost(entries[i]);
-		entries = entries.slice(dropCount);
-		trimmed = true;
+	if (kept.length > MAX_THOUGHTS_PER_SESSION) {
+		const dropCount = kept.length - MAX_THOUGHTS_PER_SESSION;
+		for (let i = 0; i < dropCount; i++) total -= eventCharCost(kept[i]);
+		kept = kept.slice(dropCount);
+		didTrim = true;
 	}
 	// Drop whole oldest events until the character budget is met. The newest
 	// event always survives, even if it alone exceeds the budget.
 	let dropped = 0;
-	while (chars > MAX_THOUGHT_CHARS_PER_SESSION && dropped < entries.length - 1) {
-		chars -= eventCharCost(entries[dropped]);
+	while (total > MAX_THOUGHT_CHARS_PER_SESSION && dropped < kept.length - 1) {
+		total -= eventCharCost(kept[dropped]);
 		dropped++;
 	}
 	if (dropped > 0) {
-		entries = entries.slice(dropped);
-		trimmed = true;
+		kept = kept.slice(dropped);
+		didTrim = true;
 	}
 
-	return { entries, trimmed, chars, lastAppendAt: event.timestamp };
+	return { entries: kept, trimmed: didTrim, chars: total, lastAppendAt };
+}
+
+/**
+ * Append one event to a buffer and enforce both caps. Shared by the thinking
+ * and tool-call paths so a timeline cannot be trimmed by two different rules.
+ */
+function pushEvent(prev: ThoughtBuffer, event: StreamEvent): ThoughtBuffer {
+	return enforceCaps(
+		prev.entries.concat(event),
+		prev.chars + eventCharCost(event),
+		prev.trimmed,
+		event.timestamp
+	);
 }
 
 /**
@@ -311,6 +333,13 @@ function pushEvent(prev: ThoughtBuffer, event: StreamEvent): ThoughtBuffer {
  *  2. otherwise the newest still-running call with the same tool name in the
  *     same tab (Codex and friends send no call id).
  * Returns -1 when this is a call we have not seen start.
+ *
+ * Rule 1 missing does NOT end the search. A provider can omit the id on the
+ * start event and send it on the completion, and returning early there would
+ * render one action as two rows - a phantom "still running" call above its own
+ * result, which is exactly the shape an operator reads as a hung tool. Rule 2
+ * therefore still applies, but it refuses any entry that already carries a
+ * DIFFERENT id, so a completion can never steal a call it does not belong to.
  */
 function findMergeTarget(
 	entries: StreamEvent[],
@@ -324,7 +353,6 @@ function findMergeTarget(
 			const event = entries[i];
 			if (isToolEvent(event) && event.tool.toolCallId === toolCallId) return i;
 		}
-		return -1;
 	}
 	if (!finalizing) return -1;
 	for (let i = entries.length - 1; i >= 0; i--) {
@@ -333,7 +361,8 @@ function findMergeTarget(
 			isToolEvent(event) &&
 			event.tabId === tabId &&
 			event.tool.name === toolName &&
-			event.tool.status === 'running'
+			event.tool.status === 'running' &&
+			(!event.tool.toolCallId || event.tool.toolCallId === toolCallId)
 		) {
 			return i;
 		}
@@ -437,9 +466,15 @@ export const useThoughtStreamStore = create<ThoughtStreamState>((set) => ({
 				};
 				const entries = prev.entries.slice();
 				entries[targetIdx] = merged;
+				// The merge can REPLACE the label (an empty target enriched by the
+				// completion's input), so the character total has to be re-derived
+				// from the two labels rather than carried over. Carrying it over
+				// undercounts what the buffer holds, which is what decides when the
+				// budget trims and whether the panel admits it trimmed anything.
+				const chars = prev.chars - eventCharCost(existing) + eventCharCost(merged);
 				const buffers = {
 					...state.buffers,
-					[sessionId]: { ...prev, entries, lastAppendAt: timestamp },
+					[sessionId]: enforceCaps(entries, chars, prev.trimmed, timestamp),
 				};
 				return { buffers: evictColdSessions(buffers, [sessionId, state.panelSessionId]) };
 			}

@@ -466,6 +466,53 @@ describe('tool activity capture', () => {
 		expect(event.tool.label.target).toBe('npm test');
 	});
 
+	it('merges an id-carrying completion into a start the provider sent without one', () => {
+		// Some providers only stamp the id on the completion. Bailing out on the
+		// id miss rendered ONE action as two rows: a phantom "still running" call
+		// sitting above its own result, which reads exactly like a hung tool.
+		tool(SID, TAB, 'shell', 'running', { timestamp: 1000 });
+		tool(SID, TAB, 'shell', 'completed', { toolCallId: 'late-id', timestamp: 2000 });
+
+		const { entries } = useThoughtStreamStore.getState().buffers[SID];
+		expect(entries).toHaveLength(1);
+		const event = entries[0] as ToolActivityEntry;
+		expect(event.tool.status).toBe('completed');
+		expect(event.tool.toolCallId).toBe('late-id');
+	});
+
+	it('never steals a running call that already belongs to a different id', () => {
+		tool(SID, TAB, 'shell', 'running', { toolCallId: 'call-a', timestamp: 1000 });
+		tool(SID, TAB, 'shell', 'completed', { toolCallId: 'call-b', timestamp: 2000 });
+
+		const { entries } = useThoughtStreamStore.getState().buffers[SID];
+		expect(entries).toHaveLength(2);
+		expect((entries[0] as ToolActivityEntry).tool.status).toBe('running');
+		expect((entries[0] as ToolActivityEntry).tool.toolCallId).toBe('call-a');
+	});
+
+	it('re-derives the character total when a merge replaces the label', () => {
+		// The merged row is LONGER than the one it replaced. Carrying the old
+		// total forward undercounts what the buffer holds, which is what decides
+		// when the budget trims and whether the panel admits it trimmed anything.
+		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
+			toolName: 'Bash',
+			label: { verb: 'Ran', target: '' },
+			status: 'running',
+			toolCallId: 'c1',
+		});
+		expect(useThoughtStreamStore.getState().buffers[SID].chars).toBe('Ran'.length);
+
+		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
+			toolName: 'Bash',
+			label: { verb: 'Ran', target: 'npm test' },
+			status: 'completed',
+			toolCallId: 'c1',
+		});
+		expect(useThoughtStreamStore.getState().buffers[SID].chars).toBe(
+			'Ran'.length + 'npm test'.length
+		);
+	});
+
 	it('counts tool calls toward the timeline cap', () => {
 		for (let i = 0; i < MAX_THOUGHTS_PER_SESSION + 5; i++) {
 			tool(SID, TAB, `tool-${i}`, 'completed', { timestamp: 1000 + i });
