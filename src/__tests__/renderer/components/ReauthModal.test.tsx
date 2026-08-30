@@ -540,3 +540,90 @@ describe('ReauthModal credential kinds', () => {
 		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
 	});
 });
+
+/**
+ * The sign-in URL is the one thing on this screen the user cannot get at by
+ * hand: it is hundreds of characters, the provider TUI soft-wraps it across
+ * rows, and mouse tracking eats the drag that would select it. These cover the
+ * wiring rather than the matching (see `loginUrl.test.ts` for that) - the part
+ * that can silently break is the accumulation across PTY chunks, since a
+ * wrapped URL never arrives in one.
+ */
+describe('ReauthModal login URL', () => {
+	let writeText: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(window.navigator, 'clipboard', {
+			value: { writeText },
+			configurable: true,
+		});
+	});
+
+	/** Mount the dialog and return the PTY id its login shell was spawned on. */
+	async function renderAndSpawn(): Promise<string> {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage({ toolType: 'claude-code' })}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		return mockSpawnTerminalTab.mock.calls[0][0].sessionId;
+	}
+
+	it('offers nothing until the provider prints a URL', async () => {
+		const ptyId = await renderAndSpawn();
+		await emitShellOutput(ptyId, 'Starting login...\n');
+
+		expect(screen.queryByTestId('reauth-copy-url')).not.toBeInTheDocument();
+	});
+
+	it('copies a URL that arrived split across PTY chunks', async () => {
+		const ptyId = await renderAndSpawn();
+
+		// A real login URL is longer than the terminal is wide, so it reaches the
+		// renderer as several writes with the wrap in the middle of the query.
+		await emitShellOutput(ptyId, 'Open this URL:\n\n  https://claude.ai/oauth/authorize?client_id');
+		await emitShellOutput(
+			ptyId,
+			'=9d1c&redirect_uri=http%3A%2F%2Flocal\nhost%3A45289%2Fcallback\n'
+		);
+
+		fireEvent.click(await screen.findByTestId('reauth-copy-url'));
+
+		await waitFor(() =>
+			expect(writeText).toHaveBeenCalledWith(
+				'https://claude.ai/oauth/authorize?client_id=9d1c&redirect_uri=http%3A%2F%2Flocalhost%3A45289%2Fcallback'
+			)
+		);
+	});
+
+	// A retried login prints a fresh URL; copying the spent one fails with no
+	// sign anything is wrong.
+	it('follows the flow to a reissued URL', async () => {
+		const ptyId = await renderAndSpawn();
+		await emitShellOutput(ptyId, 'https://claude.ai/oauth/authorize?attempt=1\n');
+		await emitShellOutput(
+			ptyId,
+			'That code expired.\nhttps://claude.ai/oauth/authorize?attempt=2\n'
+		);
+
+		fireEvent.click(screen.getByTestId('reauth-copy-url'));
+
+		await waitFor(() =>
+			expect(writeText).toHaveBeenCalledWith('https://claude.ai/oauth/authorize?attempt=2')
+		);
+	});
+
+	// The login shell prints plenty of URLs that are not the sign-in link.
+	it('stays hidden for output that carries no sign-in link', async () => {
+		const ptyId = await renderAndSpawn();
+		await emitShellOutput(ptyId, 'Docs: https://example.com/help\n');
+
+		expect(screen.queryByTestId('reauth-copy-url')).not.toBeInTheDocument();
+	});
+});
