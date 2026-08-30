@@ -1449,12 +1449,18 @@ html[data-rowdesign='c'] .row-provider {
 	white-space: nowrap;
 }
 
+/* Width only. The chip sits beside the title and would otherwise hold its
+   natural width, so it is capped and given an ellipsis; that is layout.
+   An `opacity: .7` used to live here as well and it has been removed for the
+   same reason the provider dimming was: measured on the shipped palettes it
+   took the chip from 11.19:1 to 5.98:1 on Olive Nights and from 2.51:1 to
+   1.92:1 on Dracula, and at 9px it is never large text. This variant now
+   changes WHERE things sit and nothing about how legible they are. */
 html[data-rowdesign='c'] .row-group-chip {
 	max-width: 90px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	opacity: 0.7;
 }
 
 html[data-rowdesign='b'] .row-name {
