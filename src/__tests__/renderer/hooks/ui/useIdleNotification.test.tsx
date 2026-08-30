@@ -98,6 +98,32 @@ describe('useIdleNotification', () => {
 		expect(speak).not.toHaveBeenCalled();
 	});
 
+	it('stays silent when a different agent still has queued work', () => {
+		// The selector spans every session, so the agent that finishes its turn is
+		// not necessarily the one holding work. Idle is a fleet-wide question.
+		setSessions([
+			createMockSession({ id: 'sess-1', state: 'busy', executionQueue: [] }),
+			createMockSession({
+				id: 'sess-2',
+				state: 'idle',
+				executionQueue: [queuedItem({ id: 'q2' })],
+			}),
+		]);
+		const { rerender } = renderHook(() => useIdleNotification());
+
+		setSessions([
+			createMockSession({ id: 'sess-1', state: 'idle', executionQueue: [] }),
+			createMockSession({
+				id: 'sess-2',
+				state: 'idle',
+				executionQueue: [queuedItem({ id: 'q2' })],
+			}),
+		]);
+		rerender();
+
+		expect(speak).not.toHaveBeenCalled();
+	});
+
 	it('fires once when the last queued item finishes and the queue is empty', () => {
 		setSessions([createMockSession({ state: 'busy', executionQueue: [] })]);
 		const { rerender } = renderHook(() => useIdleNotification());
