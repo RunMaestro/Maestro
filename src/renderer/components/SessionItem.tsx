@@ -252,7 +252,7 @@ export const SessionItem = memo(function SessionItem({
 	const getContainerClassName = () => {
 		// Worktree items get a dashed left border to visually distinguish from regular agents
 		const borderClass = variant === 'worktree' ? 'border-l-2 border-dashed' : 'border-l-2';
-		const base = `cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
+		const base = `session-row cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
 			return `mx-3 px-3 py-2 rounded mb-1 ${base}`;
@@ -289,7 +289,7 @@ export const SessionItem = memo(function SessionItem({
 			}}
 		>
 			{/* Left side: Session name and metadata */}
-			<div className="min-w-0 flex-1">
+			<div className="row-main min-w-0 flex-1">
 				{isEditing ? (
 					<input
 						autoFocus
@@ -310,7 +310,7 @@ export const SessionItem = memo(function SessionItem({
 						}}
 					/>
 				) : (
-					<div className="flex items-center gap-1.5" onDoubleClick={onStartRename}>
+					<div className="row-title flex items-center gap-1.5" onDoubleClick={onStartRename}>
 						{/* Worktree expand/collapse chevron for parent agents (rotates 90deg when expanded) */}
 						{isWorktreeParent && onToggleWorktrees && (
 							<button
@@ -400,7 +400,7 @@ export const SessionItem = memo(function SessionItem({
 
 				{/* Session metadata row (hidden for compact worktree variant) */}
 				{variant !== 'worktree' && (
-					<div className="flex items-center gap-2 text-[10px] mt-0.5 opacity-70">
+					<div className="row-meta flex items-center gap-2 text-[10px] mt-0.5 opacity-70">
 						{/* Session Jump Number Badge (Opt+Cmd+NUMBER) */}
 						{jumpNumber && (
 							<div
@@ -423,7 +423,7 @@ export const SessionItem = memo(function SessionItem({
 			</div>
 
 			{/* Right side: Indicators and actions */}
-			<div className="flex items-center gap-2 ml-2">
+			<div className="row-actions flex items-center gap-2 ml-2">
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default; the showFullGroupLabelInBookmarks setting swaps in the full group

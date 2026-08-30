@@ -1381,6 +1381,78 @@ html[data-theme-mode='light'] .chrome-raised-active {
      b  - name is allowed to wrap to two lines, provider demoted to a chip
    ============================================================================ */
 
+/* ---------------------------------------------------------------------------
+   Variant C - Ryan Dawson's correction, and it is the better idea.
+
+   B fought for width by letting the title wrap. C gives the title the ENTIRE
+   row instead: everything else moves down to a second line, so a long name has
+   the full sidebar to itself and never needs a second line at all.
+
+   The mechanism is `display: contents` on the row's left wrapper, which
+   dissolves that wrapper as a box and promotes the title and meta rows to
+   direct grid children of the row. Without it the title cannot span past the
+   wrapper, and the actions cluster cannot be pulled onto the meta line, since
+   the two live in different parents.
+   --------------------------------------------------------------------------- */
+
+html[data-rowdesign='c'] .session-row {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	column-gap: 0.5rem;
+}
+
+html[data-rowdesign='c'] .row-main {
+	display: contents;
+}
+
+html[data-rowdesign='c'] .row-title {
+	grid-column: 1 / -1;
+	grid-row: 1;
+	min-width: 0;
+}
+
+/* Single line, full row width. The ellipsis is now a genuine last resort
+   rather than the normal case it was at fourteen characters. */
+html[data-rowdesign='c'] .row-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+html[data-rowdesign='c'] .row-meta {
+	grid-column: 1;
+	grid-row: 2;
+	min-width: 0;
+}
+
+html[data-rowdesign='c'] .row-actions {
+	grid-column: 2;
+	grid-row: 2;
+	margin-left: 0;
+	justify-self: end;
+}
+
+html[data-rowdesign='c'] .row-provider {
+	font-size: 9px;
+	opacity: 0.5;
+	white-space: nowrap;
+}
+
+html[data-rowdesign='c'] .row-provider-icon {
+	opacity: 0.45;
+}
+
+html[data-rowdesign='c'] .row-group-chip {
+	max-width: 90px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	opacity: 0.7;
+}
+
 html[data-rowdesign='b'] .row-name {
 	/* The variable gets the room. Two lines is enough for every real agent name
 	   without letting one pathological name push the row to five. */
