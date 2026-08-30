@@ -711,14 +711,25 @@ export class CodexOutputParser implements AgentOutputParser {
 	private transformItemCompleted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
 		switch (item.type) {
 			case 'reasoning':
-				// Reasoning shows model's thinking process
-				// Emit as text but mark it as partial/streaming
+				// Reasoning shows model's thinking process.
 				// Format reasoning text: add line breaks before ** SECTION ** markers
-				// Codex uses this pattern to separate thinking stages
+				// Codex uses this pattern to separate thinking stages.
+				//
+				// `isReasoning` matters twice, exactly as it does on the
+				// `response_item` reasoning path in transformResponseItem():
+				//   1. StdoutHandler gates Codex thinking-chunk events on it, so
+				//      without the flag this reasoning never reaches the thinking
+				//      panel and never becomes a `source: 'thinking'` log entry -
+				//      which is what "Context: Copy with Reasoning" keys off.
+				//   2. Untagged partial text is appended to `streamedText`, the
+				//      buffer ExitHandler emits as the final answer when a turn
+				//      ends without a result message. Reasoning must never be
+				//      handed to the user as the agent's response.
 				return {
 					type: 'text',
 					text: this.formatReasoningText(item.text || ''),
 					isPartial: true,
+					isReasoning: true,
 					raw: msg,
 				};
 
