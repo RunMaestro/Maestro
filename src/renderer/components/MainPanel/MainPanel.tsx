@@ -23,6 +23,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
+import { useRemoteTerminalBufferResponder } from '../../hooks/terminal/useRemoteTerminalBufferResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { aiTabFocusFields, getTabDisplayName } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
@@ -168,6 +169,10 @@ export const MainPanel = React.memo(
 			terminalSearchOpen,
 			setTerminalSearchOpen,
 		} = useTerminalMounting(activeSession);
+
+		// Serve CLI/web `read-terminal` requests. Lives here because the xterm
+		// scrollback exists only in the mounted TerminalView, not in the store.
+		useRemoteTerminalBufferResponder(terminalViewRefs);
 
 		// Extract tab handlers from props
 		const {

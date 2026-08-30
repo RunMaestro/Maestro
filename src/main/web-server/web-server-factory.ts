@@ -20,7 +20,13 @@ import { getSshRemoteById } from '../stores';
 import { isImageRef, resolveToDataUrlSync } from '../storage/session-image-store';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry, TerminalTabInfo } from './types';
+import type {
+	WebPlaybook,
+	CueSubscriptionInfo,
+	CueActivityEntry,
+	TerminalTabInfo,
+	ReadTerminalTabResult,
+} from './types';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
@@ -1217,6 +1223,64 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}, 5000);
 			});
 		});
+
+		server.setReadTerminalTabCallback(
+			async (sessionId: string, payload: { tabRef?: string; tail?: number }) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for readTerminalTab', 'WebServer');
+					return { success: false, error: 'Desktop window not available' };
+				}
+
+				return new Promise<ReadTerminalTabResult>((resolve) => {
+					const responseChannel = `remote:readTerminalTab:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'object' && result !== null) {
+							const r = result as Record<string, unknown>;
+							resolve({
+								success: r.success === true,
+								error: typeof r.error === 'string' ? r.error : undefined,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+								tabName: typeof r.tabName === 'string' ? r.tabName : undefined,
+								cwd: typeof r.cwd === 'string' ? r.cwd : undefined,
+								state: typeof r.state === 'string' ? r.state : undefined,
+								content: typeof r.content === 'string' ? r.content : undefined,
+								totalLines: typeof r.totalLines === 'number' ? r.totalLines : undefined,
+							});
+							return;
+						}
+						resolve({ success: false, error: 'Malformed response from the desktop app' });
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for readTerminalTab', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, error: 'Desktop window not available' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:readTerminalTab',
+						sessionId,
+						payload,
+						responseChannel
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(`readTerminalTab callback timed out for session ${sessionId}`, 'WebServer');
+						resolve({ success: false, error: 'Timed out waiting for the desktop app' });
+					}, 5000);
+				});
+			}
+		);
 
 		server.setNewAITabWithPromptCallback(
 			async (sessionId: string, prompt: string, background?: boolean) => {

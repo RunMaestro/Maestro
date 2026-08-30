@@ -52,6 +52,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
 			setListTerminalTabsCallback = vi.fn();
+			setReadTerminalTabCallback = vi.fn();
 			setNewAITabWithPromptCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();

@@ -47,6 +47,7 @@ import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
+import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
@@ -384,6 +385,19 @@ program
 	.option('--no-enter', 'Type the command without pressing Enter')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sendTerminal);
+
+// Read-terminal command - read the scrollback of an existing Maestro terminal tab
+program
+	.command('read-terminal')
+	.description("Read a Maestro terminal tab's output")
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--tab <id-or-name>',
+		"Terminal tab ID or display name (defaults to the agent's active terminal)"
+	)
+	.option('--tail <n>', `Return only the last N lines (default: ${DEFAULT_TAIL_LINES})`)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(readTerminal);
 
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program

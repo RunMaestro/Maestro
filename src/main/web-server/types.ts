@@ -468,6 +468,43 @@ export interface TerminalTabInfo {
 	startupCommand: string | null;
 }
 export type ListTerminalTabsCallback = (sessionId?: string) => Promise<TerminalTabInfo[]>;
+
+/**
+ * Read a terminal tab's scrollback. The counterpart to WriteTerminalTabPayload:
+ * `send-terminal` types into a shell, this reads back what it printed.
+ */
+export interface ReadTerminalTabPayload {
+	/** Tab id or display name. Omitted means the agent's active terminal. */
+	tabRef?: string;
+	/**
+	 * Tail-truncate to the last N lines. Applied in the renderer, before the
+	 * buffer crosses IPC - a `tail -f` tab can hold megabytes of scrollback and
+	 * shipping all of it just to drop it here would be wasted copying.
+	 */
+	tail?: number;
+}
+
+export interface ReadTerminalTabResult {
+	success: boolean;
+	error?: string;
+	/** The tab that was actually read, echoed back for reporting. */
+	tabId?: string;
+	tabName?: string;
+	cwd?: string;
+	/** PTY lifecycle state: 'idle' | 'busy' | 'exited'. Tells the caller whether
+	 *  the output is final or the command is still running. */
+	state?: string;
+	content?: string;
+	/** Total lines in the buffer before tail-truncation, so a caller can tell
+	 *  "that's everything" from "that's the last 200 of 4000". */
+	totalLines?: number;
+}
+
+export type ReadTerminalTabCallback = (
+	sessionId: string,
+	payload: ReadTerminalTabPayload
+) => Promise<ReadTerminalTabResult>;
+
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
 
 /**
