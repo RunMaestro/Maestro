@@ -1207,6 +1207,15 @@ function MaestroConsoleInner() {
 		themeColors: theme.colors,
 	});
 
+	// GLOSS DEMO HARNESS (branch gloss-demo only). Publishes the active theme's
+	// mode onto <html> so the chrome-sheen rules can exclude light themes, and
+	// seeds data-gloss so the option can be flipped live from the console.
+	useEffect(() => {
+		const root = document.documentElement;
+		root.dataset.themeMode = theme.mode;
+		if (!root.dataset.gloss) root.dataset.gloss = 'off';
+	}, [theme.mode]);
+
 	// Get capabilities for the active session's agent type
 	const { hasCapability: hasActiveSessionCapability } = useAgentCapabilities(
 		activeSession?.toolType
@@ -2877,7 +2886,7 @@ function MaestroConsoleInner() {
 				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape or when using native title bar) --- */}
 				{!isMobileLandscape && !useNativeTitleBar && (
 					<div
-						className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
+						className="chrome-sheen fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
 						style={
 							{
 								WebkitAppRegion: 'drag',
