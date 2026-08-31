@@ -19,7 +19,9 @@ import {
 	calculateLayout,
 	buildAdjacencyMap,
 	calculateNodeHeight,
-	NODE_WIDTH,
+	calculateNodeWidth,
+	NODE_PILL_CHAR_WIDTH,
+	NODE_PILL_CHROME_WIDTH,
 	NODE_HEADER_HEIGHT,
 	NODE_SUBHEADER_HEIGHT,
 	DESC_LINE_HEIGHT,
@@ -69,6 +71,8 @@ export interface MindMapNode {
 	isFocused?: boolean;
 	connectionCount?: number;
 	neighbors?: Set<string>;
+	/** Last-modified time in epoch ms, 0 or undefined when unknown. */
+	mtime?: number;
 }
 
 /**
@@ -141,11 +145,28 @@ export interface MindMapProps {
 	containerRef?: React.RefObject<HTMLDivElement>;
 	/** Whether the help/legend drawer is open - slides the minimap clear of it */
 	legendExpanded?: boolean;
+	/**
+	 * Bump this to re-frame the whole graph on screen. It is a token rather than
+	 * a callback because the fit has to happen inside the canvas, which owns the
+	 * transform; the parent only needs to say "now".
+	 */
+	fitToken?: number;
 }
 
 // ============================================================================
 // Rendering Constants (not part of layout algorithms)
 // ============================================================================
+/**
+ * Zoom range. The floor used to be 0.2, which is not far enough out to frame a
+ * graph of any size - the user could not zoom out to see the whole thing no
+ * matter how far they scrolled, which reads as the canvas being broken rather
+ * than as a clamp.
+ */
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 3;
+/** Zoom-to-fit never magnifies past 1:1; a three-node graph should not fill the screen. */
+const FIT_MAX_ZOOM = 1;
+
 /** Node corner radius */
 const NODE_BORDER_RADIUS = 12;
 /** Open icon size */
@@ -472,9 +493,9 @@ function renderDocumentNode(
 		ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
-		const pillTitleWidth = width - OPEN_ICON_SIZE - OPEN_ICON_PADDING * 3 - 12;
+		const pillTitleWidth = width - NODE_PILL_CHROME_WIDTH;
 		ctx.fillText(
-			truncateText(label, Math.floor(pillTitleWidth / 7)),
+			truncateText(label, Math.floor(pillTitleWidth / NODE_PILL_CHAR_WIDTH)),
 			nodeLeft + 14,
 			nodeTop + height / 2
 		);
@@ -685,6 +706,7 @@ export function MindMap({
 	onNodePositionChange,
 	containerRef: externalContainerRef,
 	legendExpanded = false,
+	fitToken = 0,
 }: MindMapProps) {
 	// Canvas measures and paints glyphs itself, so it needs a resolved family
 	// string rather than the CSS variable the DOM surfaces inherit.
@@ -888,6 +910,28 @@ export function MindMap({
 		ctx.translate(pan.x, pan.y);
 		ctx.scale(zoom, zoom);
 
+		// Axis captions sit behind everything. Only Timeline emits any - a time
+		// axis with no dates on it is just an arbitrary left-to-right ordering.
+		if (layout.axisLabels && layout.axisLabels.length > 0) {
+			ctx.save();
+			ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			layout.axisLabels.forEach((label) => {
+				if (label.ruleHeight) {
+					ctx.strokeStyle = `${theme.colors.border}80`;
+					ctx.lineWidth = 1;
+					ctx.beginPath();
+					ctx.moveTo(label.x, label.y + 14);
+					ctx.lineTo(label.x, label.y + 14 + label.ruleHeight);
+					ctx.stroke();
+				}
+				ctx.fillStyle = theme.colors.textDim;
+				ctx.fillText(label.text, label.x, label.y);
+			});
+			ctx.restore();
+		}
+
 		// Render links first (behind nodes)
 		const nodeMap = new Map(nodesWithState.map((n) => [n.id, n]));
 		layout.links.forEach((link) => {
@@ -999,6 +1043,7 @@ export function MindMap({
 		zoom,
 		nodesWithState,
 		layout.links,
+		layout.axisLabels,
 		selectedNodeId,
 		hoveredNodeId,
 		focusedNodeId,
@@ -1014,20 +1059,47 @@ export function MindMap({
 		render();
 	}, [render]);
 
-	// Center view on mount and when center file changes
+	/**
+	 * Frame the whole graph in the viewport.
+	 *
+	 * Centering on the focus node at whatever zoom happened to be current is
+	 * what made a large graph unreadable: the content is thousands of pixels
+	 * across, so the user lands on one node with the rest off screen and no
+	 * amount of scrolling brings it back into view.
+	 */
+	const fitToView = useCallback(() => {
+		const { minX, maxX, minY, maxY } = layout.bounds;
+		const contentWidth = maxX - minX;
+		const contentHeight = maxY - minY;
+		if (contentWidth <= 0 || contentHeight <= 0 || width <= 0 || height <= 0) return;
+
+		const zoomToFit = Math.min(width / contentWidth, height / contentHeight);
+		const nextZoom = Math.min(FIT_MAX_ZOOM, Math.max(MIN_ZOOM, zoomToFit));
+		const contentCenterX = (minX + maxX) / 2;
+		const contentCenterY = (minY + maxY) / 2;
+
+		setTransform({
+			zoom: nextZoom,
+			panX: width / 2 - contentCenterX * nextZoom,
+			panY: height / 2 - contentCenterY * nextZoom,
+		});
+	}, [layout.bounds, width, height]);
+
+	// Frame the graph on mount, and whenever the thing being drawn changes shape
+	// (new center, new layout algorithm). Not on every `layout` identity: node
+	// drags rebuild it too, and re-framing under a drag fights the user.
 	useEffect(() => {
 		if (layout.nodes.length > 0) {
-			// Center on the center node
-			const centerNode = layout.nodes.find((n) => n.isFocused);
-			if (centerNode) {
-				setTransform((prev) => ({
-					...prev,
-					panX: width / 2 - centerNode.x * prev.zoom,
-					panY: height / 2 - centerNode.y * prev.zoom,
-				}));
-			}
+			fitToView();
 		}
-	}, [centerFilePath, width, height, layout.nodes]);
+	}, [centerFilePath, layoutType, previewCharLimit, width, height]);
+
+	// Explicit re-fit requested by the parent (the `F` key).
+	useEffect(() => {
+		if (fitToken > 0) {
+			fitToView();
+		}
+	}, [fitToken]);
 
 	// Mouse event handlers
 	const handleMouseDown = useCallback(
@@ -1189,7 +1261,7 @@ export function MindMap({
 		setTransform((prev) => {
 			// Calculate new zoom
 			const delta = -e.deltaY * 0.001;
-			const newZoom = Math.min(Math.max(prev.zoom + delta * prev.zoom, 0.2), 3);
+			const newZoom = Math.min(Math.max(prev.zoom + delta * prev.zoom, MIN_ZOOM), MAX_ZOOM);
 
 			// Adjust pan to zoom towards mouse position
 			const zoomRatio = newZoom / prev.zoom;
@@ -1461,7 +1533,7 @@ export function convertToMindMapData(
 				id: node.id,
 				x: 0,
 				y: 0,
-				width: NODE_WIDTH,
+				width: calculateNodeWidth(filename, previewCharLimit),
 				height: calculateNodeHeight(previewText, previewCharLimit),
 				depth: 0,
 				side: 'center' as const,
@@ -1475,6 +1547,7 @@ export function convertToMindMapData(
 				size: docData.size,
 				brokenLinks: docData.brokenLinks,
 				isLargeFile: docData.isLargeFile,
+				mtime: docData.mtime,
 				neighbors,
 				connectionCount,
 			};

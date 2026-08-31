@@ -479,7 +479,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// The command terminal can use its own font (issue #1228).
 	const terminal = useSurfaceTypography('terminal');
 	const terminalFontFamily = terminal.fontFamily;
-	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
@@ -1210,7 +1209,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							// the per-surface ratio the terminal size setting now
 							// expresses explicitly and lets the user change.
 							fontSize={terminal.fontSize}
-							defaultShell={defaultShell}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}
 							onTabPidChange={createTabPidChangeHandler(sessionId)}
 							searchOpen={isCurrentSession ? terminalSearchOpen : false}

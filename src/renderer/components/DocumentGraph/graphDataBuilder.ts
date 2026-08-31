@@ -1482,6 +1482,10 @@ async function parseFileWithSsh(
 
 		// Compute document statistics
 		const stats = computeDocumentStats(contentForParsing, relativePath, fileSize);
+		// Carry the stat's mtime onto the node data. Every document node builds
+		// its payload by spreading `parsed.stats`, so stamping it here is what
+		// makes it reach the Timeline layout without touching each build site.
+		stats.mtime = fileMtime;
 
 		if (isLargeFile) {
 			stats.isLargeFile = true;

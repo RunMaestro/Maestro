@@ -20,7 +20,7 @@ import {
 } from '../utils/terminalTabHelpers';
 import { useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
-import { captureException } from '../utils/sentry';
+import { spawnPtyForTab as spawnPty } from '../services/terminalSpawn';
 import { notifyToast } from '../stores/notificationStore';
 import { isCoarsePointer } from '../utils/touch';
 import type { PaneRect, Session, TerminalTab } from '../types';
@@ -55,9 +55,6 @@ interface TerminalViewProps {
 	theme: Theme;
 	fontFamily: string;
 	fontSize?: number;
-	defaultShell: string;
-	shellArgs?: string;
-	shellEnvVars?: Record<string, string>;
 	onTabStateChange: (tabId: string, state: TerminalTab['state'], exitCode?: number) => void;
 	onTabPidChange: (tabId: string, pid: number) => void;
 	searchOpen?: boolean;
@@ -97,9 +94,6 @@ export const TerminalView = memo(
 			theme,
 			fontFamily,
 			fontSize,
-			defaultShell,
-			shellArgs,
-			shellEnvVars,
 			onTabStateChange,
 			onTabPidChange,
 			searchOpen,
@@ -120,8 +114,6 @@ export const TerminalView = memo(
 		// ref rather than on the tab so it stays out of the persisted session snapshot;
 		// it is only needed for the keep-or-close decision on the very next render.
 		const exitSignalsRef = useRef<Map<string, number | undefined>>(new Map());
-		// In-flight spawn guard: set of tabIds currently waiting for a PTY PID
-		const spawnInFlightRef = useRef<Set<string>>(new Set());
 		// Track which tabs have already had the loading message written to avoid duplicates
 		const loadingWrittenRef = useRef<Set<string>>(new Set());
 		// Dedup spawn-failure toasts: batch rapid failures into a single notification
@@ -277,132 +269,19 @@ export const TerminalView = memo(
 			[activeTab]
 		);
 
-		// Shared spawn function - closes tab and shows error toast on failure
+		// Spawning lives in services/terminalSpawn so a tab this component never
+		// renders can still get a shell (see that module). The view supplies only the
+		// failure reporting, which is the one part that needs the live xterm buffer.
 		const spawnPtyForTab = useCallback(
 			(tab: TerminalTab) => {
-				const tabId = tab.id;
-				// Guard: skip if a spawn is already in flight for this tab
-				if (spawnInFlightRef.current.has(tabId)) return;
-				spawnInFlightRef.current.add(tabId);
-
-				// "Persistent" tabs carry user intent to keep running: a configured
-				// startup command, or any tab under an SSH/remote session (whose
-				// transport can drop for reasons unrelated to the user). We never
-				// silently discard these on failure - we keep them as a restartable
-				// exited husk instead of closing the tab and losing its config.
-				const isPersistent =
-					!!tab.startupCommand ||
-					!!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
-
-				const terminalSessionId = getTerminalSessionId(session.id, tabId);
-
-				// Build effective SSH config: prefer explicit sessionSshRemoteConfig, then fall back
-				// to sshRemoteId which is set after an AI agent connects. Without this fallback,
-				// terminal tabs under running SSH agents spawn locally instead of on the remote host.
-				//
-				// workingDirOverride must be a REMOTE path. Fallback chain:
-				//   1. sessionSshRemoteConfig.workingDirOverride - user-configured remote project root
-				//   2. session.remoteCwd - tracked remote cwd (set after agent reports cd)
-				//   3. session.cwd - the working directory from session creation; for SSH sessions
-				//      this IS a remote path (the user types a remote path when SSH is enabled)
-				const effectiveSshConfig = session.sessionSshRemoteConfig?.enabled
-					? {
-							...session.sessionSshRemoteConfig,
-							workingDirOverride:
-								session.sessionSshRemoteConfig.workingDirOverride ||
-								session.remoteCwd ||
-								session.cwd ||
-								undefined,
-						}
-					: session.sshRemoteId
-						? {
-								enabled: true,
-								remoteId: session.sshRemoteId,
-								workingDirOverride:
-									session.remoteCwd ||
-									session.sessionSshRemoteConfig?.workingDirOverride ||
-									session.cwd ||
-									undefined,
-							}
-						: undefined;
-
-				// When a startup command is configured, spawn the PTY in its configured cwd
-				// (if any) so the command runs in the right directory. Otherwise keep the
-				// existing fallback chain.
-				const spawnCwd =
-					(tab.startupCommand && tab.startupCommandCwd) ||
-					tab.cwd ||
-					session.cwd ||
-					session.projectRoot ||
-					'';
-
-				window.maestro.process
-					.spawnTerminalTab({
-						sessionId: terminalSessionId,
-						cwd: spawnCwd,
-						shell: defaultShell || undefined,
-						shellArgs,
-						shellEnvVars,
-						toolType: session.toolType,
-						sessionCustomEnvVars: session.customEnvVars,
-						sessionSshRemoteConfig: effectiveSshConfig,
-					})
-					.then((result) => {
-						if (result.success) {
-							onTabPidChangeRef.current(tabId, result.pid);
-							// Run the user-configured startup command. The PTY buffers stdin,
-							// so the shell will execute it once initialization (rc files, etc.)
-							// finishes.
-							if (tab.startupCommand) {
-								window.maestro.process
-									.write(terminalSessionId, tab.startupCommand + '\n')
-									.catch(() => {
-										// Write failures are surfaced by the process exit handler
-									});
-							}
-						} else {
-							// Spawn failed. Persistent tabs are kept (marked exited so the
-							// spawn effects stop retrying in a loop); scratch tabs are closed.
-							handleSpawnFailure(
-								tabId,
-								isPersistent,
-								effectiveSshConfig?.enabled
-									? 'SSH terminal could not be started. Check that the SSH remote is enabled and reachable.'
-									: 'The shell process could not be started. Check system PTY availability.'
-							);
-						}
-					})
-					.catch((err) => {
-						captureException(err, {
-							extra: {
-								tabId,
-								terminalSessionId,
-								operation: 'spawnTerminalTab',
-							},
-						});
-						// Spawn threw - same persistent-vs-scratch handling as a failed spawn.
-						handleSpawnFailure(
-							tabId,
-							isPersistent,
-							err instanceof Error ? err.message : 'An unexpected error occurred.'
-						);
-					})
-					.finally(() => {
-						spawnInFlightRef.current.delete(tabId);
-					});
+				void spawnPty({
+					session,
+					tab,
+					onPid: (id, pid) => onTabPidChangeRef.current(id, pid),
+					onSpawnFailure: handleSpawnFailure,
+				});
 			},
-			[
-				session.id,
-				session.cwd,
-				session.remoteCwd,
-				session.sessionSshRemoteConfig,
-				session.sshRemoteId,
-				defaultShell,
-				shellArgs,
-				shellEnvVars,
-				// onTabPidChange / onTabStateChange accessed via stable refs - not deps
-				handleSpawnFailure,
-			]
+			[session, handleSpawnFailure]
 		);
 
 		// Spawn a PTY for every terminal that needs one. Three kinds qualify:

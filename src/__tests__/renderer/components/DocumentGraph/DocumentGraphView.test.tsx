@@ -2223,7 +2223,8 @@ describe('DocumentGraphView', () => {
 
 			it('L cycles the layout through the shared order', () => {
 				expect(nextMindMapLayout('mindmap')).toBe('radial');
-				expect(nextMindMapLayout('force')).toBe('mindmap');
+				expect(nextMindMapLayout('force')).toBe('lobes');
+				expect(nextMindMapLayout('timeline')).toBe('mindmap');
 			});
 
 			it('D widens the depth and treats All as the top rung', () => {

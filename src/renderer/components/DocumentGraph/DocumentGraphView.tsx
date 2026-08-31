@@ -229,6 +229,9 @@ export function DocumentGraphView({
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
+	// Bumped by `F` to re-frame the whole graph. A token rather than a callback
+	// because the transform lives inside the canvas component.
+	const [fitToken, setFitToken] = useState(0);
 
 	// Close all other dropdowns when opening one
 	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
@@ -1351,7 +1354,7 @@ export function DocumentGraphView({
 
 	/**
 	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
-	 * P preview length; +/- node spacing)
+	 * P preview length; F fit to view; +/- node spacing)
 	 */
 	const handleContainerKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -1390,6 +1393,14 @@ export function DocumentGraphView({
 			if (e.key === 'p' || e.key === 'P') {
 				e.preventDefault();
 				applyPreviewCharLimit(nextPreviewCharLimit(previewCharLimit));
+				return;
+			}
+
+			// F re-frames the entire graph. Zooming out by hand cannot always get
+			// there, so this is the only reliable way back to the whole picture.
+			if (e.key === 'f' || e.key === 'F') {
+				e.preventDefault();
+				setFitToken((prev) => prev + 1);
 				return;
 			}
 
@@ -2045,6 +2056,7 @@ export function DocumentGraphView({
 							onNodePositionChange={handleNodePositionChange}
 							containerRef={mindMapContainerRef}
 							legendExpanded={legendExpanded}
+							fitToken={fitToken}
 						/>
 					) : (
 						<div
