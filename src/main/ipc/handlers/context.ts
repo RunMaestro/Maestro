@@ -22,11 +22,15 @@ import {
 } from '../../utils/ipcHandler';
 import { getSessionStorage, type SessionMessagesResult } from '../../agents';
 import { groomContext, cancelAllGroomingSessions } from '../../utils/context-groomer';
+import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { getSettingsStore } from '../../stores';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
 import type { AgentConfigsData, MaestroSettings } from '../../stores/types';
 import { captureException } from '../../utils/sentry';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -151,6 +155,13 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					customPath?: string;
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
+					/**
+					 * Pin this turn to the bottom of both ladders. Summarization sets it;
+					 * grooming and transfer must not, because their output becomes the
+					 * context every later turn reads. The handler cannot tell the three
+					 * apart - it only receives a prompt string - so the caller decides.
+					 */
+					cheapTurn?: boolean;
 				}
 			): Promise<string> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
@@ -177,6 +188,10 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				// on the local machine would look at the wrong filesystem.
 				const usingUtilityAgent = !!utilityAgentId && effectiveAgentType !== agentType;
 
+				// Only summarization opts in (see `cheapTurn` above). Left undefined
+				// for grooming and transfer, which keep the agent's configured model.
+				const cheapTurn = options?.cheapTurn ? cheapTurnSettings(agentType as ToolType) : undefined;
+
 				// Use the shared groomContext utility
 				const result = await groomContext(
 					{
@@ -185,11 +200,26 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						prompt,
 						// Only apply the model override when a utility agent is actually in use.
 						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
-						// Pass SSH and custom config for remote execution support
+						// Pass SSH and custom config for remote execution support.
+						// The store lets groomContext resolve `remoteId` and actually
+						// wrap the spawn with ssh - without it grooming would run the
+						// prompt locally (issue #1416).
 						sessionSshRemoteConfig: options?.sshRemoteConfig,
+						sshStore: options?.sshRemoteConfig?.enabled
+							? createSshRemoteStoreAdapter(getSettingsStore())
+							: undefined,
+						// A utility agent runs as ITSELF, so the calling session's own
+						// binary path / args / env must not leak into its spawn.
 						sessionCustomPath: usingUtilityAgent ? undefined : options?.customPath,
 						sessionCustomArgs: usingUtilityAgent ? undefined : options?.customArgs,
 						sessionCustomEnvVars: usingUtilityAgent ? undefined : options?.customEnvVars,
+						// Undefined unless the caller asked for a cheap turn, and
+						// undefined means "inherit the agent's own value" all the way
+						// down - so grooming and transfer are untouched by this. An
+						// explicit tier is not the caller's own setting leaking, so it
+						// applies to a utility agent too.
+						sessionCustomModel: cheapTurn?.model,
+						sessionCustomEffort: cheapTurn?.effort,
 						agentConfigValues,
 					},
 					processManager,

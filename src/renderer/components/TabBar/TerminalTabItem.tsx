@@ -5,6 +5,7 @@ import {
 	Pencil,
 	Terminal,
 	ChevronsLeft,
+	Clock,
 	ChevronsRight,
 	Clipboard,
 	ArrowRightCircle,
@@ -42,6 +43,8 @@ export interface TerminalTabItemProps {
 	isDragging: boolean;
 	isDragOver: boolean;
 	registerRef?: (el: HTMLDivElement | null) => void;
+	/** Park this tab until a chosen moment. Omitted when snoozing is unavailable. */
+	onSnooze?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
 	isFirstTab?: boolean;
@@ -82,6 +85,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	isDragging,
 	isDragOver,
 	registerRef,
+	onSnooze,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -195,6 +199,15 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		},
 		[onRename, tab.id, setOverlayOpen]
 	);
+	const handleSnoozeClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onSnooze?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onSnooze, tab.id, setOverlayOpen]
+	);
+
 	const handleMoveToFirstClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -504,6 +517,20 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<Play className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Startup Command…
+									</button>
+								)}
+
+								{onSnooze && (
+									<button
+										onClick={handleSnoozeClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Snooze Tab
+										{tabShortcuts.snoozeTab && (
+											<ShortcutHint keys={tabShortcuts.snoozeTab.keys} theme={theme} />
+										)}
 									</button>
 								)}
 

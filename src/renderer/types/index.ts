@@ -69,6 +69,7 @@ export type {
 	FailoverState,
 } from '../../shared/providerFailover';
 import type { FailoverConfig } from '../../shared/providerFailover';
+import type { ComposerCommandMode } from '../utils/shellCommandInput';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
@@ -80,6 +81,7 @@ export type RightPanelTab = 'files' | 'history' | 'autorun';
 export type UsageDashboardViewMode =
 	| 'overview'
 	| 'agents'
+	| 'groups'
 	| 'agent-overview'
 	| 'tokens'
 	| 'activity'
@@ -90,6 +92,10 @@ export type UsageDashboardViewMode =
 	| 'shortcuts';
 export type SettingsTab =
 	| 'general'
+	// SettingsModal has always rendered a Display tab and accepted it as an
+	// `initialTab`; it was simply missing from this union, so nothing could
+	// deep-link there through openSettings().
+	| 'display'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
@@ -294,6 +300,14 @@ export interface LogEntry {
 	// "Captured via interactive TUI" footer pill on non-user entries. Exists as
 	// forward-compatible metadata for any future divergence.
 	renderStyle?: 'structured' | 'text-stream';
+	// The model and effort this turn ran under, copied from the tab's send-time
+	// stamp (`AITab.turnModel` / `turnEffort`) when the entry is created. The
+	// transcript is a record of who answered what: a user who switches model or
+	// effort mid-conversation can read back which configuration produced each
+	// response. Undefined means the agent's own default was in force, and the
+	// footer pill is omitted rather than guessed at.
+	turnModel?: string;
+	turnEffort?: string;
 	// For session_not_found system entries - payload for the inline "Create new
 	// session from prior context" action. The button on the entry opens
 	// SessionRecoveryModal which re-spawns the agent in place on `tabId`,
@@ -317,6 +331,17 @@ export interface LogEntry {
 	shellCommand?: {
 		/** The command as typed, without the leading `!`. */
 		command: string;
+		/**
+		 * The plain-English request this command was generated from, when it came
+		 * from AI command mode. Absent for a command the user typed themselves -
+		 * that command IS the intent, with nothing upstream of it.
+		 *
+		 * Kept because the command alone loses the "why": `find . -newermt '2 days
+		 * ago' -type f` does not say it was asked for as "files edited in the past
+		 * two days", and a follow-up ("actually just the count") is refining the
+		 * REQUEST at least as much as the command line.
+		 */
+		request?: string;
 		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
 		cwd: string;
 		/** SSH remote name when the agent runs remotely, else undefined. */
@@ -349,6 +374,28 @@ export interface LogEntry {
 // Supports both messages and slash commands, processed sequentially
 export type QueuedItemType = 'message' | 'command';
 
+/**
+ * The model and effort a queued item was queued WITH.
+ *
+ * Settings are codified at send, and queuing is the send: a user who queues one
+ * message on a cheap model, flips to a big one, and queues another expects each
+ * to run - and to be labeled - with what was in force when they hit Enter. The
+ * live tab/agent values at dispatch time belong to whatever the user has since
+ * selected, so they cannot answer that.
+ *
+ * The whole object is optional but its FIELDS are meaningfully undefined:
+ * `undefined` model/effort means "the agent's own default was in force". So the
+ * presence of the object is the capture flag - never fall back with
+ * `item.model ?? liveModel`, or an item queued on the default would inherit a
+ * model the user picked afterwards.
+ */
+export interface QueuedTurnSettings {
+	/** Model in force when the item was queued, or undefined for the default. */
+	model?: string;
+	/** Effort in force when the item was queued, or undefined for the default. */
+	effort?: string;
+}
+
 export interface QueuedItem {
 	id: string; // Unique item ID
 	timestamp: number; // When it was queued (for ordering)
@@ -362,7 +409,11 @@ export interface QueuedItem {
 	commandArgs?: string; // Arguments passed after the command (e.g., 'Blah blah' from '/speckit.plan Blah blah')
 	commandDescription?: string; // Command description for display
 	// Display metadata
-	tabName?: string; // Tab name at time of queuing (for display)
+	// Last-known tab label, snapshotted when the item was queued. This is a
+	// FALLBACK only: the queue UI resolves the live tab name first (see
+	// resolveQueuedItemTabName in utils/executionQueue.ts), so an item queued
+	// into an unnamed tab does not keep reading "New" after auto-naming.
+	tabName?: string;
 	// Read-only mode tracking (for parallel execution bypass)
 	readOnlyMode?: boolean; // True if queued from a read-only tab
 	// Force parallel: dispatches immediately when this tab finishes, skipping cross-tab wait
@@ -370,6 +421,22 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	// This message `@mentions` another agent, and that consult has NOT fired yet.
+	// It fires when the item is dispatched (agentStore.processQueuedItem), so the
+	// mentioned agent is pulled in at the moment the message becomes the agent's
+	// turn - not when the user typed it into a queue that was minutes deep.
+	crossAgentMention?: boolean;
+	// The message is addressed ONLY at the mentioned agent(s) - it leads with an
+	// `@agent` mention, so this agent does not answer it. Dispatching the item
+	// fires the consult and nothing else: no spawn, no turn. It still occupies a
+	// queue slot, because its POSITION is what the user is expressing ("finish
+	// that, then ask them"). Always paired with `crossAgentMention`.
+	crossAgentOnly?: boolean;
+	// Model/effort captured when the user queued this item. Both the spawn and
+	// the transcript pills read it, so a queued turn runs under - and is labeled
+	// with - the configuration it was queued with, not whatever is selected by
+	// the time the queue drains. Undefined only on items queued by older builds.
+	turnSettings?: QueuedTurnSettings;
 }
 
 export interface WorkLogItem {
@@ -597,6 +664,25 @@ export interface OnboardingStats {
 	averageTasksPerPhase: number; // Average tasks per document
 }
 
+/**
+ * A tab's parked state for one provider it is not currently using.
+ *
+ * `agentSessionId` is a provider-specific resume token (`--resume <id>` for
+ * Claude, `resume <id>` for Codex, `--session <id>` for OpenCode), so a single
+ * slot goes invalid the moment the agent's provider changes. Parking the old
+ * provider's values here - instead of discarding them - is what lets a user
+ * switch away and back and land on the same conversation. Token counts and the
+ * per-tab model are parked alongside it because they are equally
+ * provider-specific: blending two providers' usage produces a meaningless
+ * total, and a Claude model name means nothing to Codex.
+ */
+export interface ProviderTabSession {
+	agentSessionId: string | null;
+	usageStats?: UsageStats;
+	customModel?: string;
+	customEffort?: string;
+}
+
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
@@ -607,11 +693,19 @@ export interface AITab {
 	logs: LogEntry[]; // Conversation history
 	agentError?: AgentError; // Tab-specific agent error (shown in banner)
 	inputValue: string; // Pending input text for this tab
-	// When true, this tab's composer is in command mode (`!`) and `inputValue`
-	// is a shell command, not a message for the agent. Persisted alongside
-	// inputValue so a draft restored after a tab switch or restart is still
-	// routed the way the user intended - the text alone can't say which.
-	commandMode?: boolean;
+	/**
+	 * Which rung of the bang ladder this tab's composer is on: `'shell'` means
+	 * `inputValue` is a shell command line, `'ai'` means it is a plain-English
+	 * request the model turns into one, and absent/`'off'` means it is a message
+	 * for the agent. Persisted alongside inputValue so a draft restored after a
+	 * tab switch or restart is still routed the way the user intended - the text
+	 * alone can't say which.
+	 *
+	 * `true` is the legacy encoding of `'shell'`, still written by older builds
+	 * and still on disk in existing sessions files. Always read it through
+	 * `normalizeComposerCommandMode()` rather than testing it directly.
+	 */
+	commandMode?: ComposerCommandMode | boolean;
 	stagedImages: string[]; // Staged images (base64) for this tab
 	usageStats?: UsageStats; // Token usage for this tab
 	createdAt: number; // Timestamp for ordering
@@ -661,6 +755,36 @@ export interface AITab {
 	 * to its original position rather than appending it to the end of the strip.
 	 */
 	hidden?: boolean;
+	/**
+	 * Parked per-provider state for every provider this tab is NOT currently
+	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
+	 * `customModel` / `customEffort` as they always have, so this map never holds
+	 * an entry for `session.toolType`. Changing the agent's provider swaps the
+	 * live values with this map's entry rather than clearing them.
+	 */
+	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
+	/**
+	 * The provider that owns the turn most recently sent from this tab, captured
+	 * at send time. Settings are codified when the user hits send, so a provider
+	 * change made while a turn is in flight must not retarget that turn: the
+	 * agent process keeps running under the old provider, and its session ID,
+	 * usage, and exit events still belong to it when they land. Async handlers
+	 * must resolve the owning provider through `resolveTurnProvider()` rather
+	 * than reading the live `session.toolType`, or one provider's data gets
+	 * written into another's slot. Undefined on a tab that has never sent.
+	 */
+	turnProvider?: ToolType;
+	/**
+	 * The model and effort the most recent turn from this tab was sent with,
+	 * captured at send time next to `turnProvider` and for the same reason:
+	 * settings are codified when the user hits send, so changing the model or
+	 * effort while a turn is in flight applies from the NEXT message. Assistant
+	 * log entries copy these as they stream in, which is what lets the transcript
+	 * attribute each response to the configuration that produced it. Undefined
+	 * when the agent's own default was in force.
+	 */
+	turnModel?: string;
+	turnEffort?: string;
 }
 
 // A single "thinking item" - one busy tab within a session.
@@ -956,14 +1080,80 @@ export interface SnoozeHistoryEntry {
 	resolution: SnoozeResolution;
 }
 
-export interface SnoozedTabEntry {
+/**
+ * Fields every snooze carries, whatever kind of tab it parked.
+ *
+ * Split out so the union below only has to say what differs - the `type` tag
+ * and the tab payload it discriminates.
+ */
+interface SnoozedTabEntryBase {
 	id: string; // Snooze ID (stable across edits, used for list keys and wake dedupe)
-	tab: AITab; // The full tab, restored verbatim on wake
 	unifiedIndex: number; // Position in unifiedTabOrder at snooze time (restore target)
 	snoozedAt: number; // When the user snoozed it
 	wakeAt: number; // When it should come back (ms epoch)
 	note?: string; // Optional note-to-self surfaced in the wake notification
 }
+
+/**
+ * A snoozed tab of any kind, held out of the tab bar until `wakeAt`.
+ *
+ * Shaped after {@link UnifiedTab} rather than {@link ClosedTabEntry}: the two
+ * are near-identical, but `UnifiedTab` is the one whose payload is guaranteed
+ * non-null, and a nullable tab here would force a null check at every restore
+ * site to describe a state that cannot happen.
+ *
+ * What survives a snooze differs by kind, and the difference is the point:
+ * - `ai` restores verbatim, transcript and provider session intact.
+ * - `file` / `browser` restore from persisted state (path, URL). The file's
+ *   contents may have changed underneath, and its path may be gone entirely -
+ *   the wake path re-validates.
+ * - `terminal` restores the tab and its position, NOT the shell. A PTY cannot
+ *   be parked; it comes back as a fresh shell at the same cwd. That is the
+ *   promise: the layout survives, the process does not.
+ * - `group` parks a whole tiled group. See {@link SnoozedGroupPayload}.
+ */
+export type SnoozedTabEntry =
+	| ({ type: 'ai'; tab: AITab } & SnoozedTabEntryBase)
+	| ({ type: 'file'; tab: FilePreviewTab } & SnoozedTabEntryBase)
+	| ({ type: 'terminal'; tab: TerminalTab } & SnoozedTabEntryBase)
+	| ({ type: 'browser'; tab: BrowserTab } & SnoozedTabEntryBase)
+	| (SnoozedGroupPayload & SnoozedTabEntryBase);
+
+/**
+ * One pane of a snoozed group - the same per-kind payload the single-tab
+ * variants carry, minus the snooze bookkeeping, which lives on the group.
+ * A group never nests, so `group` is not a member kind.
+ */
+export type SnoozedGroupMember =
+	| { type: 'ai'; tab: AITab }
+	| { type: 'file'; tab: FilePreviewTab }
+	| { type: 'terminal'; tab: TerminalTab }
+	| { type: 'browser'; tab: BrowserTab };
+
+/**
+ * A parked tiled group.
+ *
+ * `group` carries the whole {@link TabGroup} - crucially its `layout` tree and
+ * `focusedPaneId` - so the wake replays the arrangement verbatim rather than
+ * re-deriving it from a member list. Split direction, sizes and the focused
+ * pane are all inside `layout`, which is why nothing extra is stored for them.
+ *
+ * `members` holds each pane's tab, because the layout tree only references
+ * panes by `UnifiedTabRef` and those tabs are removed from the session while
+ * the group sleeps. Order is the tree's own leaf order, so a restore that has
+ * to drop a member (a file whose path is gone) can still rebuild the rest.
+ *
+ * Note the shape: this variant has `group`/`members` and NO `tab`. Anything
+ * reading `entry.tab` must narrow on `type` first - the compiler enforces it.
+ */
+export interface SnoozedGroupPayload {
+	type: 'group';
+	group: TabGroup;
+	members: SnoozedGroupMember[];
+}
+
+/** The group variant of {@link SnoozedTabEntry}, named so guards can return it. */
+export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
 export interface Session {
 	id: string;

@@ -8,6 +8,7 @@
  *   - Splash screen coordination (wait for settings + sessions)
  *   - GitHub CLI availability check
  *   - Windows warning modal for Windows users
+ *   - First-run modal series (typography, theme, agent powers)
  *   - File gist URLs loading from settings
  *   - Beta updates setting sync
  *   - Update check on startup
@@ -31,7 +32,17 @@ import { getOpenSpecCommands } from '../../services/openspec';
 import { getBmadCommands } from '../../services/bmad';
 import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
+import {
+	exposeOnboardingSeriesDebug,
+	startOnboardingSeries,
+} from '../../stores/onboardingSeriesStore';
 import type { GistInfo } from '../../components/GistPublishModal';
+import {
+	flushLeaderboardOutbox,
+	recoverUncommittedAutoRunCredit,
+	reportLeaderboardDrift,
+} from '../../services/leaderboard';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -63,6 +74,14 @@ export function useAppInitialization(): AppInitializationReturn {
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const initialFileTreeReady = useSessionStore((s) => s.initialFileTreeReady);
 	const suppressWindowsWarning = useSettingsStore((s) => s.suppressWindowsWarning);
+	const typographyPromptSeen = useSettingsStore((s) => s.typographyPromptSeen);
+	const themePromptSeen = useSettingsStore((s) => s.themePromptSeen);
+	const agentPowersPromptSeen = useSettingsStore((s) => s.agentPowersPromptSeen);
+	const activeThemeId = useSettingsStore((s) => s.activeThemeId);
+	// "Does this user already have agents" is the only signal that separates a
+	// fresh install from one that predates these steps, and it needs no new
+	// persisted state.
+	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
 	const enableBetaUpdates = useSettingsStore((s) => s.enableBetaUpdates);
 	const checkForUpdatesOnStartup = useSettingsStore((s) => s.checkForUpdatesOnStartup);
 	const leaderboardAuthToken = useSettingsStore((s) => s.leaderboardRegistration?.authToken);
@@ -75,6 +94,10 @@ export function useAppInitialization(): AppInitializationReturn {
 	const speckitEnabled = useSettingsStore((s) => s.speckitEnabled);
 	const openspecEnabled = useSettingsStore((s) => s.openspecEnabled);
 	const bmadEnabled = useSettingsStore((s) => s.bmadEnabled);
+
+	// Outside a WindowProvider (web build) there is only one renderer, so treat
+	// it as the main window.
+	const isMainWindow = useWindowContextOptional()?.isMainWindow ?? true;
 
 	// --- Local state ---
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -149,6 +172,45 @@ export function useAppInitialization(): AppInitializationReturn {
 			});
 	}, [settingsLoaded, suppressWindowsWarning]);
 
+	// --- First-run modal series (typography -> theme -> agent powers) ---
+	// Each step carries its own seen flag, so this fires whenever ANY of them is
+	// still unshown - which is what lets a later step reach users who already
+	// answered the earlier ones. Every flag is false on a fresh install and on
+	// every install predating its step, so one gate serves both audiences; the
+	// modals change their own copy.
+	//
+	// Gated on sessionsLoaded because "does this user already have agents" is
+	// what tells a new user from a returning one, and on isMainWindow so a
+	// second window does not ask the same questions again.
+	const onboardingSeriesStartedRef = useRef(false);
+	useEffect(() => {
+		exposeOnboardingSeriesDebug();
+
+		if (!settingsLoaded || !sessionsLoaded) return;
+		if (!isMainWindow) return;
+		if (onboardingSeriesStartedRef.current) return;
+		onboardingSeriesStartedRef.current = true;
+
+		startOnboardingSeries({
+			audience: hasAnySession ? 'returning' : 'new',
+			seen: {
+				typography: typographyPromptSeen,
+				theme: themePromptSeen,
+				agentPowers: agentPowersPromptSeen,
+			},
+			activeThemeId,
+		});
+	}, [
+		settingsLoaded,
+		sessionsLoaded,
+		isMainWindow,
+		hasAnySession,
+		typographyPromptSeen,
+		themePromptSeen,
+		agentPowersPromptSeen,
+		activeThemeId,
+	]);
+
 	// --- Load file gist URLs from settings ---
 	useEffect(() => {
 		window.maestro.settings
@@ -219,13 +281,32 @@ export function useAppInitialization(): AppInitializationReturn {
 		const email = leaderboardRegistration?.email;
 		if (!authToken || !email) return;
 
+		// Only the main window syncs. Every window runs this hook, and a flush
+		// from two of them would submit the same queued deltas twice.
+		if (!isMainWindow) return;
+
 		const timer = setTimeout(async () => {
 			try {
+				// Ship everything owed BEFORE reading the server total, so the
+				// comparison below describes real drift and not a queue that simply
+				// had not been drained yet.
+				await recoverUncommittedAutoRunCredit();
+				await flushLeaderboardOutbox();
+
 				const result = await window.maestro.leaderboard.sync({ email, authToken });
 
 				if (result.success && result.found && result.data) {
 					// Read fresh autoRunStats at call time
 					const currentStats = useSettingsStore.getState().autoRunStats;
+					if (result.data.cumulativeTimeMs < currentStats.cumulativeTimeMs) {
+						// The server aggregates every device, so it can only be BELOW
+						// this machine's total when deltas were dropped. Silently
+						// skipping here is what latched the sync off for good.
+						void reportLeaderboardDrift(
+							currentStats.cumulativeTimeMs,
+							result.data.cumulativeTimeMs
+						);
+					}
 					if (result.data.cumulativeTimeMs > currentStats.cumulativeTimeMs) {
 						const longestRunTimestamp = result.data.longestRunDate
 							? new Date(result.data.longestRunDate).getTime()
@@ -249,7 +330,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		}, 3000);
 
 		return () => clearTimeout(timer);
-	}, [settingsLoaded, leaderboardAuthToken]);
+	}, [settingsLoaded, leaderboardAuthToken, isMainWindow]);
 
 	// --- SpecKit commands loading ---
 	// Wait for settings so we know whether the user has disabled this bundle.

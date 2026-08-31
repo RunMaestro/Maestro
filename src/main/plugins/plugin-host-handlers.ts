@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -48,6 +49,13 @@ import { isHistoryEntryType } from '../../shared/history';
 
 /** Cap a fetched response body so a hostile/huge response cannot exhaust memory. */
 const MAX_FETCH_BYTES = 5_000_000;
+
+/**
+ * Request budget for plugin net.fetch. A plugin cannot be trusted to bound its
+ * own requests, and an un-timed fetch here parks a sandbox host call forever.
+ * Covers the response headers only; MAX_FETCH_BYTES bounds the body.
+ */
+const PLUGIN_FETCH_TIMEOUT_MS = 30_000;
 /** Cap a single fs.read so a plugin cannot exhaust memory reading a huge file. */
 const MAX_READ_BYTES = 10_000_000;
 /** Cap a single settings value (serialized) a plugin may write. */
@@ -771,7 +779,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					? { dispatcher: deps.egressGuard.dispatcher as unknown as RequestInit['dispatcher'] }
 					: {}),
 			};
-			const response = await fetch(p.url, init);
+			const response = await fetchWithTimeout(p.url, init, PLUGIN_FETCH_TIMEOUT_MS);
 			const reader = response.body?.getReader();
 			let received = 0;
 			let body = '';

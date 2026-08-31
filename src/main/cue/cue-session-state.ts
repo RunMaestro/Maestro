@@ -24,7 +24,6 @@ export interface SessionState {
 	 * `onRefreshRequested` so any of them changing reloads the merged view.
 	 */
 	yamlWatchers: Array<() => void>;
-	sleepPrevented: boolean;
 	lastTriggered?: string;
 	/** Non-empty when this session's unowned subscriptions are suppressed because
 	 *  ownership of the cue.yaml is contested or unresolvable. Used by the Cue

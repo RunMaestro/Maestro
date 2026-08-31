@@ -25,14 +25,18 @@ import { parseSynopsis } from '../../shared/synopsis';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
-import { getCliPrompt } from './prompt-loader';
+import { getCliPrompt, getCliTaskSelectionBlock } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
-import { detectHaltMarker } from '../../shared/autorun/haltMarker';
+import { findActiveModelHint, countTasksUnderActiveHint } from '../../shared/autorunModelHints';
+import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
+import { cheapTurnSettings } from '../../shared/modelTiers';
 
-// `detectHaltMarker` is re-exported so existing CLI consumers and tests that
-// reference it via this module keep resolving. The canonical implementation now
-// lives in `shared/autorun/haltMarker` so the desktop renderer can share it.
+// Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
+// both share it and draw a pill for a marker that would block the next run.
+// Re-exported because this module is where the CLI engine and its tests reach
+// for it.
+import { detectHaltMarker } from '../../shared/autorunMarkers';
 export { detectHaltMarker };
 
 /**
@@ -67,6 +71,9 @@ export async function* runPlaybook(
 		effort: runEffort,
 	} = options;
 	const batchStartTime = Date.now();
+	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
+	// it depends only on the provider, which cannot change mid-run.
+	const cheapSynopsis = cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -477,15 +484,10 @@ export async function* runPlaybook(
 						documentPath: docFilePath,
 					};
 
-					// Substitute template variables in the prompt
-					// Use default Auto Run prompt if playbook.prompt is empty/null
-					// Marketplace playbooks with prompt: null will use the default
-					const basePrompt = substituteTemplateVariables(
-						playbook.prompt || (await getCliPrompt(PROMPT_IDS.AUTORUN_DEFAULT)),
-						templateContext
-					);
-
-					// Read document content and expand template variables in it
+					// Read document content and expand template variables in it. Read
+					// BEFORE the prompt is built: the selection block depends on where
+					// the document's model hints change, so the content has to exist
+					// first.
 					const { content: docContent } = readDocAndCountTasks(folderPath, docEntry.filename);
 					const expandedDocContent = docContent
 						? substituteTemplateVariables(docContent, templateContext)
@@ -495,6 +497,31 @@ export async function* runPlaybook(
 					if (expandedDocContent && expandedDocContent !== docContent) {
 						writeDoc(folderPath, `${docEntry.filename}.md`, expandedDocContent);
 					}
+
+					// Resolve the task-selection block BEFORE the template-variable pass,
+					// so variables inside the swapped-in block expand too. The desktop
+					// engine has always done this (useDocumentProcessor -> batchUtils);
+					// the CLI never did, so `{{TASK_SELECTION_BLOCK}}` reached the agent
+					// as a literal placeholder in step 2 of the default prompt. The
+					// agent was being handed a template, not an instruction.
+					const rawBasePrompt = playbook.prompt || (await getCliPrompt(PROMPT_IDS.AUTORUN_DEFAULT));
+					// Same content and baseline the model hint is resolved from below, so
+					// the boundary the prompt names and the settings the run uses cannot
+					// disagree.
+					const hintSegment = countTasksUnderActiveHint(
+						expandedDocContent,
+						session.toolType,
+						session.customModel,
+						session.customEffort
+					);
+					const selectionBlock = await getCliTaskSelectionBlock(
+						playbook.taskSelectionMode,
+						hintSegment
+					);
+					const basePrompt = substituteTemplateVariables(
+						rawBasePrompt.replace(/\{\{TASK_SELECTION_BLOCK\}\}/gi, selectionBlock),
+						templateContext
+					);
 
 					// Combine prompt with document content - agent works on what it's given
 					// Include explicit file path so agent knows where to save changes.
@@ -524,6 +551,36 @@ export async function* runPlaybook(
 					// Run task. Synopsis spawn below intentionally omits this
 					// - it's a resume into the same agent that already has the
 					// prompt and re-sending would waste tokens.
+					// Resolve the document's model hint for THIS task. Recomputed per
+					// dispatch rather than carried as run state, so editing the document
+					// mid-run takes effect on the next task. The run-scoped --model /
+					// --effort goes in as the baseline the hint overrides, matching the
+					// desktop engine's precedence: document hint, then run override, then
+					// the agent's own value.
+					const turnSettings = resolveTurnSettings(
+						session.toolType,
+						findActiveModelHint(expandedDocContent),
+						runModel ?? session.customModel,
+						runEffort ?? session.customEffort
+					);
+					// Its own event type rather than `verbose`: a hint that could not be
+					// honored has to reach the operator whether or not they passed
+					// --verbose, and a distinct type lets consumers filter for it.
+					const turnSettingsNote = describeTurnSettings(turnSettings);
+					if (turnSettingsNote) {
+						yield {
+							type: 'model_resolution',
+							timestamp: Date.now(),
+							document: docEntry.filename,
+							taskIndex,
+							model: turnSettings.model ?? null,
+							effort: turnSettings.effort ?? null,
+							notes: turnSettings.notes,
+							warnings: turnSettings.warnings,
+							message: turnSettingsNote,
+						};
+					}
+
 					const result = await captureCliRun(
 						{
 							sessionId: session.id,
@@ -535,8 +592,8 @@ export async function* runPlaybook(
 						() =>
 							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
 								permissionMode: 'full',
-								customModel: runModel ?? session.customModel,
-								customEffort: runEffort ?? session.customEffort,
+								customModel: turnSettings.model,
+								customEffort: turnSettings.effort,
 								customArgs: session.customArgs,
 								additionalDirectories: session.additionalDirectories,
 								customEnvVars: session.customEnvVars,
@@ -596,8 +653,18 @@ export async function* runPlaybook(
 									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
 									result.agentSessionId,
 									{
-										customModel: runModel ?? session.customModel,
-										customEffort: runEffort ?? session.customEffort,
+										// A synopsis is a throwaway summarization of work that already
+										// happened, so it runs at the bottom of both ladders regardless of
+										// what the task ran at. On a long playbook this is one premium turn
+										// per task saved. Safe because the synopsis is a leaf: its returned
+										// agentSessionId is discarded, so the downgrade cannot follow the
+										// conversation into the next real turn.
+										// The `??` fallbacks matter on providers with no tier mapping
+										// (codex, opencode): there is nothing to downgrade TO, so the
+										// synopsis inherits, and it must inherit the same value the task
+										// ran under - the run override, not just the session's.
+										customModel: cheapSynopsis.model ?? runModel ?? session.customModel,
+										customEffort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
 										customArgs: session.customArgs,
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,

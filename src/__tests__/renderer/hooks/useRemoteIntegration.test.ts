@@ -15,6 +15,13 @@ import {
 	handleConcertoDesignerMessage,
 	registerConcertoDesignerFrame,
 } from '../../../renderer/components/Concerto/concertoDesignerBridge';
+import { planCrossAgentMentions } from '../../../renderer/services/crossAgentMentions';
+
+// The planner's verdict is the seam under test: a queued CLI prompt must carry
+// it as the same flags a composer-queued message does.
+vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+	planCrossAgentMentions: vi.fn(() => null),
+}));
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -87,6 +94,15 @@ describe('useRemoteIntegration', () => {
 		| undefined;
 	let onRemoteRemoveQueueItemHandler:
 		| ((sessionId: string, itemId: string, responseChannel: string) => void)
+		| undefined;
+	let onRemoteCreateGistHandler:
+		| ((
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				agentSessionId: string | undefined,
+				responseChannel: string
+		  ) => void)
 		| undefined;
 	let onRemoteNotifyToastHandler:
 		| ((params: {
@@ -208,6 +224,10 @@ describe('useRemoteIntegration', () => {
 		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteLaunchGoalRun: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteLaunchGoalRunResponse: vi.fn(),
 		onRemoteSetAutoRunFolder: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -230,6 +250,15 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		onRemoteSetSetting: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		// Added with `maestro-cli open`: the hook subscribes to this on mount, so
+		// leaving it out makes every test in this file throw before it asserts.
+		onRemoteOpenModal: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		// Same story for `maestro-cli open-graph`.
+		onRemoteOpenDocumentGraph: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		sendRemoteSetSettingResponse: vi.fn(),
@@ -283,7 +312,8 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteGetGitDiffResponse: vi.fn(),
-		onRemoteCreateGist: vi.fn().mockImplementation(() => {
+		onRemoteCreateGist: vi.fn().mockImplementation((handler) => {
+			onRemoteCreateGistHandler = handler;
 			return () => {};
 		}),
 		sendRemoteCreateGistResponse: vi.fn(),
@@ -356,6 +386,13 @@ describe('useRemoteIntegration', () => {
 		updateSessionName: vi.fn().mockResolvedValue(true),
 	};
 
+	const mockGit = {
+		...window.maestro.git,
+		createGist: vi
+			.fn()
+			.mockResolvedValue({ success: true, gistUrl: 'https://gist.github.com/abc' }),
+	};
+
 	const mockCue = {
 		...window.maestro.cue,
 		triggerSubscription: vi.fn().mockResolvedValue(true),
@@ -381,6 +418,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteNotifyToastHandler = undefined;
 		onRemoteMovementHandler = undefined;
 		onRequestMovementDesignerInspectionHandler = undefined;
+		onRemoteCreateGistHandler = undefined;
 
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
@@ -398,6 +436,7 @@ describe('useRemoteIntegration', () => {
 			agentSessions: mockAgentSessions as typeof window.maestro.agentSessions,
 			history: mockHistory as typeof window.maestro.history,
 			cue: mockCue as typeof window.maestro.cue,
+			git: mockGit as typeof window.maestro.git,
 		};
 	});
 
@@ -1083,6 +1122,47 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
+		it('stamps cross-agent mention intent on the queued item so the dequeue consults', () => {
+			// Without the flags the mention is inert: processQueuedItem only fires a
+			// consult for items marked crossAgentMention, and a CLI-queued item
+			// used to be built without it.
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+				targetSessionIds: ['reviewer-1'],
+				suppressLocal: true,
+			} as any);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'@Reviewer check this',
+					'chan-m',
+					'ai',
+					'tab-1'
+				);
+			});
+
+			expect(planCrossAgentMentions).toHaveBeenCalledWith('@Reviewer check this', 'session-1');
+			const updater = deps.setSessions.mock.calls[0][0];
+			const [updated] = updater([session]);
+			expect(updated.executionQueue[0]).toMatchObject({
+				text: '@Reviewer check this',
+				crossAgentMention: true,
+				crossAgentOnly: true,
+			});
+		});
+
 		it('appends after existing items so ordering stays FIFO and position advances', () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const existing = {
@@ -1385,6 +1465,162 @@ describe('useRemoteIntegration', () => {
 
 			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
 			expect(mockAgentSessions.setSessionName).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('remote create gist', () => {
+		const gistLog = (source: 'user' | 'stdout', text: string) => ({
+			id: `${source}-${text}`,
+			timestamp: 1700000000000,
+			source,
+			text,
+		});
+
+		// `gist create <agent> --session <id>` must publish the named conversation
+		// and nothing else. Headless callers (Relay, playbooks, Cue, CI) hold a
+		// provider session id, and a gist is readable by anyone with the URL, so
+		// publishing the agent's open tabs instead leaks an unrelated chat.
+		it('publishes only the tab holding the requested provider session', async () => {
+			const targetTab = createMockTab({
+				id: 'tab-target',
+				agentSessionId: 'provider-session-9',
+				logs: [gistLog('user', 'question about topic B')],
+			});
+			const otherTab = createMockTab({
+				id: 'tab-other',
+				agentSessionId: 'provider-session-1',
+				logs: [gistLog('user', 'unrelated topic A')],
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [otherTab, targetTab],
+				activeTabId: 'tab-other',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteCreateGistHandler?.(
+					'session-1',
+					'desc',
+					false,
+					'provider-session-9',
+					'response-channel'
+				);
+			});
+
+			expect(mockGit.createGist).toHaveBeenCalledTimes(1);
+			const [filename, content] = mockGit.createGist.mock.calls[0];
+			expect(content).toContain('question about topic B');
+			expect(content).not.toContain('unrelated topic A');
+			expect(content).toContain('provider-session-9');
+			expect(filename).toContain('provider');
+			expect(mockProcess.sendRemoteCreateGistResponse).toHaveBeenCalledWith('response-channel', {
+				success: true,
+				gistUrl: 'https://gist.github.com/abc',
+			});
+		});
+
+		// The relay case: the conversation was run headlessly with `send -s <id>`,
+		// so no desktop tab holds it and the transcript only exists on disk.
+		it('reads the provider transcript when no open tab holds the session', async () => {
+			mockAgentSessions.read.mockResolvedValueOnce({
+				messages: [
+					{
+						type: 'user',
+						content: 'headless question',
+						timestamp: '2026-08-26T00:00:00.000Z',
+						uuid: 'u1',
+					},
+					{
+						type: 'assistant',
+						content: 'headless answer',
+						timestamp: '2026-08-26T00:00:01.000Z',
+						uuid: 'a1',
+					},
+				],
+				total: 2,
+				hasMore: false,
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				projectRoot: '/test/project',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteCreateGistHandler?.(
+					'session-1',
+					'',
+					false,
+					'headless-session-4',
+					'response-channel'
+				);
+			});
+
+			expect(mockAgentSessions.read).toHaveBeenCalledWith(
+				'claude-code',
+				'/test/project',
+				'headless-session-4',
+				expect.objectContaining({ offset: 0 }),
+				undefined
+			);
+			const [, content] = mockGit.createGist.mock.calls[0];
+			expect(content).toContain('headless question');
+			expect(content).toContain('headless answer');
+		});
+
+		// No silent fallback: publishing the open tabs for a session that could not
+		// be found is exactly the leak this option exists to close.
+		it('fails instead of falling back to the open tabs when the session is unknown', async () => {
+			mockAgentSessions.read.mockRejectedValueOnce(new Error('ENOENT'));
+			const tab = createMockTab({
+				id: 'tab-other',
+				agentSessionId: 'provider-session-1',
+				logs: [gistLog('user', 'unrelated topic A')],
+			});
+			const session = createMockSession({ id: 'session-1', aiTabs: [tab] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteCreateGistHandler?.(
+					'session-1',
+					'',
+					false,
+					'missing-session',
+					'response-channel'
+				);
+			});
+
+			expect(mockGit.createGist).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteCreateGistResponse).toHaveBeenCalledWith(
+				'response-channel',
+				expect.objectContaining({ success: false })
+			);
+		});
+
+		it('still publishes every open tab when no session is requested', async () => {
+			const tabA = createMockTab({ id: 'tab-a', logs: [gistLog('user', 'topic A')] });
+			const tabB = createMockTab({ id: 'tab-b', logs: [gistLog('user', 'topic B')] });
+			const session = createMockSession({ id: 'session-1', aiTabs: [tabA, tabB] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteCreateGistHandler?.('session-1', '', false, undefined, 'response-channel');
+			});
+
+			const [, content] = mockGit.createGist.mock.calls[0];
+			expect(content).toContain('topic A');
+			expect(content).toContain('topic B');
+			expect(mockAgentSessions.read).not.toHaveBeenCalled();
 		});
 	});
 

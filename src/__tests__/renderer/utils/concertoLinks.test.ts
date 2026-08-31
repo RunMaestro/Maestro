@@ -8,6 +8,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { parseConcertoHref, flashConcertoTarget } from '../../../renderer/utils/concertoLinks';
 import { applyMovementPayload, useMovementStore } from '../../../renderer/stores/movementStore';
+import { useCadenzaStore } from '../../../renderer/stores/cadenzaStore';
+import { getModalActions, useModalStore } from '../../../renderer/stores/modalStore';
 
 describe('parseConcertoHref', () => {
 	it('parses the canonical maestro:// form for both surfaces', () => {
@@ -51,17 +53,22 @@ describe('parseConcertoHref', () => {
 
 describe('flashConcertoTarget', () => {
 	let flashCadenza: ReturnType<typeof vi.fn>;
+	let setCadenzasHidden: ReturnType<typeof vi.fn>;
 	let origMaestro: unknown;
 	const win = window as unknown as { maestro: unknown };
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		useMovementStore.setState({ items: [], dismissedItems: [], flashedId: null, hidden: true });
+		useMovementStore.setState({ items: [], dismissedItems: [], flashedId: null });
+		useCadenzaStore.setState({ cadenzas: [], hidden: true, flashedId: null });
+		getModalActions().setConcertoStageOpen(false);
 		flashCadenza = vi.fn();
+		setCadenzasHidden = vi.fn();
 		origMaestro = win.maestro;
 		win.maestro = {
 			process: {
 				flashCadenza,
+				setCadenzasHidden,
 				restoreConcertoHtmlDocument: vi.fn().mockResolvedValue(17),
 			},
 		};
@@ -73,13 +80,13 @@ describe('flashConcertoTarget', () => {
 		win.maestro = origMaestro;
 	});
 
-	it('flashes the movement store (and un-stashes it) for a live movement href', async () => {
+	it('flashes the movement store and reopens the closed stage for a live movement href', async () => {
 		applyMovementPayload({ op: 'add', id: 'deploy' });
-		useMovementStore.getState().setHidden(true);
+		getModalActions().setConcertoStageOpen(false);
 
 		await expect(flashConcertoTarget('maestro://concerto/movement/deploy')).resolves.toBe(true);
 		expect(useMovementStore.getState().flashedId).toBe('deploy');
-		expect(useMovementStore.getState().hidden).toBe(false);
+		expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
 	});
 
 	it('restores a dismissed HTML movement as a fresh document', async () => {
@@ -113,6 +120,12 @@ describe('flashConcertoTarget', () => {
 	it('routes a cadenza href through main (flashCadenza), since cadenzas live in the HUD', async () => {
 		await expect(flashConcertoTarget('maestro://concerto/cadenza/tests')).resolves.toBe(true);
 		expect(flashCadenza).toHaveBeenCalledWith('tests');
+	});
+
+	it('un-stashes cadenzas in both renderers before pointing at one', async () => {
+		await expect(flashConcertoTarget('maestro://concerto/cadenza/tests')).resolves.toBe(true);
+		expect(useCadenzaStore.getState().hidden).toBe(false);
+		expect(setCadenzasHidden).toHaveBeenCalledWith(false);
 	});
 
 	it('is a no-op returning false for a non-concerto href', async () => {

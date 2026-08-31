@@ -6,13 +6,13 @@ import { useInputAreaTextChange } from '../../../../../renderer/components/Input
 function Harness({
 	isTerminalMode = false,
 	slashCommandOpen = false,
-	isCommandMode = false,
+	commandMode = 'off',
 	previousValue = '',
 	handlers,
 }: {
 	isTerminalMode?: boolean;
 	slashCommandOpen?: boolean;
-	isCommandMode?: boolean;
+	commandMode?: 'off' | 'shell' | 'ai';
 	/** What the composer held before the edit under test. */
 	previousValue?: string;
 	handlers: Record<string, ReturnType<typeof vi.fn>>;
@@ -21,7 +21,7 @@ function Harness({
 	const onChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
-		isCommandMode,
+		commandMode,
 		setCommandMode: handlers.setCommandMode,
 		getPreviousValue: () => previousValue,
 		keystrokeResizeScheduledRef,
@@ -190,7 +190,7 @@ describe('useInputAreaTextChange', () => {
 				target: { value: '!', selectionStart: 1 },
 			});
 
-			expect(handlers.setCommandMode).toHaveBeenCalledWith(true);
+			expect(handlers.setCommandMode).toHaveBeenCalledWith('shell');
 			// The bang never reaches the text - that is the whole point.
 			expect(handlers.setInputValue).toHaveBeenCalledWith('');
 		});
@@ -203,7 +203,7 @@ describe('useInputAreaTextChange', () => {
 				target: { value: '!git status', selectionStart: 11 },
 			});
 
-			expect(handlers.setCommandMode).toHaveBeenCalledWith(true);
+			expect(handlers.setCommandMode).toHaveBeenCalledWith('shell');
 			expect(handlers.setInputValue).toHaveBeenCalledWith('git status');
 		});
 
@@ -219,9 +219,33 @@ describe('useInputAreaTextChange', () => {
 			expect(handlers.setInputValue).toHaveBeenCalledWith('!deploy the site');
 		});
 
-		it('does not re-enter once already in command mode - the bang is plain text', () => {
+		it('climbs from command mode to AI command mode on a second bang', () => {
 			const handlers = createHandlers();
-			render(<Harness handlers={handlers} isCommandMode />);
+			render(<Harness handlers={handlers} commandMode="shell" />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '!', selectionStart: 1 },
+			});
+
+			expect(handlers.setCommandMode).toHaveBeenCalledWith('ai');
+			expect(handlers.setInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('leaves a bang typed into a non-empty command line as shell text', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} commandMode="shell" previousValue="echo " />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: 'echo !', selectionStart: 6 },
+			});
+
+			expect(handlers.setCommandMode).not.toHaveBeenCalled();
+			expect(handlers.setInputValue).toHaveBeenCalledWith('echo !');
+		});
+
+		it('has no rung above AI command mode - the bang stays in the request', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} commandMode="ai" />);
 
 			fireEvent.change(screen.getByLabelText('input'), {
 				target: { value: '!', selectionStart: 1 },
@@ -229,6 +253,19 @@ describe('useInputAreaTextChange', () => {
 
 			expect(handlers.setCommandMode).not.toHaveBeenCalled();
 			expect(handlers.setInputValue).toHaveBeenCalledWith('!');
+		});
+
+		it('suppresses the slash menu and @ mentions in AI command mode too', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} commandMode="ai" />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '/usr', selectionStart: 4 },
+			});
+
+			expect(handlers.setSlashCommandOpen).toHaveBeenCalledWith(false);
+			expect(handlers.setSlashCommandOpen).not.toHaveBeenCalledWith(true);
+			expect(handlers.setAtMentionOpen).not.toHaveBeenCalledWith(true);
 		});
 
 		it('does not enter in terminal mode, which is already a shell', () => {
@@ -245,7 +282,7 @@ describe('useInputAreaTextChange', () => {
 
 		it('suppresses the slash menu in command mode so /usr/bin is a path', () => {
 			const handlers = createHandlers();
-			render(<Harness handlers={handlers} isCommandMode />);
+			render(<Harness handlers={handlers} commandMode="shell" />);
 
 			fireEvent.change(screen.getByLabelText('input'), {
 				target: { value: '/usr', selectionStart: 4 },
@@ -257,7 +294,7 @@ describe('useInputAreaTextChange', () => {
 
 		it('suppresses @ mentions in command mode', () => {
 			const handlers = createHandlers();
-			render(<Harness handlers={handlers} isCommandMode />);
+			render(<Harness handlers={handlers} commandMode="shell" />);
 
 			fireEvent.change(screen.getByLabelText('input'), {
 				target: { value: 'scp file user@host', selectionStart: 18 },

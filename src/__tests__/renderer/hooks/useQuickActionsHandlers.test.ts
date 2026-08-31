@@ -98,7 +98,6 @@ function createDeps(
 		handleSummarizeAndContinue: vi.fn(),
 		processQueuedItem: vi.fn().mockResolvedValue(undefined),
 		handleCloseCurrentTab: vi.fn(),
-		handleUnifiedTabReorder: vi.fn(),
 		handleCopyContext: vi.fn(),
 		handleExportHtml: vi.fn().mockResolvedValue(undefined),
 		handlePublishTabGist: vi.fn(),
@@ -1139,7 +1138,13 @@ describe('useQuickActionsHandlers', () => {
 	});
 
 	describe('handleQuickActionsMoveTabToFirst', () => {
-		it('reorders active tab to index 0', () => {
+		/** The active session's unified tab order, as plain "type:id" keys. */
+		const orderKeys = () =>
+			(useSessionStore.getState().sessions[0].unifiedTabOrder ?? []).map(
+				(r) => `${r.type}:${r.id}`
+			);
+
+		it('moves the active tab to the first slot', () => {
 			const tab1 = createTab({ id: 'tab-1' });
 			const tab2 = createTab({ id: 'tab-2' });
 			const session = createSession({
@@ -1159,7 +1164,7 @@ describe('useQuickActionsHandlers', () => {
 				result.current.handleQuickActionsMoveTabToFirst();
 			});
 
-			expect(deps.handleUnifiedTabReorder).toHaveBeenCalledWith(1, 0);
+			expect(orderKeys()).toEqual(['ai:tab-2', 'ai:tab-1']);
 		});
 
 		it('is a no-op when active tab is already first', () => {
@@ -1177,10 +1182,10 @@ describe('useQuickActionsHandlers', () => {
 				result.current.handleQuickActionsMoveTabToFirst();
 			});
 
-			expect(deps.handleUnifiedTabReorder).not.toHaveBeenCalled();
+			expect(orderKeys()).toEqual(['ai:tab-1']);
 		});
 
-		it('reorders active browser tab to index 0', () => {
+		it('moves the active browser tab to the first slot', () => {
 			const tab1 = createTab({ id: 'tab-1' });
 			const session = createSession({
 				activeTabId: 'tab-1',
@@ -1211,12 +1216,18 @@ describe('useQuickActionsHandlers', () => {
 				result.current.handleQuickActionsMoveTabToFirst();
 			});
 
-			expect(deps.handleUnifiedTabReorder).toHaveBeenCalledWith(1, 0);
+			expect(orderKeys()).toEqual(['browser:browser-1', 'ai:tab-1']);
 		});
 	});
 
 	describe('handleQuickActionsMoveTabToLast', () => {
-		it('reorders active tab to last index', () => {
+		/** The active session's unified tab order, as plain "type:id" keys. */
+		const orderKeys = () =>
+			(useSessionStore.getState().sessions[0].unifiedTabOrder ?? []).map(
+				(r) => `${r.type}:${r.id}`
+			);
+
+		it('moves the active tab to the last slot', () => {
 			const tab1 = createTab({ id: 'tab-1' });
 			const tab2 = createTab({ id: 'tab-2' });
 			const tab3 = createTab({ id: 'tab-3' });
@@ -1238,7 +1249,7 @@ describe('useQuickActionsHandlers', () => {
 				result.current.handleQuickActionsMoveTabToLast();
 			});
 
-			expect(deps.handleUnifiedTabReorder).toHaveBeenCalledWith(0, 2);
+			expect(orderKeys()).toEqual(['ai:tab-2', 'ai:tab-3', 'ai:tab-1']);
 		});
 
 		it('is a no-op when active tab is already last', () => {
@@ -1247,6 +1258,10 @@ describe('useQuickActionsHandlers', () => {
 			const session = createSession({
 				activeTabId: 'tab-2',
 				aiTabs: [tab1, tab2],
+				unifiedTabOrder: [
+					{ type: 'ai' as const, id: 'tab-1' },
+					{ type: 'ai' as const, id: 'tab-2' },
+				],
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
 
@@ -1257,10 +1272,10 @@ describe('useQuickActionsHandlers', () => {
 				result.current.handleQuickActionsMoveTabToLast();
 			});
 
-			expect(deps.handleUnifiedTabReorder).not.toHaveBeenCalled();
+			expect(orderKeys()).toEqual(['ai:tab-1', 'ai:tab-2']);
 		});
 
-		it('reorders active browser tab to last index', () => {
+		it('moves the active browser tab to the last slot', () => {
 			const tab1 = createTab({ id: 'tab-1' });
 			const tab2 = createTab({ id: 'tab-2' });
 			const session = createSession({
@@ -1293,7 +1308,7 @@ describe('useQuickActionsHandlers', () => {
 				result.current.handleQuickActionsMoveTabToLast();
 			});
 
-			expect(deps.handleUnifiedTabReorder).toHaveBeenCalledWith(0, 2);
+			expect(orderKeys()).toEqual(['ai:tab-1', 'ai:tab-2', 'browser:browser-1']);
 		});
 	});
 

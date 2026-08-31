@@ -59,7 +59,9 @@ Open the Cue modal to monitor and manage all automation activity.
 
 - Press `Cmd+K` / `Ctrl+K` and search for "Maestro Cue"
 
-The modal has three tabs - **Dashboard**, **Pipeline Editor**, and **Activity Log** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
+The modal has six tabs - **Dashboard**, **Scheduled Tasks**, **Pipeline Graph**, **Pipeline List**, **Activity Log**, and **Backup** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
+
+**From an agent:** ask any Maestro agent to open it and it will run `maestro-cli open cue`, optionally on a tab (`maestro-cli open cue --tab scheduled`). See [Opening a surface from the CLI](./cli-reference#maestro-cli-open).
 
 ## Dashboard
 
@@ -81,13 +83,52 @@ Each row has three action buttons:
 
 - **Run Now** - Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
 - **Edit YAML** - Open the inline YAML editor for that agent.
-- **View in Pipeline** - Jump to the Pipeline Editor filtered to that agent.
+- **View in Graph** - Jump to the Pipeline Graph tab with that agent's pipeline selected.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
-## Pipeline Editor
+## Scheduled Tasks
 
-The Pipeline Editor tab visualizes your Cue subscriptions as a node graph - triggers on the left, agents on the right, with edges showing how events flow through your automation.
+The Scheduled Tasks tab is the clock-driven slice of Cue in one list: every task that fires at a time rather than in response to a file change, a PR, or another agent. Three kinds live here:
+
+| Kind             | YAML event       | Fires                                                     |
+| ---------------- | ---------------- | --------------------------------------------------------- |
+| **Once**         | `time.once`      | A single time, then the task removes itself from the YAML |
+| **At set times** | `time.scheduled` | At chosen `HH:MM` times, optionally only on chosen days   |
+| **Interval**     | `time.heartbeat` | Every N minutes                                           |
+
+Each row shows the task label, the subscription name and its pipeline, the agent that runs it, its schedule, and a countdown to the next fire. The pipeline is omitted when it just repeats the agent name. A paused task is dimmed and marked `paused`.
+
+**Sorting.** Click any column header to sort by it; click the active header again to reverse it. Switching columns starts that column in its own natural order rather than inheriting the previous one. The default is **Next**, soonest first. Tasks with no projected next fire (a repeating interval, whose phase lives in engine run state rather than in the YAML) always sort last, in both directions. **Schedule** groups by recurrence first (one-offs, then set times, then intervals) and orders within each group by when it actually fires.
+
+**Filtering.** Two filters, and they stack:
+
+- The **text box** narrows the list as you type. The task label, subscription name, and agent are matched fuzzily, so `wspr` finds "Wispr Sync". The pipeline, schedule text, and action are matched as plain substrings, so `18:00` or `command` pull up exactly what you would expect.
+- The **All / Once / At set times / Interval** buttons narrow by recurrence, which is the fast way to separate one-off reminders from standing jobs.
+
+A live count shows how many of the total are showing whenever either filter is narrowing the list, and `Esc` clears the text filter before it closes the modal.
+
+**Reading the schedule.** Day sets are written as compactly as they can be read: all seven days is `Every day`, Monday through Friday is `Weekdays`, Saturday and Sunday is `Weekends`, and anything else uses one- or two-letter days (`M`, `T`, `W`, `Th`, `F`, `Sa`, `Su`) with runs of three or more collapsed into a range. So `06:05 · Every day`, `15:30 · Weekdays`, `08:00 · Su`, `09:00 · M-W, Sa`. A one-off shows its fire time in your own timezone rather than the UTC timestamp stored in the YAML. The icon at the left of the cell is the recurrence, matching the filter buttons above.
+
+Three buttons per row:
+
+- **Pause / Resume** - Flips `enabled` in the YAML. The task stays on disk, it just stops firing. Use this instead of deleting a task you will want back.
+- **Edit** - Change when the task fires, its prompt, its notification, or its label. The agent and the recurrence kind are fixed once a task exists: both are identity on disk, so switching either means cancelling and creating a new task.
+- **Cancel** - Deletes the task from the agent's `cue.yaml`. This asks for confirmation and cannot be undone.
+
+**New Task** opens a form: pick the agent, pick how it repeats, set the time (a one-shot offers `15m` / `1h` / `4h` / `1d` quick picks), and give it a prompt, a toast notification, or both. A notification can be made sticky so it waits for you to dismiss it.
+
+Tasks created here and tasks created with `maestro-cli cue schedule` are the same objects in the same file - both surfaces read and write through one module, so the list is always the whole truth. That also means an agent can schedule work for you and you can see, re-time, or cancel it here:
+
+```bash
+maestro-cli cue schedule --in 20m --agent "Cyber Stocks" --prompt "Check the deploy status."
+maestro-cli cue schedule --daily-at 09:00 --days mon,tue,wed,thu,fri --agent Pedsidian --prompt "Draft the standup notes."
+maestro-cli cue schedule --list
+```
+
+## Pipeline Graph
+
+The Pipeline Graph tab visualizes your Cue subscriptions as a node graph - triggers on the left, agents on the right, with edges showing how events flow through your automation.
 
 ![All Pipelines](./screenshots/cue-pipelines.png)
 
@@ -111,6 +152,79 @@ Two layout buttons in the top-right corner clean up a messy canvas. Both snap no
 - **Arrange** additionally reorders nodes within each column to untangle crossing edges. Reach for it after importing a pipeline or whenever the wiring looks tangled.
 
 In the **All Pipelines** view there are no edges between pipeline cards to cross, so only **Arrange** appears there and it packs the cards into a balanced grid. Either button previews as a confirmation first, and the result can be undone with **Discard** before you save.
+
+## Pipeline List
+
+The Pipeline List tab is the same pipelines read as text rather than drawn as a graph. Once you have more than a handful, a canvas is good at showing how one pipeline is wired and bad at answering "what do all of these do, and is anything broken?" That is what this tab is for.
+
+Each row collapses to a one-line overview:
+
+- **What it does** - a small pipeline shows its literal flow: `Scheduled (09:00) → rc → Maestro`, following the edges rather than the order nodes happen to sit in the file. A pipeline with many triggers or steps shows counts instead: `39 triggers (Scheduled, File Change) → 39 agents`. That is not just brevity - a pipeline like that is usually 39 _independent_ chains grouped under one name, so chaining their names with arrows would describe a sequence that does not exist.
+- **How it is doing** - a health badge, the outcome and age of the last run, how many recent runs there were and how many of those failed, and the number of steps.
+- **What is wrong** - any configuration problems, spelled out verbatim (a trigger with no schedule, an agent with no prompt, a node pointing at an agent that no longer exists). These stay visible while collapsed; a broken pipeline should not need a click to admit it.
+
+Click a row (or focus it and press `Enter` / `Space`) to expand it into two columns: every **Trigger** with its configuration and underlying subscription name, and every **Step** with its agent name or command body. Several rows can be open at once, which is the point - expanding two pipelines side by side is the usual reason to expand at all.
+
+**Prompts.** Each step shows the prompt it receives on one clipped line beneath its name, and hovering reveals the full text with its original line breaks. This is usually the only thing that tells two steps apart: a fan-out pipeline renders the same agent name six times, and the prompt is what says which of the six does what. The inline line is clipped by the column width rather than cut to a fixed word count, so a wider window simply shows more of it. A step fed by several different prompts (an agent wired to more than one trigger) carries an `×N` badge, and the hover card says how many others there are.
+
+Prompts are searchable, so `unusual volume` finds the pipeline containing that instruction even when every agent in it shares a name. Prompts written with `prompt_file` show their resolved file contents, not the filename.
+
+The prompt appears on the step rather than the trigger on purpose: a trigger's outgoing edge and its target's incoming edge are the same edge, so showing it in both columns would print everything twice, and a fan-out trigger has one prompt per target rather than one of its own.
+
+Health is derived, not stored. The badge is one of:
+
+| Badge               | Meaning                                                                          |
+| ------------------- | -------------------------------------------------------------------------------- |
+| **Running**         | A run for this pipeline is in flight right now                                   |
+| **Needs attention** | The configuration is broken, or a node references an agent that no longer exists |
+| **Disabled**        | Every subscription behind this pipeline is switched off in `cue.yaml`            |
+| **Failing**         | The most recent finished run failed, timed out, or was stopped                   |
+| **Healthy**         | The most recent finished run completed                                           |
+| **No recent runs**  | Nothing for this pipeline in the recent activity window                          |
+
+"No recent runs" is deliberately not "never run" - the activity log is a bounded window, so a pipeline that ran successfully a long time ago lands here too.
+
+### Searching, filtering, and sorting
+
+The toolbar narrows the list three ways. All three combine.
+
+**Search** matches the pipeline name, the trigger labels and their configuration, every agent and command name, and the health label - so `09:00`, `rc`, and `failing` are all valid queries.
+
+**Filter** by health:
+
+| Filter        | Shows                                                   |
+| ------------- | ------------------------------------------------------- |
+| **All**       | Every pipeline (default)                                |
+| **Attention** | Needs attention or Failing - the rows that want a human |
+| **Running**   | Pipelines with a run in flight right now                |
+| **Quiet**     | Disabled, or nothing in the recent activity window      |
+
+**Sort** by:
+
+| Sort         | Orders by                                                                         |
+| ------------ | --------------------------------------------------------------------------------- |
+| **Health**   | Worst first: Needs attention, Failing, Running, No recent runs, Disabled, Healthy |
+| **Name**     | Alphabetical, ignoring any leading emoji                                          |
+| **Last run** | Most recently finished first; pipelines that have not run land at the bottom      |
+
+Health is the default so anything needing a human sits at the top rather than being buried under a couple dozen working pipelines.
+
+### Row actions
+
+**Run now** fires the pipeline on demand. It appears only when the pipeline has exactly one trigger subscription. With several triggers the button would be ambiguous (which event is being simulated? each trigger carries its own prompt) and dangerous - a 39-trigger pipeline would dispatch 39 agent runs on one click. Multi-trigger pipelines instead get a **Run** button next to each trigger in the expanded detail, so you fire exactly the one you meant.
+
+**Graph** jumps to the Pipeline Graph tab with that pipeline selected.
+
+**Rename** is the pencil beside the pipeline name. Click it (or the name's pencil on hover), type, and press `Enter` to commit or `Escape` to cancel; clicking away also commits, since clicking away from text you just typed reads as "keep it". While a rename is open, `Escape` cancels it rather than closing the Cue modal - a second `Escape` closes the modal as usual. A blank name, or one another pipeline already uses, is refused in the field rather than after a round-trip, so your text stays put and you can fix it. Changing only the capitalization of the current name is allowed.
+
+A rename rewrites `pipeline_name` on every subscription in the pipeline, across every `cue.yaml` it spans - a cross-agent pipeline is physically several files and all of them are updated together. What it deliberately does not touch:
+
+- **Subscription names** stay exactly as they were. They are stable identities: saved node positions and `source_sub` chain references point at them, and renaming them would strand both. This means a pipeline renamed from `Old` to `New` keeps subscriptions called `Old`, `Old-chain-2`, and so on. That is correct, not a bug - `pipeline_name` is what determines pipeline membership.
+- **Prompt files** under `.maestro/prompts/` are keyed by subscription name, so their paths stay valid.
+
+Two side effects worth knowing. Saved node positions move with the pipeline automatically. And because past runs recorded the name they ran under, the renamed pipeline's **recent run history reads as empty** until it next runs - the old runs are still in the Activity Log under the previous name.
+
+Apart from the rename, the list is read-only. Editing the wiring stays on the graph.
 
 ## Activity Log
 

@@ -84,7 +84,7 @@ docs/
    - Ensure you haven't broken any existing test cases.
 
 5. Completion + Reporting
-   - Mark the task as completed by changing "- [ ]" to "- [x]".
+   - Mark the task as completed by changing "- [ ]" to "- [x]". Change ONLY those three characters - leave the rest of the line byte-for-byte intact. A task line may carry a trailing `<!-- MAESTRO:MODEL ... -->` marker that selects the model and effort for that task; rewriting the line and dropping it would silently change how the task runs on the next loop.
    - Begin your response with the specific synopsis (see "Response Format Requirement" above).
    - Follow with any relevant details about:
      - Implementation approach or key decisions made

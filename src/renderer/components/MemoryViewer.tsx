@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Plus, X, Database, FileText, Clock, Zap } from 'lucide-react';
+import { Brain, Plus, X, Database, FileText, Clock, Zap, Unlink, Network } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { formatSize, formatRelativeTime, formatNumber } from '../utils/formatters';
 import { estimateTokenCount } from '../../shared/formatters';
@@ -17,6 +17,14 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from './shared/DualPaneFileEditor';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
+import { FilterInput } from './ui/FilterInput';
+import { HeaderActionButton } from './ui/HeaderActionButton';
+import { TextareaHighlightOverlay } from './ui/TextareaHighlightOverlay';
+import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { useDebouncedValue } from '../hooks/utils/useThrottle';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import { isTextInputTarget } from '../utils/messageScrollNavigation';
+import { useModalStore } from '../stores/modalStore';
 
 interface MemoryViewerProps {
 	theme: Theme;
@@ -58,6 +66,17 @@ function starterContentFor(filename: string): string {
 	return filename === 'MEMORY.md' ? INDEX_STARTER_CONTENT : ENTRY_STARTER_CONTENT;
 }
 
+/**
+ * The entry to land on after `deleted` disappears: the one below it, else the
+ * one above. Keeps a Backspace-through cleanup pass moving in one direction
+ * instead of bouncing back to the MEMORY.md index after every delete.
+ */
+function nextSelectionAfterDelete(visibleNames: string[], deleted: string): string | null {
+	const index = visibleNames.indexOf(deleted);
+	if (index === -1) return null;
+	return visibleNames[index + 1] ?? visibleNames[index - 1] ?? null;
+}
+
 function suggestNewFilename(existing: Set<string>): string {
 	// First file should always be MEMORY.md (the index that points at every other entry).
 	if (existing.size === 0) return 'MEMORY.md';
@@ -96,15 +115,105 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+	// Keyword filter. `matches` is null while no filter is applied; a Map (name
+	// -> first matching body line) once one is, so an empty Map means "filter
+	// active, nothing matched" rather than "no filter".
+	const [filterQuery, setFilterQuery] = useState('');
+	const debouncedFilter = useDebouncedValue(filterQuery, 150);
+	const [matches, setMatches] = useState<Map<string, string | undefined> | null>(null);
+
+	// Memories nothing points at. Claude reads MEMORY.md to decide what to load,
+	// so an unreferenced entry is written but never recalled - the filter exists
+	// to make that visible, since nothing else in the app shows it.
+	const [orphans, setOrphans] = useState<string[]>([]);
+	const [showOnlyOrphans, setShowOnlyOrphans] = useState(false);
+
+	// Bumped after a delete so focus returns to the list and the next Backspace
+	// keeps working (the row that had focus was just unmounted).
+	const [listFocusToken, setListFocusToken] = useState(0);
+
 	const [createModalOpen, setCreateModalOpen] = useState(false);
 	const [createName, setCreateName] = useState('');
 	const [createError, setCreateError] = useState<string | null>(null);
 	const [isCreating, setIsCreating] = useState(false);
 	const createInputRef = useRef<HTMLInputElement>(null);
+	const filterInputRef = useRef<HTMLInputElement>(null);
+	const editorRef = useRef<HTMLTextAreaElement>(null);
+
+	/**
+	 * The stats bar is one non-wrapping row, and the filter box is the widest
+	 * thing on it. It collapses to its magnifier until used, and the unlinked
+	 * pill stands down while it is open - the pill is a filter too, so the two
+	 * never need to be reachable at the same instant.
+	 */
+	const [filterExpanded, setFilterExpanded] = useState(false);
+
+	/** Move keyboard focus back to the file list (see `listFocusToken`). */
+	const focusList = useCallback(() => setListFocusToken((t) => t + 1), []);
 
 	const layerIdRef = useRef<string>();
-	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
+	/**
+	 * Escape is a LADDER, climbed one rung per press, never skipping to close.
+	 *
+	 *   1. caret in the filter box -> hand focus back to the list, query intact
+	 *   2. filter still has text    -> clear it
+	 *   3. otherwise                -> close the viewer
+	 *
+	 * Rung 1 is what makes "filter, then arrow through the hits" work: the
+	 * query has to survive the key that gets you out of the text box, or the
+	 * results you were about to walk vanish as you reach for them.
+	 *
+	 * It all lives here because the layer stack handles Escape at CAPTURE on
+	 * `window`, so `FilterInput`'s own Escape handler never sees the key inside
+	 * a registered surface - and without this ladder the whole pane would close
+	 * while the user was only trying to leave the filter box.
+	 */
+	const onEscapeRef = useRef<() => void>(() => {});
+	onEscapeRef.current = () => {
+		// `visibleNamesRef` guards the hand-off: a filter that matched nothing has
+		// no row to focus, so blurring would drop focus on <body> and the arrows
+		// the user just reached for would do nothing. In that case fall through
+		// to clearing the filter, which is the useful move anyway.
+		if (document.activeElement === filterInputRef.current && visibleNamesRef.current.length > 0) {
+			filterInputRef.current?.blur();
+			focusList();
+			return;
+		}
+		if (filterQuery) {
+			setFilterQuery('');
+			return;
+		}
+		onClose();
+	};
+
+	/**
+	 * Jump to the filter box: Cmd/Ctrl+F, or bare `/`.
+	 *
+	 * The two guards differ on purpose. `/` is a legal character, so it only
+	 * takes effect when the caret is NOT in a text field - otherwise typing a
+	 * path into the memory editor would fling focus into the filter mid-word.
+	 * Cmd+F carries a modifier and means nothing else here, so it works from
+	 * anywhere including the editor.
+	 *
+	 * Skipped entirely while the New Memory dialog is up: it sits on top, and a
+	 * surface the user cannot see should not be stealing their keystrokes.
+	 */
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			const isFindChord = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f';
+			const isSlash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey;
+			if (!isFindChord && !isSlash) return;
+			if (isSlash && isTextInputTarget(e.target)) return;
+
+			e.preventDefault();
+			e.stopPropagation();
+			filterInputRef.current?.focus();
+			filterInputRef.current?.select();
+		},
+		{ enabled: !createModalOpen }
+	);
 
 	const { registerLayer, unregisterLayer } = useLayerStack();
 
@@ -117,7 +226,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			capturesFocus: false,
 			focusTrap: 'lenient',
 			ariaLabel: 'Project Memory Viewer',
-			onEscape: () => onCloseRef.current(),
+			onEscape: () => onEscapeRef.current(),
 		});
 		return () => {
 			if (layerIdRef.current) unregisterLayer(layerIdRef.current);
@@ -206,6 +315,85 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		void reloadList();
 	}, [reloadList]);
 
+	// Content search runs in the main process (it has to read every file), so it
+	// is debounced and re-runs whenever the file set changes under it.
+	useEffect(() => {
+		const query = debouncedFilter.trim();
+		if (!query || !projectPath) {
+			setMatches(null);
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			try {
+				const result = await window.maestro.memory.search(projectPath, query, agentId);
+				if (cancelled) return;
+				if (!result.success) {
+					setActionError(result.error || 'Failed to search memory');
+					return;
+				}
+				setMatches(new Map((result.matches || []).map((m) => [m.name, m.snippet])));
+			} catch (err) {
+				// Report it rather than leaving the list silently unfiltered - the
+				// user typed a query and is owed an answer either way.
+				if (!cancelled) setActionError(String(err));
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [debouncedFilter, projectPath, agentId, entries]);
+
+	const orphanSet = useMemo(() => new Set(orphans), [orphans]);
+
+	// The two filters compose rather than override: "unlinked entries mentioning
+	// worktrees" is a real question, and making the chip clear the search box
+	// would answer a different one.
+	const filteredEntries = useMemo(() => {
+		const byQuery = matches ? entries.filter((e) => matches.has(e.name)) : entries;
+		return showOnlyOrphans ? byQuery.filter((e) => orphanSet.has(e.name)) : byQuery;
+	}, [entries, matches, showOnlyOrphans, orphanSet]);
+
+	// Read at delete time to pick the next selection; a ref keeps the delete
+	// callbacks off the filtered list's identity.
+	const visibleNamesRef = useRef<string[]>([]);
+	visibleNamesRef.current = filteredEntries.map((e) => e.name);
+
+	// A filter that hides the current selection moves to the top hit, so typing
+	// shows the match instead of an empty editor. Unsaved edits win: never yank
+	// the user off a file they have changed.
+	useEffect(() => {
+		if (!matches || hasUnsavedChanges) return;
+		if (selectedName && matches.has(selectedName)) return;
+		const first = filteredEntries[0];
+		if (first) void loadEntry(first.name);
+	}, [matches, filteredEntries, selectedName, hasUnsavedChanges, loadEntry]);
+
+	// Recomputed whenever the file set changes: every create, delete, and save
+	// goes through reloadList, and each of those can make or break a reference.
+	useEffect(() => {
+		if (!projectPath || entries.length === 0) {
+			setOrphans([]);
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			try {
+				const result = await window.maestro.memory.orphans(projectPath, agentId);
+				if (cancelled || !result.success) return;
+				setOrphans(result.orphans ?? []);
+			} catch {
+				// The chip is purely additive, so losing it is a safe degradation -
+				// and an unguarded await here surfaces as an unhandled rejection
+				// rather than anything the user could act on.
+				if (!cancelled) setOrphans([]);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [projectPath, agentId, entries]);
+
 	const handleSelect = useCallback(
 		async (name: string) => {
 			if (name === selectedName) return;
@@ -243,31 +431,73 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		}
 	}, [selectedName, hasUnsavedChanges, editedContent, projectPath, agentId, reloadList]);
 
-	const handleDelete = useCallback(async () => {
-		if (!selectedName) return;
-		if (selectedName === 'MEMORY.md') {
-			setActionError('MEMORY.md is the index and cannot be deleted from the viewer');
-			return;
-		}
-		const confirmed = window.confirm(
-			`Delete memory file "${selectedName}"? This cannot be undone.`
-		);
-		if (!confirmed) return;
+	const performDelete = useCallback(
+		async (name: string) => {
+			const nextName = nextSelectionAfterDelete(visibleNamesRef.current, name);
+			setIsDeleting(true);
+			setActionError(null);
+			try {
+				const result = await window.maestro.memory.delete(projectPath, name, agentId);
+				if (!result.success) {
+					setActionError(result.error || `Failed to delete ${name}`);
+					return;
+				}
+				setSuccessMessage(`Deleted ${name}`);
+				await reloadList(nextName);
+			} finally {
+				setIsDeleting(false);
+				setListFocusToken((t) => t + 1);
+			}
+		},
+		[projectPath, agentId, reloadList]
+	);
 
-		setIsDeleting(true);
-		setActionError(null);
-		try {
-			const result = await window.maestro.memory.delete(projectPath, selectedName, agentId);
-			if (!result.success) {
-				setActionError(result.error || `Failed to delete ${selectedName}`);
+	/**
+	 * Raised by the Delete button and by Backspace/Delete on a focused list row.
+	 * Both go through the shared destructive confirm modal so the two paths
+	 * cannot drift on what they warn about.
+	 */
+	const requestDelete = useCallback(
+		(name: string) => {
+			if (!name) return;
+			if (name === 'MEMORY.md') {
+				setActionError('MEMORY.md is the index and cannot be deleted from the viewer');
 				return;
 			}
-			setSuccessMessage(`Deleted ${selectedName}`);
-			await reloadList(null);
-		} finally {
-			setIsDeleting(false);
-		}
-	}, [selectedName, projectPath, agentId, reloadList]);
+			useModalStore.getState().openModal('confirm', {
+				title: 'Delete Memory',
+				message: `Delete memory file "${name}"? This cannot be undone.`,
+				destructive: true,
+				onConfirm: () => {
+					void performDelete(name);
+				},
+			});
+		},
+		[performDelete]
+	);
+
+	/**
+	 * Graph how the memories link to each other.
+	 *
+	 * Scoped to the memory directory and rooted there explicitly: memory lives
+	 * under `~/.claude/projects/<encoded>/memory/`, outside the project, so the
+	 * graph's usual project root would resolve every path to nothing.
+	 *
+	 * The viewer closes on the way out. Both are full-window views on the same
+	 * agent, so leaving this one mounted underneath would strand it behind a
+	 * surface the user cannot see past.
+	 */
+	const handleOpenGraph = useCallback(() => {
+		if (!directoryPath) return;
+		useFileExplorerStore.getState().openGraphScope({
+			directory: '',
+			rootPath: directoryPath,
+			// Center on MEMORY.md when it exists - it is the index every other
+			// entry hangs off, so it is the hub a reader expects in the middle.
+			focusPath: entries.some((e) => e.name === 'MEMORY.md') ? 'MEMORY.md' : undefined,
+		});
+		onClose();
+	}, [directoryPath, entries, onClose]);
 
 	const handleCreate = useCallback(() => {
 		if (!projectPath) return;
@@ -324,16 +554,20 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 
 	const items = useMemo<DualPaneFileEditorItem[]>(
 		() =>
-			entries.map((e) => {
+			filteredEntries.map((e) => {
 				const isCurrent = e.name === selectedName;
+				const snippet = matches?.get(e.name);
+				const meta = `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`;
+				const orphaned = orphanSet.has(e.name);
+				const description = orphaned ? `${meta}\nunlinked - nothing points at this` : meta;
 				return {
 					id: e.name,
 					label: e.name,
-					description: `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`,
+					description: snippet ? `${description}\nmatch: ${snippet}` : description,
 					isModified: isCurrent && hasUnsavedChanges,
 				};
 			}),
-		[entries, selectedName, hasUnsavedChanges]
+		[filteredEntries, matches, selectedName, hasUnsavedChanges, orphanSet]
 	);
 
 	const editorTokenCount = useMemo(
@@ -342,23 +576,39 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	);
 
 	const renderEditorBody = useCallback(() => {
+		// The highlight layer sits BEHIND the textarea and paints only the wash
+		// under each hit, so the glyphs on screen are always the real, editable
+		// ones. When it is active the textarea goes transparent and the backdrop
+		// carries the editor's fill; with no query there is no layer at all and
+		// the textarea paints its own background as before.
+		const highlighting = debouncedFilter.trim().length > 0;
 		return (
-			<textarea
-				className="dual-pane-textarea"
-				value={editedContent}
-				onChange={(e) => {
-					setEditedContent(e.target.value);
-					setHasUnsavedChanges(e.target.value !== originalContent);
-				}}
-				spellCheck={false}
-				style={{
-					borderColor: theme.colors.border,
-					backgroundColor: theme.colors.bgMain,
-					color: theme.colors.textMain,
-				}}
-			/>
+			<div className="dual-pane-highlight-wrap">
+				<TextareaHighlightOverlay
+					textareaRef={editorRef}
+					value={editedContent}
+					query={debouncedFilter.trim()}
+					theme={theme}
+					backgroundColor={theme.colors.bgMain}
+				/>
+				<textarea
+					ref={editorRef}
+					className="dual-pane-textarea"
+					value={editedContent}
+					onChange={(e) => {
+						setEditedContent(e.target.value);
+						setHasUnsavedChanges(e.target.value !== originalContent);
+					}}
+					spellCheck={false}
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: highlighting ? 'transparent' : theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+				/>
+			</div>
 		);
-	}, [editedContent, originalContent, theme]);
+	}, [editedContent, originalContent, theme, debouncedFilter]);
 
 	// Cheap estimate: ~4 bytes/token for English text (matches estimateTokenCount from shared/formatters).
 	const estimatedTokens = useMemo(() => Math.ceil(stats.totalBytes / 4), [stats.totalBytes]);
@@ -379,18 +629,26 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					</span>
 				</div>
 				<div className="flex items-center gap-2">
-					<button
+					{entries.length > 0 && (
+						<HeaderActionButton
+							theme={theme}
+							onClick={handleOpenGraph}
+							variant="ghost"
+							icon={<Network />}
+							title="Graph how these memories link to each other"
+							testId="memory-open-graph"
+						>
+							Graph
+						</HeaderActionButton>
+					)}
+					<HeaderActionButton
+						theme={theme}
 						onClick={handleCreate}
-						className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
+						icon={<Plus />}
 						title="Create a new memory file"
 					>
-						<Plus className="w-4 h-4" />
 						New Memory
-					</button>
+					</HeaderActionButton>
 					<button
 						onClick={onClose}
 						className="p-2 rounded hover:bg-white/5 transition-colors"
@@ -407,20 +665,20 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				className="px-6 py-3 border-b shrink-0 flex items-center gap-6 text-xs"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 			>
-				<span className="flex items-center gap-1.5">
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
 					<FileText className="w-3.5 h-3.5" />
 					{stats.fileCount} {stats.fileCount === 1 ? 'file' : 'files'}
 				</span>
-				<span className="flex items-center gap-1.5">
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
 					<Database className="w-3.5 h-3.5" />
 					{formatSize(stats.totalBytes)}
 				</span>
-				<span className="flex items-center gap-1.5">
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
 					<Zap className="w-3.5 h-3.5" />~{formatNumber(estimatedTokens)} tokens
 				</span>
 				{stats.firstCreatedAt && (
 					<span
-						className="flex items-center gap-1.5"
+						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
 						title={new Date(stats.firstCreatedAt).toLocaleString()}
 					>
 						<Clock className="w-3.5 h-3.5" />
@@ -429,13 +687,47 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				)}
 				{stats.lastModifiedAt && (
 					<span
-						className="flex items-center gap-1.5"
+						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
 						title={new Date(stats.lastModifiedAt).toLocaleString()}
 					>
 						<Clock className="w-3.5 h-3.5" />
 						last edited {formatRelativeTime(stats.lastModifiedAt)}
 					</span>
 				)}
+				<div className="flex-1" />
+				{orphans.length > 0 && !filterExpanded && (
+					<button
+						onClick={() => setShowOnlyOrphans((v) => !v)}
+						className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors shrink-0"
+						style={{
+							backgroundColor: showOnlyOrphans
+								? `${theme.colors.warning}25`
+								: `${theme.colors.warning}10`,
+							color: showOnlyOrphans ? theme.colors.warning : theme.colors.textDim,
+						}}
+						title={
+							showOnlyOrphans
+								? 'Show all memories'
+								: `Show only the ${orphans.length} ${orphans.length === 1 ? 'memory' : 'memories'} nothing links to - Claude never loads these`
+						}
+						data-testid="memory-orphan-filter"
+					>
+						<Unlink className="w-3.5 h-3.5" />
+						{orphans.length} unlinked
+					</button>
+				)}
+				<FilterInput
+					ref={filterInputRef}
+					theme={theme}
+					value={filterQuery}
+					onChange={setFilterQuery}
+					placeholder="Filter by name or content..."
+					ariaLabel="Filter memories by name or content"
+					width={280}
+					resultLabel={matches ? `${filteredEntries.length}/${entries.length}` : undefined}
+					collapsible
+					onExpandedChange={setFilterExpanded}
+				/>
 			</div>
 
 			{/* Body */}
@@ -461,17 +753,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					>
 						<Brain className="w-10 h-10 opacity-30" />
 						<div>No memory files yet for this project.</div>
-						<button
-							onClick={handleCreate}
-							className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-							style={{
-								backgroundColor: theme.colors.accent,
-								color: theme.colors.accentForeground,
-							}}
-						>
-							<Plus className="w-4 h-4" />
+						<HeaderActionButton theme={theme} onClick={handleCreate} icon={<Plus />}>
 							Create first memory
-						</button>
+						</HeaderActionButton>
 					</div>
 				) : (
 					<DualPaneFileEditor
@@ -479,14 +763,24 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						items={items}
 						selectedId={selectedName}
 						onSelect={handleSelect}
-						emptyStateMessage="Select a memory file to view"
+						emptyStateMessage={
+							filteredEntries.length === 0 && showOnlyOrphans
+								? 'No unlinked memories match'
+								: matches && filteredEntries.length === 0
+									? `No memory matches "${debouncedFilter.trim()}"`
+									: 'Select a memory file to view'
+						}
 						editorTitle={selectedName ?? undefined}
 						editorTokenCount={editorTokenCount}
 						showModifiedBadge={hasUnsavedChanges}
 						renderEditorBody={renderEditorBody}
 						successMessage={successMessage}
 						errorMessage={actionError}
+						highlightQuery={debouncedFilter.trim()}
 						listWidthStorageKey="maestro.memoryViewer.listWidth"
+						onDeleteItem={requestDelete}
+						listFocusToken={listFocusToken}
+						autoFocusList
 						primaryAction={{
 							label: isSaving ? 'Saving…' : 'Save',
 							loading: isSaving,
@@ -500,7 +794,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 										loading: isDeleting,
 										disabled: isDeleting,
 										variant: 'danger',
-										onClick: handleDelete,
+										onClick: () => requestDelete(selectedName),
 									}
 								: undefined
 						}

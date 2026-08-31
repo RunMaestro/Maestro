@@ -65,6 +65,8 @@ Claude Code agents can bill against either your Anthropic API credit or your Cla
 | TUI Wrapper (Max plan) | `TUI Wrapper` | Always drives the Claude interactive TUI against your Max plan quota.                    |
 | Dynamic                | `Dynamic ...` | Starts on the Max plan TUI, then auto-switches to API when the quota is near exhaustion. |
 
+When a window does run dry, [Agent Resilience](/agent-resilience) takes the turn over: it reads the reset moment out of Claude's own banner (`resets 11:40am (America/Chicago)`) and resends your prompt then, instead of leaving you to notice and retype it.
+
 The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI (the mode that draws on your Max plan quota rather than per-token API credit). It ships bundled with the desktop app, so local agents work out of the box.
 
 <Note>
@@ -73,21 +75,24 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 
 ## Codex (OpenAI)
 
-| Feature            | Support                                    |
-| ------------------ | ------------------------------------------ |
-| Image attachments  | ⚠️ New sessions only (not on resume)       |
-| Session resume     | ✅ `exec resume <id>`                      |
-| Read-only mode     | ✅ `--sandbox read-only`                   |
-| Slash commands     | ❌ Interactive TUI only (not in exec mode) |
-| Cost tracking      | ❌ Token counts only (no pricing)          |
-| Model selection    | ✅ `-m, --model` flag                      |
-| Context operations | ✅ Merge, export, and transfer             |
-| Thinking display   | ✅ Reasoning tokens (o3/o4-mini)           |
+| Feature            | Support                                               |
+| ------------------ | ----------------------------------------------------- |
+| Image attachments  | ⚠️ New sessions only (not on resume)                  |
+| Session resume     | ✅ `exec resume <id>`                                 |
+| Read-only mode     | ✅ `--sandbox read-only`                              |
+| Slash commands     | ✅ Custom skills and prompts (built-ins are TUI only) |
+| Cost tracking      | ❌ Token counts only (no pricing)                     |
+| Model selection    | ✅ `-m, --model` flag                                 |
+| Context operations | ✅ Merge, export, and transfer                        |
+| Thinking display   | ✅ Reasoning tokens (o3/o4-mini)                      |
 
 **Notes**:
 
 - Codex's `resume` subcommand doesn't accept the `-i/--image` flag. Images can only be attached when starting a new session. Maestro hides the attach image button when resuming Codex sessions.
-- Codex has [slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/compact`, `/diff`, `/model`, etc.) but they only work in interactive TUI mode, not in `exec` mode which Maestro uses.
+- Your **custom** Codex commands appear in Maestro's `/` autocomplete. Maestro reads them straight off disk from `<CODEX_HOME>/skills/<name>/SKILL.md` and `.codex/skills/` (plus `<CODEX_HOME>/prompts/*.md` on older Codex builds), so no extra setup is needed. `CODEX_HOME` is honoured, and a project-local command shadows a global one with the same name. A skill marked `user-invocable: false` is skipped, matching Codex's own picker.
+- Because Maestro drives Codex through `codex exec`, the CLI never expands the slash itself. Maestro substitutes the command's file contents before sending, so the agent receives the fully expanded prompt.
+- Codex's **built-in** [slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/compact`, `/diff`, `/model`, etc.) are still unavailable: they are implemented inside the interactive TUI and have no on-disk prompt to expand.
+- Codex commands on an SSH remote agent are not discovered yet, since the skills live on the remote host.
 
 ## OpenCode
 

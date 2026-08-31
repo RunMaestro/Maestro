@@ -8,7 +8,7 @@ import React, {
 	Suspense,
 	type ReactNode,
 } from 'react';
-import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
+import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfterRender';
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
 import { slashCommands } from './slashCommands';
@@ -57,6 +57,7 @@ import {
 	useMainKeyboardHandler,
 	useTilingShortcuts,
 	useTextEditorUndo,
+	useAppMenuBridge,
 	// Agent
 	useAgentSessionManagement,
 	useAgentExecution,
@@ -208,7 +209,7 @@ import {
 	findNextUnreadSession,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
-import { getQueueBusyContext } from './utils/executionQueue';
+import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -1251,7 +1252,7 @@ function MaestroConsoleInner() {
 		handleLogViewerShortcutUsed,
 		handleViewGitDiff,
 		handleDirectorNotesResumeSession,
-	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef);
+	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef, groupChatInputRef);
 
 	const {
 		handleOpenWorktreeConfig,
@@ -1345,6 +1346,16 @@ function MaestroConsoleInner() {
 	const prevAiTabIdsRef = useRef<string[]>(
 		activeSession ? activeSession.aiTabs.map((t) => t.id) : []
 	);
+
+	// Return the caret to the AI composer when the queued-message editor closes.
+	// Nothing restores focus when a layer unregisters, so Escape otherwise left
+	// focus on the document body: the composer looked ready but swallowed the
+	// next keystroke, and the shortcut that opened the editor could not reopen it.
+	// Keyed on the uiStore id, so this covers the Cmd+Shift+E path and the pencil
+	// on a queued row, but NOT the copy inside the Execution Queue browser - that
+	// one owns local state and must hand focus back to the browser behind it.
+	const editingQueuedItemId = useUIStore((s) => s.editingQueuedItemId);
+	useFocusOnClose(inputRef, editingQueuedItemId !== null);
 	const shouldFocusOnLastTabReplaced = isSoleAiTabReplacement(
 		prevFocusSessionIdRef.current,
 		prevAiTabIdsRef.current,
@@ -1744,6 +1755,7 @@ function MaestroConsoleInner() {
 		retryLastMessage: retryInlineWizardMessage,
 		generateDocuments: generateInlineWizardDocuments,
 		endWizard: endInlineWizard,
+		cancelTurn: cancelInlineWizardTurn,
 		isWizardActiveForTab,
 	} = inlineWizardContext;
 
@@ -1860,13 +1872,26 @@ function MaestroConsoleInner() {
 		[processInput]
 	);
 
-	// Build (tab→busy summary) lookup used by the inline Force Send button to
-	// decide visibility and to populate the confirmation modal's "other tabs
-	// working" list. Computed from the current agent's tab states at call time.
-	const getForceSendContext = useCallback((item: QueuedItem) => {
+	// Force Send eligibility for the inline QUEUED card: whether the item can be
+	// dispatched out of turn, why not when it can't, and the busy-tab summary the
+	// confirmation modal lists. Computed from the current agent's tab states at
+	// call time.
+	//
+	// This returns the FULL eligibility rather than the busy context alone. The
+	// inline card used to re-derive "can I force this?" from a narrowed
+	// {targetTabBusy, otherBusyTabs} and reached a different answer than the
+	// Execution Queue modal, which asks the shared helper - so the same item
+	// offered Send Now in one surface and showed nothing in the other. One
+	// decision, computed once, read by both.
+	const getForceSendContext = useCallback((item: QueuedItem): ForceSendEligibility | null => {
 		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return null;
-		return getQueueBusyContext(session, item);
+		// Read the setting at call time rather than closing over it, so this
+		// callback keeps one identity and cannot hand back a stale answer after
+		// the user toggles Forced Parallel Execution.
+		return getForceSendEligibility(session, item, {
+			forcedParallelEnabled: useSettingsStore.getState().forcedParallelExecution,
+		});
 	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
@@ -2014,6 +2039,10 @@ function MaestroConsoleInner() {
 	// textarea/input undo in Electron on macOS).
 	useTextEditorUndo();
 
+	// Keeps the native File/View menus showing the user's real accelerators, and
+	// replays menu clicks as keystrokes through the handler above.
+	useAppMenuBridge();
+
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
 	const { flushNow: flushSessionPersistence } = useDebouncedPersistence(initialLoadComplete);
@@ -2072,6 +2101,10 @@ function MaestroConsoleInner() {
 	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Sort/nav/starred
 	// come from sidebarNavStore (no App subscription).
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
+	// Arrow nav needs both: the flag to know the section is closed, and the setter
+	// to open it when the cursor crosses into it.
+	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const setUngroupedCollapsed = useSettingsStore((s) => s.setUngroupedCollapsed);
 	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
 	const starredSessionsCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const { setGroupChatsExpanded, setStarredSessionsCollapsed } = useSettingsStore.getState();
@@ -2103,6 +2136,8 @@ function MaestroConsoleInner() {
 		setGroupChatsExpanded,
 		groupChatSortAlphabetical,
 		showUnreadAgentsOnly,
+		ungroupedCollapsed,
+		setUngroupedCollapsed,
 	});
 
 	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
@@ -2354,7 +2389,6 @@ function MaestroConsoleInner() {
 		handleSummarizeAndContinue,
 		processQueuedItem,
 		handleCloseCurrentTab,
-		handleUnifiedTabReorder,
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
@@ -2612,7 +2646,7 @@ function MaestroConsoleInner() {
 	);
 
 	const handleOpenOutputSearch = useCallback(() => {
-		// Output search is scoped per agent+AI-tab; open the active window's slot.
+		// Find is scoped per chat window (agent+AI-tab, or active group chat).
 		const key = getActiveOutputSearchKey();
 		if (key) useUIStore.getState().setOutputSearchOpen(key, true);
 	}, []);
@@ -2824,6 +2858,7 @@ function MaestroConsoleInner() {
 		retryInlineWizardMessage,
 		clearInlineWizardError,
 		endInlineWizard,
+		cancelInlineWizardTurn,
 		handleAutoRunRefresh,
 
 		// Complex wizard handlers
@@ -2990,8 +3025,6 @@ function MaestroConsoleInner() {
 			<PluginModalPanelMount theme={theme} />
 			<AppShell
 				theme={theme}
-				fontFamily={fontFamily}
-				fontSize={fontSize}
 				keyboardShellOffset={keyboardShellOffset}
 				isMobileLandscape={isMobileLandscape}
 				useNativeTitleBar={useNativeTitleBar}

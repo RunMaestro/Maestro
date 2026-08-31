@@ -24,9 +24,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // vi.hoisted(), the factory closes over a `mockExecFile` that hasn't been
 // initialized yet, and the first `import` from the source module crashes
 // with "Cannot access 'mockExecFile' before initialization".
-const { mockExecFile, captureMessageMock } = vi.hoisted(() => ({
+const { mockExecFile, captureMessageMock, readAccountIdentityMock } = vi.hoisted(() => ({
 	mockExecFile: vi.fn(),
 	captureMessageMock: vi.fn(),
+	readAccountIdentityMock: vi.fn(),
 }));
 
 vi.mock('child_process', async (importOriginal) => {
@@ -73,9 +74,19 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureMessage: captureMessageMock,
 }));
 
+// Stubbed so the sampler's `.claude.json` read never touches the real disk -
+// the account identity has its own test file.
+vi.mock('../../../main/agents/claude-account-identity', () => ({
+	readClaudeAccountIdentity: readAccountIdentityMock,
+}));
+
 import os from 'os';
 import path from 'path';
-import { sampleUsage } from '../../../main/agents/claude-usage-sampler';
+import {
+	FAILURE_REREPORT_INTERVAL_MS,
+	resetFailureReportingForTests,
+	sampleUsage,
+} from '../../../main/agents/claude-usage-sampler';
 import { asarNodePath, canonKey } from '../../helpers/pathExpect';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
@@ -134,6 +145,14 @@ describe('claude-usage-sampler', () => {
 		mockExecFile.mockReset();
 		captureMessageMock.mockReset();
 		captureMessageMock.mockResolvedValue(undefined);
+		// The failure memo behind MAESTRO-Q2 is module-level process state, so it
+		// outlives a single case. Without this, the second test to hit the same
+		// (configDir, stage, reason) would see its report suppressed.
+		resetFailureReportingForTests();
+		// Default: no identity available, which is the shape every pre-existing
+		// assertion in this file was written against.
+		readAccountIdentityMock.mockReset();
+		readAccountIdentityMock.mockResolvedValue(null);
 		// Restore env to a known baseline; some tests intentionally drop
 		// CLAUDE_CONFIG_DIR from `process.env` to verify the ~/.claude fallback.
 		for (const key of Object.keys(process.env)) {
@@ -149,6 +168,70 @@ describe('claude-usage-sampler', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	describe('account identity', () => {
+		it('stamps the account email / uuid / org onto the snapshot', async () => {
+			// The quota is bucketed per Anthropic ACCOUNT, but the snapshot is
+			// keyed by config DIRECTORY. Without these fields the dashboard can
+			// only label a row by its directory name, and two dirs sharing one
+			// login look like a sampling bug.
+			readAccountIdentityMock.mockResolvedValue({
+				email: 'pedram@smashlabs.com',
+				accountUuid: '2acf84ae-d765-4a12-ae90-296b9f903018',
+				organizationName: "pedram@smashlabs.com's Organization",
+			});
+			primeSuccess(wireEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap?.accountEmail).toBe('pedram@smashlabs.com');
+			expect(snap?.accountUuid).toBe('2acf84ae-d765-4a12-ae90-296b9f903018');
+			expect(snap?.organizationName).toBe("pedram@smashlabs.com's Organization");
+		});
+
+		it('reads the identity from the canonical config dir, not the wire echo', async () => {
+			// `config_dir` in the wire is whatever string maestro-p printed;
+			// the snapshot key is the locally-resolved path. Reading the
+			// identity from anything but the key would let the two disagree.
+			readAccountIdentityMock.mockResolvedValue(null);
+			primeSuccess(wireEnvelope({ config_dir: '/some/echoed/path/' }));
+
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				cwd: '/tmp',
+				configDir: '/Users/test/.claude-smash',
+			});
+
+			// The identity is read with the RESOLVED key, so the expectation has to go
+			// through the same primitive - a bare POSIX literal fails on Windows, where
+			// `path.resolve` drive-anchors it. Every sibling assertion already does this.
+			expect(readAccountIdentityMock).toHaveBeenCalledWith(canonKey('/Users/test/.claude-smash'));
+		});
+
+		it('omits the identity fields entirely when the account is unknown', async () => {
+			// Absent rather than `undefined`-valued, so a snapshot from a dir
+			// that was never logged into persists in the same shape it always
+			// did and older cached snapshots stay comparable.
+			readAccountIdentityMock.mockResolvedValue(null);
+			primeSuccess(wireEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap).not.toHaveProperty('accountEmail');
+			expect(snap).not.toHaveProperty('accountUuid');
+			expect(snap).not.toHaveProperty('organizationName');
+		});
+
+		it('keeps the fields it does know when the identity is partial', async () => {
+			readAccountIdentityMock.mockResolvedValue({ email: 'legacy@example.com' });
+			primeSuccess(wireEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap?.accountEmail).toBe('legacy@example.com');
+			expect(snap).not.toHaveProperty('accountUuid');
+		});
 	});
 
 	describe('happy path', () => {
@@ -479,14 +562,137 @@ describe('claude-usage-sampler', () => {
 			expect(snap).toBeNull();
 		});
 
-		it('returns null when a resets_at field is missing', async () => {
+		// A missing resets_at is a legitimate wire shape, not a malformed one:
+		// claude paints no "Resets ..." row for a window with nothing running in
+		// it, and rejecting the envelope over that used to throw away the
+		// percentages of an exhausted account - the one case the dashboard most
+		// needs to show.
+		it('keeps the snapshot when a resets_at field is missing, dropping only that field', async () => {
+			primeSuccess(wireEnvelope({ week_all_models: { percent: 50 } }));
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			expect(snap?.weekAllModels).toEqual({ percent: 50 });
+			expect(snap?.session.resetsAt).toBeTruthy();
+		});
+
+		it('returns null when a resets_at field is present but not a string', async () => {
 			primeSuccess(
 				wireEnvelope({
-					week_all_models: { percent: 50 } as unknown as { percent: number; resets_at: string },
+					week_all_models: { percent: 50, resets_at: 12345 as unknown as string },
 				})
 			);
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
 			expect(snap).toBeNull();
+		});
+
+		it('carries the second weekly window label through to the snapshot', async () => {
+			primeSuccess(
+				wireEnvelope({
+					week_sonnet_only: {
+						percent: 36,
+						resets_at: '2026-05-15T17:00:00.000Z',
+						label: 'Fable',
+					},
+				})
+			);
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			expect(snap?.weekSonnetOnly.label).toBe('Fable');
+		});
+	});
+
+	describe('repeat-failure suppression (MAESTRO-Q2)', () => {
+		const OPTS = { binPath: '/bin/maestro-p.js', cwd: '/tmp', configDir: '/home/u/.claude' };
+
+		it('reports the first failure but not identical repeats', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			for (let i = 0; i < 5; i++) {
+				expect(await sampleUsage(OPTS)).toBeNull();
+			}
+
+			// Every tick still returns null and still logs; only the report is deduped.
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+			expect(captureMessageMock.mock.calls[0][2]).toMatchObject({
+				stage: 'spawn',
+				reason: 'exit: 1',
+			});
+		});
+
+		it('reports again when the failure signature changes', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			// Same config dir, different reason - this is new information.
+			primeFailure(Object.assign(new Error('nope'), { code: 'ENOENT' }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(captureMessageMock.mock.calls[1][2]).toMatchObject({ reason: 'ENOENT' });
+		});
+
+		it('keeps config dirs independent so one broken account cannot mute another', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-a' });
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-a' });
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-b' });
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(
+				captureMessageMock.mock.calls.map((c) => (c[2] as { configDir: string }).configDir)
+			).toEqual([canonKey('/home/u/.claude-a'), canonKey('/home/u/.claude-b')]);
+		});
+
+		it('keys off customEnvVars.CLAUDE_CONFIG_DIR too, not just opts.configDir', async () => {
+			// `CLAUDE_CONFIG_DIR` can arrive through customEnvVars instead of the
+			// explicit option, and the sampler honors it for the snapshot key. A memo
+			// keyed on opts.configDir alone would collapse both of these onto
+			// ~/.claude: the first account would mute the second, and both
+			// breadcrumbs would name the wrong directory.
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				cwd: '/tmp',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-a' },
+			});
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				cwd: '/tmp',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-b' },
+			});
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(
+				captureMessageMock.mock.calls.map((c) => (c[2] as { configDir: string }).configDir)
+			).toEqual([canonKey('/home/u/.claude-env-a'), canonKey('/home/u/.claude-env-b')]);
+		});
+
+		it('re-reports an unchanged failure once the interval elapses', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS - 1));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+		});
+
+		it('forgets the history after a success so a flapping account reports again', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			primeSuccess(wireEnvelope());
+			expect(await sampleUsage(OPTS)).not.toBeNull();
+
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
 		});
 	});
 
@@ -516,14 +722,16 @@ describe('claude-usage-sampler', () => {
 				configDir: '/Users/test/.claude-explicit',
 			});
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
-			expect(extras.configDir).toBe('/Users/test/.claude-explicit');
+			// Resolved, like the snapshot key it now mirrors - a bare POSIX literal
+			// fails on Windows where `path.resolve` drive-anchors it.
+			expect(extras.configDir).toBe(canonKey('/Users/test/.claude-explicit'));
 		});
 
 		it('falls back to ~/.claude in the breadcrumb when configDir is omitted', async () => {
 			primeSuccess('garbage\n');
 			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
-			expect(extras.configDir).toBe(path.join(os.homedir(), '.claude'));
+			expect(extras.configDir).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
 	});
 });

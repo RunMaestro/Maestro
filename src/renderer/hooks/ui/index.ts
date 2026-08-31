@@ -29,11 +29,22 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Horizontal strip scrolling (edge affordances + wheel-to-horizontal)
+export { useHorizontalScroll } from './useHorizontalScroll';
+export type { HorizontalScrollState } from './useHorizontalScroll';
+
+// Live CSS-grid column count (for arrow navigation over a responsive grid)
+export { useGridColumnCount } from './useGridColumnCount';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
+export { useStickToBottom } from './useStickToBottom';
 
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
+
+// Theme-aware ANSI -> HTML converter for raw terminal output
+export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
 
 // Theme styling utilities
 export { useThemeStyles } from './useThemeStyles';
@@ -79,6 +90,26 @@ export {
 	FONT_SCALE_DEFAULT,
 } from './useFontScale';
 export type { UseFontScaleReturn } from './useFontScale';
+export { useScalePreference, clampScale } from './useScalePreference';
+export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference';
+
+// Persisted view toggle (collapsed banners, folded sections)
+export { usePersistedToggle } from './usePersistedToggle';
+export type { UsePersistedToggleReturn } from './usePersistedToggle';
+export { usePersistedChoice } from './usePersistedChoice';
+export type { UsePersistedChoiceReturn } from './usePersistedChoice';
+export { usePersistedPanelWidth } from './usePersistedPanelWidth';
+export type {
+	UsePersistedPanelWidthOptions,
+	UsePersistedPanelWidthReturn,
+} from './usePersistedPanelWidth';
+
+// Client-side pagination for lists already held in memory
+export { usePagination } from './usePagination';
+export type { UsePaginationResult } from './usePagination';
+
+// ResizeObserver-backed element width, for JS-computed layout
+export { useElementWidth } from './useElementWidth';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

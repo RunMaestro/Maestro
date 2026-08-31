@@ -179,6 +179,24 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	// Quick-access handlers
 	// ---------------------------------------------------------------------------
 
+	/**
+	 * The agent the Worktree Config modal is acting on.
+	 *
+	 * Opened from the Left Bar's right-click menu it carries an explicit target;
+	 * opened from the header or Settings it carries none and follows the active
+	 * agent. Every callback below has to resolve it the SAME way the modal host
+	 * does, or Save would write the config onto a different agent than the one
+	 * named in the dialog.
+	 */
+	const resolveWorktreeConfigTarget = useCallback((): Session | undefined => {
+		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
+		const pinnedId = useModalStore.getState().getData('worktreeConfig')?.session?.id;
+		// Re-read from the store rather than trusting the captured snapshot: the
+		// payload was stamped when the modal opened and the agent may have
+		// changed since.
+		return currentSessions.find((s) => s.id === (pinnedId ?? activeSessionId));
+	}, []);
+
 	const handleOpenWorktreeConfig = useCallback(() => {
 		getModalActions().setWorktreeConfigModalOpen(true);
 	}, []);
@@ -188,8 +206,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	}, []);
 
 	const handleOpenWorktreeConfigSession = useCallback((session: Session) => {
-		useSessionStore.getState().setActiveSessionId(session.id);
-		getModalActions().setWorktreeConfigModalOpen(true);
+		// Pass the right-clicked agent through rather than force-activating it.
+		// Opening a config dialog must not change which agent is selected: the
+		// activation was a side effect the user never asked for, and it silently
+		// retargeted every other surface bound to the active agent.
+		getModalActions().setWorktreeConfigSession(session);
 	}, []);
 
 	const handleDeleteWorktreeSession = useCallback((session: Session) => {
@@ -212,8 +233,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	}, []);
 
 	const handleSaveWorktreeConfig = useCallback(async (config: SessionWorktreeConfig) => {
-		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
-		const activeSession = currentSessions.find((s) => s.id === activeSessionId);
+		const activeSession = resolveWorktreeConfigTarget();
 		if (!activeSession) return;
 		const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
 			useSettingsStore.getState();
@@ -311,8 +331,8 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	}, []);
 
 	const handleDisableWorktreeConfig = useCallback(() => {
-		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
-		const activeSession = currentSessions.find((s) => s.id === activeSessionId);
+		const { sessions: currentSessions } = useSessionStore.getState();
+		const activeSession = resolveWorktreeConfigTarget();
 		if (!activeSession) return;
 
 		// Count worktree children that will be removed

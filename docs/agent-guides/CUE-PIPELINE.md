@@ -299,8 +299,75 @@ Dashboard modal for monitoring and controlling Cue.
 | `ActiveRunsList.tsx`    | Currently running executions with stop controls |
 | `ActivityLog.tsx`       | History of completed/failed runs                |
 | `ActivityLogDetail.tsx` | Detailed view of a single run result            |
+| `PipelineListTab.tsx`   | Pipeline List tab - prose + health, read-only   |
 | `StatusDot.tsx`         | Color-coded status indicator                    |
 | `cueModalUtils.ts`      | Utility functions for the modal                 |
+
+**Tabs.** `CueModalTab` in `CueModalHeader.tsx` is the tab union, and it must stay
+in sync with `CUE_MODAL_TABS` in `src/shared/uiSurfaces.ts` - that registry is what
+`maestro-cli open cue --tab <id>` validates against, and `CueModalHeader.test.tsx`
+asserts the two render in the same order. Note the id/label mismatch on the graph
+tab: its id is `pipeline` while its label is "Pipeline Graph". The id predates the
+rename and is deliberately frozen, because saved deep links, the YAML editor's nav
+button, and `useModalHandlers`' first-run routing all address it by id.
+
+**Pipeline Graph vs Pipeline List.** Two tabs over the same data, not two modes of
+one tab. The graph (`CuePipelineEditor`) owns editing and is the only place a
+pipeline can be changed. The list (`PipelineListTab`) is read-only and answers the
+questions a canvas is bad at: what does each pipeline do, and is it working? It
+renders `dashboardPipelines` (the same disk-loaded pipelines the Dashboard uses),
+so it needs no editor state and no save path.
+
+**The prompt renders on the STEP, never the trigger.** A trigger's outgoing edge
+and its target's incoming edge are the same edge, so rendering `prompts` in both
+columns prints every prompt twice; a fan-out trigger also has one prompt per
+target rather than one of its own. `CuePipelineTriggerSummary.prompts` still
+exists for callers describing a trigger on its own - just do not put it in the
+trigger column. Same reason the search haystack indexes step prompts only.
+
+**Row-level "Run now" is gated on a SINGLE trigger subscription.** With several
+triggers the button is ambiguous (each trigger is its own subscription with its
+own prompt) and destructive - the real 39-trigger "Pedsidian" pipeline would
+dispatch 39 agent runs on one click. Multi-trigger pipelines expose a per-trigger
+Run inside the expanded detail instead. Do not "simplify" this back to a
+fire-them-all button.
+
+**Renaming a pipeline** goes through `src/main/cue/cue-pipeline-rename.ts`, NOT
+the editor's save path - the list has no editor state to save. A pipeline is not
+an object on disk, it is the set of subscriptions sharing a `pipeline_name`, so
+the rename rewrites that field on every member in every root the pipeline spans.
+Three invariants:
+
+- **Subscription names are never rewritten.** They are stable identities: the
+  layout store keys trigger positions by them and `source_sub` points at them.
+  So `Old-chain-2` survives a rename to `New`, and that is correct - membership
+  is decided by `pipeline_name`, not by the name suffix.
+- **The handler enumerates roots itself** from `engine.getStatus()`. A caller
+  passing "the root of the agent I clicked" would silently rename half of a
+  cross-agent pipeline.
+- **A layout failure is a warning, not a failure.** The YAML write has already
+  landed by then; reporting the whole rename as failed would send the user
+  looking for a change that is already on disk. The layout re-key exists because
+  the visual id is `pipeline-${name}`, so a rename orphans the old entry.
+
+Note that health history legitimately reads as empty right after a rename: runs
+recorded the name they ran under, and `derivePipelineHealth` matches on it.
+
+**Escape during a rename is a LAYER, not a keydown handler.** `PipelineListTab`
+registers `MODAL_PRIORITIES.CUE_PIPELINE_RENAME` (462, above `CUE_MODAL`) while
+`renamingId !== null`. The layer stack listens on `window` at CAPTURE, so an
+`onKeyDown` on the rename input can never see Escape - it would close the whole
+Cue modal instead of cancelling the rename. Same mechanism and same reason as
+`CUE_SCHEDULED_TASK_FILTER`. Register it with `focusTrap: 'none'`,
+`blocksLowerLayers: false`, `capturesFocus: false`: it is an inline field, not
+an overlay, and it must not dim the modal or trap focus.
+
+**Remembered tab.** `lastOpenCueTab` is module-level state in `CueModal.tsx`,
+resolved in the `useState` lazy initializer (a restore effect double-fires under
+StrictMode and clobbers the saved value). Same shape as `lastOpenSettingsTab` in
+`Settings/SettingsModal.tsx`. An explicit `initialTab` from modal data always
+wins. Tests must call `__resetLastOpenCueTabForTests()` in `beforeEach`, or the
+remembered tab leaks between cases.
 
 ### CuePipelineEditor (`src/renderer/components/CuePipelineEditor/`)
 
@@ -378,6 +445,39 @@ Types for the visual pipeline editor (React Flow canvas):
 - `EdgeMode` - `"pass"` / `"debate"` / `"autorun"`
 - `CuePipeline` - Named pipeline with nodes, edges, and color
 - `PipelineLayoutState` - Saved node positions and viewport
+
+### `src/shared/cue-pipeline-summary.ts`
+
+Pure prose + health derivation over a `CuePipeline`. No React, no IPC, so the
+renderer, a future CLI listing, and tests all describe a pipeline identically.
+
+- `getTriggerConfigSummary(data)` - short config line for a trigger (`every 15min`,
+  `09:00, 17:00`). Used by BOTH the graph's trigger nodes and the list, which is
+  why it lives here rather than in `CuePipelineEditor/utils/pipelineGraph.ts`.
+- `summarizeCommandNode(data)` - the `$ cmd` / `cli send → target` line.
+- `describePipeline(pipeline)` - triggers, steps in execution order, and the
+  strings the list renders. Step order comes from a BFS over the edges, NOT array
+  position: hand-authored YAML can list the last agent first. It returns BOTH
+  `flow` (the full `a → b → c` chain) and `headline` (what the collapsed row
+  shows). Render `headline`, never `flow`: a pipeline with >1 trigger or >4 steps
+  is usually N independent chains grouped under one name, so arrow-chaining their
+  node names describes a sequence that does not exist - and a 39-node line buries
+  every other row. `flow` stays exported for the search haystack.
+- Every trigger and step carries a `CueNodePrompts` (`prompts`, `count`,
+  `preview`). Resolution order matters: a step reads its INCOMING edges first and
+  only falls back to `AgentNodeData.inputPrompt` when none carried one. That
+  mirrors the loader, which deliberately CLEARS `inputPrompt` on trigger→agent
+  edges (mirroring the two caused stale saves) and reserves it for chain agents.
+  `preview` is whitespace-collapsed but NOT length-capped - the list clips it with
+  CSS so it fits the real column width; a character cap would waste space on a
+  wide window and still overflow on a narrow one.
+- `derivePipelineHealth(pipeline, ctx)` - the health badge. Precedence is
+  `running > invalid > disabled > failing > healthy > idle`. Feed it `configErrors`
+  from `validatePipelines` (prefix-stripped via `stripPipelinePrefix`) and the
+  `disabled` flag from the subscriptions' on-disk `enabled` fields; it matches runs
+  to the pipeline itself via `pipelineName` with a `-chain-N` / `-fanin` fallback.
+  The `idle` label is "No recent runs", never "never run" - the activity log is a
+  bounded window and a stronger claim would be false.
 
 ### `src/shared/maestro-paths.ts`
 

@@ -4,6 +4,12 @@
 
 Maestro's prompt system consists of Markdown templates compiled to TypeScript at build time, a template variable substitution engine, and two specification management systems (SpecKit and OpenSpec) that layer user-customizable prompts on top of bundled defaults.
 
+## Shell examples in prompts must live in code fences
+
+`src/prompts/ai-command.md` teaches the model to emit shell command lines, and shell syntax collides head-on with Markdown. Running that file through Prettier once rewrote `--include='*.ts'` into `--include='_.ts'` and `du -sh *` into `du -sh \*`, because the formatter read the glob asterisks as emphasis markers.
+
+Nothing type-checks a prompt and the damage is invisible in review - it just quietly teaches the model broken syntax, which then gets pasted into a real shell. Any prompt whose examples contain globs, backslashes, underscores, or asterisks must keep them inside a fenced code block. `src/__tests__/prompts/aiCommandPrompt.test.ts` is the tripwire for that specific file.
+
 ## Prompt Templates
 
 ### Build Pipeline

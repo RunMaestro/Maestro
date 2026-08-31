@@ -549,7 +549,7 @@ All IPC handlers are registered in `setupIpcHandlers()` within `src/main/ipc/boo
 | `registerNotificationsHandlers()` | `notifications.ts`  | Main window                                                          |
 | `registerAttachmentsHandlers()`   | `attachments.ts`    | App                                                                  |
 | `registerLeaderboardHandlers()`   | `leaderboard.ts`    | App, settings store                                                  |
-| `registerSymphonyHandlers()`      | `symphony.ts`       | App, main window, sessions store                                     |
+| `registerSymphonyHandlers()`      | `symphony/`         | App, main window, sessions store                                     |
 | `registerTabNamingHandlers()`     | `tabNaming.ts`      | Process manager, agent detector, agent configs, settings             |
 | `registerWakatimeHandlers()`      | `wakatime.ts`       | WakaTime manager                                                     |
 | `registerFeedbackHandlers()`      | `feedback.ts`       | Process manager, agent detector, web server, settings, stores        |

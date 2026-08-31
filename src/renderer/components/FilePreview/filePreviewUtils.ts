@@ -1,4 +1,7 @@
 import { formatSize } from '../../../shared/formatters';
+import { isImageFile } from '../../../shared/gitUtils';
+import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { getOpenedMediaKind } from '../../utils/mediaItems';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -160,6 +163,8 @@ export interface FontScaleTargetView {
 	isMermaid: boolean;
 	/** CSV / TSV table view. */
 	isCsv: boolean;
+	/** Parquet grid, which owns its own row height and column widths. */
+	isParquet: boolean;
 	/** JSONL viewer, including JSON under a jq filter. */
 	isJsonlView: boolean;
 	/** HTML being rendered in the sandboxed iframe (not shown as source). */
@@ -171,7 +176,8 @@ export interface FontScaleTargetView {
  *
  * Only where zoom actually moves type. The views that own their own layout -
  * images, the binary card, rendered HTML inside a sandboxed iframe we cannot
- * style, Mermaid diagrams, and the CSV / JSONL table viewers - are excluded: a
+ * style, Mermaid diagrams, and the CSV / JSONL / parquet table viewers - are
+ * excluded: a
  * control that changes nothing reads as broken, which is exactly why Rich Mode
  * lost its copy of these buttons in Director's Notes.
  */
@@ -181,6 +187,7 @@ export function canScaleFontForView(view: FontScaleTargetView): boolean {
 		!view.isImage &&
 		!view.isBinary &&
 		!view.isCsv &&
+		!view.isParquet &&
 		!view.isJsonlView &&
 		!view.isMermaid &&
 		!view.isRenderedHtml
@@ -352,6 +359,28 @@ export const isBinaryExtension = (filename: string): boolean => {
 	return BINARY_EXTENSIONS.has(ext || '');
 };
 
+// ─── Gist Publishing ──────────────────────────────────────────────────────────
+
+/**
+ * Whether a previewed file can go up as a GitHub Gist. A gist body is plain
+ * text, so images, playable media, binaries, and the parquet marker (which
+ * holds a path rather than the file) are all out, and so is an empty file -
+ * publishing one produces a gist with nothing in it.
+ *
+ * Shared so the FilePreview toolbar button and the file tab's overlay menu
+ * offer the action on exactly the same files. `filename` must carry the
+ * extension (a file tab stores name and extension apart).
+ */
+export function isGistPublishableFile(filename: string, content: string): boolean {
+	if (!content.trim()) return false;
+	if (isImageFile(filename)) return false;
+	if (getOpenedMediaKind(filename, content) !== null) return false;
+	// Parquet is binary on disk but never arrives as content, so it is checked
+	// off the marker before the binary tests below (which the marker passes).
+	if (isParquetPreviewMarker(content)) return false;
+	return !isBinaryExtension(filename) && !isBinaryContent(content);
+}
+
 // ─── Formatting ───────────────────────────────────────────────────────────────
 
 /** Format file size in human-readable format */
@@ -403,45 +432,12 @@ export const countMarkdownTasks = (content: string): { open: number; closed: num
 export { extractHeadings } from '../Toc';
 
 /**
- * A GFM task list marker at the start of a line: indent, bullet or ordered
- * marker, then `[ ]` / `[x]` / `[X]`. Split into groups so a toggle can swap
- * the state character without disturbing the author's spacing or bullet style.
+ * Re-exported from the shared markdown-task helper, which main extracted so the
+ * chat renderer's clickable checkboxes and the File Preview toggle share one
+ * implementation. Kept here so existing File Preview imports keep resolving.
  */
-const TASK_MARKER_REGEX = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\])/;
-
-export interface TaskToggleResult {
-	/** Full document with the one task line rewritten. */
-	content: string;
-	/** The task's state AFTER the toggle. */
-	checked: boolean;
-}
-
-/**
- * Flip the GFM task checkbox on 1-based `line`, returning the rewritten
- * document. Returns null when that line holds no task marker, so a caller can
- * treat a stale line number as a no-op instead of corrupting the file.
- *
- * Only the state character is rewritten - indentation, bullet style, and the
- * task text are preserved byte for byte, and splitting on `\n` alone leaves a
- * CRLF file's `\r` attached to its line so line endings round-trip unchanged.
- */
-export const toggleTaskCheckboxAtLine = (
-	content: string,
-	line: number
-): TaskToggleResult | null => {
-	if (!Number.isInteger(line) || line < 1) return null;
-	const lines = content.split('\n');
-	const target = lines[line - 1];
-	if (target === undefined) return null;
-
-	const match = TASK_MARKER_REGEX.exec(target);
-	if (!match) return null;
-
-	const wasChecked = match[2] !== ' ';
-	lines[line - 1] = match[1] + (wasChecked ? ' ' : 'x') + match[3] + target.slice(match[0].length);
-
-	return { content: lines.join('\n'), checked: !wasChecked };
-};
+export { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+export type { TaskToggleResult } from '../../utils/markdownTasks';
 
 /**
  * Normalize a POSIX-style path by resolving `.` and `..` segments.

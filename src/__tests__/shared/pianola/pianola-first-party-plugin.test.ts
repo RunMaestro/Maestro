@@ -49,6 +49,66 @@ describe('Pianola first-party plugin definition', () => {
 	});
 });
 
+/**
+ * The usage guide the Extensions details pane renders. It lives on the
+ * definition (not inline in the view), so these guard what the pane assumes:
+ * a non-empty overview, a walkthrough whose steps say something, and agent
+ * commands that name real `maestro pianola` verbs rather than an invented
+ * binary.
+ */
+describe('Pianola usage guide', () => {
+	const usage = PIANOLA_FIRST_PARTY_PLUGIN.usage;
+
+	it('ships an overview and an ordered walkthrough', () => {
+		expect(usage).toBeDefined();
+		expect(usage!.overview.length).toBeGreaterThan(0);
+		expect(usage!.overview.every((p) => p.trim().length > 0)).toBe(true);
+		expect(usage!.steps?.length ?? 0).toBeGreaterThan(0);
+		for (const step of usage!.steps ?? []) {
+			expect(step.title.trim()).not.toBe('');
+			expect(step.body.trim()).not.toBe('');
+		}
+	});
+
+	it('says how to reach the manager, since Pianola has no hotkey', () => {
+		const access = usage!.access ?? [];
+		expect(access.length).toBeGreaterThan(0);
+		// No shortcutId anywhere: the pane resolves one to a live binding, and
+		// naming an id that DEFAULT_SHORTCUTS does not carry would render nothing.
+		expect(access.every((path) => path.shortcutId === undefined)).toBe(true);
+		expect(access.some((path) => path.commandPalette || path.menu)).toBe(true);
+	});
+
+	it('states the two safety guarantees the policy engine actually enforces', () => {
+		const notes = (usage!.notes ?? []).join(' ').toLowerCase();
+		// High-risk always escalates, and an unmatched prompt escalates rather
+		// than being answered. Both are load-bearing claims - if the engine ever
+		// stops honoring them, this copy becomes a lie.
+		expect(notes).toContain('high-risk');
+		expect(notes).toContain('escalate');
+	});
+
+	it('documents agent commands under the maestro pianola namespace', () => {
+		const commands = usage!.agentCommands ?? [];
+		expect(commands.length).toBeGreaterThan(0);
+		for (const entry of commands) {
+			expect(entry.command.startsWith('maestro pianola ')).toBe(true);
+			expect(entry.label.trim()).not.toBe('');
+		}
+	});
+
+	it('has no em-dashes or en-dashes in user-facing copy', () => {
+		const all = [
+			...usage!.overview,
+			...(usage!.steps ?? []).flatMap((s) => [s.title, s.body]),
+			...(usage!.notes ?? []),
+			...(usage!.access ?? []).flatMap((a) => [a.label, a.commandPalette ?? '', a.menu ?? '']),
+			...(usage!.agentCommands ?? []).flatMap((c) => [c.label, c.command]),
+		].join(' ');
+		expect(all).not.toMatch(/[\u2013\u2014]/);
+	});
+});
+
 describe('Groups+ first-party plugin definition', () => {
 	it('declares Groups+ as an opt-in first-party UI extension', () => {
 		expect(GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID).toBe('com.maestro.groups-plus');

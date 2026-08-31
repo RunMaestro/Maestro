@@ -75,8 +75,12 @@ vi.mock('../../../renderer/services/inlineWizardDocumentGeneration', () => ({
 }));
 
 // Mock window.maestro.agents.get for agent availability checks
+const mockProcessKill = vi.fn().mockResolvedValue(undefined);
 Object.defineProperty(window, 'maestro', {
 	value: {
+		process: {
+			kill: mockProcessKill,
+		},
 		agents: {
 			get: vi.fn().mockResolvedValue({
 				id: 'claude-code',
@@ -545,6 +549,98 @@ describe('useInlineWizard', () => {
 			expect(result.current.wizardGoal).toBe(null);
 			expect(result.current.existingDocuments).toEqual([]);
 		});
+
+		it('ends the current tab when handed something that is not a tab id', async () => {
+			// `endWizard` sits behind `() => void` props, and `onClick={onCancel}` hands
+			// React's click event in as the first argument. Treating that as a tab id
+			// matched nothing, so the wizard stayed registered on a tab that had already
+			// dropped it - a wand in the Left Bar with no wizard tab to reach.
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add feature',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-1',
+					'agent-1'
+				);
+			});
+			expect(result.current.wizardActiveTabs.has('tab-1')).toBe(true);
+
+			await act(async () => {
+				await result.current.endWizard({ type: 'click' } as unknown as string);
+			});
+
+			expect(result.current.wizardActiveTabs.has('tab-1')).toBe(false);
+			expect(result.current.isWizardActive).toBe(false);
+		});
+	});
+
+	describe('wizardActiveTabs', () => {
+		it('is empty until a wizard starts', () => {
+			const { result } = renderHook(() => useInlineWizard());
+			expect(result.current.wizardActiveTabs.size).toBe(0);
+		});
+
+		it('records the tab and the agent that owns it', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add feature',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-1',
+					'agent-1'
+				);
+			});
+
+			expect(result.current.wizardActiveTabs.get('tab-1')).toEqual({
+				sessionId: 'agent-1',
+				isGeneratingDocs: false,
+			});
+		});
+
+		it('tracks concurrent wizards on separate tabs independently', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'first',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-1',
+					'agent-1'
+				);
+			});
+			await act(async () => {
+				await result.current.startWizard(
+					'second',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Agent',
+					'tab-2',
+					'agent-2'
+				);
+			});
+
+			expect([...result.current.wizardActiveTabs.keys()].sort()).toEqual(['tab-1', 'tab-2']);
+
+			// Ending the tab that is NOT the last-touched one must evict that tab only.
+			await act(async () => {
+				await result.current.endWizard('tab-1');
+			});
+
+			expect([...result.current.wizardActiveTabs.keys()]).toEqual(['tab-2']);
+		});
 	});
 
 	describe('setExistingDocuments', () => {
@@ -646,6 +742,106 @@ describe('useInlineWizard', () => {
 			);
 			// Mode should have changed to 'new'
 			expect(result.current.wizardMode).toBe('new');
+		});
+	});
+
+	describe('cancelTurn', () => {
+		/** Start a wizard on a tab and leave a turn in flight (sendWizardMessage never resolves). */
+		async function startTurnInFlight() {
+			const { sendWizardMessage } =
+				await import('../../../renderer/services/inlineWizardConversation');
+			const mockSend = vi.mocked(sendWizardMessage);
+			let resolveTurn: (value: any) => void = () => {};
+			mockSend.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveTurn = resolve;
+					})
+			);
+
+			const { result } = renderHook(() => useInlineWizard());
+			await act(async () => {
+				await result.current.startWizard(
+					'build me a thing',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project',
+					'tab-1'
+				);
+			});
+
+			act(() => {
+				void result.current.sendMessage('build me a thing', undefined, undefined, 'tab-1');
+			});
+			await waitFor(() => expect(result.current.isWaiting).toBe(true));
+
+			return { result, resolveTurn: (v: any) => resolveTurn(v) };
+		}
+
+		it('kills the wizard process and clears the waiting state', async () => {
+			const { result } = await startTurnInFlight();
+
+			await act(async () => {
+				await result.current.cancelTurn('tab-1');
+			});
+
+			expect(mockProcessKill).toHaveBeenCalledWith('test-session-id');
+			expect(result.current.isWaiting).toBe(false);
+			expect(result.current.error).toBeNull();
+			const last = result.current.conversationHistory.at(-1);
+			expect(last?.role).toBe('system');
+			expect(last?.content).toContain('Turn stopped');
+		});
+
+		it('leaves the wizard active so the conversation can change direction', async () => {
+			const { result } = await startTurnInFlight();
+
+			await act(async () => {
+				await result.current.cancelTurn('tab-1');
+			});
+
+			expect(result.current.isWizardActive).toBe(true);
+			expect(result.current.conversationHistory.some((m) => m.role === 'user')).toBe(true);
+		});
+
+		it('does not surface the killed turn as an error', async () => {
+			const { result, resolveTurn } = await startTurnInFlight();
+
+			await act(async () => {
+				await result.current.cancelTurn('tab-1');
+			});
+
+			// The kill makes the agent exit non-zero; that resolution must stay silent.
+			await act(async () => {
+				resolveTurn({ success: false, error: 'Agent exited with code 143' });
+				await Promise.resolve();
+			});
+
+			expect(result.current.error).toBeNull();
+			expect(result.current.isWaiting).toBe(false);
+		});
+
+		it('is a no-op when no turn is running', async () => {
+			const { result } = renderHook(() => useInlineWizard());
+			await act(async () => {
+				await result.current.startWizard(
+					'build me a thing',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Test Project',
+					'tab-1'
+				);
+			});
+
+			let stopped: boolean | undefined;
+			await act(async () => {
+				stopped = await result.current.cancelTurn('tab-1');
+			});
+
+			expect(stopped).toBe(false);
+			expect(mockProcessKill).not.toHaveBeenCalled();
 		});
 	});
 

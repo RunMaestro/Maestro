@@ -409,7 +409,9 @@ describe('HistoryPanel', () => {
 
 			await waitFor(() => {
 				// Find the success indicator with validated title
-				const indicator = screen.getByTitle('Task completed successfully and human-validated');
+				const indicator = screen.getByTitle(
+					'Task completed successfully, and you marked it as checked'
+				);
 				expect(indicator).toBeInTheDocument();
 				// Should contain an SVG with two polylines (double check)
 				const svg = indicator.querySelector('svg');
@@ -1032,6 +1034,34 @@ describe('HistoryPanel', () => {
 				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
 				expect(screen.getByTestId('modal-entry-summary')).toHaveTextContent('Detail entry');
 			});
+		});
+
+		it('should jump to the entry session with Cmd+Enter instead of opening the modal', async () => {
+			const onOpenSessionAsTab = vi.fn();
+			const entry = createMockEntry({
+				summary: 'Jump entry',
+				agentSessionId: 'abc12345-def-789',
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container } = render(
+				<HistoryPanel
+					session={createMockSession()}
+					theme={mockTheme}
+					onOpenSessionAsTab={onOpenSessionAsTab}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Jump entry')).toBeInTheDocument();
+			});
+
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
+			fireEvent.keyDown(listContainer!, { key: 'Enter', metaKey: true });
+
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
 
 		it('should clear selection with Escape when modal is closed', async () => {

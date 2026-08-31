@@ -146,7 +146,7 @@ return {
 };
 ```
 
-### Shared Utilities (`tabHelpers.ts`)
+### Shared Utilities (`tabHelpers`)
 
 - **`buildUnifiedTabs(session)`** - Builds the unified tab list from session data. Follows `unifiedTabOrder` then appends orphaned tabs as a safety net. Single source of truth used by both `useTabHandlers.ts` and `tabStore.ts`.
 - **`ensureInUnifiedTabOrder(order, type, id)`** - Returns order unchanged if tab is present, appends it otherwise. Zero-cost no-op when no repair needed (returns same reference).
@@ -356,6 +356,8 @@ When adding a new Encore Feature, gate **all** access points:
 5. **Keyboard shortcuts** - Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`
 6. **Hamburger menu** - Make the setter optional, conditionally render the menu item in `SessionList.tsx`
 7. **Command palette** - Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
+8. **Left Bar / cycling** - A feature that adds a pinned AGENT (like Pianola) must also be hidden from the keyboard orders: the agent persists in the session store while the flag is off, so add it to `isSessionVisibleInSidebar()` in `src/renderer/utils/sessionVisibility.ts` or `Cmd+[` / `Cmd+]` still lands on it
+9. **Usage guide** - Fill in the entry's `description` in `src/shared/plugins/first-party.ts`, and add a `usage` block when the one-liner cannot carry it: `overview` (what it does), `access` (every way in - name a `shortcutId` rather than literal key text so the pane prints the user's LIVE binding), `steps` (an ordered walkthrough when setup takes more than one action), `notes` (guard rails worth stating before someone enables it), `agentCommands`, and `docsSlug`. `UsageGuide.tsx` renders whichever sections exist, so nothing is hard-coded per feature in the view
 
 ### Reference Implementations
 
@@ -390,7 +392,7 @@ When a `<webview>` has focus, keyboard events are trapped in its guest Chromium 
 
 **Key files:** `window-manager.ts` (before-input-event + guest injection), `preload/system.ts` (IPC bridge), `useMainKeyboardHandler.ts` (IPC → dispatch), `BrowserTabView.tsx` (focus guard)
 
-**Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers.ts`) must explicitly handle `browser` type tabs - they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
+**Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers`) must explicitly handle `browser` type tabs - they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
 
 See [[IPC-PATTERNS.md → Browser Tab Shortcut Forwarding]](docs/agent-guides/IPC-PATTERNS.md#browser-tab-shortcut-forwarding) for the full event flow.
 

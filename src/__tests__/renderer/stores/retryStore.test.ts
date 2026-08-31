@@ -19,9 +19,11 @@ import {
 	cancelRetry,
 	clearRetryIfSettled,
 	getRetryEntry,
+	hasPendingRetry,
 	getOutage,
 	sessionHasActiveOutage,
 	registerBatchResumer,
+	replayAfterAuth,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -262,6 +264,48 @@ describe('noteDispatch supersession', () => {
 		);
 		expect(getRetryEntry('s14', 't1')?.status).toBe('in-flight');
 	});
+
+	// Superseding drops the entry, which also kills the timer. If the outage
+	// record stayed 'active' the transcript card would tick "Failing for" upward
+	// forever on a retry that is never coming, show "Next attempt: now…", and its
+	// Stop button would be inert (cancelRetry early-returns without an entry).
+	it('freezes the outage card when a fresh dispatch supersedes the retry', () => {
+		setupSession('s15', 't1');
+		seedSnapshot('s15', 't1');
+		scheduleRetryForError('s15', 't1', quota());
+		const outageId = getRetryEntry('s15', 't1')!.outageId;
+		expect(getOutage(outageId)?.status).toBe('active');
+
+		noteDispatch(
+			's15',
+			{ id: 'item-2', timestamp: 2, tabId: 't1', type: 'message', text: 'different' },
+			deps
+		);
+
+		expect(getOutage(outageId)?.status).toBe('stopped');
+		expect(getOutage(outageId)?.resolvedAt).toBe(NOW);
+	});
+});
+
+describe('hasPendingRetry', () => {
+	it('is true only while a retry is counting down', () => {
+		setupSession('s16', 't1');
+		seedSnapshot('s16', 't1');
+		expect(hasPendingRetry('s16', 't1')).toBe(false);
+
+		scheduleRetryForError('s16', 't1', quota());
+		expect(hasPendingRetry('s16', 't1')).toBe(true);
+
+		// An in-flight resend is already dispatched - it must NOT hold the queue,
+		// or the queue would never drain after a successful retry.
+		retryNow('s16', 't1');
+		expect(getRetryEntry('s16', 't1')?.status).toBe('in-flight');
+		expect(hasPendingRetry('s16', 't1')).toBe(false);
+	});
+
+	it('is false for a tab with no retry at all', () => {
+		expect(hasPendingRetry('nope', 'nope')).toBe(false);
+	});
 });
 
 describe('batch-resume mode', () => {
@@ -354,5 +398,107 @@ describe('outage records (transcript status card)', () => {
 		expect(outage.status).toBe('stopped');
 		expect(outage.resolvedAt).toBe(NOW);
 		expect(sessionHasActiveOutage('o4')).toBe(false);
+	});
+});
+
+describe('replayAfterAuth', () => {
+	// The user's ask: after re-authenticating once, the work that died on the
+	// expired token comes back on its own. `auth_expired` is deliberately
+	// non-retryable on a timer (only a human can fix it), so this replay hangs
+	// off the human's login instead.
+	it('resends the snapshotted turn for each failed tab', () => {
+		setupSession('sess-1', 'tab-1');
+		seedSnapshot('sess-1', 'tab-1');
+
+		replayAfterAuth('sess-1', ['tab-1']);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			'sess-1',
+			expect.objectContaining({ text: 'hi', tabId: 'tab-1' }),
+			deps
+		);
+	});
+
+	it('replays every failed tab of a multi-tab agent', () => {
+		setupSession('sess-1', 'tab-1');
+		seedSnapshot('sess-1', 'tab-1');
+		noteDispatch(
+			'sess-1',
+			{ id: 'item-2', timestamp: 2, tabId: 'tab-2', type: 'message', text: 'second' },
+			deps
+		);
+
+		replayAfterAuth('sess-1', ['tab-1', 'tab-2']);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(2);
+	});
+
+	// Every tab has a snapshot, including ones whose last turn succeeded.
+	// Replaying those would put a message the user never asked for on the wire.
+	it('replays only the tabs it was given', () => {
+		setupSession('sess-1', 'tab-1');
+		seedSnapshot('sess-1', 'tab-1');
+		noteDispatch(
+			'sess-1',
+			{ id: 'item-2', timestamp: 2, tabId: 'tab-healthy', type: 'message', text: 'fine' },
+			deps
+		);
+
+		replayAfterAuth('sess-1', ['tab-1']);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem).not.toHaveBeenCalledWith(
+			'sess-1',
+			expect.objectContaining({ tabId: 'tab-healthy' }),
+			expect.anything()
+		);
+	});
+
+	// Snapshots are in memory only, so an app restart between the failure and
+	// the login leaves nothing to replay. (Distinct ids because the snapshot map
+	// is module-scoped and outlives the store resets in beforeEach.)
+	it('does nothing for a tab with no snapshot', () => {
+		setupSession('sess-fresh', 'tab-fresh');
+
+		expect(() => replayAfterAuth('sess-fresh', ['tab-fresh'])).not.toThrow();
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('replays the remaining tabs when one has no snapshot', () => {
+		setupSession('sess-1', 'tab-1');
+		seedSnapshot('sess-1', 'tab-1');
+
+		replayAfterAuth('sess-1', ['tab-never-dispatched', 'tab-1']);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+	});
+
+	it('supersedes a pending auto-retry on the same tab', () => {
+		setupSession('sess-1', 'tab-1');
+		seedSnapshot('sess-1', 'tab-1');
+		scheduleRetryForError('sess-1', 'tab-1', overload());
+		expect(getRetryEntry('sess-1', 'tab-1')).toBeDefined();
+
+		replayAfterAuth('sess-1', ['tab-1']);
+
+		// We are dispatching that work right now; the timer must not fire it again.
+		expect(getRetryEntry('sess-1', 'tab-1')).toBeUndefined();
+		vi.runAllTimers();
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps replaying after a dispatch throws', () => {
+		setupSession('sess-1', 'tab-1');
+		seedSnapshot('sess-1', 'tab-1');
+		noteDispatch(
+			'sess-1',
+			{ id: 'item-2', timestamp: 2, tabId: 'tab-2', type: 'message', text: 'second' },
+			deps
+		);
+		processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
+
+		expect(() => replayAfterAuth('sess-1', ['tab-1', 'tab-2'])).not.toThrow();
+		expect(processQueuedItem).toHaveBeenCalledTimes(2);
 	});
 });

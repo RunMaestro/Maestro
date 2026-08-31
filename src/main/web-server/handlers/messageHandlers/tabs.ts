@@ -3,15 +3,23 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: select_tab, new_tab,
  * close_tab, rename_tab, star_tab, reorder_tab, toggle_bookmark,
- * open_file_tab, open_browser_tab, open_terminal_tab, new_ai_tab_with_prompt.
+ * open_file_tab, open_browser_tab, open_terminal_tab, new_ai_tab_with_prompt,
+ * open_document_graph.
  */
 
 import path from 'path';
+import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import {
+	UI_SURFACES,
+	resolveUiSurface,
+	resolveUiSurfaceTab,
+	surfaceTabIds,
+} from '../../../../shared/uiSurfaces';
 
 /**
  * Handle select_tab message - select a tab within a session
@@ -60,7 +68,11 @@ export function handleNewTab(
 	message: WebClientMessage
 ): void {
 	const sessionId = message.sessionId as string;
-	logger.info(`[Web] Received new_tab message: session=${sessionId}`, LOG_CONTEXT);
+	const background = readBackgroundField(message);
+	logger.info(
+		`[Web] Received new_tab message: session=${sessionId}, background=${background}`,
+		LOG_CONTEXT
+	);
 
 	if (!sessionId) {
 		ctx.sendError(client, 'Missing sessionId');
@@ -73,13 +85,14 @@ export function handleNewTab(
 	}
 
 	ctx.callbacks
-		.newTab(sessionId)
+		.newTab(sessionId, background)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'new_tab_result',
 				success: !!result,
 				sessionId,
 				tabId: result?.tabId,
+				background,
 				requestId: message.requestId,
 			});
 		})
@@ -302,10 +315,16 @@ export function handleOpenFileTab(
 ): void {
 	const sessionId = message.sessionId as string;
 	const filePath = message.filePath as string;
-	// `switchToAgent` defaults to true so older clients keep the existing UX.
-	const switchToAgent = message.switchToAgent !== false;
+	// Two DIFFERENT asks, and folding one into the other would silently change
+	// behaviour for callers already passing `--no-switch`:
+	//   switchToAgent:false -> stay on the current agent, but still activate
+	//                          the new tab inside the target agent.
+	//   background:true     -> change nothing that is currently rendered,
+	//                          anywhere. Strictly stronger, so it wins.
+	const background = readBackgroundField(message);
+	const switchToAgent = readSwitchToAgentField(message);
 	logger.info(
-		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, switchToAgent=${switchToAgent}`,
+		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, background=${background}, switchToAgent=${switchToAgent}`,
 		LOG_CONTEXT
 	);
 
@@ -345,13 +364,15 @@ export function handleOpenFileTab(
 	}
 
 	ctx.callbacks
-		.openFileTab(sessionId, resolved, switchToAgent)
+		.openFileTab(sessionId, resolved, { background, switchToAgent })
 		.then((success) => {
 			ctx.send(client, {
 				type: 'open_file_tab_result',
 				success,
 				sessionId,
 				filePath,
+				background,
+				switchToAgent,
 				requestId: message.requestId,
 			});
 		})
@@ -511,6 +532,7 @@ export async function handleOpenTerminalTab(
 	const rawShell = message.shell;
 	const rawName = message.name;
 	const rawCommand = message.command;
+	const background = readBackgroundField(message);
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
 	logger.info(
@@ -601,13 +623,14 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command })
+		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',
 				success: result.success,
 				tabId: result.tabId,
 				sessionId,
+				background,
 				requestId: message.requestId,
 			});
 		})
@@ -789,6 +812,85 @@ export async function handleWriteTerminalTab(
 }
 
 /**
+ * Handle read_terminal_tab message - read a terminal tab's scrollback. The
+ * counterpart to write_terminal_tab: that one types into a shell, this reads
+ * back what it printed, so an agent can observe a command it started.
+ *
+ * Like the write path, the tab is resolved in the renderer, since terminal
+ * tabs (and their xterm buffers) live only in renderer state.
+ */
+export async function handleReadTerminalTab(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const rawTabRef = message.tabRef;
+	const rawTail = message.tail;
+
+	const sendErrorResult = (error: string) => {
+		ctx.send(client, {
+			type: 'read_terminal_tab_result',
+			success: false,
+			error,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId) {
+		sendErrorResult('Missing sessionId');
+		return;
+	}
+	if (rawTabRef !== undefined && typeof rawTabRef !== 'string') {
+		sendErrorResult('Invalid tabRef: must be a string');
+		return;
+	}
+	if (
+		rawTail !== undefined &&
+		(typeof rawTail !== 'number' || !Number.isFinite(rawTail) || rawTail < 1)
+	) {
+		sendErrorResult('Invalid tail: must be a positive number');
+		return;
+	}
+
+	const session = ctx.callbacks.getSessions?.().find((s) => s.id === sessionId);
+	if (!session) {
+		sendErrorResult('Session not found');
+		return;
+	}
+
+	if (!ctx.callbacks.readTerminalTab) {
+		sendErrorResult('Terminal reads not configured');
+		return;
+	}
+
+	try {
+		const result = await ctx.callbacks.readTerminalTab(sessionId, {
+			tabRef: typeof rawTabRef === 'string' ? rawTabRef : undefined,
+			tail: typeof rawTail === 'number' ? Math.floor(rawTail) : undefined,
+		});
+		ctx.send(client, {
+			type: 'read_terminal_tab_result',
+			success: result.success,
+			error: result.error,
+			tabId: result.tabId,
+			tabName: result.tabName,
+			cwd: result.cwd,
+			state: result.state,
+			content: result.content,
+			totalLines: result.totalLines,
+			sessionId,
+			requestId: message.requestId,
+		});
+	} catch (error) {
+		sendErrorResult(
+			`Failed to read terminal tab: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+}
+
+/**
  * Handle list_terminal_tabs message - enumerate open desktop terminal tabs,
  * optionally scoped to one agent.
  */
@@ -837,4 +939,147 @@ export async function handleListTerminalTabs(
 			requestId: message.requestId,
 		});
 	}
+}
+
+/**
+ * Handle open_document_graph - render the Document Graph over a named set of
+ * documents rather than the usual one-focus-file graph.
+ *
+ * Paths are resolved against the agent's cwd only so a relative path from a
+ * script still works. They are deliberately NOT confined to the worktree,
+ * matching `open_file_tab`: a paired client already has shell-level access, so
+ * confining a read-only visualization gates nothing the connection token does
+ * not already gate.
+ */
+export function handleOpenDocumentGraph(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = message.sessionId as string;
+	const rawFiles = Array.isArray(message.files) ? (message.files as string[]) : [];
+	const rawDirectory = typeof message.directory === 'string' ? message.directory : undefined;
+	const rawFocus = typeof message.focusPath === 'string' ? message.focusPath : undefined;
+
+	const sendErrorResult = (error: string) => {
+		ctx.send(client, {
+			type: 'open_document_graph_result',
+			success: false,
+			error,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId) {
+		sendErrorResult('Missing sessionId');
+		return;
+	}
+	if (rawFiles.length === 0 && rawDirectory === undefined) {
+		sendErrorResult('Give either files or a directory to graph');
+		return;
+	}
+
+	const sessions = ctx.callbacks.getSessions?.();
+	const session = sessions?.find((s) => s.id === sessionId);
+	if (!session?.cwd) {
+		sendErrorResult('Session not found or has no working directory');
+		return;
+	}
+
+	const sessionRoot = path.resolve(session.cwd);
+	const files = rawFiles
+		.filter((f) => typeof f === 'string' && f.length > 0)
+		.map((f) => path.resolve(sessionRoot, f));
+	const directory =
+		rawDirectory !== undefined ? path.resolve(sessionRoot, rawDirectory) : undefined;
+	const focusPath = rawFocus ? path.resolve(sessionRoot, rawFocus) : undefined;
+
+	logger.info(
+		`[Web] Received open_document_graph: session=${sessionId}, files=${files.length}, directory=${directory ?? 'none'}`,
+		LOG_CONTEXT
+	);
+
+	if (!ctx.callbacks.openDocumentGraph) {
+		sendErrorResult('Document graph opening not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.openDocumentGraph({ sessionId, files, directory, focusPath })
+		.then((success) => {
+			ctx.send(client, {
+				type: 'open_document_graph_result',
+				success,
+				sessionId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			sendErrorResult(`Failed to open document graph: ${error.message}`);
+		});
+}
+
+/**
+ * Handle open_modal message - open one of the app's modals / dashboards by
+ * `UiSurface.id`, optionally on a specific tab. Both the surface and the tab
+ * are validated here so the renderer only ever receives ids it can act on.
+ */
+export function handleOpenModal(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const surfaceName = typeof message.surface === 'string' ? message.surface : '';
+	const tabName =
+		typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
+
+	const sendResult = (success: boolean, error?: string) => {
+		ctx.send(client, {
+			type: 'open_modal_result',
+			success,
+			error,
+			requestId: message.requestId,
+		});
+	};
+
+	const surface = resolveUiSurface(surfaceName);
+	if (!surface) {
+		sendResult(
+			false,
+			`Unknown surface "${surfaceName}". Valid surfaces: ${UI_SURFACES.map((s) => s.id).join(', ')}`
+		);
+		return;
+	}
+
+	let tabId: string | undefined;
+	if (tabName !== undefined) {
+		const tab = resolveUiSurfaceTab(surface, tabName);
+		if (!tab) {
+			const valid = surfaceTabIds(surface);
+			sendResult(
+				false,
+				valid.length > 0
+					? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
+					: `${surface.label} has no tabs.`
+			);
+			return;
+		}
+		tabId = tab.id;
+	}
+
+	logger.info(
+		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}`,
+		LOG_CONTEXT
+	);
+
+	if (!ctx.callbacks.openModal) {
+		sendResult(false, 'Opening modals is not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.openModal({ surface: surface.id, tab: tabId })
+		.then((success) => sendResult(success, success ? undefined : 'Maestro window is not available'))
+		.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 }

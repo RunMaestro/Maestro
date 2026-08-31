@@ -11,7 +11,9 @@
  * - rename: Rename file/directory (local & SSH remote)
  * - copyPath: Copy a file/directory into a destination (local only; drag-import)
  * - delete: Delete file/directory (local & SSH remote)
+ * - deleteMany: Delete a batch of files/directories in one call (local & SSH remote)
  * - countItems: Count files and folders recursively (local & SSH remote)
+ * - compressFolder: Zip a folder into its parent dir (local & SSH remote)
  * - fetchImageAsBase64: Fetch image from URL and return as base64
  *
  * Extracted from main/index.ts to improve code organization.
@@ -21,15 +23,19 @@ import { ipcMain } from 'electron';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, createWriteStream } from 'fs';
+import archiver from 'archiver';
 
 import { logger } from '../../utils/logger';
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import {
 	shouldIgnore,
 	parseGitignoreContent,
 	LOCAL_IGNORE_DEFAULTS,
 } from '../../../shared/globUtils';
 import { isMediaFile } from '../../../shared/mediaTypes';
+import { buildParquetPreviewMarker, isParquetFile } from '../../../shared/parquet/preview';
+import { getImageMimeType } from '../../../shared/gitUtils';
 import { buildLocalMediaStreamUrl } from '../../media/media-stream';
 import {
 	readDirRemote,
@@ -42,8 +48,10 @@ import {
 	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
+	deleteManyRemote,
 	existsRemote,
 	countItemsRemote,
+	compressFolderRemote,
 	listTreeRemote,
 	type ListTreeOptions,
 } from '../../utils/remote-fs';
@@ -52,6 +60,7 @@ import { resolveDirentType } from '../../utils/dirent-utils';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import { captureException } from '../../utils/sentry';
+import { mapWithConcurrency, LOCAL_FILE_DELETE_CONCURRENCY } from '../../utils/concurrency';
 
 /**
  * Recursively upload a local directory to a remote host over SSH.
@@ -135,6 +144,13 @@ async function uploadLocalPathToRemote(
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
 
 /**
+ * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
+ * this, and the SSRF guard above only vets the host: a permitted host that
+ * accepts the connection and then stalls would hang the handler forever.
+ */
+const IMAGE_FETCH_TIMEOUT_MS = 15_000;
+
+/**
  * Check if a hostname resolves to a private/internal network address.
  * Blocks SSRF attacks targeting localhost, private RFC1918 ranges,
  * link-local addresses, and cloud metadata endpoints.
@@ -179,6 +195,56 @@ function isPrivateHostname(hostname: string): boolean {
 /**
  * Register all filesystem-related IPC handlers.
  */
+/**
+ * Pick a free `.zip` path for `basePath` (an extension-less path).
+ *
+ * Tries `<base>.zip` first, then `<base>-1.zip`, `<base>-2.zip`, ... until the
+ * probe reports a free name. `exists` is injected so the same walk serves both
+ * the local disk and an SSH remote.
+ */
+async function resolveUniqueZipPath(
+	basePath: string,
+	exists: (candidate: string) => Promise<boolean>
+): Promise<string> {
+	let candidate = `${basePath}.zip`;
+	let suffix = 0;
+	// Bounded so a filesystem that reports every name as taken (a permission
+	// error surfacing as "exists", say) cannot spin forever.
+	while (await exists(candidate)) {
+		suffix++;
+		if (suffix > 9999) {
+			throw new Error(`Could not find an unused archive name for ${basePath}.zip`);
+		}
+		candidate = `${basePath}-${suffix}.zip`;
+	}
+	return candidate;
+}
+
+/** Outcome of one path in a `fs:deleteMany` batch. */
+interface BulkDeleteResult {
+	path: string;
+	success: boolean;
+	error?: string;
+}
+
+/**
+ * Delete one local file or directory.
+ *
+ * Shared by `fs:delete` and `fs:deleteMany` so the two cannot drift on what
+ * "delete" means. The `stat` is what decides between `rm` and `unlink`, and it
+ * stays here rather than being folded into an unconditional `fs.rm(..., {
+ * recursive })`: with `recursive: false` an explicit stat is what lets a
+ * directory fail as a directory instead of surfacing as a bare `ERR_FS_EISDIR`.
+ */
+async function deleteLocalPath(targetPath: string, recursive: boolean): Promise<void> {
+	const stat = await fs.stat(targetPath);
+	if (stat.isDirectory()) {
+		await fs.rm(targetPath, { recursive, force: true });
+	} else {
+		await fs.unlink(targetPath);
+	}
+}
+
 export function registerFilesystemHandlers(): void {
 	// Get user home directory
 	ipcMain.handle('fs:homeDir', () => {
@@ -264,6 +330,16 @@ export function registerFilesystemHandlers(): void {
 		'fs:readFile',
 		async (_, filePath: string, sshRemoteId?: string, requestId?: string) => {
 			try {
+				// Parquet is binary, columnar, and routinely larger than RAM.
+				// Reading it as text would corrupt it and blow up the IPC
+				// payload for a file the viewer only ever reads a window of, so
+				// hand back a marker and let the ParquetViewer query it through
+				// the `parquet:*` handlers instead. Applies to remote files too:
+				// the parquet reader fetches those into a local cache itself.
+				if (isParquetFile(filePath)) {
+					return buildParquetPreviewMarker(filePath);
+				}
+
 				// SSH remote: dispatch to remote fs operations
 				if (sshRemoteId) {
 					const sshConfig = getSshRemoteById(sshRemoteId);
@@ -284,8 +360,7 @@ export function registerFilesystemHandlers(): void {
 							}
 							throw new Error(imgResult.error || 'Failed to read remote image');
 						}
-						const mimeType = imgExt === 'svg' ? 'image/svg+xml' : `image/${imgExt}`;
-						return `data:${mimeType};base64,${imgResult.data}`;
+						return `data:${getImageMimeType(imgExt || '')};base64,${imgResult.data}`;
 					}
 
 					let result: Awaited<ReturnType<typeof readFileRemote>>;
@@ -326,8 +401,7 @@ export function registerFilesystemHandlers(): void {
 					// Read image as buffer and convert to base64 data URL
 					const buffer = await fs.readFile(filePath);
 					const base64 = buffer.toString('base64');
-					const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
-					return `data:${mimeType};base64,${base64}`;
+					return `data:${getImageMimeType(ext || '')};base64,${base64}`;
 				} else if (isMediaFile(filePath)) {
 					// Audio/video never gets inlined the way images do - a long
 					// recording would blow up the IPC payload and pin the whole file
@@ -759,17 +833,135 @@ export function registerFilesystemHandlers(): void {
 					return { success: true };
 				}
 
-				// Local: standard fs delete
-				const stat = await fs.stat(targetPath);
-				if (stat.isDirectory()) {
-					await fs.rm(targetPath, { recursive: options?.recursive ?? true, force: true });
-				} else {
-					await fs.unlink(targetPath);
-				}
+				await deleteLocalPath(targetPath, options?.recursive ?? true);
 				return { success: true };
 			} catch (error) {
 				throw new Error(`Failed to delete: ${error}`);
 			}
+		}
+	);
+
+	// Delete a batch of files/folders in ONE IPC call (supports SSH remote).
+	//
+	// The renderer used to loop `fs:delete` per path, which serialized a full
+	// round trip - plus a `stat` and the SSH handshake - behind every single
+	// file. On a slow volume or a remote host that per-file latency is the whole
+	// cost, and a 125-file multi-select took over 30 seconds (issue #1423).
+	//
+	// Unlike `fs:delete` this RESOLVES with a per-path outcome instead of
+	// throwing on the first failure: a partial delete is the normal case for a
+	// bulk operation (one locked or permission-denied file among many), and the
+	// caller needs to know which paths survived so it can report and attribute
+	// them rather than losing the whole batch to one bad entry.
+	ipcMain.handle(
+		'fs:deleteMany',
+		async (
+			_,
+			targetPaths: string[],
+			options?: { recursive?: boolean; sshRemoteId?: string }
+		): Promise<{ results: BulkDeleteResult[] }> => {
+			if (!Array.isArray(targetPaths) || targetPaths.length === 0) {
+				return { results: [] };
+			}
+
+			const recursive = options?.recursive ?? true;
+			const sshRemoteId = options?.sshRemoteId;
+
+			// SSH remote: one `rm` for the whole batch rather than one per path.
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(sshRemoteId);
+				if (!sshConfig) {
+					// An unresolvable remote is a configuration failure, not a
+					// per-path one - fail the call rather than reporting 125
+					// identical path errors.
+					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				}
+				const remoteResults = await deleteManyRemote(targetPaths, sshConfig, recursive);
+				return {
+					results: remoteResults.map((result, index) => ({
+						path: targetPaths[index],
+						success: result.success,
+						...(result.success ? {} : { error: result.error || 'Failed to delete remote file' }),
+					})),
+				};
+			}
+
+			// Local: overlap the deletes so per-file latency stops being additive.
+			const results = await mapWithConcurrency(
+				targetPaths,
+				LOCAL_FILE_DELETE_CONCURRENCY,
+				async (targetPath): Promise<BulkDeleteResult> => {
+					try {
+						await deleteLocalPath(targetPath, recursive);
+						return { path: targetPath, success: true };
+					} catch (error) {
+						return {
+							path: targetPath,
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						};
+					}
+				}
+			);
+
+			return { results };
+		}
+	);
+
+	// Compress a folder into a .zip sitting beside it in the parent directory.
+	// The archive is named after the folder; when that name is taken the next
+	// free `-N` suffix is used, so repeated compressions never clobber an
+	// existing archive.
+	ipcMain.handle(
+		'fs:compressFolder',
+		async (_, folderPath: string, options?: { sshRemoteId?: string }) => {
+			const sshRemoteId = options?.sshRemoteId;
+			const folderName = path.basename(folderPath.replace(/[\\/]+$/, ''));
+			const parentDir = path.dirname(folderPath.replace(/[\\/]+$/, ''));
+
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(sshRemoteId);
+				if (!sshConfig) {
+					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				}
+				// Remote paths are POSIX regardless of what the desktop runs on, so
+				// join with '/' rather than path.join (which uses '\\' on Windows).
+				const destPath = await resolveUniqueZipPath(
+					`${parentDir.replace(/\\/g, '/')}/${folderName}`,
+					async (candidate) => {
+						const result = await existsRemote(candidate, sshConfig);
+						if (!result.success) {
+							throw new Error(result.error || 'Failed to check remote path');
+						}
+						return result.data === true;
+					}
+				);
+				const result = await compressFolderRemote(folderPath, destPath, sshConfig);
+				if (!result.success) {
+					throw new Error(result.error || 'Failed to compress remote folder');
+				}
+				return { success: true, path: destPath, name: path.posix.basename(destPath) };
+			}
+
+			const destPath = await resolveUniqueZipPath(
+				path.join(parentDir, folderName),
+				async (candidate) => existsSync(candidate)
+			);
+
+			await new Promise<void>((resolve, reject) => {
+				const output = createWriteStream(destPath);
+				const archive = archiver('zip', { zlib: { level: 9 } });
+				output.on('close', () => resolve());
+				output.on('error', reject);
+				archive.on('error', reject);
+				archive.pipe(output);
+				// Nest everything under the folder's own name so unzipping produces a
+				// single folder rather than spraying its contents into the cwd.
+				archive.directory(folderPath, folderName);
+				void archive.finalize();
+			});
+
+			return { success: true, path: destPath, name: path.basename(destPath) };
 		}
 	);
 
@@ -836,7 +1028,7 @@ export function registerFilesystemHandlers(): void {
 				throw new Error(`Requests to private/internal addresses are not allowed: ${hostname}`);
 			}
 
-			const response = await fetch(url);
+			const response = await fetchWithTimeout(url, {}, IMAGE_FETCH_TIMEOUT_MS);
 			if (!response.ok) {
 				throw new Error(`HTTP ${response.status}`);
 			}

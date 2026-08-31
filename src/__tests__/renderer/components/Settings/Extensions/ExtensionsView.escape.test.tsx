@@ -10,9 +10,10 @@
  *  - details showing     -> back to the grid, Settings untouched
  *  - Escape twice        -> back, then Settings closes
  *
- * The same grid-vs-details distinction governs the header chrome, so the
- * "Install plugin…" button's visibility is asserted here too rather than
- * standing up a second copy of this mock scaffolding.
+ * The same grid-vs-details distinction governs the header chrome - the one
+ * top-right slot holds "Install plugin…" on the grid and "All plugins" in the
+ * details pane - so that swap is asserted here too rather than standing up a
+ * second copy of this mock scaffolding.
  */
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -71,10 +72,9 @@ vi.mock('../../../../../renderer/components/Settings/Extensions/useExtensions', 
 // The detail pane's internals are covered by the ExtensionDetails suites; this
 // suite only needs to know whether it is on screen.
 vi.mock('../../../../../renderer/components/Settings/Extensions/ExtensionDetails', () => ({
-	ExtensionDetails: ({ ext, onBack }: { ext: UnifiedExtension; onBack: () => void }) => (
+	ExtensionDetails: ({ ext }: { ext: UnifiedExtension }) => (
 		<div data-testid="extension-details-stub">
 			<span data-testid="details-name">{ext.name}</span>
-			<button data-testid="details-back" onClick={onBack} />
 		</div>
 	),
 }));
@@ -140,37 +140,40 @@ describe('ExtensionsView escape routing', () => {
 		expect(settingsEscape).toHaveBeenCalledTimes(1);
 	});
 
-	it('still supports the explicit back button', () => {
+	it('still supports the explicit back button in the header', () => {
 		const { settingsEscape } = renderView();
 		openFirstTile();
 
-		fireEvent.click(screen.getByTestId('details-back'));
+		fireEvent.click(screen.getByTestId('extensions-back'));
 
 		expect(screen.queryByTestId('extension-details-stub')).not.toBeInTheDocument();
 		expect(settingsEscape).not.toHaveBeenCalled();
 	});
 });
 
-describe('ExtensionsView install button', () => {
-	it('shows the install button on the grid', () => {
+describe('ExtensionsView header slot', () => {
+	it('offers install, and no way back, on the grid', () => {
 		renderView();
 
 		expect(screen.getByTestId('extensions-install')).toBeInTheDocument();
+		expect(screen.queryByTestId('extensions-back')).not.toBeInTheDocument();
 	});
 
-	it('hides the install button while a details pane is open', () => {
+	it('swaps install for the way back while a details pane is open', () => {
 		renderView();
 		openFirstTile();
 
 		expect(screen.queryByTestId('extensions-install')).not.toBeInTheDocument();
+		expect(screen.getByTestId('extensions-back')).toHaveTextContent('All plugins');
 	});
 
-	it('brings the install button back after going to the grid', () => {
+	it('restores the install button after going back to the grid', () => {
 		renderView();
 		openFirstTile();
 
-		fireEvent.click(screen.getByTestId('details-back'));
+		fireEvent.click(screen.getByTestId('extensions-back'));
 
 		expect(screen.getByTestId('extensions-install')).toBeInTheDocument();
+		expect(screen.queryByTestId('extensions-back')).not.toBeInTheDocument();
 	});
 });

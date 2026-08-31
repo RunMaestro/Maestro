@@ -29,6 +29,7 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
 	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
+	ADD_QUERY_EVENT_TOKEN_COLUMNS,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -85,6 +86,11 @@ function getMigrations(): Migration[] {
 			description:
 				'Add multi_window_usage_daily table for tracking windows opened and peak concurrent windows per day',
 			up: (db) => migrateV8(db),
+		},
+		{
+			version: 9,
+			description: 'Add per-turn token and cost columns to query_events for cost attribution',
+			up: (db) => migrateV9(db),
 		},
 	];
 }
@@ -332,6 +338,26 @@ function migrateV8(db: Database.Database): void {
 	db.prepare(CREATE_MULTI_WINDOW_USAGE_DAILY_SQL).run();
 
 	logger.debug('Created multi_window_usage_daily table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v9: Add per-turn token and cost columns to query_events.
+ *
+ * Columns stay nullable with no default so a historical row reads as "unknown"
+ * rather than "zero tokens" - see ADD_QUERY_EVENT_TOKEN_COLUMNS. Guarded by
+ * hasColumn for the same reason as v5: a partially-applied run must be safe to
+ * repeat.
+ *
+ * `cost_usd` is REAL; the token columns are INTEGER.
+ */
+function migrateV9(db: Database.Database): void {
+	for (const column of ADD_QUERY_EVENT_TOKEN_COLUMNS) {
+		if (hasColumn(db, 'query_events', column)) continue;
+		const type = column === 'cost_usd' ? 'REAL' : 'INTEGER';
+		db.prepare(`ALTER TABLE query_events ADD COLUMN ${column} ${type}`).run();
+	}
+
+	logger.debug('Added token and cost columns to query_events table', LOG_CONTEXT);
 }
 
 /**

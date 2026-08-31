@@ -31,7 +31,8 @@ export const EXPERIENCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'document-graph',
 	},
 	documentGraphPreviewCharLimit: {
-		description: 'Character limit for node preview text in the document graph. Range: 50-500.',
+		description:
+			'Character limit for node preview text in the document graph. Range: 0-500, where 0 draws each node as a filename pill with no preview text.',
 		type: 'number',
 		default: 100,
 		category: 'document-graph',

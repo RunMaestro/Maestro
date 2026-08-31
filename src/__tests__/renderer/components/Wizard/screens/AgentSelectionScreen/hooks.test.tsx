@@ -7,6 +7,7 @@ import { useAgentDetection } from '../../../../../../renderer/components/Wizard/
 import { useAgentSelectionFocus } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useAgentSelectionFocus';
 import { useAgentSelectionKeyboard } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useAgentSelectionKeyboard';
 import { useSshRemotes } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useSshRemotes';
+import { AGENT_TILES } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentTiles';
 import { captureException } from '../../../../../../renderer/utils/sentry';
 
 vi.mock('../../../../../../renderer/utils/sentry', () => ({
@@ -45,6 +46,9 @@ function createRefs() {
 		},
 	};
 }
+
+const FIRST_TILE_ID = AGENT_TILES[0].id;
+const SECOND_TILE_ID = AGENT_TILES[1].id;
 
 describe('AgentSelectionScreen hooks', () => {
 	beforeEach(() => {
@@ -292,6 +296,7 @@ describe('AgentSelectionScreen hooks', () => {
 		const { rerender } = renderHook(
 			({ detectedAgents, selectedAgent }) =>
 				useAgentSelectionFocus({
+					tiles: AGENT_TILES,
 					isDetecting: false,
 					selectedAgent,
 					detectedAgents,
@@ -301,7 +306,7 @@ describe('AgentSelectionScreen hooks', () => {
 				}),
 			{
 				initialProps: {
-					detectedAgents: [agent({ id: 'claude-code', available: true })],
+					detectedAgents: [agent({ id: FIRST_TILE_ID, available: true })],
 					selectedAgent: null as string | null,
 				},
 			}
@@ -310,12 +315,14 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(nameInput.focus).toHaveBeenCalled();
 		expect(setIsNameFieldFocused).toHaveBeenCalledWith(true);
 
+		// Tile order is alphabetical and grows with every new provider, so drive
+		// the assertion off the strip rather than off two hard-coded ids.
 		rerender({
 			detectedAgents: [
-				agent({ id: 'claude-code', available: true }),
-				agent({ id: 'codex', available: true }),
+				agent({ id: FIRST_TILE_ID, available: true }),
+				agent({ id: SECOND_TILE_ID, available: true }),
 			],
-			selectedAgent: 'codex',
+			selectedAgent: SECOND_TILE_ID,
 		});
 
 		expect(setFocusedTileIndex).toHaveBeenCalledWith(1);
@@ -333,11 +340,13 @@ describe('AgentSelectionScreen hooks', () => {
 		const { result, rerender } = renderHook(
 			({ isNameFieldFocused, focusedTileIndex }) =>
 				useAgentSelectionKeyboard({
+					tiles: AGENT_TILES,
+					tileColumns: AGENT_TILES.length,
 					isNameFieldFocused,
 					focusedTileIndex,
 					detectedAgents: [
-						agent({ id: 'claude-code', available: true }),
-						agent({ id: 'codex', available: true }),
+						agent({ id: FIRST_TILE_ID, available: true }),
+						agent({ id: SECOND_TILE_ID, available: true }),
 					],
 					nameInputRef: refs.nameInputRef,
 					tileRefs: refs.tileRefs,
@@ -359,7 +368,7 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(nameInput.focus).toHaveBeenCalled();
 
 		act(() => result.current({ key: ' ', preventDefault } as any));
-		expect(setSelectedAgent).toHaveBeenCalledWith('claude-code');
+		expect(setSelectedAgent).toHaveBeenCalledWith(FIRST_TILE_ID);
 
 		act(() => result.current({ key: 'Enter', preventDefault } as any));
 		expect(nextStep).toHaveBeenCalledTimes(1);
@@ -367,6 +376,151 @@ describe('AgentSelectionScreen hooks', () => {
 		rerender({ isNameFieldFocused: true, focusedTileIndex: 0 });
 		act(() => result.current({ key: 'Tab', shiftKey: true, preventDefault } as any));
 		expect(setFocusedTileIndex).toHaveBeenCalledWith(1);
+	});
+
+	it('navigates the filtered strip, not the full provider registry', () => {
+		// With unavailable providers hidden, the strip is two tiles long. Clamping
+		// on the registry would let the focus ring walk past what is drawn.
+		const { refs, secondTile } = createRefs();
+		const setFocusedTileIndex = vi.fn();
+		const preventDefault = vi.fn();
+		const visibleTiles = AGENT_TILES.slice(0, 2);
+
+		const { result } = renderHook(
+			({ focusedTileIndex }) =>
+				useAgentSelectionKeyboard({
+					tiles: visibleTiles,
+					tileColumns: visibleTiles.length,
+					isNameFieldFocused: false,
+					focusedTileIndex,
+					detectedAgents: [
+						agent({ id: FIRST_TILE_ID, available: true }),
+						agent({ id: SECOND_TILE_ID, available: true }),
+					],
+					nameInputRef: refs.nameInputRef,
+					tileRefs: refs.tileRefs,
+					setIsNameFieldFocused: vi.fn(),
+					setFocusedTileIndex,
+					setSelectedAgent: vi.fn(),
+					canProceedToNext: () => true,
+					nextStep: vi.fn(),
+				}),
+			{ initialProps: { focusedTileIndex: 1 } }
+		);
+
+		act(() => result.current({ key: 'ArrowRight', preventDefault } as any));
+		expect(setFocusedTileIndex).not.toHaveBeenCalled();
+
+		act(() => result.current({ key: 'ArrowLeft', preventDefault } as any));
+		expect(setFocusedTileIndex).toHaveBeenCalledWith(0);
+
+		// The strip scrolls the focused tile into view itself, so the browser's own
+		// scroll must be suppressed or it parks the tile under an edge fade first.
+		expect(secondTile.focus).not.toHaveBeenCalled();
+	});
+
+	it('steps a whole row on up/down once the tiles wrap', () => {
+		// A filtered list short enough to wrap is drawn as rows, so up/down have
+		// somewhere to go. The row width comes from the grid's own measurement -
+		// assuming one here would jump the ring to a tile that is not below the
+		// current one.
+		const { refs } = createRefs();
+		const setFocusedTileIndex = vi.fn();
+		const preventDefault = vi.fn();
+		const visibleTiles = AGENT_TILES.slice(0, 5);
+
+		const { result } = renderHook(
+			({ focusedTileIndex }) =>
+				useAgentSelectionKeyboard({
+					tiles: visibleTiles,
+					tileColumns: 3,
+					isNameFieldFocused: false,
+					focusedTileIndex,
+					detectedAgents: visibleTiles.map((tile) => agent({ id: tile.id, available: true })),
+					nameInputRef: refs.nameInputRef,
+					tileRefs: refs.tileRefs,
+					setIsNameFieldFocused: vi.fn(),
+					setFocusedTileIndex,
+					setSelectedAgent: vi.fn(),
+					canProceedToNext: () => true,
+					nextStep: vi.fn(),
+				}),
+			{ initialProps: { focusedTileIndex: 0 } }
+		);
+
+		act(() => result.current({ key: 'ArrowDown', preventDefault } as any));
+		expect(setFocusedTileIndex).toHaveBeenLastCalledWith(3);
+
+		act(() => result.current({ key: 'ArrowUp', preventDefault } as any));
+		expect(setFocusedTileIndex).toHaveBeenCalledTimes(1);
+	});
+
+	it('suppresses the browser scroll when moving focus onto a tile', () => {
+		const { refs, secondTile } = createRefs();
+		const preventDefault = vi.fn();
+
+		const { result } = renderHook(() =>
+			useAgentSelectionKeyboard({
+				tiles: AGENT_TILES,
+				tileColumns: AGENT_TILES.length,
+				isNameFieldFocused: false,
+				focusedTileIndex: 0,
+				detectedAgents: [
+					agent({ id: FIRST_TILE_ID, available: true }),
+					agent({ id: SECOND_TILE_ID, available: true }),
+				],
+				nameInputRef: refs.nameInputRef,
+				tileRefs: refs.tileRefs,
+				setIsNameFieldFocused: vi.fn(),
+				setFocusedTileIndex: vi.fn(),
+				setSelectedAgent: vi.fn(),
+				canProceedToNext: () => true,
+				nextStep: vi.fn(),
+			})
+		);
+
+		act(() => result.current({ key: 'ArrowRight', preventDefault } as any));
+		expect(secondTile.focus).toHaveBeenCalledWith({ preventScroll: true });
+	});
+
+	it('leaves keys alone for a control that opts out of strip navigation', () => {
+		// The keydown handler covers the whole screen, so the availability bar's
+		// toggle would otherwise lose its own Tab and arrow keys to tile movement.
+		const { refs } = createRefs();
+		const setFocusedTileIndex = vi.fn();
+		const setIsNameFieldFocused = vi.fn();
+		const preventDefault = vi.fn();
+
+		const exempt = document.createElement('label');
+		exempt.setAttribute('data-provider-bar-nav-exempt', 'true');
+		const toggle = document.createElement('button');
+		exempt.appendChild(toggle);
+
+		const { result } = renderHook(() =>
+			useAgentSelectionKeyboard({
+				tiles: AGENT_TILES,
+				tileColumns: AGENT_TILES.length,
+				isNameFieldFocused: false,
+				focusedTileIndex: 0,
+				detectedAgents: [agent({ id: FIRST_TILE_ID, available: true })],
+				nameInputRef: refs.nameInputRef,
+				tileRefs: refs.tileRefs,
+				setIsNameFieldFocused,
+				setFocusedTileIndex,
+				setSelectedAgent: vi.fn(),
+				canProceedToNext: () => true,
+				nextStep: vi.fn(),
+			})
+		);
+
+		act(() => result.current({ key: 'ArrowRight', preventDefault, target: toggle } as any));
+		act(() =>
+			result.current({ key: 'Tab', shiftKey: false, preventDefault, target: toggle } as any)
+		);
+
+		expect(setFocusedTileIndex).not.toHaveBeenCalled();
+		expect(setIsNameFieldFocused).not.toHaveBeenCalled();
+		expect(preventDefault).not.toHaveBeenCalled();
 	});
 
 	it('opens and closes config panel, loading config and models with SSH ID', async () => {

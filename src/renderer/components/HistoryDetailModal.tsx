@@ -20,6 +20,7 @@ import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
@@ -33,6 +34,7 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './History';
+import { HoverTooltip } from './ui/HoverTooltip';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -127,7 +129,9 @@ export function HistoryDetailModal({
 		}
 	}, [showDeleteConfirm]);
 
-	// Keyboard navigation for prev/next with arrow keys.
+	// Keyboard navigation for prev/next with arrow keys, plus Cmd/Ctrl+Enter to
+	// jump to the entry's session - the same verb the History list offers, so
+	// the shortcut keeps working after Enter opened this modal.
 	useEventListener('keydown', (e) => {
 		// Don't handle if delete confirmation is showing
 		if (showDeleteConfirm) return;
@@ -139,6 +143,12 @@ export function HistoryDetailModal({
 		} else if (ke.key === 'ArrowRight') {
 			ke.preventDefault();
 			goToNext();
+		} else if (ke.key === 'Enter' && (ke.metaKey || ke.ctrlKey)) {
+			if (!onResumeSession || !entry.agentSessionId) return;
+			ke.preventDefault();
+			trackShortcutUsage('historyJumpToSession');
+			onResumeSession(entry.agentSessionId);
+			onClose();
 		}
 	});
 
@@ -271,7 +281,7 @@ export function HistoryDetailModal({
 									title={
 										entry.success
 											? entry.validated
-												? 'Task completed successfully and human-validated'
+												? 'Task completed successfully, and you marked it as checked'
 												: 'Task completed successfully'
 											: 'Task failed'
 									}
@@ -415,25 +425,34 @@ export function HistoryDetailModal({
 
 							{/* Validated toggle for dispatched work (AUTO / CUE / AGENT) */}
 							{hasRunOutcome(entry.type) && entry.success && onUpdate && (
-								<button
-									onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
-									className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
-									style={{
-										backgroundColor: entry.validated
-											? theme.colors.success + '20'
-											: theme.colors.bgActivity,
-										color: entry.validated ? theme.colors.success : theme.colors.textDim,
-										border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
-									}}
-									title={entry.validated ? 'Mark as not validated' : 'Mark as human-validated'}
+								<HoverTooltip
+									theme={theme}
+									maxWidth={260}
+									label={
+										entry.validated
+											? 'Clear the mark that says you checked this entry yourself.'
+											: 'Mark that you checked this entry yourself. Entirely optional, and only a bookmark for your own review pass - it changes nothing about the run.'
+									}
 								>
-									{entry.validated ? (
-										<DoubleCheck className="w-3 h-3" />
-									) : (
-										<Check className="w-3 h-3" />
-									)}
-									Validated
-								</button>
+									<button
+										onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
+										className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
+										style={{
+											backgroundColor: entry.validated
+												? theme.colors.success + '20'
+												: theme.colors.bgActivity,
+											color: entry.validated ? theme.colors.success : theme.colors.textDim,
+											border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
+										}}
+									>
+										{entry.validated ? (
+											<DoubleCheck className="w-3 h-3" />
+										) : (
+											<Check className="w-3 h-3" />
+										)}
+										Validated
+									</button>
+								</HoverTooltip>
 							)}
 
 							{/* Timestamp - right-justified (last element pushes to the right edge) */}

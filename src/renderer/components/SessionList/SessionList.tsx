@@ -6,6 +6,7 @@ import React, {
 	memo,
 	useCallback,
 	useDeferredValue,
+	useSyncExternalStore,
 } from 'react';
 import {
 	Wand2,
@@ -25,6 +26,8 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import { subscribeSidebarReveal, getSidebarRevealToken } from '../../utils/sidebarReveal';
+import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -48,6 +51,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
@@ -73,6 +77,8 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
+import { useHeaderTextDelta } from '../../hooks/ui/useHeaderTextDelta';
+import { Wordmark } from '../ui/Wordmark';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
@@ -87,6 +93,14 @@ import { buildVirtualGrouping } from '../../utils/pluginGroupings';
  * they are the whole transport a minimized player has). Its tooltip names the
  * file at any width.
  */
+/**
+ * All of these are measured against the BASELINE font - Roboto Mono at a 14px
+ * root, which is what Maestro always rendered in before the interface font
+ * became a setting. They are corrected for the font actually in use by
+ * `useHeaderTextDelta`, which adds however much wider each label got. Do not
+ * re-measure them against whatever font you happen to be running: the delta
+ * would then be applied on top of a correction already baked in.
+ */
 const LIVE_LABEL_MIN_WIDTH = 256;
 const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
 /**
@@ -94,6 +108,31 @@ const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
  * label thresholds out by the same amount. Shared so the two cannot drift.
  */
 const HEADER_BADGE_WIDTH = 39;
+/**
+ * Width the header's left cluster needs before the MAESTRO wordmark is drawn:
+ * the wand, the wordmark itself, the hamburger, and the row's own padding.
+ * Excludes the LIVE pill and the now-playing pill, which are added below.
+ *
+ * The wordmark is drawn IN FULL or not at all. It used to `truncate`, which is
+ * how a narrow sidebar rendered the brand as "MAE...", and a clipped brand
+ * reads as a rendering bug rather than as a deliberate space saving. The wand
+ * stays at every width, so the header never loses its identity or its
+ * switch-agent affordance.
+ */
+const WORDMARK_MIN_WIDTH = 232;
+/**
+ * The LIVE toggle's own reserve, broken out rather than folded into the
+ * constant above so a build that hides the toggle can zero it in one line.
+ */
+const LIVE_PILL_RESERVE = 48;
+/**
+ * What the now-playing pill costs, by the form it is currently drawn in. It
+ * sheds its filename below NOW_PLAYING_LABEL_MIN_WIDTH, so reserving the wide
+ * figure at every width would hide the wordmark for a pill that is no longer
+ * that wide.
+ */
+const NOW_PLAYING_COMPACT_RESERVE = 59;
+const NOW_PLAYING_LABEL_RESERVE = 181;
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -246,6 +285,31 @@ function SessionListInner(props: SessionListProps) {
 	// thresholds below shift by the same amount when it is showing.
 	const headerBadgeWidth =
 		autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0;
+	// Whether the now-playing pill is on screen, and in which form. Read from the
+	// store's own selector rather than re-derived here, so the reserve below
+	// cannot end up describing a header nobody is looking at.
+	const nowPlayingVisible = useMediaPlaybackStore(selectNowPlayingVisible);
+	const nowPlayingCompact = leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth;
+	const nowPlayingReserve = !nowPlayingVisible
+		? 0
+		: nowPlayingCompact
+			? NOW_PLAYING_COMPACT_RESERVE
+			: NOW_PLAYING_LABEL_RESERVE;
+	// How much wider the header's own labels render in the current interface font
+	// than in the one the thresholds below were measured against. Zero when the
+	// user is on the original monospace face.
+	const headerTextDelta = useHeaderTextDelta();
+	// Constant on this build. The indirection is deliberate: a build that hides
+	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
+	// The label's own delta rides with it, since the reserve exists to hold it.
+	const livePillReserve = LIVE_PILL_RESERVE + headerTextDelta.liveLabel;
+	const showWordmark =
+		leftSidebarWidthState >=
+		WORDMARK_MIN_WIDTH +
+			headerTextDelta.wordmark +
+			livePillReserve +
+			headerBadgeWidth +
+			nowPlayingReserve;
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -257,7 +321,16 @@ function SessionListInner(props: SessionListProps) {
 	// Inline wizard activity per agent (Session.id). Used by the Left Bar to
 	// render the wand glyph on agent rows AND on the group header / Bookmarks
 	// header for the group(s) those agents live in.
-	const { wizardActiveSessions } = useInlineWizardContext();
+	const { wizardActiveTabs } = useInlineWizardContext();
+
+	// Roll live wizard tabs up to their owning agent, dropping any whose tab is no
+	// longer open. Without that liveness check a single missed eviction (a close
+	// path that forgot to end the wizard, a cancel that ended the wrong tab) leaves
+	// a wand burning on an agent that has no wizard tab to switch to.
+	const wizardActiveSessions = useMemo(
+		() => rollUpWizardActivityToSessions(wizardActiveTabs, sessions),
+		[wizardActiveTabs, sessions]
+	);
 
 	// Multi-window awareness. `windowCtx` is declared above (next to the scoped
 	// session list it drives). It is optional so the Left Bar still renders
@@ -373,6 +446,14 @@ function SessionListInner(props: SessionListProps) {
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
 	const unreadGroupChatIds = useGroupChatStore((s) => s.unreadGroupChatIds);
 
+	// Latest nav cursor, read by the reveal effect on the next frame rather than
+	// captured when the reveal was requested. The cursor is not settled at
+	// request time: `selectedSidebarIndex` is synced from `activeSessionId` by a
+	// parent effect, and parent effects run after child ones, so reading it
+	// synchronously gives the row the cursor was leaving.
+	const navCursorRef = useRef({ selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId });
+	navCursorRef.current = { selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId };
+
 	// Shared with the group chat rows' status dots and the agent jumper's LIVE
 	// bucket, so all three agree on what "running" means.
 	const isAnyGroupChatBusy = useMemo(
@@ -394,28 +475,45 @@ function SessionListInner(props: SessionListProps) {
 		]
 	);
 
-	// Keep the keyboard-selected Left Bar row in view as navigation moves it.
-	// Rows are tagged with `data-nav-key`; we resolve the current key from the
-	// active cursor (priority: Starred/Group-Chat extra cursor, then the active
-	// group chat, then the agent index) and scroll it into the list viewport.
-	// Fires for both arrow-key navigation and the global Cmd+[ / Cmd+] cycle.
+	// Bring the keyboard cursor into view - and ONLY when something asked.
+	//
+	// This used to fire on any `activeSessionId` change, which meant a click
+	// re-aimed the list the user had just scrolled by hand. Intent is now
+	// declared by the caller (`requestSidebarReveal`) rather than inferred from
+	// the state a click and a keystroke both produce; see utils/sidebarReveal.ts.
+	//
+	// Deferred to the next frame so the cursor has settled. Without that, a
+	// programmatic jump scrolls to the row the cursor is leaving and never
+	// corrects, because nothing asks a second time.
+	const revealToken = useSyncExternalStore(subscribeSidebarReveal, getSidebarRevealToken);
+	// Seeded with the token as it stands at mount, because MOUNTING IS NOT A
+	// REQUEST. The counter is global and monotonic, so a fresh SessionList (a new
+	// window, a remount) would otherwise run this effect once against whatever
+	// the last reveal left behind and scroll a list nobody had touched.
+	const handledRevealRef = useRef(revealToken);
 	useEffect(() => {
-		const container = listScrollRef.current;
-		if (!container) return;
-		let navKey: string | null = null;
-		if (sidebarExtraSelection?.kind === 'starred') {
-			navKey = `starred:${sidebarExtraSelection.key}`;
-		} else if (sidebarExtraSelection?.kind === 'groupChat') {
-			navKey = `groupchat:${sidebarExtraSelection.id}`;
-		} else if (activeGroupChatId) {
-			navKey = `groupchat:${activeGroupChatId}`;
-		} else if (selectedSidebarIndex >= 0) {
-			navKey = `idx:${selectedSidebarIndex}`;
-		}
-		if (!navKey) return;
-		const el = container.querySelector(`[data-nav-key="${CSS.escape(navKey)}"]`);
-		el?.scrollIntoView({ block: 'nearest' });
-	}, [selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId, activeSessionId]);
+		if (revealToken === handledRevealRef.current) return;
+		handledRevealRef.current = revealToken;
+		const frame = requestAnimationFrame(() => {
+			const container = listScrollRef.current;
+			if (!container) return;
+			const cursor = navCursorRef.current;
+			let navKey: string | null = null;
+			if (cursor.sidebarExtraSelection?.kind === 'starred') {
+				navKey = `starred:${cursor.sidebarExtraSelection.key}`;
+			} else if (cursor.sidebarExtraSelection?.kind === 'groupChat') {
+				navKey = `groupchat:${cursor.sidebarExtraSelection.id}`;
+			} else if (cursor.activeGroupChatId) {
+				navKey = `groupchat:${cursor.activeGroupChatId}`;
+			} else if (cursor.selectedSidebarIndex >= 0) {
+				navKey = `idx:${cursor.selectedSidebarIndex}`;
+			}
+			if (!navKey) return;
+			const el = container.querySelector(`[data-nav-key="${CSS.escape(navKey)}"]`);
+			el?.scrollIntoView({ block: 'nearest' });
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [revealToken]);
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
@@ -1259,11 +1357,12 @@ function SessionListInner(props: SessionListProps) {
 			>
 				{leftSidebarOpen ? (
 					<>
-						{/* `min-w-0` here plus `truncate` on the wordmark below give this row
-						    a legitimate shrink target. It neither wraps nor scrolls, so without
-						    one, adding any control (the now-playing pill, a badge) pushes the
-						    hamburger menu off the edge on a narrow sidebar. Branding is what
-						    yields; every control stays shrink-0. */}
+						{/* This row neither wraps nor scrolls, so it needs a legitimate
+						    shrink target or any added control (the now-playing pill, a badge)
+						    pushes the hamburger menu off the edge on a narrow sidebar. That
+						    role now belongs to the now-playing pill's filename, which can be
+						    clipped without looking broken. The wordmark is drawn in full or
+						    dropped entirely - see `showWordmark`. */}
 						<div className="flex items-center gap-2 min-w-0">
 							<button
 								type="button"
@@ -1283,12 +1382,13 @@ function SessionListInner(props: SessionListProps) {
 									style={{ color: theme.colors.accent }}
 								/>
 							</button>
-							<h1
-								className="font-bold tracking-widest text-lg truncate min-w-0"
-								style={{ color: theme.colors.textMain }}
-							>
-								MAESTRO
-							</h1>
+							{showWordmark && (
+								<Wordmark
+									as="h1"
+									className="text-lg shrink-0 whitespace-nowrap"
+									style={{ color: theme.colors.textMain }}
+								/>
+							)}
 							{/* Badge Level Indicator */}
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (
 								<button
@@ -1307,10 +1407,7 @@ function SessionListInner(props: SessionListProps) {
 							    user can always see that audio is coming from Maestro and get
 							    the widget back with one click. Sheds its label on a narrow
 							    sidebar, the same way the LIVE pill below does. */}
-							<NowPlayingIndicator
-								theme={theme}
-								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth}
-							/>
+							<NowPlayingIndicator theme={theme} compact={nowPlayingCompact} />
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}
@@ -1337,8 +1434,11 @@ function SessionListInner(props: SessionListProps) {
 										}
 									>
 										<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
-										{leftSidebarWidthState >= LIVE_LABEL_MIN_WIDTH + headerBadgeWidth &&
-											(isLiveMode ? 'LIVE' : 'OFFLINE')}
+										{leftSidebarWidthState >=
+											LIVE_LABEL_MIN_WIDTH +
+												headerTextDelta.liveLabel +
+												headerTextDelta.wordmark +
+												headerBadgeWidth && (isLiveMode ? 'LIVE' : 'OFFLINE')}
 									</button>
 
 									{/* LIVE Overlay with URL and QR Code */}

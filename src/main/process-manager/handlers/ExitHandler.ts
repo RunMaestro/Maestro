@@ -6,6 +6,7 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
@@ -23,7 +24,20 @@ interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
-	processStreamJsonLine: (sessionId: string, managedProcess: ManagedProcess, line: string) => void;
+	/**
+	 * Dispatch an event ExitHandler already parsed through the stdout pipeline, so
+	 * a record flushed without its trailing newline emits the same usage, session
+	 * id and result as one that arrived with it. ExitHandler parses the line itself
+	 * (it has to tell a parser that CHOKED, which must surface raw, from one that
+	 * cleanly declined, which is noise) and hands the event over rather than the
+	 * text, so the line is never parsed twice.
+	 */
+	dispatchParsedEvent: (
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		event: ParsedEvent,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	) => void;
 }
 
 /**
@@ -34,13 +48,13 @@ export class ExitHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
-	private processStreamJsonLine: ExitHandlerDependencies['processStreamJsonLine'];
+	private dispatchParsedEvent: ExitHandlerDependencies['dispatchParsedEvent'];
 
 	constructor(deps: ExitHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
-		this.processStreamJsonLine = deps.processStreamJsonLine;
+		this.dispatchParsedEvent = deps.dispatchParsedEvent;
 	}
 
 	/**
@@ -98,10 +112,14 @@ export class ExitHandler {
 			});
 		}
 
-		// Route an unterminated final JSON record through the same pipeline used
-		// for newline-delimited events before provider shutdown reconciliation.
-		// Copilot may report its session ID only in this record, and the shutdown
-		// wait needs that ID to recover the authoritative disk-side final state.
+		// Handle stream-json mode: process any remaining jsonBuffer content.
+		// The jsonBuffer may contain the last line if it didn't end with \n.
+		// Without this, short-lived processes (tab-naming, batch ops) can lose
+		// their result message if it's the last line without a trailing newline.
+		//
+		// This runs BEFORE provider shutdown reconciliation: Copilot may report its
+		// session ID only in this unterminated record, and the shutdown wait needs
+		// that ID to recover the authoritative disk-side final state.
 		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
 			const remainingLine = managedProcess.jsonBuffer.trim();
 			managedProcess.jsonBuffer = '';
@@ -110,7 +128,62 @@ export class ExitHandler {
 				remainingLineLength: remainingLine.length,
 				remainingLinePreview: remainingLine.substring(0, 200),
 			});
-			this.processStreamJsonLine(sessionId, managedProcess, remainingLine);
+			// Scoped to the parse alone. A malformed last line is an expected,
+			// recoverable condition with a defined fallback (emit it raw), but
+			// classifying and dispatching the event below is not - widening this
+			// catch around that work would swallow a real defect AND emit the failed
+			// envelope's JSON to the user as if it were the answer.
+			let event: ParsedEvent | null = null;
+			try {
+				event = outputParser.parseJsonLine(remainingLine);
+			} catch {
+				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
+			}
+
+			// A terminal envelope that reports a FAILURE has to leave through the
+			// error path, not the result path. Emitting its text as data would render
+			// a provider failure as the agent's answer, and dropping it silently is
+			// worse still: `detectErrorFromExit` below returns null on exit code 0, so
+			// a CLI that reports the failure in-band and then exits clean would settle
+			// the turn with no answer and no error at all - the tab just stops, and no
+			// retry or recovery handling ever fires.
+			// `interrupted` (the user pressed Stop) suppresses this the same way it
+			// does in StdoutHandler: a terminal envelope flushed on the way out of a
+			// deliberate stop is not a turn failure.
+			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
+				// Capture the provider's session id BEFORE returning through the error
+				// path, which the dispatch below would otherwise have done. When this
+				// flushed line is the first event to carry one - a short-lived run whose
+				// whole output is this single trailing envelope - this is the only
+				// chance to record it. Without it the tab has no id to resume from, so
+				// recovery from a *recoverable* error silently opens a fresh
+				// conversation and drops the context the retry was supposed to continue.
+				const eventSessionId = outputParser.extractSessionId(event);
+				if (eventSessionId) {
+					managedProcess.agentSessionId = eventSessionId;
+					if (!managedProcess.sessionIdEmitted) {
+						managedProcess.sessionIdEmitted = true;
+						this.emitter.emit('session-id', sessionId, eventSessionId);
+					}
+				}
+
+				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
+				if (agentError) {
+					managedProcess.errorEmitted = true;
+					agentError.sessionId = sessionId;
+					if (managedProcess.sshRemoteId) {
+						agentError.sshRemoteId = managedProcess.sshRemoteId;
+					}
+					this.emitter.emit('agent-error', sessionId, agentError);
+				}
+			} else if (event) {
+				// Everything else is an ordinary event that merely lost its newline, so
+				// it goes through the ordinary pipeline: usage, session id, slash
+				// commands and result text, in the order every other event produces
+				// them. Re-implementing a subset here is what dropped the usage and cost
+				// of a run whose entire output was this one trailing envelope.
+				this.dispatchParsedEvent(sessionId, managedProcess, event, outputParser);
+			}
 		}
 
 		// Copilot CLI: wait for the on-disk shutdown marker before emitting

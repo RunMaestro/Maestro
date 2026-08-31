@@ -9,6 +9,7 @@ import {
 	getVisibleAgents,
 	hasSshConnectionFailure,
 	isAgentAvailable,
+	selectVisibleAgentTiles,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentAvailability';
 import {
 	addEnvVar,
@@ -22,12 +23,13 @@ import {
 	AGENT_TILES,
 	type AgentTile,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
+import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
+import { SUPPORTED_AGENTS } from '../../../../../../renderer/components/NewInstanceModal/types';
+import { getNextAgentTileIndex } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGrid';
 import {
-	getAgentTileColSpanClass,
-	getNextAgentTileIndex,
-	LAST_ROW_COL_START_CLASS,
-	LAST_ROW_START_INDEX,
-} from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGrid';
+	agentTilesPerRow,
+	resolveAgentGridLayout,
+} from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGridLayout';
 import {
 	getInitialSshRemoteConfig,
 	getSshRemoteIdForDetection,
@@ -64,7 +66,9 @@ describe('AgentSelectionScreen utils', () => {
 		];
 
 		expect(countSelectableAgentTiles(AGENT_TILES, detected)).toBe(2);
-		expect(findFirstSelectableTileIndex(AGENT_TILES, detected)).toBe(0);
+		// The strip is alphabetical, so assert on the tile found rather than a
+		// fixed index that moves whenever a provider is added.
+		expect(AGENT_TILES[findFirstSelectableTileIndex(AGENT_TILES, detected)].id).toBe('claude-code');
 		expect(findFirstSelectableTileIndex(AGENT_TILES, [])).toBe(-1);
 	});
 
@@ -106,15 +110,106 @@ describe('AgentSelectionScreen utils', () => {
 		).toBe('Agent detection complete on remote host. 2 of 3 agents available.');
 	});
 
-	it('computes grid movement boundaries and last-row centering classes', () => {
-		// Grid is GRID_COLS (4) wide: ArrowDown moves +4, ArrowUp moves -4.
-		expect(getNextAgentTileIndex(0, 'ArrowLeft')).toBe(0);
-		expect(getNextAgentTileIndex(0, 'ArrowRight')).toBe(1);
-		expect(getNextAgentTileIndex(0, 'ArrowDown')).toBe(4);
-		expect(getNextAgentTileIndex(4, 'ArrowDown')).toBe(4);
-		expect(getNextAgentTileIndex(4, 'ArrowUp')).toBe(0);
-		expect(getAgentTileColSpanClass(0)).toBe('col-span-2');
-		expect(getAgentTileColSpanClass(LAST_ROW_START_INDEX)).toContain(LAST_ROW_COL_START_CLASS);
+	it('steps along the single-row strip and clamps at both ends', () => {
+		const count = AGENT_TILES.length;
+
+		expect(getNextAgentTileIndex(0, 'ArrowLeft', count)).toBe(0);
+		expect(getNextAgentTileIndex(0, 'ArrowRight', count)).toBe(1);
+		expect(getNextAgentTileIndex(1, 'ArrowLeft', count)).toBe(0);
+		expect(getNextAgentTileIndex(count - 1, 'ArrowRight', count)).toBe(count - 1);
+		// The strip is one row, so vertical movement has nowhere to go.
+		expect(getNextAgentTileIndex(0, 'ArrowDown', count)).toBe(0);
+		expect(getNextAgentTileIndex(1, 'ArrowUp', count)).toBe(1);
+	});
+
+	it('steps a whole row on up/down once the tiles wrap', () => {
+		// Five tiles laid out 3 + 2. Down from the end of the full row has no tile
+		// directly beneath it, and refusing to move there reads as a dead key.
+		expect(getNextAgentTileIndex(0, 'ArrowDown', 5, 3)).toBe(3);
+		expect(getNextAgentTileIndex(2, 'ArrowDown', 5, 3)).toBe(4);
+		expect(getNextAgentTileIndex(4, 'ArrowDown', 5, 3)).toBe(4);
+		expect(getNextAgentTileIndex(3, 'ArrowUp', 5, 3)).toBe(0);
+		expect(getNextAgentTileIndex(1, 'ArrowUp', 5, 3)).toBe(1);
+		// Left/right still walk the flat order across the row break.
+		expect(getNextAgentTileIndex(2, 'ArrowRight', 5, 3)).toBe(3);
+	});
+
+	it('balances the rows rather than filling one and stranding the rest', () => {
+		// Wide enough for four across (the strip's own max width).
+		const wide = 1200;
+
+		// Everything fits on one row: one row, centered, no leftovers.
+		expect(resolveAgentGridLayout(4, wide)).toMatchObject({ mode: 'wrap', columns: 4 });
+		// Five would draw 4 + 1, which looks like a mistake. 3 + 2 does not.
+		expect(resolveAgentGridLayout(5, wide)).toMatchObject({ mode: 'wrap', columns: 3 });
+		expect(resolveAgentGridLayout(7, wide)).toMatchObject({ mode: 'wrap', columns: 4 });
+		// Past two rows the Continue button goes below the fold, so back to the strip.
+		expect(resolveAgentGridLayout(9, wide).mode).toBe('strip');
+		expect(resolveAgentGridLayout(AGENT_TILES.length, wide).mode).toBe('strip');
+	});
+
+	it('measures the row against the real width, and falls back before it is known', () => {
+		expect(agentTilesPerRow(0)).toBe(4);
+		expect(agentTilesPerRow(300)).toBe(1);
+		expect(agentTilesPerRow(500)).toBe(2);
+		// Capped at the strip's own width, so a maximized wizard does not spread the
+		// tiles wider than the strip it just replaced.
+		expect(agentTilesPerRow(4000)).toBe(4);
+		// A narrow wizard fits fewer per row, so it drops to the strip sooner.
+		expect(resolveAgentGridLayout(7, 700)).toMatchObject({ mode: 'strip' });
+		expect(resolveAgentGridLayout(5, 700)).toMatchObject({ mode: 'wrap', columns: 3 });
+	});
+
+	it('clamps against the RENDERED tile count, not the provider total', () => {
+		// Filtering to the available providers shortens the strip. Clamping on the
+		// full registry would walk the focus ring off the end of what is drawn.
+		expect(getNextAgentTileIndex(2, 'ArrowRight', 3)).toBe(2);
+		expect(getNextAgentTileIndex(1, 'ArrowRight', 3)).toBe(2);
+		expect(getNextAgentTileIndex(0, 'ArrowRight', 1)).toBe(0);
+		expect(getNextAgentTileIndex(0, 'ArrowRight', 0)).toBe(0);
+	});
+
+	it('hides unavailable providers unless asked, and never renders an empty strip', () => {
+		const detected = [
+			agent({ id: 'claude-code', available: true }),
+			agent({ id: 'codex', available: false }),
+			agent({ id: 'opencode', available: true }),
+		];
+
+		expect(selectVisibleAgentTiles(AGENT_TILES, detected, false).map((tile) => tile.id)).toEqual([
+			'claude-code',
+			'opencode',
+		]);
+		expect(selectVisibleAgentTiles(AGENT_TILES, detected, true)).toEqual(AGENT_TILES);
+
+		// Nothing detected: filtering would leave a strip with no tiles, no way to
+		// reach Customize, and no way to proceed, so the full list stands in.
+		expect(selectVisibleAgentTiles(AGENT_TILES, [], false)).toEqual(AGENT_TILES);
+	});
+
+	it('keeps the selected provider visible even when it is not installed', () => {
+		// Otherwise the strip hides the very tile that shows what is selected.
+		const detected = [
+			agent({ id: 'claude-code', available: true }),
+			agent({ id: 'codex', available: false }),
+		];
+
+		expect(
+			selectVisibleAgentTiles(AGENT_TILES, detected, false, 'codex').map((tile) => tile.id)
+		).toEqual(['claude-code', 'codex']);
+		expect(
+			selectVisibleAgentTiles(AGENT_TILES, detected, false, null).map((tile) => tile.id)
+		).toEqual(['claude-code']);
+	});
+
+	it('offers every pickable provider, in the shared registry order', () => {
+		expect(AGENT_TILES.map((tile) => tile.id)).toEqual([...PICKABLE_AGENT_IDS]);
+		expect(AGENT_TILES.every((tile) => tile.supported)).toBe(true);
+		// Regression: Grok and Qwen3 Coder were selectable in the New Agent modal
+		// yet absent from the wizard and un-pickable as a group chat moderator.
+		expect(AGENT_TILES.map((tile) => tile.id)).toEqual(
+			expect.arrayContaining([...SUPPORTED_AGENTS])
+		);
 	});
 
 	it('normalizes wizard config fields and env var edits', () => {

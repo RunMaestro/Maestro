@@ -6,6 +6,7 @@
  * - Runtime engine controls (enable/disable)
  * - Run management (stop individual or all)
  * - YAML configuration management (read, write, validate)
+ * - Scheduled Tasks (list / create / edit / cancel time-driven subscriptions)
  * - Real-time activity updates via event listener
  */
 
@@ -16,6 +17,11 @@ import type {
 	CueSessionStatus,
 	CueSettings,
 } from '../../shared/cue';
+import type {
+	ScheduledTask,
+	ScheduledTaskCreateInput,
+	ScheduledTaskUpdateInput,
+} from '../../shared/cue/scheduled-tasks';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import type { CueMetrics } from '../cue/cue-metrics';
 import type { FanInHealthEntry } from '../cue/cue-fan-in-tracker';
@@ -117,6 +123,27 @@ export function createCueApi() {
 		removeSession: (sessionId: string): Promise<void> =>
 			ipcRenderer.invoke('cue:removeSession', { sessionId }),
 
+		// ── Scheduled Tasks (time.once / time.scheduled / time.heartbeat) ──
+		// Same on-disk representation as `maestro-cli cue schedule`.
+		listScheduledTasks: (): Promise<{ tasks: ScheduledTask[]; warnings: string[] }> =>
+			ipcRenderer.invoke('cue:listScheduledTasks'),
+
+		createScheduledTask: (input: ScheduledTaskCreateInput): Promise<{ names: string[] }> =>
+			ipcRenderer.invoke('cue:createScheduledTask', { input }),
+
+		updateScheduledTask: (
+			projectRoot: string,
+			name: string,
+			patch: ScheduledTaskUpdateInput
+		): Promise<{ updated: boolean; reason?: string }> =>
+			ipcRenderer.invoke('cue:updateScheduledTask', { projectRoot, name, patch }),
+
+		cancelScheduledTask: (
+			projectRoot: string,
+			name: string
+		): Promise<{ removed: boolean; reason?: string }> =>
+			ipcRenderer.invoke('cue:cancelScheduledTask', { projectRoot, name }),
+
 		// Read raw YAML content from a session's maestro-cue.yaml
 		readYaml: (projectRoot: string): Promise<string | null> =>
 			ipcRenderer.invoke('cue:readYaml', { projectRoot }),
@@ -132,6 +159,18 @@ export function createCueApi() {
 		// Delete a session's cue.yaml config file
 		deleteYaml: (projectRoot: string): Promise<boolean> =>
 			ipcRenderer.invoke('cue:deleteYaml', { projectRoot }),
+
+		// Rename a pipeline across every cue.yaml it spans
+		renamePipeline: (
+			oldName: string,
+			newName: string
+		): Promise<{
+			renamed: boolean;
+			subscriptionsUpdated: number;
+			filesWritten: string[];
+			reason?: string;
+			warnings: string[];
+		}> => ipcRenderer.invoke('cue:renamePipeline', { oldName, newName }),
 
 		// Validate YAML content as a Cue configuration
 		validateYaml: (content: string): Promise<{ valid: boolean; errors: string[] }> =>

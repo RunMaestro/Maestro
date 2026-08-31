@@ -129,6 +129,15 @@ export interface SnoozeTabModalData {
 	tabLabel: string;
 }
 
+/**
+ * Model & effort modal data. Only the tab id travels: the modal resolves the
+ * agent, the option lists, and the tab > session > agent-default ladder from
+ * the stores itself, so an opener can't hand it a stale snapshot.
+ */
+export interface ModelEffortModalData {
+	tabId: string;
+}
+
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
 	sessionId: string;
@@ -164,6 +173,19 @@ export interface AgentErrorModalData {
 	historicalError?: AgentError;
 }
 
+/**
+ * Provider re-authentication modal data.
+ *
+ * Addressed by PROVIDER, not by agent: one expired token blocks every agent
+ * that shares the credential store, and they are all fixed by one login. The
+ * roster of blocked agents (and the error text) lives in `authOutageStore`
+ * keyed by this value, so it stays correct as more agents fail while the prompt
+ * is already open.
+ */
+export interface ReauthModalData {
+	providerKey: string;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -183,7 +205,27 @@ export interface QuitConfirmModalData {
 }
 
 export interface CueModalData {
-	initialTab?: 'dashboard' | 'pipeline';
+	/** Tab the modal opens on. Values match `CueModalTab` in
+	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
+	 *  `shared/uiSurfaces.ts`. */
+	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
+	/**
+	 * Agent to highlight and scroll to in the dashboard's session table.
+	 *
+	 * The Left Bar's per-agent "Configure Maestro Cue" opens a table of EVERY
+	 * Cue-enabled agent, so without this the menu item promises one agent and
+	 * delivers a list with nothing marking which row you asked for.
+	 *
+	 * Deliberately NOT a filter: cue.yaml is a per-PROJECT file and several
+	 * agents can share one projectRoot, so narrowing the table to one agent
+	 * would hide the sibling that actually owns the config - which is exactly
+	 * the row that explains why this agent shows zero subscriptions.
+	 *
+	 * Optional: the keyboard shortcut, command palette and Settings entry
+	 * points open the dashboard with no agent in hand and nothing to
+	 * disambiguate.
+	 */
+	focusSessionId?: string;
 }
 
 /** Cue YAML editor data */
@@ -218,6 +260,12 @@ export interface GitDiffModalData {
 	 * it so it can diff an agent that isn't active.
 	 */
 	cwd?: string;
+	/**
+	 * Agent the diff was taken for, used to name it in the header. Optional for
+	 * the same reason as `cwd`: the keyboard shortcut and command palette follow
+	 * the active agent, so there is nothing to disambiguate.
+	 */
+	sessionId?: string;
 }
 
 /**
@@ -228,6 +276,8 @@ export interface GitDiffModalData {
 export interface GitLogModalData {
 	cwd: string;
 	sshRemoteId?: string;
+	/** Agent the log belongs to, used to name it in the header. */
+	sessionId?: string;
 }
 
 /** Git command runner data - which streaming operation the console modal runs */
@@ -290,6 +340,7 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
+	| 'reauth'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -300,6 +351,7 @@ export type ModalId =
 	| 'renameTab'
 	| 'terminalStartupCommand'
 	| 'snoozeTab'
+	| 'modelEffort'
 	| 'snoozedTabs'
 	// Group Management
 	| 'renameGroup'
@@ -357,13 +409,17 @@ export type ModalId =
 	| 'symphony'
 	// Platform Warnings
 	| 'windowsWarning'
+	// First-run typography chooser
+	| 'typographyChoice'
 	// Director's Notes
 	| 'directorNotes'
 	// Maestro Cue
 	| 'cueModal'
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
-	| 'pianolaModal';
+	| 'pianolaModal'
+	// Concerto (agent-composed views)
+	| 'concertoStage';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -378,13 +434,21 @@ export interface ModalDataMap {
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
+	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
+	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
+	/**
+	 * Present when opened from the Left Bar's right-click menu, naming the agent
+	 * to configure. Absent when opened from the header or Settings, where the
+	 * modal follows the active agent.
+	 */
+	worktreeConfig: WorktreeModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
 	deleteWorktree: WorktreeModalData;
@@ -630,7 +694,7 @@ export const selectModalData =
  * Use this for event handlers and callbacks.
  */
 export function getModalActions() {
-	const { openModal, closeModal, updateModalData } = useModalStore.getState();
+	const { openModal, closeModal, toggleModal, updateModalData } = useModalStore.getState();
 
 	return {
 		// Settings Modal
@@ -923,9 +987,20 @@ export function getModalActions() {
 		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
 			openModal('agentError', { sessionId, historicalError: error }),
 
+		// Provider Re-authentication Modal
+		openReauthModal: (data: ReauthModalData) => openModal('reauth', data),
+		closeReauthModal: () => closeModal('reauth'),
+
 		// Worktree Modals
+		// Opened WITHOUT a target (header pill, Settings): follows the active agent.
 		setWorktreeConfigModalOpen: (open: boolean) =>
 			open ? openModal('worktreeConfig') : closeModal('worktreeConfig'),
+		// Opened WITH a target (Left Bar right-click): configures that agent
+		// wherever the selection happens to be. This used to be done by
+		// force-activating the right-clicked agent first, which silently moved
+		// the user's selection as a side effect of opening a dialog.
+		setWorktreeConfigSession: (session: Session | null) =>
+			session ? openModal('worktreeConfig', { session }) : closeModal('worktreeConfig'),
 		setCreateWorktreeModalOpen: (open: boolean) =>
 			open ? openModal('createWorktree') : closeModal('createWorktree'),
 		setCreateWorktreeSession: (session: Session | null) =>
@@ -1003,14 +1078,18 @@ export function getModalActions() {
 		setWindowsWarningModalOpen: (open: boolean) =>
 			open ? openModal('windowsWarning') : closeModal('windowsWarning'),
 
+		// Typography Choice Modal (first run / first launch after the update)
+		setTypographyChoiceModalOpen: (open: boolean) =>
+			open ? openModal('typographyChoice') : closeModal('typographyChoice'),
+
 		// Director's Notes Modal
 		setDirectorNotesOpen: (open: boolean) =>
 			open ? openModal('directorNotes') : closeModal('directorNotes'),
 
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
-		openCueModalWithTab: (tab: 'dashboard' | 'pipeline') =>
-			openModal('cueModal', { initialTab: tab }),
+		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>, focusSessionId?: string) =>
+			openModal('cueModal', { initialTab: tab, focusSessionId }),
 
 		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)
 		openCueYamlEditor: (sessionId: string, projectRoot: string) =>
@@ -1020,6 +1099,14 @@ export function getModalActions() {
 		// Pianola Modal (autonomous manager: rules + decision log)
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
+
+		// Concerto stage. This one flag is the whole truth about whether the stage
+		// is up: the movement store reads it back rather than keeping its own
+		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
+		// panel cannot disagree about it.
+		setConcertoStageOpen: (open: boolean) =>
+			open ? openModal('concertoStage') : closeModal('concertoStage'),
+		toggleConcertoStage: () => toggleModal('concertoStage'),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
@@ -1092,6 +1179,7 @@ export function useModalActions() {
 	const wizardResumeModalOpen = useModalStore(selectModalOpen('wizardResume'));
 	const wizardResumeData = useModalStore(selectModalData('wizardResume'));
 	const agentErrorData = useModalStore(selectModalData('agentError'));
+	const reauthData = useModalStore(selectModalData('reauth'));
 	const worktreeConfigModalOpen = useModalStore(selectModalOpen('worktreeConfig'));
 	const createWorktreeModalOpen = useModalStore(selectModalOpen('createWorktree'));
 	const createWorktreeData = useModalStore(selectModalData('createWorktree'));
@@ -1117,6 +1205,7 @@ export function useModalActions() {
 	const tourData = useModalStore(selectModalData('tour'));
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
+	const typographyChoiceModalOpen = useModalStore(selectModalOpen('typographyChoice'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
 	const cueModalOpen = useModalStore(selectModalOpen('cueModal'));
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
@@ -1262,6 +1351,9 @@ export function useModalActions() {
 		// Agent Error Modal
 		agentErrorModalSessionId: agentErrorData?.sessionId ?? null,
 
+		// Provider Re-authentication Modal
+		reauthModalData: reauthData ?? null,
+
 		// Worktree Modals
 		worktreeConfigModalOpen,
 		createWorktreeModalOpen,
@@ -1316,6 +1408,9 @@ export function useModalActions() {
 
 		// Windows Warning Modal
 		windowsWarningModalOpen,
+
+		// Typography Choice Modal
+		typographyChoiceModalOpen,
 
 		// Director's Notes Modal
 		directorNotesOpen,

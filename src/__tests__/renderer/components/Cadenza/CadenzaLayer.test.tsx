@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CadenzaLayer } from '../../../../renderer/components/Cadenza/CadenzaLayer';
 import { applyCadenzaPayload, useCadenzaStore } from '../../../../renderer/stores/cadenzaStore';
@@ -6,7 +6,7 @@ import { mockTheme } from '../../../helpers/mockTheme';
 
 describe('CadenzaLayer', () => {
 	beforeEach(() => {
-		useCadenzaStore.setState({ cadenzas: [], flashedId: null });
+		useCadenzaStore.setState({ cadenzas: [], hidden: false, flashedId: null });
 		vi.mocked(window.maestro.fs.readFile).mockReset();
 		vi.mocked(window.maestro.process.releaseConcertoHtmlDocument).mockClear();
 	});
@@ -29,6 +29,36 @@ describe('CadenzaLayer', () => {
 		expect(window.maestro.fs.readFile).toHaveBeenCalledWith(path, undefined);
 		expect(image).toHaveAttribute('src', dataUrl);
 		expect(image).toHaveAttribute('draggable', 'false');
+	});
+
+	it('stashes every card without unmounting it, so live state survives', () => {
+		applyCadenzaPayload({
+			op: 'open',
+			id: 'game',
+			viewType: 'html',
+			title: 'Live game',
+			body: '<button>Move</button>',
+		});
+		render(<CadenzaLayer theme={mockTheme} />);
+		const frame = screen.getByTestId('concerto-html-iframe');
+
+		act(() => useCadenzaStore.getState().setHidden(true));
+
+		expect(screen.getByTestId('cadenza-layer')).toHaveStyle({ visibility: 'hidden' });
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
+
+		act(() => useCadenzaStore.getState().setHidden(false));
+
+		expect(screen.getByTestId('cadenza-layer')).toHaveStyle({ visibility: 'visible' });
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
+	});
+
+	it('leaves the stash alone when an agent opens another card', () => {
+		useCadenzaStore.getState().setHidden(true);
+
+		applyCadenzaPayload({ op: 'open', id: 'tracker', title: 'Tracker' });
+
+		expect(useCadenzaStore.getState().hidden).toBe(true);
 	});
 
 	it('labels plugin-namespaced host views with their provenance', () => {

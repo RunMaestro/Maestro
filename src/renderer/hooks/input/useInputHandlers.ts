@@ -21,7 +21,12 @@
 
 import { useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Session, Group, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	updateSessionWith,
+	updateAiTab,
+} from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -30,6 +35,8 @@ import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { setLiveDraft } from '../../utils/liveDraftStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { notifyToast } from '../../stores/notificationStore';
+import { uploadPathlessFile } from '../../utils/osFileDrop';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
@@ -44,12 +51,18 @@ import {
 	type SpawnBackgroundSynopsisFn,
 } from '../agent/useCrossAgentDispatch';
 import {
-	resolveMentionedTargetSessionIds,
-	buildKnownMentionNameSet,
-} from './useAgentMentionCompletion';
-import { messageStartsWithAgentMention } from '../../../shared/crossAgentContext';
+	planCrossAgentMentions,
+	dispatchCrossAgentMentions,
+	type CrossAgentMentionPlan,
+} from '../../services/crossAgentMentions';
 import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPatterns';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
+import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
+import { STAGED_IMAGE_MIME } from '../../components/InputArea/components/stagedImageDrag';
+import {
+	normalizeComposerCommandMode,
+	type ComposerCommandMode,
+} from '../../utils/shellCommandInput';
 import {
 	FILE_TREE_SINGLE_MIME,
 	FILE_TREE_MULTI_MIME,
@@ -229,6 +242,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
 	// re-render MaestroConsoleInner on every chunk.
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// The id `selectActiveSession` actually resolved to, which is NOT always
+	// `activeSessionId`: the selector falls back to `sessions[0]` while a freshly
+	// created agent catches up. Draft ownership has to tell those apart, so it
+	// gets its own narrow subscription rather than the whole session object.
+	const resolvedSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
 	const activeSessionInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
 	const activeTabId = useSessionStore((s) => {
 		const session = selectActiveSession(s);
@@ -280,6 +298,18 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const groups = useSessionStore((s) => (atMentionOpen ? s.groups : EMPTY_GROUPS));
 
 	// --- Derived values ---
+	// The tab the composer is currently drafting FOR, which is not the same
+	// question as "which tab does the app show". `selectActiveSession` falls back
+	// to `sessions[0]` so the UI has something to render while a freshly created
+	// agent's session object catches up with `activeSessionId` - useful for
+	// rendering, actively wrong for attributing text, because it names an agent
+	// the user is not typing into. Resolve `undefined` in that window instead:
+	// the text is then parked unowned and adopted by the real tab when it lands,
+	// rather than flushed onto a stranger's tab.
+	const activeTabIdForInput =
+		resolvedSessionId && (!activeSessionId || resolvedSessionId === activeSessionId)
+			? activeTabId
+			: undefined;
 	const isAiMode = activeSessionInputMode === 'ai';
 
 	// ====================================================================
@@ -293,11 +323,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const setAiValue = useMemo(() => useComposerInputStore.getState().setAiValue, []);
 	const setTerminalValue = useMemo(() => useComposerInputStore.getState().setTerminalValue, []);
 	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
+	const loadAiDraft = useMemo(() => useComposerInputStore.getState().loadAiDraft, []);
+	const adoptAiDraft = useMemo(() => useComposerInputStore.getState().adoptAiDraft, []);
 
-	// Ref-mirror of activeTab.id so the live-draft mirror attributes text to the
-	// correct tab, and the tab-switch effect can flush the OLD tab's text without
-	// re-triggering on tab-switch alone.
-	const activeTabIdRef = useRef<string | undefined>(activeTabId);
+	// Ref-mirror of the tab the composer drafts for, so the live-draft mirror can
+	// adopt text typed before any tab existed, and the tab-switch effect can act
+	// on a change without re-triggering on tab-switch alone.
+	const activeTabIdRef = useRef<string | undefined>(activeTabIdForInput);
 
 	// Ref-mirror of the current mode so non-reactive readers (getInputValue) pick
 	// the right slice at call time without subscribing.
@@ -313,10 +345,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return isAiModeRef.current ? s.aiValue : s.terminalValue;
 	}, []);
 
-	// Command mode only exists for the AI composer; the terminal is already a
-	// shell, so it reports false there rather than double-routing.
+	// The bang ladder only exists for the AI composer; the terminal is already a
+	// shell, so it reports 'off' there rather than double-routing.
 	const getCommandMode = useCallback(
-		() => isAiModeRef.current && useComposerInputStore.getState().aiCommandMode,
+		(): ComposerCommandMode =>
+			isAiModeRef.current ? useComposerInputStore.getState().aiCommandMode : 'off',
 		[]
 	);
 
@@ -340,25 +373,24 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		(imagesOrUpdater: string[] | ((prev: string[]) => string[])) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => {
-							if (tab.id !== s.activeTabId) return tab;
-							const currentImages = tab.stagedImages || [];
-							const newImages =
-								typeof imagesOrUpdater === 'function'
-									? imagesOrUpdater(currentImages)
-									: imagesOrUpdater;
-							return { ...tab, stagedImages: newImages };
-						}),
-					};
-				})
-			);
+			updateSessionWith(activeSession.id, (s) => {
+				const tabId = s.activeTabId;
+				if (!tabId) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) => {
+						if (tab.id !== tabId) return tab;
+						const currentImages = tab.stagedImages || [];
+						const newImages =
+							typeof imagesOrUpdater === 'function'
+								? imagesOrUpdater(currentImages)
+								: imagesOrUpdater;
+						return { ...tab, stagedImages: newImages };
+					}),
+				};
+			});
 		},
-		[setSessions]
+		[]
 	);
 
 	// ====================================================================
@@ -376,23 +408,39 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	//  - onto the tab itself via a coalesced write-back, so the text survives
 	//    anything that skips the blur / submit / tab-switch flush points (a
 	//    quit while typing, an unmount, focus that never left the textarea).
-	// Both are attributed to the tab that was active when the text was typed,
-	// never to whatever tab is active when the write finally lands.
+	// Both are attributed to the tab that OWNS the text (composerInputStore's
+	// `aiValueTabId`), never to whatever tab is active when the write lands.
+	// A keystroke on unowned text claims it for the tab being drafted for, if
+	// there is one - text typed while the agent has no AI tab at all stays
+	// unowned and is adopted by the next tab to become active, rather than being
+	// filed against the last tab of the agent the user just left.
 	// Subscribing outside React render keeps this off the re-render path.
 	useEffect(() => {
-		activeTabIdRef.current = activeTabId;
-		const mirror = (aiValue: string) => {
-			const currentTabId = activeTabIdRef.current;
-			if (currentTabId) setLiveDraft(currentTabId, aiValue);
+		activeTabIdRef.current = activeTabIdForInput;
+		const ownerOf = (stamped: string | null): string | undefined => {
+			if (stamped) return stamped;
+			const adoptable = activeTabIdRef.current;
+			if (adoptable) adoptAiDraft(adoptable);
+			return adoptable;
 		};
-		mirror(useComposerInputStore.getState().aiValue);
-		return useComposerInputStore.subscribe((state, prev) => {
-			if (state.aiValue === prev.aiValue && state.aiCommandMode === prev.aiCommandMode) return;
-			mirror(state.aiValue);
-			const currentTabId = activeTabIdRef.current;
-			if (currentTabId) queueAiDraftFlush(currentTabId, state.aiValue, state.aiCommandMode);
+		const state = useComposerInputStore.getState();
+		if (state.aiValueTabId) setLiveDraft(state.aiValueTabId, state.aiValue);
+		return useComposerInputStore.subscribe((next, prev) => {
+			// Ownership changes matter as much as edits: a tab handed the same text
+			// its neighbour was holding still needs its own live-draft entry, or the
+			// tab strip shows no draft marker on the tab that actually has one.
+			if (
+				next.aiValue === prev.aiValue &&
+				next.aiCommandMode === prev.aiCommandMode &&
+				next.aiValueTabId === prev.aiValueTabId
+			)
+				return;
+			const ownerTabId = ownerOf(next.aiValueTabId);
+			if (!ownerTabId) return;
+			setLiveDraft(ownerTabId, next.aiValue);
+			queueAiDraftFlush(ownerTabId, next.aiValue, next.aiCommandMode);
 		});
-	}, [activeTabId, queueAiDraftFlush]);
+	}, [activeTabIdForInput, adoptAiDraft, queueAiDraftFlush]);
 
 	// Tab / @mention completion: no-arg form subscribes only to non-streaming fields
 	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion();
@@ -402,21 +450,26 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Tab/Session switching effects
 	// ====================================================================
 
-	const prevActiveTabIdRef = useRef<string | undefined>(activeTabId);
-	const prevActiveSessionIdRef = useRef<string | undefined>(activeSessionId ?? undefined);
+	const prevActiveTabIdRef = useRef<string | undefined>(activeTabIdForInput);
+	const prevActiveSessionIdRef = useRef<string | undefined>(resolvedSessionId);
 	const didHydrateAiInputRef = useRef(false);
 	const didHydrateTerminalInputRef = useRef(false);
 
 	useEffect(() => {
-		if (!activeTabId || didHydrateAiInputRef.current) return;
+		if (!activeTabIdForInput || didHydrateAiInputRef.current) return;
+		// Read the tab from the store rather than subscribing to it: this hook
+		// deliberately holds no whole-session subscription (see the PERF note on
+		// the selectors above), and the store copy is the fresher one anyway.
 		const session = selectActiveSession(useSessionStore.getState());
 		const tab = session ? getActiveTab(session) : null;
-		setAiValue(tab?.inputValue ?? '');
-		// Restore the mode alongside the text: the same string routes as a shell
-		// command or a chat message depending on this flag.
-		setAiCommandMode(tab?.commandMode === true);
+		if (!tab) return;
+		loadAiDraft(
+			activeTabIdForInput,
+			tab.inputValue ?? '',
+			normalizeComposerCommandMode(tab.commandMode)
+		);
 		didHydrateAiInputRef.current = true;
-	}, [activeTabId, setAiValue, setAiCommandMode]);
+	}, [activeTabIdForInput, loadAiDraft]);
 
 	useEffect(() => {
 		if (!activeSessionId || didHydrateTerminalInputRef.current) return;
@@ -425,44 +478,62 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		didHydrateTerminalInputRef.current = true;
 	}, [activeSessionId, setTerminalValue]);
 
-	// Sync local AI input with tab's persisted value when switching tabs
+	// Hand the composer over when the tab being drafted for changes - including
+	// to "no tab at all", which is a legal state (every AI tab closed with a file
+	// tab still open, or an agent whose session object has not landed yet) and
+	// leaves the composer on screen and typeable.
 	useEffect(() => {
-		if (activeTabId && activeTabId !== prevActiveTabIdRef.current) {
-			const prevTabId = prevActiveTabIdRef.current;
+		const nextTabId = activeTabIdForInput;
+		if (nextTabId === prevActiveTabIdRef.current) return;
+		prevActiveTabIdRef.current = nextTabId;
 
-			// Save current AI input to the PREVIOUS tab. Command mode rides along
-			// with the text (syncAiInputToSession reads it from the store) - a
-			// command draft that came back as a plain message would be sent to the
-			// agent instead of the shell.
-			if (prevTabId) {
-				syncAiInputToSession(useComposerInputStore.getState().aiValue, { tabId: prevTabId });
-			}
-
-			// Load new tab's persisted input value + mode. Read it from the store
-			// rather than this render's snapshot: a coalesced draft write-back (or
-			// text injected into the tab by another surface) can land between the
-			// render and this effect, and the snapshot would show it as empty.
-			const session = selectActiveSession(useSessionStore.getState());
-			const activeTab = session ? getActiveTab(session) : null;
-			setAiValue(activeTab?.inputValue ?? '');
-			setAiCommandMode(activeTab?.commandMode === true);
-			prevActiveTabIdRef.current = activeTabId;
-
-			// Clear hasUnread indicator on newly active tab
-			if (activeTab?.hasUnread && session) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== session.id) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === activeTabId ? { ...t, hasUnread: false } : t)),
-						};
-					})
-				);
-			}
+		// Save the outgoing text to the tab that OWNS it, not to whichever tab was
+		// last active: those differ exactly when the previous window had no tab to
+		// draft for, and that gap is how text typed on one agent used to be filed
+		// against another. Command mode rides along with the text
+		// (syncAiInputToSession reads it from the store) - a command draft that
+		// came back as a plain message would be sent to the agent, not the shell.
+		const composer = useComposerInputStore.getState();
+		const ownerTabId = composer.aiValueTabId;
+		if (ownerTabId) {
+			syncAiInputToSession(composer.aiValue, { tabId: ownerTabId });
 		}
-		// Intentionally only depend on activeTabId, NOT inputValue
-	}, [activeTabId]);
+
+		// Resolve the incoming session/tab from the store, not a render snapshot:
+		// this hook keeps no whole-session subscription, and a coalesced draft
+		// write-back (or text injected by another surface) can land between the
+		// render and this effect, which a snapshot would show as empty.
+		const session = selectActiveSession(useSessionStore.getState());
+		const nextTab = session ? getActiveTab(session) : null;
+
+		if (!nextTabId || !nextTab) {
+			// Nowhere to draft for. Text that belonged to a tab is safely flushed
+			// above, so clear it; text nobody owns stays parked in the composer for
+			// the next tab to adopt, because the user typed it and it is not ours
+			// to throw away.
+			if (ownerTabId) loadAiDraft(null, '', 'off');
+			return;
+		}
+
+		const storedTab = session?.aiTabs?.find((t) => t.id === nextTabId) ?? nextTab;
+		const storedValue = storedTab.inputValue ?? '';
+		// Unowned text was typed while no tab existed to hold it (the user started
+		// a message as a new agent was still coming up). The tab that materializes
+		// under it adopts it, unless that tab already has a draft of its own -
+		// which would mean overwriting one draft with another.
+		const adoptsOrphanText = !ownerTabId && composer.aiValue.trim() !== '' && storedValue === '';
+		if (adoptsOrphanText) {
+			loadAiDraft(nextTabId, composer.aiValue, composer.aiCommandMode);
+		} else {
+			loadAiDraft(nextTabId, storedValue, normalizeComposerCommandMode(storedTab.commandMode));
+		}
+
+		// Clear hasUnread indicator on newly active tab
+		if (nextTab.hasUnread && session) {
+			updateAiTab(session.id, nextTabId, (t) => ({ ...t, hasUnread: false }));
+		}
+		// Intentionally only depend on the drafted-for tab id, NOT inputValue
+	}, [activeTabIdForInput]);
 
 	// Sync terminal input when switching sessions
 	useEffect(() => {
@@ -472,11 +543,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Save terminal input to the previous session (including empty string to persist cleared input)
 			if (prevSessionId) {
 				const currentTerminalValue = useComposerInputStore.getState().terminalValue;
-				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === prevSessionId ? { ...s, terminalDraftInput: currentTerminalValue } : s
-					)
-				);
+				updateSessionWith(prevSessionId, (s) => ({
+					...s,
+					terminalDraftInput: currentTerminalValue,
+				}));
 			}
 
 			// Load terminal input from the new session
@@ -502,9 +572,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return activeSessionInputMode === 'terminal' ? s.terminalValue : s.aiValue;
 	});
 	// Same gating trick for the mode flag: a stable `false` unless the dropdown
-	// is open, so toggling command mode doesn't re-render this hook either.
+	// is open, so toggling command mode doesn't re-render this hook either. Only
+	// the 'shell' rung completes - AI command mode's draft is prose.
 	const tabCompletionCommandMode = useComposerInputStore((s) =>
-		tabCompletionOpen ? s.aiCommandMode : false
+		tabCompletionOpen ? s.aiCommandMode === 'shell' : false
 	);
 	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionInput, 50);
 	const tabCompletionSuggestions = useMemo(() => {
@@ -587,50 +658,22 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// ====================================================================
 
 	// Cross-agent @mention dispatch (Phase 03). Mounted here (a singleton hook)
-	// so the response-chunk subscription is set up once. resolveMentionedTargetSessionIds
-	// reuses the same agent/group resolution the `@` picker uses, so a typed
-	// `@name` dispatches identically to one chosen from the popover.
-	const { sendCrossAgentRequest } = useCrossAgentDispatch(spawnBackgroundSynopsis);
-	// Returns `true` when the source agent's own send should be SUPPRESSED - i.e.
-	// the message is addressed at the mentioned agent(s), so only they answer.
-	// That is the case when the message leads with an `@agent` mention and at
-	// least one target resolves. A trailing mention (`hey @Backend, thoughts?`)
-	// or a leading `@file` mention returns false, so the source agent answers too.
-	const handleCrossAgentMentions = useCallback(
-		(message: string, sourceSession: Session, sourceTabId: string): boolean => {
-			const { sessions: allSessions, groups: allGroups } = useSessionStore.getState();
-			const targetSessionIds = resolveMentionedTargetSessionIds(
-				message,
-				allSessions,
-				allGroups,
-				sourceSession.id
-			).filter((id) => id !== sourceSession.id); // Self-mention guard (defend at dispatch).
-			if (targetSessionIds.length === 0) return false;
+	// so the response-chunk subscription is set up once. The planning/dispatch
+	// pair itself lives in services/crossAgentMentions so the queue drain can
+	// fire a deferred consult from outside React.
+	useCrossAgentDispatch(spawnBackgroundSynopsis);
 
-			// Roster for the leading-mention check below, so a message that leads with
-			// a file-shaped agent name (`@RunMaestro.ai fix this`) suppresses the local
-			// send just like a bare `@Codex` does.
-			const knownMentionNames = buildKnownMentionNameSet(allSessions, allGroups, sourceSession.id);
-
-			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
-			const sourceLogs = sourceTab?.logs ?? [];
-			for (const targetSessionId of targetSessionIds) {
-				sendCrossAgentRequest({
-					sourceSessionId: sourceSession.id,
-					sourceAgentName: sourceSession.name,
-					sourceTabId,
-					targetSessionId,
-					userPrompt: message,
-					sourceLogs,
-					// The source agent's working directory: the consulted agent is told it
-					// may READ files here to answer (see cross-agent-router prompt).
-					sourceCwd: sourceSession.cwd,
-				});
-			}
-
-			return messageStartsWithAgentMention(message, knownMentionNames);
-		},
-		[sendCrossAgentRequest]
+	// Resolve a message's mentions WITHOUT consulting anyone yet. The send path
+	// decides when to fire: immediately for a message that dispatches now, or at
+	// dequeue time for one that lands in the execution queue. `suppressLocal` on
+	// the returned plan means the message leads with an `@agent` mention, so only
+	// the mentioned agent(s) answer; a trailing mention (`hey @Backend,
+	// thoughts?`) or a leading `@file` mention leaves it false and the source
+	// agent answers too.
+	const handleCrossAgentMentionPlan = useCallback(
+		(message: string, sourceSession: Session): CrossAgentMentionPlan | null =>
+			planCrossAgentMentions(message, sourceSession.id),
+		[]
 	);
 
 	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
@@ -660,7 +703,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onSkillsCommand: handleSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
-		onCrossAgentMentions: handleCrossAgentMentions,
+		onPlanCrossAgentMentions: handleCrossAgentMentionPlan,
+		onDispatchCrossAgentMentions: dispatchCrossAgentMentions,
 	});
 
 	// processInputRef - maintained for access in memoized callbacks without stale closures
@@ -714,15 +758,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			sessionsRef.current.find((s) => s.id === blurSessionId)?.inputMode === 'ai';
 		const composer = useComposerInputStore.getState();
 		if (currentIsAiMode) {
-			// Always attribute the text to the tab it was typed into. Blur can fire
-			// after the active tab already moved (focus leaving asynchronously, a
-			// tab activated from outside the composer), and an unattributed write
+			// Attribute the text to the tab that owns it. Blur can fire after the
+			// active tab already moved (focus leaving asynchronously, a tab
+			// activated from outside the composer), and the unattributed write
 			// would then stamp this text onto the newly active tab - erasing that
-			// tab's own draft.
-			syncAiInputToSession(composer.aiValue, {
-				sessionId: target?.sessionId ?? blurSessionId,
-				tabId: target?.tabId ?? activeTabIdRef.current,
-			});
+			// tab's own draft. Unowned text has no tab to be written to yet.
+			const ownerTabId = composer.aiValueTabId ?? activeTabIdRef.current;
+			if (ownerTabId) syncAiInputToSession(composer.aiValue, { tabId: ownerTabId });
 		} else {
 			syncTerminalInputToSession(composer.terminalValue, blurSessionId || undefined);
 		}
@@ -735,7 +777,12 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			const activeTab = activeSession ? getActiveTab(activeSession) : null;
 			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
-			const pin = activeSession ? { sessionId: activeSession.id, tabId: activeTab?.id } : undefined;
+			// The restore below runs a tick later - pin it to the tab that OWNS the
+			// draft so it can't be written onto whatever tab is active by then.
+			const draftTabId = useComposerInputStore.getState().aiValueTabId ?? activeTabIdRef.current;
+			const pin = activeSession
+				? { sessionId: activeSession.id, tabId: draftTabId ?? activeTab?.id }
+				: undefined;
 
 			if (images && images.length > 0) {
 				setStagedImages(images);
@@ -794,16 +841,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
-			// Command mode is a shell prompt: the draft is piped to `sh`, never to
-			// the agent, so a staged image has nothing that could consume it. Say so
-			// rather than silently swallowing the paste - an image that vanishes with
-			// no feedback reads as a broken paste.
-			if (!isGroupChatActive && getCommandMode()) {
+			// Neither command rung has anywhere to put an image: one pipes the draft
+			// to `sh`, the other asks the model for a command line. Say so rather
+			// than silently swallowing the paste - an image that vanishes with no
+			// feedback reads as a broken paste.
+			if (!isGroupChatActive && getCommandMode() !== 'off') {
 				e.preventDefault();
 				notifyCenterFlash({
 					message: 'Images are not supported in command mode',
 					color: 'yellow',
-					detail: 'Press Esc to go back to the agent',
+					detail: 'Press Esc to step back toward the agent',
 				});
 				return;
 			}
@@ -846,20 +893,79 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[setInputValue, setStagedImages, getCommandMode]
 	);
 
-	const appendMentionsToAiInput = useCallback(
-		(paths: string[]) => {
-			if (paths.length === 0) return;
-			const joined = paths.map((p) => formatFileMention(p)).join(' ');
+	/**
+	 * Append arbitrary text to the LIVE composer. Used by drops that are not
+	 * `@` mentions (a staged-image slot reference, say), which always target the
+	 * tab on screen because the drag ends there.
+	 */
+	const appendToAiInput = useCallback(
+		(text: string) => {
 			setInputValue((prev) => {
-				if (!prev) return joined + ' ';
+				if (!prev) return text + ' ';
 				const sep = /\s$/.test(prev) ? '' : ' ';
-				return prev + sep + joined + ' ';
+				return prev + sep + text + ' ';
 			});
 		},
 		[setInputValue]
 	);
 
-	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
+	/**
+	 * Append `@` mentions to the AI composer.
+	 *
+	 * `pinnedTabId` names the tab the mentions belong to. Pass it whenever the
+	 * append can land after the active tab may have moved (an upload that awaits
+	 * the host, say): the composer store holds whatever draft is on screen right
+	 * now, so an unpinned write would drop the mention into whichever
+	 * conversation the user switched to. When the pinned tab is no longer the one
+	 * on screen the mention goes onto that tab's own persisted draft instead.
+	 *
+	 * The background write deliberately does not go through
+	 * `syncAiInputToSession`: that reads `aiCommandMode` from the live composer
+	 * and would stamp the on-screen tab's bang-ladder rung onto the background
+	 * tab, and it cancels the queued flush that belongs to the tab being typed
+	 * in. Only `inputValue` is touched here.
+	 *
+	 * Returns true when the live composer was the one updated, so the caller
+	 * knows whether focusing the textarea is the right follow-up.
+	 */
+	const appendMentionsToAiInput = useCallback(
+		(paths: string[], pinnedTabId?: string): boolean => {
+			if (paths.length === 0) return false;
+			const joined = paths.map((p) => formatFileMention(p)).join(' ');
+			const append = (prev: string) => {
+				if (!prev) return joined + ' ';
+				const sep = /\s$/.test(prev) ? '' : ' ';
+				return prev + sep + joined + ' ';
+			};
+			const pinIsOnScreen =
+				!pinnedTabId || (isAiModeRef.current && pinnedTabId === activeTabIdRef.current);
+			if (!pinIsOnScreen) {
+				// Tab was closed mid-upload: the file is still on the host, there is
+				// just no draft left to mention it in.
+				const owner = useSessionStore
+					.getState()
+					.sessions.find((s) => s.aiTabs?.some((t) => t.id === pinnedTabId));
+				if (!owner || !pinnedTabId) {
+					notifyToast({
+						color: 'yellow',
+						title: 'Attachment has nowhere to go',
+						message: 'The tab it was dropped into was closed before the upload finished',
+					});
+					return false;
+				}
+				updateAiTab(owner.id, pinnedTabId, (t) => ({
+					...t,
+					inputValue: append(t.inputValue ?? ''),
+				}));
+				return false;
+			}
+			setInputValue(append);
+			return true;
+		},
+		[setInputValue]
+	);
+
+	const appendMentionsToGroupChatDraft = useCallback((paths: string[], pinnedChatId?: string) => {
 		if (paths.length === 0) return;
 		const joined = paths.map((p) => formatFileMention(p)).join(' ');
 		// Reading the store via getState() (instead of subscribing) is intentional:
@@ -867,7 +973,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		// chatId / setter at fire time and don't want stale-closure invalidation to
 		// re-create the callback (and bust handleDrop's useCallback deps) on every
 		// store update.
-		const { activeGroupChatId: chatId, setGroupChats } = useGroupChatStore.getState();
+		//
+		// `pinnedChatId` is the chat the drop happened in. An upload resolves
+		// asynchronously, so without the pin a mention would land in whichever chat
+		// is open when it finishes - or vanish entirely once the user has left
+		// group chat.
+		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+		const chatId = pinnedChatId ?? activeGroupChatId;
 		if (!chatId) return;
 		setGroupChats((prev) =>
 			prev.map((c) => {
@@ -880,6 +992,48 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		);
 	}, []);
 
+	/**
+	 * Attach dropped files that carry no filesystem path (the web-desktop build
+	 * runs in a browser, so `getPathForFile` comes back empty and the file may
+	 * live on a different machine than the agent). The bytes are uploaded into
+	 * the session's attachments directory and the resulting host path is
+	 * @mentioned. Anything that fails raises a toast - dropping a file into the
+	 * chat and getting nothing back at all is the bug this exists to avoid.
+	 */
+	const uploadAndMentionPathlessFiles = useCallback(
+		async (
+			files: File[],
+			ownerId: string,
+			projectRoot: string | undefined,
+			toGroupChat: boolean,
+			pinnedTabId: string | undefined
+		) => {
+			const mentions: string[] = [];
+			for (const file of files) {
+				try {
+					const savedPath = await uploadPathlessFile(file, ownerId);
+					mentions.push(toMentionPath(savedPath, projectRoot));
+				} catch (error) {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: error instanceof Error ? error.message : `Could not attach ${file.name}`,
+					});
+				}
+			}
+			if (mentions.length === 0) return;
+			if (toGroupChat) {
+				// `ownerId` is the group chat the drop happened in.
+				appendMentionsToGroupChatDraft(mentions, ownerId);
+			} else if (appendMentionsToAiInput(mentions, pinnedTabId)) {
+				// Only steal focus when the mention actually went into the composer
+				// that is on screen.
+				inputRef.current?.focus();
+			}
+		},
+		[appendMentionsToAiInput, appendMentionsToGroupChatDraft, inputRef]
+	);
+
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
 			e.preventDefault();
@@ -890,14 +1044,32 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const isGroupChatActive = !!useGroupChatStore.getState().activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
-			// Command mode has no agent to hand attachments (or @mentions) to - the
-			// draft goes straight to a shell. Drop is a no-op there.
-			if (!isGroupChatActive && getCommandMode()) {
+			// Neither command rung has an agent to hand attachments (or @mentions)
+			// to - the draft goes to a shell or to a one-shot command request. Drop
+			// is a no-op there.
+			if (!isGroupChatActive && getCommandMode() !== 'off') {
 				notifyCenterFlash({
 					message: 'Attachments are not supported in command mode',
 					color: 'yellow',
-					detail: 'Press Esc to go back to the agent',
+					detail: 'Press Esc to step back toward the agent',
 				});
+				return;
+			}
+
+			// A thumbnail dragged out of the staged-image strip. It is already
+			// attached, so the drop inserts the slot reference the user can then
+			// talk about ("crop Screenshot 2") rather than staging anything new.
+			// Appended at the end like an @mention: the drop caret a textarea
+			// paints during a drag is not readable from selectionStart, so
+			// pretending to insert "where you dropped it" would land the text
+			// somewhere else.
+			const stagedImageIndex = e.dataTransfer.getData(STAGED_IMAGE_MIME);
+			if (stagedImageIndex !== '') {
+				if (isGroupChatActive || !isDirectAIMode) return;
+				const index = Number(stagedImageIndex);
+				if (!Number.isInteger(index) || index < 0) return;
+				appendToAiInput(screenshotReferenceLabel(index));
+				inputRef.current?.focus();
 				return;
 			}
 
@@ -976,6 +1148,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			const files = e.dataTransfer.files;
 			const externalPaths: string[] = [];
+			// Files with no resolvable path (browser drops) get uploaded instead.
+			const pathlessFiles: File[] = [];
 			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
 			for (let i = 0; i < files.length; i++) {
@@ -1014,7 +1188,35 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					const filePath = window.maestro.fs.getPathForFile(file);
 					if (filePath) {
 						externalPaths.push(toMentionPath(filePath, projectRoot));
+					} else {
+						// No path to mention: the web-desktop build is a browser, where
+						// `File` objects have no path at all. Upload the bytes to the host
+						// so the agent has something real to read.
+						pathlessFiles.push(file);
 					}
+				}
+			}
+
+			if (pathlessFiles.length > 0) {
+				const ownerId = isGroupChatActive
+					? useGroupChatStore.getState().activeGroupChatId
+					: activeSession?.id;
+				if (ownerId) {
+					void uploadAndMentionPathlessFiles(
+						pathlessFiles,
+						ownerId,
+						projectRoot,
+						isGroupChatActive,
+						// Pin the tab from drop time so switching tabs or agents while
+						// the bytes are in flight cannot retarget the mention.
+						activeSession ? getActiveTab(activeSession)?.id : undefined
+					);
+				} else {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: 'There is no active agent to attach it to',
+					});
 				}
 			}
 
@@ -1027,7 +1229,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setStagedImages, appendMentionsToAiInput, appendMentionsToGroupChatDraft, getCommandMode]
+		[
+			setStagedImages,
+			appendToAiInput,
+			appendMentionsToAiInput,
+			appendMentionsToGroupChatDraft,
+			uploadAndMentionPathlessFiles,
+			getCommandMode,
+		]
 	);
 
 	// ====================================================================

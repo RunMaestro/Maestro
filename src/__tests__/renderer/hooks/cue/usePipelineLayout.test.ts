@@ -854,4 +854,109 @@ describe('usePipelineLayout', () => {
 			expect(setPipelineState.mock.calls[0][0].pipelines).toEqual(freshPipelines);
 		});
 	});
+
+	describe('beautify on load', () => {
+		// A pipeline in the naive yamlToPipeline shape: fixed 300px pitch with a
+		// wide command node, so consecutive nodes overlap - the ugly default
+		// other agents write into cue.yaml.
+		function overlappingPipeline(id: string) {
+			return {
+				id,
+				name: `Pipeline ${id}`,
+				color: '#06b6d4',
+				nodes: [
+					{
+						id: 't',
+						type: 'trigger',
+						position: { x: 100, y: 200 },
+						data: { eventType: 'time.heartbeat', label: 'Timer', config: {} },
+					},
+					{
+						id: 'cmd',
+						type: 'command',
+						position: { x: 400, y: 200 },
+						data: {
+							name: 'options-desk-context',
+							mode: 'shell',
+							shell: 'BASE=/Volumes/VRAM/90-99_Archive/path collect-context --for-day',
+							owningSessionId: 's1',
+							owningSessionName: 'Finance Desk',
+						},
+					},
+					{
+						id: 'a1',
+						type: 'agent',
+						position: { x: 700, y: 200 },
+						data: { sessionId: 's1', sessionName: 'Finance Desk', toolType: 'claude-code' },
+					},
+				],
+				edges: [
+					{ id: 'e1', source: 't', target: 'cmd', mode: 'pass' },
+					{ id: 'e2', source: 'cmd', target: 'a1', mode: 'pass' },
+				],
+			};
+		}
+
+		it('re-lays merged pipelines onto the grid and snapshots savedStateRef AFTER healing', async () => {
+			const livePipelines = [overlappingPipeline('p1')];
+			mockGraphSessionsToPipelines.mockReturnValue(livePipelines as any);
+			// Earlier tests pin mockReturnValue on the merge mock and clearAllMocks
+			// does not remove return values - restore the pass-through default.
+			mockMergePipelinesWithSavedLayout.mockImplementation(
+				(live: any) => ({ pipelines: live, selectedPipelineId: 'p1' }) as any
+			);
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue({
+				pipelines: [overlappingPipeline('p1')],
+				selectedPipelineId: 'p1',
+			});
+
+			const setPipelineState = vi.fn();
+			const savedStateRef = { current: '' };
+			const params = createDefaultParams({ setPipelineState, savedStateRef });
+			renderHook(() => usePipelineLayout(params));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			expect(setPipelineState).toHaveBeenCalledTimes(1);
+			const applied = setPipelineState.mock.calls[0][0].pipelines[0];
+			// The naive fixed-pitch positions were healed: columns now clear the
+			// wide command node instead of sitting 300px apart.
+			const byId = new Map<string, number>(
+				applied.nodes.map((n: { id: string; position: { x: number } }) => [n.id, n.position.x])
+			);
+			expect(byId.get('cmd')! - byId.get('t')!).toBeGreaterThan(300);
+			expect(byId.get('a1')! - byId.get('cmd')!).toBeGreaterThan(300);
+			// savedStateRef reflects the HEALED layout, so healing alone can
+			// never flip the dirty flag on open.
+			expect(savedStateRef.current).toBe(
+				JSON.stringify(setPipelineState.mock.calls[0][0].pipelines)
+			);
+		});
+
+		it('drops the saved viewport when healing moved nodes (falls back to fitView)', async () => {
+			const livePipelines = [overlappingPipeline('p1')];
+			mockGraphSessionsToPipelines.mockReturnValue(livePipelines as any);
+			mockMergePipelinesWithSavedLayout.mockImplementation(
+				(live: any) => ({ pipelines: live, selectedPipelineId: 'p1' }) as any
+			);
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue({
+				pipelines: [overlappingPipeline('p1')],
+				selectedPipelineId: 'p1',
+				viewport: { x: 100, y: 200, zoom: 1.5 },
+			});
+
+			const params = createDefaultParams();
+			const { result } = renderHook(() => usePipelineLayout(params));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			// The saved pan/zoom framed the pre-heal layout; applying it to the
+			// healed one could open on empty canvas. It must be discarded.
+			expect(result.current.pendingSavedViewportRef.current).toBeNull();
+		});
+	});
 });

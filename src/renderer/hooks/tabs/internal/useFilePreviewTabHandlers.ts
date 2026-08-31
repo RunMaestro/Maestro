@@ -6,14 +6,20 @@ import {
 	ensureInUnifiedTabOrder,
 	findGroupPaneForTab,
 } from '../../../utils/tabHelpers';
+import { fileTabFocusFields } from '../../../utils/tabFocusFields';
 import { generateId } from '../../../utils/ids';
 import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrderUtils';
 import { logger } from '../../../utils/logger';
 import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
+import { useUIStore } from '../../../stores/uiStore';
 import { getOpenedMediaKind } from '../../../utils/mediaItems';
-import { buildReplacementNavigationHistory, getFileNameParts } from './filePreviewTabHelpers';
+import {
+	buildReplacementNavigationHistory,
+	createUntitledFileTab,
+	getFileNameParts,
+} from './filePreviewTabHelpers';
 import type { FilePreviewTabHandlersReturn, FileTabOpenParams, MediaOpenMode } from './types';
 
 export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
@@ -24,9 +30,16 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				openInNewTab?: boolean;
 				targetSessionId?: string;
 				mediaMode?: MediaOpenMode;
+				/**
+				 * When false the tab is created but NOT shown: every active-* id and
+				 * inputMode are left as they were. Background placement for remote
+				 * (CLI / web) opens - see shared/focusPlacement.ts. Default true.
+				 */
+				activate?: boolean;
 			}
 		) => {
 			const openInNewTab = options?.openInNewTab ?? true;
+			const activate = options?.activate !== false;
 			const { setSessions } = useSessionStore.getState();
 			const activeSessionId =
 				options?.targetSessionId || useSessionStore.getState().activeSessionId;
@@ -112,10 +125,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						return {
 							...s,
 							filePreviewTabs: updatedTabs,
-							activeFileTabId: existingTab.id,
-							activeBrowserTabId: null,
-							activeTerminalTabId: null,
-							inputMode: 'ai' as const,
+							// A background re-open refreshes the tab's content in place and
+							// leaves the view alone; only an activating open brings it forward.
+							...(activate ? fileTabFocusFields(existingTab.id) : {}),
 							activeTabId: s.activeTabId,
 							// Opening a standalone file takes over the panel, so leave any active
 							// tiled group.
@@ -161,11 +173,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						return {
 							...s,
 							filePreviewTabs: updatedTabs,
-							activeBrowserTabId: null,
-							activeTerminalTabId: null,
-							inputMode: 'ai' as const,
-							// Opening a file takes over the panel, so leave any active tiled group.
-							activeGroupId: null,
+							// This branch rewrites the file tab that is ALREADY active, so
+							// activation only has to clear the surfaces that outrank it.
+							...(activate ? fileTabFocusFields(currentTabId) : {}),
 						};
 					}
 
@@ -198,13 +208,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						...s,
 						filePreviewTabs: [...s.filePreviewTabs, newFileTab],
 						unifiedTabOrder: updatedUnifiedTabOrder,
-						activeFileTabId: newTabId,
-						activeBrowserTabId: null,
-						activeTerminalTabId: null,
-						inputMode: 'ai' as const,
-						// A newly-opened standalone file tab takes over the panel, so it
-						// must leave any active tiled group (mirrors handleSelectFileTab).
-						activeGroupId: null,
+						...(activate ? fileTabFocusFields(newTabId) : {}),
 					};
 				})
 			);
@@ -424,27 +428,16 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 
 	const handleNewFileTab = useCallback(() => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
+		// Captured inside the updater so focus is only requested for a tab that was
+		// actually created (no active session leaves every entry untouched).
+		let createdTabId: string | null = null;
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const newTabId = generateId();
-				const newFileTab: FilePreviewTab = {
-					id: newTabId,
-					path: '',
-					name: 'Untitled',
-					extension: '',
-					content: '',
-					scrollTop: 0,
-					searchQuery: '',
-					editMode: true,
-					editContent: '',
-					createdAt: Date.now(),
-					lastModified: Date.now(),
-					isLoading: false,
-					navigationHistory: [],
-					navigationIndex: -1,
-				};
+				const newFileTab = createUntitledFileTab();
+				const newTabId = newFileTab.id;
+				createdTabId = newTabId;
 
 				const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
 				const updatedUnifiedTabOrder = insertAfterActiveInUnifiedTabOrder(s, newTabRef);
@@ -463,6 +456,12 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				};
 			})
 		);
+		// A blank file exists to be typed into, so put the caret in the editor rather
+		// than leaving it wherever it was. The request retries until CodeMirror (a
+		// lazy import) has mounted.
+		if (createdTabId) {
+			useUIStore.getState().requestTabFocus({ type: 'file', id: createdTabId });
+		}
 	}, []);
 
 	const handleClearFilePreviewHistory = useCallback(() => {

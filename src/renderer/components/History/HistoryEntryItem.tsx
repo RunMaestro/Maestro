@@ -8,8 +8,6 @@ import { formatTimestamp } from '../../../shared/formatters';
 import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
 
-const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
-
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;
 	index: number;
@@ -139,7 +137,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							title={
 								entry.success
 									? entry.validated
-										? 'Task completed successfully and human-validated'
+										? 'Task completed successfully, and you marked it as checked'
 										: 'Task completed successfully'
 									: 'Task failed'
 							}
@@ -172,7 +170,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 
 				{/* Timestamp */}
 				<span className="text-[10px] flex-shrink-0" style={{ color: theme.colors.textDim }}>
-					{formatTime(entry.timestamp)}
+					{formatTimestamp(entry.timestamp, 'smart')}
 				</span>
 			</div>
 

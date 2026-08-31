@@ -12,6 +12,7 @@ import {
 	GroupChatHandlerDependencies,
 	groupChatEmitters,
 	isExpectedGroomingFailure,
+	resolveParticipantSshRemoteConfig,
 } from '../../../../main/ipc/handlers/groupChat';
 
 // Import types we need for mocking
@@ -97,6 +98,18 @@ vi.mock('../../../../main/utils/logger', () => ({
 // clients through safeSend, independently of the Electron renderer's liveness.
 vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
 	broadcastBridgeEvent: vi.fn(),
+}));
+
+// Mock the main-process stores. Only the sessions store matters here: it is what
+// resolveParticipantSshRemoteConfig reads to recover a participant's SSH config.
+const mockStoredSessions: Record<string, unknown>[] = [];
+vi.mock('../../../../main/stores', () => ({
+	getSessionsStore: () => ({
+		get: () => mockStoredSessions,
+	}),
+	getSettingsStore: () => ({
+		get: () => undefined,
+	}),
 }));
 
 // Import mocked modules for test setup
@@ -1360,5 +1373,56 @@ describe('isExpectedGroomingFailure', () => {
 	it('still reports genuine grooming faults', () => {
 		expect(isExpectedGroomingFailure(new Error('Grooming timed out after 60000ms'))).toBe(false);
 		expect(isExpectedGroomingFailure(new Error('spawn ENOENT'))).toBe(false);
+	});
+});
+
+describe('resolveParticipantSshRemoteConfig', () => {
+	// A participant record stores only the remote's display name, so the reset
+	// summary has to recover the full config off the agent it was added from.
+	// Reading the wrong field silently groomed a remote participant locally.
+	beforeEach(() => {
+		mockStoredSessions.length = 0;
+	});
+
+	it('reads the persisted sessionSshRemoteConfig field', () => {
+		mockStoredSessions.push({
+			id: 's1',
+			name: 'Backend',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+
+		expect(resolveParticipantSshRemoteConfig('Backend')).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+		});
+	});
+
+	it('uses the same normalized-name matcher the router dispatches turns with', () => {
+		mockStoredSessions.push({
+			id: 's1',
+			name: 'Backend-Agent',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+
+		expect(resolveParticipantSshRemoteConfig('Backend Agent')).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+		});
+	});
+
+	it('returns undefined for a local participant', () => {
+		mockStoredSessions.push({ id: 's1', name: 'Backend' });
+
+		expect(resolveParticipantSshRemoteConfig('Backend')).toBeUndefined();
+	});
+
+	it('returns undefined when the source agent is gone', () => {
+		mockStoredSessions.push({
+			id: 's1',
+			name: 'Frontend',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+
+		expect(resolveParticipantSshRemoteConfig('Backend')).toBeUndefined();
 	});
 });

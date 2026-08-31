@@ -6,6 +6,7 @@
  * the MainPanel when a group chat is active.
  */
 
+import { useCallback, useEffect, useRef } from 'react';
 import type {
 	Theme,
 	GroupChat,
@@ -18,6 +19,12 @@ import type {
 import { GroupChatHeader } from './GroupChatHeader';
 import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
+import { OutputSearchBar } from './TerminalOutput/components/OutputSearchBar';
+import { groupChatOutputSearchKey, groupChatSearchContentRevision } from '../utils/outputSearch';
+import { useOutputSearchSlot } from '../hooks/ui/useOutputSearchSlot';
+import { useOutputSearchLayer } from '../hooks/ui/useOutputSearchLayer';
+import { useOutputSearchMatching } from '../hooks/ui/useOutputSearchMatching';
+import { useDebouncedValue } from '../hooks/utils/useThrottle';
 
 interface GroupChatPanelProps {
 	theme: Theme;
@@ -116,6 +123,51 @@ export function GroupChatPanel({
 	ghCliAvailable,
 	onPublishMessageGist,
 }: GroupChatPanelProps): JSX.Element {
+	const searchKey = groupChatOutputSearchKey(groupChat.id);
+	const {
+		outputSearchOpen,
+		outputSearchQuery,
+		outputSearchRegex,
+		setOutputSearchQuery,
+		setOutputSearchRegex,
+		clearOutputSearch,
+	} = useOutputSearchSlot(searchKey);
+
+	const messagesScrollRef = useRef<HTMLDivElement | null>(null);
+	const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
+
+	const closeSearch = useCallback(() => {
+		clearOutputSearch();
+		inputRef?.current?.focus();
+	}, [clearOutputSearch, inputRef]);
+
+	useOutputSearchLayer({
+		open: outputSearchOpen,
+		onEscape: closeSearch,
+		ariaLabel: 'Group Chat Search',
+	});
+
+	const { currentMatchIndex, totalMatches, regexError, goToNextMatch, goToPrevMatch } =
+		useOutputSearchMatching({
+			containerRef: messagesScrollRef,
+			outputSearchOpen,
+			outputSearchRegex,
+			debouncedSearchQuery,
+			contentRevision: groupChatSearchContentRevision(
+				messages,
+				debouncedSearchQuery,
+				outputSearchOpen
+			),
+		});
+
+	// Leaving this group chat (unmount or switch to another id) must clear the
+	// slot so re-entry does not restore a stale open bar + query.
+	useEffect(() => {
+		return () => {
+			clearOutputSearch();
+		};
+	}, [searchKey, clearOutputSearch]);
+
 	return (
 		<div className="flex flex-col h-full" style={{ backgroundColor: theme.colors.bgMain }}>
 			<GroupChatHeader
@@ -133,6 +185,37 @@ export function GroupChatPanel({
 				shortcuts={shortcuts}
 			/>
 
+			{/* Same Custom Highlight styles as TerminalOutput - ::highlight is document-global,
+			    but TerminalOutput is unmounted while a group chat is active. */}
+			{outputSearchOpen && (
+				<style>{`
+					::highlight(terminal-search-all) {
+						background-color: ${theme.colors.warning};
+						color: ${theme.mode === 'light' ? '#fff' : '#000'};
+					}
+					::highlight(terminal-search-current) {
+						background-color: ${theme.colors.accent};
+						color: #fff;
+					}
+				`}</style>
+			)}
+
+			{outputSearchOpen && (
+				<OutputSearchBar
+					theme={theme}
+					outputSearchQuery={outputSearchQuery}
+					outputSearchRegex={outputSearchRegex}
+					regexError={regexError}
+					currentMatchIndex={currentMatchIndex}
+					totalMatches={totalMatches}
+					setOutputSearchQuery={setOutputSearchQuery}
+					setOutputSearchRegex={setOutputSearchRegex}
+					goToNextMatch={goToNextMatch}
+					goToPrevMatch={goToPrevMatch}
+					onClose={closeSearch}
+				/>
+			)}
+
 			<GroupChatMessages
 				ref={messagesRef}
 				theme={theme}
@@ -147,6 +230,8 @@ export function GroupChatPanel({
 				onOpenLightbox={onOpenLightbox}
 				ghCliAvailable={ghCliAvailable}
 				onPublishGist={onPublishMessageGist}
+				searchActive={outputSearchOpen}
+				scrollContainerRef={messagesScrollRef}
 			/>
 
 			<GroupChatInput

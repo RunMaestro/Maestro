@@ -6,8 +6,7 @@
  * stay in App.tsx and are passed in as slots.
  */
 
-import React, { useEffect, useRef, type ComponentProps, type ReactNode } from 'react';
-import { withMonoFallback } from '../../shared/fontStack';
+import React, { useEffect, type ComponentProps, type ReactNode } from 'react';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { SessionList } from './SessionList';
 import { RightPanel, type RightPanelHandle } from './RightPanel';
@@ -24,9 +23,9 @@ import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
 import { CadenzaLayer } from './Cadenza';
-import { MovementOverlay } from './Movement';
+import { ConcertoStageModal } from './Concerto/ConcertoStageModal';
 import { useCadenzaStore } from '../stores/cadenzaStore';
-import { selectHasVisibleMovement, useMovementStore } from '../stores/movementStore';
+import { useMovementStore } from '../stores/movementStore';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
 import type { Group, GroupChat, Theme } from '../types';
 
@@ -37,8 +36,6 @@ type EmptyStateViewProps = ComponentProps<typeof EmptyStateView>;
 
 export interface AppShellProps {
 	theme: Theme;
-	fontFamily: string;
-	fontSize: number;
 	keyboardShellOffset: number;
 	isMobileLandscape: boolean;
 	useNativeTitleBar: boolean;
@@ -79,8 +76,6 @@ export interface AppShellProps {
 
 export function AppShell({
 	theme,
-	fontFamily,
-	fontSize,
 	keyboardShellOffset,
 	isMobileLandscape,
 	useNativeTitleBar,
@@ -128,9 +123,6 @@ export function AppShell({
 		);
 	});
 	const hasTitleSession = useSessionStore((s) => !!selectActiveSession(s));
-	const hasVisibleConcerto = useMovementStore(selectHasVisibleMovement);
-	const concertoChatBoundaryRef = useRef<HTMLDivElement>(null);
-
 	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
 	// outside React. Clear both stores when the feature is disabled so stale views
 	// do not return if the user enables it again later.
@@ -142,25 +134,24 @@ export function AppShell({
 
 	const showTitleBar =
 		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
-	const concertoWorkspaceActive =
-		concertoEnabled && hasVisibleConcerto && hasSessions && !activeGroupChatId && !logViewerOpen;
-	const concertoWorkspaceLayout = concertoWorkspaceActive
-		? isNarrowViewport
-			? 'stacked'
-			: 'side'
-		: undefined;
 
 	return (
 		<div
-			className={`flex maestro-app-shell w-full font-mono overflow-hidden transition-colors duration-300 ${
+			// `font-mono` is deliberately absent. It resolves to the CODE face now
+			// (see tailwind.config.mjs), which is not what the shell wants, and it
+			// was already dead here - the inline fontFamily below has always won.
+			className={`flex maestro-app-shell w-full overflow-hidden transition-colors duration-300 ${
 				showTitleBar ? 'pt-10' : 'pt-0'
 			}`}
 			style={
 				{
 					backgroundColor: theme.colors.bgMain,
 					color: theme.colors.textMain,
-					fontFamily: withMonoFallback(fontFamily),
-					fontSize: `${fontSize}px`,
+					// Read from the published variables rather than re-deriving from
+					// props, so the shell and every portal outside it resolve the
+					// same value. The literals are the first-paint fallback.
+					fontFamily: 'var(--maestro-font-interface, ui-monospace, Menlo, monospace)',
+					fontSize: 'var(--maestro-size-interface, 14px)',
 					'--keyboard-offset': `${keyboardShellOffset}px`,
 				} as React.CSSProperties
 			}
@@ -259,43 +250,9 @@ export function AppShell({
 
 			{groupChatView}
 
-			{hasSessions &&
-				!activeGroupChatId &&
-				!logViewerOpen &&
-				(concertoWorkspaceActive ? (
-					<div
-						ref={concertoChatBoundaryRef}
-						data-testid="concerto-chat-surface"
-						data-concerto-workspace
-						className="flex flex-col min-w-0 min-h-0 overflow-hidden"
-						style={
-							isNarrowViewport
-								? {
-										position: 'fixed',
-										left: 0,
-										right: 0,
-										bottom: 0,
-										height: 'clamp(280px, 42vh, 460px)',
-										zIndex: 90001,
-										borderTop: `1px solid ${theme.colors.border}`,
-										boxShadow: '0 -16px 40px -24px rgba(0,0,0,0.7)',
-									}
-								: {
-										flex: '0 1 clamp(400px, 34vw, 520px)',
-										width: 'clamp(400px, 34vw, 520px)',
-										minWidth: 400,
-										position: 'relative',
-										zIndex: 1,
-										borderRight: `1px solid ${theme.colors.border}`,
-										boxShadow: '16px 0 40px -28px rgba(0,0,0,0.75)',
-									}
-						}
-					>
-						<MainPanel ref={mainPanelRef} {...mainPanelProps} />
-					</div>
-				) : (
-					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
-				))}
+			{hasSessions && !activeGroupChatId && !logViewerOpen && (
+				<MainPanel ref={mainPanelRef} {...mainPanelProps} />
+			)}
 
 			<PluginPanelSlot
 				theme={theme}
@@ -329,15 +286,14 @@ export function AppShell({
 			<ContextTimelinePanel theme={theme} />
 			{/* --- PERMISSION PROMPT (Claude Code standard mode; portal) --- */}
 			<PermissionPrompt theme={theme} />
+			{/* --- CONCERTO ---
+			    Cadenzas float over the app; the movement stage lives in its own
+			    resizable window (Alt+C / command palette / hamburger menu). Both stay
+			    MOUNTED while hidden so an interactive panel keeps its state. */}
 			{concertoEnabled && (
 				<>
 					<CadenzaLayer theme={theme} />
-					<MovementOverlay
-						theme={theme}
-						workspaceBoundaryRef={concertoWorkspaceActive ? concertoChatBoundaryRef : undefined}
-						workspaceLayout={concertoWorkspaceLayout}
-						workspaceTopInset={showTitleBar ? 40 : 0}
-					/>
+					<ConcertoStageModal theme={theme} />
 				</>
 			)}
 		</div>

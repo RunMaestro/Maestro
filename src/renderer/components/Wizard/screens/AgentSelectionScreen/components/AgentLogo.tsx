@@ -1,4 +1,11 @@
+import { AA_LARGE_CONTRAST, readableTextOn } from '../../../../../../shared/colorContrast';
 import type { Theme } from '../../../../../types';
+
+/** One place to resize every provider mark; they are drawn at one size only. */
+const LOGO_SIZE_CLASS = 'w-14 h-14';
+
+/** Identifies the "no mark for this provider" placeholder. See the default case. */
+export const AGENT_LOGO_FALLBACK_TESTID = 'agent-logo-fallback';
 
 export function AgentLogo({
 	agentId,
@@ -13,14 +20,19 @@ export function AgentLogo({
 	brandColor?: string;
 	theme: Theme;
 }): JSX.Element {
-	const color = supported && detected ? brandColor || theme.colors.accent : theme.colors.textDim;
+	// A brand color can sit almost on top of the tile background - GitHub's
+	// near-black #24292F on a dark theme all but disappears - so run it through
+	// the shared contrast helper. It returns the brand color untouched whenever
+	// it already clears WCAG AA, and only nudges it when it does not.
+	const rawColor = supported && detected ? brandColor || theme.colors.accent : theme.colors.textDim;
+	const color = readableTextOn(rawColor, [theme.colors.bgSidebar], AA_LARGE_CONTRAST);
 	const opacity = supported ? 1 : 0.35;
 
 	switch (agentId) {
 		case 'claude-code':
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 48 48"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -37,7 +49,7 @@ export function AgentLogo({
 		case 'codex':
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 48 48"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -51,7 +63,7 @@ export function AgentLogo({
 		case 'opencode':
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 48 48"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -80,7 +92,7 @@ export function AgentLogo({
 		case 'factory-droid':
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 48 48"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -132,7 +144,7 @@ export function AgentLogo({
 			// Official GitHub Copilot mark (Primer octicon `copilot-24`).
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 24 24"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -151,7 +163,7 @@ export function AgentLogo({
 			// clean line-art rendering of Hermes' iconography.
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 48 48"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -194,7 +206,7 @@ export function AgentLogo({
 			// Official pi.dev mark (their favicon glyph, viewBox 0 0 800 800).
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 800 800"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -214,7 +226,7 @@ export function AgentLogo({
 			// Official Oh My Pi mark (omp.sh favicon glyph, viewBox 0 0 64 64).
 			return (
 				<svg
-					className="w-12 h-12"
+					className={LOGO_SIZE_CLASS}
 					viewBox="0 0 64 64"
 					fill="none"
 					xmlns="http://www.w3.org/2000/svg"
@@ -224,9 +236,116 @@ export function AgentLogo({
 				</svg>
 			);
 
-		default:
+		case 'antigravity':
+			// Google publishes Antigravity's mark only as a multi-color raster, so
+			// this is a monochrome line-art reading of the name: a ringed body with
+			// something leaving it upward.
 			return (
-				<div className="w-12 h-12 rounded-full border-2" style={{ borderColor: color, opacity }} />
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<circle cx="24" cy="27" r="9" stroke={color} strokeWidth="2" />
+					<ellipse
+						cx="24"
+						cy="27"
+						rx="18"
+						ry="5.5"
+						stroke={color}
+						strokeWidth="2"
+						transform="rotate(-20 24 27)"
+					/>
+					<path
+						d="M24 21V8m0 0l-4.5 4.5M24 8l4.5 4.5"
+						stroke={color}
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			);
+
+		case 'grok':
+			// xAI ships a wordmark rather than a redistributable glyph; this is its
+			// slashed X - one unbroken diagonal crossed by a second that breaks
+			// around it.
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path d="M12 10L36 38" stroke={color} strokeWidth="5" />
+					<path d="M36 10L27.5 20" stroke={color} strokeWidth="5" />
+					<path d="M20.5 28L12 38" stroke={color} strokeWidth="5" />
+				</svg>
+			);
+
+		case 'cursor-cli':
+			// Cursor publishes its mark as a shaded three-face solid, so this is a
+			// monochrome line reading of it: a triangular prism whose three faces
+			// meet at the center. Deliberately not the hexagon Codex uses.
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path d="M24 6L41 37H7L24 6z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+					<path
+						d="M24 26.7L15.5 21.5M24 26.7L32.5 21.5M24 26.7V37"
+						stroke={color}
+						strokeWidth="2"
+						strokeLinecap="round"
+					/>
+				</svg>
+			);
+
+		case 'qwen3-coder':
+			// Qwen's mark is a geometric knot inside a hex silhouette; this keeps the
+			// hex and reads the knot as two interlocking chevrons.
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M24 5l16.5 9.5v19L24 43 7.5 33.5v-19L24 5z"
+						stroke={color}
+						strokeWidth="2"
+						strokeLinejoin="round"
+					/>
+					<path
+						d="M15 21l9-5 9 5M15 30l9 5 9-5"
+						stroke={color}
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			);
+
+		default:
+			// Marked so a test can prove a pickable provider draws a real mark rather
+			// than landing here. Asserting "an svg rendered" would not: this fallback
+			// is a div today, but nothing stops it becoming an svg later and quietly
+			// satisfying that assertion for every unregistered provider.
+			return (
+				<div
+					data-testid={AGENT_LOGO_FALLBACK_TESTID}
+					className={`${LOGO_SIZE_CLASS} rounded-full border-2`}
+					style={{ borderColor: color, opacity }}
+				/>
 			);
 	}
 }

@@ -48,11 +48,23 @@ vi.mock('../../../renderer/contexts/InputContext', () => ({
 	useInputContext: () => mockInputContext,
 }));
 
-import { useInputKeyDown } from '../../../renderer/hooks/input/useInputKeyDown';
+import {
+	useInputKeyDown,
+	FORCED_PARALLEL_SEND_EVENT,
+} from '../../../renderer/hooks/input/useInputKeyDown';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { InputKeyDownDeps } from '../../../renderer/hooks/input/useInputKeyDown';
+import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
+import { acceptAiCommand, dismissAiCommand } from '../../../renderer/services/aiCommand';
+
+// The proposal card's two outcomes are services; assert the routing, not the run.
+vi.mock('../../../renderer/services/aiCommand', () => ({
+	acceptAiCommand: vi.fn(),
+	dismissAiCommand: vi.fn((entry: { request: string }) => entry.request),
+	requestAiCommand: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ============================================================================
 // Test Helpers
@@ -74,7 +86,7 @@ function createMockDeps(
 		syncFileTreeToTabCompletion: vi.fn(),
 		processInput: vi.fn(),
 		getTabCompletionSuggestions: vi.fn().mockReturnValue([]),
-		getCommandMode: () => false,
+		getCommandMode: () => 'off',
 		setCommandMode: vi.fn(),
 		inputRef: { current: { focus: vi.fn(), blur: vi.fn() } } as any,
 		terminalOutputRef: { current: { focus: vi.fn() } } as any,
@@ -1086,6 +1098,60 @@ describe('Forced parallel send shortcut', () => {
 		expect(deps.processInput).not.toHaveBeenCalledWith(undefined, { forceParallel: true });
 	});
 
+	it('runs from the window event when focus is outside the composer', () => {
+		// The chord acts on the tab's queue, which is drawn in the transcript -
+		// requiring focus in the textarea made it look broken from the one place
+		// the user was looking at the thing it force-sends.
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({ forcedParallelExecution: true } as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { forceParallel: true });
+	});
+
+	it('force-sends the newest queued item from the window event on an empty draft', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({ forcedParallelExecution: true } as any);
+		const deps = createMockDeps({ inputValue: '' });
+		renderHook(() => useInputKeyDown(deps));
+
+		const queued = vi.fn();
+		window.addEventListener('maestro:triggerForceSendQueued', queued);
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+		window.removeEventListener('maestro:triggerForceSendQueued', queued);
+
+		expect(queued).toHaveBeenCalledTimes(1);
+		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
+	it('ignores the window event when the feature is disabled or not in AI mode', () => {
+		// Same gates as the keydown path - one runner, so they cannot drift.
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({ forcedParallelExecution: false } as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+		expect(deps.processInput).not.toHaveBeenCalled();
+
+		setActiveSession({ inputMode: 'terminal' });
+		useSettingsStore.setState({ forcedParallelExecution: true } as any);
+		const termDeps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(termDeps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+		});
+		expect(termDeps.processInput).not.toHaveBeenCalled();
+	});
+
 	it('respects custom shortcut configuration', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({
@@ -1535,7 +1601,7 @@ describe('General edge cases - additional', () => {
 		// The `!` gesture consumes the bang, so there is no character left to
 		// delete. Escape and Backspace on an empty command line are the way out.
 		function commandModeDeps(overrides: Parameters<typeof createMockDeps>[0] = {}) {
-			return createMockDeps({ getCommandMode: () => true, ...overrides });
+			return createMockDeps({ getCommandMode: () => 'shell', ...overrides });
 		}
 
 		it.each(['Escape', 'Backspace'])('exits on %s when the line is empty', (key) => {
@@ -1548,7 +1614,7 @@ describe('General edge cases - additional', () => {
 				result.current.handleInputKeyDown(e);
 			});
 
-			expect(deps.setCommandMode).toHaveBeenCalledWith(false);
+			expect(deps.setCommandMode).toHaveBeenCalledWith('off');
 			expect(e.preventDefault).toHaveBeenCalled();
 		});
 
@@ -1607,7 +1673,7 @@ describe('General edge cases - additional', () => {
 				result.current.handleInputKeyDown(e);
 			});
 
-			expect(deps.setCommandMode).toHaveBeenCalledWith(false);
+			expect(deps.setCommandMode).toHaveBeenCalledWith('off');
 			expect(e.stopPropagation).toHaveBeenCalled();
 			expect(deps.inputRef.current!.focus).toHaveBeenCalled();
 			expect(deps.inputRef.current!.blur).not.toHaveBeenCalled();
@@ -1625,7 +1691,7 @@ describe('General edge cases - additional', () => {
 				result.current.handleInputKeyDown(createKeyEvent('Escape'));
 			});
 
-			expect(deps.setCommandMode).toHaveBeenCalledWith(false);
+			expect(deps.setCommandMode).toHaveBeenCalledWith('off');
 			expect(deps.inputRef.current!.focus).toHaveBeenCalled();
 			expect(deps.inputRef.current!.blur).not.toHaveBeenCalled();
 		});
@@ -1667,5 +1733,178 @@ describe('General edge cases - additional', () => {
 		const first = result.current.handleInputKeyDown;
 		rerender();
 		expect(result.current.handleInputKeyDown).toBe(first);
+	});
+});
+
+// ============================================================================
+// AI command mode
+// ============================================================================
+
+describe('useInputKeyDown - AI command mode', () => {
+	const SESSION_ID = 'session-1';
+	const TAB_ID = 'tab-1';
+
+	function seedEntry(overrides: Record<string, unknown> = {}) {
+		useAiCommandStore.setState({ entries: {} });
+		useAiCommandStore.getState().beginAiCommand({
+			requestId: 'req-1',
+			sessionId: SESSION_ID,
+			tabId: TAB_ID,
+			request: 'what is eating disk space',
+		});
+		if (overrides.command) {
+			useAiCommandStore.getState().resolveAiCommand('req-1', overrides.command as string);
+		}
+		if (overrides.choice === 'cancel') {
+			useAiCommandStore.getState().setAiCommandChoice(`${SESSION_ID}:${TAB_ID}`, 'cancel');
+		}
+	}
+
+	function aiModeDeps(overrides: Parameters<typeof createMockDeps>[0] = {}) {
+		return createMockDeps({ getCommandMode: () => 'ai', ...overrides });
+	}
+
+	beforeEach(() => {
+		useAiCommandStore.setState({ entries: {} });
+		setActiveSession({ activeTabId: TAB_ID });
+	});
+
+	describe('the ladder', () => {
+		it('Escape on an empty AI command line steps back to command mode', () => {
+			// One rung down, not all the way out - the user asked for a shell, and
+			// the shell is still what they get.
+			const deps = aiModeDeps({ inputValue: '' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			const e = createKeyEvent('Escape');
+
+			act(() => result.current.handleInputKeyDown(e));
+
+			expect(deps.setCommandMode).toHaveBeenCalledWith('shell');
+			expect(e.stopPropagation).toHaveBeenCalled();
+		});
+	});
+
+	describe('answering a proposal', () => {
+		it('arrow keys move between Run and Cancel', () => {
+			seedEntry({ command: 'du -sh *' });
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('ArrowRight')));
+			expect(useAiCommandStore.getState().entries[`${SESSION_ID}:${TAB_ID}`].choice).toBe('cancel');
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('ArrowLeft')));
+			expect(useAiCommandStore.getState().entries[`${SESSION_ID}:${TAB_ID}`].choice).toBe('run');
+		});
+
+		it('defaults to Run, so Enter runs the proposed command', () => {
+			seedEntry({ command: 'du -sh *' });
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+
+			expect(acceptAiCommand).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(acceptAiCommand).mock.calls[0][1]).toMatchObject({ command: 'du -sh *' });
+		});
+
+		it('Enter on Cancel declines and hands the request back for editing', () => {
+			seedEntry({ command: 'du -sh *', choice: 'cancel' });
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+
+			expect(acceptAiCommand).not.toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+		});
+
+		it('y and n answer without touching the arrows', () => {
+			seedEntry({ command: 'du -sh *' });
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('n')));
+			expect(acceptAiCommand).not.toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+
+			seedEntry({ command: 'du -sh *' });
+			act(() => result.current.handleInputKeyDown(createKeyEvent('y')));
+			expect(acceptAiCommand).toHaveBeenCalledTimes(1);
+		});
+
+		it('Escape declines rather than stepping down a rung', () => {
+			// The card owns the keyboard while it is up: Escape answers it, and the
+			// composer keeps its caret so the next Escape can walk the ladder.
+			seedEntry({ command: 'du -sh *' });
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			const e = createKeyEvent('Escape');
+
+			act(() => result.current.handleInputKeyDown(e));
+
+			expect(deps.setCommandMode).not.toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+			expect(e.stopPropagation).toHaveBeenCalled();
+		});
+
+		it('Enter while still thinking runs nothing', () => {
+			seedEntry();
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+
+			expect(acceptAiCommand).not.toHaveBeenCalled();
+			expect(deps.processInput).not.toHaveBeenCalled();
+		});
+
+		it('Escape while still thinking abandons the request', () => {
+			seedEntry();
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Escape')));
+
+			expect(dismissAiCommand).toHaveBeenCalledTimes(1);
+			expect(deps.setCommandMode).not.toHaveBeenCalled();
+		});
+
+		it('Enter after a failure hands the request back so it can be retried', () => {
+			seedEntry();
+			useAiCommandStore.getState().failAiCommand('req-1', 'the model returned nothing');
+			const deps = aiModeDeps();
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+
+			expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+			expect(acceptAiCommand).not.toHaveBeenCalled();
+		});
+
+		it('Backspace cannot sneak past the card by stepping down a rung', () => {
+			// Otherwise the card would be parked on a tab that no longer renders it
+			// and would reappear the next time the user climbed back.
+			seedEntry({ command: 'du -sh *' });
+			const deps = aiModeDeps({ inputValue: '' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Backspace')));
+
+			expect(deps.setCommandMode).not.toHaveBeenCalled();
+		});
+
+		it('leaves a proposal parked on another tab alone', () => {
+			// Entries are per tab; a card belonging to a tab the user is not looking
+			// at must not swallow this tab's keystrokes.
+			seedEntry({ command: 'du -sh *' });
+			setActiveSession({ activeTabId: 'tab-2' });
+			const deps = aiModeDeps({ inputValue: '' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Escape')));
+
+			expect(deps.setCommandMode).toHaveBeenCalledWith('shell');
+		});
 	});
 });

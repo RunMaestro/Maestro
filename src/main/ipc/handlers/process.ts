@@ -23,7 +23,7 @@ import { shellEscape } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
-import { getDefaultShell } from '../../stores/defaults';
+import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
@@ -540,13 +540,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				);
 				const processManager = requireProcessManager(getProcessManager);
 
-				// Get the shell from settings if not provided
-				// Custom shell path takes precedence over the selected shell ID
-				let shell = config.shell || settingsStore.get('defaultShell', getDefaultShell());
-				const customShellPath = settingsStore.get('customShellPath', '');
-				if (customShellPath && customShellPath.trim()) {
-					shell = customShellPath.trim();
-				}
+				// Get the shell from settings if not provided. Shared with AI command
+				// mode, which has to name this exact shell to the model.
+				const shell = config.shell || resolveConfiguredShell(settingsStore);
 
 				// Get shell env vars for passing to runCommand
 				const shellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Session, Theme } from '../../../types';
 import type { FileNode } from '../../../types/fileTree';
 import type { FileClickOptions } from '../../../hooks/ui/useAppHandlers';
@@ -6,8 +6,16 @@ import { isMediaFile } from '../../../../shared/mediaTypes';
 import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../../../hooks/ui/useContextMenuPosition';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
-import { useModalStore } from '../../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../../stores/modalStore';
+import { useBatchStore } from '../../../stores/batchStore';
+import { useFileExplorerStore } from '../../../stores/fileExplorerStore';
+import { notifyToast } from '../../../stores/notificationStore';
 import { safeClipboardWrite } from '../../../utils/clipboard';
+import {
+	autoRunDocIdForFile,
+	collectAutoRunDocsInFolder,
+	relativeToAutoRunFolder,
+} from '../../../utils/autoRunStaging';
 import { captureException } from '../../../utils/sentry';
 import { shouldOpenExternally } from '../../../utils/fileExplorer';
 import { joinPath } from '../../../../shared/formatters';
@@ -62,9 +70,19 @@ interface UseFileContextMenuResult {
 	handleOpenNewFile: () => void;
 	handleOpenNewFolder: () => void;
 	handleNewAgentHere: () => void;
+	handleCompressFolder: () => Promise<void>;
 	handleOpenRename: () => void;
 	handleOpenDelete: () => Promise<void>;
 	handleFocusInGraph: () => void;
+	handleGraphFolder: () => void;
+	handleGraphSelection: () => void;
+	/**
+	 * Auto Run documents the current menu context resolves to - a folder's whole
+	 * subtree, one markdown file, or a multi-selection. Empty when nothing under
+	 * the cursor lives in the agent's Auto Run folder.
+	 */
+	autoRunStagedDocs: string[];
+	handleStageForAutoRun: () => void;
 	handlePreviewFile: () => Promise<void>;
 	handlePreviewAllInFolder: () => void;
 	handlePreviewMulti: () => Promise<void>;
@@ -82,6 +100,12 @@ function isMissingFileError(error: unknown): boolean {
 		'code' in error &&
 		(error as { code?: unknown }).code === 'ENOENT'
 	);
+}
+
+/** Files the Document Graph can actually parse. */
+function isMarkdownPath(pathOrName: string): boolean {
+	const lower = pathOrName.toLowerCase();
+	return lower.endsWith('.md') || lower.endsWith('.markdown');
 }
 
 export function useFileContextMenu({
@@ -172,6 +196,25 @@ export function useFileContextMenu({
 		}
 		setContextMenu(null);
 	}, [contextMenu, onFocusFileInGraph]);
+
+	/**
+	 * Graph every markdown file under the right-clicked folder.
+	 *
+	 * The folder path is handed to the builder rather than a file list, so the
+	 * scope does not depend on the folder being expanded in the tree - a
+	 * collapsed folder has no loaded children, and enumerating from the tree
+	 * would silently graph nothing.
+	 *
+	 * These two handlers write to the store directly instead of taking a prop.
+	 * `onFocusFileInGraph` is itself just `focusFileInGraph` handed down through
+	 * four files, and `FileContextMenu.tsx` already calls the store this way.
+	 */
+	const handleGraphFolder = useCallback(() => {
+		if (contextMenu?.node?.type === 'folder') {
+			useFileExplorerStore.getState().openGraphScope({ directory: contextMenu.path });
+		}
+		setContextMenu(null);
+	}, [contextMenu]);
 
 	/**
 	 * Open a run of files, playing the first media file and queueing the rest.
@@ -282,6 +325,80 @@ export function useFileContextMenu({
 		}
 		return result;
 	}, [selectedPathsRef, session.fileTree]);
+
+	/**
+	 * Graph exactly the selected markdown files.
+	 *
+	 * The right-clicked row becomes the center when it is itself markdown;
+	 * otherwise the builder picks the most-connected file, which beats
+	 * centering on whichever file happened to be selected first.
+	 */
+	const handleGraphSelection = useCallback(() => {
+		const files = resolveSelectedNodes()
+			.filter(({ node }) => node.type === 'file' && isMarkdownPath(node.name))
+			.map(({ path }) => path);
+		if (files.length > 0) {
+			const clicked = contextMenu?.path;
+			useFileExplorerStore.getState().openGraphScope({
+				files,
+				focusPath: clicked && files.includes(clicked) ? clicked : undefined,
+			});
+		}
+		setContextMenu(null);
+	}, [contextMenu, resolveSelectedNodes]);
+
+	// Auto Run staging. A folder contributes every document beneath it, a
+	// markdown file contributes itself, and anything outside the agent's Auto Run
+	// folder contributes nothing. Ids are reconciled against the loader's list so
+	// the run list only ever receives documents it can resolve, and the result is
+	// emitted in that list's order so a staged run reads the same way the Auto Run
+	// panel does.
+	const autoRunDocumentList = useBatchStore((s) => s.documentList);
+	const autoRunStagedDocs = useMemo(() => {
+		const menu = contextMenu;
+		if (!menu?.node) return [];
+		const autoRunFolderPath = session.autoRunFolderPath;
+		if (!autoRunFolderPath) return [];
+
+		const docsForNode = (node: FileNode, path: string): string[] => {
+			const absolutePath = `${session.fullPath}/${path}`;
+			if (node.type === 'folder') {
+				const relativeFolder = relativeToAutoRunFolder(absolutePath, autoRunFolderPath);
+				return relativeFolder === null
+					? []
+					: collectAutoRunDocsInFolder(relativeFolder, autoRunDocumentList);
+			}
+			const docId = autoRunDocIdForFile(absolutePath, autoRunFolderPath);
+			return docId ? [docId] : [];
+		};
+
+		// Right-clicking one row inside a multi-selection stages the selection;
+		// right-clicking outside one stages just that row. Same rule the media
+		// queue action uses, so the two menus never disagree about what "this"
+		// means.
+		const selected = resolveSelectedNodes();
+		const targets =
+			selected.length > 1 && selected.some((entry) => entry.path === menu.path)
+				? selected
+				: [{ node: menu.node, path: menu.path }];
+
+		const wanted = new Set(targets.flatMap(({ node, path }) => docsForNode(node, path)));
+		if (wanted.size === 0) return [];
+		return autoRunDocumentList.filter((doc) => wanted.has(doc));
+	}, [
+		contextMenu,
+		resolveSelectedNodes,
+		session.fullPath,
+		session.autoRunFolderPath,
+		autoRunDocumentList,
+	]);
+
+	const handleStageForAutoRun = useCallback(() => {
+		const docs = autoRunStagedDocs;
+		setContextMenu(null);
+		if (docs.length === 0) return;
+		getModalActions().openBatchRunnerWithPresets(docs);
+	}, [autoRunStagedDocs]);
 
 	const handlePreviewMulti = useCallback(async () => {
 		const selectedNodes = resolveSelectedNodes();
@@ -419,29 +536,48 @@ export function useFileContextMenu({
 		setIsMultiDeleting(true);
 		let succeeded = 0;
 		let failed = 0;
-		let lastError: unknown = null;
+		let lastError: string | null = null;
+		// The batch reports per-path failures in its result, so a THROW out of it
+		// means the whole call failed (an unresolvable SSH remote, a dead IPC
+		// bridge) and nothing was deleted. That is a different message from the
+		// refresh failing after the files are already gone.
+		let batchCompleted = false;
 
 		try {
-			for (const item of multiDeleteModal.nodes) {
-				const absolutePath = `${session.fullPath}/${item.path}`;
-				try {
-					await window.maestro.fs.delete(absolutePath, { sshRemoteId });
+			// ONE IPC call for the whole selection. Deleting these one at a time
+			// put a full round trip (and an SSH handshake, when remote) in front
+			// of every file, so the cost scaled with the slowest volume rather
+			// than with the work: 125 files took over 30 seconds (issue #1423).
+			const nodesByAbsolutePath = new Map(
+				multiDeleteModal.nodes.map((item) => [`${session.fullPath}/${item.path}`, item])
+			);
+			const { results } = await window.maestro.fs.deleteMany([...nodesByAbsolutePath.keys()], {
+				sshRemoteId,
+			});
+			batchCompleted = true;
+
+			for (const result of results) {
+				if (result.success) {
 					succeeded++;
-				} catch (error) {
-					failed++;
-					lastError = error;
-					captureException(error, {
-						extra: {
-							action: 'delete-multi',
-							path: item.path,
-							absolutePath,
-							nodeName: item.node.name,
-							nodeType: item.node.type,
-							sessionId: session.id,
-							sshRemoteId,
-						},
-					});
+					continue;
 				}
+				failed++;
+				lastError = result.error ?? 'Unknown error';
+				// The batch resolves with per-path outcomes instead of throwing,
+				// so report each failure here to keep the Sentry breadcrumb the
+				// per-file loop used to produce.
+				const item = nodesByAbsolutePath.get(result.path);
+				captureException(new Error(lastError), {
+					extra: {
+						action: 'delete-multi',
+						path: item?.path,
+						absolutePath: result.path,
+						nodeName: item?.node.name,
+						nodeType: item?.node.type,
+						sessionId: session.id,
+						sshRemoteId,
+					},
+				});
 			}
 
 			await refreshFileTree(session.id);
@@ -450,19 +586,18 @@ export function useFileContextMenu({
 			} else if (succeeded > 0 && failed > 0) {
 				onShowFlash?.(`Deleted ${succeeded}, ${failed} failed`);
 			} else if (failed > 0) {
-				const msg = lastError instanceof Error ? lastError.message : 'Unknown error';
-				onShowFlash?.(`Delete failed: ${msg}`);
+				onShowFlash?.(`Delete failed: ${lastError ?? 'Unknown error'}`);
 			}
 		} catch (error) {
 			captureException(error, {
 				extra: {
-					action: 'delete-multi-refresh',
+					action: batchCompleted ? 'delete-multi-refresh' : 'delete-multi-batch',
 					sessionId: session.id,
+					sshRemoteId,
 				},
 			});
-			onShowFlash?.(
-				`Delete refresh failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-			);
+			const msg = error instanceof Error ? error.message : 'Unknown error';
+			onShowFlash?.(batchCompleted ? `Delete refresh failed: ${msg}` : `Delete failed: ${msg}`);
 			throw error;
 		} finally {
 			setSelectedPaths(new Set());
@@ -614,6 +749,44 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [resolveCreateParent, openNewFolderModal]);
 
+	// Zip a folder into `<name>.zip` beside it in the parent directory. The main
+	// process picks the archive name (auto-suffixing `-1`, `-2`, ... when taken)
+	// and reports back what it wrote, so the toast names the real file.
+	const handleCompressFolder = useCallback(async () => {
+		const menu = contextMenu;
+		setContextMenu(null);
+		if (!menu || !menu.node || menu.node.type !== 'folder') return;
+
+		const folderName = menu.node.name;
+		const absolutePath = `${session.fullPath}/${menu.path}`;
+		try {
+			const result = await window.maestro.fs.compressFolder(absolutePath, { sshRemoteId });
+			notifyToast({
+				color: 'green',
+				title: 'Folder compressed',
+				message: `"${folderName}" -> ${result.name}`,
+			});
+			// The archive lands in the parent directory, which is usually on screen -
+			// refresh so it shows up without the auto-refresh interval's delay.
+			await refreshFileTree(session.id);
+		} catch (error) {
+			captureException(error, {
+				extra: {
+					action: 'compress-folder',
+					path: menu.path,
+					nodeName: folderName,
+					sessionId: session.id,
+					sshRemoteId,
+				},
+			});
+			notifyToast({
+				color: 'red',
+				title: 'Compress failed',
+				message: `Could not compress "${folderName}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+			});
+		}
+	}, [contextMenu, session.fullPath, session.id, sshRemoteId, refreshFileTree]);
+
 	const handleOpenRename = useCallback(() => {
 		if (contextMenu && contextMenu.node) {
 			openRenameModal(contextMenu.node, contextMenu.path);
@@ -647,9 +820,14 @@ export function useFileContextMenu({
 		handleOpenNewFile,
 		handleOpenNewFolder,
 		handleNewAgentHere,
+		handleCompressFolder,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
+		handleGraphFolder,
+		handleGraphSelection,
+		autoRunStagedDocs,
+		handleStageForAutoRun,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
 		handlePreviewMulti,

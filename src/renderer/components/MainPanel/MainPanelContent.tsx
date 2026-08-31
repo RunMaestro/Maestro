@@ -28,11 +28,12 @@ import {
 	resolveTabRefTitle,
 	splitPaneRectsByKind,
 } from '../../utils/panelLayout';
+import { filePaneAttrs, focusPaneInputWhenReady } from '../../utils/paneFocus';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { withMonoFallback } from '../../../shared/fontStack';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
@@ -56,6 +57,7 @@ import type {
 	GroomingProgress,
 	MergeResult,
 } from '../../types/contextMerge';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 
 // Lazy-loaded: FilePreview is the single aggregation point that pulls mermaid,
 // react-syntax-highlighter, and the full react-markdown/remark/rehype stack into
@@ -198,9 +200,13 @@ export interface MainPanelContentProps {
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/**
+	 * Force Send eligibility for a queued item: can it be dispatched now, why not
+	 * if it can't, and which other tabs are working. Carries the FULL
+	 * ForceSendEligibility so the inline card renders the same decision the
+	 * Execution Queue modal does instead of re-deriving one from a subset.
+	 */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	onOpenQueueBrowser?: () => void;
 	showFlashNotification?: (message: string) => void;
 
@@ -223,6 +229,7 @@ export interface MainPanelContentProps {
 
 	// Inline wizard exit handler
 	onExitWizard?: () => void;
+	onStopWizardTurn?: (tabId?: string) => void;
 
 	// Per-kind action handlers for a tiled pane's chevron dropdown (bundled in
 	// MainPanel where the same handlers already feed the TabBar). Forwarded to
@@ -409,6 +416,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onExitWizard,
 		paneTabActions,
 		paneFileActions,
+		onStopWizardTurn,
 		onDeleteLog,
 		onScrollPositionChange,
 		onAtBottomChange,
@@ -462,16 +470,15 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onEffortChange,
 	} = props;
 
-	// Self-sourced from settingsStore. withMonoFallback guarantees the AI-output
-	// and terminal surfaces degrade to monospace instead of the browser's serif
-	// default when the stored font (a bare name from the picker) isn't installed.
-	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
-	// The command terminal can use its own font (issue #1228). An empty setting
-	// means "inherit the UI font", so fall back to fontFamily before applying the
-	// monospace safety net.
-	const terminalFontFamily = useSettingsStore((s) =>
-		withMonoFallback(s.terminalFontFamily?.trim() || s.fontFamily)
-	);
+	// Chat and terminal each carry their own font and size; an unset value means
+	// "inherit the interface setting". Resolved through useSurfaceTypography so
+	// these agree with the CSS custom properties the rest of the app reads -
+	// xterm paints to a canvas and cannot use a CSS variable.
+	const chat = useSurfaceTypography('chat');
+	const chatFontFamily = chat.fontFamily;
+	// The command terminal can use its own font (issue #1228).
+	const terminal = useSurfaceTypography('terminal');
+	const terminalFontFamily = terminal.fontFamily;
 	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
@@ -611,45 +618,73 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		},
 		[activeGroup, activeSession.id]
 	);
-	// Keyboard pane commands move the focus RING via `focusedPaneId`, but the caret
-	// stays wherever it was - so switching to a terminal tile and typing sent the
-	// keystrokes to the previous pane. The tiling shortcuts publish a one-shot
-	// `paneFocusRequest` (leaf id) and this consumes it, putting DOM focus inside
-	// the pane's real input:
+	// Creating or moving to a tab moves the focus RING (`focusedPaneId`, or just the
+	// active-tab ids), but the caret stays wherever it was - so tiling a terminal and
+	// typing sent the keystrokes to the previous pane. The commands publish a one-shot
+	// `focusRequest` and this consumes it, putting DOM focus inside the tab's real
+	// input:
 	//   - terminal -> that tab's xterm, by id. `focusActiveTerminal()` is NOT usable
 	//     here: a tiled terminal pane never sets `activeTerminalTabId`.
 	//   - ai       -> the shared chat textarea, which is already scoped to the
 	//     focused pane's tab (focusPaneInSession syncs activeTabId for AI panes).
-	//   - browser  -> skipped; the webview takes Chromium input off
-	//     `groupFocusedBrowserTabId` on its own.
-	//   - file     -> skipped; a preview has no text input to land in.
-	// Deferred a frame: the request is published in the same tick as the session
-	// commit, so the newly focused pane has not rendered/unhidden yet.
-	const paneFocusRequest = useUIStore((s) => s.paneFocusRequest);
+	//   - browser  -> that tab's address bar, selected.
+	//   - file     -> that tab's editor (or the preview container in preview mode).
+	// The per-kind routing lives in utils/paneFocus so it stays testable and so the
+	// two DOM-resolved kinds (browser overlay, CodeMirror editor) are described in
+	// one place rather than inline here.
+	//
+	// The retry is owned by a REF, not by the effect's cleanup. Consuming the request
+	// sets store state this effect subscribes to, so returning the canceller made the
+	// effect tear itself down: clear -> deps change -> React runs the cleanup ->
+	// cancel() -> the re-run sees a null request and does nothing. The retry was
+	// killed a few ms in, always before its first 50ms attempt, so NO pane ever took
+	// focus. A ref survives that re-run; a superseded request still cancels the one
+	// before it, which is all the cleanup was there for.
+	const focusRequest = useUIStore((s) => s.focusRequest);
+	const focusRetryRef = React.useRef<(() => void) | null>(null);
+	React.useEffect(() => () => focusRetryRef.current?.(), []);
 	React.useEffect(() => {
-		if (!paneFocusRequest) return;
+		if (!focusRequest) return;
 		// Consume immediately so a stale request can never re-steal focus on a later
 		// remount, even if the lookups below bail out.
-		useUIStore.getState().clearPaneFocusRequest();
-		if (!activeGroup) return;
-		const leaf = findLeafById(activeGroup.layout, paneFocusRequest);
-		if (!leaf || leaf.kind !== 'leaf') return;
-		const tab = leaf.tab;
+		useUIStore.getState().clearFocusRequest();
+		// Whatever the previous request was still chasing, it is stale now.
+		focusRetryRef.current?.();
+		focusRetryRef.current = null;
+		// A pane request addresses a leaf in the active group; a tab request names the
+		// tab outright (a plain "new tab" never belongs to a group).
+		let tab: UnifiedTabRef;
+		if ('tab' in focusRequest) {
+			tab = focusRequest.tab;
+		} else {
+			if (!activeGroup) return;
+			const leaf = findLeafById(activeGroup.layout, focusRequest.leafId);
+			if (!leaf || leaf.kind !== 'leaf') return;
+			tab = leaf.tab;
+		}
 		const sessionId = activeSession.id;
 		// The pane shortcuts are not gated on activeFocus, so they can fire while the
 		// Left Bar or Right Bar owns it. Land it back on 'main' for EVERY pane kind or
 		// the arrow keys keep navigating that other region while the caret sits in a
 		// pane. Set synchronously - it is plain state, nothing to wait for.
 		useUIStore.getState().setActiveFocus('main');
-		const timer = setTimeout(() => {
-			if (tab.type === 'terminal') {
-				terminalViewRefs.current.get(sessionId)?.focusTerminal(tab.id);
-			} else if (tab.type === 'ai') {
-				inputRef.current?.focus();
-			}
-		}, PANE_FOCUS_DELAY_MS);
-		return () => clearTimeout(timer);
-	}, [paneFocusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
+		// Retried rather than fired once: a tab created and tiled in the same commit
+		// has not rendered yet, and the file editor (lazy CodeMirror) and browser
+		// address bar (keep-alive overlay) can take several frames to exist.
+		focusRetryRef.current = focusPaneInputWhenReady(
+			tab,
+			{
+				focusTerminal: (tabId) =>
+					terminalViewRefs.current.get(sessionId)?.focusTerminal(tabId) ?? false,
+				focusAiInput: () => {
+					if (!inputRef.current) return false;
+					inputRef.current.focus();
+					return true;
+				},
+			},
+			{ intervalMs: PANE_FOCUS_DELAY_MS }
+		);
+	}, [focusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
 	// Number of open modal/overlay layers. When any layer is open over a browser
 	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
 	// focus so keyboard navigation lands in the modal instead of the page. Driving
@@ -826,6 +861,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					ref={filePreviewContainerRef}
 					tabIndex={-1}
 					className="flex-1 overflow-hidden outline-none"
+					// Same marker the tiled file pane carries, so the focus router can put
+					// the caret in THIS tab's editor. A standalone file tab needs it just
+					// as much as a tiled one: "new file tab" should land you in the text.
+					{...filePaneAttrs(activeFileTabId)}
 				>
 					<React.Suspense fallback={null}>
 						<FilePreview
@@ -948,7 +987,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								ref={terminalOutputRef}
 								session={activeSession}
 								theme={theme}
-								fontFamily={fontFamily}
+								fontFamily={chatFontFamily}
 								activeFocus={activeFocus}
 								outputSearchOpen={outputSearchOpen}
 								outputSearchQuery={outputSearchQuery}
@@ -1111,6 +1150,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onCancelMerge={onCancelMerge}
 						// Inline wizard mode
 						onExitWizard={onExitWizard}
+						onStopWizardTurn={onStopWizardTurn}
 						wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
 						onToggleWizardShowThinking={onToggleWizardShowThinking}
 						// Model/Effort quick-change pills
@@ -1165,7 +1205,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							session={session}
 							theme={theme}
 							fontFamily={terminalFontFamily}
-							fontSize={Math.round(fontSize * 0.85)}
+							// The terminal's own resolved size. This used to be a
+							// hard-coded 0.85 of the interface size, which is exactly
+							// the per-surface ratio the terminal size setting now
+							// expresses explicitly and lets the user change.
+							fontSize={terminal.fontSize}
 							defaultShell={defaultShell}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}
 							onTabPidChange={createTabPidChangeHandler(sessionId)}

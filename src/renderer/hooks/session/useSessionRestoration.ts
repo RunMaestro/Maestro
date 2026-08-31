@@ -23,6 +23,7 @@ import { generateId } from '../../utils/ids';
 import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
+import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
@@ -194,6 +195,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
+			// An untagged entry falls through every per-kind switch, and the wake
+			// path would clear the snooze without restoring the tab.
+			session = migrateLegacySnoozedTabs(session);
+
 			// Migration: ensure projectRoot is set (for sessions created before this field was added)
 			if (!session.projectRoot) {
 				session = { ...session, projectRoot: session.cwd };

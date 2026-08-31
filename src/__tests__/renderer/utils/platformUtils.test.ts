@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+	getFileManagerName,
+	fileManagerName,
 	getRevealLabel,
 	getOpenInLabel,
 	isWindowsPlatform,
@@ -55,6 +57,33 @@ describe('platformUtils', () => {
 		it('returns false for darwin', () => {
 			(window as any).maestro = { platform: 'darwin' };
 			expect(isLinuxPlatform()).toBe(false);
+		});
+	});
+
+	describe('getFileManagerName', () => {
+		it('names the file manager per platform', () => {
+			expect(getFileManagerName('darwin')).toBe('Finder');
+			expect(getFileManagerName('win32')).toBe('Explorer');
+			expect(getFileManagerName('linux')).toBe('File Manager');
+		});
+
+		it('falls back to Finder for unknown platforms', () => {
+			expect(getFileManagerName('freebsd')).toBe('Finder');
+			expect(getFileManagerName('')).toBe('Finder');
+		});
+	});
+
+	describe('fileManagerName', () => {
+		it('resolves the platform from the preload bridge', () => {
+			(window as any).maestro = { platform: 'win32' };
+			expect(fileManagerName()).toBe('Explorer');
+			(window as any).maestro = { platform: 'darwin' };
+			expect(fileManagerName()).toBe('Finder');
+		});
+
+		it('falls back to Finder when the bridge is missing', () => {
+			(window as any).maestro = undefined;
+			expect(fileManagerName()).toBe('Finder');
 		});
 	});
 

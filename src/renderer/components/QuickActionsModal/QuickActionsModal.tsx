@@ -10,7 +10,9 @@ import { notifyToast, useNotificationStore } from '../../stores/notificationStor
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
+import { buildConcertoCommands } from './commands/concertoCommands';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -41,10 +43,7 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
-import {
-	selectCanRestoreFloatingPlayer,
-	useMediaPlaybackStore,
-} from '../../stores/mediaPlaybackStore';
+import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
@@ -68,6 +67,7 @@ import {
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
+import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { buildWindowMoveTargets } from '../../utils/windowTargets';
 
@@ -228,8 +228,23 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
-	const canRestoreFloatingPlayer = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
-	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
+	// Concerto's two surfaces are store-owned toggles, so read their live state
+	// here: the palette entries name what the keypress will actually do.
+	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
+	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
+	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
+	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
+	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const toggleConcertoStageFloating = useCallback(
+		() => setConcertoStageFloating(!concertoStageFloating),
+		[concertoStageFloating, setConcertoStageFloating]
+	);
+	const canOpenMediaPlayer = useMediaPlaybackStore(selectCanOpenMediaPlayer);
+	// Resolved at INVOKE time inside the store, not render time: the palette can
+	// sit open while a queued file advances, and landing on a stale id would open
+	// the player on something the user already finished.
+	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -468,9 +483,23 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...sessionActions,
 		...groupChatActions,
 		...buildMediaPlayerCommands({
-			canRestoreFloatingPlayer,
-			restoreFloatingPlayer,
+			canOpenMediaPlayer,
+			openMediaPlayer,
 			setQuickActionOpen,
+		}),
+		...buildConcertoCommands({
+			concertoEnabled,
+			stageOpen: concertoStageOpen,
+			cadenzasHidden,
+			stageFloating: concertoStageFloating,
+			toggleConcertoStage,
+			toggleStageFloating: toggleConcertoStageFloating,
+			toggleCadenzas: toggleAllCadenzas,
+			setQuickActionOpen,
+			shortcuts: {
+				toggleConcerto: shortcuts.toggleConcerto,
+				toggleCadenzas: shortcuts.toggleCadenzas,
+			},
 		}),
 		...buildNotificationCommands({
 			visibleToastCount,
@@ -609,6 +638,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
+				openModelEffort: shortcuts.openModelEffort,
 			},
 			tabShortcuts,
 			toggleInputMode,
@@ -616,6 +646,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTabGroupCommands({
 			activeSession,
 			setQuickActionOpen,
+		}),
+		...buildTileCommands({
+			activeSession,
+			setQuickActionOpen,
+			shortcuts: {
+				tileAiBelow: shortcuts.tileAiBelow,
+				tileBrowserBelow: shortcuts.tileBrowserBelow,
+				tileFileBelow: shortcuts.tileFileBelow,
+				tileTerminalBelow: shortcuts.tileTerminalBelow,
+			},
 		}),
 		...buildFeatureCommands({
 			activeSession,

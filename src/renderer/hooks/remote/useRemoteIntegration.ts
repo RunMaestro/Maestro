@@ -6,8 +6,12 @@ import { captureException } from '../../utils/sentry';
 import { aiTabFocusFields, createTab, closeTab, getActiveTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { generateId } from '../../utils/ids';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
+import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
+import type { SessionMessage } from '../agent/useSessionViewer';
+import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import { notifyToast } from '../../stores/notificationStore';
 import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore';
 import {
@@ -15,6 +19,7 @@ import {
 	getMovementSnapshot,
 	useMovementStore,
 } from '../../stores/movementStore';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
@@ -24,6 +29,7 @@ import {
 	getConcertoDesignerFrameSnapshot,
 	interactWithConcertoDesignerFrame,
 } from '../../components/Concerto/concertoDesignerBridge';
+import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -128,6 +134,67 @@ function waitForMovementInspectionPaint(): Promise<void> {
 			window.requestAnimationFrame(finish);
 		});
 	});
+}
+
+/**
+ * Upper bound on messages pulled from a provider transcript for a gist. The
+ * read is tail-anchored, so this keeps the newest N and reports the cut.
+ */
+const GIST_SESSION_MESSAGE_LIMIT = 10000;
+
+type GistBody = { body: string } | { error: string };
+
+/**
+ * Transcript body for `gist create <agent-id> --session <id>` - ONE provider
+ * session, not the agent's open AI tabs.
+ *
+ * Headless callers (Maestro Relay, playbooks, Cue, CI) address a conversation
+ * by its provider session id and have no desktop tab, so publishing the
+ * agent's tabs for them puts an unrelated conversation in a URL-readable gist.
+ *
+ * Prefers a live tab holding that session (its logs are already in memory and
+ * every provider has them) and falls back to the provider's on-disk transcript,
+ * which is where a purely headless session lives.
+ */
+async function buildSessionGistBody(session: Session, agentSessionId: string): Promise<GistBody> {
+	const liveTab = session.aiTabs.find((tab) => tab.agentSessionId === agentSessionId);
+	if (liveTab) {
+		const body = formatLogsForClipboard(liveTab.logs);
+		return body ? { body } : { error: `Session has no conversation history: ${agentSessionId}` };
+	}
+
+	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
+	if (!projectPathForSessions) {
+		return { error: `Cannot resolve a project path for agent ${session.id}` };
+	}
+
+	let result: { messages: SessionMessage[]; hasMore: boolean };
+	try {
+		result = await window.maestro.agentSessions.read(
+			session.toolType,
+			projectPathForSessions,
+			agentSessionId,
+			{ offset: 0, limit: GIST_SESSION_MESSAGE_LIMIT },
+			sshRemoteId
+		);
+	} catch {
+		// A missing transcript throws out of the provider storage read. That is
+		// an ordinary miss (wrong id, wrong agent, provider without on-disk
+		// sessions), so answer the caller instead of reporting a crash.
+		return { error: `No transcript found for session ${agentSessionId}` };
+	}
+
+	const body = formatLogsForClipboard(messagesToLogEntries(result.messages, agentSessionId));
+	if (!body) {
+		return { error: `No transcript found for session ${agentSessionId}` };
+	}
+	// Say so when the tail was cut - a silently truncated transcript reads as a
+	// complete one to whoever opens the gist.
+	return {
+		body: result.hasMore
+			? `_Older messages truncated - showing the most recent ${GIST_SESSION_MESSAGE_LIMIT}._\n\n${body}`
+			: body,
+	};
 }
 
 /**
@@ -298,7 +365,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// This allows web mode switches to go through the same code path as desktop
 	useEffect(() => {
 		const unsubscribeSwitchMode = window.maestro.process.onRemoteSwitchMode(
-			(sessionId: string, mode: 'ai' | 'terminal') => {
+			(sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => {
 				// Find the session and update its mode
 				setSessions((prev) => {
 					const session = prev.find((s) => s.id === sessionId);
@@ -308,6 +375,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					// Only switch if mode is different
 					if (session.inputMode === mode) {
+						return prev;
+					}
+
+					// Background placement: mode IS the rendered surface, so switching
+					// the agent the human is looking at would move their view. Nothing
+					// is created here that could sit in a tab bar instead, so the only
+					// honest background behaviour is to decline. Agents that are not on
+					// screen switch normally - that changes no pixels.
+					if (background && useSessionStore.getState().activeSessionId === sessionId) {
 						return prev;
 					}
 
@@ -430,23 +506,30 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string) => {
+			(sessionId: string, responseChannel: string, background?: boolean) => {
 				let newTabId: string | null = null;
 
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
-						// Use createTab helper
+						// Use createTab helper. `activate: false` appends the tab without
+						// touching any active-* id, so it shows up in the tab bar the way
+						// a browser opens a background tab.
 						const result = createTab(s, {
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
+							activate: !background,
 						});
 						if (!result) return s;
 						newTabId = result.tab.id;
 						return result.session;
 					})
 				);
+				// A background create must not pull the Left Bar over either.
+				if (newTabId && !background) {
+					setActiveSessionId(sessionId);
+				}
 
 				// Send response back with the new tab ID
 				if (newTabId) {
@@ -718,6 +801,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// UI creates in useInputProcessing so it is a first-class queue citizen.
 					const isReadOnly =
 						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
+					// Cross-agent @mentions: stamp the intent so processQueuedItem fires the
+					// consult when this item becomes the agent's turn - the same contract a
+					// composer-queued message carries (useInputProcessing). Without the flag
+					// the mention is inert and the target agent is never consulted.
+					const mentionPlan = planCrossAgentMentions(command, sessionId);
 					const queuedItem: QueuedItem = {
 						id: generateId(),
 						timestamp: Date.now(),
@@ -731,6 +819,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								? targetTab.agentSessionId.split('-')[0].toUpperCase()
 								: 'New'),
 						readOnlyMode: isReadOnly,
+						...(mentionPlan && {
+							crossAgentMention: true,
+							crossAgentOnly: mentionPlan.suppressLocal,
+						}),
 					};
 
 					// Position is deterministic from the snapshot we already read: the item
@@ -865,10 +957,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenFileTab(
-			(sessionId: string, filePath: string, switchToAgent: boolean) => {
+			(
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openFileTab', {
-						detail: { sessionId, filePath, switchToAgent },
+						detail: {
+							sessionId,
+							filePath,
+							background: options.background,
+							switchToAgent: options.switchToAgent,
+						},
 					})
 				);
 			}
@@ -877,6 +978,51 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribe();
 		};
 	}, []);
+
+	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
+	// The main process has already validated the surface and tab, so this is a
+	// straight hand-off to the shared opener.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenModal((params) => {
+			openUiSurface(params.surface, params.tab);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote request to graph a set of documents (`maestro-cli
+	// open-graph`). Paths arrive absolute; the graph addresses files relative to
+	// its own root, so they are relativized against the target agent here rather
+	// than in the main process, which does not know which root the view uses.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenDocumentGraph((params) => {
+			const session = useSessionStore
+				.getState()
+				.sessions.find((s: Session) => s.id === params.sessionId);
+			const root = session?.projectRoot || session?.cwd || '';
+			const relative = (absolutePath: string): string => {
+				if (!root) return absolutePath;
+				if (absolutePath === root) return '';
+				const prefix = root.endsWith('/') ? root : `${root}/`;
+				return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+			};
+
+			// Focusing the agent first: the graph is a full-window view on ONE
+			// agent, so rendering it under a different agent than the one the user
+			// is looking at would put it somewhere they cannot see.
+			if (session) setActiveSessionId(params.sessionId);
+
+			useFileExplorerStore.getState().openGraphScope({
+				files: params.files?.length ? params.files.map(relative) : undefined,
+				directory: params.directory !== undefined ? relative(params.directory) : undefined,
+				focusPath: params.focusPath ? relative(params.focusPath) : undefined,
+			});
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, [setActiveSessionId]);
 
 	// Handle remote refresh file tree from web/CLI interface
 	useEffect(() => {
@@ -1158,11 +1304,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openTerminalTab', {
-						detail: { sessionId, config, responseChannel },
+						detail: {
+							sessionId,
+							config,
+							responseChannel,
+							background: options?.background === true,
+						},
 					})
 				);
 			}
@@ -1234,14 +1386,40 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle a remote Goal-Driven Auto Run launch (`goal-run --visible`) from the CLI
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteLaunchGoalRun(
+			(
+				sessionId: string,
+				config: {
+					goal: string;
+					exitCriteria?: string;
+					maxIterations?: number | null;
+					model?: string;
+					effort?: string;
+				},
+				responseChannel: string
+			) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:launchGoalRun', {
+						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
 	// git worktree branched off a parent agent, without an Auto Run playbook.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteCreateWorktreeSession(
-			(parentSessionId: string, config: any, responseChannel: string) => {
+			(parentSessionId: string, config: any, responseChannel: string, background?: boolean) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:createWorktreeSession', {
-						detail: { parentSessionId, config, responseChannel },
+						detail: { parentSessionId, config, responseChannel, background },
 					})
 				);
 			}
@@ -1579,11 +1757,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCreateSession', {
-						detail: { name, toolType, cwd, groupId, config, responseChannel },
+						detail: { name, toolType, cwd, groupId, config, responseChannel, background },
 					})
 				);
 			}
@@ -1829,6 +2008,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				sessionId: string,
 				description: string,
 				isPublic: boolean,
+				agentSessionId: string | undefined,
 				responseChannel: string
 			) => {
 				try {
@@ -1841,26 +2021,49 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
-					const sections: string[] = [];
-					for (const tab of session.aiTabs) {
-						const body = formatLogsForClipboard(tab.logs);
-						if (!body) continue;
-						const header = tab.name || tab.id.slice(0, 8);
-						sections.push(`## Tab: ${header}\n\n${body}`);
+					let content: string;
+					if (agentSessionId) {
+						// Narrowed to one provider session: publish exactly that
+						// conversation, never a fallback to the agent's tabs. A caller
+						// that named a session and got a different one published has
+						// leaked it - gists are readable by anyone with the URL.
+						const result = await buildSessionGistBody(session, agentSessionId);
+						if ('error' in result) {
+							window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+								success: false,
+								error: result.error,
+							});
+							return;
+						}
+						content = `# ${session.name}\n\n_Session \`${agentSessionId}\`_\n\n${result.body}\n`;
+					} else {
+						const sections: string[] = [];
+						for (const tab of session.aiTabs) {
+							const body = formatLogsForClipboard(tab.logs);
+							if (!body) continue;
+							const header = tab.name || tab.id.slice(0, 8);
+							sections.push(`## Tab: ${header}\n\n${body}`);
+						}
+
+						if (sections.length === 0) {
+							window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+								success: false,
+								error: 'Session has no conversation history to publish',
+							});
+							return;
+						}
+
+						content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
 					}
 
-					if (sections.length === 0) {
-						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
-							success: false,
-							error: 'Session has no conversation history to publish',
-						});
-						return;
-					}
-
-					const content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
 					const safeName =
 						(session.name || 'session').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 60) || 'session';
-					const filename = `${safeName}_context.md`;
+					// Session ids are provider-issued, so scrub them the same way as the
+					// agent name before they become a gist filename.
+					const safeSessionId = agentSessionId?.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 8);
+					const filename = safeSessionId
+						? `${safeName}_${safeSessionId}_context.md`
+						: `${safeName}_context.md`;
 
 					const result = await window.maestro.git.createGist(
 						filename,
@@ -1882,6 +2085,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							sessionId,
 							isPublic,
 							descriptionProvided: Boolean(description),
+							agentSessionTargeted: Boolean(agentSessionId),
 						},
 					});
 					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {

@@ -13,6 +13,8 @@ import type {
 import {
 	type MindMapLayoutType,
 	LAYOUT_LABELS,
+	MIND_MAP_LAYOUT_TYPES,
+	nextMindMapLayout,
 	calculateLayout,
 	calculateMindMapLayout,
 	calculateRadialLayout,
@@ -24,6 +26,7 @@ import {
 	NODE_HEADER_HEIGHT,
 	NODE_SUBHEADER_HEIGHT,
 	NODE_HEIGHT_BASE,
+	NODE_PILL_HEIGHT,
 	DESC_LINE_HEIGHT,
 	CHARS_PER_LINE,
 	DESC_PADDING,
@@ -147,6 +150,46 @@ describe('mindMapLayouts', () => {
 	});
 
 	// ====================================================================
+	// MIND_MAP_LAYOUT_TYPES / nextMindMapLayout
+	// ====================================================================
+
+	describe('nextMindMapLayout', () => {
+		// One order serves the toolbar dropdown and the `L` shortcut, so a key
+		// press and a click cannot disagree about what comes next.
+		it('every listed layout has a label', () => {
+			for (const type of MIND_MAP_LAYOUT_TYPES) {
+				expect(LAYOUT_LABELS[type]).toBeDefined();
+			}
+			expect(MIND_MAP_LAYOUT_TYPES).toHaveLength(Object.keys(LAYOUT_LABELS).length);
+		});
+
+		it('advances through the list in order', () => {
+			expect(nextMindMapLayout('mindmap')).toBe('radial');
+			expect(nextMindMapLayout('radial')).toBe('hierarchical');
+			expect(nextMindMapLayout('hierarchical')).toBe('force');
+		});
+
+		it('wraps at the end of the list', () => {
+			expect(nextMindMapLayout('force')).toBe('mindmap');
+		});
+
+		it('visits every layout exactly once per cycle', () => {
+			const seen: MindMapLayoutType[] = [];
+			let current: MindMapLayoutType = MIND_MAP_LAYOUT_TYPES[0];
+			for (let i = 0; i < MIND_MAP_LAYOUT_TYPES.length; i++) {
+				seen.push(current);
+				current = nextMindMapLayout(current);
+			}
+			expect(new Set(seen).size).toBe(MIND_MAP_LAYOUT_TYPES.length);
+			expect(current).toBe(MIND_MAP_LAYOUT_TYPES[0]);
+		});
+
+		it('restarts the cycle from an unrecognized layout rather than sticking', () => {
+			expect(nextMindMapLayout('nonsense' as MindMapLayoutType)).toBe(MIND_MAP_LAYOUT_TYPES[0]);
+		});
+	});
+
+	// ====================================================================
 	// calculateNodeHeight
 	// ====================================================================
 
@@ -173,6 +216,15 @@ describe('mindMapLayouts', () => {
 			const a = calculateNodeHeight('Test text here', 100);
 			const b = calculateNodeHeight('Test text here', 100);
 			expect(a).toBe(b);
+		});
+
+		it('collapses to a pill when previews are off, however long the text', () => {
+			// Off is a mode, not a zero-length preview: the body box and the folder
+			// sub-header both go away, so the height cannot depend on the content.
+			expect(calculateNodeHeight('A'.repeat(500), 0)).toBe(NODE_PILL_HEIGHT);
+			expect(calculateNodeHeight('short', 0)).toBe(NODE_PILL_HEIGHT);
+			expect(calculateNodeHeight(undefined, 0)).toBe(NODE_PILL_HEIGHT);
+			expect(NODE_PILL_HEIGHT).toBeLessThan(NODE_HEIGHT_BASE);
 		});
 	});
 

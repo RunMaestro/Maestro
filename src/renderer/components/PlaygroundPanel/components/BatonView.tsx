@@ -1,4 +1,5 @@
 import { Check, Copy, RotateCcw, Wand2 } from 'lucide-react';
+import { Wordmark } from '../../ui/Wordmark';
 import { EASING_OPTIONS } from '../utils/batonCss';
 import type { Theme } from '../../../types';
 import type { BatonPlaygroundState } from '../types';
@@ -31,12 +32,7 @@ export function BatonView({ theme, baton }: BatonViewProps) {
 							style={{ color: theme.colors.accent }}
 						/>
 						<div className="flex flex-col gap-1">
-							<span
-								className="font-bold tracking-widest text-3xl"
-								style={{ color: theme.colors.textMain }}
-							>
-								MAESTRO
-							</span>
+							<Wordmark className="text-3xl" style={{ color: theme.colors.textMain }} />
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
 								{baton.batonActive ? 'Animation active' : 'Animation paused'}
 							</span>
@@ -67,12 +63,7 @@ export function BatonView({ theme, baton }: BatonViewProps) {
 									className={`w-5 h-5${baton.batonActive ? ' baton-sparkle-active' : ''}`}
 									style={{ color: theme.colors.accent }}
 								/>
-								<span
-									className="font-bold tracking-widest text-lg"
-									style={{ color: theme.colors.textMain }}
-								>
-									MAESTRO
-								</span>
+								<Wordmark className="text-lg" style={{ color: theme.colors.textMain }} />
 							</div>
 						</div>
 						<div className="flex items-center gap-3">

@@ -529,6 +529,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		gitLogOpen,
 		gitLogTarget,
 		gitDiffCwd,
+		gitDiffSessionId,
 		showNewGroupChatModal,
 		showGroupChatInfo,
 		leaderboardRegistrationOpen,
@@ -607,6 +608,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			gitLogOpen: s.modals.get('gitLog')?.open ?? false,
 			gitLogTarget: (s.modals.get('gitLog')?.data as GitLogModalData | undefined) ?? null,
 			gitDiffCwd: (s.modals.get('gitDiff')?.data as GitDiffModalData | undefined)?.cwd ?? null,
+			gitDiffSessionId:
+				(s.modals.get('gitDiff')?.data as GitDiffModalData | undefined)?.sessionId ?? null,
 			showNewGroupChatModal: s.modals.get('newGroupChat')?.open ?? false,
 			showGroupChatInfo: s.modals.get('groupChatInfo')?.open ?? false,
 			leaderboardRegistrationOpen: s.modals.get('leaderboard')?.open ?? false,
@@ -1175,6 +1178,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onUpdateLightboxImage={onUpdateLightboxImage}
 				gitDiffPreview={gitDiffPreview}
 				gitDiffCwd={gitDiffCwd}
+				gitDiffSessionId={gitDiffSessionId}
 				gitViewerCwd={gitViewerCwd}
 				onCloseGitDiff={onCloseGitDiff}
 				gitLogOpen={gitLogOpen}

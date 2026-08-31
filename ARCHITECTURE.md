@@ -166,6 +166,7 @@ window.maestro = {
 
   // File system
   fs: { readDir, readFile },
+  parquet: { open, query, export, close },  // windowed reads; bytes never cross IPC
 
   // Agent management
   agents: { detect, get, getConfig, setConfig, getConfigValue, setConfigValue },
@@ -1036,7 +1037,7 @@ interface FilePreviewTab {
 	path: string; // Full file path
 	name: string; // Filename without extension (tab display name)
 	extension: string; // File extension with dot (e.g., '.md', '.ts')
-	content: string; // File content (loaded on open)
+	content: string; // File content, OR a handoff sentinel - see below
 	scrollTop: number; // Preserved scroll position
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
@@ -1047,6 +1048,17 @@ interface FilePreviewTab {
 	isLoading?: boolean; // True while content is being fetched
 }
 ```
+
+**`content` is not always content.** Some formats are too large, too binary, or too random-access to cross IPC as a string, so `fs:readFile` short-circuits them to a short sentinel and the viewer fetches the real bytes another way:
+
+| Format         | What `content` holds            | Who reads the file                                    |
+| -------------- | ------------------------------- | ----------------------------------------------------- |
+| Text, code, md | the file, as UTF-8              | the renderer                                          |
+| Images         | a `data:` URL                   | the renderer                                          |
+| Audio / video  | a `maestro-media://` stream URL | Chromium, via range requests over the custom protocol |
+| Parquet        | a `maestro-parquet://` marker   | the main process, over the `parquet:*` IPC surface    |
+
+Anything that inspects `content` must therefore test what kind of tab it is first. `isParquetPreviewMarker()` (`src/shared/parquet/preview.ts`) and `isMediaStreamUrl()` (`src/shared/mediaTypes.ts`) are the checks; both are cheap prefix tests. Getting this wrong is not subtle in behaviour but is silent in review: tokenizing a marker reports "15 tokens" for a two-gigabyte table, and a text search over one reports zero matches on a file full of them.
 
 ### Unified Tab System
 
@@ -1076,9 +1088,9 @@ unifiedClosedTabHistory: ClosedTabEntry[]; // Undo stack for Cmd+Shift+T
 
 **`unifiedTabOrder` is the source of truth for the TabBar.** Every tab in `aiTabs` or `filePreviewTabs` must have a corresponding `UnifiedTabRef` in `unifiedTabOrder`. Tabs missing from this array will have content that renders (via `activeTabId`/`activeFileTabId` lookups) but will be invisible in the TabBar.
 
-When adding or activating tabs, always update `unifiedTabOrder`. Use `ensureInUnifiedTabOrder()` from `tabHelpers.ts` when activating existing tabs defensively. See [[CLAUDE-PATTERNS.md]] section 6 for code examples.
+When adding or activating tabs, always update `unifiedTabOrder`. Use `ensureInUnifiedTabOrder()` from `tabHelpers` when activating existing tabs defensively. See [[CLAUDE-PATTERNS.md]] section 6 for code examples.
 
-The shared `buildUnifiedTabs(session)` function in `tabHelpers.ts` is the canonical way to compute the tab list for rendering. It follows `unifiedTabOrder` and appends any orphaned tabs as a safety net.
+The shared `buildUnifiedTabs(session)` function in `tabHelpers` is the canonical way to compute the tab list for rendering. It follows `unifiedTabOrder` and appends any orphaned tabs as a safety net.
 
 ### Behavior
 
@@ -1109,9 +1121,10 @@ File tabs display a colored badge based on file extension. Colors are theme-awar
 | File                         | Purpose                                                                                             |
 | ---------------------------- | --------------------------------------------------------------------------------------------------- |
 | `TabBar.tsx`                 | Unified tab rendering with AI and file tabs                                                         |
-| `FilePreview.tsx`            | File content viewer with edit mode                                                                  |
+| `FilePreview.tsx`            | File content viewer with edit mode; routes each format to its viewer                                |
+| `ParquetViewer/`             | Parquet grid, schema rail, and filter bar (client of `src/main/parquet/`)                           |
 | `MainPanel.tsx`              | Coordinates tab display and file loading                                                            |
-| `tabHelpers.ts`              | Shared tab utilities (`buildUnifiedTabs`, `ensureInUnifiedTabOrder`, `createTab`, `closeTab`, etc.) |
+| `tabHelpers/`                | Shared tab utilities (`buildUnifiedTabs`, `ensureInUnifiedTabOrder`, `createTab`, `closeTab`, etc.) |
 | `useTabHandlers.ts`          | Tab operation hooks including `handleOpenFileTab`                                                   |
 | `tabStore.ts`                | Zustand selectors for tab state (`selectUnifiedTabs`, `selectActiveTab`)                            |
 | `useDebouncedPersistence.ts` | Persists file tabs across sessions                                                                  |
@@ -1130,6 +1143,8 @@ Persistent PTY-backed terminal tabs that integrate into the unified tab bar alon
 - **State persistence**: `terminalTabs` array saved with the session; PTYs are re-spawned on restore
 - **Spawn failure UX**: `state === 'exited' && pid === 0` shows an error overlay with a Retry button
 - **Exit message**: PTY exit writes a yellow ANSI banner and new-terminal hint to the xterm buffer
+- **Font-swap hazard (no mitigation in `XTerminal` today)**: xterm measures its cell size ONCE, inside `term.open()`. The terminal fonts load from Google Fonts with `display=swap` (`src/renderer/index.html`), so a face that arrives after that leaves every glyph drawn at its own advance inside a cell sized for the fallback, which renders as `C l a u d e   C o d e` - correct letters, stretched spacing. Terminal tabs mask it by re-fitting on every show/hide; a terminal that mounts once inside a modal has nothing that re-measures it. `XTerminal` carried a `document.fonts.ready` re-measure for this and it was removed, so a new always-mounted terminal surface has to solve it itself.
+- **Fixed-pitch guarantee (`resolveTerminalFontFamily()` in `XTerminal.tsx`)**: the terminal font inherits the interface font whenever the user has not set one of its own, so picking a proportional UI font (Avenir Next was the reported case) breaks every terminal at once. That is a different failure from the font-swap hazard above and needs a different fix, because the configured font resolves perfectly - it simply is not fixed-pitch, so the appended `monospace` fallback is never reached. Since CSS cannot be asked whether a family is monospace, `isFixedPitchStack()` MEASURES it on a canvas: a fixed-pitch face gives `W` and `i` the same advance, while Avenir Next gives them 1025 and 296. A proportional stack is replaced with `MONO_FALLBACK_STACK`; anything measurably fixed-pitch is left alone, and unmeasurable input (no canvas, jsdom) keeps the user's font rather than overriding on no evidence. The shared `withMonoFallback()` (`src/shared/fontStack.ts`) still runs first and covers the other half - a font that fails to resolve at all, where the browser would otherwise fall back to the context default (`sans-serif` on a canvas, the inherited UI font in the DOM). Do NOT add a terminal-local copy of that fallback chain; every surface degrades through the one in `fontStack.ts`.
 
 ### Terminal Tab Interface
 
@@ -1198,6 +1213,8 @@ interface QueuedItem {
 - Auto Run tasks queue with regular messages
 - Queue visible via indicator in tab bar
 - Users can cancel pending items via queue browser
+- A queued message that `@mentions` another agent (`crossAgentMention: true`) consults that agent when the item is DISPATCHED, not when it was queued (`src/renderer/services/crossAgentMentions.ts`)
+- Tab labels in the indicator and browser are resolved from the LIVE tab via `resolveQueuedItemTabName()`; `QueuedItem.tabName` is only a fallback for a tab that no longer exists
 
 ### Session Fields
 

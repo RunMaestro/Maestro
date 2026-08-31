@@ -510,7 +510,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.switchMode('session-3', 'terminal');
 
-			expect(callback).toHaveBeenCalledWith('session-3', 'terminal');
+			expect(callback).toHaveBeenCalledWith('session-3', 'terminal', undefined);
 		});
 
 		it('passes ai mode correctly', async () => {
@@ -519,7 +519,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.switchMode('session-3', 'ai');
 
-			expect(callback).toHaveBeenCalledWith('session-3', 'ai');
+			expect(callback).toHaveBeenCalledWith('session-3', 'ai', undefined);
 		});
 	});
 
@@ -591,7 +591,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.newTab('session-15');
 
-			expect(callback).toHaveBeenCalledWith('session-15');
+			expect(callback).toHaveBeenCalledWith('session-15', undefined);
 		});
 	});
 

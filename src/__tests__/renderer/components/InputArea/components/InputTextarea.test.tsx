@@ -2,7 +2,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ComponentProps, RefObject } from 'react';
 import { InputTextarea } from '../../../../../renderer/components/InputArea/components/InputTextarea';
-import { TEXTAREA_MAX_HEIGHT } from '../../../../../renderer/components/InputArea/utils/textareaSizing';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../../../renderer/utils/textareaSizing';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
 
 /**
@@ -69,12 +69,12 @@ function renderTextarea(overrides: Partial<TextareaProps> = {}) {
 }
 
 describe('InputTextarea', () => {
-	it('caps the textarea with the shared TEXTAREA_MAX_HEIGHT constant', () => {
+	it('caps the textarea with the shared KEYSTROKE_TEXTAREA_MAX_HEIGHT constant', () => {
 		const { textarea } = renderTextarea();
 
 		// Locks the dedupe in: the CSS cap must stay the same value the resize
 		// logic clamps to, never a re-hard-coded `11rem`.
-		expect(textarea.style.maxHeight).toBe(`${TEXTAREA_MAX_HEIGHT}px`);
+		expect(textarea.style.maxHeight).toBe(`${KEYSTROKE_TEXTAREA_MAX_HEIGHT}px`);
 		expect(textarea.style.maxHeight).toBe('176px');
 	});
 

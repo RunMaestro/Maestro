@@ -80,8 +80,12 @@ export function buildGitWorktreeCommands({
 		commands.push({
 			id: 'gitPull',
 			label: 'Git Pull',
-			subtext:
-				gitActions.behind > 0
+			// A run already in flight (its console may have been dismissed with Run
+			// in Background) is worth more than the behind count, which is stale
+			// until that run finishes.
+			subtext: gitActions.pullRunning
+				? 'Running - open to watch it'
+				: gitActions.behind > 0
 					? `${gitActions.behind} commit${gitActions.behind === 1 ? '' : 's'} behind`
 					: 'Pull from origin',
 			action: () => {
@@ -93,8 +97,9 @@ export function buildGitWorktreeCommands({
 		commands.push({
 			id: 'gitPush',
 			label: 'Git Push',
-			subtext:
-				gitActions.ahead > 0
+			subtext: gitActions.pushRunning
+				? 'Running - open to watch it'
+				: gitActions.ahead > 0
 					? `${gitActions.ahead} commit${gitActions.ahead === 1 ? '' : 's'} ahead`
 					: 'Push to origin',
 			action: () => {

@@ -39,8 +39,9 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 			title="History Panel Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={1008}
-			maxHeight="85vh"
+			resizeKey="history-guide"
+			defaultSize={{ width: 880, height: 720 }}
+			minSize={{ width: 520, height: 400 }}
 			closeOnBackdropClick
 			zIndex={50}
 			footer={

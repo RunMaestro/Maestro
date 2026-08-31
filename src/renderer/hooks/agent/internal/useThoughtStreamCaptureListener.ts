@@ -6,25 +6,64 @@
  * INDEPENDENT of any tab's `showThinking` setting. This is what lets a user
  * introspect an Auto Run's reasoning even when thinking display is off.
  *
- * Cheap by default: every chunk hits a single early-out
- * (`capturing[sessionId]`) and does nothing unless that session has an open or
- * minimized capture. Active captures are coalesced per `requestAnimationFrame`
- * (same approach as the thinking-log listener) so a high-frequency stream
- * becomes one store write per frame.
+ * Capture is ambient: every owned session's chunks are buffered whether or not
+ * the panel is open, so opening the stream on a run that has been hanging for
+ * ten minutes shows those ten minutes rather than an empty log. The store
+ * bounds the buffers (see MAX_THOUGHT_CHARS_PER_SESSION / MAX_CAPTURED_SESSIONS).
+ *
+ * Chunks are coalesced on a THOUGHT_FLUSH_MS timer, not requestAnimationFrame:
+ * rAF is paused while the window is hidden or minimized, which is exactly when
+ * a long unattended run is producing the reasoning the user later wants to read.
+ * A timer keeps flushing (throttled, not stopped) in the background, and at one
+ * store write every 250ms per session the always-on path stays cheap.
  */
 
 import { useEffect, useRef } from 'react';
 import { useThoughtStreamStore } from '../../../stores/thoughtStreamStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
+import type { ParsedSessionId } from '../../../utils/sessionIdParser';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
+
+/** Coalescing window for the raw chunk stream. */
+/**
+ * Streaming-id types the Thought Stream captures.
+ *
+ * Only Auto Run. Every in-app Auto Run path - the document loop, the batch
+ * processor and the goal runner - funnels through `spawnAgentForSession`
+ * (useAgentExecution), which mints exactly one shape, `{sessionId}-batch-{ts}`.
+ * That single mint site is why this is a one-element set rather than a guess.
+ *
+ * Deliberately excluded:
+ * - `ai-tab` / `legacy-ai`: ordinary conversation. This is the leak that made
+ *   the panel show chat alongside a run.
+ * - `synopsis`: background summarization of a finished turn. Not conversational,
+ *   but not an Auto Run either, and attributing it to a run would misread it.
+ * - `regular`: an unrecognized shape. Capturing the unknown is what produced the
+ *   over-broad behaviour this replaces.
+ */
+export const AUTO_RUN_SESSION_TYPES: ReadonlySet<ParsedSessionId['type']> = new Set(['batch']);
+
+export const THOUGHT_FLUSH_MS = 250;
 
 export function useThoughtStreamCaptureListener(): void {
 	const bufferRef = useRef<Map<string, string>>(new Map());
-	const rafIdRef = useRef<number | null>(null);
+	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
 		const buffer = bufferRef.current;
+
+		const flush = () => {
+			flushTimerRef.current = null;
+			if (buffer.size === 0) return;
+			const chunks = new Map(buffer);
+			buffer.clear();
+			const appendThought = useThoughtStreamStore.getState().appendThought;
+			for (const [chunkKey, text] of chunks) {
+				const sepIndex = chunkKey.indexOf(':');
+				appendThought(chunkKey.slice(0, sepIndex), chunkKey.slice(sepIndex + 1), text);
+			}
+		};
 
 		const unsubscribe = window.maestro.process.onThinkingChunk?.(
 			(sessionId: string, content: string) => {
@@ -37,41 +76,41 @@ export function useThoughtStreamCaptureListener(): void {
 				// the key the thought stream captures under. Using REGEX_AI_TAB alone
 				// silently dropped every Auto Run thinking chunk.
 				const parsed = parseSessionId(sessionId);
-				const baseSessionId = parsed.baseSessionId;
 
-				// Early-out: skip all work unless this session is being captured.
-				if (!useThoughtStreamStore.getState().capturing[baseSessionId]) return;
+				// ...and resolving them all to one base id is also why they MERGED: an
+				// Auto Run and an ordinary chat in the same agent share a base session
+				// id, so the run's Thoughts panel showed the conversation too. The base
+				// id says which agent; only `type` says which kind of run, so the kind
+				// is the gate and the base id stays the key.
+				//
+				// Adding a new Auto Run spawn shape means adding its type HERE. Leaving
+				// it out reproduces the original bug - silently dropping that run's
+				// thinking - so the set is asserted in this hook's tests rather than
+				// left to be discovered.
+				if (!AUTO_RUN_SESSION_TYPES.has(parsed.type)) return;
 
 				// Interactive tabs carry a real tabId; batch/synopsis spawns don't, so
 				// fall back to the full streaming id to keep parallel spawns distinct.
 				const tabId = parsed.tabId ?? parsed.actualSessionId;
-				const key = `${baseSessionId}:${tabId}`;
-				bufferRef.current.set(key, (bufferRef.current.get(key) || '') + content);
+				const key = `${parsed.baseSessionId}:${tabId}`;
+				buffer.set(key, (buffer.get(key) || '') + content);
 
-				if (rafIdRef.current === null) {
-					rafIdRef.current = requestAnimationFrame(() => {
-						rafIdRef.current = null;
-						const chunks = new Map(bufferRef.current);
-						bufferRef.current.clear();
-						const appendThought = useThoughtStreamStore.getState().appendThought;
-						for (const [chunkKey, text] of chunks) {
-							const sepIndex = chunkKey.indexOf(':');
-							const sid = chunkKey.slice(0, sepIndex);
-							const tid = chunkKey.slice(sepIndex + 1);
-							appendThought(sid, tid, text);
-						}
-					});
+				if (flushTimerRef.current === null) {
+					flushTimerRef.current = setTimeout(flush, THOUGHT_FLUSH_MS);
 				}
 			}
 		);
 
 		return () => {
 			unsubscribe?.();
-			if (rafIdRef.current !== null) {
-				cancelAnimationFrame(rafIdRef.current);
-				rafIdRef.current = null;
+			if (flushTimerRef.current !== null) {
+				clearTimeout(flushTimerRef.current);
+				flushTimerRef.current = null;
 			}
-			buffer.clear();
+			// Land whatever was mid-coalesce rather than dropping it - a teardown
+			// mid-run (window close, hot reload) should not lose the last quarter
+			// second of reasoning.
+			flush();
 		};
 	}, [ownedGate]);
 }

@@ -34,7 +34,7 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, ConcertoRoutes, StaticRoutes, WsRoute } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -67,6 +67,8 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenDocumentGraphCallback,
+	OpenModalCallback,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
 	CloseBrowserTabCallback,
@@ -74,12 +76,15 @@ import type {
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
 	ListTerminalTabsCallback,
+	ReadTerminalTabCallback,
+	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	LaunchGoalRunCallback,
 	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
@@ -186,6 +191,12 @@ export class WebServer {
 	// Security token - persistent or regenerated per startup
 	private securityToken: string;
 
+	// Read-only token for the Concerto HTML document route. Deliberately NOT the
+	// security token above: a Concerto document is sandboxed but can still
+	// navigate its own frame, so anything in its URL can leave the machine.
+	// Regenerated every startup - documents are in-memory and never outlive it.
+	private concertoToken: string = randomUUID().replace(/-/g, '');
+
 	// Local IP address for generating URLs (detected at startup)
 	private localIpAddress: string = 'localhost';
 
@@ -201,6 +212,7 @@ export class WebServer {
 
 	// Route instances
 	private apiRoutes: ApiRoutes;
+	private concertoRoutes: ConcertoRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
@@ -252,10 +264,12 @@ export class WebServer {
 
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
+		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
 			this.webAssetsPath,
-			this.webDesktopPath
+			this.webDesktopPath,
+			this.concertoToken
 		);
 		this.wsRoute = new WsRoute(this.securityToken);
 
@@ -453,6 +467,14 @@ export class WebServer {
 		this.callbackRegistry.setOpenFileTabCallback(callback);
 	}
 
+	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
+		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
+	}
+
+	setOpenModalCallback(callback: OpenModalCallback): void {
+		this.callbackRegistry.setOpenModalCallback(callback);
+	}
+
 	setRefreshFileTreeCallback(callback: RefreshFileTreeCallback): void {
 		this.callbackRegistry.setRefreshFileTreeCallback(callback);
 	}
@@ -475,6 +497,10 @@ export class WebServer {
 
 	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
 		this.callbackRegistry.setListTerminalTabsCallback(callback);
+	}
+
+	setReadTerminalTabCallback(callback: ReadTerminalTabCallback): void {
+		this.callbackRegistry.setReadTerminalTabCallback(callback);
 	}
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
@@ -513,6 +539,10 @@ export class WebServer {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbackRegistry.setConfigureAutoRunCallback(callback);
+	}
+
+	setLaunchGoalRunCallback(callback: LaunchGoalRunCallback): void {
+		this.callbackRegistry.setLaunchGoalRunCallback(callback);
 	}
 
 	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
@@ -879,6 +909,9 @@ export class WebServer {
 		});
 		this.apiRoutes.registerRoutes(this.server);
 
+		// Concerto HTML documents for browser clients (no custom-scheme handler).
+		this.concertoRoutes.registerRoutes(this.server);
+
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
 			getSessions: () => this.callbackRegistry.getSessions(),
@@ -947,13 +980,14 @@ export class WebServer {
 					images,
 					background
 				),
-			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
-				this.callbackRegistry.switchMode(sessionId, mode),
+			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
+				this.callbackRegistry.switchMode(sessionId, mode, background),
 			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
 				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
-			newTab: async (sessionId: string) => this.callbackRegistry.newTab(sessionId),
+			newTab: async (sessionId: string, background?: boolean) =>
+				this.callbackRegistry.newTab(sessionId, background),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>
@@ -963,8 +997,13 @@ export class WebServer {
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
-			openFileTab: async (sessionId: string, filePath: string, switchToAgent: boolean) =>
-				this.callbackRegistry.openFileTab(sessionId, filePath, switchToAgent),
+			openFileTab: async (
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => this.callbackRegistry.openFileTab(sessionId, filePath, options),
+			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
+			openModal: async (params) => this.callbackRegistry.openModal(params),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
@@ -972,12 +1011,15 @@ export class WebServer {
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
 			openTerminalTab: async (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string }
-			) => this.callbackRegistry.openTerminalTab(sessionId, config),
+				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				options?: { background?: boolean }
+			) => this.callbackRegistry.openTerminalTab(sessionId, config, options),
 			writeTerminalTab: async (sessionId: string, payload: WriteTerminalTabPayload) =>
 				this.callbackRegistry.writeTerminalTab(sessionId, payload),
 			listTerminalTabs: async (sessionId?: string) =>
 				this.callbackRegistry.listTerminalTabs(sessionId),
+			readTerminalTab: async (sessionId: string, payload: ReadTerminalTabPayload) =>
+				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			enqueueCommand: async (
@@ -1005,6 +1047,10 @@ export class WebServer {
 				sessionId: string,
 				config: Parameters<CallbackRegistry['configureAutoRun']>[1]
 			) => this.callbackRegistry.configureAutoRun(sessionId, config),
+			launchGoalRun: async (
+				sessionId: string,
+				config: Parameters<CallbackRegistry['launchGoalRun']>[1]
+			) => this.callbackRegistry.launchGoalRun(sessionId, config),
 			setSessionAutoRunFolder: async (sessionId: string, folderPath: string) =>
 				this.callbackRegistry.setSessionAutoRunFolder(sessionId, folderPath),
 			getSessions: () => this.callbackRegistry.getSessions(),
@@ -1052,12 +1098,14 @@ export class WebServer {
 				toolType: string,
 				cwd: string,
 				groupId?: string,
-				config?: CreateSessionConfig
-			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config),
+				config?: CreateSessionConfig,
+				background?: boolean
+			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config, background),
 			createWorktreeSession: async (
 				parentSessionId: string,
-				config: Parameters<CallbackRegistry['createWorktreeSession']>[1]
-			) => this.callbackRegistry.createWorktreeSession(parentSessionId, config),
+				config: Parameters<CallbackRegistry['createWorktreeSession']>[1],
+				background?: boolean
+			) => this.callbackRegistry.createWorktreeSession(parentSessionId, config, background),
 			deleteSession: async (sessionId: string) => this.callbackRegistry.deleteSession(sessionId),
 			renameSession: async (sessionId: string, newName: string) =>
 				this.callbackRegistry.renameSession(sessionId, newName),
@@ -1087,8 +1135,12 @@ export class WebServer {
 				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
 			summarizeContext: async (sessionId: string) =>
 				this.callbackRegistry.summarizeContext(sessionId),
-			createGist: async (sessionId: string, description: string, isPublic: boolean) =>
-				this.callbackRegistry.createGist(sessionId, description, isPublic),
+			createGist: async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				agentSessionId?: string
+			) => this.callbackRegistry.createGist(sessionId, description, isPublic, agentSessionId),
 			getCueSubscriptions: async (sessionId?: string) =>
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>
@@ -1102,7 +1154,7 @@ export class WebServer {
 			) => this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt, sourceAgentId),
 			// Cue pipeline-layout mutations operate directly on the
 			// main-process layout file via the mutation primitives - no
-			// renderer round-trip needed. The Pipeline Editor (when open)
+			// renderer round-trip needed. The Pipeline Graph (when open)
 			// keeps its own in-memory state, so CLI edits made while the
 			// editor is open will be overwritten on the editor's next
 			// save. The CLI surface documents this; we don't gate here.

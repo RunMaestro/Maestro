@@ -4,7 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import type { TerminalTabInfo } from '../types';
+import type { TerminalTabInfo, ReadTerminalTabResult } from '../types';
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
@@ -105,7 +105,8 @@ export function registerBrowserTabCallbacks(
 	server.setOpenTerminalTabCallback(
 		async (
 			sessionId: string,
-			config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+			config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+			options?: { background?: boolean }
 		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -141,7 +142,9 @@ export function registerBrowserTabCallbacks(
 					resolve({ success: false });
 					return;
 				}
-				mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel);
+				mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel, {
+					background: options?.background === true,
+				});
 
 				const timeoutId = setTimeout(() => {
 					if (resolved) return;
@@ -211,6 +214,59 @@ export function registerBrowserTabCallbacks(
 					logger.warn(`writeTerminalTab callback timed out for session ${sessionId}`, 'WebServer');
 					resolve({ success: false, error: 'Timed out waiting for the desktop app' });
 				}, 8000);
+			});
+		}
+	);
+
+	server.setReadTerminalTabCallback(
+		async (sessionId: string, payload: { tabRef?: string; tail?: number }) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for readTerminalTab', 'WebServer');
+				return { success: false, error: 'Desktop window not available' };
+			}
+
+			return new Promise<ReadTerminalTabResult>((resolve) => {
+				const responseChannel = `remote:readTerminalTab:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					if (typeof result === 'object' && result !== null) {
+						const r = result as Record<string, unknown>;
+						resolve({
+							success: r.success === true,
+							error: typeof r.error === 'string' ? r.error : undefined,
+							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							tabName: typeof r.tabName === 'string' ? r.tabName : undefined,
+							cwd: typeof r.cwd === 'string' ? r.cwd : undefined,
+							state: typeof r.state === 'string' ? r.state : undefined,
+							content: typeof r.content === 'string' ? r.content : undefined,
+							totalLines: typeof r.totalLines === 'number' ? r.totalLines : undefined,
+						});
+						return;
+					}
+					resolve({ success: false, error: 'Malformed response from the desktop app' });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for readTerminalTab', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Desktop window not available' });
+					return;
+				}
+				mainWindow.webContents.send('remote:readTerminalTab', sessionId, payload, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`readTerminalTab callback timed out for session ${sessionId}`, 'WebServer');
+					resolve({ success: false, error: 'Timed out waiting for the desktop app' });
+				}, 5000);
 			});
 		}
 	);

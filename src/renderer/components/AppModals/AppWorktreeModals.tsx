@@ -2,6 +2,8 @@ import { memo, useEffect, useState } from 'react';
 import type { Theme, Session, SessionWorktreeConfig } from '../../types';
 import type { PRDetails } from '../CreatePRModal';
 import { gitService } from '../../services/git';
+import { useModalStore } from '../../stores/modalStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { resolveGitCwd, resolveGitSshRemoteId } from '../../hooks/git/useGitAgentActions';
 
 // Worktree Modal Components
@@ -85,6 +87,19 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 	// Determine session for PR modal - uses createPRSession if set, otherwise activeSession
 	const prSession = createPRSession || activeSession;
 
+	// Same shape for Worktree Config: the Left Bar's right-click menu pins the
+	// agent it targeted, the header and Settings pin nothing and follow the
+	// active agent. Re-read from the store so a rename or config change since the
+	// modal opened is reflected, and so the modal and the save/disable callbacks
+	// (which resolve the target the same way) cannot diverge.
+	const pinnedWorktreeConfigId = useModalStore(
+		(s) => (s.modals.get('worktreeConfig')?.data as { session?: Session } | undefined)?.session?.id
+	);
+	const pinnedWorktreeConfigSession = useSessionStore((s) =>
+		pinnedWorktreeConfigId ? s.sessions.find((x) => x.id === pinnedWorktreeConfigId) : undefined
+	);
+	const worktreeConfigSession = pinnedWorktreeConfigSession ?? activeSession;
+
 	// Only worktree-spawned agents carry `worktreeBranch`/`gitBranches`. The PR
 	// modal is now also reachable for a plain git agent (header pill menu, Left
 	// Bar menu), which passes its live branch as `createPRSourceBranch`; the
@@ -117,12 +132,12 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 	return (
 		<>
 			{/* --- WORKTREE CONFIG MODAL --- */}
-			{worktreeConfigModalOpen && activeSession && (
+			{worktreeConfigModalOpen && worktreeConfigSession && (
 				<WorktreeConfigModal
 					isOpen={worktreeConfigModalOpen}
 					onClose={onCloseWorktreeConfigModal}
 					theme={theme}
-					session={activeSession}
+					session={worktreeConfigSession}
 					onSaveConfig={onSaveWorktreeConfig}
 					onCreateWorktree={onCreateWorktreeFromConfig}
 					onDisableConfig={onDisableWorktreeConfig}
@@ -148,6 +163,7 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 					theme={theme}
 					worktreePath={prSession.cwd}
 					worktreeBranch={prSourceBranch}
+					agentName={prSession.name}
 					availableBranches={prAvailableBranches}
 					onPRCreated={onPRCreated}
 				/>

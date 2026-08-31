@@ -13,10 +13,22 @@ import {
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import {
+	selectShowNowPlayingIndicator,
+	useMediaPlaybackStore,
+} from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import {
+	DEFAULT_SHORTCUTS,
+	TAB_SHORTCUTS,
+	FIXED_SHORTCUTS,
+} from '../../../renderer/constants/shortcuts';
+import {
+	KEYBOARD_MASTERY_LEVELS,
+	collectBoundShortcuts,
+} from '../../../renderer/constants/keyboardMastery';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
+import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 
 // Pull defaults from a freshly-initialized store so tests don't need to re-import them.
 // Deep-cloned so test mutations can't affect the captured reference.
@@ -197,6 +209,15 @@ describe('settingsStore', () => {
 			expect(state.shellEnvVars).toEqual({});
 			expect(state.ghPath).toBe('');
 			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			// Every surface font defaults to empty, meaning "inherit the interface
+			// font", so a fresh install pins no surface to a face of its own.
+			expect(state.terminalFontFamily).toBe('');
+			expect(state.chatFontFamily).toBe('');
+			expect(state.filePreviewFontFamily).toBe('');
+			expect(state.fileEditorFontFamily).toBe('');
+			// False on a fresh install AND on every install predating the chooser,
+			// which is what makes one gate serve new and existing users alike.
+			expect(state.typographyPromptSeen).toBe(false);
 			expect(state.fontSize).toBe(14);
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
@@ -340,6 +361,58 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setFontFamily('Fira Code');
 				expect(useSettingsStore.getState().fontFamily).toBe('Fira Code');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontFamily', 'Fira Code');
+			});
+
+			it.each([
+				['setTerminalFontFamily', 'terminalFontFamily'],
+				['setChatFontFamily', 'chatFontFamily'],
+				['setFilePreviewFontFamily', 'filePreviewFontFamily'],
+				['setFileEditorFontFamily', 'fileEditorFontFamily'],
+			] as const)('%s updates state and persists', (action, key) => {
+				const store = useSettingsStore.getState() as unknown as Record<
+					string,
+					(value: string) => void
+				>;
+				store[action]('Verdana');
+				expect((useSettingsStore.getState() as unknown as Record<string, string>)[key]).toBe(
+					'Verdana'
+				);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(key, 'Verdana');
+			});
+
+			it('applyTypographyPreset writes every font field in one state update', () => {
+				useSettingsStore.getState().applyTypographyPreset('default');
+				const state = useSettingsStore.getState();
+				const preset = TYPOGRAPHY_PRESETS.default.fonts;
+
+				expect(state.fontFamily).toBe(preset.fontFamily);
+				expect(state.chatFontFamily).toBe(preset.chatFontFamily);
+				expect(state.terminalFontFamily).toBe(preset.terminalFontFamily);
+				expect(state.filePreviewFontFamily).toBe(preset.filePreviewFontFamily);
+				expect(state.fileEditorFontFamily).toBe(preset.fileEditorFontFamily);
+
+				for (const [key, value] of Object.entries(preset)) {
+					expect(window.maestro.settings.set).toHaveBeenCalledWith(key, value);
+				}
+			});
+
+			it('applyTypographyPreset round-trips between the two presets', () => {
+				// A preset that skipped a surface would leave the other preset's
+				// value there, so Default -> Hacker would not restore Hacker.
+				useSettingsStore.getState().applyTypographyPreset('default');
+				useSettingsStore.getState().applyTypographyPreset('hacker');
+				const state = useSettingsStore.getState();
+
+				expect(state.fontFamily).toBe(TYPOGRAPHY_PRESETS.hacker.fonts.fontFamily);
+				expect(state.terminalFontFamily).toBe('');
+				expect(state.filePreviewFontFamily).toBe('');
+				expect(state.fileEditorFontFamily).toBe('');
+			});
+
+			it('setTypographyPromptSeen updates state and persists', () => {
+				useSettingsStore.getState().setTypographyPromptSeen(true);
+				expect(useSettingsStore.getState().typographyPromptSeen).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('typographyPromptSeen', true);
 			});
 
 			it('setFontSize updates state and persists', () => {
@@ -903,9 +976,15 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().documentGraphMaxNodes).toBe(500);
 		});
 
-		it('setDocumentGraphPreviewCharLimit clamps to 50-500', () => {
-			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(10);
-			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(50);
+		it('setDocumentGraphPreviewCharLimit clamps to 0-500, keeping 0 as "previews off"', () => {
+			// 0 is a mode, not a floor violation: it draws each graph node as a
+			// filename pill. Clamping it up to 50 would make the setting
+			// unreachable and snap the graph back to full cards.
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(0);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
+
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(-10);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
 
 			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(1000);
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(500);
@@ -1471,39 +1550,69 @@ describe('settingsStore', () => {
 			]);
 		});
 
+		// The denominator is the shortcuts that actually have a chord bound, so the
+		// ids used here have to be real ones - made-up ids count for nothing.
+		const boundShortcutIds = () =>
+			collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS).map((s) => s.id);
+
 		it('recordShortcutUsage detects level-up', () => {
-			// To trigger level 1 (student), we need >= 25% of total shortcuts
-			// Total = DEFAULT_SHORTCUTS + TAB_SHORTCUTS + FIXED_SHORTCUTS keys
-			const totalShortcuts =
-				Object.keys(DEFAULT_SHORTCUTS).length + Object.keys(TAB_SHORTCUTS).length + 8; // FIXED_SHORTCUTS has 8 entries
+			const bound = boundShortcutIds();
+			// Level 1 (Student) starts at 25% of the bound shortcuts.
+			const needed = Math.ceil(bound.length * 0.25);
 
-			const needed = Math.ceil(totalShortcuts * 0.25);
-
-			// Pre-populate with enough shortcuts to be just below level 1
-			const fakeShortcuts: string[] = [];
-			for (let i = 0; i < needed - 1; i++) {
-				fakeShortcuts.push(`fake-shortcut-${i}`);
-			}
+			// Pre-populate to one short of the threshold.
 			useSettingsStore.setState({
 				keyboardMasteryStats: {
 					...DEFAULT_KEYBOARD_MASTERY_STATS,
-					usedShortcuts: fakeShortcuts,
+					usedShortcuts: bound.slice(0, needed - 1),
 					currentLevel: 0,
 				},
 			});
 
-			const result = useSettingsStore
-				.getState()
-				.recordShortcutUsage(`shortcut-that-triggers-level-up`);
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[needed - 1]);
 
-			// The new shortcut should have been added
 			expect(useSettingsStore.getState().keyboardMasteryStats.usedShortcuts).toHaveLength(needed);
+			expect(result.newLevel).toBe(1);
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(1);
+		});
 
-			// If this crossed the threshold, newLevel should be 1
-			if (result.newLevel !== null) {
-				expect(result.newLevel).toBeGreaterThan(0);
-				expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBeGreaterThan(0);
-			}
+		it('recordShortcutUsage ignores ids that have no chord bound', () => {
+			const bound = boundShortcutIds();
+			const needed = Math.ceil(bound.length * 0.25);
+
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, needed - 1),
+					currentLevel: 0,
+				},
+			});
+
+			// An unbound action can never be fired, so recording one must not move
+			// the level - otherwise the numerator outruns its own denominator.
+			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => s.keys.length === 0);
+			expect(unbound).toBeDefined();
+			const result = useSettingsStore.getState().recordShortcutUsage(unbound!.id);
+
+			expect(result.newLevel).toBeNull();
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(0);
+		});
+
+		it('reaches 100% once every bound shortcut has been used', () => {
+			const bound = boundShortcutIds();
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, -1),
+					currentLevel: 3,
+				},
+			});
+
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[bound.length - 1]);
+
+			// Unbound shortcuts used to sit in the denominator, which made the top
+			// level unreachable no matter how many chords the user learned.
+			expect(result.newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
 		});
 
 		it('acknowledgeKeyboardMasteryLevel updates level', () => {
@@ -1584,6 +1693,10 @@ describe('settingsStore', () => {
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',
+				chatFontFamily: 'Verdana',
+				filePreviewFontFamily: 'Georgia',
+				fileEditorFontFamily: 'Iosevka',
+				typographyPromptSeen: true,
 				fontSize: 16,
 				activeThemeId: 'one-dark-pro',
 				enterToSendAI: true,
@@ -1594,6 +1707,10 @@ describe('settingsStore', () => {
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('JetBrains Mono');
+			expect(state.chatFontFamily).toBe('Verdana');
+			expect(state.filePreviewFontFamily).toBe('Georgia');
+			expect(state.fileEditorFontFamily).toBe('Iosevka');
+			expect(state.typographyPromptSeen).toBe(true);
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');
 			expect(state.enterToSendAI).toBe(true);
@@ -1724,6 +1841,11 @@ describe('settingsStore', () => {
 				expect(state.dismissed).toBe(true);
 				expect(state.playing).toBe(false);
 				expect(state.pendingAutoplay).toBe(false);
+				// Dormant as well as hidden: a restored queue must not put media
+				// controls in the Left Bar header at launch, when the user has not
+				// played anything yet.
+				expect(state.dormant).toBe(true);
+				expect(selectShowNowPlayingIndicator(state)).toBe(false);
 				// History is per-boot by design: a fresh session must not open onto a
 				// log of last week's files.
 				expect(state.history).toEqual([]);
@@ -2148,6 +2270,244 @@ describe('settingsStore', () => {
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
 		});
 
+		it('strips a persisted Cmd+Shift+Down binding and restores the bundled default', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Meta', 'Shift', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			// Cmd+Shift+Down is select-to-end in every text field; Maestro must not
+			// shadow it, so the action falls back to its own default instead.
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'shortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.nextUnreadTab.keys).toEqual(['Alt', 'Meta', 'ArrowDown']);
+		});
+
+		it('strips the Windows Ctrl+Shift+Down spelling of the same reserved chord', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Ctrl', 'Shift', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+		});
+
+		it('strips a reserved chord from tabShortcuts too, which is a separate persist key', async () => {
+			// tabShortcuts runs the same migration through a second call site with
+			// its own defaults table and its own settings key. A guard applied to
+			// only one of the two leaves half the bindings able to shadow the OS.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				tabShortcuts: {
+					closeAllTabs: {
+						id: 'closeAllTabs',
+						label: 'Close All Tabs',
+						keys: ['Meta', 'Shift', 'ArrowUp'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().tabShortcuts.closeAllTabs.keys).toEqual([
+				'Meta',
+				'Shift',
+				'w',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'tabShortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.closeAllTabs.keys).toEqual(['Meta', 'Shift', 'w']);
+		});
+
+		it('moves New Group Chat off Opt+Cmd+C and hands the combo to Concerto', async () => {
+			// Without this remap the two COLLIDE: anyone who has ever opened the
+			// Shortcuts tab has the whole map persisted, so New Group Chat would keep
+			// Opt+Cmd+C while Concerto's new default also claimed it, and whichever
+			// branch runs first in the keyboard handler would swallow the other.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					newGroupChat: {
+						id: 'newGroupChat',
+						label: 'New Group Chat',
+						keys: ['Alt', 'Meta', 'c'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.newGroupChat.keys).toEqual(['Alt', 'Meta', 'g']);
+			expect(shortcuts.toggleConcerto.keys).toEqual(['Alt', 'Meta', 'c']);
+		});
+
+		it('carries both retired Concerto bindings forward, including a skipped build', async () => {
+			// The stage went bare Opt+C -> Opt+Cmd+V -> Opt+Cmd+C. A user who skipped
+			// the middle build still carries the oldest default, so both are listed.
+			for (const oldKeys of [
+				['Alt', 'c'],
+				['Alt', 'Meta', 'v'],
+			]) {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						toggleConcerto: {
+							id: 'toggleConcerto',
+							label: 'Show/Hide Concerto Stage',
+							keys: oldKeys,
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.toggleConcerto.keys).toEqual([
+					'Alt',
+					'Meta',
+					'c',
+				]);
+			}
+		});
+
+		it('returns Jump to Bottom to Cmd+Shift+J from every interim binding', async () => {
+			// The action went Cmd+Shift+J -> Opt+J -> Opt+Cmd+Down -> Cmd+Shift+J.
+			// Both interim eras must land back on the original chord; a user who
+			// skipped a build carries whichever one they last received.
+			for (const oldKeys of [
+				['Alt', 'j'],
+				['Alt', 'Meta', 'ArrowDown'],
+			]) {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: oldKeys },
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.jumpToBottom.keys).toEqual([
+					'Meta',
+					'Shift',
+					'j',
+				]);
+			}
+		});
+
+		it('does not re-migrate Jump to Bottom once it is already on Cmd+Shift+J', async () => {
+			// Cmd+Shift+J is the destination, so it must NOT appear in fromKeys -
+			// remapping a chord onto itself sets needsMigration on every load and
+			// re-enters the persist/file-watcher loop.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					jumpToBottom: {
+						id: 'jumpToBottom',
+						label: 'Jump to Bottom',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			vi.mocked(window.maestro.settings.set).mockClear();
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.jumpToBottom.keys).toEqual([
+				'Meta',
+				'Shift',
+				'j',
+			]);
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.some(([k]) => k === 'shortcuts')
+			).toBe(false);
+		});
+
+		it('gives the tiling family its Ctrl+Cmd defaults over a persisted unbound map', async () => {
+			// The merge keeps a saved `keys` whenever it is PRESENT, and `[]` is
+			// present. Anyone who opened Settings -> Shortcuts while these shipped
+			// unbound has empty arrays on disk and would never see the new defaults.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					tileAiBelow: { id: 'tileAiBelow', label: 'Tile New AI Chat Below', keys: [] },
+					tileBrowserBelow: { id: 'tileBrowserBelow', label: 'Tile New Browser Below', keys: [] },
+					tileFileBelow: { id: 'tileFileBelow', label: 'Tile New File Below', keys: [] },
+					tileTerminalBelow: {
+						id: 'tileTerminalBelow',
+						label: 'Tile New Terminal Below',
+						keys: [],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.tileAiBelow.keys).toEqual(['Control', 'Meta', 't']);
+			expect(shortcuts.tileBrowserBelow.keys).toEqual(['Control', 'Meta', 'b']);
+			expect(shortcuts.tileFileBelow.keys).toEqual(['Control', 'Meta', 'f']);
+			expect(shortcuts.tileTerminalBelow.keys).toEqual(['Control', 'Meta', 'j']);
+		});
+
+		it('moves Tile New Terminal off Cmd+Shift+J so Jump to Bottom can hold it', async () => {
+			// The one binding that would otherwise put two live actions on one key.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					tileTerminalBelow: {
+						id: 'tileTerminalBelow',
+						label: 'Tile New Terminal Below',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.tileTerminalBelow.keys).toEqual(['Control', 'Meta', 'j']);
+			expect(shortcuts.jumpToBottom.keys).toEqual(['Meta', 'Shift', 'j']);
+		});
+
+		it('leaves a user-customized New Group Chat binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					newGroupChat: {
+						id: 'newGroupChat',
+						label: 'New Group Chat',
+						keys: ['Meta', 'Shift', 'q'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.newGroupChat.keys).toEqual([
+				'Meta',
+				'Shift',
+				'q',
+			]);
+		});
+
 		it('leaves a user-customized focusActiveTab binding alone', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {
@@ -2165,6 +2525,48 @@ describe('settingsStore', () => {
 				'Meta',
 				'Shift',
 				'j',
+			]);
+		});
+
+		it.each([
+			['the original Cmd+Shift+2 default', ['Meta', 'Shift', '2']],
+			['the interim Cmd+Shift+E default', ['Meta', 'Shift', 'e']],
+		])('moves toggleAutoRunExpanded off %s onto Cmd+Shift+3', async (_label, fromKeys) => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					toggleAutoRunExpanded: {
+						id: 'toggleAutoRunExpanded',
+						label: 'Auto Run Expanded Preview',
+						keys: fromKeys,
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.toggleAutoRunExpanded.keys).toEqual(['Meta', 'Shift', '3']);
+			// The freed combo now belongs to the queued-message editor.
+			expect(shortcuts.editLastQueuedMessage.keys).toEqual(['Meta', 'Shift', 'e']);
+		});
+
+		it('leaves a user-customized toggleAutoRunExpanded binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					toggleAutoRunExpanded: {
+						id: 'toggleAutoRunExpanded',
+						label: 'Auto Run Expanded Preview',
+						keys: ['Meta', 'Shift', 'q'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.toggleAutoRunExpanded.keys).toEqual([
+				'Meta',
+				'Shift',
+				'q',
 			]);
 		});
 
@@ -2230,26 +2632,93 @@ describe('settingsStore', () => {
 			expect(commitCmd!.isBuiltIn).toBe(true);
 		});
 
-		it('applies auto-run time migration for concurrent tallying bug', async () => {
-			const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+		// MAESTRO-YP/YQ/YR: settings.json is user/sync/legacy editable, so the
+		// persisted array is not guaranteed to be CustomAICommand[]. An entry with
+		// no id cannot be edited, saved, reset or deleted (all keyed by id) and was
+		// stored under the Map key `undefined`, then rendered anyway - which crashed
+		// the Settings modal. Drop it during hydration instead.
+		it('skips malformed customAICommands entries that have no id', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				customAICommands: [
+					{
+						command: '/legacy',
+						description: 'Persisted before ids existed',
+						prompt: 'legacy',
+					},
+					{ id: '', command: '/blank', description: 'Blank id', prompt: 'blank' },
+					null,
+					'not-an-object',
+					{
+						id: 'custom-cmd',
+						command: '/custom',
+						description: 'My custom command',
+						prompt: 'do something',
+						isBuiltIn: false,
+					},
+				],
+			});
+
+			await loadAllSettings();
+
+			const commands = useSettingsStore.getState().customAICommands;
+			// Every surviving entry is usable.
+			expect(commands.every((c) => c && typeof c.id === 'string' && c.id)).toBe(true);
+			expect(commands.find((c) => c?.command === '/legacy')).toBeUndefined();
+			expect(commands.find((c) => c?.command === '/blank')).toBeUndefined();
+			// Well-formed entries still come through, alongside the defaults.
+			expect(commands.find((c) => c.id === 'custom-cmd')).toBeDefined();
+			expect(commands.find((c) => c.id === 'commit')).toBeDefined();
+		});
+
+		// An id alone is not enough. The panel calls command.startsWith('/') and
+		// prompt.substring(...) directly, so an entry carrying an id but missing
+		// either one still crashes the Settings modal (MAESTRO-YP/YQ/YR).
+		it('skips customAICommands entries whose command or prompt is unusable', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				customAICommands: [
+					{ id: 'no-command', description: 'Lost its command', prompt: 'x' },
+					{ id: 'no-prompt', command: '/nope', description: 'Lost its prompt' },
+					{ id: 'wrong-types', command: 42, description: 'Not strings', prompt: [] },
+					{
+						id: 'no-description',
+						command: '/keep',
+						prompt: 'description is only rendered',
+					},
+				],
+			});
+
+			await loadAllSettings();
+
+			const commands = useSettingsStore.getState().customAICommands;
+			expect(commands.find((c) => c.id === 'no-command')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'no-prompt')).toBeUndefined();
+			expect(commands.find((c) => c.id === 'wrong-types')).toBeUndefined();
+			// A missing description is cosmetic, so the command survives with ''.
+			expect(commands.find((c) => c.id === 'no-description')?.description).toBe('');
+			// Nothing that survives can crash the panel's string calls.
+			expect(
+				commands.every((c) => typeof c.command === 'string' && typeof c.prompt === 'string')
+			).toBe(true);
+		});
+
+		it('never grows cumulative auto-run time on load', async () => {
+			// The removed concurrent-tallying migration added 3 hours here. Loading
+			// settings must not invent time: any local growth that does not also
+			// submit a leaderboard delta pushes the local total above the server's,
+			// which the server can never reconcile.
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				autoRunStats: {
 					...DEFAULT_AUTO_RUN_STATS,
 					cumulativeTimeMs: 100000,
 				},
-				// Migration not yet applied
+				// Migration flag absent - the pre-fix code treated this as "apply it"
 			});
 
 			await loadAllSettings();
 
 			const stats = useSettingsStore.getState().autoRunStats;
-			expect(stats.cumulativeTimeMs).toBe(100000 + THREE_HOURS_MS);
-			// Should persist the migrated stats and the flag
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'autoRunStats',
-				expect.objectContaining({ cumulativeTimeMs: 100000 + THREE_HOURS_MS })
-			);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+			expect(stats.cumulativeTimeMs).toBe(100000);
+			expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
 				'concurrentAutoRunTimeMigrationApplied',
 				true
 			);
@@ -2331,6 +2800,19 @@ describe('settingsStore', () => {
 
 			// Invalid value rejected, keeps default
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(100);
+		});
+
+		it('keeps a saved documentGraphPreviewCharLimit of 0 on load', async () => {
+			// The "previews off" choice round-trips through settings on every
+			// launch. A floor of 50 in the load validator would discard it
+			// silently and the graph would come back as full cards each time.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				documentGraphPreviewCharLimit: 0,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
 		});
 
 		it('validates documentGraphLayoutType on load (rejects invalid)', async () => {

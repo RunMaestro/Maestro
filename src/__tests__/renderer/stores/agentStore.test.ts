@@ -13,6 +13,7 @@ import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore'
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
 import { resetStores } from '../../helpers';
 
 // ============================================================================
@@ -110,6 +111,12 @@ vi.mock('../../../renderer/services/git', () => ({
 // Mock substituteTemplateVariables - pass through the template as-is for simplicity
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((template: string) => template),
+}));
+
+// Mock the cross-agent consult so the deferred-mention dispatch is observable
+// without standing up the whole @mention resolution + IPC pipeline.
+vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+	dispatchCrossAgentMentionsForMessage: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -713,7 +720,7 @@ describe('agentStore', () => {
 	});
 
 	describe('authenticateAfterError', () => {
-		it('clears error, sets active session, and switches to terminal mode', () => {
+		it('clears error and selects the agent without touching its input mode', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -727,7 +734,10 @@ describe('agentStore', () => {
 
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.state).toBe('idle');
-			expect(updated.inputMode).toBe('terminal');
+			// The login now happens in the re-authentication modal, so the agent must
+			// stay in AI mode - a forced terminal switch left the user in a shell they
+			// never asked for once the modal closed.
+			expect(updated.inputMode).toBe('ai');
 			expect(updated.agentError).toBeUndefined();
 			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
 		});
@@ -738,7 +748,7 @@ describe('agentStore', () => {
 			expect(mockClearError).not.toHaveBeenCalled();
 		});
 
-		it('is idempotent when session is already in terminal mode', () => {
+		it('leaves a session that is already in terminal mode alone', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -767,7 +777,7 @@ describe('agentStore', () => {
 			useAgentStore.getState().authenticateAfterError('session-1');
 
 			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
-			expect(useSessionStore.getState().sessions[0].inputMode).toBe('terminal');
+			expect(useSessionStore.getState().sessions[0].inputMode).toBe('ai');
 		});
 
 		it('calls IPC clearError via delegation', () => {
@@ -809,7 +819,7 @@ describe('agentStore', () => {
 			expect(updated.aiTabs[0].inputValue).toBe('pending input');
 		});
 
-		it('clears activeFileTabId to prevent orphaned file preview', () => {
+		it('leaves the open file tab alone', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -821,9 +831,12 @@ describe('agentStore', () => {
 
 			useAgentStore.getState().authenticateAfterError('session-1');
 
+			// The old flow forced the agent into terminal mode, which orphaned the
+			// file preview and made this clear necessary. The re-authentication modal
+			// owns the login now, so the user's view must survive it intact.
 			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.inputMode).toBe('terminal');
-			expect(updated.activeFileTabId).toBeNull();
+			expect(updated.inputMode).toBe('ai');
+			expect(updated.activeFileTabId).toBe('file-tab-1');
 		});
 	});
 
@@ -1072,8 +1085,8 @@ describe('agentStore', () => {
 
 			// Active session switched to session-2
 			expect(useSessionStore.getState().activeSessionId).toBe('session-2');
-			// session-2 is now in terminal mode
-			expect(useSessionStore.getState().sessions[1].inputMode).toBe('terminal');
+			// The login happens in the re-authentication modal, so the agent stays in AI mode
+			expect(useSessionStore.getState().sessions[1].inputMode).toBe('ai');
 		});
 
 		it('double clear is idempotent', () => {
@@ -1117,7 +1130,7 @@ describe('agentStore', () => {
 			expect(updated[0].state).toBe('idle');
 			expect(updated[0].agentError).toBeUndefined();
 			expect(updated[1].state).toBe('idle');
-			expect(updated[1].inputMode).toBe('terminal');
+			expect(updated[1].inputMode).toBe('ai');
 		});
 
 		it('recovery after restart then new session', async () => {
@@ -1258,6 +1271,125 @@ describe('agentStore', () => {
 					agentSessionId: 'existing-conv-id',
 				})
 			);
+		});
+
+		// A queued message that @mentions another agent must consult that agent HERE,
+		// as the message becomes this agent's turn - not when the user typed it into
+		// a queue that was several messages deep.
+		it('fires the deferred cross-agent consult when the item carries one', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'now ask @Backend to review',
+				crossAgentMention: true,
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledTimes(1);
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				'now ask @Backend to review',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1'
+			);
+			// The local turn still runs: a trailing mention does not suppress it.
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		// A mention-only item (the message was addressed at the other agent) fires
+		// the consult and nothing else - there is no local turn to run.
+		it('consults and stops for a crossAgentOnly item, releasing the agent', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: 1,
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'busy',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: '@rc pull in the latest changes',
+				crossAgentMention: true,
+				crossAgentOnly: true,
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledTimes(1);
+			// No local turn: the source agent was never asked to answer this.
+			expect(mockSpawn).not.toHaveBeenCalled();
+
+			// The dequeue marked the tab busy and nothing else will close it out, so
+			// this path has to release it or the agent hangs on a turn that never ran.
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(updated.state).toBe('idle');
+			expect(updated.busySource).toBeUndefined();
+		});
+
+		it('does not consult anyone for an item without a pending mention', async () => {
+			// Queued items from Auto Run, Cue, and the CLI never planned a consult.
+			// An `@` in their text must not turn into one at dispatch time.
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'email ops@example.com' });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).not.toHaveBeenCalled();
 		});
 
 		it('prepends system prompt for new sessions (no agentSessionId)', async () => {
@@ -1996,6 +2128,89 @@ describe('agentStore', () => {
 				expect.objectContaining({
 					sessionCustomModel: 'session-model',
 					sessionCustomEffort: 'session-effort',
+				})
+			);
+		});
+
+		// Queuing IS the send: the item carries the model/effort the user had
+		// selected when they hit Enter, and the spawn must honour that no matter
+		// how many times they switched models before the queue drained.
+		it('spawns a queued item under the settings frozen when it was queued', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customModel: 'session-model',
+				customEffort: 'session-effort',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						customModel: 'tab-model',
+						customEffort: 'tab-effort',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'Hello',
+				turnSettings: { model: 'queued-model', effort: 'queued-effort' },
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionCustomModel: 'queued-model',
+					sessionCustomEffort: 'queued-effort',
+				})
+			);
+		});
+
+		// An empty capture is a real choice ("the agent default was in force"),
+		// not a missing one - so it must NOT inherit what the user picked after.
+		it('keeps an item queued on the agent default off the live overrides', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customModel: 'session-model',
+				customEffort: 'session-effort',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						customModel: 'tab-model',
+						customEffort: 'tab-effort',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'Hello', turnSettings: {} });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionCustomModel: undefined,
+					sessionCustomEffort: undefined,
 				})
 			);
 		});

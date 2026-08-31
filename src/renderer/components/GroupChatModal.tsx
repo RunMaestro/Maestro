@@ -14,7 +14,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Settings, ChevronDown, Check } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
-import { isBetaAgent } from '../../shared/agentMetadata';
+import { AGENT_AUTOSELECT_ORDER, isBetaAgent } from '../../shared/agentMetadata';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput } from './ui';
@@ -103,8 +103,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		}
 	}, [ac.isDetecting, isOpen]);
 
-	// Auto-select first supported agent (create mode only) after detection,
-	// and revalidate if current selection is no longer available
+	// Auto-select the most preferred installed agent (create mode only) after
+	// detection, and revalidate if current selection is no longer available.
+	// The dropdown itself is alphabetical, so the default comes from
+	// AGENT_AUTOSELECT_ORDER rather than from whatever sorts first.
 	useEffect(() => {
 		if (mode !== 'create' || ac.isDetecting) return;
 
@@ -116,12 +118,16 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		// If current selection is still valid, keep it
 		if (ac.selectedAgent && ac.detectedAgents.some((a) => a.id === ac.selectedAgent)) return;
 
-		const firstSupported = AGENT_TILES.find((tile) => {
-			if (!tile.supported) return false;
-			return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
-		});
-		if (firstSupported) {
-			ac.setSelectedAgent(firstSupported.id);
+		const isSupportedAndDetected = (agentId: string) =>
+			AGENT_TILES.some((tile) => tile.id === agentId && tile.supported) &&
+			ac.detectedAgents.some((a: AgentConfig) => a.id === agentId);
+
+		const preferred =
+			AGENT_AUTOSELECT_ORDER.find(isSupportedAndDetected) ??
+			AGENT_TILES.find((tile) => tile.supported && isSupportedAndDetected(tile.id))?.id;
+
+		if (preferred) {
+			ac.setSelectedAgent(preferred);
 		} else {
 			ac.setSelectedAgent(ac.detectedAgents[0].id);
 		}

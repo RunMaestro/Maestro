@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	fixMarkdownLinkSpaces,
+	hardBreakInlineFields,
 	preprocessMarkdown,
 } from '../../../../renderer/components/Markdown/preprocess';
 
@@ -73,5 +74,52 @@ describe('preprocessMarkdown', () => {
 		const input = 'Use `List<int>` and:\n```ts\nconst x: Array<number> = []; if (a < b) {}\n```';
 		expect(preprocessMarkdown(input)).toBe(input);
 		expect(preprocessMarkdown(input, { chatMath: true })).toContain('Array<number>');
+	});
+});
+
+describe('hardBreakInlineFields', () => {
+	it('breaks a run of Dataview-style inline fields onto their own lines', () => {
+		const input = 'Type:: Briefing\nPeriod:: AM\nDate:: 2026-08-28';
+		expect(hardBreakInlineFields(input)).toBe(
+			'Type:: Briefing  \nPeriod:: AM  \nDate:: 2026-08-28'
+		);
+	});
+
+	it('separates the field block from prose above and below it', () => {
+		const input = 'Intro line\nType:: Briefing\nPeriod:: AM\nTrailing prose';
+		expect(hardBreakInlineFields(input)).toBe(
+			'Intro line  \nType:: Briefing  \nPeriod:: AM  \nTrailing prose'
+		);
+	});
+
+	it('leaves a lone field-looking line alone (prose containing ::)', () => {
+		const input = 'The syntax is Key:: value\nand it keeps flowing.';
+		expect(hardBreakInlineFields(input)).toBe(input);
+	});
+
+	it('does not touch C++/Rust scope resolution', () => {
+		const input = 'std::vector<int> v;\nstd::sort(v.begin(), v.end());';
+		expect(hardBreakInlineFields(input)).toBe(input);
+	});
+
+	it('skips fenced code blocks that document the syntax', () => {
+		const input = '```\nType:: Briefing\nPeriod:: AM\n```';
+		expect(hardBreakInlineFields(input)).toBe(input);
+	});
+
+	it('does not double up an existing hard break', () => {
+		const input = 'Type:: Briefing  \nPeriod:: AM';
+		expect(hardBreakInlineFields(input)).toBe(input);
+	});
+
+	it('leaves a field block that is already blank-line separated alone', () => {
+		const input = 'Type:: Briefing\n\nPeriod:: AM';
+		expect(hardBreakInlineFields(input)).toBe(input);
+	});
+
+	it('runs as part of preprocessMarkdown', () => {
+		expect(preprocessMarkdown('Type:: Briefing\nPeriod:: AM')).toBe(
+			'Type:: Briefing  \nPeriod:: AM'
+		);
 	});
 });

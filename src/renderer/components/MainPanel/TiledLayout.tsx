@@ -41,12 +41,13 @@ import {
 	updateGroupInSession,
 	updateSplitSizes,
 } from '../../utils/panelLayout';
+import { filePaneAttrs } from '../../utils/paneFocus';
 import { usePaneDrag } from '../../hooks/tabs/usePaneDrag';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
-import { withMonoFallback } from '../../../shared/fontStack';
+import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
 import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useTabStore } from '../../stores/tabStore';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -355,7 +356,9 @@ function TiledFilePane({
 	if (!fileTab || !memoizedFilePreviewFile) return <PaneMissingTab theme={theme} />;
 
 	return (
-		<div className="flex-1 overflow-hidden select-text">
+		// Tagged with the tab id so the pane focus router can land the caret in THIS
+		// pane's editor when several file panes are tiled at once (see utils/paneFocus).
+		<div className="flex-1 overflow-hidden select-text" {...filePaneAttrs(fileTabId)}>
 			<React.Suspense fallback={null}>
 				<FilePreview
 					file={memoizedFilePreviewFile}
@@ -437,7 +440,9 @@ function TiledAiPane({
 	isFocused: boolean;
 	actions: PaneChatActions | null;
 }) {
-	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
+	// Same chat font as the single-pane view (MainPanelContent) - a tiled pane
+	// renders the same transcript, so it must not disagree about its typeface.
+	const fontFamily = useSurfaceFontFamily('chat');
 	const maxOutputLines = useSettingsStore((s) => s.maxOutputLines);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 	const activeFocus = useUIStore((s) => s.activeFocus);

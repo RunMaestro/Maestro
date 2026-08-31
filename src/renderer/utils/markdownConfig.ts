@@ -25,6 +25,8 @@ import { openUrl } from './openUrl';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 import { AlertCallout } from '../components/Markdown/components/AlertCallout';
 import { alertTypeFromClassName } from '../components/Markdown/remarkAlert';
+import { TaskCheckbox } from '../components/Markdown/components/TaskCheckbox';
+import { MarkerPill } from '../components/Markdown/components/MarkerPill';
 import {
 	INLINE_CODE_CLICK_PROPS,
 	INLINE_CODE_CLICK_STYLE,
@@ -88,6 +90,14 @@ export interface MarkdownComponentsOptions {
 	bionifyIntensity?: number;
 	/** Algorithm string controlling Bionify highlight lengths */
 	bionifyAlgorithm?: string;
+	/**
+	 * Makes rendered GFM task checkboxes clickable. Called with the 1-based
+	 * source line of the task's `- [ ]` marker; resolve false when the write did
+	 * not happen so the box reverts. Requires `rehypeSourceLine` in the caller's
+	 * rehype plugins - that is what stamps each box with its line. Omit the
+	 * option to keep the read-only checkboxes react-markdown emits by default.
+	 */
+	onTaskToggle?: (sourceLine: number) => Promise<boolean>;
 }
 
 /**
@@ -388,6 +398,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		enableBionifyReadingMode = false,
 		bionifyIntensity,
 		bionifyAlgorithm,
+		onTaskToggle,
 	} = options;
 
 	// Reset match counter at start of each render
@@ -404,8 +415,13 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 	};
 
 	const components: Partial<Components> = {
-		// Override paragraph to apply search highlighting
-		p: ({ children }: any) => React.createElement('p', null, withReadableTransforms(children)),
+		// Override paragraph to apply search highlighting.
+		// Props are forwarded (minus `node`) so `rehypeSourceLine`'s
+		// `data-source-line` survives. Dropping it left HEADINGS as the only
+		// anchored blocks, so the preview -> edit toggle could not tell "the top
+		// of the document" from "the first heading" and jumped down to it.
+		p: ({ children, node: _node, ...props }: any) =>
+			React.createElement('p', props, withReadableTransforms(children)),
 
 		// Override headings to apply readable transforms (search highlighting + Bionify)
 		// Forward id/props for rehype-slug anchors (rc) while piping through withReadableTransforms (main/Bionify)
@@ -422,8 +438,11 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		h6: ({ children, node: _node, ...props }: any) =>
 			React.createElement('h6', props, withReadableTransforms(children)),
 
-		// Override list items to apply search highlighting
-		li: ({ children }: any) => React.createElement('li', null, withReadableTransforms(children)),
+		// Override list items to apply search highlighting. Props forwarded for
+		// the same reason as `p` - a long list between two headings is otherwise
+		// one unanchored run.
+		li: ({ children, node: _node, ...props }: any) =>
+			React.createElement('li', props, withReadableTransforms(children)),
 
 		// Override table cells to apply search highlighting
 		td: ({ children }: any) => React.createElement('td', null, withReadableTransforms(children)),
@@ -431,7 +450,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 
 		// Override blockquote to apply search highlighting; render GitHub
 		// `[!NOTE]`-style callouts (tagged by remarkAlert) as styled AlertCallouts.
-		blockquote: ({ children, className }: any) => {
+		blockquote: ({ children, node: _node, className, ...props }: any) => {
 			const alertType = alertTypeFromClassName(className);
 			if (alertType) {
 				return React.createElement(AlertCallout, {
@@ -442,7 +461,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 			}
 			return React.createElement(
 				'blockquote',
-				className ? { className } : null,
+				{ ...props, ...(className ? { className } : null) },
 				withReadableTransforms(children)
 			);
 		},
@@ -480,11 +499,62 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		});
 	}
 
+	// Clickable GFM task checkboxes. Without this react-markdown renders them
+	// `disabled`, so a document can only be ticked off in edit mode. The line
+	// comes from `rehypeSourceLine`, which stamps each box with the line its
+	// `- [ ]` marker lives on. Everything else (raw HTML inputs passed through by
+	// rehype-raw) stays inert - a preview is not a form.
+	if (onTaskToggle) {
+		components.input = ({ node: _node, type, checked, ...props }: any) => {
+			const line = Number(props['data-source-line']);
+			if (type === 'checkbox' && Number.isFinite(line)) {
+				return React.createElement(TaskCheckbox, {
+					line,
+					checked: !!checked,
+					theme,
+					onToggle: onTaskToggle,
+				});
+			}
+			return React.createElement('input', {
+				type,
+				checked,
+				disabled: true,
+				readOnly: true,
+				...props,
+			});
+		};
+	}
+
 	// Strip event handler attributes (e.g. onToggle) that rehype-raw may
 	// pass through as strings from AI-generated HTML, which React rejects.
 	// Fixes MAESTRO-8Q
 	components.details = ({ node: _node, onToggle: _onToggle, ...props }: any) =>
 		React.createElement('details', props);
+
+	// Auto Run markers, tagged by `remarkMaestroMarkers` (block markers become a
+	// div, inline ones a span). Only this DOCUMENT component map gets them: chat
+	// builds its own map, so an agent explaining the marker syntax in a message
+	// keeps rendering as prose rather than claiming something is configured.
+	//
+	// Both overrides fall through to a plain element when the attribute is
+	// absent, so they are inert on any surface that does not run the plugin.
+	const renderMarker = (tag: 'div' | 'span') => {
+		return ({ node: _node, children, ...props }: any) => {
+			const kind = props['data-maestro-marker'];
+			if (!kind) return React.createElement(tag, props, children);
+			return React.createElement(MarkerPill, {
+				kind,
+				status: props['data-maestro-marker-status'],
+				scope: props['data-maestro-marker-scope'],
+				label: props['data-maestro-marker-label'],
+				detail: props['data-maestro-marker-detail'],
+				artifact: props['data-maestro-marker-artifact'],
+				theme,
+			});
+		};
+	};
+	components.div = renderMarker('div');
+	components.span = renderMarker('span');
 
 	return components;
 }

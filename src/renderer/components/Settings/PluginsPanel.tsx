@@ -25,6 +25,7 @@ import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
 import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 import { notifyToast } from '../../stores/notificationStore';
 import { useUIStore } from '../../stores/uiStore';
+import { launchFromSettings } from '../../utils/launchFromSettings';
 import { PluginActivityView } from './PluginActivityView';
 
 interface PluginsPanelProps {
@@ -47,6 +48,8 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 	// The modal panel host is mounted ONCE at App level (PluginModalPanelMount);
 	// this launch button just names the panel to open, so the Settings path and a
 	// plugin's own `ui.openPanel` summon share one mount and one webview guest.
+	// The launch goes through `launchFromSettings` because that host renders
+	// below the settings modal, so leaving Settings open hides the panel.
 	const setOpenPluginPanelId = useUIStore((s) => s.setOpenPluginPanelId);
 
 	const load = useCallback(async () => {
@@ -383,7 +386,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 															backgroundColor: theme.colors.accent + '18',
 															color: theme.colors.accent,
 														}}
-														onClick={() => setOpenPluginPanelId(panel.id)}
+														onClick={() => launchFromSettings(() => setOpenPluginPanelId(panel.id))}
 														title={`Open ${panel.title}`}
 													>
 														<PanelTop className="w-3 h-3" />

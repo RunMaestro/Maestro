@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
-import { ipcMain, dialog, shell, BrowserWindow, App } from 'electron';
+import { ipcMain, dialog, shell, clipboard, nativeImage, BrowserWindow, App } from 'electron';
 import Store from 'electron-store';
 import {
 	registerSystemHandlers,
@@ -25,6 +25,7 @@ import {
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
+		on: vi.fn(),
 		removeHandler: vi.fn(),
 	},
 	dialog: {
@@ -43,6 +44,14 @@ vi.mock('electron', () => ({
 	app: {
 		getVersion: vi.fn(),
 		getPath: vi.fn(),
+	},
+	clipboard: {
+		writeImage: vi.fn(),
+		readImage: vi.fn(),
+	},
+	nativeImage: {
+		createFromDataURL: vi.fn(),
+		createFromBuffer: vi.fn(),
 	},
 }));
 
@@ -79,6 +88,12 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 }));
 
 // Mock execFile utility
+vi.mock('../../../../main/runtime/getShellPath', () => ({
+	peekShellPath: vi.fn(() => '/opt/homebrew/bin:/usr/bin:/bin'),
+}));
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
@@ -121,6 +136,7 @@ import { logger } from '../../../../main/utils/logger';
 import { detectShells } from '../../../../main/utils/shellDetector';
 import { isCloudflaredInstalled } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { captureException } from '../../../../main/utils/sentry';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
@@ -267,6 +283,50 @@ describe('system IPC handlers', () => {
 		});
 	});
 
+	describe('clipboard:writeImage', () => {
+		const JPEG_DATA_URL = 'data:image/jpg;base64,/9j/4AAQSkZJRg==';
+
+		it('writes the image when the declared media type decodes', async () => {
+			const image = { isEmpty: () => false };
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue(image as any);
+
+			await handlers.get('clipboard:writeImage')!({} as any, 'data:image/png;base64,iVBORw0KGgo=');
+
+			expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
+			expect(clipboard.writeImage).toHaveBeenCalledWith(image);
+		});
+
+		// nativeImage only accepts image/png and image/jpeg, so a JPEG mislabeled
+		// `image/jpg` decodes empty. The bytes still have to reach the clipboard.
+		it('falls back to the raw bytes when the media type is mislabeled', async () => {
+			const image = { isEmpty: () => false };
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue({ isEmpty: () => true } as any);
+			vi.mocked(nativeImage.createFromBuffer).mockReturnValue(image as any);
+
+			await handlers.get('clipboard:writeImage')!({} as any, JPEG_DATA_URL);
+
+			const buffer = vi.mocked(nativeImage.createFromBuffer).mock.calls[0][0] as Buffer;
+			expect(buffer.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+			expect(clipboard.writeImage).toHaveBeenCalledWith(image);
+		});
+
+		it('throws when the bytes cannot be decoded either', async () => {
+			vi.mocked(nativeImage.createFromDataURL).mockReturnValue({ isEmpty: () => true } as any);
+			vi.mocked(nativeImage.createFromBuffer).mockReturnValue({ isEmpty: () => true } as any);
+
+			await expect(
+				handlers.get('clipboard:writeImage')!({} as any, 'data:image/webp;base64,UklGRg==')
+			).rejects.toThrow('Failed to create image from data URL');
+			expect(clipboard.writeImage).not.toHaveBeenCalled();
+		});
+
+		it('rejects an empty data URL', async () => {
+			await expect(handlers.get('clipboard:writeImage')!({} as any, '')).rejects.toThrow(
+				'Invalid data URL'
+			);
+		});
+	});
+
 	describe('dialog:selectFolder', () => {
 		it('should open dialog and return selected path', async () => {
 			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
@@ -386,7 +446,20 @@ describe('system IPC handlers', () => {
 	});
 
 	describe('fonts:detect', () => {
-		it('should return array of system fonts using fc-list', async () => {
+		// The handler returns a RESULT rather than a bare array now: the caller
+		// has to be able to tell "here is what is installed" from "we could not
+		// look", or it annotates real fonts "(Not Found)".
+		const FALLBACK = [
+			'Monaco',
+			'Menlo',
+			'Courier New',
+			'Consolas',
+			'Roboto Mono',
+			'Fira Code',
+			'JetBrains Mono',
+		];
+
+		it('should return the installed fonts, flagged reliable', async () => {
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'Arial\nHelvetica\nMonaco\nCourier New',
 				stderr: '',
@@ -396,8 +469,51 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('fc-list', [':', 'family']);
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco', 'Courier New']);
+			expect(result).toEqual({
+				fonts: ['Arial', 'Helvetica', 'Monaco', 'Courier New'],
+				source: 'fc-list',
+				reliable: true,
+			});
+		});
+
+		it('should run fc-list with the login-shell PATH', async () => {
+			// The GUI process PATH excludes /opt/homebrew/bin, so a packaged app
+			// could not find fc-list even where it was installed.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'Arial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'fc-list',
+				[':', 'family'],
+				undefined,
+				expect.objectContaining({ env: expect.anything() })
+			);
+		});
+
+		it('should split comma-separated family aliases', async () => {
+			// fc-list prints "DejaVu Sans,DejaVu Sans Book" for one family. The
+			// previous parse kept the whole line, so an aliased family could
+			// never match a picker entry by name.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'DejaVu Sans,DejaVu Sans Book\nArial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			const result = await handler!({} as any);
+
+			expect((result as { fonts: string[] }).fonts).toEqual([
+				'DejaVu Sans',
+				'DejaVu Sans Book',
+				'Arial',
+			]);
 		});
 
 		it('should deduplicate fonts', async () => {
@@ -410,7 +526,7 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica']);
 		});
 
 		it('should filter empty lines', async () => {
@@ -423,10 +539,13 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica', 'Monaco']);
 		});
 
-		it('should return fallback fonts when fc-list fails', async () => {
+		it('should flag the fallback list unreliable when fc-list is absent', async () => {
+			// This is the majority case: fontconfig ships with neither macOS nor
+			// Windows. The seven names are a placeholder so the picker has
+			// something to show, NOT a claim about what is installed.
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: '',
 				stderr: 'command not found',
@@ -436,32 +555,36 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+			expect((result as { reason?: string }).reason).toBeTruthy();
 		});
 
-		it('should return fallback fonts on error', async () => {
+		it('should flag the fallback list unreliable on error', async () => {
 			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('Command failed'));
 
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+		});
+
+		it('should not report a missing fc-list to Sentry', async () => {
+			// It is the EXPECTED path off Linux, so reporting it would bury real
+			// crashes under noise from the majority platform.
+			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('ENOENT'));
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(captureException).not.toHaveBeenCalled();
 		});
 	});
 

@@ -11,6 +11,8 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import { gitService } from '../../../renderer/services/git';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -54,6 +56,29 @@ describe('BranchSwitcherModal', () => {
 			'fix/crash-on-boot',
 		]);
 		vi.mocked(gitService.checkoutBranch).mockResolvedValue({ success: true });
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'session-1', name: 'Sonoma-Fix' })],
+		} as never);
+	});
+
+	// This modal's customHeader REPLACES the default header, so `<Modal subtitle>`
+	// never renders here - the name has to live in the custom header itself.
+	it('names the agent whose repo is switching branches', async () => {
+		renderModal();
+
+		await waitFor(() => expect(gitService.getBranches).toHaveBeenCalled());
+		expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix');
+		// Not folded into the title, which is the aria-label and would otherwise
+		// collide with the explicit resizeKey contract.
+		expect(screen.queryByText(/Switch Branch . Sonoma-Fix/)).not.toBeInTheDocument();
+	});
+
+	it('renders no name when the agent is gone', async () => {
+		useSessionStore.setState({ sessions: [] } as never);
+		renderModal();
+
+		await waitFor(() => expect(gitService.getBranches).toHaveBeenCalled());
+		expect(screen.queryByTestId('modal-subtitle')).not.toBeInTheDocument();
 	});
 
 	it('lists branches with the current one marked', async () => {

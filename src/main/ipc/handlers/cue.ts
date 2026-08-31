@@ -28,7 +28,16 @@ import {
 	writeCuePromptFile,
 } from '../../cue/config/cue-config-repository';
 import { setCueActive } from '../../cue/cue-active-state';
+import {
+	cancelScheduledTask,
+	collectScheduledTasks,
+	createScheduledTask,
+	updateScheduledTask,
+	type ScheduledTaskAgent,
+} from '../../cue/cue-scheduled-tasks';
+import { getSessionsStore } from '../../stores';
 import { loadPipelineLayout, savePipelineLayout } from '../../cue/pipeline-layout-store';
+import { renamePipelineOnDisk, type RenamePipelineResult } from '../../cue/cue-pipeline-rename';
 import { captureException } from '../../utils/sentry';
 import type { CueEngine } from '../../cue/cue-engine';
 import type {
@@ -38,6 +47,11 @@ import type {
 	CueSettings,
 } from '../../cue/cue-types';
 import type { PipelineLayoutState } from '../../../shared/cue-pipeline-types';
+import type {
+	ScheduledTask,
+	ScheduledTaskCreateInput,
+	ScheduledTaskUpdateInput,
+} from '../../../shared/cue/scheduled-tasks';
 
 const LOG_CONTEXT = '[Cue]';
 
@@ -46,6 +60,24 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	context: LOG_CONTEXT,
 	operation,
 });
+
+/**
+ * Every agent, in the shape the scheduled-task module wants. Read straight
+ * from the sessions store rather than from `CueEngine.getStatus()`: creating a
+ * task must work for an agent that has no cue.yaml yet, and `getStatus()` only
+ * knows about agents that already have one.
+ */
+function readTaskAgents(): ScheduledTaskAgent[] {
+	const stored = getSessionsStore().get('sessions', []);
+	return stored
+		.filter((session) => session.toolType !== 'terminal')
+		.map((session) => ({
+			id: session.id,
+			name: session.name,
+			projectRoot: session.projectRoot || session.cwd || '',
+		}))
+		.filter((agent) => agent.projectRoot.length > 0);
+}
 
 /**
  * Dependencies required for Cue handler registration
@@ -277,6 +309,62 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(handlerOpts('getGraphData'), async (): Promise<CueGraphSession[]> => {
 			return requireEngine().getGraphData();
 		})
+	);
+
+	// ── Scheduled Tasks ──────────────────────────────────────────────────────
+	// The clock-driven slice of Cue (time.once / time.scheduled / time.heartbeat),
+	// surfaced by the Cue modal's Scheduled Tasks tab. Filesystem work and
+	// validation live in `cue-scheduled-tasks.ts`, shared byte-for-byte with
+	// `maestro-cli cue schedule` so both surfaces write identical YAML.
+
+	ipcMain.handle(
+		'cue:listScheduledTasks',
+		withIpcErrorLogging(
+			handlerOpts('listScheduledTasks'),
+			async (): Promise<{ tasks: ScheduledTask[]; warnings: string[] }> => {
+				return collectScheduledTasks(readTaskAgents());
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'cue:createScheduledTask',
+		withIpcErrorLogging(
+			handlerOpts('createScheduledTask'),
+			async (options: { input: ScheduledTaskCreateInput }): Promise<{ names: string[] }> => {
+				const agent = readTaskAgents().find((entry) => entry.id === options.input.agentId);
+				if (!agent) throw new Error(`Agent ${options.input.agentId} not found`);
+				const { names } = createScheduledTask(agent, options.input);
+				return { names };
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'cue:updateScheduledTask',
+		withIpcErrorLogging(
+			handlerOpts('updateScheduledTask'),
+			async (options: {
+				projectRoot: string;
+				name: string;
+				patch: ScheduledTaskUpdateInput;
+			}): Promise<{ updated: boolean; reason?: string }> => {
+				return updateScheduledTask(options.projectRoot, options.name, options.patch);
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'cue:cancelScheduledTask',
+		withIpcErrorLogging(
+			handlerOpts('cancelScheduledTask'),
+			async (options: {
+				projectRoot: string;
+				name: string;
+			}): Promise<{ removed: boolean; reason?: string }> => {
+				return cancelScheduledTask(options.projectRoot, options.name);
+			}
+		)
 	);
 
 	// Read raw YAML content from a session's cue config (checks .maestro/cue.yaml then legacy)
@@ -518,6 +606,26 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// Collapse .maestro/ itself if nothing else lives there.
 				removeEmptyMaestroDir(options.projectRoot);
 				return deleted;
+			}
+		)
+	);
+
+	// Rename a pipeline in place, across every cue.yaml it spans.
+	//
+	// The roots are enumerated here rather than taken from the caller: a
+	// cross-agent pipeline is physically N files at N project roots, and the
+	// engine is the only side that knows the full set. A caller passing "the
+	// root of the agent I clicked" would silently rename half a pipeline.
+	ipcMain.handle(
+		'cue:renamePipeline',
+		withIpcErrorLogging(
+			handlerOpts('renamePipeline'),
+			async (options: { oldName: string; newName: string }): Promise<RenamePipelineResult> => {
+				const roots = requireEngine()
+					.getStatus()
+					.map((s) => s.projectRoot)
+					.filter((root): root is string => typeof root === 'string' && root.length > 0);
+				return renamePipelineOnDisk(roots, options.oldName, options.newName);
 			}
 		)
 	);

@@ -29,14 +29,18 @@ To add support for a new agent, follow this checklist. The agent completeness te
 3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (24 boolean fields)
 4. **Add display name & beta status** to `src/shared/agentMetadata.ts` - add entry to the internal `AGENT_DISPLAY_NAMES` record and optionally to `BETA_AGENTS` set (both are module-private; use `getAgentDisplayName()` and `isBetaAgent()` to read them)
 5. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
-6. **Sync renderer interfaces** - add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
+6. **Register it in the provider pickers** - add an entry to `AGENT_PICKER_META` in `src/shared/agentMetadata.ts` (description + brand color), or `null` if the agent must never be offered. This is what puts the provider in the New Agent modal, the New Agent Wizard's tile strip, and the Group Chat moderator dropdown, all at once. See [Step 2.6](#step-26-register-the-provider-in-the-pickers)
+7. **Add a re-auth command** to `AGENT_LOGIN_COMMANDS` in `src/shared/agentMetadata.ts` (`null` only when the agent carries no credentials of its own)
+8. **Draw the tile logo** - add a `case` to `AgentLogo` in `src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`, and a glyph to `AGENT_ICONS` in `src/renderer/constants/agentIcons.ts`
+9. **Sync renderer interfaces** - add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
 
 #### Conditional Steps (based on capabilities)
 
-7. **If `supportsJsonOutput: true`**: Create output parser at `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
-8. **If output parser exists**: Add error patterns to `src/main/parsers/error-patterns.ts`
-9. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
-10. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
+10. **If `supportsJsonOutput: true`**: Create output parser at `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
+11. **If output parser exists**: Add error patterns to `src/main/parsers/error-patterns.ts`
+12. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
+13. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
+14. **If the agent needs binary probing beyond `$PATH`**: Add install locations to `src/main/agents/path-prober.ts` (both the Windows and the POSIX tables)
 
 #### CI Enforcement
 
@@ -48,6 +52,9 @@ The `agent-completeness.test.ts` test validates:
 - Every agent with `supportsSessionStorage` has a registered session storage
 - Every agent with an output parser has error patterns registered
 - Every agent declares `additionalDirArgs` **iff** `supportsAdditionalDirectories` is true
+- Every ID in `AGENT_IDS` has a picker decision in `AGENT_PICKER_META` (compile-time: the record is keyed by `AgentId`)
+- Every pickable agent has a real, non-hidden definition and a usable re-auth command
+- Every pickable agent draws a real logo rather than the blank fallback ring (`AgentSelectionScreen/components.test.tsx`)
 
 See detailed instructions below.
 
@@ -365,6 +372,62 @@ const BETA_AGENTS: ReadonlySet<AgentId> = new Set([
 	'your-agent', // Add here if beta
 ]);
 ```
+
+### Step 2.6: Register the Provider in the Pickers
+
+A provider that is defined, capable, and detected is still invisible until it is
+registered for the pickers. Maestro asks the user to choose a provider in three
+places - the New Agent modal, the New Agent Wizard's tile strip, and the Group
+Chat moderator dropdown - and all three read one registry.
+
+Edit `src/shared/agentMetadata.ts`:
+
+```typescript
+export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
+	// ... existing agents. Key order does not matter: PICKABLE_AGENT_IDS sorts
+	// by display name, so the pickers render one alphabetical list either way.
+	'your-agent': {
+		description: "Your Vendor's AI coding assistant",
+		brandColor: '#4285F4',
+	},
+	// null withholds an agent from every picker (internal or unshipped)
+	terminal: null,
+};
+```
+
+Three things follow from that one entry:
+
+- `AGENT_TILES` (the wizard strip) is derived from it, so the tile appears with
+  the right name, pitch, brand color, and Beta badge.
+- `SUPPORTED_AGENTS` (the New Agent modal) re-exports the same list, so the row
+  becomes selectable rather than dimmed as "coming soon".
+- The Group Chat moderator dropdown filters the same tiles by what is installed,
+  so an installed provider becomes a choosable moderator.
+
+The record is keyed by `AgentId`, so adding an id to `AGENT_IDS` does not compile
+until a decision is made here. That is deliberate: Grok and Qwen3 Coder each
+shipped selectable in the New Agent modal yet absent from the wizard and
+un-pickable as a moderator, because the three lists were hand-written and nothing
+forced them to agree.
+
+Where the provider LANDS in each list is not your call: `PICKABLE_AGENT_IDS`
+sorts by display name so the user scans one predictable alphabetical order
+everywhere. If the new provider should also be a candidate DEFAULT - the choice a
+picker makes when the user has not made one - add it to `AGENT_AUTOSELECT_ORDER`
+in the same file, which is consulted in preference order and skips anything the
+user has not installed. Leaving it out is the normal case; it simply means the
+provider is never auto-selected.
+
+Then draw the mark. Add a `case` for the agent to `AgentLogo`
+(`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)
+and a glyph to `AGENT_ICONS` (`src/renderer/constants/agentIcons.ts`). Without
+the first, the tile renders the fallback empty ring, which reads as a bug; a test
+in `AgentSelectionScreen/components.test.tsx` fails when a pickable provider has
+no mark of its own.
+
+Brand colors are run through `readableTextOn()` before painting, so a near-black
+or near-background brand color is nudged into legibility rather than vanishing.
+Use the real brand color and let the helper do the rest.
 
 ### Step 3: Define Capabilities
 
@@ -948,16 +1011,13 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 
 ---
 
-### Gemini CLI 📋 Planned
+### Gemini CLI 📋 Superseded
 
-**Status:** Not yet implemented
+**Status:** Not shipping. Hidden from the UI, kept only for type/back-compat.
 
-**To Add:**
-
-1. Agent definition in `agents/definitions.ts`
-2. Capabilities in `agents/capabilities.ts`
-3. Output parser for Gemini JSON format
-4. Error patterns for Google API errors
+Google's terminal agent story moved to Antigravity CLI (`agy`). See
+[Antigravity CLI](#antigravity-cli--implemented-unverified-against-a-live-binary) below for
+the shipping integration.
 
 ---
 
@@ -1092,6 +1152,76 @@ grok --cwd /path/to/project --always-approve --output-format streaming-json --re
 # Read-only plan mode
 grok --cwd /path/to/project --output-format streaming-json --permission-mode plan -p "prompt"
 ```
+
+---
+
+### Antigravity CLI ✅ Implemented (unverified against a live binary)
+
+**Status:** Beta (marked beta via `BETA_AGENTS` in `src/shared/agentMetadata.ts`)
+
+Google's terminal coding agent, and the successor to the Gemini CLI effort above.
+
+- **Agent ID:** `antigravity`
+- **Binary:** `agy` (installs to `~/.local/bin/agy` on macOS/Linux, `%LOCALAPPDATA%\agy\bin` on Windows)
+- **Auth:** Google account. Headless runs reuse cached credentials, so the user must sign in once from an interactive `agy` session on that machine first.
+
+| Aspect             | Value                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| Batch/headless     | `-p` (aliases `--print`, `--prompt`)                         |
+| JSON Output        | `--output-format stream-json` (also supports `json`, `text`) |
+| Resume             | `--conversation <id>` (`--continue` resumes the most recent) |
+| Session ID Field   | `conversation_id`                                            |
+| Model Selection    | `--model <slug>`                                             |
+| Reasoning Effort   | `--effort low\|medium\|high`                                 |
+| Auto-approve tools | `--dangerously-skip-permissions`                             |
+| Terminal sandbox   | `--sandbox`                                                  |
+| Headless timeout   | `--print-timeout` (CLI default 5m; Maestro defaults to 30m)  |
+| Session Storage    | ❌ On-disk conversation format is undocumented               |
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/antigravity-output-parser.ts`
+- ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (`ANTIGRAVITY_ERROR_PATTERNS`)
+- ❌ Session Storage: not implemented; `supportsSessionStorage` is false
+- ⏳ Capabilities: derived from the published headless contract, not from a captured live run
+
+**Stream-JSON Event Types:**
+
+Antigravity discriminates on an `event` key and nests the payload under a property of the
+same name, which is why it needs its own parser rather than a Claude-parser subclass:
+
+- `init` → `{ cwd, tools, permission_mode, model, agent }`. Carries no `conversation_id`.
+- `step_update` → `{ conversation_id, step_index, state (ACTIVE|DONE), step_type
+(user_input|agent_response|tool|checkpoint), text_delta, tool_name, tool_info, usage }`
+- `result` → `{ conversation_id, status, response, error, duration_seconds, num_turns, usage }`.
+  `error` is present only on failure, so its presence (not the free-form `status` string) is
+  what the parser keys off to reclassify a result as an error.
+
+Usage fields are snake_case: `input_tokens`, `output_tokens`, `thinking_tokens`,
+`cache_read_tokens`, `total_tokens`. No context window is reported, so the configured
+window drives the context meter.
+
+**Known Limitations:**
+
+- **No true read-only mode.** Headless mode auto-allows reading _and writing_ files inside the
+  active workspace; `--sandbox` only restricts terminal commands. `supportsReadOnlyMode` is
+  therefore false and `readOnlyCliEnforced` is false. Knock-on effect: tab naming spawns
+  read-only and leans on `noToolsArgs` to stop a task-like first message from becoming a real
+  agentic run, but the CLI has no tool-disabling flag to put there, so a naming run can still
+  touch workspace files. (`noToolsArgs` is Claude-only today, so this is shared with every
+  other non-Claude agent - Antigravity is just the one that also lacks CLI read-only.)
+- **No image input.** No documented attachment flag, so `supportsImageInput` is false.
+- **No slash commands in headless mode.** They are a TUI-only affordance.
+- **Batch runs pass `--dangerously-skip-permissions`.** Without it, headless mode soft-denies
+  shell commands and a run stalls on its first terminal tool call.
+
+**Documentation Sources:**
+
+- [Antigravity CLI overview](https://antigravity.google/docs/cli/overview)
+- [Headless mode](https://antigravity.google/docs/cli/headless)
+- [Installation & auth](https://antigravity.google/docs/cli/install)
+
+---
 
 ### Cursor CLI
 

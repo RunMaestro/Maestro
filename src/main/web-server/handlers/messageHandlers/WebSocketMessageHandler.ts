@@ -17,6 +17,7 @@
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
  * - open_file_tab: Open a file in a preview tab
+ * - open_document_graph: Render the Document Graph over a file set or directory
  * - refresh_file_tree: Refresh the file tree for a session
  * - get_file_tree: Read directory tree from filesystem for web file explorer
  * - get_settings: Fetch current web settings
@@ -73,6 +74,7 @@ import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
+	handleLaunchGoalRun,
 	handleSetAutoRunFolder,
 	handleGetAutoRunDocs,
 	handleGetAutoRunState,
@@ -93,8 +95,11 @@ import {
 	handleReorderTab,
 	handleToggleBookmark,
 	handleOpenFileTab,
+	handleOpenDocumentGraph,
 	handleOpenBrowserTab,
+	handleOpenModal,
 	handleWriteTerminalTab,
+	handleReadTerminalTab,
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
 	handleOpenTerminalTab,
@@ -288,12 +293,24 @@ export class WebSocketMessageHandler {
 				handleOpenFileTab(this.ctx, client, message);
 				break;
 
+			case 'open_document_graph':
+				handleOpenDocumentGraph(this.ctx, client, message);
+				break;
+
 			case 'write_terminal_tab':
 				void handleWriteTerminalTab(this.ctx, client, message);
 				break;
 
 			case 'list_terminal_tabs':
 				void handleListTerminalTabs(this.ctx, client, message);
+				break;
+
+			case 'read_terminal_tab':
+				void handleReadTerminalTab(this.ctx, client, message);
+				break;
+
+			case 'open_modal':
+				handleOpenModal(this.ctx, client, message);
 				break;
 
 			case 'open_browser_tab':
@@ -338,6 +355,10 @@ export class WebSocketMessageHandler {
 
 			case 'configure_auto_run':
 				handleConfigureAutoRun(this.ctx, client, message);
+				break;
+
+			case 'launch_goal_run':
+				handleLaunchGoalRun(this.ctx, client, message);
 				break;
 
 			case 'create_worktree_session':

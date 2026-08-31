@@ -104,6 +104,13 @@ export interface CrossAgentTargetSession {
 	name: string;
 	toolType: ToolType;
 	cwd: string;
+	/**
+	 * Per-agent binary override. Honored ahead of detection, exactly like the
+	 * tab spawn and the Group Chat moderator: a consult that ignores it runs a
+	 * DIFFERENT binary than the tab does (detection probes known install dirs
+	 * before PATH, so a stale nvm stub wins over the codex the user picked).
+	 */
+	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
@@ -292,7 +299,7 @@ export async function startCrossAgentRequest(
 	}
 
 	const fullPrompt = buildCrossAgentPrompt(request, writable);
-	const command = agent.path || agent.command;
+	const command = target.customPath || agent.path || agent.command;
 	// Honor a per-session context-window override the same way model/effort/args
 	// are honored: getContextWindowValue (inside spawnGroupChatAgent) reads
 	// `agentConfigValues.contextWindow`, so fold the session value in here on a

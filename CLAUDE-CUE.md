@@ -95,6 +95,21 @@ Two facts that aren't obvious:
 - **`prompt_file` is resolved at config load time, not run time.** `materializeCueConfig` reads the file and replaces it with inline `prompt`. A missing `prompt_file` is a **warning, not an error** - the subscription is kept with `prompt = ''` and fails loudly only when it tries to run (`cue-executor.ts` ⇒ `failedResult('...has no prompt content')`). This is the most common "my sub silently doesn't work" cause.
 - **`pipeline_name` and visual node keys (`target_node_key`, `fan_out_node_keys`) are renderer concerns** that the engine ignores - but the normalizer must allowlist them or the editor's visual round-trip breaks (multiple separate canvas nodes silently collapse into one). See `cue-config-normalizer.ts:normalizeSubscription`.
 
+## Scheduled Tasks (`cue-scheduled-tasks.ts`)
+
+The three clock events - `time.once`, `time.scheduled`, `time.heartbeat` - are exposed to users as one concept, **Scheduled Tasks**. Two surfaces edit them and both go through `src/main/cue/cue-scheduled-tasks.ts`:
+
+- `maestro-cli cue schedule` (create / `--list` / `--reschedule` / `--pause` / `--resume` / `--cancel`), which works with the desktop app closed.
+- The Cue modal's **Scheduled Tasks** tab, over `cue:listScheduledTasks` / `createScheduledTask` / `updateScheduledTask` / `cancelScheduledTask`.
+
+Rules worth knowing before editing it:
+
+- **Wire shapes live in `src/shared/cue/scheduled-tasks.ts`** so the renderer can type against them without importing `main/`. Pure helpers (duration/time parsing, label truncation, schedule description) live there too and are shared with the CLI.
+- **Writes never trigger a reload.** They land in `.maestro/cue.yaml` atomically and the engine's YAML watcher picks them up. Forcing a refresh races the watcher.
+- **`updateScheduledTask` refuses cross-kind timing patches.** Setting `fire_at` on a `time.scheduled` sub would leave both a `fire_at` and `schedule_times` in the file, which the validator rejects; changing HOW a task repeats means cancel + recreate, which is what the UI offers.
+- **Next-fire projection is one-way.** `time.once` reads `fire_at`; `time.scheduled` calls `calculateNextScheduledTime` (the same helper the trigger source uses); `time.heartbeat` returns `null`, because an interval's phase lives in engine run state, not YAML. Don't fake a projection for it.
+- **Agent lists come from the sessions store, not `getStatus()`.** Creating a task must work for an agent that has no `cue.yaml` yet, and `getStatus()` only knows agents that already have one.
+
 ## Concurrency, queue, and persistence
 
 `CueRunManager` (`cue-run-manager.ts`) owns these rules:
@@ -202,6 +217,16 @@ Single SQLite database, WAL mode. Tables:
 - **`cue-env-sanitizer.ts`** drops env vars whose name doesn't match `[a-zA-Z_][a-zA-Z0-9_]*` OR whose uppercase form is in a blocklist (`PATH, HOME, USER, SHELL, LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES, NODE_OPTIONS`). Case-insensitive - Windows `Path` is the same as `PATH`.
 - **`cue-output-filter.ts`** truncates per-source chain output to `SOURCE_OUTPUT_MAX_CHARS` (5000) and applies the optional `include_output_from` / `forward_output_from` filters before injecting into downstream prompts.
 - **Shell executor** uses local `bash -c <cmd>` (or remote-shell wrapping under SSH); CLI executor invokes `maestro-cli send` with a 5000ms timeout cap.
+
+## Auth expiry detection (`cue-auth-detector.ts`)
+
+Because Cue spawns its own agents (above) instead of going through the ProcessManager, none of the streaming error classification that produces `agent:error` ever sees a pipeline run. An expired provider token therefore used to take every pipeline down silently: runs kept failing in the background and the user only found out when they typed a message by hand.
+
+`reportCueAuthFailure(mainWindow, result, toolType, sshRemoteId?)` runs on the completion path in `src/main/index.ts`, just before `recordCueHistoryEntry`. It re-uses the SAME pattern bank as the interactive path (`getErrorPatterns` / `matchErrorPattern` in `src/shared/agentErrorPatterns.ts`, reached via the main-process wrapper `src/main/parsers/error-patterns.ts`) over the head of stderr and both ends of stdout, capped at 4000 chars each.
+
+- On a match it calls `capabilitySnapshots.markAuthRequired(...)` (so the Settings -> Agents pill flips for a pipeline-only failure too) and sends `agent:authExpired` to the renderer, which opens the re-authentication modal.
+- **It prompts once per provider**, keyed by `toolType` plus SSH remote id. Expired credentials fail every run, and a busy board can fire several a minute. The key is dropped as soon as a run for that provider completes, which is the only reliable signal that new credentials took. `resetReportedAuthFailures()` is the test seam.
+- It never throws: a reporting failure must not take down the run bookkeeping that follows it.
 
 ## Telemetry
 

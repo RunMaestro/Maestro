@@ -34,6 +34,8 @@ export const AGENT_ICONS: Record<string, string> = {
 	// Google family
 	'gemini-cli': '🔷',
 	gemini: '🔷',
+	antigravity: '🪐',
+	agy: '🪐',
 
 	// Alibaba family
 	'qwen3-coder': '⬡',

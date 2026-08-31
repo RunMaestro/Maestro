@@ -34,12 +34,17 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectThoughtCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
-import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import {
+	RIGHT_PANEL_MIN_WIDTH,
+	RIGHT_PANEL_MAX_WIDTH,
+	RIGHT_PANEL_TAB_FONT_SIZE,
+	RIGHT_PANEL_TAB_LINE_HEIGHT,
+} from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
 
@@ -181,14 +186,12 @@ export const RightPanel = memo(
 		);
 
 		// Thought Stream: brain button on the Auto Run card opens a persistent,
-		// searchable view of the agent's live thinking stream for this session.
-		// While capturing, the same button doubles as the (minimized) status
-		// indicator - it animates and reads "Capturing", and clicking re-expands
-		// the panel. There is no separate floating pill.
+		// searchable view of the agent's thinking stream for this session.
+		// Capture is ambient, so the button reports how much reasoning is already
+		// buffered and waiting to be read - clicking opens (or re-expands) the
+		// panel on that history. There is no separate floating pill.
 		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-		const isCapturingThoughts = useThoughtStreamStore(
-			(s) => !!sessionId && !!s.capturing[sessionId]
-		);
+		const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
@@ -460,12 +463,23 @@ export const RightPanel = memo(
 				onClick={() => setActiveFocus('right')}
 				onFocus={() => setActiveFocus('right')}
 				onBlur={(e) => {
-					// Clear focus ring when focus moves entirely outside this panel
-					if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+					const panel = e.currentTarget;
+					const next = e.relatedTarget as Node | null;
+					// Focus moved to another node still inside this panel (tab button,
+					// file row, filter input). Keep the Right Bar focused.
+					if (next && panel.contains(next)) return;
+					// relatedTarget is null when the click landed on a non-focusable
+					// child (padding, file-tree row). That is NOT "left the panel" -
+					// React fires blur anyway, and treating null as outside handed
+					// focus to Main on a second click. Check after the click: only
+					// drop the ring when the caret actually left.
+					requestAnimationFrame(() => {
+						if (!panel.isConnected) return;
+						if (panel.contains(document.activeElement)) return;
 						if (useUIStore.getState().activeFocus === 'right') {
 							setActiveFocus('main');
 						}
-					}
+					});
 				}}
 			>
 				{/* Resize Handle */}
@@ -482,8 +496,15 @@ export const RightPanel = memo(
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
-							className="flex-1 text-xs font-bold border-b-2 transition-colors"
+							// This is the panel's HEADING - it names which of three views
+							// you are looking at - so it is the largest thing in the Right
+							// Bar header, not the smallest. Deliberately a different
+							// constant from the filter pills below it: a heading sits above
+							// its content, a control that labels rows sits below them.
+							className="flex-1 font-bold border-b-2 transition-colors"
 							style={{
+								fontSize: RIGHT_PANEL_TAB_FONT_SIZE,
+								lineHeight: RIGHT_PANEL_TAB_LINE_HEIGHT,
 								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
 								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
 							}}
@@ -908,18 +929,18 @@ export const RightPanel = memo(
 									<button
 										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
-											color: isCapturingThoughts ? theme.colors.accent : theme.colors.textDim,
+											color: bufferedThoughts > 0 ? theme.colors.accent : theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => openThoughtStream(sessionId)}
 										title={
-											isCapturingThoughts
-												? 'Capturing thoughts - click to expand'
+											bufferedThoughts > 0
+												? `${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'} - click to read`
 												: "Peer into the agent's thought stream"
 										}
 									>
-										<Brain className={`w-3 h-3 ${isCapturingThoughts ? 'animate-pulse' : ''}`} />
-										{isCapturingThoughts ? 'Capturing' : 'View Thoughts'}
+										<Brain className="w-3 h-3" />
+										View Thoughts
 									</button>
 								)}
 								{/* View history link - shown on all tabs except history */}

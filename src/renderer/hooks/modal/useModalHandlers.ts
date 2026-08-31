@@ -27,6 +27,7 @@ import {
 import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
+import { reportAuthFailure } from '../../stores/authOutageStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
@@ -183,7 +184,8 @@ const selectShortcutsHelpOpen = (s: ReturnType<typeof useModalStore.getState>) =
 export function useModalHandlers(
 	inputRef: React.RefObject<HTMLTextAreaElement | null>,
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>,
-	handleResumeSessionRef?: React.MutableRefObject<((agentSessionId: string) => void) | null>
+	handleResumeSessionRef?: React.MutableRefObject<((agentSessionId: string) => void) | null>,
+	groupChatInputRef?: React.RefObject<HTMLTextAreaElement | null>
 ): ModalHandlersReturn {
 	// --- Reactive subscriptions (for derived state & effects) ---
 	const agentErrorModalSessionId = useModalStore(selectAgentErrorSessionId);
@@ -432,14 +434,23 @@ export function useModalHandlers(
 		[inputRef]
 	);
 
-	const handleAuthenticateAfterError = useCallback(
-		(sessionId: string) => {
-			useAgentStore.getState().authenticateAfterError(sessionId);
-			getModalActions().setAgentErrorModalSessionId(null);
-			setTimeout(() => inputRef.current?.focus(), 0);
-		},
-		[inputRef]
-	);
+	// Hand off to the re-authentication terminal rather than the bare terminal
+	// tab: the login flow finishes inside the modal, so the user never has to
+	// remember the provider's login command. Registering the failure first is
+	// what scopes the dialog to the provider and puts this agent on the list to
+	// resume - reached when the user opens a historical error by hand, so the
+	// outage may not exist yet.
+	const handleAuthenticateAfterError = useCallback((sessionId: string) => {
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		const { providerKey } = reportAuthFailure({
+			sessionId,
+			message: session?.agentError?.message ?? 'The provider rejected the stored credentials.',
+			tabId: session?.agentErrorTabId,
+		});
+		useAgentStore.getState().authenticateAfterError(sessionId);
+		getModalActions().setAgentErrorModalSessionId(null);
+		if (providerKey) getModalActions().openReauthModal({ providerKey });
+	}, []);
 
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
 	// otherwise fall back to live session error
@@ -537,20 +548,24 @@ export function useModalHandlers(
 		getModalActions().setCreatePRSession(session);
 	}, []);
 
-	const handleConfigureCue = useCallback(async (_session: Session) => {
-		// Pick the initial tab based on whether *any* Cue config already exists:
-		// returning users land on the Dashboard, first-time users land in the
-		// Pipeline Editor where they can build their first pipeline. Falls back
-		// to 'pipeline' if the status query fails - first-run is the safer
-		// landing for a user who has nothing configured yet.
+	const handleConfigureCue = useCallback(async (session: Session) => {
+		// Pick the initial tab from whether THIS agent already has Cue config:
+		// an agent that is already wired up lands on the Dashboard, one that is
+		// not lands in the Pipeline Graph where its first pipeline gets built.
+		// Asking "does *any* agent have config" instead dumps someone who just
+		// right-clicked a fresh agent onto a dashboard that says nothing about
+		// it. Falls back to 'pipeline' if the status query fails - first-run is
+		// the safer landing for a user who has nothing configured yet.
 		let initialTab: 'dashboard' | 'pipeline' = 'pipeline';
 		try {
 			const sessions = await cueService.getStatus();
-			if (sessions.length > 0) initialTab = 'dashboard';
+			if (sessions.some((s) => s.sessionId === session.id)) initialTab = 'dashboard';
 		} catch {
 			initialTab = 'pipeline';
 		}
-		getModalActions().openCueModalWithTab(initialTab);
+		// The dashboard lists every Cue-enabled agent. Carrying the id through is
+		// what lets it mark the row the user actually right-clicked.
+		getModalActions().openCueModalWithTab(initialTab, session.id);
 	}, []);
 
 	// ====================================================================
@@ -693,8 +708,14 @@ export function useModalHandlers(
 
 	const handleClosePromptComposer = useCallback(() => {
 		getModalActions().setPromptComposerOpen(false);
-		setTimeout(() => inputRef.current?.focus(), 0);
-	}, [inputRef]);
+		// The composer serves both the agent composer and a group chat room, so
+		// hand the caret back to whichever one is actually on screen. The AI
+		// input isn't rendered while a room is open, so focusing it there lands
+		// the caret nowhere and the next keystroke goes to the document.
+		const inGroupChat = useGroupChatStore.getState().activeGroupChatId !== null;
+		const targetRef = inGroupChat && groupChatInputRef ? groupChatInputRef : inputRef;
+		setTimeout(() => targetRef.current?.focus(), 0);
+	}, [inputRef, groupChatInputRef]);
 
 	const handleCloseCreatePRModal = useCallback(() => {
 		getModalActions().setCreatePRModalOpen(false);

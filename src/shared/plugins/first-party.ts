@@ -49,6 +49,68 @@ export interface FirstPartyBackgroundService {
 }
 
 /** One Encore feature's first-party plugin metadata. */
+/**
+ * One way a user can reach a feature.
+ *
+ * `shortcutId` is a key into DEFAULT_SHORTCUTS rather than literal key text:
+ * the details pane resolves the user's LIVE binding through it, so a rebound
+ * key never leaves the panel advertising a combination that does nothing.
+ */
+export interface FirstPartyAccessPath {
+	/** What this opens or toggles, e.g. "Open the Concerto stage". */
+	label: string;
+	/** Key into DEFAULT_SHORTCUTS, resolved to the user's current binding. */
+	shortcutId?: string;
+	/** Exact text to search for in the command palette. */
+	commandPalette?: string;
+	/** Where to click, when the feature also has a menu or button. */
+	menu?: string;
+}
+
+/** One command an agent runs to drive the feature, shown verbatim. */
+export interface FirstPartyAgentCommand {
+	label: string;
+	command: string;
+}
+
+/** One step in a feature's ordered "get it working" walkthrough. */
+export interface FirstPartyUsageStep {
+	title: string;
+	body: string;
+}
+
+/**
+ * How a first-party feature is actually used, rendered under its description in
+ * the Extensions details pane.
+ *
+ * A one-line description tells the user what a feature IS; it does not tell them
+ * that it has a hotkey, that the command palette can reach it, or what an agent
+ * types to drive it. Turning a feature on and then not knowing how to summon it
+ * is the failure this closes. Optional: a feature with no usage guide simply
+ * renders its description as before.
+ */
+export interface FirstPartyUsageGuide {
+	/** Paragraphs on what the feature does in practice. */
+	overview: readonly string[];
+	/** Every way in. Order them the way a new user would try them. */
+	access?: readonly FirstPartyAccessPath[];
+	/** How an agent drives it, for features an agent operates rather than the user. */
+	agentCommands?: readonly FirstPartyAgentCommand[];
+	/**
+	 * Ordered walkthrough for a feature that takes more than one action to get
+	 * working. `access` says where the doors are; this says what to do once you
+	 * are inside. Omit it for a feature that is useful the moment it is on.
+	 */
+	steps?: readonly FirstPartyUsageStep[];
+	/**
+	 * Guard rails and limits worth stating plainly before someone enables it -
+	 * what the feature will never do on its own, and what turning it off costs.
+	 */
+	notes?: readonly string[];
+	/** Docs page slug on docs.runmaestro.ai (e.g. "concerto"). */
+	docsSlug?: string;
+}
+
 export interface FirstPartyPluginDefinition {
 	/** Stable, reverse-DNS plugin identity (`com.maestro.*`). */
 	id: string;
@@ -63,8 +125,16 @@ export interface FirstPartyPluginDefinition {
 	settingsNamespace: string;
 	/** The Encore feature flag that authorizes the first-party surface. */
 	encoreFlag: FirstPartyEncoreFlag;
+	/**
+	 * The day this feature first shipped, as `YYYY-MM-DD`. Required, because the
+	 * marketplace sorts by it: a feature with no date would sort to the end of
+	 * "Newest" forever and read as the oldest thing Maestro has.
+	 */
+	releaseDate: string;
 	/** Supervised background services the feature runs (empty when none). */
 	backgroundServices: readonly FirstPartyBackgroundService[];
+	/** How to actually use the feature once it is on. */
+	usage?: FirstPartyUsageGuide;
 }
 
 /** Stable first-party plugin identity for Pianola's plugin-backed Encore surface. */
@@ -106,6 +176,86 @@ export const PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[
 	},
 ] as const;
 
+/**
+ * Pianola's usage guide. Written against what the code actually does: the
+ * classifier (`shared/pianola/pianola-classifier.ts`), the policy engine
+ * (`pianola-policy.ts`, whose precedence the notes mirror), the supervisor
+ * (`main/pianola/pianola-supervisor.ts`), and the `maestro pianola` CLI verbs.
+ * Keep it in sync when that behaviour changes.
+ */
+export const PIANOLA_FIRST_PARTY_PLUGIN_USAGE: FirstPartyUsageGuide = {
+	overview: [
+		'Pianola is a manager agent that sits above your other agents. It watches the tabs you point it at, notices when one has stopped and is waiting on you (a permission prompt, a plan to review, a multiple-choice question), and decides what to do: answer it from a rule you wrote, or escalate it to you.',
+		'Enabling it pins one Pianola agent to the top of the Left Bar. It is a real chat agent, so you can talk to it like any other, and its workspace also carries a Dashboard: who needs you right now, who is still working, who just finished, and a live feed of every decision Pianola made.',
+		'Nothing is watched until you say so, and nothing is auto-answered without a rule you wrote. With no rules at all, Pianola is a monitor: it tells you who is stuck and stays out of the way.',
+	],
+	access: [
+		{
+			// No hotkey: Pianola is a pinned AGENT, so its first-class way in is the
+			// Left Bar row itself. The palette text is the literal command label.
+			label: 'Open the Pianola manager (rules, decisions, suggestions)',
+			commandPalette: 'Pianola',
+			menu: 'the pinned Pianola agent at the top of the Left Bar',
+		},
+	],
+	steps: [
+		{
+			title: 'Open its workspace',
+			body: 'Click the pinned Pianola agent, then use the Dashboard / Chat toggle in its tab strip. The manager and rules also open from the Settings tab and from the command palette.',
+		},
+		{
+			title: 'Put a watch on an agent',
+			body: 'On the Dashboard, the Watching section lists what Pianola is babysitting; the + button adds one of your other agents. Each watch is supervised by the desktop app: it restarts on crash and comes back when you relaunch, so it keeps working while you are away from the keyboard.',
+		},
+		{
+			title: 'Let it escalate first, then write rules',
+			body: 'Run it with no rules for a while. Every waiting prompt escalates to a toast and lands in the decision log, which shows you exactly what your agents keep asking. Those recurring asks are the ones worth automating.',
+		},
+		{
+			title: 'Write a rule for the asks you always answer the same way',
+			body: 'A rule is declarative: a scope (global, one project, or one tab), what it matches (maximum risk, signal kinds, topic substrings), and an action (auto-answer with a reply, escalate, or ignore). Lower priority numbers run first, and the first matching rule wins.',
+		},
+		{
+			title: 'Review the decision log',
+			body: 'The Decisions tab is the audit trail: what was asked, how it was classified, which rule matched, what Pianola sent, and how it turned out. Every decision is recorded before anything is dispatched, so a wrong rule is always visible after the fact.',
+		},
+		{
+			title: 'Approve learned suggestions (optional)',
+			body: 'Pianola can read your own past CLI transcripts and propose rules and a decision profile that match how you already answer. Proposals sit in the Suggestions tab until you approve them; approving only writes config, and an approved rule still goes through the safety checks at runtime.',
+		},
+	],
+	notes: [
+		'High-risk prompts ALWAYS escalate. No rule can auto-answer or silence one, because the transcript it is reading is not trusted input.',
+		'No matching rule means escalate. Pianola never invents an answer, and never auto-answers on a low-confidence read.',
+		'Only the agents you add a watch for are touched. Everything else is left alone.',
+		'Turning the feature off stops every supervised watcher immediately. Your rules, decisions, and the Pianola agent itself are kept, so switching it back on resumes where you left off.',
+	],
+	agentCommands: [
+		{
+			label: 'Watch one tab from the terminal (add --dry-run to classify without replying)',
+			command: 'maestro pianola watch <tab-id>',
+		},
+		{ label: 'List the configured rules (--json for scripting)', command: 'maestro pianola rules' },
+		{
+			label: 'Add a rule without opening the app',
+			command: 'maestro pianola add-rule --action auto_answer --answer "yes"',
+		},
+		{ label: 'Show the recent decision audit log', command: 'maestro pianola log' },
+		{
+			label: 'Crawl your installed CLI transcripts into a labeled decision corpus',
+			command: 'maestro pianola learn',
+		},
+		{
+			label: 'Inspect the watchers the desktop app keeps alive',
+			command: 'maestro pianola supervise list',
+		},
+		{
+			label: 'Run a saved task plan, dispatching each task as its dependencies finish',
+			command: 'maestro pianola orchestrate <plan-id>',
+		},
+	],
+};
+
 /** Pianola: the complete definition (the pattern the other features follow). */
 export const PIANOLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	id: PIANOLA_FIRST_PARTY_PLUGIN_ID,
@@ -117,6 +267,7 @@ export const PIANOLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'pianola',
 	encoreFlag: 'pianola',
+	releaseDate: '2026-06-24',
 	backgroundServices: [
 		{
 			id: 'pianola.supervisor',
@@ -125,6 +276,7 @@ export const PIANOLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				'Supervises Pianola watch/orchestrate targets and stops them when consent is off.',
 		},
 	],
+	usage: PIANOLA_FIRST_PARTY_PLUGIN_USAGE,
 };
 
 /** Broker capabilities Coworking actually touches. Coworking exposes the
@@ -185,6 +337,7 @@ export const COWORKING_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'coworking',
 	encoreFlag: 'coworking',
+	releaseDate: '2026-05-03',
 	// No supervised background service tied to the flag: the coworking IPC bridge
 	// is app-scoped (main startup/shutdown owns its lifecycle), so disable = flag
 	// off + per-agent MCP uninstall; nothing flag-supervised keeps running.
@@ -212,6 +365,7 @@ export const OPENCODE_SERVER_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'opencodeServer',
 	encoreFlag: 'opencodeServer',
+	releaseDate: '2026-07-07',
 	// The shared `opencode serve` process is app-scoped (spawned lazily by
 	// OpencodeServerManager, torn down on quit), not flag-supervised: disable =
 	// flag off, and routing falls back to the CLI path. Nothing keeps running.
@@ -274,6 +428,7 @@ export const DIRECTOR_NOTES_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'directorNotes',
 	encoreFlag: 'directorNotes',
+	releaseDate: '2026-02-16',
 	// No supervised background services: every Director's Notes surface is
 	// on-demand (unified history / graph / stats are computed per IPC call;
 	// synopsis generation is a single awaited, timeout-bounded batch spawn
@@ -352,6 +507,7 @@ export const USAGE_STATS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	// `fs:write` scope is claimed.
 	settingsNamespace: 'usageStats',
 	encoreFlag: 'usageStats',
+	releaseDate: '2025-11-26',
 	backgroundServices: [
 		{
 			id: 'stats.sampler',
@@ -431,6 +587,7 @@ export const SYMPHONY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: SYMPHONY_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'symphony',
 	encoreFlag: 'symphony',
+	releaseDate: '2025-12-30',
 	// NONE on purpose: registry/issue fetching is on-demand (2h/5min/24h TTL
 	// caches, refreshed when the UI asks) and PR-status sync is renderer-side
 	// polling of on-demand IPC while the Symphony modal is open. There is no
@@ -503,6 +660,7 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'maestroCue',
 	encoreFlag: 'maestroCue',
+	releaseDate: '2026-03-01',
 	backgroundServices: [
 		{
 			id: 'cue.engine',
@@ -523,7 +681,7 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	id: 'com.maestro.concerto',
 	name: 'Concerto',
 	description:
-		'Let agents compose rich data views from native building blocks: a floating movement of panels plus always-on-top cadenza HUD cards.',
+		'Let agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top cadenza HUD cards.',
 	firstParty: true,
 	category: 'ui',
 	permissions: [
@@ -549,11 +707,51 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'concerto',
 	encoreFlag: 'concerto',
+	releaseDate: '2026-07-05',
 	// No supervised background service: the movement overlay + cadenza HUD are
 	// purely reactive to CLI-pushed payloads (dropped at the render gate when the
 	// flag is off), and the bridge that carries them is app-scoped. Disable =
 	// flag off + overlays unmount + payloads dropped; nothing keeps running.
 	backgroundServices: [],
+	usage: {
+		overview: [
+			'Concerto lets an agent answer with something you can look at and click, instead of a wall of text. Ask for a chessboard, a dashboard, a mockup, a simulator, or a comparison, and the agent composes it as a real, interactive view.',
+			'Views land on the CONCERTO STAGE: one window holding every panel the agent has composed. Drag panels around it, resize them from any edge, or minimize one to the stage taskbar in the bottom right. The stage itself is centered by default; the pop-out button in its header floats it as a free-positioned window so you can keep typing to the agent beside it. Its size, position, and which mode you chose are all remembered.',
+			'CADENZAS are the second surface: small cards that float above every application, not just Maestro. Use them for the one number or the one question you want in view while you work somewhere else. A cadenza can also ask you to decide, and your answer goes straight back to the agent.',
+			'Closing the stage parks it, it never tears it down. A game keeps its position and a live tracker keeps tracking, so reopening puts you back exactly where you were.',
+		],
+		access: [
+			{
+				label: 'Show or hide the Concerto stage',
+				shortcutId: 'toggleConcerto',
+				commandPalette: 'Concerto Stage',
+				menu: 'Concerto in the Left Bar hamburger menu',
+			},
+			{
+				label: 'Pop the stage out into a floating window (or dock it again)',
+				commandPalette: 'Pop Concerto Stage Out',
+				menu: 'the pop-out button beside ESC in the stage header',
+			},
+			{
+				label: 'Stash every cadenza card at once, without closing any of them',
+				shortcutId: 'toggleCadenzas',
+				commandPalette: 'Hide All Cadenzas',
+			},
+		],
+		agentCommands: [
+			{ label: 'Ask for one in plain language', command: 'Show me a playable chessboard' },
+			{
+				label: 'Compose an interactive view',
+				command: 'maestro-cli movement add <id> --title "<title>" --html-file <file.html>',
+			},
+			{
+				label: 'Keep a live status card on top of everything',
+				command: 'maestro-cli cadenza open <id> --type tracker --title "Tests" --body "0/10"',
+			},
+			{ label: 'See what is already on the stage', command: 'maestro-cli movement state --json' },
+		],
+		docsSlug: 'concerto',
+	},
 };
 
 /** Groups+ uses the host-owned group model and renderer; it only needs to
@@ -578,6 +776,7 @@ export const GROUPS_PLUS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: GROUPS_PLUS_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'groupsPlus',
 	encoreFlag: 'groupsPlus',
+	releaseDate: '2026-07-10',
 	// Groups+ has no service or broker entry point: existing group persistence stays
 	// host-owned. Disable only hides its renderer surfaces and preserves stored data.
 	backgroundServices: [],

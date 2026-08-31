@@ -73,7 +73,13 @@ export type MediaOpenMode = 'play' | 'queue';
 export interface FilePreviewTabHandlersReturn {
 	handleOpenFileTab: (
 		file: FileTabOpenParams,
-		options?: { openInNewTab?: boolean; targetSessionId?: string; mediaMode?: MediaOpenMode }
+		options?: {
+			openInNewTab?: boolean;
+			targetSessionId?: string;
+			mediaMode?: MediaOpenMode;
+			/** false = create the tab without showing it (background placement). */
+			activate?: boolean;
+		}
 	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;
 	handleCloseFileTab: (tabId: string) => void;
@@ -105,7 +111,7 @@ export interface BrowserTabHandlersReturn {
 }
 
 export interface UnifiedTabHandlersReturn {
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	handleUnifiedTabReorder: (sourceTabId: string, targetTabId: string) => void;
 	handleCloseOtherTabs: (pivotTabId?: string) => void;
 	handleCloseTabsLeft: (pivotTabId?: string) => void;
 	handleCloseTabsRight: (pivotTabId?: string) => void;

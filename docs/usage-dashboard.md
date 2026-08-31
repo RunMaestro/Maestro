@@ -30,7 +30,7 @@ The Usage Dashboard only tracks activity from within Maestro. It does not includ
 
 ## Dashboard Tabs
 
-The dashboard is organized into four tabs, each providing different insights into your usage:
+The dashboard is organized into tabs, each providing different insights into your usage. The core tabs are described below; additional tabs (Tokens, Cue, Shortcuts, and the per-provider usage tabs) appear when the matching Encore Feature is enabled.
 
 ### Overview
 
@@ -70,19 +70,28 @@ A line chart showing how your query durations vary over time. Useful for spottin
 
 ### Agents
 
-The Agents tab provides detailed per-agent analytics:
+The Agents tab shows one card per agent, so you can scan your whole fleet at once. Each card carries the agent name, a live status dot, its age, and three stats: **Queries**, **Tabs**, and **Auto %** (the share of that agent's queries that came from Auto Run or Cue), plus a 7-day activity sparkline. Worktree agents render with a dashed border, a **WT** badge, and their checked-out branch.
 
-**Session Statistics:**
+**Filtering:** the filter box above the grid narrows the cards as you type. Matching is fuzzy, so `cbst` finds "Cyber Stocks", and it searches the agent name (with or without its leading emoji) as well as a worktree's branch name. A count next to the box shows how many of your agents match. Press `Esc` or click the **ESC** pill to clear the filter; clearing it is what `Esc` does first, so the dashboard stays open.
 
-- **Total Sessions** - Count of registered sessions
-- **By Agent** - Breakdown by agent type (Claude Code, Codex, etc.) with color-coded indicators
-- **Git Repos vs Folders** - How many sessions are Git repositories versus plain directories
-- **Remote vs Local** - Sessions running on remote SSH hosts versus local machine
+**Sorting:** the **Sort by** control orders the grid by Name, Created, Recent, Queries, Tabs, or Auto %. The stat being sorted on is highlighted on every card, so it is obvious what the order means. **Recent** ranks by when each agent last ran a query, so the fleet reads newest-work-first; under it the card's corner badge switches from the agent's age to that last-query time, and an agent that has not run anything in the selected range drops to the bottom with no badge at all. When a filter is active, the default Name sort ranks the best match first; any other sort keeps the order you chose.
 
-**Agent Comparison:**
+**Per-agent details:** click any card to open a detail view for that agent, covering total queries, total and average duration, active days, a full-window daily activity chart, duration distribution (min / median / p95 / max), the user-vs-auto query split, and Auto Run totals.
 
-- Full agent comparison chart showing query counts and time spent per agent
-- Side-by-side visual comparison of your agent usage patterns
+#### Tab breakdown
+
+The detail view also breaks the agent's activity down by AI tab, as a grid of tab tiles. Each tile shows the tab name, **Queries**, **Time** (total agent time in that tab, with the per-query average on hover), **Auto %**, when it was last active, and a 14-day sparkline. The tab currently in focus is badged **Active**, snoozed tabs are badged **Snoozed**, and closed tabs render with a dashed border.
+
+- **Show** picks how far back to look: **Open** (the default, tabs currently open on that agent), **Last 10**, **Last 25**, or **All**.
+- **Sort by** orders the tiles by Recent, Queries, Time, or Name.
+
+**Paging:** an agent with a long history can have hundreds or thousands of tabs, so **All** is shown 32 tiles at a time. Page arrows appear next to the tile count whenever the list overflows one page, and you can also page with the Left and Right arrow keys once they have focus. The narrower filters always fit on a single page, so the arrows only show up when they are actually needed. Changing the filter or the sort returns you to the first page.
+
+The detail view is resizable: drag any edge or corner to resize it, and double-click a resize handle to return to the default size. Maestro remembers the size you chose and reuses it the next time you open an agent's details.
+
+<Note>
+Maestro records which tab issued each query, but tab *names* live with the tab itself. A tab that is open, snoozed, or was closed during this app session is shown by name; older closed tabs can only be identified by a short ID (e.g. `DEADBEEF`). This is why **Open** is the default view - a long-running agent accumulates many retired tabs that can no longer be named.
+</Note>
 
 ### Activity
 

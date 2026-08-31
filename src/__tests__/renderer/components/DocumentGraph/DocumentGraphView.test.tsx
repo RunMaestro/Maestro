@@ -7,6 +7,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PREVIEW_WIDTH_STORAGE_KEY } from '../../../../renderer/components/DocumentGraph/previewPaneSizing';
+import { nextMindMapLayout } from '../../../../renderer/components/DocumentGraph/mindMapLayouts';
+import {
+	NEIGHBOR_DEPTH_ALL,
+	NEIGHBOR_DEPTH_MAX,
+	nextNeighborDepth,
+} from '../../../../renderer/components/DocumentGraph/neighborDepth';
+import {
+	nextPreviewCharLimit,
+	PREVIEW_CHAR_LIMIT_OFF,
+} from '../../../../renderer/components/DocumentGraph/previewCharLimit';
 
 // Mock ReactFlow before importing the component
 vi.mock('reactflow', () => {
@@ -2198,6 +2209,70 @@ describe('DocumentGraphView', () => {
 			});
 		});
 
+		describe('container shortcuts (L / D / P / +-)', () => {
+			// L cycles the layout, D widens the neighbor depth, P cycles the preview
+			// length. All route through the SAME handlers the toolbar controls use,
+			// so a key press persists the choice and clears layout-specific drag
+			// overrides like a click.
+			const isBareKey = (e: {
+				key: string;
+				metaKey?: boolean;
+				ctrlKey?: boolean;
+				altKey?: boolean;
+			}) => !e.metaKey && !e.ctrlKey && !e.altKey;
+
+			it('L cycles the layout through the shared order', () => {
+				expect(nextMindMapLayout('mindmap')).toBe('radial');
+				expect(nextMindMapLayout('force')).toBe('mindmap');
+			});
+
+			it('D widens the depth and treats All as the top rung', () => {
+				expect(nextNeighborDepth(2)).toBe(3);
+				expect(nextNeighborDepth(NEIGHBOR_DEPTH_MAX)).toBe(NEIGHBOR_DEPTH_ALL);
+				expect(nextNeighborDepth(NEIGHBOR_DEPTH_ALL)).toBe(1);
+			});
+
+			it('P lengthens the preview and wraps through Off', () => {
+				expect(nextPreviewCharLimit(PREVIEW_CHAR_LIMIT_OFF)).toBe(50);
+				expect(nextPreviewCharLimit(100)).toBe(200);
+				expect(nextPreviewCharLimit(500)).toBe(PREVIEW_CHAR_LIMIT_OFF);
+			});
+
+			it('P is no longer a second spelling of Enter', () => {
+				// It used to open the in-graph preview, duplicating Enter. The canvas
+				// handler must let the key bubble to the container now, so any switch
+				// case for it there would swallow the cycle.
+				const canvasHandled = [
+					'ArrowUp',
+					'ArrowDown',
+					'ArrowLeft',
+					'ArrowRight',
+					'Enter',
+					' ',
+					'o',
+					'O',
+				];
+				expect(canvasHandled).not.toContain('p');
+				expect(canvasHandled).not.toContain('P');
+			});
+
+			it('ignores L and D while a modifier is held', () => {
+				// Cmd+D is an OS/browser chord; claiming it here would shadow it.
+				expect(isBareKey({ key: 'd', metaKey: true })).toBe(false);
+				expect(isBareKey({ key: 'l', ctrlKey: true })).toBe(false);
+				expect(isBareKey({ key: 'd' })).toBe(true);
+			});
+
+			it('ignores L and D while typing into a field', () => {
+				// Otherwise searching for "documentation" would cycle the layout
+				// four times and the depth twice on the way through.
+				const skips = (tag: string) => tag === 'INPUT' || tag === 'TEXTAREA';
+				expect(skips('INPUT')).toBe(true);
+				expect(skips('TEXTAREA')).toBe(true);
+				expect(skips('DIV')).toBe(false);
+			});
+		});
+
 		describe('handleKeyDown', () => {
 			it('does not handle keys when focus is in search input', () => {
 				// Keyboard navigation should be disabled when typing in search
@@ -2981,6 +3056,24 @@ describe('DocumentGraphView', () => {
 			expect(layerConfig.type).toBe('overlay');
 			expect(layerConfig.capturesFocus).toBe(true);
 			expect(layerConfig.focusTrap).toBe('lenient');
+		});
+
+		it('preview panel width is dragged by its left edge and remembered', () => {
+			// The pane floats over the right of the graph, so widening it means
+			// dragging its LEFT edge toward the canvas - `side: 'right'` in
+			// useResizablePanel. Persistence belongs to usePersistedPanelWidth, so
+			// no settingsKey is passed (a second write would go nowhere readable).
+			const resizeConfig = {
+				side: 'right',
+				storageKey: PREVIEW_WIDTH_STORAGE_KEY,
+				settingsKey: undefined,
+				handleClassName: 'absolute top-0 left-0 w-3 h-full cursor-col-resize',
+			};
+
+			expect(resizeConfig.side).toBe('right');
+			expect(resizeConfig.settingsKey).toBeUndefined();
+			expect(resizeConfig.handleClassName).toContain('cursor-col-resize');
+			expect(resizeConfig.storageKey).toBe('documentGraph.previewWidth');
 		});
 
 		it('preview content area is focusable for keyboard scrolling', () => {

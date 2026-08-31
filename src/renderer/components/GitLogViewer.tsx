@@ -9,16 +9,45 @@ import { parseGitDiff } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { useListNavigation } from '../hooks';
+import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { ModalSubtitle } from './ui/Modal';
+import { useSessionStore } from '../stores/sessionStore';
 import { gitService, type GitGraphNode } from '../services/git';
 import { GitGraphView } from './GitGraphView';
+import {
+	computeGitGraphGeometry,
+	gitGraphColumnEdge,
+	gitGraphTopCommit,
+	jumpGitGraphVertical,
+	stepGitGraphHorizontal,
+	stepGitGraphVertical,
+} from '../utils/gitGraphLayout';
 import 'react-diff-view/style/index.css';
 
 const VIEW_MODE_STORAGE_KEY = 'maestro:gitLogViewer:viewMode';
 const COMMIT_FETCH_LIMIT = 200;
 type ViewMode = 'list' | 'graph';
+
+// Cmd/Ctrl+Shift+[ / ] steps between the List and Graph views. On macOS Shift+[
+// arrives as '{' and Shift+] as '}', so both spellings have to be matched (the
+// same pair the app-level handler checks). This chord cannot collide with the
+// app's tab cycling: `useMainKeyboardHandler` blocks it outright whenever a true
+// modal is open, precisely so a modal can claim it for its own views.
+function viewModeStepFromKey(e: KeyboardEvent): -1 | 1 | null {
+	if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return null;
+	if (e.key === '[' || e.key === '{') return -1;
+	if (e.key === ']' || e.key === '}') return 1;
+	return null;
+}
+
+const VIEW_MODES: ViewMode[] = ['list', 'graph'];
+
+// Commits a PageUp/PageDown covers down the current branch line in graph view.
+// Matches the list view's own page size so the two views move at the same rate.
+const GRAPH_PAGE_COMMITS = 10;
 
 interface GitLogEntry {
 	hash: string;
@@ -37,6 +66,12 @@ interface GitLogViewerProps {
 	onClose: () => void;
 	sshRemoteId?: string;
 	/**
+	 * Agent whose log is shown, named in the header. The cwd pill alone does not
+	 * identify it - worktrees of one repo share a path prefix, and two agents can
+	 * sit on the same directory.
+	 */
+	sessionId?: string;
+	/**
 	 * Open a file as a preview tab. Given an absolute path and the display name.
 	 * When provided, the per-file diff headers become clickable; the viewer
 	 * dismisses itself via `onClose` first, then calls this to open the file.
@@ -49,8 +84,14 @@ export const GitLogViewer = memo(function GitLogViewer({
 	theme,
 	onClose,
 	sshRemoteId,
+	sessionId,
 	onOpenFile,
 }: GitLogViewerProps) {
+	// Name the agent whose repo this is. Subscribe to the name alone, never the
+	// Session: these viewers stay open over a streaming agent and a whole-session
+	// subscription would re-render the diff list on every unrelated token update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
+
 	const [entries, setEntries] = useState<GitLogEntry[]>([]);
 	const [totalCommits, setTotalCommits] = useState<number | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -180,6 +221,14 @@ export const GitLogViewer = memo(function GitLogViewer({
 		[cwd, sshRemoteId]
 	);
 
+	// Where each commit is actually DRAWN, read back from the same @gitgraph
+	// construction the view renders. Navigation is visual, so it has to move by
+	// the layout on screen rather than by an order re-derived beside it.
+	const graphGeometry = useMemo(
+		() => computeGitGraphGeometry(graphNodes, theme),
+		[graphNodes, theme]
+	);
+
 	// Memoised so GitGraphView's `useMemo` (which lists onCommitClick in its deps)
 	// doesn't rebuild the entire GitgraphCore on every parent render.
 	const handleGraphCommitClick = useCallback(
@@ -241,15 +290,96 @@ export const GitLogViewer = memo(function GitLogViewer({
 		}
 	}, [selectedIndex]);
 
+	// Graph-mode keyboard model, with one axis per question, both answered in
+	// SCREEN terms. Up/Down follow the branch line the selected commit is drawn
+	// on, skipping commits that belong to other columns; Left/Right move to the
+	// branch line drawn immediately beside it, landing at the same height. Moving
+	// vertically by the global commit order instead would drift sideways on its
+	// own, leaving Left/Right with nothing to do.
+	//
+	// Columns are used instead of the list's index because the graph is built
+	// from `git log --all` while the list only holds the current branch, so a
+	// commit selected off a side branch would otherwise leave the arrow keys
+	// doing nothing visible.
+	const handleGraphKeyDown = useCallback(
+		(e: KeyboardEvent): boolean => {
+			if (viewMode !== 'graph' || e.metaKey || e.ctrlKey || e.altKey) return false;
+
+			const selected = displayedCommit?.hash;
+			// Fall back to the newest commit when the selection is not on the graph
+			// (an empty log, or an entry outside the graph's range). Keys that answer
+			// with nothing read as broken, so give them somewhere to start.
+			const anchor =
+				selected && graphGeometry.positionOfCommit.has(selected)
+					? selected
+					: gitGraphTopCommit(graphGeometry);
+
+			let target: string | null = null;
+			switch (e.key) {
+				case 'ArrowRight':
+					target = stepGitGraphHorizontal(graphGeometry, anchor, 'right');
+					break;
+				case 'ArrowLeft':
+					target = stepGitGraphHorizontal(graphGeometry, anchor, 'left');
+					break;
+				case 'ArrowUp':
+				case 'k':
+					target = stepGitGraphVertical(graphGeometry, anchor, 'up');
+					break;
+				case 'ArrowDown':
+				case 'j':
+					target = stepGitGraphVertical(graphGeometry, anchor, 'down');
+					break;
+				// The page and end keys are answered here too, and stay in the column
+				// for the same reason. Left to the list handler they would move an
+				// index the graph is not showing, which reads as the key having died.
+				case 'PageUp':
+					target = jumpGitGraphVertical(graphGeometry, anchor, -GRAPH_PAGE_COMMITS);
+					break;
+				case 'PageDown':
+					target = jumpGitGraphVertical(graphGeometry, anchor, GRAPH_PAGE_COMMITS);
+					break;
+				case 'Home':
+					target = gitGraphColumnEdge(graphGeometry, anchor, 'top');
+					break;
+				case 'End':
+					target = gitGraphColumnEdge(graphGeometry, anchor, 'bottom');
+					break;
+				default:
+					return false;
+			}
+
+			e.preventDefault();
+			// A step off the end of a column (or of the graph) holds the selection
+			// rather than falling through to the list handler, which would move the
+			// cursor somewhere the graph never showed it going.
+			if (target) handleGraphCommitClick(target);
+			return true;
+		},
+		[viewMode, displayedCommit?.hash, graphGeometry, handleGraphCommitClick]
+	);
+
 	// Handle keyboard navigation via global listener
 	// Store handleKeyDown in a ref to avoid stale closure issues
 	// The ref is updated synchronously on every render, before any events can fire
 	const handleKeyDownRef = useRef(handleKeyDown);
 	handleKeyDownRef.current = handleKeyDown;
+	const handleGraphKeyDownRef = useRef(handleGraphKeyDown);
+	handleGraphKeyDownRef.current = handleGraphKeyDown;
 
 	useEffect(() => {
 		// Wrapper function that always calls the current handler from the ref
 		const handler = (e: KeyboardEvent) => {
+			const step = viewModeStepFromKey(e);
+			if (step !== null) {
+				e.preventDefault();
+				setViewMode((prev) => {
+					const next = VIEW_MODES.indexOf(prev) + step;
+					return VIEW_MODES[Math.min(Math.max(next, 0), VIEW_MODES.length - 1)];
+				});
+				return;
+			}
+			if (handleGraphKeyDownRef.current(e)) return;
 			handleKeyDownRef.current(e);
 		};
 		window.addEventListener('keydown', handler);
@@ -386,6 +516,11 @@ export const GitLogViewer = memo(function GitLogViewer({
 		dialogRef.current?.focus();
 	}, []);
 
+	// Platform-correct spelling of the view-switch chord for the toggle tooltips
+	// and the footer hint (⌘ ⇧ [ on macOS, Ctrl+Shift+[ elsewhere).
+	const viewToggleHint = useMemo(() => formatShortcutKeys(['Meta', 'Shift', '[']), []);
+	const viewToggleHintForward = useMemo(() => formatShortcutKeys(['Meta', 'Shift', ']']), []);
+
 	return (
 		<div
 			className="fixed inset-0 z-[9999] flex items-center justify-center modal-overlay"
@@ -420,9 +555,13 @@ export const GitLogViewer = memo(function GitLogViewer({
 				>
 					<div className="flex items-center gap-3">
 						<GitCommit className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+						<span
+							className="text-lg font-semibold shrink-0"
+							style={{ color: theme.colors.textMain }}
+						>
 							Git Log
 						</span>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 						<span
 							className="text-xs px-2 py-1 rounded"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
@@ -448,7 +587,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 									backgroundColor: viewMode === 'list' ? theme.colors.bgActivity : 'transparent',
 									color: viewMode === 'list' ? theme.colors.textMain : theme.colors.textDim,
 								}}
-								title="List view"
+								title={`List view (${viewToggleHint})`}
 								aria-pressed={viewMode === 'list'}
 							>
 								<List className="w-3.5 h-3.5" />
@@ -461,7 +600,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 									backgroundColor: viewMode === 'graph' ? theme.colors.bgActivity : 'transparent',
 									color: viewMode === 'graph' ? theme.colors.textMain : theme.colors.textDim,
 								}}
-								title="Graph view"
+								title={`Graph view (${viewToggleHintForward})`}
 								aria-pressed={viewMode === 'graph'}
 							>
 								<Network className="w-3.5 h-3.5" />
@@ -749,6 +888,33 @@ export const GitLogViewer = memo(function GitLogViewer({
 								j/k
 							</kbd>{' '}
 							navigate
+						</span>
+						{viewMode === 'graph' && (
+							<span>
+								<kbd
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									←→
+								</kbd>{' '}
+								switch branch
+							</span>
+						)}
+						<span>
+							<kbd
+								className="px-1 py-0.5 rounded"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{viewToggleHint}
+							</kbd>{' '}
+							/{' '}
+							<kbd
+								className="px-1 py-0.5 rounded"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								]
+							</kbd>{' '}
+							switch view
 						</span>
 						<span>
 							<kbd

@@ -1308,7 +1308,7 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 
 			expect(execFile.execFileStreaming).toHaveBeenCalledWith(
 				'git',
-				['pull', '--progress'],
+				['-c', 'color.ui=always', 'pull', '--progress'],
 				expect.objectContaining({ cwd: '/test/repo' })
 			);
 			expect(event.sender.send).toHaveBeenCalledWith('git:commandOutput', {
@@ -1376,9 +1376,35 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 
 			expect(execFile.execFileStreaming).toHaveBeenCalledWith(
 				'git',
-				['push', '--progress', '--set-upstream', 'origin', 'feature/login'],
+				[
+					'-c',
+					'color.ui=always',
+					'push',
+					'--progress',
+					'--set-upstream',
+					'origin',
+					'feature/login',
+				],
 				expect.anything()
 			);
+		});
+
+		it('forces color from git and from whatever its hooks run', async () => {
+			mockStreaming([], { exitCode: 0 });
+
+			const handler = handlers.get('git:runCommand');
+			await handler!(mockEvent(), {
+				runId: 'run-color',
+				operation: 'push',
+				cwd: '/test/repo',
+			});
+
+			// The console renders ANSI, but nothing in this chain is a TTY: git
+			// needs color.ui=always and a pre-push hook's tooling needs FORCE_COLOR,
+			// or the whole transcript arrives gray.
+			const [, args, options] = vi.mocked(execFile.execFileStreaming).mock.calls[0];
+			expect(args.slice(0, 2)).toEqual(['-c', 'color.ui=always']);
+			expect(options?.env).toMatchObject({ FORCE_COLOR: '1', CLICOLOR_FORCE: '1' });
 		});
 
 		it('fails loudly when the requested SSH remote cannot be resolved', async () => {
@@ -1424,9 +1450,32 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 
 			resolveRun({ stdout: '', stderr: '', exitCode: 'SIGTERM' });
 			await runPromise;
+		});
 
-			// Once finished the run is forgotten, so a late cancel is a no-op.
-			expect(await cancelHandler!({} as any, 'run-cancel')).toEqual({ success: false });
+		it('honours a cancel that arrives before the process is spawned', async () => {
+			const cancel = vi.fn();
+			let resolveRun: (value: any) => void = () => {};
+			vi.mocked(execFile.execFileStreaming).mockImplementation(() => ({
+				result: new Promise((resolve) => {
+					resolveRun = resolve;
+				}),
+				cancel,
+			}));
+
+			// Cancel is clickable while the run is still resolving the shell PATH
+			// and building its command; that click has to survive to the spawn.
+			expect(await handlers.get('git:cancelCommand')!({} as any, 'run-early')).toEqual({
+				success: true,
+			});
+
+			const runPromise = handlers.get('git:runCommand')!(
+				{ sender: { isDestroyed: () => false, send: vi.fn() } } as any,
+				{ runId: 'run-early', operation: 'push', cwd: '/test/repo' }
+			);
+			await vi.waitFor(() => expect(cancel).toHaveBeenCalled());
+
+			resolveRun({ stdout: '', stderr: '', exitCode: 'SIGTERM' });
+			expect(await runPromise).toEqual(expect.objectContaining({ cancelled: true }));
 		});
 	});
 

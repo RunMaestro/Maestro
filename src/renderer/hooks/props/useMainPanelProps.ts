@@ -33,6 +33,8 @@ import type {
 } from '../../types/contextMerge';
 import type { FileNode } from '../../types/fileTree';
 import type { DocumentGenerationCallbacks } from '../../services/inlineWizardDocumentGeneration';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { PublishTextAsGistOptions } from '../tabs/useTabExportHandlers';
 
 /**
  * Dependencies for computing MainPanel props.
@@ -150,9 +152,8 @@ export interface UseMainPanelPropsDeps {
 	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;
-	getForceSendContext: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
+	getForceSendContext: (item: QueuedItem) => ForceSendEligibility | null;
 	handleOpenQueueBrowser: () => void;
 
 	// Tab management handlers
@@ -161,7 +162,7 @@ export interface UseMainPanelPropsDeps {
 	handleNewTab: () => void;
 	handleRequestTabRename: (tabId: string) => void;
 	handleTabReorder: (fromIndex: number, toIndex: number) => void;
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	handleUnifiedTabReorder: (sourceTabId: string, targetTabId: string) => void;
 	handleUpdateTabByClaudeSessionId: (
 		agentSessionId: string,
 		updates: { name?: string | null; starred?: boolean }
@@ -247,8 +248,12 @@ export interface UseMainPanelPropsDeps {
 	handlePublishTabGist: (tabId: string) => void;
 	/** Copy arbitrary text to the clipboard (used by terminal buffer actions) */
 	handleCopyText: (text: string, subject?: string) => void;
-	/** Queue arbitrary text for the Gist publish modal (used by terminal buffer actions) */
-	handlePublishTextAsGist: (text: string, filenameStem: string) => void;
+	/** Queue arbitrary text for the Gist publish modal (used by terminal buffer and file tab actions) */
+	handlePublishTextAsGist: (
+		text: string,
+		filenameStem: string,
+		options?: PublishTextAsGistOptions
+	) => void;
 	/** Queue arbitrary text for Send to Agent transfer (used by terminal buffer actions) */
 	handleSendTextToAgent: (text: string, sourceName: string) => void;
 	cancelTab: (tabId: string) => void;
@@ -279,7 +284,9 @@ export interface UseMainPanelPropsDeps {
 	) => Promise<void>;
 	retryInlineWizardMessage: () => void;
 	clearInlineWizardError: () => void;
-	endInlineWizard: () => void;
+	endInlineWizard: (tabId?: string) => void;
+	/** Stop the wizard turn running on a tab, keeping the wizard open */
+	cancelInlineWizardTurn: (tabId?: string) => void;
 	handleAutoRunRefresh: () => void;
 
 	// File tree refresh
@@ -526,9 +533,14 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 				const url = `file://${encodedPath}`;
 				deps.handleOpenBrowserTabAt(url, { title: activeFileTab.name });
 			},
-			// Inline wizard callbacks handled inline to maintain closure access
-			onExitWizard: deps.endInlineWizard,
-			onWizardCancelGeneration: deps.endInlineWizard,
+			// Inline wizard callbacks handled inline to maintain closure access.
+			// Both name the tab: the hook's fallback is the last-touched wizard, which is
+			// the wrong one whenever a second wizard has been opened since, and ending the
+			// wrong tab leaves the visible one registered with no way to clear it.
+			onExitWizard: () => deps.endInlineWizard(deps.activeSession?.activeTabId),
+			onStopWizardTurn: (tabId?: string) =>
+				deps.cancelInlineWizardTurn(tabId ?? deps.activeSession?.activeTabId),
+			onWizardCancelGeneration: () => deps.endInlineWizard(deps.activeSession?.activeTabId),
 			// Complex wizard handlers (passed through from App.tsx)
 			onWizardComplete: deps.onWizardComplete,
 			onWizardCompleteAndStartAutoRun: deps.onWizardCompleteAndStartAutoRun,
@@ -709,6 +721,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setIsGraphViewOpen,
 			deps.handleOpenBrowserTabAt,
 			deps.endInlineWizard,
+			deps.cancelInlineWizardTurn,
+			deps.activeSession?.activeTabId,
 			// Complex wizard handlers
 			deps.onWizardComplete,
 			deps.onWizardCompleteAndStartAutoRun,

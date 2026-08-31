@@ -7,7 +7,7 @@ import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
-import { getAgentLoginCommand } from '../../../shared/agentMetadata';
+import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
@@ -462,7 +462,14 @@ export class StdoutHandler {
 			parsed !== null && outputParser ? outputParser.parseJsonObject(parsed) : null;
 
 		// ── Error detection from parser ──
-		if (outputParser && !managedProcess.errorEmitted) {
+		// `interrupted` means the USER pressed Stop, and `interrupt()` sets it
+		// before signalling. Anything a CLI reports after that is a consequence of
+		// the stop, not a failure of the turn: several agents flush a terminal
+		// envelope on their way out (grok emits `stopReason: "cancelled"`, which
+		// the parser correctly classifies as a turn that died early). Raising it
+		// would show a red error and arm recovery for a turn the user deliberately
+		// abandoned, so drop it - the turn is over either way.
+		if (outputParser && !managedProcess.errorEmitted && !managedProcess.interrupted) {
 			// Use pre-parsed object when available; fall back to line-based detection
 			// for non-JSON lines (e.g., Claude embedded JSON in stderr)
 			const agentError =
@@ -470,8 +477,15 @@ export class StdoutHandler {
 					? outputParser.detectErrorFromParsed(parsed)
 					: outputParser.detectErrorFromLine(line);
 			if (agentError) {
-				// Error results can be the first provider event. Preserve the
-				// provider session ID before returning through agent-error.
+				// Capture the PROVIDER's session id off this line before anything else:
+				// the branch returns without reaching `handleParsedEvent`, so this is the
+				// only chance, and `agentError.sessionId` below is Maestro's own
+				// composite id, not the agent's. A failing terminal envelope is exactly
+				// where an id can arrive for the first and last time - grok reports one
+				// only on `end`, and an `end` that died early now leaves through here.
+				// Losing it means recovery from a *recoverable* error silently opens a
+				// fresh conversation and drops the context the retry was supposed to
+				// continue. ExitHandler does the same for the flushed no-newline case.
 				if (parsedEvent) {
 					this.emitSessionIdIfNeeded(
 						sessionId,
@@ -494,9 +508,13 @@ export class StdoutHandler {
 					// are often generic (no CLI name) and first-match-wins ordering
 					// can shadow the ones that do name a command. A small map keeps
 					// every agent correct without depending on pattern text/order.
-					const loginCmd = getAgentLoginCommand(toolType);
-					agentError.message = loginCmd
-						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${loginCmd}" to re-authenticate.`
+					const login = getAgentLoginCommand(toolType);
+					// Some agents have no login subcommand and only expose the flow
+					// as a slash command inside their TUI, so name that follow-up
+					// rather than implying the one-liner finishes the job.
+					const followUp = login?.followUp ? ` then type "${login.followUp}"` : '';
+					agentError.message = login
+						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${formatAgentLoginCommand(login)}"${followUp} to re-authenticate.`
 						: `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate.`;
 				}
 
@@ -547,8 +565,16 @@ export class StdoutHandler {
 		// Non-JSON lines from JSONL agents are silently suppressed (shell profile noise, MCP startup, etc.)
 	}
 
-	/** Handle a normalized event: extract usage, tools, and result data. */
-	private handleParsedEvent(
+	/**
+	 * Handle a normalized event: extract usage, tools, and result data.
+	 *
+	 * Public because ExitHandler dispatches the trailing no-newline record through
+	 * it. That record is an ordinary event that merely arrived without its
+	 * delimiter, so it must produce the same usage, session-id and result emissions
+	 * as any other - ExitHandler used to re-implement a subset inline and silently
+	 * dropped the usage of a run whose whole output was that one envelope.
+	 */
+	handleParsedEvent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
 		event: ParsedEvent,

@@ -46,6 +46,16 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// Out of disk space - user environment, never a Maestro bug.
 	if (/ENOSPC: no space left on device/i.test(haystack)) return true;
 
+	// The same out-of-disk condition as above, worded by SQLite instead of libuv.
+	// better-sqlite3 raises `SqliteError: database or disk is full` (SQLITE_FULL)
+	// from any write once the volume fills, which lights up every stats / cue DB
+	// writer at once - the query-event buffer flush is just the one that reached
+	// us first (MAESTRO-ZD). Those writes are best-effort telemetry and the code
+	// already drops the batch rather than retrying, so there is nothing to fix.
+	// Narrow on purpose: SQLITE_CORRUPT, SQLITE_BUSY and I/O errors still report,
+	// because those are the shapes that can indicate a real bug of ours.
+	if (/database or disk is full/i.test(haystack)) return true;
+
 	// Broken pipe writing to a closed stdout/stderr (process torn down underneath us).
 	// Two message shapes reach us: libuv fs-style writes surface as `EPIPE: broken pipe`,
 	// while Node stream/socket writes (console.* into a stdout pipe whose reader already
@@ -90,6 +100,15 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	}
 	if (ipcMethod === 'shell:trashItem' || ipcMethod === 'shell:showItemInFolder') {
 		if (/Path does not exist:/i.test(haystack)) return true;
+	}
+	// Electron's catch-all when the platform refuses to move a path to the trash:
+	// the file is open in another process, the volume has no recycle bin (network
+	// share, removable media), or the user lacks permission. Nothing we can do in
+	// code, and the delete is user-initiated - the caller already shows a
+	// "Failed to Erase Directory" toast carrying this message, so the user knows
+	// and can retry. The crash report on top of that is pure noise (MAESTRO-9V).
+	if (ipcMethod === 'shell:trashItem' && /Failed to perform delete operation/i.test(haystack)) {
+		return true;
 	}
 
 	// ENOSPC / EPERM / EACCES bubbling up through settings / sessions writes (same as

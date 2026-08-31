@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	flushMediaQueuePersist,
 	selectActiveMediaItem,
+	selectCanOpenMediaPlayer,
 	selectCanRestoreFloatingPlayer,
+	selectShowNowPlayingIndicator,
 	useMediaPlaybackStore,
 	MEDIA_HISTORY_LIMIT,
 	MEDIA_QUEUE_LIMIT,
@@ -37,8 +39,10 @@ function reset() {
 		history: [],
 		playing: false,
 		dismissed: false,
+		dormant: false,
 		pendingAutoplay: false,
 		toggleRequest: 0,
+		focusRequest: 0,
 		resumeTimes: {},
 		durations: {},
 		floatPosition: null,
@@ -259,12 +263,129 @@ describe('mediaPlaybackStore', () => {
 			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
 		});
 
+		it('wakes a dormant queue on the first thing the user opens or queues', () => {
+			const dormant = () => useMediaPlaybackStore.getState().dormant;
+
+			initial.openMedia(request());
+			useMediaPlaybackStore.setState({ dormant: true });
+			initial.openMedia(request({ path: '/files/b.mp3', name: 'b.mp3' }));
+			expect(dormant()).toBe(false);
+
+			useMediaPlaybackStore.setState({ dormant: true });
+			initial.enqueueMedia([request({ path: '/files/c.mp3', name: 'c.mp3' })]);
+			expect(dormant()).toBe(false);
+
+			useMediaPlaybackStore.setState({ dormant: true });
+			initial.setActiveItem(idOf(request()));
+			expect(dormant()).toBe(false);
+		});
+
+		it('selectShowNowPlayingIndicator hides the header pill for a dormant queue', () => {
+			// The state a restart lands in: loaded, hidden, untouched. The palette
+			// can still reach it; the Left Bar must not advertise it.
+			initial.openMedia(request());
+			useMediaPlaybackStore.setState({ dismissed: true, dormant: true, playing: false });
+			expect(selectCanRestoreFloatingPlayer(useMediaPlaybackStore.getState())).toBe(true);
+			expect(selectShowNowPlayingIndicator(useMediaPlaybackStore.getState())).toBe(false);
+
+			initial.restore();
+			useMediaPlaybackStore.setState({ dismissed: true });
+			expect(selectShowNowPlayingIndicator(useMediaPlaybackStore.getState())).toBe(true);
+		});
+
 		it('selectCanRestoreFloatingPlayer needs both a dismissal and loaded media', () => {
 			expect(selectCanRestoreFloatingPlayer(useMediaPlaybackStore.getState())).toBe(false);
 			initial.openMedia(request());
 			expect(selectCanRestoreFloatingPlayer(useMediaPlaybackStore.getState())).toBe(false);
 			initial.dismiss();
 			expect(selectCanRestoreFloatingPlayer(useMediaPlaybackStore.getState())).toBe(true);
+		});
+	});
+
+	describe('focusRequest', () => {
+		const focus = () => useMediaPlaybackStore.getState().focusRequest;
+
+		it('rises on the two gestures that mean "show me the player"', () => {
+			initial.openMedia(request());
+			const before = focus();
+
+			initial.restore();
+			expect(focus()).toBe(before + 1);
+
+			initial.openPlayer();
+			expect(focus()).toBe(before + 2);
+		});
+
+		it('rises on restore even when the widget was already up', () => {
+			// The header pill and the palette are the only callers, and both are the
+			// user asking to be put in the player - not a state reconciliation.
+			initial.openMedia(request());
+			const before = focus();
+			initial.restore();
+			expect(focus()).toBe(before + 1);
+		});
+
+		it('stays put when a file is opened or queued', () => {
+			// Opening media is a request to HEAR something, often from a file tree
+			// the user is still navigating. Stealing the caret there would be a
+			// keystroke landing somewhere they were not looking.
+			const before = focus();
+			initial.openMedia(request());
+			initial.enqueueMedia([request({ path: '/files/b.mp3', name: 'b.mp3' })]);
+			initial.setActiveItem(mediaItemId('s1', '/files/b.mp3'));
+			expect(focus()).toBe(before);
+		});
+	});
+
+	describe('openPlayer', () => {
+		it('re-queues a target that only survives in history', () => {
+			const r = request();
+			initial.openMedia(r);
+			initial.rememberTime(idOf(r), 12);
+			initial.closeItem(idOf(r));
+
+			// The palette still offers the command, so it has to do something.
+			expect(selectCanOpenMediaPlayer(useMediaPlaybackStore.getState())).toBe(true);
+
+			initial.openPlayer();
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.activeItemId).toBe(idOf(r));
+			expect(state.items.map((i) => i.id)).toEqual([idOf(r)]);
+			// Back where the user stopped, and paused: opening is not "play".
+			expect(state.resumeTimes[idOf(r)]).toBe(12);
+			expect(state.pendingAutoplay).toBe(false);
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			// The loaded track is never in history.
+			expect(state.history.map((h) => h.id)).not.toContain(idOf(r));
+		});
+
+		it('wakes a dormant restored queue without restarting it', () => {
+			const r = request();
+			useMediaPlaybackStore.setState({
+				items: [{ ...r, id: idOf(r) }],
+				activeItemId: idOf(r),
+				resumeTimes: { [idOf(r)]: 30 },
+				dismissed: true,
+				dormant: true,
+			});
+
+			initial.openPlayer();
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			expect(state.activeItemId).toBe(idOf(r));
+			expect(state.resumeTimes[idOf(r)]).toBe(30);
+			expect(state.pendingAutoplay).toBe(false);
+		});
+
+		it('does nothing when there is nothing to open', () => {
+			initial.openPlayer();
+			const state = useMediaPlaybackStore.getState();
+			expect(state.activeItemId).toBeNull();
+			expect(state.items).toHaveLength(0);
 		});
 	});
 
@@ -300,7 +421,24 @@ describe('mediaPlaybackStore', () => {
 			// Closing drops it from the queue but not from what was played: history
 			// is a record, not a view onto the queue.
 			expect(state.history.map((h) => h.id)).toEqual([idOf(r)]);
-			expect(state.resumeTimes[idOf(r)]).toBeUndefined();
+			// And it keeps its position, because history is how the user gets back
+			// to it - reopening from "recently played" must resume, not restart.
+			expect(state.resumeTimes[idOf(r)]).toBe(10);
+		});
+
+		it('forgets the position of an item that leaves the queue without entering history', () => {
+			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			initial.openMedia(a);
+			initial.enqueueMedia([b]);
+			initial.rememberTime(idOf(b), 42);
+
+			// `b` was never loaded, so closing it drops it from both lists.
+			initial.closeItem(idOf(b));
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.history.map((h) => h.id)).not.toContain(idOf(b));
+			expect(state.resumeTimes[idOf(b)]).toBeUndefined();
 		});
 
 		it('closing is stop, not skip - it does not auto-advance', () => {
@@ -431,6 +569,68 @@ describe('mediaPlaybackStore', () => {
 			expect(state.activeItemId).toBe(idOf(a));
 			expect(state.playing).toBe(true);
 			expect(state.pendingAutoplay).toBe(false);
+		});
+
+		it('brings a hidden player back, without disturbing what is loaded', () => {
+			const a = request();
+			initial.openMedia(a);
+			initial.consumeAutoplay();
+			initial.setPlaying(true);
+			// Minimized to the header, or restored from disk and never touched:
+			// either way there is no widget on screen to queue into.
+			useMediaPlaybackStore.setState({ dismissed: true, dormant: true });
+
+			initial.enqueueMedia([request({ path: '/files/b.mp4', name: 'b.mp4', kind: 'video' })]);
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			// Un-hiding is not interrupting.
+			expect(state.activeItemId).toBe(idOf(a));
+			expect(state.playing).toBe(true);
+			expect(state.pendingAutoplay).toBe(false);
+		});
+
+		it('shows the player even when every file was already queued', () => {
+			// The retry case: queueing did nothing visible, so the user does it
+			// again with the same files. Nothing is added the second time, and
+			// bailing on that is what made the command look permanently broken.
+			const a = request();
+			const b = request({ path: '/files/b.mp4', name: 'b.mp4', kind: 'video' });
+			initial.openMedia(a);
+			initial.enqueueMedia([b]);
+			useMediaPlaybackStore.setState({ dismissed: true, dormant: true });
+
+			expect(initial.enqueueMedia([b])).toBe(0);
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(false);
+			expect(state.dormant).toBe(false);
+			expect(state.items.map((i) => i.id)).toEqual([idOf(a), idOf(b)]);
+		});
+
+		it('re-queueing into a visible player changes nothing at all', () => {
+			const a = request();
+			initial.openMedia(a);
+			initial.consumeAutoplay();
+			const before = useMediaPlaybackStore.getState();
+
+			expect(initial.enqueueMedia([a])).toBe(0);
+			expect(useMediaPlaybackStore.getState()).toBe(before);
+		});
+
+		it('loads a requested file the queue already holds when the player is idle', () => {
+			// Closing the loaded track leaves the rest of the queue behind with
+			// nothing active. Queueing one of those files again must put it in the
+			// player rather than reporting "already queued" and showing nothing.
+			const a = request();
+			const b = request({ path: '/files/b.mp4', name: 'b.mp4', kind: 'video' });
+			initial.enqueueMedia([a, b]);
+			initial.closeItem(idOf(a));
+
+			expect(initial.enqueueMedia([b])).toBe(0);
+			expect(useMediaPlaybackStore.getState().activeItemId).toBe(idOf(b));
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
 		});
 
 		it('loads the first file when the player is idle, so the queue is reachable', () => {

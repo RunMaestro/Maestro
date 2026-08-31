@@ -512,7 +512,9 @@ class ConversationManager {
 						} else {
 							// Check for provider errors in the output
 							const rawOutput = this.session?.outputBuffer || '';
-							const detectedError = detectWizardError(rawOutput);
+							const detectedError = this.session
+								? detectWizardError(rawOutput, this.session.agentType)
+								: null;
 
 							if (detectedError) {
 								wizardDebugLogger.log('error', 'Detected provider error', {

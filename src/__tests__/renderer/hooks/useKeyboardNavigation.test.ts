@@ -75,6 +75,8 @@ const createMockDeps = (
 		setGroupChatsExpanded: vi.fn(),
 		groupChatSortAlphabetical: false,
 		showUnreadAgentsOnly: false,
+		ungroupedCollapsed: false,
+		setUngroupedCollapsed: vi.fn(),
 		...overrides,
 	};
 };
@@ -229,6 +231,35 @@ describe('useKeyboardNavigation', () => {
 			const handled = result.current.handleSidebarNavigation(event);
 
 			expect(handled).toBe(false);
+		});
+
+		it('should leave every modified arrow to the app shortcut chain', () => {
+			// Sidebar navigation owns BARE arrows only. Claiming a modified
+			// ArrowDown/ArrowUp made Opt+Cmd+Down (next unread) and Opt+Cmd+Up
+			// (focus active tab) dead whenever the Left Bar held focus.
+			const deps = createMockDeps({ activeFocus: 'sidebar' });
+			const { result } = renderHook(() => useKeyboardNavigation(deps));
+
+			const modified = [
+				{ key: 'ArrowDown', altKey: true, metaKey: true },
+				{ key: 'ArrowUp', altKey: true, metaKey: true },
+				{ key: 'ArrowDown', altKey: true, ctrlKey: true },
+				{ key: 'ArrowUp', metaKey: true },
+				{ key: 'ArrowRight', ctrlKey: true },
+			];
+
+			for (const init of modified) {
+				const event = new KeyboardEvent('keydown', init);
+				expect(result.current.handleSidebarNavigation(event)).toBe(false);
+			}
+		});
+
+		it('should still handle a bare arrow', () => {
+			const deps = createMockDeps({ activeFocus: 'sidebar' });
+			const { result } = renderHook(() => useKeyboardNavigation(deps));
+
+			const event = new KeyboardEvent('keydown', { key: 'ArrowDown' });
+			expect(result.current.handleSidebarNavigation(event)).toBe(true);
 		});
 	});
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, GitPullRequest, AlertTriangle, ExternalLink } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ModalSubtitle } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import type { Theme, GhCliStatus } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -62,6 +63,12 @@ interface CreatePRModalProps {
 	// Worktree info
 	worktreePath: string;
 	worktreeBranch: string;
+	/**
+	 * Agent whose branch the PR is opened from, shown in the header. Only
+	 * `cwd`/branch reach this component, so without it the modal has no way to
+	 * say which agent a right-click targeted.
+	 */
+	agentName?: string;
 	// Available branches for target selection
 	availableBranches: string[];
 	// Callback when PR is created
@@ -85,6 +92,7 @@ export function CreatePRModal({
 	worktreePath,
 	worktreeBranch,
 	availableBranches,
+	agentName,
 	onPRCreated,
 }: CreatePRModalProps) {
 	const onCloseRef = useRef(onClose);
@@ -213,11 +221,12 @@ export function CreatePRModal({
 					className="flex items-center justify-between px-4 py-3 border-b"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-2">
-						<GitPullRequest className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="font-bold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-2 min-w-0">
+						<GitPullRequest className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="font-bold shrink-0" style={{ color: theme.colors.textMain }}>
 							Create Pull Request
 						</h2>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 					</div>
 					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />

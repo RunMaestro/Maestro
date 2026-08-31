@@ -85,6 +85,9 @@ export function registerDirectorNotesCallbacks(
 				const allConfigs = agentConfigsStore.get('configs', {});
 				const dnAgentConfigValues = allConfigs[provider] || {};
 
+				// Intentionally local, same as the desktop Director's Notes handler:
+				// the prompt manifests history files on THIS machine, so grooming
+				// gets no `sessionSshRemoteConfig` and spawns locally (issue #1416).
 				const result = await groomContext(
 					{
 						projectRoot: process.cwd(),

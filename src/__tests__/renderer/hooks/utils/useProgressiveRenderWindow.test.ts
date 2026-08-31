@@ -175,6 +175,53 @@ describe('useProgressiveRenderWindow', () => {
 		});
 	});
 
+	describe('absorbPrepend (scroll-to-top history backfill, issue #1407)', () => {
+		it('keeps the visible slice stable when history is prepended', () => {
+			// 300 entries, window walked to the head, then 250 older ones arrive.
+			const { result, rerender } = renderHook(
+				({ total }) => useProgressiveRenderWindow(total, 'a'),
+				{ initialProps: { total: 300 } }
+			);
+			act(() => {
+				result.current.revealTo(0);
+			});
+			expect(result.current.startIndex).toBe(0);
+
+			act(() => {
+				result.current.absorbPrepend(250);
+			});
+			rerender({ total: 550 });
+
+			// The same 300 entries stay rendered - the new history sits above the
+			// window rather than mounting in one commit.
+			expect(result.current.startIndex).toBe(250);
+		});
+
+		it('lets the idle loop walk back through the prepended history', () => {
+			const { result, rerender } = renderHook(
+				({ total }) => useProgressiveRenderWindow(total, 'a'),
+				{ initialProps: { total: 300 } }
+			);
+			act(() => {
+				result.current.revealTo(0);
+				result.current.absorbPrepend(250);
+			});
+			rerender({ total: 550 });
+
+			flushIdleTick();
+			expect(result.current.startIndex).toBe(250 - DEFAULT_BACKFILL_CHUNK);
+		});
+
+		it('ignores non-positive counts', () => {
+			const { result } = renderHook(() => useProgressiveRenderWindow(500, 'a'));
+			const before = result.current.startIndex;
+			act(() => {
+				result.current.absorbPrepend(0);
+			});
+			expect(result.current.startIndex).toBe(before);
+		});
+	});
+
 	it('uses requestIdleCallback when the platform provides one', () => {
 		const scheduled: Array<() => void> = [];
 		const ric = vi.fn((cb: () => void) => {

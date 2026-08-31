@@ -6,7 +6,6 @@ import {
 	formatFileSize,
 	formatDateTime,
 	countMarkdownTasks,
-	toggleTaskCheckboxAtLine,
 	extractHeadings,
 	resolveImagePath,
 	isCodeFile,
@@ -21,8 +20,10 @@ import {
 	GIANT_TIER_LINES,
 	LINE_LENGTH_GIANT_THRESHOLD,
 	canScaleFontForView,
+	isGistPublishableFile,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
+import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
 
 describe('filePreviewUtils', () => {
 	describe('getLanguageFromFilename', () => {
@@ -125,6 +126,28 @@ describe('filePreviewUtils', () => {
 			expect(isBinaryExtension('font.woff2')).toBe(true);
 		});
 
+		it('leaves parquet out, because parquet has a viewer of its own', () => {
+			// Parquet IS a binary format, so adding these here looks like an
+			// obvious tidy-up. It is not: a parquet tab holds a handoff marker
+			// and renders as a filterable grid, and classifying it binary swaps
+			// that grid for an "Open in Default App" card.
+			//
+			// FilePreview also guards on the marker itself, so this absence is
+			// not the only thing holding the viewer up - but the two together
+			// are why the grid survives an edit to either one.
+			expect(isBinaryExtension('events.parquet')).toBe(false);
+			expect(isBinaryExtension('events.parq')).toBe(false);
+			expect(isBinaryExtension('events.pq')).toBe(false);
+		});
+
+		it('still treats database files as binary - Maestro has no SQLite viewer', () => {
+			// If a SQLite viewer ever lands, this is the assertion that will fail
+			// and point at the classifier that needs to learn about it.
+			expect(isBinaryExtension('app.db')).toBe(true);
+			expect(isBinaryExtension('app.sqlite')).toBe(true);
+			expect(isBinaryExtension('app.sqlite3')).toBe(true);
+		});
+
 		it('returns false for text files', () => {
 			expect(isBinaryExtension('index.ts')).toBe(false);
 			expect(isBinaryExtension('README.md')).toBe(false);
@@ -218,51 +241,6 @@ describe('filePreviewUtils', () => {
 			const result = countMarkdownTasks(content);
 			expect(result.open).toBe(1);
 			expect(result.closed).toBe(0);
-		});
-	});
-
-	describe('toggleTaskCheckboxAtLine', () => {
-		it('checks an open task and reports the new state', () => {
-			const result = toggleTaskCheckboxAtLine('# Notes\n- [ ] call the clerk\n', 2);
-			expect(result).toEqual({ content: '# Notes\n- [x] call the clerk\n', checked: true });
-		});
-
-		it('unchecks a closed task, accepting an uppercase marker', () => {
-			const result = toggleTaskCheckboxAtLine('- [X] shipped\n', 1);
-			expect(result).toEqual({ content: '- [ ] shipped\n', checked: false });
-		});
-
-		it('preserves indentation, bullet style, and spacing', () => {
-			const result = toggleTaskCheckboxAtLine('\t\t*   [ ]  nested task', 1);
-			expect(result?.content).toBe('\t\t*   [x]  nested task');
-		});
-
-		it('toggles ordered-list tasks', () => {
-			const result = toggleTaskCheckboxAtLine('1. [ ] first step', 1);
-			expect(result?.content).toBe('1. [x] first step');
-		});
-
-		it('leaves CRLF line endings intact', () => {
-			const result = toggleTaskCheckboxAtLine('- [ ] a\r\n- [ ] b\r\n', 2);
-			expect(result?.content).toBe('- [ ] a\r\n- [x] b\r\n');
-		});
-
-		it('only rewrites the requested line when the text repeats', () => {
-			const content = '- [ ] same text\n- [ ] same text\n- [ ] same text';
-			expect(toggleTaskCheckboxAtLine(content, 2)?.content).toBe(
-				'- [ ] same text\n- [x] same text\n- [ ] same text'
-			);
-		});
-
-		it('returns null for a line with no task marker', () => {
-			expect(toggleTaskCheckboxAtLine('# Notes\n- plain bullet\n', 2)).toBeNull();
-			expect(toggleTaskCheckboxAtLine('a [ ] not a task', 1)).toBeNull();
-		});
-
-		it('returns null for out-of-range and invalid line numbers', () => {
-			expect(toggleTaskCheckboxAtLine('- [ ] only line', 2)).toBeNull();
-			expect(toggleTaskCheckboxAtLine('- [ ] only line', 0)).toBeNull();
-			expect(toggleTaskCheckboxAtLine('- [ ] only line', 1.5)).toBeNull();
 		});
 	});
 
@@ -572,6 +550,37 @@ describe('filePreviewUtils', () => {
 		it('offers the zoom for HTML source, not the rendered iframe', () => {
 			expect(canScaleFontForView(view({ isRenderedHtml: false }))).toBe(true);
 			expect(canScaleFontForView(view({ isRenderedHtml: true }))).toBe(false);
+		});
+	});
+
+	describe('isGistPublishableFile', () => {
+		it('accepts plain text, prose, and code', () => {
+			expect(isGistPublishableFile('notes.txt', 'just some notes')).toBe(true);
+			expect(isGistPublishableFile('README.md', '# Title')).toBe(true);
+			expect(isGistPublishableFile('index.ts', 'export const a = 1;')).toBe(true);
+			expect(isGistPublishableFile('Makefile', 'all:\n\techo hi')).toBe(true);
+		});
+
+		// A gist body is text. Everything below would publish garbage or nothing.
+		it('rejects images', () => {
+			expect(isGistPublishableFile('shot.png', 'anything')).toBe(false);
+			expect(isGistPublishableFile('logo.svg', '<svg></svg>')).toBe(false);
+		});
+
+		it('rejects binaries by extension and by content', () => {
+			expect(isGistPublishableFile('app.wasm', 'text-looking')).toBe(false);
+			expect(isGistPublishableFile('mystery', 'abc\u0000def')).toBe(false);
+		});
+
+		it('rejects the parquet marker, which holds a path rather than the file', () => {
+			expect(
+				isGistPublishableFile('data.parquet', buildParquetPreviewMarker('/tmp/data.parquet'))
+			).toBe(false);
+		});
+
+		it('rejects an empty file, which would publish a blank gist', () => {
+			expect(isGistPublishableFile('empty.txt', '')).toBe(false);
+			expect(isGistPublishableFile('blank.txt', '   \n\t ')).toBe(false);
 		});
 	});
 });

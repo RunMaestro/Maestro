@@ -47,6 +47,7 @@ import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-sta
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
+import { registerParquetHandlers } from './parquet';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
 	registerWebHandlers,
@@ -60,6 +61,7 @@ import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
+import { registerAiCommandHandlers } from './aiCommand';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
@@ -121,6 +123,7 @@ export type { CueStatsHandlerDependencies };
 export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
+export { registerParquetHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
 export {
@@ -136,6 +139,7 @@ export { registerNotificationsHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
+export { registerAiCommandHandlers };
 export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
@@ -154,6 +158,7 @@ export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
 export { registerTabsHandlers };
+export { registerContextTimelineHandlers };
 export { registerAgentRunHandlers };
 export { registerWindowsHandlers };
 export { wireWindowRegistryBroadcast };
@@ -319,6 +324,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register filesystem handlers (no dependencies needed - uses stores directly)
 	registerFilesystemHandlers();
+	registerParquetHandlers();
 	// Register attachments handlers
 	registerAttachmentsHandlers({
 		app: deps.app,

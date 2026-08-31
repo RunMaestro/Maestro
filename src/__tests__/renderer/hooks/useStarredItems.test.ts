@@ -12,6 +12,7 @@
  *   - Project-path normalization when matching a closed session to its parent
  *   - Rows are sorted by display name; section disabled yields an empty list
  *   - activateStarredItem focuses an open tab, and offers to remove an aged-out star
+ *   - Rows owned by Pianola are dropped while its Encore flag is off
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -403,6 +404,42 @@ describe('useStarredItems', () => {
 				parentSessionId: 's1',
 				displayName: 'Owned Tab',
 			});
+		});
+	});
+	describe('pianola encore flag', () => {
+		beforeEach(() => {
+			useSessionStore.setState({
+				sessions: [
+					makeSession({
+						id: 'p',
+						name: 'Pianola',
+						isPianola: true,
+						aiTabs: [
+							{ id: 'tp', starred: true, agentSessionId: 'ap', name: 'Manager Tab' },
+						] as never,
+					}),
+					makeSession({
+						id: 's1',
+						name: 'Alpha',
+						aiTabs: [{ id: 't1', starred: true, agentSessionId: 'a1', name: 'Alpha Tab' }] as never,
+					}),
+				],
+			} as never);
+		});
+
+		it('drops rows owned by Pianola while the flag is off', () => {
+			useSettingsStore.setState({ encoreFeatures: { pianola: false } } as never);
+			const { result } = renderHook(() => useStarredItems({}));
+			expect(result.current.starredItems.map((i) => i.displayName)).toEqual(['Alpha Tab']);
+		});
+
+		it('keeps Pianola rows once the flag is on', () => {
+			useSettingsStore.setState({ encoreFeatures: { pianola: true } } as never);
+			const { result } = renderHook(() => useStarredItems({}));
+			expect(result.current.starredItems.map((i) => i.displayName)).toEqual([
+				'Alpha Tab',
+				'Manager Tab',
+			]);
 		});
 	});
 });

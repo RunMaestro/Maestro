@@ -35,12 +35,20 @@ The consultation is **non-blocking and isolated**:
 - The target runs as a **fresh, ephemeral process** - it is not injected into that agent's own live chat, so the consultation never pollutes the other agent's main conversation.
 - The answer is still kept. Maestro writes it to a dedicated **consult tab** on the target agent, labeled with who asked (`↩ YourAgent`), so the target has a durable record of what it was consulted about. That agent's History also logs a "Consulted by _YourAgent_" entry, so it remembers who reached out.
 - **Continuity per thread.** Ask the same agent again from the **same tab** and Maestro resumes its consult session, so it carries forward your earlier consults from that thread. A mention from a different tab starts a fresh consult in its own tab.
-- Your chat is never blocked. A small pill at the top of the input shows in-flight consultations (each agent's name and elapsed seconds); click it to expand the list. Keep typing while you wait.
+- Your chat is never blocked. A small pill at the top of the input shows in-flight consultations (each agent's name and elapsed seconds); click it to expand the list. Each agent in that list is itself a link: click it to jump straight to the consult tab working on your question, so you can watch the answer being written. Keep typing while you wait.
 - When the target finishes, its reply streams back **inline into the chat you are already in**, attributed to the agent that answered.
 
 Every consulted reply lands in a tinted bubble topped by an **attribution header**: the answering agent's name, its provider, and its session id. That header is what tells replies apart when several agents answer at once, and it does double duty as a jump control. Click the agent name (or the jump button on the right) to open that agent's consult tab in the Left Bar, where the full exchange is kept, so you can continue the thread in its own context; click the session id to copy it. While a reply is still streaming the header shows a spinner, and a consult that failed tints the header red.
 
 Mention several agents in one message and each runs independently and concurrently, so a fan-out returns as fast as the slowest agent, not the sum of them.
+
+### Mentions in a queued message wait their turn
+
+If your agent is busy, the message you send is added to its [execution queue](./general-usage) instead of running right away - and the mention inside it waits with it. The consultation fires at the moment that queued message becomes your agent's turn, not when you pressed Enter.
+
+That keeps the order you wrote in. A queued "finish the refactor, then have @Reviewer check it" reaches the reviewer after the refactor lands, with the transcript as it stands then, rather than pulling the reviewer into work that has not happened yet. Editing a queued message updates its pending consultation too, so adding or removing an `@name` before it runs does what you would expect. **Force Send** on a queued item runs the consultation immediately, along with the rest of that message.
+
+This applies to a message addressed **only** to another agent too (one that starts with `@name`). Your agent does not answer it, but that is not the same as having nothing to wait for - if you lined work up first, the position of the message is the instruction, so it waits its turn like anything else. It is consulted immediately only when there is genuinely nothing ahead of it: no turn in flight, no queued items, no Auto Run.
 
 ### Who answers: your agent, the mentioned agents, or both
 
@@ -80,6 +88,8 @@ An explicit count always wins over a softer hint, and the hint is read from your
 ## Mentioning a Group
 
 Mention a [group](./general-usage) by name (`@Backend-Team`) to consult every agent in it at once. Group mentions expand to each non-terminal member and run as independent consultations. If you mention both a group and an agent that belongs to it, that agent is still consulted only once.
+
+Picking a group from the picker inserts its members' names rather than the group's, so you can see exactly who you are about to ask and drop anyone you did not mean to include before sending. The row shows the member count for the same reason. Typing `@Backend-Team` by hand still works and still expands.
 
 Groups sort above individual agents in the picker, so a name that matches both surfaces the group first.
 

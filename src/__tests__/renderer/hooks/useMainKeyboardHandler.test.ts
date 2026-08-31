@@ -2,9 +2,19 @@ import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+
+// Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
+// wiring rather than re-running the layout transform (covered in tileNewTab.test).
+const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession: vi.fn() }));
+vi.mock('../../../renderer/services/tileNewTabAction', () => ({
+	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
+}));
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -83,6 +93,13 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		// a tiled group, so it must exist even for tests that only care about a
 		// non-pane shortcut.
 		isPaneShortcut: () => false,
+		// Same reason: a shortcut that moves focus as part of its action calls this
+		// on the way through, so it has to exist even for tests that only assert on
+		// what the action changed. Missing, it throws inside the dispatched
+		// listener - which jsdom turns into an uncaught exception rather than a
+		// failure, so the test still reports pass while the rest of the handler
+		// (the trackShortcut call) silently never runs.
+		setActiveFocus: vi.fn(),
 		sessions: [],
 		activeSessionId: '',
 		activeGroupChatId: null,
@@ -99,6 +116,9 @@ describe('useMainKeyboardHandler', () => {
 
 	beforeEach(() => {
 		addedListeners = [];
+		// Hoisted module mocks survive across tests in this file, so a "did NOT
+		// fire" assertion would otherwise read calls left by an earlier case.
+		mockTileNewTabInSession.mockClear();
 		originalMaestro = (window as any).maestro;
 		const maestroObj = ((window as any).maestro ?? {}) as Record<string, unknown>;
 		const processObj = ((maestroObj.process as Record<string, unknown> | undefined) ??
@@ -411,6 +431,52 @@ describe('useMainKeyboardHandler', () => {
 			// The event should NOT be prevented when Tab is pressed with layers open
 		});
 
+		it('keeps the Concerto keys live while a modal is open', () => {
+			// The stage is a modal itself, so a toggle blocked by the modal guard
+			// could only ever open it; cadenzas float above every modal, so stashing
+			// them has to work from anywhere too.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: true },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
+		it('still blocks the Concerto keys when the Encore Feature is off', () => {
+			useModalStore.getState().closeModal('concertoStage');
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				encoreFeatures: { concerto: false },
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'toggleConcerto' && e.altKey && e.code === 'KeyC',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+		});
+
 		it('should allow layout shortcuts (Alt+Cmd+Arrow) when modals are open', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
@@ -442,6 +508,36 @@ describe('useMainKeyboardHandler', () => {
 
 			// Layout shortcuts should work even when modal is open
 			expect(mockSetLeftSidebar).toHaveBeenCalled();
+		});
+
+		it('should allow next-unread when modals are open, at whatever key it is bound to', () => {
+			// Resolved through the BINDING, not a hard-coded Alt+Cmd+ArrowDown: a
+			// user who rebound next-unread got a shortcut that silently died the
+			// moment any modal was open, including the Shortcuts pane itself.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockGoToNextUnreadTab = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'nextUnreadTab' && e.shiftKey && e.metaKey && e.key === 'u',
+				sessions: [{ id: 'test' }],
+				goToNextUnreadTab: mockGoToNextUnreadTab,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'u',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockGoToNextUnreadTab).toHaveBeenCalled();
 		});
 
 		it('should allow tab management shortcuts (Cmd+T) when only overlays are open', () => {
@@ -606,6 +702,75 @@ describe('useMainKeyboardHandler', () => {
 
 			// Cmd+J should open a new terminal tab even when file preview overlay is open
 			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
+		});
+
+		it('tiles a new terminal below on tileTerminalBelow (Ctrl+Cmd+J)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockHandleOpenTerminalTab = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isPaneShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileTerminalBelow',
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'j',
+						metaKey: true,
+						ctrlKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', 'terminal');
+			// The tiled twin must not also run the plain "new terminal tab" path.
+			expect(mockHandleOpenTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['tileAiBelow', 'ai', 't'],
+			['tileBrowserBelow', 'browser', 'b'],
+			['tileFileBelow', 'file', 'f'],
+		])('tiles a new %s tab on its Ctrl+Cmd chord', (shortcutId, kind, key) => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isPaneShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key, metaKey: true, ctrlKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).toHaveBeenCalledWith('test-session', kind);
+		});
+
+		it('does not tile when only the general matcher would fire (plain Cmd+T)', () => {
+			// The family lives on Ctrl+Cmd and is matched by isPaneShortcut. Routing
+			// it through isShortcut instead would fire on a bare Cmd+T, because that
+			// matcher folds Ctrl and Cmd into one modifier.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tileAiBelow',
+				isPaneShortcut: () => false,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai', aiTabs: [] },
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 't', metaKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockTileNewTabInSession).not.toHaveBeenCalled();
 		});
 
 		it('should allow tab cycle shortcut with brace characters when layers are open', () => {
@@ -1575,11 +1740,11 @@ describe('useMainKeyboardHandler', () => {
 				expect(useSettingsStore.getState().fontSize).toBe(20);
 			});
 
-			it('should reset font size on Cmd+Shift+0', () => {
+			it('should reset the font zoom on Cmd+Shift+0', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				// Set font size to non-default
-				useSettingsStore.setState({ fontSize: 20 });
+				// The shortcut resets the zoom multiplier, not the stored sizes.
+				useSettingsStore.setState({ fontSize: 20, fontZoom: 1.5 });
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
@@ -1597,8 +1762,8 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Cmd+Shift+0 should reset font size
-				expect(useSettingsStore.getState().fontSize).toBe(14);
+				expect(useSettingsStore.getState().fontZoom).toBe(1);
+				expect(useSettingsStore.getState().fontSize).toBe(20);
 			});
 		});
 
@@ -2080,6 +2245,11 @@ describe('useMainKeyboardHandler', () => {
 					handleCloseCurrentTab: mockHandleCloseCurrentTab,
 					setSessions: mockSetSessions,
 					activeGroupChatId: 'group-1',
+					// The next/prev-tab chord is the one exception: it cycles the right
+					// panel's tabs instead of doing nothing.
+					setRightPanelOpen: vi.fn(),
+					setGroupChatRightTab: vi.fn(),
+					setActiveFocus: vi.fn(),
 				});
 
 				act(() => {
@@ -2713,10 +2883,13 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
-	describe('font size shortcuts', () => {
+	describe('font zoom shortcuts', () => {
+		// Cmd+= / Cmd+- move `fontZoom`, a multiplier over every surface size,
+		// rather than the interface size directly. Each surface now carries its
+		// own size, and pushing the base around would compress those differences
+		// on the way up and lose them at the clamp.
 		beforeEach(() => {
-			// Reset font size to default before each test
-			useSettingsStore.setState({ fontSize: 14 });
+			useSettingsStore.setState({ fontSize: 14, fontZoom: 1, terminalFontSize: 0 });
 		});
 
 		it('should increase font size with Cmd+=', () => {
@@ -2738,7 +2911,10 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
+			// The stored size is untouched, which is what makes the zoom
+			// perfectly reversible.
+			expect(useSettingsStore.getState().fontSize).toBe(14);
 		});
 
 		it('should increase font size with Cmd++', () => {
@@ -2758,7 +2934,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
 		});
 
 		it('should decrease font size with Cmd+-', () => {
@@ -2780,14 +2956,37 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(12);
+			expect(useSettingsStore.getState().fontZoom).toBe(0.9);
 		});
 
-		it('should reset font size to default (14) with Cmd+Shift+0', () => {
+		it('should keep the proportions between surfaces while zooming', () => {
+			// The whole reason zoom is a multiplier: a user who set the terminal
+			// smaller than the interface keeps that relationship.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			useSettingsStore.setState({ fontSize: 16, terminalFontSize: 12, fontZoom: 1 });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: '=', metaKey: true, bubbles: true })
+				);
+			});
+
+			const state = useSettingsStore.getState();
+			expect(state.fontSize).toBe(16);
+			expect(state.terminalFontSize).toBe(12);
+			expect(state.fontZoom).toBeGreaterThan(1);
+		});
+
+		it('should reset the zoom with Cmd+Shift+0, keeping custom surface sizes', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			// Set font size to something other than default
-			useSettingsStore.setState({ fontSize: 20 });
+			// Custom sizes are a Settings preference, not zoom state - wiping
+			// them from a keystroke would be unrecoverable.
+			useSettingsStore.setState({ fontSize: 20, terminalFontSize: 11, fontZoom: 1.5 });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
@@ -2807,13 +3006,15 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(14);
+			expect(useSettingsStore.getState().fontZoom).toBe(1);
+			expect(useSettingsStore.getState().fontSize).toBe(20);
+			expect(useSettingsStore.getState().terminalFontSize).toBe(11);
 		});
 
-		it('should not exceed maximum font size (24)', () => {
+		it('should not exceed the maximum zoom', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			useSettingsStore.setState({ fontSize: 24 });
+			useSettingsStore.setState({ fontZoom: FONT_ZOOM_MAX });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
@@ -2829,13 +3030,13 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(24);
+			expect(useSettingsStore.getState().fontZoom).toBe(FONT_ZOOM_MAX);
 		});
 
-		it('should not go below minimum font size (10)', () => {
+		it('should not go below the minimum zoom', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			useSettingsStore.setState({ fontSize: 10 });
+			useSettingsStore.setState({ fontZoom: FONT_ZOOM_MIN });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
@@ -2851,10 +3052,10 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(10);
+			expect(useSettingsStore.getState().fontZoom).toBe(FONT_ZOOM_MIN);
 		});
 
-		it('should work when modal is open (font size is a benign viewing preference)', () => {
+		it('should work when a modal is open (zoom is a benign viewing preference)', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
 			result.current.keyboardHandlerRef.current = createMockContext({
@@ -2873,7 +3074,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
 		});
 
 		it('should not trigger with Alt modifier (avoids conflict with session jump)', () => {
@@ -3668,10 +3869,12 @@ describe('useMainKeyboardHandler', () => {
 				activeSessionId: 'kbd-sess',
 			} as any);
 			// Mount a stand-in for the find bar's input so the handler's
-			// querySelector('.terminal-output input') focus target exists.
+			// querySelector('[data-output-search-input]') focus target exists
+			// (shared by AI TerminalOutput and group chat).
 			const container = document.createElement('div');
 			container.className = 'terminal-output';
 			searchInput = document.createElement('input');
+			searchInput.setAttribute('data-output-search-input', '');
 			container.appendChild(searchInput);
 			document.body.appendChild(container);
 			searchInput.blur();
@@ -3701,6 +3904,57 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
 			expect(document.activeElement).toBe(searchInput);
+		});
+
+		it('does not steal Cmd+F back to Find when the Right Bar is focused', () => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, true);
+			const setFileTreeFilterOpen = vi.fn();
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				// Find overlay is registered while the bar is open.
+				hasOpenLayers: () => true,
+				activeFocus: 'right',
+				activeRightTab: 'files',
+				fileTreeFilterOpen: false,
+				setFileTreeFilterOpen,
+				fileTreeFilterInputRef: { current: null },
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(document.activeElement).not.toBe(searchInput);
+			expect(setFileTreeFilterOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('does not steal Cmd+F back to Find when the Left Bar is focused', () => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, true);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				activeFocus: 'sidebar',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(document.activeElement).not.toBe(searchInput);
 		});
 
 		it('does not steal Cmd+F focus when output search is closed', () => {
@@ -3905,5 +4159,342 @@ describe('useMainKeyboardHandler', () => {
 			// Must not silently swallow the key when it cannot act.
 			expect(evt.defaultPrevented).toBe(false);
 		});
+	});
+
+	describe('group chat Cmd+F vs Opt+Cmd+F', () => {
+		const GROUP_ID = 'gc-find';
+		const SEARCH_KEY = groupChatOutputSearchKey(GROUP_ID);
+
+		afterEach(() => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, false);
+		});
+
+		it('opens group Find on Cmd+F', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: GROUP_ID,
+				activeFocus: 'main',
+				isShortcut: () => false,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useUIStore.getState().outputSearchByKey[SEARCH_KEY]?.open).toBe(true);
+		});
+
+		it('does not open group Find on Opt+Cmd+F', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: GROUP_ID,
+				activeFocus: 'main',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch: vi.fn(),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						code: 'KeyF',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useUIStore.getState().outputSearchByKey[SEARCH_KEY]?.open).toBeFalsy();
+		});
+	});
+});
+
+/**
+ * Cmd+Shift+E - "Edit Last Queued Message".
+ *
+ * The defect these cover: the handler used to read the session snapshot that
+ * `ctx` captured during the last App render. The pencil on a queued row reads
+ * live props, so whenever that snapshot lagged the store the shortcut reported
+ * "no queued message" while a queued card was on screen and clickable. The
+ * handler now reads the session store at keypress time.
+ */
+describe('useMainKeyboardHandler - editLastQueuedMessage', () => {
+	const TAB_A = 'tab-a';
+	const TAB_B = 'tab-b';
+
+	function session(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'agent-1',
+			name: 'Maestro',
+			activeTabId: TAB_A,
+			activeFileTabId: null,
+			activeTerminalTabId: null,
+			activeBrowserTabId: null,
+			inputMode: 'ai',
+			aiTabs: [{ id: TAB_A }, { id: TAB_B }],
+			executionQueue: [],
+			...overrides,
+		} as any;
+	}
+
+	function queued(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'q1',
+			timestamp: 1,
+			tabId: TAB_A,
+			type: 'message',
+			text: 'still not fixed',
+			...overrides,
+		} as any;
+	}
+
+	function press(ctxOverrides: Record<string, unknown>) {
+		// These tests turn on the ctx snapshot DISAGREEING with the store, which is
+		// the defect being covered. `createMockContext` mirrors whatever
+		// `activeSession` it is handed back into the session store, so capture what
+		// the test seeded and restore it after the context is built - otherwise the
+		// helper would quietly make the two agree again and the stale-snapshot case
+		// could never fail.
+		const seeded = useSessionStore.getState();
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'editLastQueuedMessage',
+			...ctxOverrides,
+		});
+		useSessionStore.setState({
+			sessions: seeded.sessions,
+			activeSessionId: seeded.activeSessionId,
+		} as never);
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'E', metaKey: true, shiftKey: true, bubbles: true })
+			);
+		});
+	}
+
+	beforeEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	afterEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as any);
+	});
+
+	it('opens the queued message even when the ctx snapshot is stale', () => {
+		const item = queued();
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		// The snapshot ctx captured still shows an EMPTY queue - exactly the state
+		// that used to make this report "No queued message to edit".
+		press({ activeSession: session({ executionQueue: [] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+	});
+
+	it('falls back to a message queued on another tab and switches to it', () => {
+		const item = queued({ id: 'q-other', tabId: TAB_B });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session({ executionQueue: [item] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-other');
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.activeTabId).toBe(TAB_B);
+	});
+
+	it('prefers the message on the tab already on screen', () => {
+		const onOther = queued({ id: 'q-other', tabId: TAB_B, timestamp: 2 });
+		const onActive = queued({ id: 'q-active', tabId: TAB_A, timestamp: 1 });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [onActive, onOther] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session() });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-active');
+	});
+
+	it('does not open anything when only commands are queued', () => {
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [queued({ id: 'c1', type: 'command', text: '' })] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session() });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+	});
+
+	it('still finds the message when its tab is no longer open', () => {
+		// A missing tab must not collapse the result set to nothing - that is how
+		// a filter turns into a false "nothing is queued".
+		const item = queued({ id: 'q-orphan', tabId: 'tab-gone' });
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		press({ activeSession: session({ executionQueue: [item] }) });
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-orphan');
+	});
+});
+
+describe('useMainKeyboardHandler - openPromptComposer', () => {
+	function press(ctxOverrides: Record<string, unknown>) {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'openPromptComposer',
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			...ctxOverrides,
+		});
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'P', metaKey: true, shiftKey: true, bubbles: true })
+			);
+		});
+	}
+
+	beforeEach(() => {
+		useModalStore.setState({ modals: new Map() });
+	});
+
+	afterEach(() => {
+		useModalStore.setState({ modals: new Map() });
+	});
+
+	it('opens the composer for an agent in AI mode', () => {
+		press({ activeSession: { id: 'agent-1', inputMode: 'ai' } });
+
+		expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+	});
+
+	it('opens the composer in a group chat even when the last agent was in terminal mode', () => {
+		// A room has no inputMode of its own - activeSession still points at the
+		// agent selected before the room was opened, so gating on that alone made
+		// the hotkey silently die in group chat.
+		press({
+			activeGroupChatId: 'chat-1',
+			activeSession: { id: 'agent-1', inputMode: 'terminal' },
+		});
+
+		expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+	});
+
+	it('stays closed for an agent in terminal mode with no room open', () => {
+		press({ activeSession: { id: 'agent-1', inputMode: 'terminal' } });
+
+		expect(useModalStore.getState().isOpen('promptComposer')).toBe(false);
+	});
+});
+
+// ============================================================================
+// Group chat Right Bar: Cmd+Shift+[ / Cmd+Shift+]
+// ============================================================================
+
+/**
+ * A group chat has no AI tabs, so the tab-cycling chord is dead there. It walks
+ * the Right Bar's two panels instead - the only two views a room has.
+ */
+describe('group chat right panel cycling', () => {
+	const pressTabCycle = (shortcutId: 'nextTab' | 'prevTab', overrides: Record<string, unknown>) => {
+		// The store is what the app itself reads back to persist the choice, so it
+		// has to agree with the context object the handler is gated on.
+		useGroupChatStore.setState({
+			activeGroupChatId: (overrides.activeGroupChatId as string | null) ?? null,
+		} as never);
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
+			activeSessionId: 'agent-1',
+			activeSession: { id: 'agent-1', name: 'Agent', inputMode: 'ai' },
+			...overrides,
+		});
+
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: shortcutId === 'nextTab' ? ']' : '[',
+					metaKey: true,
+					shiftKey: true,
+					bubbles: true,
+					cancelable: true,
+				})
+			);
+		});
+	};
+
+	beforeEach(() => {
+		useGroupChatStore.setState({ groupChatRightTab: 'participants' } as never);
+		useUIStore.setState({ rightPanelOpen: true } as never);
+	});
+
+	it('switches Participants -> History on Cmd+Shift+]', () => {
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
+	});
+
+	it('switches back on Cmd+Shift+[ - two panels, so either direction flips', () => {
+		useGroupChatStore.setState({ groupChatRightTab: 'history' } as never);
+
+		pressTabCycle('prevTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('participants');
+	});
+
+	it('remembers the panel for that chat', () => {
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatRightTab:chat-1', 'history');
+	});
+
+	it('moves focus with the panel, so it answers the arrows straight away', () => {
+		const setActiveFocus = vi.fn();
+
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1', setActiveFocus });
+
+		expect(setActiveFocus).toHaveBeenCalledWith('right');
+	});
+
+	it('opens the Right Bar when it is closed - a hidden switch reads as a dead key', () => {
+		useUIStore.setState({ rightPanelOpen: false } as never);
+
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
+	});
+
+	it('leaves the chord to the agent tabs when no room is open', () => {
+		const navigateToNextUnifiedTab = vi.fn().mockReturnValue(null);
+
+		pressTabCycle('nextTab', {
+			activeGroupChatId: null,
+			setSessions: vi.fn((updater: unknown) =>
+				typeof updater === 'function'
+					? (updater as (p: unknown[]) => unknown)([{ id: 'agent-1' }])
+					: undefined
+			),
+			navigateToNextUnifiedTab,
+		});
+
+		expect(navigateToNextUnifiedTab).toHaveBeenCalled();
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('participants');
 	});
 });

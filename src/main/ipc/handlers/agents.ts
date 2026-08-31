@@ -12,6 +12,9 @@ import {
 	extractModelsFromConfig,
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
+	getCodexSkillDirs,
+	getCodexPromptDirs,
+	parseCodexMarkdownDoc,
 } from '../../agents';
 import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
@@ -324,6 +327,101 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
 
 	const commandList = Array.from(commands.values());
 	logger.info(`Discovered ${commandList.length} OpenCode slash commands`, LOG_CONTEXT);
+	return commandList;
+}
+
+/**
+ * Discover Codex slash commands by reading from disk.
+ *
+ * Codex commands come from these sources (checked in priority order):
+ * 1. Project-local skills:  <cwd>/.codex/skills/<name>/SKILL.md
+ * 2. User-global skills:    <CODEX_HOME>/skills/<name>/SKILL.md
+ * 3. Project-local prompts: <cwd>/.codex/prompts/<name>.md
+ * 4. User-global prompts:   <CODEX_HOME>/prompts/<name>.md
+ *
+ * Every discovered command carries the file body as its `prompt`, because
+ * Maestro drives Codex through headless `codex exec`, where the CLI does not
+ * expand `/name` itself - the renderer substitutes the body before sending
+ * (see `useInputProcessing`), exactly as it already does for OpenCode.
+ *
+ * Codex's own built-in commands (/init, /compact, /review, ...) are excluded:
+ * they are implemented inside the TUI and have no on-disk prompt to inline, so
+ * offering them would send a literal "/compact" to the model.
+ */
+async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredCommand[]> {
+	const commands = new Map<string, DiscoveredCommand>();
+
+	const addCommand = (name: string, content: string) => {
+		if (commands.has(name)) return; // project-local wins over global
+		const doc = parseCodexMarkdownDoc(content);
+		// `user-invocable: false` marks a background/reference skill that Codex
+		// itself never offers as a `/name`, so Maestro must not either.
+		if (!doc.userInvocable) return;
+		if (!doc.body) return;
+		commands.set(name, { name, prompt: doc.body, description: doc.description });
+	};
+
+	// Skills: one directory per command, holding a SKILL.md.
+	const addSkillsFromDir = async (dir: string) => {
+		let entries: fs.Dirent[];
+		try {
+			entries = await fs.promises.readdir(dir, { withFileTypes: true });
+		} catch (error) {
+			if (isMissingEntryError(error)) {
+				logger.debug(`Codex skills directory not found: ${dir}`, LOG_CONTEXT);
+				return;
+			}
+			throw error;
+		}
+		for (const entry of entries) {
+			if (!entry.isDirectory()) continue;
+			// `.system/` holds Codex's own internal skills, and dotted names are
+			// hidden from its picker.
+			if (entry.name.startsWith('.')) continue;
+			if (commands.has(entry.name)) continue;
+			try {
+				const raw = await fs.promises.readFile(path.join(dir, entry.name, 'SKILL.md'), 'utf-8');
+				addCommand(entry.name, raw);
+			} catch (error) {
+				// A directory without a SKILL.md is not a skill.
+				if (!isMissingEntryError(error)) throw error;
+			}
+		}
+	};
+
+	// Prompts: one .md file per command.
+	const addPromptsFromDir = async (dir: string) => {
+		let files: string[];
+		try {
+			files = await fs.promises.readdir(dir);
+		} catch (error) {
+			if (isMissingEntryError(error)) {
+				logger.debug(`Codex prompts directory not found: ${dir}`, LOG_CONTEXT);
+				return;
+			}
+			throw error;
+		}
+		for (const file of files) {
+			if (!file.endsWith('.md')) continue;
+			const name = file.replace(/\.md$/, '');
+			if (commands.has(name)) continue;
+			try {
+				addCommand(name, await fs.promises.readFile(path.join(dir, file), 'utf-8'));
+			} catch (error) {
+				if (!isMissingEntryError(error)) throw error;
+			}
+		}
+	};
+
+	for (const dir of getCodexSkillDirs(cwd)) {
+		await addSkillsFromDir(dir);
+	}
+	for (const dir of getCodexPromptDirs(cwd)) {
+		await addPromptsFromDir(dir);
+	}
+
+	const commandList = Array.from(commands.values());
+	logger.info(`Discovered ${commandList.length} Codex slash commands`, LOG_CONTEXT);
 	return commandList;
 }
 
@@ -1559,6 +1657,21 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				// Agent-specific discovery paths
 				if (agentId === 'opencode') {
 					return discoverOpenCodeSlashCommands(cwd);
+				}
+
+				if (agentId === 'codex') {
+					// Codex skills/prompts live on the machine that runs the CLI.
+					// For an SSH-remote agent that is the remote host, so return
+					// nothing rather than offering this machine's commands - a
+					// command the remote Codex has never heard of is worse than none.
+					if (sshRemoteId) {
+						logger.debug(
+							'Skipping Codex slash command discovery for SSH remote agent',
+							LOG_CONTEXT
+						);
+						return null;
+					}
+					return discoverCodexSlashCommands(cwd);
 				}
 
 				if (agentId === 'copilot-cli') {

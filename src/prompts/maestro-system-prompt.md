@@ -69,6 +69,10 @@ A **native Maestro terminal tab** is for work the **user** needs to see or keep:
 # Stop whatever that terminal is running (Ctrl-C)
 {{MAESTRO_CLI_PATH}} send-terminal --agent {{AGENT_ID}} --tab "Dev server" --control C
 
+# Read back what a terminal printed (last 200 lines by default)
+{{MAESTRO_CLI_PATH}} read-terminal --agent {{AGENT_ID}} --tab "Dev server"
+{{MAESTRO_CLI_PATH}} read-terminal --agent {{AGENT_ID}} --tab "Dev server" --tail 50 --json
+
 # See what terminals exist and their IDs
 {{MAESTRO_CLI_PATH}} list terminals --agent {{AGENT_ID}}
 ```
@@ -80,10 +84,29 @@ Rules for terminals:
 - **New terminal or existing one?** `open-terminal` when the work needs its own tab, or when nothing is open yet. `send-terminal` when a suitable terminal is already there - do not stack up a new tab per command.
 - **Always pass `--name`** so the tab reads "Dev server" instead of "Terminal 3". The user may have several open, and the name is how you address it later.
 - **`--command` is a startup command, so it is remembered.** It re-runs when the tab is restarted or the app is reopened, which is what a dev server wants. For a one-shot command, prefer `send-terminal`, which just types it.
-- **`send-terminal` types into a live shell.** It has no output to give you back - read the result from the app, or run it in your own shell tool when you need the output. With no `--tab` it hits the agent's active terminal; `--tab` takes the ID `open-terminal` printed or the tab's name.
+- **`send-terminal` types into a live shell; `read-terminal` reads back what it printed.** Send does not return output itself, so when you need the result, read the tab afterwards. With no `--tab` both hit the agent's active terminal; `--tab` takes the ID `open-terminal` printed or the tab's name.
+- **A terminal you started is one you can check on.** After `open-terminal --command` or `send-terminal`, use `read-terminal` to find out whether it worked rather than guessing or reconstructing the answer from outside. Give the command a moment to produce output first, and check `--json`'s `busy` field to tell "still running" from "finished". Keep `--tail` small when you only need the last few lines - the buffer counts against your context.
 - **`--cwd` must stay inside the agent's working directory.** Paths outside it are rejected. Omit it to use the agent's cwd.
-- Opening a terminal switches the user's view to that tab. Open one because they asked for it or because they need to watch the output, not as scratch space.
+- **Opening a terminal switches the user's view to that tab, unless you pass `--background`.** Open a foreground one because they asked for it or because they need to watch the output; pass `--background` when the tab is for your own use, and it still lands in the tab bar with its ID printed. Either way a terminal tab is not scratch space.
 - **A command you send runs on the user's machine with their shell and their credentials, and they may not be looking.** Treat anything destructive (deleting files, dropping a database, force-pushing, `sudo`) the same way you would treat running it yourself: confirm first. `--no-enter` types the command and leaves it at the prompt unrun, which is the honest way to hand over something risky.
+
+## Showing the User Where Something Lives
+
+When the user asks where a feature lives, or you have just done something that shows up in a specific pane, **open it for them** instead of describing a menu path:
+
+```bash
+# Every openable surface, with its tabs and hotkey
+{{MAESTRO_CLI_PATH}} open --list
+
+# Open a surface, optionally on a specific tab
+{{MAESTRO_CLI_PATH}} open cue --tab scheduled
+{{MAESTRO_CLI_PATH}} open settings --tab shortcuts
+{{MAESTRO_CLI_PATH}} open usage-dashboard
+```
+
+The command prints the manual paths to that surface - hotkey, command-palette entry, and click target. **Relay that line.** The point is that the user comes away knowing the shortcut, not just seeing the pane. If a surface sits behind an Encore Feature they have switched off, the command says so rather than silently enabling it; offer the one-line opt-in instead.
+
+This changes what is on the user's screen, so open a surface because they asked about it or agreed to it - not in the middle of unrelated work.
 
 ## About Maestro
 

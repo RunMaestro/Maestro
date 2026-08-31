@@ -10,6 +10,7 @@ import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
+import { formatElapsedTicker } from '../../shared/duration';
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -46,24 +47,12 @@ const ElapsedTimeDisplay = memo(
 			return () => clearInterval(interval);
 		}, [startTime]);
 
-		const formatTime = (seconds: number): string => {
-			const days = Math.floor(seconds / 86400);
-			const hours = Math.floor((seconds % 86400) / 3600);
-			const mins = Math.floor((seconds % 3600) / 60);
-			const secs = seconds % 60;
-
-			if (days > 0) {
-				return `${days}d ${hours}h ${mins}m ${secs}s`;
-			} else if (hours > 0) {
-				return `${hours}h ${mins}m ${secs}s`;
-			} else {
-				return `${mins}m ${secs}s`;
-			}
-		};
-
 		return (
+			// Monospace on purpose, unlike the name slots around it: this counts up
+			// once a second, and proportional digits change width as they tick, so
+			// the pill would twitch on every frame.
 			<span className="font-mono text-xs" style={{ color: textColor }}>
-				{formatTime(elapsedSeconds)}
+				{formatElapsedTicker(elapsedSeconds * 1000)}
 			</span>
 		);
 	}
@@ -138,9 +127,7 @@ const ThinkingItemRow = memo(
 					<span className="text-xs truncate">
 						<span className="font-medium">{maestroName}</span>
 						<span style={{ color: theme.colors.textDim }}> / </span>
-						<span className="font-mono" style={{ color: theme.colors.textDim }}>
-							{tabDisplayName}
-						</span>
+						<span style={{ color: theme.colors.textDim }}>{tabDisplayName}</span>
 					</span>
 				</div>
 				<div
@@ -593,6 +580,10 @@ function ThinkingStatusPillInner({
 	// prefer namedSessions, then tab name, then UUID octet (NOT session name - that's already shown)
 	const displayClaudeId =
 		customName || tabName || (agentSessionId ? agentSessionId.substring(0, 8).toUpperCase() : null);
+	// True only when the two name sources were empty and this fell through to the
+	// raw session id. A name is prose and belongs in the interface font; a hex
+	// octet is an identifier and reads better in the code face.
+	const displayIsSessionId = !customName && !tabName && Boolean(agentSessionId);
 
 	// For tooltip, show all available info
 	const tooltipParts = [maestroSessionName];
@@ -679,7 +670,9 @@ function ThinkingStatusPillInner({
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
 							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
-							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
+							className={`text-xs hover:underline cursor-pointer truncate min-w-0${
+								displayIsSessionId ? ' font-mono' : ''
+							}`}
 							style={{ color: theme.colors.accent }}
 							title={
 								agentSessionId

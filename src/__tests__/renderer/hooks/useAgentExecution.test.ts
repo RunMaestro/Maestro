@@ -175,6 +175,210 @@ describe('useAgentExecution', () => {
 		expect(updatedSession.aiTabs[0].state).toBe('idle');
 	});
 
+	it('forwards the Auto Run turn overrides to the spawn, and the agent config otherwise', async () => {
+		// The document's MAESTRO:MODEL hint arrives here as modelOverride /
+		// effortOverride. This is the last hop before the process, so a dropped
+		// value means the same playbook runs at a different setting in the app
+		// than it does under maestro-cli.
+		const session = createMockSession({
+			state: 'busy',
+			customModel: 'sonnet',
+			customEffort: 'medium',
+			aiTabs: [createMockTab({ state: 'busy' })],
+		});
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		result.current.spawnAgentForSession(session.id, 'Overridden task', undefined, {
+			isAutoRun: true,
+			modelOverride: 'opus',
+			effortOverride: 'max',
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomModel).toBe('opus');
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('max');
+
+		// Without overrides the agent's own configuration stands - including
+		// effort, which used to be dropped on this path only.
+		result.current.spawnAgentForSession(session.id, 'Plain task', undefined, {
+			isAutoRun: true,
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		expect(mockProcess.spawn.mock.calls[1][0].sessionCustomModel).toBe('sonnet');
+		expect(mockProcess.spawn.mock.calls[1][0].sessionCustomEffort).toBe('medium');
+	});
+
+	it('pins a background synopsis to the cheapest model rather than the tab model', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'claude-code',
+			{ customModel: 'opus' }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		// A synopsis summarizes work that already happened, so it never inherits
+		// the expensive model the turn itself ran on.
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomModel).toBe('haiku');
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('low');
+	});
+
+	it('keeps the tab model when the cheap tier would shrink the context window', async () => {
+		// A synopsis RESUMES the transcript, so the cheap model has to hold the
+		// whole conversation. Downgrading a 1M-context agent onto a 200k model
+		// makes every synopsis of a long session fail with "Prompt is too long".
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'claude-code',
+			{ customModel: 'opus[1m]' }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomModel).toBe('opus[1m]');
+		// Effort still drops - reading a transcript back costs nothing extra.
+		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('low');
+	});
+
+	it('reports a synopsis that printed a provider error as failed', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'claude-code'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+		act(() => {
+			onDataHandler?.(targetSessionId, 'Prompt is too long');
+			onExitHandler?.(targetSessionId, 0);
+		});
+
+		const resultData = await spawnPromise;
+
+		// Exit code 0 with an error body: the failure is only visible in the text.
+		expect(resultData.success).toBe(false);
+		expect(resultData.error).toBe('Prompt is too long');
+	});
+
+	it('reports a non-zero synopsis exit as failed even with prose on stdout', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'claude-code'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+		act(() => {
+			onDataHandler?.(targetSessionId, 'Partial summary');
+			onExitHandler?.(targetSessionId, 1);
+		});
+
+		const resultData = await spawnPromise;
+
+		expect(resultData.success).toBe(false);
+	});
+
 	it('includes appendSystemPrompt in batch spawns', async () => {
 		const session = createMockSession({
 			state: 'busy',

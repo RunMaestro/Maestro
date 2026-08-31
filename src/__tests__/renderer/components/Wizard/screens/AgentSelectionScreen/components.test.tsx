@@ -14,6 +14,8 @@ import {
 	SshConnectionErrorPanel,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components';
 import { AGENT_TILES } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
+import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
+import { AGENT_LOGO_FALLBACK_TESTID } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo';
 
 vi.mock('../../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 	AgentConfigPanel: (props: any) => (
@@ -53,6 +55,32 @@ describe('AgentSelectionScreen components', () => {
 		expect(container.querySelector('div')).toHaveClass('rounded-full');
 	});
 
+	it('draws a real mark for every provider a user can pick', () => {
+		// A provider that reaches a picker without a mark of its own renders as the
+		// blank fallback ring, which reads as a bug. Assert on the fallback's own
+		// marker rather than "some svg rendered": the fallback is a div today, but
+		// were it ever redrawn as an svg, a presence check would start passing for
+		// exactly the providers this test exists to catch.
+		for (const agentId of PICKABLE_AGENT_IDS) {
+			const { queryByTestId, unmount } = render(
+				<AgentLogo agentId={agentId} supported detected theme={mockTheme} />
+			);
+			expect(
+				queryByTestId(AGENT_LOGO_FALLBACK_TESTID),
+				`${agentId} has no logo of its own and fell through to the fallback`
+			).toBeNull();
+			unmount();
+		}
+	});
+
+	it('marks the fallback so the coverage test above cannot pass vacuously', () => {
+		const { queryByTestId } = render(
+			<AgentLogo agentId="not-a-real-provider" supported detected theme={mockTheme} />
+		);
+
+		expect(queryByTestId(AGENT_LOGO_FALLBACK_TESTID)).toBeInTheDocument();
+	});
+
 	it('renders tile states, beta badges, disabled unavailable agents, and customize actions', () => {
 		const onTileClick = vi.fn();
 		const onOpenConfig = vi.fn();
@@ -66,9 +94,14 @@ describe('AgentSelectionScreen components', () => {
 				selectedAgent="claude-code"
 				focusedTileIndex={0}
 				isNameFieldFocused={false}
+				totalProviderCount={AGENT_TILES.length}
+				availableProviderCount={1}
+				providerLocationLabel="locally"
+				showAllProviders
 				tileRefs={tileRefs}
 				onTileClick={onTileClick}
 				onOpenConfig={onOpenConfig}
+				onShowAllProvidersChange={vi.fn()}
 				setFocusedTileIndex={vi.fn()}
 				setIsNameFieldFocused={vi.fn()}
 			/>
@@ -82,12 +115,95 @@ describe('AgentSelectionScreen components', () => {
 		expect(screen.getAllByText('Beta').length).toBeGreaterThan(0);
 		expect(screen.getAllByText('Not installed').length).toBeGreaterThan(0);
 
+		// One customize action per tile, so the strip's alphabetical order decides
+		// which one belongs to Codex.
+		const codexTileIndex = AGENT_TILES.findIndex((tile) => tile.id === 'codex');
 		const customizeActions = screen.getAllByTitle('Customize agent settings');
-		fireEvent.click(customizeActions[1]);
+		fireEvent.click(customizeActions[codexTileIndex]);
 		expect(onOpenConfig).toHaveBeenCalledWith('codex');
-		expect(customizeActions[1]).toHaveAttribute('tabindex', '0');
-		fireEvent.keyDown(customizeActions[1], { key: 'Enter' });
+		expect(customizeActions[codexTileIndex]).toHaveAttribute('tabindex', '0');
+		fireEvent.keyDown(customizeActions[codexTileIndex], { key: 'Enter' });
 		expect(onOpenConfig).toHaveBeenCalledTimes(2);
+	});
+
+	it('reports the provider count and toggles the unavailable ones', () => {
+		const onShowAllProvidersChange = vi.fn();
+		const tileRefs: React.MutableRefObject<(HTMLButtonElement | null)[]> = { current: [] };
+		const available = [detectedAgent('claude-code'), detectedAgent('codex')];
+
+		render(
+			<AgentGrid
+				theme={mockTheme}
+				tiles={AGENT_TILES.slice(0, 2)}
+				detectedAgents={available}
+				selectedAgent="claude-code"
+				focusedTileIndex={0}
+				isNameFieldFocused={false}
+				totalProviderCount={15}
+				availableProviderCount={5}
+				providerLocationLabel="locally"
+				showAllProviders={false}
+				tileRefs={tileRefs}
+				onTileClick={vi.fn()}
+				onOpenConfig={vi.fn()}
+				onShowAllProvidersChange={onShowAllProvidersChange}
+				setFocusedTileIndex={vi.fn()}
+				setIsNameFieldFocused={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText('5 providers available locally of 15 supported')).toBeInTheDocument();
+
+		const toggle = screen.getByRole('switch', { name: 'Show all supported providers' });
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		// The screen-wide keydown handler must not eat this control's own keys.
+		expect(toggle.closest('[data-provider-bar-nav-exempt]')).not.toBeNull();
+
+		fireEvent.click(toggle);
+		expect(onShowAllProvidersChange).toHaveBeenCalledWith(true);
+	});
+
+	it('wraps a short tile set and only reaches for the strip when it has to', () => {
+		const onColumnsChange = vi.fn();
+		const tileRefs: React.MutableRefObject<(HTMLButtonElement | null)[]> = { current: [] };
+
+		function renderGrid(tiles: typeof AGENT_TILES) {
+			return (
+				<AgentGrid
+					theme={mockTheme}
+					tiles={tiles}
+					detectedAgents={tiles.map((tile) => detectedAgent(tile.id))}
+					selectedAgent={null}
+					focusedTileIndex={0}
+					isNameFieldFocused={false}
+					totalProviderCount={AGENT_TILES.length}
+					availableProviderCount={tiles.length}
+					providerLocationLabel="locally"
+					showAllProviders
+					tileRefs={tileRefs}
+					onTileClick={vi.fn()}
+					onOpenConfig={vi.fn()}
+					onShowAllProvidersChange={vi.fn()}
+					onColumnsChange={onColumnsChange}
+					setFocusedTileIndex={vi.fn()}
+					setIsNameFieldFocused={vi.fn()}
+				/>
+			);
+		}
+
+		// Five tiles fit in two rows, so there is nothing to scroll and no arrows to
+		// draw. An arrow that cannot move is worse than no arrow.
+		const { rerender } = render(renderGrid(AGENT_TILES.slice(0, 5)));
+		expect(screen.queryByTitle('Scroll right')).toBeNull();
+		// Balanced 3 + 2 rather than 4 + 1, and the count is reported upward so
+		// up/down arrow movement steps by the layout that was actually drawn.
+		expect(onColumnsChange).toHaveBeenLastCalledWith(3);
+
+		// The full registry does not, so the strip and its affordances come back.
+		rerender(renderGrid(AGENT_TILES));
+		expect(screen.getByTitle('Scroll right')).toBeInTheDocument();
+		expect(screen.getByTitle('Scroll left')).toBeInTheDocument();
 	});
 
 	it('renders location select only when remotes exist and forwards selection', () => {
@@ -191,7 +307,7 @@ describe('AgentSelectionScreen components', () => {
 				isTransitioning={false}
 				isDetecting
 				configuringAgent={detectedAgent('codex')}
-				configuringTile={AGENT_TILES[1]}
+				configuringTile={AGENT_TILES.find((tile) => tile.id === 'codex')}
 				detectedConfigAgent={undefined}
 				sshRemotes={[{ id: 'remote-1', name: 'Server', host: 'host' } as any]}
 				sshRemoteConfig={undefined}

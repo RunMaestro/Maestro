@@ -34,12 +34,14 @@ import {
 	registerDocumentGraphHandlers,
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
+	registerParquetHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
+	registerAiCommandHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
@@ -51,6 +53,7 @@ import {
 	registerPromptsHandlers,
 	registerMemoryHandlers,
 	registerTabsHandlers,
+	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
@@ -286,6 +289,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
 
+	// Register Context Timeline capture handlers (per-agent turn history backfill).
+	// The renderer calls these on every panel open and timeline clear, so leaving
+	// them out makes `contextTimeline:*` reject with "No handler registered"
+	// (MAESTRO-YV) and the panel silently starts empty after a reload.
+	registerContextTimelineHandlers();
+
 	// Register Pianola handlers (autonomous manager: rules, decisions, and the
 	// supervised daemon). The supervisor is constructed during core-service init
 	// above, so it is available here; guard anyway to keep types honest.
@@ -455,6 +464,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register filesystem handlers (extracted to handlers/filesystem.ts)
 	registerFilesystemHandlers();
 
+	// Parquet preview handlers. Registered HERE, not only in registerAllHandlers()
+	// - that function is dead code, so a registration that lives solely there
+	// never runs and every Parquet preview fails with no handler.
+	registerParquetHandlers();
+
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts
 
@@ -485,6 +499,15 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register tab naming handlers for automatic tab naming
 	registerTabNamingHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+	});
+
+	// AI Command handlers (plain-English request -> one shell command line).
+	// Same dependency shape as tab naming: both spawn a short-lived agent turn.
+	registerAiCommandHandlers({
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,

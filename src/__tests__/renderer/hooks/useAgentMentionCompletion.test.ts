@@ -117,6 +117,23 @@ describe('useAgentMentionCompletion', () => {
 		expect(group?.memberSessionIds).toEqual(['a', 'b']);
 	});
 
+	it('carries a member expansion so accepting a group inserts its agents, not the group', () => {
+		const sessions = [
+			agent('a', 'Alpha', { groupId: 'g1' }),
+			agent('b', 'Beta', { groupId: 'g1' }),
+			agent('c', 'Gamma'),
+		];
+		const groups: Group[] = [{ id: 'g1', name: 'Squad', emoji: '', collapsed: false }];
+		const suggestions = getSuggestions(sessions, groups, 'current');
+
+		const group = suggestions.find((s) => s.kind === 'group');
+		// Only the group's own members, in roster order, with a trailing space.
+		expect(group?.memberMentionValue).toBe('@Alpha @Beta ');
+		// Each expanded token is byte-identical to picking that agent's own row.
+		const alpha = suggestions.find((s) => s.displayText === 'Alpha');
+		expect(group?.memberMentionValue?.startsWith(alpha?.value.trimEnd() ?? '')).toBe(true);
+	});
+
 	it('skips groups with no non-terminal members', () => {
 		const sessions = [agent('t', 'Term', { groupId: 'g1', toolType: 'terminal' })];
 		const groups: Group[] = [{ id: 'g1', name: 'Empty', emoji: '', collapsed: false }];

@@ -1,5 +1,5 @@
 /**
- * Tests for tabHelpers.ts - AI multi-tab management utilities
+ * Tests for tabHelpers - AI multi-tab management utilities
  *
  * Functions tested:
  * - getActiveTab
@@ -62,6 +62,7 @@ import {
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	moveActiveUnifiedTabToEdge,
+	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
 	findNextUnreadSession,
 	resolveQueuedItemTarget,
@@ -206,6 +207,53 @@ describe('tabHelpers', () => {
 
 			expect(result.session.activeGroupId).toBeNull();
 			expect(result.session.activeTabId).toBe('mock-generated-id');
+		});
+
+		it('leaves every visible-surface pointer alone when activate is false', () => {
+			// Background create. The tab has to exist and be reachable, and NOTHING
+			// the user is currently looking at may change - "created but invisible"
+			// and "created and stole the view" are both failures.
+			const session = createMockSession({
+				aiTabs: [],
+				activeTabId: 'was-active',
+				activeFileTabId: 'file-1',
+				activeBrowserTabId: 'browser-1',
+				activeTerminalTabId: 'terminal-1',
+				inputMode: 'terminal',
+			});
+
+			const result = createTab(session, { activate: false })!;
+
+			expect(result.session.aiTabs).toHaveLength(1);
+			expect(result.session.unifiedTabOrder).toContainEqual({
+				type: 'ai',
+				id: 'mock-generated-id',
+			});
+			expect(result.session.activeTabId).toBe('was-active');
+			expect(result.session.activeFileTabId).toBe('file-1');
+			expect(result.session.activeBrowserTabId).toBe('browser-1');
+			expect(result.session.activeTerminalTabId).toBe('terminal-1');
+			expect(result.session.inputMode).toBe('terminal');
+		});
+
+		it('clears the higher-precedence surfaces when activate is true', () => {
+			// The other half: a browser/file/terminal selection outranks the AI tab
+			// in the render precedence, so activation that left one set would show
+			// the old view and look like the new tab did nothing.
+			const session = createMockSession({
+				aiTabs: [],
+				activeFileTabId: 'file-1',
+				activeBrowserTabId: 'browser-1',
+				activeTerminalTabId: 'terminal-1',
+				inputMode: 'terminal',
+			});
+
+			const result = createTab(session, { activate: true })!;
+
+			expect(result.session.activeTabId).toBe('mock-generated-id');
+			expect(result.session.activeFileTabId).toBeNull();
+			expect(result.session.activeBrowserTabId).toBeNull();
+			expect(result.session.activeTerminalTabId).toBeNull();
 			expect(result.session.inputMode).toBe('ai');
 		});
 
@@ -4473,6 +4521,87 @@ describe('tabHelpers', () => {
 			expect(revealAiTab(session, 'ai-1')).toBe(session);
 			expect(revealAiTab(session, 'nope')).toBe(session);
 		});
+
+		// A hidden tab keeps its unifiedTabOrder ref (that's what restores its position
+		// on reveal), so every index the keyboard uses has to be taken from the strip's
+		// list rather than the stored one. Otherwise cycling stops on chips that aren't
+		// drawn: the user presses prev-tab and the panel changes with no tab selected.
+		const hiddenConsultSession = () =>
+			createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'ai-1' }),
+					createMockTab({ id: 'consult-1', hidden: true }),
+					createMockTab({ id: 'consult-2', hidden: true }),
+					createMockTab({ id: 'ai-2' }),
+				],
+				activeTabId: 'ai-2',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'ai', id: 'consult-2' },
+					{ type: 'ai', id: 'ai-2' },
+				],
+			});
+
+		it('steps prev-tab straight past hidden tabs onto the previous chip', () => {
+			const result = navigateToPrevUnifiedTab(hiddenConsultSession());
+
+			expect(result?.id).toBe('ai-1');
+		});
+
+		it('steps next-tab straight past hidden tabs when wrapping', () => {
+			const session = { ...hiddenConsultSession(), activeTabId: 'ai-1' };
+
+			const result = navigateToNextUnifiedTab(session);
+
+			expect(result?.id).toBe('ai-2');
+		});
+
+		it('counts Cmd+N over visible chips only', () => {
+			const session = hiddenConsultSession();
+
+			expect(navigateToUnifiedTabByIndex(session, 1)?.id).toBe('ai-2');
+			// Two chips are rendered, so there is no third position to reach.
+			expect(navigateToUnifiedTabByIndex(session, 2)).toBeNull();
+		});
+
+		it('treats the last visible chip as the last tab', () => {
+			expect(navigateToLastUnifiedTab(hiddenConsultSession())?.id).toBe('ai-2');
+		});
+
+		it('resolves a tab by id against the visible order', () => {
+			const session = hiddenConsultSession();
+
+			expect(navigateToUnifiedTabById(session, 'ai', 'ai-2')?.id).toBe('ai-2');
+		});
+
+		it('hands focus to a visible neighbor when the active tab is closed', () => {
+			const result = closeTab(hiddenConsultSession(), 'ai-2');
+
+			expect(result?.session.activeTabId).toBe('ai-1');
+		});
+
+		it('hands focus to a visible neighbor when the active file tab is closed', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' }), createMockTab({ id: 'consult-1', hidden: true })],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+
+			const result = closeFileTab(session, 'file-1');
+
+			expect(result?.session.activeTabId).toBe('ai-1');
+			expect(result?.session.activeFileTabId).toBeNull();
+			// The hidden tab keeps its stored ref so revealing it still restores position.
+			expect(result?.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: 'consult-1' });
+		});
 	});
 
 	describe('buildUnifiedTabs', () => {
@@ -5554,7 +5683,7 @@ describe('tabHelpers', () => {
 				text: 'run this',
 				timestamp: 1700000000000,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.state).toBe('busy');
 			expect(result.thinkingStartTime).toBeDefined();
 			expect(result.logs).toHaveLength(1);
@@ -5574,7 +5703,7 @@ describe('tabHelpers', () => {
 				forceParallel: true,
 				readOnlyMode: true,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.logs[0]).toMatchObject({ forceParallel: true, readOnly: true });
 		});
 
@@ -5587,9 +5716,94 @@ describe('tabHelpers', () => {
 				command: '/commit',
 				timestamp: 1700000000000,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.state).toBe('busy');
 			expect(result.logs).toHaveLength(0);
+		});
+
+		// A dequeued turn is a send, so it must freeze the same model/effort stamp the
+		// direct composer path freezes. Every message typed while the agent was busy
+		// comes through here, and an unstamped turn renders no attribution pills.
+		it('codifies the turn provider, model, and effort at dispatch', () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const session = createMockSession({
+				aiTabs: [tab],
+				toolType: 'claude-code',
+				customModel: 'opus[1m]',
+				customEffort: 'high',
+			});
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'queued while busy',
+				timestamp: 1700000000000,
+			};
+			const result = markTabRunningQueuedItem(tab, item, session);
+			expect(result.turnProvider).toBe('claude-code');
+			expect(result.turnModel).toBe('opus[1m]');
+			expect(result.turnEffort).toBe('high');
+		});
+
+		it('prefers the tab override over the agent default when codifying', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'fable' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				customModel: 'opus[1m]',
+				customEffort: 'high',
+			});
+			const result = markTabRunningQueuedItem(
+				tab,
+				{ id: 'q1', tabId: 't1', type: 'command', command: '/commit', timestamp: 1700000000000 },
+				session
+			);
+			expect(result.turnModel).toBe('fable');
+			expect(result.turnEffort).toBe('high');
+		});
+
+		// The queue can sit through any number of model changes. The item carries
+		// what the user had selected when they hit Enter, and THAT is what the turn
+		// runs under and what the response pills name.
+		it('stamps the settings the item was queued with, not the live ones', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'opus[1m]' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				toolType: 'claude-code',
+				customEffort: 'xhigh',
+			});
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'queued on the cheap model',
+				timestamp: 1700000000000,
+				turnSettings: { model: 'haiku', effort: 'low' },
+			};
+			const result = markTabRunningQueuedItem(tab, item, session);
+			expect(result.turnProvider).toBe('claude-code');
+			expect(result.turnModel).toBe('haiku');
+			expect(result.turnEffort).toBe('low');
+		});
+
+		// An empty capture is not a missing capture: the user queued on the agent
+		// default, so a model they picked afterwards must not be attributed to it.
+		it('keeps an item queued on the agent default unstamped', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'opus[1m]' });
+			const session = createMockSession({ aiTabs: [tab], customEffort: 'xhigh' });
+			const result = markTabRunningQueuedItem(
+				tab,
+				{
+					id: 'q1',
+					tabId: 't1',
+					type: 'message',
+					text: 'queued on the default',
+					timestamp: 1700000000000,
+					turnSettings: {},
+				},
+				session
+			);
+			expect(result.turnModel).toBeUndefined();
+			expect(result.turnEffort).toBeUndefined();
 		});
 	});
 
@@ -5765,6 +5979,81 @@ describe('tabHelpers', () => {
 				activeTabId: 'a1',
 			});
 			expect(moveActiveUnifiedTabToEdge(session, 'end')).toBe(session);
+		});
+	});
+
+	describe('moveUnifiedTabToTarget', () => {
+		/** ai(a1) -> terminal(t1) -> file(f1) -> browser(b1) */
+		function stripSession(overrides: Record<string, unknown> = {}) {
+			return createMockSession({
+				aiTabs: [createMockTab({ id: 'a1' })],
+				terminalTabs: [
+					{ id: 't1', name: null, shellType: 'zsh', pid: 0, cwd: '', createdAt: 1, state: 'idle' },
+				],
+				filePreviewTabs: [createMockFileTab({ id: 'f1', path: '/tmp/f1' })],
+				browserTabs: [createMockBrowserTab({ id: 'b1' })],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'terminal', id: 't1' },
+					{ type: 'file', id: 'f1' },
+					{ type: 'browser', id: 'b1' },
+				],
+				activeTabId: 'a1',
+				...overrides,
+			});
+		}
+
+		it('drops a tab just past the target when dragging forwards', () => {
+			const result = moveUnifiedTabToTarget(stripSession(), 'a1', 'f1');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['t1', 'f1', 'a1', 'b1']);
+		});
+
+		it('drops a tab into the target slot when dragging backwards', () => {
+			const result = moveUnifiedTabToTarget(stripSession(), 'b1', 't1');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 'b1', 't1', 'f1']);
+		});
+
+		it('reorders across kinds without touching the tabs themselves', () => {
+			const session = stripSession();
+			const result = moveUnifiedTabToTarget(session, 'f1', 'a1');
+			expect(result.unifiedTabOrder.map((r) => `${r.type}:${r.id}`)).toEqual([
+				'file:f1',
+				'ai:a1',
+				'terminal:t1',
+				'browser:b1',
+			]);
+			expect(result.aiTabs).toBe(session.aiTabs);
+		});
+
+		it('moves the tab the user grabbed even when hidden refs sit between the chips', () => {
+			// The strip omits hidden AI tabs, so chip positions and unifiedTabOrder
+			// positions disagree. Addressing by id is what keeps the two in step.
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'a1' }),
+					createMockTab({ id: 'consult', hidden: true }),
+					createMockTab({ id: 'a2' }),
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'ai', id: 'consult' },
+					{ type: 'ai', id: 'a2' },
+				],
+				activeTabId: 'a1',
+			});
+			const result = moveUnifiedTabToTarget(session, 'a1', 'a2');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['consult', 'a2', 'a1']);
+		});
+
+		it('is a no-op when the source and target are the same tab', () => {
+			const session = stripSession();
+			expect(moveUnifiedTabToTarget(session, 'a1', 'a1')).toBe(session);
+		});
+
+		it('is a no-op when either id is absent from the order', () => {
+			const session = stripSession();
+			expect(moveUnifiedTabToTarget(session, 'a1', 'gone')).toBe(session);
+			expect(moveUnifiedTabToTarget(session, 'gone', 'a1')).toBe(session);
 		});
 	});
 

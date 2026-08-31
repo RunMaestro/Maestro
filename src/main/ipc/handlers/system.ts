@@ -19,6 +19,8 @@ import * as path from 'path';
 import * as fsSync from 'fs';
 import Store from 'electron-store';
 import { execFileNoThrow } from '../../utils/execFile';
+import { peekShellPath } from '../../runtime/getShellPath';
+import { fallbackFontResult, type FontDetectionResult } from '../../../shared/fontDetection';
 import { logger } from '../../utils/logger';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
@@ -28,6 +30,7 @@ import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
+import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { createSafeSend } from '../../utils/safe-send';
@@ -46,6 +49,32 @@ export interface SystemHandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	getWebServer: () => WebServer | null;
 	bootstrapStore?: Store<BootstrapSettings>;
+}
+
+/**
+ * Decode a data URL into a NativeImage for the clipboard.
+ *
+ * `nativeImage.createFromDataURL()` trusts the DECLARED media type and accepts
+ * only `image/png` and `image/jpeg`, so a JPEG announced as `image/jpg` decodes
+ * to an empty image and the copy silently degrades to pasting the data URL as
+ * text. Every producer here should emit a canonical type (see
+ * `getImageMimeType`), but the clipboard follows the BYTES rather than the
+ * label: on an empty decode the base64 payload is handed to
+ * `createFromBuffer`, which sniffs the PNG/JPEG magic itself.
+ *
+ * Formats Chromium's image decoder does not expose to nativeImage (webp, gif)
+ * still come back empty - the renderer rasterizes those to PNG before it gets
+ * here.
+ */
+function decodeClipboardImage(dataUrl: string): Electron.NativeImage {
+	const direct = nativeImage.createFromDataURL(dataUrl);
+	if (!direct.isEmpty()) return direct;
+
+	const comma = dataUrl.indexOf(',');
+	if (comma < 0 || !/^data:[^,]*;base64$/i.test(dataUrl.slice(0, comma))) {
+		return direct;
+	}
+	return nativeImage.createFromBuffer(Buffer.from(dataUrl.slice(comma + 1), 'base64'));
 }
 
 /**
@@ -114,48 +143,54 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	// ============ Font Detection Handlers ============
 
 	// Font detection
-	ipcMain.handle('fonts:detect', async () => {
+	ipcMain.handle('fonts:detect', async (): Promise<FontDetectionResult> => {
+		// fc-list is fontconfig, which ships with essentially no macOS or Windows
+		// install - it is present on a dev Mac only because Homebrew pulled it in
+		// as a dependency. It was also being executed with the GUI process PATH,
+		// which does not include /opt/homebrew/bin, so even a machine that HAS it
+		// failed once the app was packaged. Both failures returned the hard-coded
+		// list silently, and the picker then annotated genuinely-installed fonts
+		// "(Not Found)".
+		//
+		// The renderer now tries Chromium's Local Font Access API first (native,
+		// cross-platform, no external binary) and only falls back to here. This
+		// handler keeps fc-list for Linux, where fontconfig IS the system font
+		// database, and now runs it with the login-shell PATH.
 		try {
-			// Use fc-list on all platforms (faster than system_profiler on macOS)
-			// macOS: 0.74s (was 8.77s with system_profiler) - 11.9x faster
-			// Linux/Windows: 0.5-0.6s
-			const result = await execFileNoThrow('fc-list', [':', 'family']);
+			const shellPath = peekShellPath();
+			const env = shellPath ? { ...process.env, PATH: shellPath } : undefined;
+			const result = await execFileNoThrow('fc-list', [':', 'family'], undefined, { env });
 
 			if (result.exitCode === 0 && result.stdout) {
-				// Parse font list and deduplicate
-				const fonts = result.stdout
-					.split('\n')
-					.filter(Boolean)
-					.map((line: string) => line.trim())
-					.filter((font) => font.length > 0);
-
-				// Deduplicate fonts (fc-list can return duplicates)
-				return [...new Set(fonts)];
+				// fc-list prints comma-separated aliases per family ("DejaVu Sans,
+				// DejaVu Sans Book"). Splitting on the comma recovers each real name;
+				// the previous parse kept the whole line, so a family with aliases
+				// never matched a picker entry by name.
+				const fonts = new Set<string>();
+				for (const line of result.stdout.split('\n')) {
+					for (const alias of line.split(',')) {
+						const name = alias.trim();
+						if (name) fonts.add(name);
+					}
+				}
+				if (fonts.size > 0) {
+					return { fonts: [...fonts], source: 'fc-list', reliable: true };
+				}
 			}
 
-			// Fallback if fc-list not available (rare on modern systems)
-			return [
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			];
+			logger.info('Font detection: fc-list unavailable, availability unknown', 'Fonts', {
+				exitCode: result.exitCode,
+				hadShellPath: Boolean(shellPath),
+			});
+			return fallbackFontResult('fontconfig (fc-list) is not installed on this system');
 		} catch (error) {
-			void captureException(error);
-			logger.error('Font detection error:', undefined, error);
-			// Return common monospace fonts as fallback
-			return [
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			];
+			// Not reported to Sentry: on macOS and Windows a missing fc-list is the
+			// EXPECTED path, not an anomaly, and the renderer has already tried the
+			// native API by the time it asks us.
+			logger.info('Font detection: fc-list threw, availability unknown', 'Fonts', {
+				reason: error instanceof Error ? error.message : String(error),
+			});
+			return fallbackFontResult('the system font list could not be read');
 		}
 	});
 
@@ -189,7 +224,16 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	});
 
 	// Shell operations - open external URLs
-	const ALLOWED_PROTOCOLS = ['http:', 'https:', 'mailto:'];
+	//
+	// `clickup:` lets a ClickUp task link open the native desktop app instead of a browser tab. ClickUp
+	// registers the scheme (CFBundleURLSchemes) but declares no associated-domains, so macOS universal links
+	// never redirect app.clickup.com on their own - the scheme is the only route to the app, and this
+	// allowlist was the one thing standing in the way.
+	//
+	// Safe on the same grounds that already admit `mailto:`: the OS hands the URL to whichever app claims the
+	// scheme, with no code execution here, and unlike `file:` (handled above) it cannot reach the filesystem.
+	// The vectors this list exists to stop, `javascript:` and `data:`, remain blocked.
+	const ALLOWED_PROTOCOLS = ['http:', 'https:', 'mailto:', 'clickup:'];
 	ipcMain.handle('shell:openExternal', async (_event, url: string) => {
 		// Validate URL before opening - Fixes MAESTRO-1S
 		if (!url || typeof url !== 'string') {
@@ -321,7 +365,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		if (!dataUrl || typeof dataUrl !== 'string') {
 			throw new Error('Invalid data URL: must be a non-empty string');
 		}
-		const img = nativeImage.createFromDataURL(dataUrl);
+		const img = decodeClipboardImage(dataUrl);
 		if (img.isEmpty()) {
 			throw new Error('Failed to create image from data URL');
 		}
@@ -419,6 +463,16 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 				mainWindow.webContents.openDevTools();
 			}
 		}
+	});
+
+	// ============ Application Menu Handlers ============
+
+	// The renderer owns the shortcut map (bundled defaults merged with the
+	// user's remaps), so it pushes the merged bindings here on mount and on
+	// every change. The menu is rebuilt so the accelerators it displays match
+	// what is actually bound. Display only - see src/main/app-menu.ts.
+	ipcMain.on('menu:setShortcutKeys', (_event, keys: Record<string, string[]>) => {
+		setMenuShortcutKeys(keys);
 	});
 
 	// ============ Update Check Handler ============

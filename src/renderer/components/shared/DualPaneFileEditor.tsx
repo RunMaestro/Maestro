@@ -10,6 +10,9 @@
  *   - Optional help overlay that replaces the split view
  *   - Action row: primary (Save), optional secondary (Reset/Delete), optional Open in Finder
  *   - Unsaved-changes guard before switching selection
+ *   - Keyboard navigation once a row has focus: Up/Down walk the visible rows,
+ *     Backspace/Delete raise `onDeleteItem` for the selected one
+ *   - Optional `autoFocusList` so those keys work without clicking a row first
  *
  * Consumers (Maestro Prompts, Memory Viewer) pass in the data + editor body;
  * this component owns the chrome and common styling.
@@ -20,6 +23,7 @@ import { ExternalLink, ChevronDown, ChevronRight } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { formatTokensCompact } from '../../../shared/formatters';
+import { highlightMatches } from '../../utils/highlightMatches';
 import './DualPaneFileEditor.css';
 
 export interface DualPaneFileEditorItem {
@@ -133,6 +137,42 @@ export interface DualPaneFileEditorProps {
 	 * When omitted, the width resets to the default on every mount.
 	 */
 	listWidthStorageKey?: string;
+
+	/**
+	 * Fired when Backspace/Delete is pressed while a list row has focus.
+	 * The consumer owns the confirmation - this only reports the intent.
+	 * Omit it to leave the keys inert.
+	 */
+	onDeleteItem?: (id: string) => void;
+
+	/**
+	 * Bump this number to move DOM focus back onto the selected list row.
+	 *
+	 * Needed after a consumer-driven delete: the row that had focus is gone, so
+	 * focus falls to <body> and the next Backspace does nothing. The consumer
+	 * knows when its own async work settled; the list does not.
+	 */
+	listFocusToken?: number;
+
+	/**
+	 * Put DOM focus on the selected row as soon as the list first has a
+	 * selection, so Up/Down and Backspace work without clicking a row first.
+	 *
+	 * Only for a surface whose primary job is walking the list (the Memory
+	 * Viewer). It claims focus ONCE, and only if nothing else has taken it -
+	 * a user who went straight for the filter box keeps the caret there.
+	 */
+	autoFocusList?: boolean;
+
+	/**
+	 * Active filter text. When set, the matching run inside each row's label is
+	 * marked, so a filtered list shows WHY each row survived rather than leaving
+	 * the reader to scan for it.
+	 *
+	 * Purely presentational - filtering itself stays the consumer's job, since
+	 * only it knows whether a row matched on its name or somewhere in its body.
+	 */
+	highlightQuery?: string;
 }
 
 const DEFAULT_LIST_WIDTH = 220;
@@ -176,6 +216,10 @@ export function DualPaneFileEditor({
 	isExpanded,
 	emptyStateMessage = 'Select a file to edit',
 	listWidthStorageKey,
+	onDeleteItem,
+	listFocusToken,
+	autoFocusList,
+	highlightQuery,
 }: DualPaneFileEditorProps): JSX.Element {
 	const selectedItem = items.find((i) => i.id === selectedId) ?? null;
 
@@ -246,6 +290,95 @@ export function DualPaneFileEditor({
 		});
 	}, [items, categories]);
 
+	// Flat, top-to-bottom order of the rows the user can actually see. Arrow
+	// navigation walks this rather than `items`, because a row inside a
+	// collapsed category is off screen and stepping onto it would move the
+	// selection somewhere the user cannot see.
+	const visibleOrder = React.useMemo(() => {
+		if (!groupedItems) return items.map((i) => i.id);
+		const ids: string[] = [];
+		for (const [category, catItems] of groupedItems) {
+			if (collapsedCategories?.has(category)) continue;
+			for (const item of catItems) ids.push(item.id);
+		}
+		return ids;
+	}, [groupedItems, items, collapsedCategories]);
+
+	const focusRow = useCallback((id: string) => {
+		listRef.current
+			?.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`)
+			?.focus({ preventScroll: false });
+	}, []);
+
+	// Arrow navigation asks for a selection change and then wants the caret to
+	// follow it. `onSelect` may be async, or may refuse (unsaved changes), so we
+	// chase focus only once `selectedId` actually lands on the requested row.
+	const pendingFocusIdRef = useRef<string | null>(null);
+	useEffect(() => {
+		const pending = pendingFocusIdRef.current;
+		if (!pending) return;
+		pendingFocusIdRef.current = null;
+		if (pending === selectedId) focusRow(pending);
+	}, [selectedId, focusRow]);
+
+	// Consumer-driven refocus (see `listFocusToken`).
+	const lastFocusTokenRef = useRef(listFocusToken);
+	useEffect(() => {
+		if (listFocusToken === undefined || listFocusToken === lastFocusTokenRef.current) return;
+		lastFocusTokenRef.current = listFocusToken;
+		if (selectedId) focusRow(selectedId);
+	}, [listFocusToken, selectedId, focusRow]);
+
+	// Initial focus (see `autoFocusList`). The list loads async, so this cannot
+	// run on mount - it waits for the first selection. It fires once and defers
+	// to anything that already holds focus, so a user who clicked into the
+	// filter box while the list was loading is not yanked back out of it.
+	const didAutoFocusRef = useRef(false);
+	useEffect(() => {
+		if (!autoFocusList || didAutoFocusRef.current) return;
+		if (!selectedId || isExpanded || showHelp) return;
+		const active = document.activeElement;
+		const focusIsIdle = !active || active === document.body;
+		if (!focusIsIdle && !listRef.current?.contains(active)) return;
+		didAutoFocusRef.current = true;
+		focusRow(selectedId);
+	}, [autoFocusList, selectedId, isExpanded, showHelp, focusRow]);
+
+	const handleListKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLDivElement>) => {
+			// Only rows drive this. The "+ New" button lives in the same
+			// container, and Backspace there must not delete the selection.
+			if (!(e.target as HTMLElement | null)?.closest?.('[data-item-id]')) return;
+
+			const isUp = e.key === 'ArrowUp';
+			const isDown = e.key === 'ArrowDown';
+			if (isUp || isDown) {
+				if (visibleOrder.length === 0) return;
+				e.preventDefault();
+				const current = selectedId ? visibleOrder.indexOf(selectedId) : -1;
+				// No selection, or one that the current filter hides: enter the
+				// list from whichever end the key points at.
+				const nextIndex =
+					current === -1
+						? isDown
+							? 0
+							: visibleOrder.length - 1
+						: Math.min(visibleOrder.length - 1, Math.max(0, current + (isDown ? 1 : -1)));
+				const nextId = visibleOrder[nextIndex];
+				if (!nextId || nextId === selectedId) return;
+				pendingFocusIdRef.current = nextId;
+				onSelect(nextId);
+				return;
+			}
+
+			if ((e.key === 'Backspace' || e.key === 'Delete') && onDeleteItem && selectedId) {
+				e.preventDefault();
+				onDeleteItem(selectedId);
+			}
+		},
+		[visibleOrder, selectedId, onSelect, onDeleteItem]
+	);
+
 	const renderActionButton = useCallback(
 		(action: DualPaneFileEditorAction, fallbackClass: 'save-button' | 'reset-button') => {
 			const variant = action.variant ?? (fallbackClass === 'save-button' ? 'primary' : 'secondary');
@@ -293,6 +426,7 @@ export function DualPaneFileEditor({
 					<div
 						ref={listRef}
 						className="dual-pane-list"
+						onKeyDown={handleListKeyDown}
 						style={{
 							borderColor: theme.colors.border,
 							width: `${listWidth}px`,
@@ -483,7 +617,11 @@ export function DualPaneFileEditor({
 					color: theme.colors.textMain,
 				}}
 			>
-				<span className="dual-pane-list-item-name">{item.label}</span>
+				<span className="dual-pane-list-item-name">
+					{highlightQuery
+						? highlightMatches(item.label, highlightQuery, theme.colors.accent)
+						: item.label}
+				</span>
 				<span className="dual-pane-list-item-meta">
 					{item.isModified && (
 						<span

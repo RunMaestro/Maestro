@@ -352,9 +352,22 @@ export function FileSearchModal({
 		handleViewModeChange(viewMode === 'visible' ? 'all' : 'visible');
 	}, [handleViewModeChange, viewMode]);
 
-	// Scroll selected item into view via virtualizer
+	// Scroll the selection into view. This is the ONLY thing allowed to move this
+	// list on its own, and it fires only when `selectedIndex` actually changes -
+	// the virtualizer instance is stable, so a scroll does not re-run it.
+	//
+	// The selected row used to carry `ref={(el) => el?.scrollIntoView(...)}` as
+	// well. An inline arrow is a new identity every render, so React detached and
+	// reattached it on EVERY render and scrolled the list each time; the
+	// virtualizer re-renders (in `flushSync`) on every scroll-offset change, so a
+	// wheel tick scrolled the list and then immediately snapped it back inside the
+	// same event. The wheel was never broken. Do not reintroduce a ref here: use
+	// `scrollToIndex`, which is also the API that understands the virtual window.
+	//
+	// No `behavior: 'smooth'` either. Over thousands of rows the animation to a
+	// distant index runs long enough for the next wheel gesture to fight it.
 	useEffect(() => {
-		virtualizer.scrollToIndex(selectedIndex, { align: 'auto', behavior: 'smooth' });
+		virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
 	}, [selectedIndex, virtualizer]);
 
 	// Derive first visible index from virtualizer for Cmd+1-9 badges
@@ -606,9 +619,6 @@ export function FileSearchModal({
 								return (
 									<button
 										key={file.fullPath}
-										ref={
-											isSelected ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : undefined
-										}
 										onClick={() => handleItemSelect(file)}
 										className="absolute top-0 left-0 w-full text-left px-4 py-2 flex items-center gap-3 hover:bg-opacity-10"
 										style={{

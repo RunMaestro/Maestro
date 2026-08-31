@@ -181,6 +181,8 @@ Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 | `--no-history`           | Do not write history entries                                                  | -       |
 | `--json`                 | Output as JSON lines (for scripting)                                          | -       |
 | `--verbose`              | Show full prompt sent to agent on each iteration                              | -       |
+| `--visible`              | Run inside the Maestro desktop app (visible Auto Run) instead of headlessly   | -       |
+| `--wait`                 | With --visible, wait for the agent to become available if busy                | -       |
 | `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | -       |
 | `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | -       |
 
@@ -236,6 +238,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | Option                            | Description                                                                                                                                                                                                                                                                | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `--new-tab`                       | Create a fresh AI tab and dispatch the prompt into it                                                                                                                                                                                                                      | -       |
+| `--background`                    | Leave the new tab in the background (default; with --new-tab)                                                                                                                                                                                                              | -       |
 | `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                   | -       |
 | `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)                                                                                                                       | -       |
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                              | -       |
@@ -292,11 +295,40 @@ Print conversation history for a desktop tab
 
 Open a file as a preview tab in the Maestro desktop app
 
-| Option             | Description                                                        | Default |
-| ------------------ | ------------------------------------------------------------------ | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent) | -       |
-| `--no-switch`      | Don't switch the Maestro UI to the target agent/tab                | -       |
-| `--json`           | Output as JSON (for scripting)                                     | -       |
+| Option             | Description                                                                     | Default |
+| ------------------ | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)              | -       |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent | -       |
+| `--focus`          | Switch to the file after opening it (default)                                   | -       |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there              | -       |
+| `--json`           | Output as JSON (for scripting)                                                  | -       |
+
+## `maestro-cli open-graph [paths...]`
+
+Open the Document Graph over specific markdown files or a directory.
+
+This is a separate verb rather than an `open <surface>` entry: `open` carries a
+surface name and a tab, and a graph needs a file set.
+
+A single directory stays a directory scope, so the app scans it when it renders
+and picks up documents written since you typed the command. Any other
+combination - several paths, or any explicit file - is flattened to that exact
+list of documents. Documents in the scope that link to nothing else in it are
+drawn in an "Unlinked" band you can toggle off.
+
+| Option             | Description                                                   | Default     |
+| ------------------ | ------------------------------------------------------------- | ----------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent) | -           |
+| `--focus <path>`   | Center the graph on this document                             | most-linked |
+| `--json`           | Output as JSON (for scripting)                                | -           |
+
+```bash
+# Everything under a folder
+maestro-cli open-graph docs/
+
+# An exact set, centered on the one you want to talk about
+maestro-cli open-graph docs/a.md docs/b.md docs/c.md --focus docs/a.md
+```
 
 ## `maestro-cli open-browser <url>`
 
@@ -306,7 +338,18 @@ Open a URL as a browser tab in the Maestro desktop app
 | ------------------ | ------------------------------------------------------------------------------------------------------------- | ------- |
 | `-a, --agent <id>` | Target agent by ID (defaults to active)                                                                       | -       |
 | `--background`     | Create the tab without focusing it or switching agents (use for agent research, then close-browser when done) | -       |
+| `--focus`          | Switch to the browser tab after opening it (default)                                                          | -       |
 | `--json`           | Output as JSON (for scripting)                                                                                | -       |
+
+## `maestro-cli open [surface]`
+
+Open a Maestro modal or dashboard (use --list to see every surface)
+
+| Option            | Description                                             | Default |
+| ----------------- | ------------------------------------------------------- | ------- |
+| `-t, --tab <tab>` | Deep-link to a tab within the surface                   | -       |
+| `--list`          | List every openable surface, its tabs, and its shortcut | -       |
+| `--json`          | Output as JSON (for scripting)                          | -       |
 
 ## `maestro-cli close-browser <tab-id>`
 
@@ -327,6 +370,8 @@ Open a new terminal tab in the Maestro desktop app
 | `--shell <shell>`     | Shell binary to use (default: zsh)                                                              | -       |
 | `--name <name>`       | Display name for the tab                                                                        | -       |
 | `--command <command>` | Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts) | -       |
+| `--background`        | Create the tab without moving the view (agent and tab stay put)                                 | -       |
+| `--focus`             | Switch to the terminal tab after opening it (default)                                           | -       |
 | `--json`              | Output as JSON (for scripting)                                                                  | -       |
 
 ## `maestro-cli send-terminal [command]`
@@ -339,6 +384,17 @@ Run a command in an existing Maestro terminal tab
 | `--tab <id-or-name>` | Terminal tab ID or display name (defaults to the agent's active terminal) | -       |
 | `--control <letter>` | Send a control character instead of a command (e.g. C for Ctrl-C)         | -       |
 | `--no-enter`         | Type the command without pressing Enter                                   | -       |
+| `--json`             | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli read-terminal`
+
+Read a Maestro terminal tab's output
+
+| Option               | Description                                                               | Default |
+| -------------------- | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`   | Target agent by ID (defaults to active)                                   | -       |
+| `--tab <id-or-name>` | Terminal tab ID or display name (defaults to the agent's active terminal) | -       |
+| `--tail <n>`         | Return only the last N lines (default: 200)                               | -       |
 | `--json`             | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli refresh-files`
@@ -458,15 +514,22 @@ List all Cue subscriptions across agents
 
 ## `maestro-cli cue schedule`
 
-Schedule a one-shot Cue task (or --list / --cancel pending tasks)
+Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 
 | Option                     | Description                                                                                           | Default |
 | -------------------------- | ----------------------------------------------------------------------------------------------------- | ------- |
-| `--in <duration>`          | Fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                   | -       |
-| `--at <timestamp>`         | Fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local time)                                         | -       |
-| `--list`                   | List all pending one-shot tasks across agents                                                         | -       |
-| `--cancel <name>`          | Cancel a pending one-shot task by name                                                                | -       |
-| `-a, --agent <id-or-name>` | Target agent (required when creating)                                                                 | -       |
+| `--in <duration>`          | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                         | -       |
+| `--at <timestamp>`         | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                    | -       |
+| `--daily-at <times>`       | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                             | -       |
+| `--days <days>`            | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                             | -       |
+| `--every <duration>`       | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                     | -       |
+| `--list`                   | List scheduled tasks across agents                                                                    | -       |
+| `--kind <kind>`            | Filter --list by kind: once, daily, interval, all (default: all)                                      | -       |
+| `--cancel <name>`          | Cancel a scheduled task by name                                                                       | -       |
+| `--reschedule <name>`      | Change when an existing task fires (pass the timing flag too)                                         | -       |
+| `--pause <name>`           | Disable a task without deleting it                                                                    | -       |
+| `--resume <name>`          | Re-enable a paused task                                                                               | -       |
+| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes other modes)                                             | -       |
 | `-p, --prompt <text>`      | Prompt to send when the task fires                                                                    | -       |
 | `--notify`                 | Show a toast notification when the task fires                                                         | -       |
 | `--sticky`                 | Make the notify toast sticky (requires --notify)                                                      | -       |
@@ -596,25 +659,27 @@ Print the full command reference (Markdown, or --format json)
 
 Create a new agent in the Maestro desktop app
 
-| Option                            | Description                                                                                      | Default         |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ | --------------- |
-| `-d, --cwd <path>`                | Working directory for the agent                                                                  | -               |
-| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, gemini-cli, qwen3-coder)   | `"claude-code"` |
-| `-g, --group <id>`                | Group ID to assign the agent to                                                                  | -               |
-| `--nudge <message>`               | Nudge message appended to every user message                                                     | -               |
-| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                | -               |
-| `--custom-path <path>`            | Custom binary path for the agent                                                                 | -               |
-| `--custom-args <args>`            | Custom CLI arguments for the agent                                                               | -               |
-| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                | `[]`            |
-| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                              | -               |
-| `--effort <level>`                | Effort/reasoning level override                                                                  | -               |
-| `--context-window <size>`         | Context window size in tokens                                                                    | -               |
-| `--provider-path <path>`          | Custom provider path                                                                             | -               |
-| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                               | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                         | -               |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote) | -               |
-| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)   | -               |
-| `--json`                          | Output as JSON (for scripting)                                                                   | -               |
+| Option                            | Description                                                                                                 | Default         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------- |
+| `-d, --cwd <path>`                | Working directory for the agent                                                                             | -               |
+| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder) | `"claude-code"` |
+| `-g, --group <id>`                | Group ID to assign the agent to                                                                             | -               |
+| `--nudge <message>`               | Nudge message appended to every user message                                                                | -               |
+| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                           | -               |
+| `--custom-path <path>`            | Custom binary path for the agent                                                                            | -               |
+| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                          | -               |
+| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                           | `[]`            |
+| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                         | -               |
+| `--effort <level>`                | Effort/reasoning level override                                                                             | -               |
+| `--context-window <size>`         | Context window size in tokens                                                                               | -               |
+| `--provider-path <path>`          | Custom provider path                                                                                        | -               |
+| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                          | -               |
+| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
+| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
+| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)              | -               |
+| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                        | -               |
+| `--focus`                         | Select the new agent after creating it (default)                                                            | -               |
+| `--json`                          | Output as JSON (for scripting)                                                                              | -               |
 
 ## `maestro-cli create-group <name>`
 
@@ -653,6 +718,8 @@ Create a new agent in a git worktree branched off an existing parent agent
 | `-b, --branch <name>`  | Branch name for the worktree (created if it does not exist)                                                        | -       |
 | `--base-branch <name>` | Ref the new branch is based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the parent repo HEAD. | -       |
 | `-m, --message <text>` | Optional initial prompt to dispatch to the new agent after creation                                                | -       |
+| `--background`         | Create the agent without selecting it (Left Bar selection stays put)                                               | -       |
+| `--focus`              | Select the new worktree agent after creating it (default)                                                          | -       |
 | `--json`               | Output as JSON (for scripting)                                                                                     | -       |
 
 ## `maestro-cli remove-agent <agent-id>`
@@ -685,6 +752,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                             | -       |
 | `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                           | -       |
 | `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                       | -       |
+| `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                | -       |
 | `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)             | -       |
 | `--force`                         | Confirm a destructive change (required for --provider)                                         | -       |
 | `--json`                          | Output as JSON (for scripting)                                                                 | -       |
@@ -692,6 +760,22 @@ Update an existing agent's group, working directory, and per-agent settings
 ## `maestro-cli rename-agent <agent-id> <new-name>`
 
 Rename an agent in the Maestro desktop app
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli bookmark <agent-id>`
+
+Bookmark an agent (pins it to the Left Bar's Bookmarks section)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli unbookmark <agent-id>`
+
+Remove an agent's bookmark
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -710,9 +794,11 @@ Focus (select) an agent in the Maestro desktop UI
 
 Switch an agent between "ai" and "terminal" mode
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option         | Description                                                                                           | Default |
+| -------------- | ----------------------------------------------------------------------------------------------------- | ------- |
+| `--background` | Refuse the switch if the agent is the one on screen, rather than changing what the user is looking at | -       |
+| `--focus`      | Switch even when the agent is the one on screen (default)                                             | -       |
+| `--json`       | Output as JSON (for scripting)                                                                        | -       |
 
 ## `maestro-cli tab`
 
@@ -722,43 +808,139 @@ Manage an agent's tabs in the desktop app
 
 Open a new tab for an agent (optionally seeded with a prompt)
 
-| Option                | Description                          | Default |
-| --------------------- | ------------------------------------ | ------- |
-| `-a, --agent <id>`    | Target agent ID                      | -       |
-| `-p, --prompt <text>` | Seed the new AI tab with this prompt | -       |
-| `--json`              | Output as JSON (for scripting)       | -       |
+| Option                | Description                                                     | Default |
+| --------------------- | --------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Target agent ID                                                 | -       |
+| `-p, --prompt <text>` | Seed the new AI tab with this prompt                            | -       |
+| `--background`        | Create the tab without moving the view (agent and tab stay put) | -       |
+| `--focus`             | Switch to the new tab after creating it (default)               | -       |
+| `--json`              | Output as JSON (for scripting)                                  | -       |
 
 ## `maestro-cli tab close <tab-id>`
 
 Close a tab (owning agent is resolved automatically)
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab rename <tab-id> <new-name>`
 
 Rename a tab
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab star <tab-id>`
 
 Star a tab
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli tab unstar <tab-id>`
 
 Unstar a tab
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab unread <tab-id>`
+
+Mark a tab unread (flags it for the human in the tab bar)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab read <tab-id>`
+
+Clear a tab's unread marker
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab save-to-history <tab-id> <bool>`
+
+Enable/disable synopsizing this tab's completions into History (true/false)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab show <tab-id>`
+
+Show one tab's settings (model, effort, thinking, access, history)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab thinking <tab-id> <mode>`
+
+Set the thinking display: off, on, sticky, or cycle
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab read-only <tab-id> <bool>`
+
+Put the tab in read-only/plan mode so the agent cannot modify files
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab model <tab-id> <model>`
+
+Override the model for this tab ("inherit" clears the override)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab effort <tab-id> <level>`
+
+Override the effort/reasoning level for this tab ("inherit" clears it)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab enter-to-send <tab-id> <bool>`
+
+Per-tab send key: true = Enter, false = Cmd+Enter, "inherit" = global setting
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
+## `maestro-cli tab move <tab-id> <position>`
+
+Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when <tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
 
 ## `maestro-cli create-ssh-remote <name>`
 
@@ -1153,10 +1335,11 @@ Publish session context to GitHub gists
 
 Publish an agent's session transcript as a GitHub gist (requires running Maestro app)
 
-| Option                     | Description                             | Default |
-| -------------------------- | --------------------------------------- | ------- |
-| `-d, --description <text>` | Gist description                        | -       |
-| `-p, --public`             | Create a public gist (default: private) | -       |
+| Option                     | Description                                                                                              | Default |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- | ------- |
+| `-d, --description <text>` | Gist description                                                                                         | -       |
+| `-p, --public`             | Create a public gist (default: private)                                                                  | -       |
+| `-s, --session <id>`       | Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs | -       |
 
 ## `maestro-cli notify`
 
@@ -1170,10 +1353,10 @@ Show a toast notification (queued, click X or icon to dismiss)
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
 | `-c, --color <color>`     | green \| yellow \| orange \| red \| theme (default: theme)                                                                                                                                                                     | -       |
 | `-t, --timeout <seconds>` | Auto-dismiss after N seconds (range: (0, 60]; omitted = app default)                                                                                                                                                           | -       |
-| `--dismissible`           | Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout                                                                                                                                        | -       |
+| `--dismissible`           | Sticky toast - no auto-dismiss; user must click to close. Cannot combine with --timeout                                                                                                                                        | -       |
 | `-a, --agent <id>`        | Associate with an agent so clicking jumps to it                                                                                                                                                                                | -       |
 | `--source-agent <label>`  | Label shown in the toast header identifying which agent/pipeline fired it. Store-independent, so it shows even for cron/watchdog toasts. Wins over the name resolved from --agent; pair with --agent to also get click-to-jump | -       |
-| `--tab <id>`              | AI tab ID within the agent — clicking jumps to that tab (requires --agent)                                                                                                                                                     | -       |
+| `--tab <id>`              | AI tab ID within the agent - clicking jumps to that tab (requires --agent)                                                                                                                                                     | -       |
 | `--action-url <url>`      | Inline link rendered beneath the message body (opens in browser when clicked)                                                                                                                                                  | -       |
 | `--action-label <text>`   | Label for --action-url (defaults to the URL itself)                                                                                                                                                                            | -       |
 | `--open-file <path>`      | On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with --open-url)                                                                                               | -       |
@@ -1182,7 +1365,7 @@ Show a toast notification (queued, click X or icon to dismiss)
 
 ## `maestro-cli notify flash <message>`
 
-Show a center-screen flash (momentary, exclusive — replaces any active flash)
+Show a center-screen flash (momentary, exclusive - replaces any active flash)
 
 | Option                    | Description                                                | Default |
 | ------------------------- | ---------------------------------------------------------- | ------- |

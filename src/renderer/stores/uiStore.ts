@@ -11,7 +11,7 @@
  */
 
 import { create } from 'zustand';
-import type { FocusArea, RightPanelTab, UsageDashboardViewMode } from '../types';
+import type { FocusArea, RightPanelTab, UnifiedTabRef, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
 
 /**
@@ -75,16 +75,22 @@ export interface UIStoreState {
 		hover: { leafId: string; zone: import('../utils/panelLayout').DropZone } | null;
 	} | null;
 
-	// Tab tiling: one-shot request to move DOM FOCUS into the pane with this leaf
-	// id (the caret into its terminal / chat input), consumed and cleared by
-	// MainPanelContent. Fired ONLY by the keyboard pane commands - moving the focus
-	// ring alone leaves the user typing into whatever had focus before.
+	// One-shot request to move DOM FOCUS into a tab's real input (the caret into
+	// its terminal / editor / address bar / chat box), consumed and cleared by
+	// MainPanelContent. Addressed EITHER by tiled pane leaf id or by tab ref, since
+	// both routes end at the same place: a keyboard pane command knows the leaf it
+	// moved to, while a plain "new tab" handler only ever knows the tab it minted.
+	// One request slot rather than two so there is a single focus owner and a
+	// single cancel chain - a later request always supersedes an earlier one.
+	//
+	// Fired ONLY by explicit create/move commands - moving the focus ring alone
+	// leaves the user typing into whatever had focus before.
 	//
 	// Deliberately a request rather than an effect keyed on `focusedPaneId`: a mouse
 	// press anywhere in a pane also moves `focusedPaneId`, so a derived effect would
 	// yank the caret into the AI input mid-drag and break text selection in the
-	// conversation. Keyboard-only keeps the steal tied to explicit user intent.
-	paneFocusRequest: string | null;
+	// conversation. Keeping it explicit ties the steal to user intent.
+	focusRequest: { leafId: string } | { tab: UnifiedTabRef } | null;
 
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
@@ -117,6 +123,19 @@ export interface UIStoreState {
 
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
+	/**
+	 * The sidebar's filter text. Shared rather than local to the filter hook,
+	 * because Cmd+[ / Cmd+] has to cycle exactly the rows the sidebar is drawing
+	 * and a `useState` inside the hook gives every caller its own copy - the
+	 * cycle could not see the filter at all, so it walked agents that were not
+	 * on screen.
+	 */
+	sessionFilter: string;
+	/**
+	 * Whether archived group chats are shown. Same reason as `sessionFilter`:
+	 * membership of the drawn list is a shared question, not a private one.
+	 */
+	showArchivedGroupChats: boolean;
 
 	// History panel search
 	historySearchFilterOpen: boolean;
@@ -130,6 +149,12 @@ export interface UIStoreState {
 	// Editing (inline renaming in sidebar)
 	editingGroupId: string | null;
 	editingSessionId: string | null;
+
+	// Queued message currently open in the edit modal (QueuedItemEditModal), or
+	// null when it is closed. Lives here rather than inside QueuedItemsList so
+	// the "Edit Last Queued Message" shortcut can open the modal from anywhere -
+	// the list itself is buried in the transcript scroll area.
+	editingQueuedItemId: string | null;
 
 	// Auto-follow active task during batch runs
 	autoFollowEnabled: boolean;
@@ -192,10 +217,11 @@ export interface UIStoreActions {
 	// Tab tiling: set/clear the transient pane-rearrange drag state.
 	setPaneDrag: (drag: UIStore['paneDrag']) => void;
 
-	// Tab tiling: ask the panel to put DOM focus inside the pane with this leaf id,
-	// and clear that request once it has been acted on.
+	// Ask the panel to put DOM focus inside a pane (by tiled leaf id) or a tab (by
+	// ref), and clear that request once it has been acted on.
 	requestPaneFocus: (leafId: string) => void;
-	clearPaneFocusRequest: () => void;
+	requestTabFocus: (tab: UnifiedTabRef) => void;
+	clearFocusRequest: () => void;
 
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -242,6 +268,8 @@ export interface UIStoreActions {
 
 	// Session filter (sidebar agent search)
 	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+	setSessionFilter: (value: string | ((prev: string) => string)) => void;
+	setShowArchivedGroupChats: (show: boolean | ((prev: boolean) => boolean)) => void;
 
 	// History panel search
 	setHistorySearchFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -255,6 +283,7 @@ export interface UIStoreActions {
 	// Editing
 	setEditingGroupId: (id: string | null | ((prev: string | null) => string | null)) => void;
 	setEditingSessionId: (id: string | null | ((prev: string | null) => string | null)) => void;
+	setEditingQueuedItemId: (id: string | null) => void;
 
 	// Auto-follow
 	setAutoFollowEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
@@ -360,7 +389,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	activeRightTab: 'files',
 	zoomedPaneId: null,
 	paneDrag: null,
-	paneFocusRequest: null,
+	focusRequest: null,
 	bookmarksCollapsed: false,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
@@ -372,11 +401,14 @@ export const useUIStore = create<UIStore>()((set) => ({
 	outputSearchByKey: {},
 	pendingLogJump: null,
 	sessionFilterOpen: false,
+	sessionFilter: '',
+	showArchivedGroupChats: false,
 	historySearchFilterOpen: false,
 	groupChatHistorySearchFilterOpen: false,
 	draggingSessionId: null,
 	editingGroupId: null,
 	editingSessionId: null,
+	editingQueuedItemId: null,
 	autoFollowEnabled: false,
 	profilingActive: false,
 	usageDashboardViewMode: 'overview',
@@ -406,8 +438,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
 	setPaneDrag: (drag) => set({ paneDrag: drag }),
 
-	requestPaneFocus: (leafId) => set({ paneFocusRequest: leafId }),
-	clearPaneFocusRequest: () => set({ paneFocusRequest: null }),
+	requestPaneFocus: (leafId) => set({ focusRequest: { leafId } }),
+	requestTabFocus: (tab) => set({ focusRequest: { tab } }),
+	clearFocusRequest: () => set({ focusRequest: null }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {
@@ -477,6 +510,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 		set((s) => (s.pendingLogJump?.logId === logId ? { pendingLogJump: null } : s)),
 
 	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
+	setSessionFilter: (v) => set((s) => ({ sessionFilter: resolve(v, s.sessionFilter) })),
+	setShowArchivedGroupChats: (v) =>
+		set((s) => ({ showArchivedGroupChats: resolve(v, s.showArchivedGroupChats) })),
 	setHistorySearchFilterOpen: (v) =>
 		set((s) => ({ historySearchFilterOpen: resolve(v, s.historySearchFilterOpen) })),
 	setGroupChatHistorySearchFilterOpen: (v) =>
@@ -488,6 +524,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setEditingGroupId: (v) => set((s) => ({ editingGroupId: resolve(v, s.editingGroupId) })),
 	setEditingSessionId: (v) => set((s) => ({ editingSessionId: resolve(v, s.editingSessionId) })),
+	setEditingQueuedItemId: (id) => set({ editingQueuedItemId: id }),
 
 	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
 

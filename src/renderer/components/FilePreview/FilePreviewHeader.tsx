@@ -16,6 +16,7 @@ import {
 	ExternalLink,
 	FolderOpen,
 	WrapText,
+	Trash2,
 } from 'lucide-react';
 import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
@@ -60,6 +61,8 @@ interface FilePreviewHeaderProps {
 	currentHistoryIndex?: number;
 	ghCliAvailable?: boolean;
 	onPublishGist?: () => void;
+	/** Whether this file's contents can go up as a gist (plain text only) */
+	canPublishGist?: boolean;
 	hasGist?: boolean;
 	onOpenInGraph?: () => void;
 	/** Open this file as a new tab in the embedded Maestro browser. */
@@ -89,6 +92,9 @@ interface FilePreviewHeaderProps {
 	/** Per-button visibility map. When a key is false, the corresponding
 	 *  toolbar button is hidden (functionality stays reachable via shortcut). */
 	toolbarVisibility: FilePreviewToolbarVisibility;
+	/** Open the delete confirmation for this file. Omitted when the preview is
+	 *  not backed by a deletable on-disk file. */
+	onDelete?: () => void;
 }
 
 export const FilePreviewHeader = React.memo(function FilePreviewHeader({
@@ -121,6 +127,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	currentHistoryIndex,
 	ghCliAvailable,
 	onPublishGist,
+	canPublishGist,
 	hasGist,
 	onOpenInGraph,
 	onOpenInBrowser,
@@ -140,6 +147,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	wordWrap,
 	setWordWrap,
 	toolbarVisibility,
+	onDelete,
 }: FilePreviewHeaderProps) {
 	const [showBackPopup, setShowBackPopup] = useState(false);
 	const [showForwardPopup, setShowForwardPopup] = useState(false);
@@ -337,12 +345,13 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Publish as Gist button - only show if gh CLI is available and not in edit mode */}
+						{/* Publish as Gist button - gh CLI available, not editing, and the
+							file is plain text a gist can carry (see isGistPublishableFile) */}
 						{toolbarVisibility.publishGist &&
 							ghCliAvailable &&
 							!markdownEditMode &&
 							onPublishGist &&
-							!isImage && (
+							canPublishGist && (
 								<HoverTooltip
 									theme={theme}
 									label={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
@@ -408,6 +417,20 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									style={{ color: theme.colors.textDim }}
 								>
 									<Copy className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
+						{/* Delete file - last in the row, and always behind a confirmation.
+						    Same flow as the command palette's "File: Delete" entry. */}
+						{toolbarVisibility.delete && onDelete && (
+							<HoverTooltip theme={theme} label="Delete file">
+								<button
+									onClick={onDelete}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="delete-file-button"
+								>
+									<Trash2 className={headerIconClass} />
 								</button>
 							</HoverTooltip>
 						)}

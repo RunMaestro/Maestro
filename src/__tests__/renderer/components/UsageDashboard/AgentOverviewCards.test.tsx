@@ -9,14 +9,27 @@
  * - Sparklines render with per-session counts (accent color for worktrees)
  * - Empty / terminal-only session arrays render nothing
  * - Staggered card-enter animation delays are applied
+ * - The fuzzy agent filter narrows cards live and clears from the ESC pill
+ * - The group dropdown narrows the grid, and only offers groups that hold agents
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentOverviewCards } from '../../../../renderer/components/UsageDashboard/AgentOverviewCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+
+// The agent filter registers a layer while it holds text so Escape clears the
+// box instead of closing the dashboard. Stub the stack so the component can
+// render standalone.
+vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({
+		registerLayer: vi.fn(() => 'layer-123'),
+		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
+	}),
+}));
 
 const theme = THEMES['dracula'];
 
@@ -55,6 +68,7 @@ const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	bySessionLastQuery: {},
 	...overrides,
 });
 
@@ -412,6 +426,57 @@ describe('AgentOverviewCards', () => {
 		});
 	});
 
+	describe('Recent / last query', () => {
+		it('sorts cards by last query descending and sinks agents with none', () => {
+			const now = Date.now();
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Stale', createdAt: now }),
+				buildSession({ id: 's2', name: 'Fresh', createdAt: now }),
+				buildSession({ id: 's3', name: 'Never', createdAt: now }),
+			];
+			const data = buildData({
+				bySessionLastQuery: { s1: now - 86_400_000, s2: now - 60_000 },
+			});
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			const cards = screen.getAllByTestId('agent-card');
+			expect(cards[0].textContent).toContain('Fresh');
+			expect(cards[1].textContent).toContain('Stale');
+			expect(cards[2].textContent).toContain('Never');
+		});
+
+		it('swaps the corner badge from age to last query and highlights it', () => {
+			const now = Date.now();
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: now - 3 * 86_400_000 }),
+			];
+			const data = buildData({ bySessionLastQuery: { s1: now - 5 * 60_000 } });
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+			expect(screen.getByTestId('agent-card-age').textContent).toBe('3d');
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			const age = screen.getByTestId('agent-card-age') as HTMLElement;
+			expect(age.textContent).toBe('5m');
+			expect(age.dataset.highlighted).toBe('true');
+		});
+
+		it('drops the corner badge when the agent has no query in range', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 86_400_000 }),
+			];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-recent'));
+
+			expect(screen.queryByTestId('agent-card-age')).toBeNull();
+		});
+	});
+
 	describe('Auto % column', () => {
 		it('renders the auto-source share for each session from bySessionSource', () => {
 			const sessions: Session[] = [
@@ -546,6 +611,145 @@ describe('AgentOverviewCards', () => {
 		});
 	});
 
+	describe('fuzzy agent filter', () => {
+		const filterSessions = (): Session[] => [
+			buildSession({ id: 's1', name: '🕵️ Agent OSINT' }),
+			buildSession({ id: 's2', name: 'Bug Bounty' }),
+			buildSession({ id: 's3', name: 'Cyber Stocks' }),
+			buildSession({
+				id: 's4',
+				name: 'acappella',
+				parentSessionId: 's1',
+				worktreeBranch: 'feat/provider-auth-recovery',
+			}),
+		];
+
+		const typeFilter = (value: string) => {
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value },
+			});
+		};
+
+		it('renders every card and no match count before anything is typed', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+			expect(screen.queryByTestId('agent-overview-filter-count')).toBeNull();
+			expect(screen.queryByTestId('agent-overview-filter-clear')).toBeNull();
+		});
+
+		it('narrows the grid live as the user types', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('bounty');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('Bug Bounty');
+			expect(screen.getByTestId('agent-overview-filter-count').textContent).toBe('1 of 4');
+		});
+
+		it('matches non-contiguous characters (fuzzy, not substring)', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('cbst');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('Cyber Stocks');
+		});
+
+		it('matches a name whose leading emoji would otherwise break the prefix', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('agent');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('Agent OSINT');
+		});
+
+		it('matches a worktree on its branch name', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('provider-auth');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names).toHaveLength(1);
+			expect(names[0]).toContain('acappella');
+		});
+
+		it('ranks the best match first under the default Name sort', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Backups' }),
+				buildSession({ id: 's2', name: 'Bug Bounty' }),
+			];
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			// Alphabetically Backups leads; "bug" is a prefix match on Bug Bounty.
+			typeFilter('bug');
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names[0]).toContain('Bug Bounty');
+		});
+
+		it('keeps an explicit sort order while filtering', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Beta', aiTabs: [{}, {}] } as Partial<Session>),
+				buildSession({ id: 's2', name: 'Bravo', aiTabs: [{}, {}, {}, {}] } as Partial<Session>),
+			];
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-tabs'));
+			typeFilter('b');
+
+			const counts = screen
+				.getAllByTestId('agent-card-tab-count')
+				.map((el) => Number(el.textContent));
+			expect(counts).toEqual([4, 2]);
+		});
+
+		it('shows an empty-state message when nothing matches', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('zzzz');
+
+			expect(screen.queryAllByTestId('agent-card')).toHaveLength(0);
+			expect(screen.queryByTestId('agent-overview-cards')).toBeNull();
+			expect(screen.getByTestId('agent-overview-no-matches').textContent).toContain('zzzz');
+			expect(screen.getByTestId('agent-overview-filter-count').textContent).toBe('0 of 4');
+		});
+
+		it('restores every card when the ESC pill clears the filter', () => {
+			render(<AgentOverviewCards sessions={filterSessions()} data={buildData()} theme={theme} />);
+
+			typeFilter('bounty');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+
+			fireEvent.click(screen.getByTestId('agent-overview-filter-clear'));
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+			expect((screen.getByTestId('agent-overview-filter-input') as HTMLInputElement).value).toBe(
+				''
+			);
+		});
+
+		it('leaves query counts untouched by the filter', () => {
+			// Two claude-code sessions with no per-session breakdown: the provider
+			// fallback must stay suppressed even when the filter shows just one.
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha' }),
+				buildSession({ id: 's2', name: 'Beta' }),
+			];
+			const data = buildData({ byAgent: { 'claude-code': { count: 99, totalDuration: 0 } } });
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+			typeFilter('alpha');
+
+			expect(screen.getByTestId('agent-card-query-count').textContent).toBe('0');
+		});
+	});
+
 	it('staggers card-enter animation delays at 60ms per card', () => {
 		const sessions: Session[] = [
 			buildSession({ id: 'a', name: 'A' }),
@@ -560,5 +764,113 @@ describe('AgentOverviewCards', () => {
 		expect(cards[1].style.animationDelay).toBe('60ms');
 		expect(cards[2].style.animationDelay).toBe('120ms');
 		cards.forEach((c) => expect(c.className).toContain('card-enter'));
+	});
+
+	describe('group filter dropdown', () => {
+		const GROUPS = [
+			{ id: 'g-acme', name: 'Acme Corp', emoji: '\u{1F3E2}' },
+			{ id: 'g-internal', name: 'Internal' },
+		];
+		const GROUPED_SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' }),
+			buildSession({ id: 's2', name: 'Beta', groupId: 'g-acme' }),
+			buildSession({ id: 's3', name: 'Gamma', groupId: 'g-internal' }),
+			buildSession({ id: 's4', name: 'Delta' }),
+		];
+
+		const renderWithGroups = (
+			sessions: Session[] = GROUPED_SESSIONS,
+			groups: Array<{ id: string; name: string; emoji?: string }> = GROUPS
+		) =>
+			render(
+				<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} groups={groups} />
+			);
+
+		/** Open the dropdown and pick an option by its visible label. */
+		const pickGroup = (label: string) => {
+			fireEvent.click(screen.getByLabelText('Filter agents by group'));
+			fireEvent.click(screen.getByRole('option', { name: label }));
+		};
+
+		it('renders the dropdown ahead of the keyword filter', () => {
+			renderWithGroups();
+
+			const trigger = screen.getByLabelText('Filter agents by group');
+			const search = screen.getByTestId('agent-overview-filter-input');
+			// Node.compareDocumentPosition: 4 = trigger precedes search.
+			expect(trigger.compareDocumentPosition(search) & 4).toBeTruthy();
+		});
+
+		it('shows every agent until a group is picked', () => {
+			renderWithGroups();
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+		});
+
+		it('narrows the grid to the picked group', () => {
+			renderWithGroups();
+
+			pickGroup('\u{1F3E2} Acme Corp');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Gamma')).not.toBeInTheDocument();
+		});
+
+		it('offers an Ungrouped option that shows only unfiled agents', () => {
+			renderWithGroups();
+
+			pickGroup('Ungrouped');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Delta')).toBeInTheDocument();
+		});
+
+		it('omits groups that hold no agents', () => {
+			// An option whose every selection yields an empty grid is a dead end.
+			renderWithGroups([buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' })]);
+
+			fireEvent.click(screen.getByLabelText('Filter agents by group'));
+
+			expect(screen.queryByRole('option', { name: 'Internal' })).not.toBeInTheDocument();
+			expect(screen.getByRole('option', { name: '\u{1F3E2} Acme Corp' })).toBeInTheDocument();
+		});
+
+		it('treats an agent whose group was deleted as ungrouped', () => {
+			// A dangling groupId must not make an agent unreachable from every
+			// option - the Left Bar and the group rollup both do the same.
+			renderWithGroups(
+				[
+					// A populated real group so the dropdown has something to offer.
+					buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' }),
+					buildSession({ id: 's9', name: 'Orphan', groupId: 'g-gone' }),
+				],
+				GROUPS
+			);
+
+			pickGroup('Ungrouped');
+
+			expect(screen.getByText('Orphan')).toBeInTheDocument();
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+		});
+
+		it('does not render the dropdown when no groups are configured', () => {
+			// With nothing to pick between, the control could only ever no-op.
+			renderWithGroups([buildSession({ id: 's1', name: 'Alpha' })], []);
+
+			expect(screen.queryByLabelText('Filter agents by group')).not.toBeInTheDocument();
+		});
+
+		it('composes with the keyword filter', () => {
+			renderWithGroups();
+
+			pickGroup('\u{1F3E2} Acme Corp');
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value: 'Alpha' },
+			});
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
 	});
 });

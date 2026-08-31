@@ -10,10 +10,12 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
+import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
+import { formatCalendarDay } from '../../../../shared/formatters';
 import { PermissionList, RISK_COLOR } from './PermissionList';
+import { UsageGuide } from './UsageGuide';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import type {
@@ -29,13 +31,13 @@ import {
 } from './extensionModel';
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
 import { getModalActions } from '../../../stores/modalStore';
+import { launchFromSettings } from '../../../utils/launchFromSettings';
 
 interface ExtensionDetailsProps {
 	theme: Theme;
 	ext: UnifiedExtension;
 	contributions: AggregatedContributions | null;
 	busy: boolean;
-	onBack: () => void;
 	onTogglePlugin: (record: PluginRecord) => void;
 	onToggleBuiltin: (flag: NonNullable<UnifiedExtension['flag']>) => void;
 	onUninstall: (record: PluginRecord) => void;
@@ -70,7 +72,6 @@ export function ExtensionDetails({
 	ext,
 	contributions,
 	busy,
-	onBack,
 	onTogglePlugin,
 	onToggleBuiltin,
 	onUninstall,
@@ -190,16 +191,8 @@ export function ExtensionDetails({
 
 	return (
 		<div data-testid="extension-details" className="select-text">
-			<button
-				type="button"
-				data-testid="extension-details-back"
-				onClick={onBack}
-				className="flex items-center gap-1 text-sm mb-4 opacity-70 hover:opacity-100"
-				style={{ color: theme.colors.textMain }}
-			>
-				<ChevronLeft className="w-4 h-4" /> All extensions
-			</button>
-
+			{/* The way back lives in the view's header row, where the grid's
+			    "Install plugin…" button sits - see ExtensionsView. */}
 			{/* Title + meta */}
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">
@@ -227,6 +220,11 @@ export function ExtensionDetails({
 						{ext.version && <span>v{ext.version}</span>}
 						{ext.author && <span>· {ext.author}</span>}
 						<span>· {CATEGORY_LABELS[ext.category]}</span>
+						{ext.releaseDate && (
+							<span data-testid="extension-details-release-date">
+								· Released {formatCalendarDay(ext.releaseDate)}
+							</span>
+						)}
 					</div>
 				</div>
 				<span
@@ -241,6 +239,10 @@ export function ExtensionDetails({
 			<p className="text-sm mt-3" style={{ color: theme.colors.textMain }}>
 				{ext.description || 'No description provided.'}
 			</p>
+
+			{/* A one-liner says what the feature is; this says how to summon it and
+			    drive it. Only first-party features carry a usage guide today. */}
+			{ext.usage && <UsageGuide theme={theme} usage={ext.usage} />}
 
 			{isPlugin && ext.loadStatus && ext.loadStatus !== 'ok' && (
 				<p className="text-xs mt-2" style={{ color: theme.colors.error }}>
@@ -549,13 +551,16 @@ export function ExtensionDetails({
 						)
 					) : null}
 
-					{/* Pianola: config lives in its dedicated modal */}
+					{/* Pianola: config lives in its dedicated modal, which renders below
+					    Settings - so the launch closes Settings first. */}
 					{isPianola &&
 						(ext.state === 'enabled' ? (
 							<button
 								type="button"
 								data-testid="extension-open-pianola"
-								onClick={() => getModalActions().setPianolaModalOpen(true)}
+								onClick={() =>
+									launchFromSettings(() => getModalActions().setPianolaModalOpen(true))
+								}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>

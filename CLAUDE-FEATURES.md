@@ -12,7 +12,10 @@ The Usage Dashboard (`src/renderer/components/UsageDashboard/`) provides analyti
 src/renderer/components/UsageDashboard/
 ├── UsageDashboardModal.tsx      # Main modal - view tabs: Overview, Agents, Agent Overview, Activity, Auto Run (+ Cue when both Encore flags are on)
 ├── SummaryCards.tsx             # 12 metric cards (queries, duration, top agent, streak, best day, active days, worktree %, etc.)
-├── AgentOverviewCards.tsx       # Per-agent overview cards (Agents tab)
+├── AgentOverviewCards.tsx       # Per-agent overview cards (Agents tab) + the fuzzy agent filter
+├── AgentDetailModal.tsx         # Per-agent stats sub-modal, opened by clicking an agent card
+├── TabBreakdown.tsx             # Per-tab stat tiles inside AgentDetailModal (groups query events by tab_id)
+├── EntityTile.tsx               # Shared card-grid tile behind BOTH the agent grid and the tab grid
 ├── SessionStats.tsx             # Session statistics (Agent Overview tab)
 ├── AgentEfficiencyChart.tsx     # Agent efficiency chart (Agent Overview tab)
 ├── AgentComparisonChart.tsx     # Bar chart comparing provider usage

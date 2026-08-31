@@ -60,12 +60,12 @@
  */
 
 import { execFile } from 'child_process';
-import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
 import { captureMessage } from '../utils/sentry';
 import { resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageStore';
+import { readClaudeAccountIdentity } from './claude-account-identity';
 
 const execFileAsync = promisify(execFile);
 
@@ -102,13 +102,16 @@ export interface SampleUsageOptions {
  * `auth_state` is optional for back-compat with older maestro-p builds that
  * didn't emit the field - readers treat its absence as `'authenticated'`.
  */
+// `resets_at` is optional per window - claude paints no "Resets ..." row for a
+// window with nothing running in it, and rejecting the envelope over that
+// discarded the panel's real percentages (see the parser's module docblock).
 interface StatusWireEnvelope {
 	type: 'status';
 	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
-	session: { percent: number; resets_at: string };
-	week_all_models: { percent: number; resets_at: string };
-	week_sonnet_only: { percent: number; resets_at: string };
+	session: { percent: number; resets_at?: string };
+	week_all_models: { percent: number; resets_at?: string };
+	week_sonnet_only: { percent: number; resets_at?: string; label?: string };
 }
 
 /**
@@ -166,6 +169,14 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 			: asarModules;
 	}
 
+	// The canonical key for WHICH account this sample is about. Resolved before
+	// the spawn because the failure paths below need it too: `CLAUDE_CONFIG_DIR`
+	// can arrive via `customEnvVars` rather than `opts.configDir`, and keying off
+	// `opts.configDir` alone collapses two such accounts onto the same
+	// home-directory key - one broken account would then mute the other's reports
+	// and name the wrong directory in the breadcrumb.
+	const configDirKey = resolveConfigDirKey(childEnv);
+
 	let stdout: string;
 	try {
 		const result = await execFileAsync(process.execPath, [opts.binPath, '--status'], {
@@ -177,18 +188,18 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		});
 		stdout = result.stdout;
 	} catch (err) {
-		void reportFailure('spawn', opts, classifySpawnError(err));
+		void reportFailure('spawn', opts, configDirKey, classifySpawnError(err));
 		return null;
 	}
 
 	if (!stdout || stdout.trim().length === 0) {
-		void reportFailure('parse', opts, 'empty stdout');
+		void reportFailure('parse', opts, configDirKey, 'empty stdout');
 		return null;
 	}
 
 	const jsonLine = extractFirstJsonLine(stdout);
 	if (jsonLine === null) {
-		void reportFailure('parse', opts, 'no json object line found');
+		void reportFailure('parse', opts, configDirKey, 'no json object line found');
 		return null;
 	}
 
@@ -199,32 +210,59 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		void reportFailure(
 			'parse',
 			opts,
+			configDirKey,
 			`json parse: ${err instanceof Error ? err.message : String(err)}`
 		);
 		return null;
 	}
 
 	if (!isStatusWireEnvelope(parsed)) {
-		void reportFailure('parse', opts, 'wire shape rejected by type guard');
+		void reportFailure('parse', opts, configDirKey, 'wire shape rejected by type guard');
 		return null;
 	}
 
+	// WHO this config dir is logged in as, read straight from
+	// `<configDir>/.claude.json`. Stamped onto the snapshot rather than looked
+	// up at render time so the dashboard's label and its percentages always
+	// describe the same moment: `/login` can repoint a dir at another account
+	// between samples, and a row captioned with the new account over the old
+	// account's bars would be a worse lie than the directory name it replaces.
+	// Best-effort - null just falls back to the directory name downstream.
+	const identity = await readClaudeAccountIdentity(configDirKey);
+
+	// The sample worked, so forget whatever was last wrong with this config dir.
+	// Without this a dir that breaks, recovers, then breaks again the same way
+	// would stay silent until the re-report interval elapsed.
+	clearFailureHistory(configDirKey);
+
 	return {
 		sampledAt: new Date().toISOString(),
-		configDirKey: resolveConfigDirKey(childEnv),
+		configDirKey,
 		authState: parsed.auth_state ?? 'authenticated',
-		session: {
-			percent: parsed.session.percent,
-			resetsAt: parsed.session.resets_at,
-		},
-		weekAllModels: {
-			percent: parsed.week_all_models.percent,
-			resetsAt: parsed.week_all_models.resets_at,
-		},
+		...(identity?.email ? { accountEmail: identity.email } : {}),
+		...(identity?.accountUuid ? { accountUuid: identity.accountUuid } : {}),
+		...(identity?.organizationName ? { organizationName: identity.organizationName } : {}),
+		session: toStoreWindow(parsed.session),
+		weekAllModels: toStoreWindow(parsed.week_all_models),
 		weekSonnetOnly: {
-			percent: parsed.week_sonnet_only.percent,
-			resetsAt: parsed.week_sonnet_only.resets_at,
+			...toStoreWindow(parsed.week_sonnet_only),
+			...(parsed.week_sonnet_only.label ? { label: parsed.week_sonnet_only.label } : {}),
 		},
+	};
+}
+
+/**
+ * snake_case wire window to camelCase store window. Absent `resets_at` stays
+ * absent rather than becoming `undefined`-valued, so the persisted JSON is the
+ * same shape it always was for windows that do carry a reset.
+ */
+function toStoreWindow(window: { percent: number; resets_at?: string }): {
+	percent: number;
+	resetsAt?: string;
+} {
+	return {
+		percent: window.percent,
+		...(window.resets_at ? { resetsAt: window.resets_at } : {}),
 	};
 }
 
@@ -267,10 +305,14 @@ function isStatusWireEnvelope(obj: unknown): obj is StatusWireEnvelope {
 	);
 }
 
-function isWireWindow(value: unknown): value is { percent: number; resets_at: string } {
+// `resets_at` and `label` are accepted only as strings when present; a window
+// carrying just a percentage is valid (see the StatusWireEnvelope comment).
+function isWireWindow(value: unknown): value is { percent: number; resets_at?: string } {
 	if (!value || typeof value !== 'object') return false;
 	const w = value as Record<string, unknown>;
-	return typeof w.percent === 'number' && typeof w.resets_at === 'string';
+	if (typeof w.percent !== 'number') return false;
+	if (w.resets_at !== undefined && typeof w.resets_at !== 'string') return false;
+	return w.label === undefined || typeof w.label === 'string';
 }
 
 /**
@@ -295,18 +337,78 @@ function classifySpawnError(err: unknown): string {
 }
 
 /**
+ * Last reported failure signature per config dir, plus when it was reported.
+ * Module-level because the sampler is a set of free functions sharing one
+ * process; `resetFailureReportingForTests` clears it between cases.
+ */
+const lastReportedFailure = new Map<string, { signature: string; reportedAt: number }>();
+
+/**
+ * Re-report a failure that has not changed only this often. Long enough that a
+ * permanently broken account costs a handful of events per day instead of one
+ * per tick, short enough that an ongoing outage is still visible in Sentry.
+ */
+export const FAILURE_REREPORT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Decide whether this failure is worth reporting, and record it either way.
+ *
+ * The sampler runs on a timer and keeps running after a failure, so a config
+ * dir that is broken for a week reported the identical warning on every single
+ * tick - one install produced over ten thousand of them, which is most of the
+ * project's Sentry volume (MAESTRO-Q2). We report the FIRST occurrence of each
+ * distinct (stage, reason) signature per config dir, re-report an unchanged one
+ * every `FAILURE_REREPORT_INTERVAL_MS`, and suppress the rest.
+ *
+ * Note what this deliberately does NOT do: it makes no claim that any exit code
+ * is expected. Every distinct failure a user hits still reaches Sentry, and a
+ * regression that hits many installs still shows up as many events, one per
+ * install, instead of being buried under one install's repeats.
+ */
+function shouldReportFailure(configDirKey: string, signature: string, now: number): boolean {
+	const previous = lastReportedFailure.get(configDirKey);
+	if (previous && previous.signature === signature) {
+		if (now - previous.reportedAt < FAILURE_REREPORT_INTERVAL_MS) {
+			return false;
+		}
+	}
+	lastReportedFailure.set(configDirKey, { signature, reportedAt: now });
+	return true;
+}
+
+/**
+ * Forget a config dir's failure history after a successful sample, so a
+ * flapping account reports again the next time it breaks rather than staying
+ * silent for the rest of the process's life.
+ */
+function clearFailureHistory(configDirKey: string): void {
+	lastReportedFailure.delete(configDirKey);
+}
+
+/** Test-only: drop all remembered failure signatures. */
+export function resetFailureReportingForTests(): void {
+	lastReportedFailure.clear();
+}
+
+/**
  * Emit a Sentry warning breadcrumb with the safe subset of context - stage,
  * binPath, configDir, reason. Full env / full stdout are deliberately omitted.
+ *
+ * Repeats of an unchanged failure are dropped - see `shouldReportFailure`.
  */
 async function reportFailure(
 	stage: 'spawn' | 'parse',
 	opts: SampleUsageOptions,
+	configDirKey: string,
 	reason: string
 ): Promise<void> {
+	if (!shouldReportFailure(configDirKey, `${stage}|${reason}`, Date.now())) {
+		return;
+	}
 	await captureMessage('maestro-p --status sample failed', 'warning', {
 		stage,
 		binPath: opts.binPath,
-		configDir: opts.configDir ?? path.join(os.homedir(), '.claude'),
+		configDir: configDirKey,
 		reason,
 	});
 }

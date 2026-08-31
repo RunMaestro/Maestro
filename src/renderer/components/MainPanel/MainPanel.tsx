@@ -1,12 +1,4 @@
-import React, {
-	useRef,
-	useCallback,
-	useMemo,
-	useState,
-	useEffect,
-	forwardRef,
-	useImperativeHandle,
-} from 'react';
+import React, { useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { Wand2 } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { FilePreviewHandle } from '../FilePreview';
@@ -17,6 +9,10 @@ import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
+import {
+	useAgentModelEffortOptions,
+	resolveModelEffort,
+} from '../../hooks/agent/useAgentModelEffortOptions';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
@@ -33,6 +29,7 @@ import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingBufferResponder';
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
+import { useRemoteTerminalBufferResponder } from '../../hooks/terminal/useRemoteTerminalBufferResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import {
 	aiTabFocusFields,
@@ -42,7 +39,6 @@ import {
 	getTabDisplayName,
 	groupFocusFields,
 } from '../../utils/tabHelpers';
-import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
@@ -282,6 +278,10 @@ export const MainPanel = React.memo(
 		useCoworkingRegistrySync();
 		useCoworkingBufferResponder(terminalViewRefs);
 
+		// Serve CLI/web `read-terminal` requests. Lives here because the xterm
+		// scrollback exists only in the mounted TerminalView, not in the store.
+		useRemoteTerminalBufferResponder(terminalViewRefs);
+
 		// Extract tab handlers from props
 		const {
 			onTabSelect,
@@ -384,11 +384,14 @@ export const MainPanel = React.memo(
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
 
-		// Model/Effort pills: available options, current values, and agent-level defaults
-		const [pillModels, setPillModels] = useState<string[]>([]);
-		const [pillEfforts, setPillEfforts] = useState<string[]>([]);
-		const [agentDefaultModel, setAgentDefaultModel] = useState('');
-		const [agentDefaultEffort, setAgentDefaultEffort] = useState('');
+		// Model/Effort pills: available options and agent-level defaults. Shared with
+		// the keyboard-only Model & Effort modal so both show the same truth.
+		const {
+			models: pillModels,
+			efforts: pillEfforts,
+			defaultModel: agentDefaultModel,
+			defaultEffort: agentDefaultEffort,
+		} = useAgentModelEffortOptions(activeSession?.toolType);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		// Navigate to agent/tab when clicking an agent pill in the log viewer
@@ -462,62 +465,12 @@ export const MainPanel = React.memo(
 			[activeSession]
 		);
 
-		// Fetch available models, effort levels, and agent defaults when agent type changes.
-		// Uses a stale flag to prevent race conditions when switching between agents -
-		// without this, a slow response (e.g., `opencode models` subprocess) from the
-		// previous agent can overwrite the current agent's model list.
-		useEffect(() => {
-			if (!activeSession?.toolType) return;
-			let stale = false;
-			const agentId = activeSession.toolType;
-			// Fetch models
-			window.maestro.agents
-				.getModels(agentId)
-				.then((models) => {
-					if (!stale) setPillModels(models);
-				})
-				.catch(() => {
-					if (!stale) setPillModels([]);
-				});
-			// Fetch effort options. Agents use either `effort` (Claude Code) or
-			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both
-			// and use whichever the agent defines, so this stays correct as new
-			// agents are added without touching this file.
-			Promise.all([
-				window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
-				window.maestro.agents
-					.getConfigOptions(agentId, 'reasoningEffort')
-					.catch(() => [] as string[]),
-			])
-				.then(([effortOpts, reasoningOpts]) => {
-					if (stale) return;
-					setPillEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
-				})
-				.catch(() => {
-					if (!stale) setPillEfforts([]);
-				});
-			// Fetch agent-level config for default model/effort
-			window.maestro.agents
-				.getConfig(agentId)
-				.then((config) => {
-					if (stale) return;
-					setAgentDefaultModel(config?.model || '');
-					setAgentDefaultEffort(readEffortFromConfig(config) ?? '');
-				})
-				.catch(() => {
-					if (stale) return;
-					setAgentDefaultModel('');
-					setAgentDefaultEffort('');
-				});
-			return () => {
-				stale = true;
-			};
-		}, [activeSession?.toolType]);
-
 		// Resolved current model/effort: tab override > session override > agent config > empty
-		const resolvedModel = activeTab?.customModel || activeSession?.customModel || agentDefaultModel;
-		const resolvedEffort =
-			activeTab?.customEffort || activeSession?.customEffort || agentDefaultEffort;
+		const { model: resolvedModel, effort: resolvedEffort } = resolveModelEffort(
+			activeTab,
+			activeSession,
+			{ defaultModel: agentDefaultModel, defaultEffort: agentDefaultEffort }
+		);
 
 		const setTabModel = useTabStore((s) => s.setTabModel);
 		const setTabEffort = useTabStore((s) => s.setTabEffort);
@@ -734,6 +687,22 @@ export const MainPanel = React.memo(
 				props.onPublishTextAsGist?.(resolved.content, resolved.displayName);
 			},
 			[resolveBuffer, props.onPublishTextAsGist]
+		);
+
+		// A file preview tab publishes under its own filename so the gist keeps the
+		// extension GitHub highlights by, and reports its path so the published URL
+		// is remembered against the file rather than the tab.
+		const handlePublishFileTabGist = useCallback(
+			(tabId: string) => {
+				const fileTab = activeSession?.filePreviewTabs?.find((t) => t.id === tabId);
+				if (!fileTab) return;
+				const filename = fileTab.name + fileTab.extension;
+				props.onPublishTextAsGist?.(fileTab.content, fileTab.name, {
+					filename,
+					filePath: fileTab.path,
+				});
+			},
+			[activeSession?.filePreviewTabs, props.onPublishTextAsGist]
 		);
 
 		const handleSendTerminalBufferToAgent = useCallback(
@@ -1188,6 +1157,9 @@ export const MainPanel = React.memo(
 									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
 									onNewFileTab={pianolaTabHandlers.onNewFileTab}
 									onNewBrowserTab={pianolaTabHandlers.onNewBrowserTab}
 									onBrowserTabSelect={pianolaTabHandlers.onBrowserTabSelect}
@@ -1274,6 +1246,9 @@ export const MainPanel = React.memo(
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
 									onNewFileTab={onNewFileTab}
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}
@@ -1448,6 +1423,7 @@ export const MainPanel = React.memo(
 									mergeTargetName={mergeTargetName}
 									onCancelMerge={onCancelMerge}
 									onExitWizard={onExitWizard}
+									onStopWizardTurn={props.onStopWizardTurn}
 									paneTabActions={paneTabActions}
 									paneFileActions={paneFileActions}
 									onDeleteLog={props.onDeleteLog}

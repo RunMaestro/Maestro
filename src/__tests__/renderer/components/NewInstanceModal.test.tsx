@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -61,6 +61,18 @@ const createAgentConfig = (overrides: Partial<AgentConfig> = {}): AgentConfig =>
 	hidden: false,
 	...overrides,
 });
+
+/**
+ * Reveal every provider row.
+ *
+ * The picker hides what this machine cannot run by default, so a test that
+ * asserts on ordering, badges, or unavailable rows has to ask for them first -
+ * otherwise it is asserting against the filtered view.
+ */
+const showAllProviders = async (): Promise<void> => {
+	const toggle = await screen.findByRole('switch', { name: 'Show all supported providers' });
+	fireEvent.click(toggle);
+};
 
 describe('NewInstanceModal', () => {
 	let theme: Theme;
@@ -194,6 +206,47 @@ describe('NewInstanceModal', () => {
 			});
 		});
 
+		it('should list supported agents alphabetically, with coming-soon ones below', async () => {
+			// Detection order is arbitrary, so the rows must not inherit it. Each
+			// bucket sorts by the name the row renders, matching the wizard tile
+			// strip and the Group Chat moderator dropdown.
+			const expected = ['Antigravity CLI', 'Codex', 'Grok CLI', 'OpenCode', 'Gemini CLI'];
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'opencode', name: 'OpenCode', available: true }),
+				createAgentConfig({ id: 'gemini-cli', name: 'Gemini CLI', available: false }),
+				createAgentConfig({ id: 'grok', name: 'Grok CLI', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: true }),
+				createAgentConfig({ id: 'antigravity', name: 'Antigravity CLI', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			// Gemini CLI is unavailable, so the default filter hides it. This test is
+			// about ORDER across both buckets, so ask for every row.
+			await showAllProviders();
+
+			await waitFor(() => {
+				expect(screen.getByText('Antigravity CLI')).toBeInTheDocument();
+			});
+
+			const names = within(screen.getByRole('listbox', { name: 'Agent provider selection' }))
+				.getAllByRole('option')
+				.map((row) => row.textContent ?? '')
+				.map((text) => expected.find((name) => text.includes(name)));
+
+			// Gemini CLI is not pickable, so it sinks to the bottom even though
+			// its name sorts ahead of Grok CLI and OpenCode.
+			expect(names).toEqual(expected);
+		});
+
 		it('should display path for available agents', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({
@@ -262,8 +315,89 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 
+			// A coming-soon provider cannot be run, so it is filtered out by default.
+			await showAllProviders();
+
 			await waitFor(() => {
 				expect(screen.getByText('Coming Soon')).toBeInTheDocument();
+			});
+		});
+
+		it('hides providers this machine cannot run until asked', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: false }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('Codex')).toBeNull();
+
+			// The count describes ALL supported providers, not the filtered rows -
+			// "1 of 1" would answer nothing.
+			expect(screen.getByText('1 of 2 locally')).toBeInTheDocument();
+
+			await showAllProviders();
+			await waitFor(() => {
+				expect(screen.getByText('Codex')).toBeInTheDocument();
+			});
+		});
+
+		it('keeps the selected provider on screen even when it is missing', async () => {
+			// Duplicating an agent whose provider is not installed here would
+			// otherwise hide the row that shows what is selected.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: false }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={
+						{
+							id: 'source-1',
+							name: 'Old Agent',
+							toolType: 'codex',
+							cwd: '/test/project',
+							projectRoot: '/test/project',
+							fullPath: '/test/project',
+							state: 'idle',
+							inputMode: 'ai',
+							aiTabs: [],
+							closedTabHistory: [],
+							shellLogs: [],
+							executionQueue: [],
+							contextUsage: 0,
+							workLog: [],
+							isGitRepo: false,
+							changedFiles: [],
+							fileTree: [],
+							fileExplorerExpanded: [],
+							fileExplorerScrollPos: 0,
+							isLive: false,
+						} as unknown as Session
+					}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Codex')).toBeInTheDocument();
 			});
 		});
 
@@ -405,6 +539,9 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+
+			// `openai-codex` is not a pickable id, so the default filter hides it.
+			await showAllProviders();
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -1874,6 +2011,9 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 
+			// Two of the three are unavailable, so ask past the default filter.
+			await showAllProviders();
+
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 				expect(screen.getByText('OpenAI Codex')).toBeInTheDocument();
@@ -1896,6 +2036,9 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+
+			// The Coming Soon row only exists past the default filter.
+			await showAllProviders();
 
 			await waitFor(() => {
 				expect(screen.getByText('Available')).toBeInTheDocument();

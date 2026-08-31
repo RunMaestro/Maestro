@@ -1,4 +1,5 @@
 import type React from 'react';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type Convert from 'ansi-to-html';
@@ -129,9 +130,8 @@ export interface TerminalOutputProps {
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	/**
 	 * Whether this chat view answers the global Force Send keyboard shortcut
 	 * (`maestro:triggerForceSendQueued`). The single view is the only chat on

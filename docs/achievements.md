@@ -74,6 +74,8 @@ Separate from Conductor ranks, Maestro tracks your **keyboard mastery** based on
 |   3   | Virtuoso         | 75-99%         |
 |   4   | Keyboard Maestro | 100%           |
 
+Mastery counts only the shortcuts that have a chord bound, so unassigned actions never hold you below 100%.
+
 Your current keyboard mastery level and progress are shown in the **Keyboard Shortcuts panel** (press `?` or `Cmd/Ctrl+/` to open). The panel displays which shortcuts you've used (marked with a checkmark) and which remain to be discovered. See [Keyboard Shortcuts](./keyboard-shortcuts) for the full shortcut reference.
 
 ## Leaderboard
@@ -92,3 +94,17 @@ The leaderboard tracks two competitive categories:
 Each entry shows the user's conductor badge level, social links, and ranking. Your stats sync across devices when you're signed in, so your achievements follow you wherever you use Maestro.
 
 Your leaderboard avatar is sourced from GitHub. Link your GitHub profile in the registration form, and update your picture on GitHub to change how it appears on the leaderboard.
+
+### If the leaderboard falls behind your local time
+
+Auto Run time is credited on your machine first and sent to the leaderboard as
+it is earned. When a submission cannot go through (you are offline, the server
+is unreachable, or you quit mid-run before the time was sent), Maestro keeps the
+unsent time in a queue and ships it on the next launch instead of dropping it.
+
+Occasionally time still goes missing - usually from a crash or a machine that
+was offline for a long stretch. The leaderboard adds up the time it receives, so
+it cannot backfill on its own: later runs only ever add their own time. When
+Maestro detects a gap, it warns you and the **Push Difference** button appears
+in the leaderboard panel next to **Pull Down**. Click it to send the missing
+time in one go, then **Pull Down** to confirm the new total.

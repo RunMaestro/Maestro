@@ -105,7 +105,8 @@ Command mode ("bang commands"): running a `!command` typed in the AI composer an
 
 **Key exports:**
 
-- `runShellCommand({ session, tabId, command })` - append a live output card to the tab and run the command; resolves on exit
+- `dispatchShellCommand({ session, tabId, command, request? })` - record the command in `aiCommandHistory` (bang-prefixed) and run it. **This is the entry point every command surface uses**: a typed `!` command and an accepted AI command mode suggestion both go through it, so both run, record, and recall identically. It forwards its whole options object to `runShellCommand` rather than destructuring the fields it happens to name, so a field added later cannot be silently dropped here. The optional `request` is the only thing separating the two: present, it marks the command as generated rather than typed
+- `runShellCommand({ session, tabId, command })` - append a live output card to the tab and run the command; resolves on exit. Use `dispatchShellCommand` unless you deliberately want the run WITHOUT the history entry
 - `cancelShellCommand(logId)` - stop a running command by its card's log id (the card's Stop button)
 - `resolveCommandCwd(session)` - where a bang command runs (agent `cwd`, or the SSH remote's working dir). Deliberately NOT `shellCwd`, which only terminal mode's `cd` moves. The composer's `CommandModeBar` and Tab completion both call this so the advertised directory, the completion source, and the actual run directory can never disagree
 - `isShellCommandRunning(logId)`, `buildShellRunSessionId(sessionId, runId)`, `SHELL_COMMAND_OUTPUT_LIMIT`
@@ -114,20 +115,55 @@ Command mode ("bang commands"): running a `!command` typed in the AI composer an
 
 Output is buffered and flushed on an animation frame (one store write per frame, not per chunk) and capped at `SHELL_COMMAND_OUTPUT_LIMIT` characters, because transcript logs are persisted to the sessions file.
 
+The output box caps at 480px and follows its own tail via `useStickToBottom`, so a chatty command cannot push the conversation off the screen AND the newest lines stay visible. That pairing is the whole reason the hook exists: the cap is what stops the outer transcript auto-scroll from being able to follow the output, because the card stops growing once it is reached.
+
 Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellCommand`. Routing happens at the top of `useInputProcessing.processInput`.
+
+**The card has TWO copy buttons, and they copy different things.** The one in the header copies the OUTPUT (ANSI-stripped - the stored text keeps its escape codes so the card can render colour, but pasting `\x1b[36m` anywhere is never wanted). The one beside the command copies the COMMAND, and appears only while the command is expanded, so it cannot be mistaken for the output copy a few pixels to its right. Both are `<CopyIconButton>`; the hand-rolled copy-then-swap-to-a-checkmark this file used to carry is gone.
+
+**The command line is a disclosure.** It is truncated to one line by default and expands to a wrapped, selectable block when the header is clicked - a `find` with a dozen predicates otherwise buries the exit code and the controls on every card. The toggle is a real `<button>` with `aria-expanded`, not a `div` with `role="button"`: this is a keyboard-first app, and `role` grants the semantics without the tab stop or Enter/Space handling. The copy button inside that clickable header relies on `CopyIconButton`'s `stopPropagation`, or copying would also collapse the command out from under the click.
+
+**Deleting a card.** The card carries its own trash icon (with the same inline "Delete? Yes/No" confirm the transcript's user messages use) because it takes an early return in `TerminalOutput` and never renders the shared hover toolbar. It routes to the SAME `handleDeleteLog` in `hooks/tabs/internal/useScrollLogHandlers.ts`, which now branches on `log.shellCommand` before its `source === 'user'` guard, since a card is neither a user message nor part of one:
+
+- It deletes as a **single entry**, not the span-to-the-next-user-message a chat message deletes as. The card owns both its command and its output.
+- It must **never** call `claude.deleteMessagePair` - the agent was bypassed entirely, so there is no pair in its session to delete.
+- Delete is hidden while the command is still **running**. Removing a live card would orphan the process: output keeps streaming into an entry that no longer exists, with no Stop button left to reach it. Stop first, then delete.
+
+Because that gate reads `shellCommand.status`, `LogItem`'s memo comparator in `TerminalOutput.tsx` must compare the `shellCommand` fields (`status`, `exitCode`, `durationMs`, `truncated`) and not just `log.text`. A command that prints NOTHING (`!true`, `!mkdir foo`) changes only those fields when it exits, so comparing text alone froze the card mid-run: spinner up, Stop still offered, delete still hidden.
+
+The recall-history rule lives in the pure reducer `hooks/tabs/internal/deleteShellCommandLog.ts`: the bang-prefixed `aiCommandHistory` entry is pruned **only when no card anywhere in the agent still shows that command**. The two lists have different scopes - cards are per tab, `aiCommandHistory` is per agent and deduplicated - so pruning unconditionally would strip `!ls` from up-arrow recall while two other `ls` cards sit on screen.
 
 ### Command mode is STATE, not a text prefix
 
 The `!` is a _gesture_ that enters the mode and is consumed on entry - it never lands in the draft. Once in command mode the composer holds the bare command line. **Never infer the mode by testing the text for a leading `!`**: a real command can contain bangs (`find . -name '*!*'`), and the draft doesn't start with one anyway.
 
-The flag lives in two places, and they must move together:
+`!` is a **rung, not a toggle**. Each press on an EMPTY composer climbs one rung, and Escape on an empty composer climbs back down. Focus never leaves the textarea at any point:
+
+```
+agent chat  --!->  'shell'  --!->  'ai'
+agent chat  <-Esc-  'shell'  <-Esc-  'ai'
+```
+
+| Rung      | The draft is...                 | Enter does                                               |
+| --------- | ------------------------------- | -------------------------------------------------------- |
+| `'off'`   | a message for the agent         | sends it                                                 |
+| `'shell'` | a literal shell command line    | runs it (`dispatchShellCommand`)                         |
+| `'ai'`    | plain English describing a want | asks the tab's model for one command line, then confirms |
+
+There is no rung above `'ai'`, so a `!` typed there is ordinary text - the request is prose, and prose contains bangs. A `!` typed into a NON-empty composer is ordinary text on every rung (`echo !` never climbs).
+
+The mode lives in two places, and they must move together:
 
 | Where                              | Scope              | Set by                                                     |
 | ---------------------------------- | ------------------ | ---------------------------------------------------------- |
 | `composerInputStore.aiCommandMode` | live, active tab   | the `!` gesture; Escape/Backspace on an empty command line |
 | `AITab.commandMode`                | persisted, per tab | flushed with `inputValue` (see draft write-back below)     |
 
-**The invariant:** the same string is a shell command or a message to the agent depending only on this flag. Any path that persists or restores `inputValue` MUST carry `commandMode` with it, or a restored draft routes the wrong way. `syncAiInputToSession` reads the mode from the store itself rather than taking it as an argument, precisely so a caller cannot forget it; the queued write-back carries it too.
+`AITab.commandMode` is typed `ComposerCommandMode | boolean` because builds before AI command mode wrote `true` for what is now `'shell'`, and those values are still on disk. **Always read it through `normalizeComposerCommandMode()`**, which maps `true` -> `'shell'` and anything unrecognised -> `'off'` (a corrupt value must land the user in chat, never in a shell).
+
+**The invariant:** the same string is a shell command, a request for one, or a message to the agent depending only on this value. Any path that persists or restores `inputValue` MUST carry `commandMode` with it, or a restored draft routes the wrong way. `syncAiInputToSession` reads the mode from the store itself rather than taking it as an argument, precisely so a caller cannot forget it; the queued write-back carries it too.
+
+Because the value is a union now, **never test it for truthiness** - `'off'` is a truthy string. Compare against `'off'` / `'shell'` / `'ai'`, or use `isShellCommandMode()` / `isAiCommandMode()`.
 
 ### Drafts are written back on a typing timer, and always to the tab they were typed in
 
@@ -145,14 +181,84 @@ Two rules keep drafts from being lost, and both exist because they were broken b
 
 `utils/shellCommandInput.ts` is down to two helpers:
 
-| Function                             | Job                                                                       |
-| ------------------------------------ | ------------------------------------------------------------------------- |
-| `detectCommandModeEntry(prev, next)` | Should this edit enter command mode? Returns the text to keep, bang eaten |
-| `stripShellCommandEscape(v)`         | Unwraps `\!foo` -> `!foo` for messages that really start with a bang      |
+| Function                                 | Job                                                                  |
+| ---------------------------------------- | -------------------------------------------------------------------- |
+| `detectCommandModeEntry(prev, next)`     | Should this edit climb a rung? Returns the text to keep, bang eaten  |
+| `nextComposerCommandMode(mode)`          | The rung a `!` climbs to, or null when there is none above           |
+| `previousComposerCommandMode(mode)`      | The rung Escape climbs down to; `'off'` is the floor                 |
+| `normalizeComposerCommandMode(raw)`      | Persisted value (including the legacy boolean) -> a mode             |
+| `isShellCommandMode` / `isAiCommandMode` | Rung predicates, so call sites don't compare strings inline          |
+| `stripShellCommandEscape(v)`             | Unwraps `\!foo` -> `!foo` for messages that really start with a bang |
 
-Entry requires the composer to have been **empty** before the edit, so retrofitting a `!` onto an in-progress message doesn't silently turn a sentence into a shell command.
+Entry requires the composer to have been **empty** before the edit, so retrofitting a `!` onto an in-progress message doesn't silently turn a sentence into a shell command - and so `echo !` stays shell text rather than climbing.
 
-Surfaces that consume the mode: `InputArea` (reads the store once, derives `isCommandModeDraft` / `isShellInput`, passes both down), `useInputKeyDown` (Tab trigger, dropdown navigation, and the Escape/Backspace exit), `useInputHandlers` (which composer slice completion reads, plus the `getCommandMode` dep threaded into `useInputProcessing`), and `useInputAreaTextChange` (the entry gesture, and suppressing `@` mentions and slash commands - in a shell line `@` is an scp target and `/` starts an absolute path).
+Surfaces that consume the mode: `InputArea` (reads the store once, derives `isShellCommandDraft` / `isAiCommandDraft` / `isShellInput`, passes them down), `useInputKeyDown` (Tab trigger, dropdown navigation, the Escape/Backspace ladder, and the proposal card's answer keys), `useInputHandlers` (which composer slice completion reads, the attachment guards, plus the `getCommandMode` dep threaded into `useInputProcessing`), and `useInputAreaTextChange` (the `!` gesture, and suppressing `@` mentions and slash commands - in a shell line `@` is an scp target and `/` starts an absolute path, and in a prose request neither belongs).
+
+### aiCommand.ts - AI command mode
+
+Turns a plain-English request into one shell command line, shows it, and runs it only after a yes/no. The composer's second bang rung.
+
+**Key exports:**
+
+- `requestAiCommand({ session, tabId, request })` - ask the tab's OWN provider, at its current model and effort (resolved with `codifyTurnSettings`, the same helper a chat turn uses), for one command line. Fire and forget: everything visible is driven off `aiCommandStore`
+- `acceptAiCommand(session, entry)` - run the proposal through `dispatchShellCommand`
+- `dismissAiCommand(entry)` - clear the card and RETURN the original request text, so declining hands it back to the composer for editing
+
+**State** lives in `stores/aiCommandStore.ts`, keyed per AI tab (`${sessionId}:${tabId}`), never on the session model: nothing here survives a restart, and a proposal the user never answered must not come back days later attached to a stale working directory. Each attempt carries a `requestId`, because the model round trip cannot be cancelled once dispatched - a reply that lands after a dismissal (or after a second request replaced the first) is dropped rather than resurrecting a card the user closed.
+
+**The model call** is `aiCommand:suggest` in the main process (`ipc/handlers/aiCommand.ts`), which builds the prompt with `shared/aiCommand.ts` and runs it through `groomContext` with `readOnlyMode` AND `disableTools`. Both flags matter: with tools available, a task-shaped request ("clean up the build output") makes the model try to DO the work instead of naming the command. The prompt itself is `src/prompts/ai-command.md`, editable in Settings -> Maestro Prompts like any other core prompt.
+
+**The handler never executes anything.** The accepted command goes back through the ordinary command-mode path, so a suggested command and a typed one run in the same directory, on the same SSH remote, through the same code.
+
+**Follow-ups carry history.** `requestAiCommand` mines the target tab's transcript with `collectRecentCommands()` and sends the last `AI_COMMAND_HISTORY_LIMIT` (8) command lines, oldest first, so "actually just give me a count" can refine the `find` command above it instead of composing a new one. Three things about that:
+
+- It reads the **transcript**, not `aiCommandHistory`. That list is per agent, deduplicated, and order-normalized (a repeat moves to the end), so it cannot answer "what did I just run in THIS tab" - which is the only question a follow-up is asking.
+- It reads the **target tab** (`tabId`), not the active one. A tab switch while a suggestion is in flight must not hand one tab's commands to another tab's request.
+- Failures are **labeled, not filtered**. "That didn't work, try something else" is a common follow-up, and a model that cannot see the failure proposes the same broken command again.
+
+Each entry carries the **request as well as the command**, rendered as an `Asked:` / `Ran:` pair. `LogEntry.shellCommand.request` is stamped by `runShellCommand` only when the caller supplies one, so the field's presence means exactly "this command was generated, not typed" - and `ShellCommandCard` shows it above the command as provenance. This matters because a follow-up refines the ASK at least as much as the command line: `find . -newermt '2 days ago' -type f` does not say it was requested as "files edited in the past two days", so without the request the model has to reverse-engineer intent from flags.
+
+`formatRecentCommands` collapses whitespace in both fields before emitting them. That is not cosmetic: the block is a list where one entry is one or two labeled lines, and a request is typed into a MULTILINE composer, so a newline in a request would inject what looks like another entry into the block above it.
+
+Commands and exit statuses are sent; output is not. The refinement cases are about the command's shape, and a `find` over a large tree would swamp the prompt with its own results.
+
+`shared/aiCommand.ts` holds the two pure pieces, unit-testable without either process: `buildAiCommandPrompt()` (substitution runs in ONE pass, so no substituted value is rescanned for further tokens - chained `.replace()` calls let a previously-run command like `echo {{USER_REQUEST}}` sitting in the history get filled in by the next replace in the chain) and `extractCommandLine()` (strips fences, `$`/`%` prompts, wrapping backticks, and lead-in lines; returns null rather than proposing an empty run).
+
+---
+
+### `probeSessionAiProcesses()` (in process.ts)
+
+`probeSessionAiProcesses(sessionId, targetTabId)` asks the MAIN process what is actually running for one agent's AI tabs, returning `{anyActive, targetTabActive, earliestStartTime, probeFailed}`.
+
+Reach for it anywhere the question is "is this agent mid-turn right now". The renderer store is NOT a safe answer: it can still read `idle` for a moment after a turn starts or before an exit reconciles, and both the queue decision and the cross-agent mention-only branch have been bitten by that window. Terminal tabs and Cue runs are filtered out (neither holds the agent's sequential AI turn), and a forced-parallel run (`-fp-<n>` suffix) counts as busy on its own tab.
+
+**It fails SAFE.** An IPC failure returns every flag `true` plus `probeFailed`, because unknown ownership must read as busy - treating it as idle re-spawns a live process id and loses its response. Do not "simplify" that to a `false` default.
+
+---
+
+### crossAgentMentions.ts (~115 lines)
+
+Resolve and dispatch `@agent` mentions. Deliberately two steps, because WHEN a consult fires is part of the contract:
+
+- `planCrossAgentMentions(message, sourceSessionId)` - resolve the mentioned agents. Sends nothing. Returns `null` when the message mentions no other agent, and `suppressLocal: true` when it LEADS with an `@agent` mention (the source agent must not answer).
+- `dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId)` - fire the consults for an already-resolved plan.
+- `dispatchCrossAgentMentionsForMessage(message, sourceSession, sourceTabId)` - plan + dispatch, for callers holding only the raw text.
+
+**A queued message must not consult at submit time - including one addressed only at the other agent.** A message sent while the agent is busy goes to the execution queue; dispatching its mention immediately pulls the other agent into a question that is still several messages deep in the queue. So `useInputProcessing` PLANS at submit (it needs `suppressLocal` to decide whether to send locally at all), stamps `crossAgentMention: true` on the `QueuedItem`, and `agentStore.processQueuedItem` dispatches when the item becomes the agent's turn. `noteDispatch` strips the flag so an Agent Resilience retry cannot re-consult, and `handleEditQueueItem` recomputes it against the edited text.
+
+A LEADING mention (`suppressLocal`) is the same story. The source agent does not answer it, but it still queues - as a `crossAgentOnly` item - whenever `hasWorkAheadOfNewMessage()` says the user lined work up first. Dispatching it fires the consult and returns before the spawn and before `noteDispatch`, then calls `applyQueuedItemRelease()` to hand back the busy state the dequeue took, since no process will arrive to close it out. It consults at submit time only when nothing is ahead of it - and that check goes through `probeSessionAiProcesses()`, not the store, so a turn main has already started still counts.
+
+Module-level functions, not a hook: the queue drain runs outside React. The send itself is `sendCrossAgentRequest` in `hooks/agent/useCrossAgentDispatch.ts`, also module-level, sharing one `pendingRequests` tracker with the hook that subscribes to the response chunks.
+
+### fileDeletion.ts - delete the previewed file
+
+One confirmation, one delete, behind every surface that offers to remove the file you are looking at: the File Preview toolbar's trash button and the command palette's `File: Delete` entry.
+
+**Key export:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })` - opens the shared `confirm` modal (destructive, titled "Delete File") and, only on confirm, runs `window.maestro.fs.delete` - the same IPC the Files panel context menu uses, so SSH remotes are honored. `sessionId` defaults to the active session, which is what both surfaces are scoped to.
+
+After a successful delete it force-closes every file preview tab in that session pointing at the path, then dispatches the `maestro:refreshFileTree` CustomEvent so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
+
+Do NOT add a second delete path. A new surface should call `requestFileDeletion` so the confirmation copy and the tab cleanup cannot drift.
 
 ---
 
@@ -510,7 +616,7 @@ Used by AchievementCard, LeaderboardRegistrationModal, PlaygroundPanel, SessionL
 
 ---
 
-### keyboardMastery.ts (~47 lines)
+### keyboardMastery.ts (~87 lines)
 
 Keyboard shortcut mastery progression system.
 
@@ -528,8 +634,12 @@ Keyboard shortcut mastery progression system.
 
 - `getLevelForPercentage(percentage)` - Returns highest matching level
 - `getLevelIndex(percentage)` - Returns index 0-4
+- `collectBoundShortcuts(...maps)` - Merges shortcut maps (later maps win on id) and keeps only the entries with a chord bound. This is the mastery DENOMINATOR everywhere: an unbound shortcut cannot be fired, so counting one pins the user below 100% forever and lists a chord that does not exist under "Unused Shortcuts". Pass the LIVE maps (`shortcuts`, `tabShortcuts` off the settings store) plus `FIXED_SHORTCUTS`, so a binding cleared in Settings -> Shortcuts leaves the denominator too.
+- `countUsedBoundShortcuts(bound, usedShortcutIds)` - The NUMERATOR. Not `usedShortcuts.length`: that list keeps ids whose binding was later cleared or that were removed from the app, which would push the count past the total and report over 100%.
 
-Used by ShortcutsHelpModal, KeyboardMasteryCelebration, LeaderboardRegistrationModal, PlaygroundPanel, settingsStore.
+Do NOT hand-roll another `Object.keys(DEFAULT_SHORTCUTS).length + ...` total - `settingsStore` and `LeaderboardRegistrationModal` each had their own copy, and they disagreed with the two surfaces that render the figure.
+
+Used by ShortcutsHelpModal, KeyboardStats, KeyboardMasteryCelebration, LeaderboardRegistrationModal, PlaygroundPanel, settingsStore.
 
 ---
 

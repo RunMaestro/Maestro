@@ -24,6 +24,24 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		it('drops SQLITE_FULL, the SQLite wording for the same full disk (MAESTRO-ZD)', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('SqliteError', 'database or disk is full'))).toBe(
+				true
+			);
+		});
+
+		it('still reports SQLite failures that can indicate a real bug', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('SqliteError', 'database disk image is malformed'))
+			).toBe(false);
+			expect(shouldDropSentryEvent(exceptionEvent('SqliteError', 'database is locked'))).toBe(
+				false
+			);
+			expect(
+				shouldDropSentryEvent(exceptionEvent('SqliteError', 'no such table: query_events'))
+			).toBe(false);
+		});
+
 		it('drops EPIPE broken-pipe errors', () => {
 			expect(shouldDropSentryEvent(exceptionEvent('Error', 'EPIPE: broken pipe, write'))).toBe(
 				true
@@ -109,6 +127,45 @@ describe('shouldDropSentryEvent', () => {
 					)
 				)
 			).toBe(true);
+		});
+
+		// MAESTRO-9V: Electron's catch-all when the OS refuses to trash a path
+		// (file open elsewhere, no recycle bin on the volume, permissions). The
+		// delete is user-initiated and the caller already toasts this exact
+		// message, so the crash report on top of it is noise.
+		it('drops the generic trash failure through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Failed to perform delete operation"
+					)
+				)
+			).toBe(true);
+		});
+
+		it('keeps a generic delete failure that did NOT come from shell:trashItem', () => {
+			// The rule is scoped to the one IPC channel we know shows a toast -
+			// the same words arriving from anywhere else are still signal.
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'fs:deleteFile': Error: Failed to perform delete operation"
+					)
+				)
+			).toBe(false);
+		});
+
+		it('keeps unrelated shell:trashItem failures', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: EBUSY: resource busy or locked"
+					)
+				)
+			).toBe(false);
 		});
 
 		it('drops EACCES on the sessions file bubbling up through sessions:setMany', () => {

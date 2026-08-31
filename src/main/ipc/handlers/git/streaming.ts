@@ -14,23 +14,39 @@ import { LOG_CONTEXT, handlerOpts } from './shared';
 const streamingGitRuns = new Map<string, () => void>();
 
 /**
+ * runIds cancelled before their process existed.
+ *
+ * Startup is not instant - resolving the shell PATH, building the SSH command
+ * and reading the branch for `--set-upstream` all await first - and Cancel is
+ * clickable that whole time. Without this, an early Cancel found no handle,
+ * silently did nothing, and the command then ran to completion anyway.
+ */
+const pendingGitCancels = new Set<string>();
+
+/**
  * Build the argv for a streaming git operation.
  *
  * `--progress` is required because git suppresses transfer progress when stdout
  * isn't a TTY, which is exactly our case - without it the modal would sit blank
  * until the command finished.
+ *
+ * `-c color.ui=always` is the same story for color: git falls back to `auto`,
+ * which means "only when stdout is a terminal", so a pipe gets plain text. The
+ * runner modal renders ANSI, so forcing it on is what makes a rejected push read
+ * red instead of reading like the rest of the transfer log.
  */
 function buildStreamingGitArgs(
 	operation: GitStreamingOperation,
 	branch: string | null,
 	setUpstream: boolean
 ): string[] {
+	const color = ['-c', 'color.ui=always'];
 	if (operation === 'push') {
 		return setUpstream && branch
-			? ['push', '--progress', '--set-upstream', 'origin', branch]
-			: ['push', '--progress'];
+			? [...color, 'push', '--progress', '--set-upstream', 'origin', branch]
+			: [...color, 'push', '--progress'];
 	}
-	return [operation, '--progress'];
+	return [...color, operation, '--progress'];
 }
 
 /**
@@ -88,7 +104,17 @@ async function runStreamingGitCommand(
 	// Full shell PATH so git hooks (Husky pre-push running npm, etc.) resolve
 	// their tooling, and GIT_TERMINAL_PROMPT=0 so a missing credential fails
 	// fast with a readable error instead of hanging on a prompt nobody can see.
-	let env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+	//
+	// FORCE_COLOR / CLICOLOR_FORCE are for what those hooks run. A pre-push suite
+	// is usually the longest, densest thing in this console, and every one of
+	// those tools checks `isTTY` before coloring - which we are not - so without
+	// these the failing test is the same gray as the 400 passing ones.
+	let env: NodeJS.ProcessEnv = {
+		...process.env,
+		GIT_TERMINAL_PROMPT: '0',
+		FORCE_COLOR: '1',
+		CLICOLOR_FORCE: '1',
+	};
 	try {
 		const shellPath = await getShellPath();
 		if (shellPath) env = { ...env, PATH: shellPath };
@@ -127,6 +153,8 @@ async function runStreamingGitCommand(
 		onChunk: send,
 	});
 	streamingGitRuns.set(runId, handle.cancel);
+	// Cancel may have arrived while we were still setting up.
+	if (pendingGitCancels.delete(runId)) handle.cancel();
 
 	try {
 		const result = await handle.result;
@@ -142,6 +170,7 @@ async function runStreamingGitCommand(
 		};
 	} finally {
 		streamingGitRuns.delete(runId);
+		pendingGitCancels.delete(runId);
 	}
 }
 
@@ -199,7 +228,13 @@ export function registerStreamingHandlers(): void {
 		'git:cancelCommand',
 		withIpcErrorLogging(handlerOpts('cancelCommand'), async (runId: string) => {
 			const cancel = streamingGitRuns.get(runId);
-			if (!cancel) return { success: false };
+			if (!cancel) {
+				// The run has not spawned yet, so remember the cancel and apply it
+				// the moment it does. (A runId is single-use, so at worst this
+				// records a cancel for a run that already finished.)
+				pendingGitCancels.add(runId);
+				return { success: true };
+			}
 			cancel();
 			return { success: true };
 		})

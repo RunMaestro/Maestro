@@ -48,8 +48,9 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 			title="Auto Run Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={1008}
-			maxHeight="85vh"
+			resizeKey="auto-run-guide"
+			defaultSize={{ width: 880, height: 760 }}
+			minSize={{ width: 520, height: 400 }}
 			closeOnBackdropClick
 			zIndex={zIndex}
 			footer={

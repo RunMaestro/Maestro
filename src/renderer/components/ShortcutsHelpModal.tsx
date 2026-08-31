@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useCallback } from 'react';
-import { X, Award, CheckCircle, Trophy, ExternalLink } from 'lucide-react';
+import { X, Award, CheckCircle, Trophy, ExternalLink, Settings } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { ShortcutFilterButton } from './ui/ShortcutFilterButton';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
@@ -7,8 +7,14 @@ import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import { Modal } from './ui/Modal';
-import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
+import {
+	KEYBOARD_MASTERY_LEVELS,
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+	getLevelForPercentage,
+} from '../constants/keyboardMastery';
 import { openUrl } from '../utils/openUrl';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
@@ -19,6 +25,11 @@ interface ShortcutsHelpModalProps {
 	onClose: () => void;
 	hasNoAgents?: boolean;
 	keyboardMasteryStats?: KeyboardMasteryStats;
+	/**
+	 * Open Settings on the Shortcuts tab. Omitted when there is nowhere to send
+	 * the user, in which case the gear is not rendered rather than rendered dead.
+	 */
+	onOpenShortcutSettings?: () => void;
 }
 
 export function ShortcutsHelpModal({
@@ -28,6 +39,7 @@ export function ShortcutsHelpModal({
 	onClose,
 	hasNoAgents,
 	keyboardMasteryStats,
+	onOpenShortcutSettings,
 }: ShortcutsHelpModalProps) {
 	const [searchQuery, setSearchQuery] = useState('');
 	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
@@ -59,10 +71,21 @@ export function ShortcutsHelpModal({
 
 	const totalShortcuts = Object.values(allShortcuts).length;
 
-	// Calculate mastery progress
-	const usedShortcutsCount = keyboardMasteryStats?.usedShortcuts.length ?? 0;
+	// Mastery runs over the BOUND shortcuts only. Unbound ones stay in the list
+	// above (the user should still know the action exists and can give it a
+	// chord), but they cannot be fired, so counting them would pin the bar below
+	// 100% no matter how much of the keyboard the user learns.
+	const boundShortcuts = useMemo(
+		() => collectBoundShortcuts(shortcuts, tabShortcuts, FIXED_SHORTCUTS),
+		[shortcuts, tabShortcuts]
+	);
+	const masteryTotal = boundShortcuts.length;
+	const usedShortcutsCount = countUsedBoundShortcuts(
+		boundShortcuts,
+		keyboardMasteryStats?.usedShortcuts ?? []
+	);
 	const masteryPercentage =
-		totalShortcuts > 0 ? Math.round((usedShortcutsCount / totalShortcuts) * 100) : 0;
+		masteryTotal > 0 ? Math.round((usedShortcutsCount / masteryTotal) * 100) : 0;
 	const currentLevel = keyboardMasteryStats
 		? getLevelForPercentage(masteryPercentage)
 		: KEYBOARD_MASTERY_LEVELS[0];
@@ -83,9 +106,7 @@ export function ShortcutsHelpModal({
 	const filteredShortcuts = Object.values(allShortcuts)
 		.filter((sc) => {
 			if (filterShortcutKeys.length > 0) {
-				const sortedFilter = [...filterShortcutKeys].sort().join('+');
-				const sortedKeys = [...sc.keys].sort().join('+');
-				return sortedKeys === sortedFilter;
+				return shortcutKeysEqual(sc.keys, filterShortcutKeys);
 			}
 			return fuzzyMatch(sc.label, searchQuery) || fuzzyMatch(sc.keys.join(' '), searchQuery);
 		})
@@ -109,9 +130,23 @@ export function ShortcutsHelpModal({
 							: totalShortcuts}
 					</span>
 				</div>
-				<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
-					<X className="w-4 h-4" />
-				</GhostIconButton>
+				<div className="flex items-center gap-1">
+					{/* The footer already tells the user shortcuts are "customized from
+					    Settings -> Shortcuts"; until now that sentence named a
+					    destination it could not reach. */}
+					{onOpenShortcutSettings && (
+						<GhostIconButton
+							onClick={onOpenShortcutSettings}
+							color={theme.colors.textDim}
+							ariaLabel="Open shortcut settings"
+						>
+							<Settings className="w-4 h-4" />
+						</GhostIconButton>
+					)}
+					<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
+						<X className="w-4 h-4" />
+					</GhostIconButton>
+				</div>
 			</div>
 
 			{hasNoAgents && (
@@ -162,7 +197,7 @@ export function ShortcutsHelpModal({
 						</span>
 					</div>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						{usedShortcutsCount} / {totalShortcuts} mastered ({masteryPercentage}%)
+						{usedShortcutsCount} / {masteryTotal} mastered ({masteryPercentage}%)
 					</span>
 				</div>
 				<div
@@ -213,9 +248,14 @@ export function ShortcutsHelpModal({
 			footer={footer}
 			initialFocusRef={searchInputRef}
 			layerOptions={{ onBeforeClose: handleBeforeClose }}
+			resizeKey="shortcuts-help"
+			defaultSize={{ width: 620, height: 640 }}
+			minSize={{ width: 420, height: 360 }}
+			contentClassName="p-6 flex-1 min-h-0 flex flex-col"
 		>
-			<div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-track-transparent -mr-6 pr-6 -my-2">
+			<div className="space-y-2 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent -mr-6 pr-6 -my-2">
 				{filteredShortcuts.map((sc, i) => {
+					const isBound = sc.keys.length > 0;
 					const isUsed = usedShortcutIds.has(sc.id);
 					return (
 						<div key={i} className="flex justify-between items-center text-sm gap-4">
@@ -224,12 +264,12 @@ export function ShortcutsHelpModal({
 									<span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
 										{isUsed ? (
 											<CheckCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-										) : (
+										) : isBound ? (
 											<span
 												className="w-3 h-3 rounded-full border"
 												style={{ borderColor: theme.colors.border }}
 											/>
-										)}
+										) : null}
 									</span>
 								)}
 								<span
@@ -248,22 +288,33 @@ export function ShortcutsHelpModal({
 									</span>
 								)}
 							</div>
-							<kbd
-								className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-								}}
-							>
-								{formatShortcutKeys(sc.keys)}
-							</kbd>
+							{sc.keys.length > 0 ? (
+								<kbd
+									className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+									}}
+								>
+									{formatShortcutKeys(sc.keys)}
+								</kbd>
+							) : (
+								<span
+									className="text-xs italic flex-shrink-0"
+									style={{ color: theme.colors.textDim }}
+								>
+									Unassigned
+								</span>
+							)}
 						</div>
 					);
 				})}
 				{filteredCount === 0 && (
 					<div className="text-center text-sm opacity-50" style={{ color: theme.colors.textDim }}>
-						No shortcuts found
+						{filterShortcutKeys.length > 0
+							? `Nothing is bound to ${formatShortcutKeys(filterShortcutKeys)}`
+							: 'No shortcuts found'}
 					</div>
 				)}
 				{/* Window scope + detach docs, then the read-more link */}

@@ -45,6 +45,10 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 	getErrorPatterns: vi.fn(() => ({})),
 	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
+	// The parser asks this of every assistant message. These tests feed ordinary
+	// tool and thinking events, none of which are plan-limit notices, so `false`
+	// is the answer that leaves the routing under test unchanged.
+	isClaudeLimitNotice: vi.fn(() => false),
 }));
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────
@@ -2540,6 +2544,75 @@ describe('StdoutHandler - single JSON parse per line', () => {
 		});
 	});
 
+	describe('user-interrupted turns suppress in-band errors', () => {
+		// A CLI that flushes a terminal envelope on its way out of a deliberate
+		// Stop must not paint that as a turn failure. Grok is the concrete case:
+		// headless, it ends a cancelled turn with `stopReason: "cancelled"`, which
+		// the parser (correctly) classifies as a turn that died early.
+		it('does not emit agent-error for a cancelled grok end after interrupt', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: new GrokOutputParser(),
+				interrupted: true,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"cancelled","sessionId":"sess-1"}\n'
+			);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+		});
+
+		it('still emits agent-error for a cancelled grok end when the user did not stop it', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: new GrokOutputParser(),
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"cancelled","sessionId":"sess-1"}\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy.mock.calls[0][1]).toMatchObject({
+				message: expect.stringContaining('cancelled'),
+			});
+		});
+
+		// Grok reports its session id ONLY on `end`. When that end is the one that
+		// died early, the error branch is the last place the id passes through -
+		// dropping it makes recovery resume into a brand-new conversation.
+		it('still captures the provider session id from a failing terminal envelope', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: new GrokOutputParser(),
+			});
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"cancelled","sessionId":"grok-sess-9"}\n'
+			);
+
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'grok-sess-9');
+			expect(proc.agentSessionId).toBe('grok-sess-9');
+		});
+	});
+
 	describe('Claude thinking-chunk routing', () => {
 		// Regression: claude-code was lumped into the isReasoning gate meant for
 		// Grok/Codex/OpenCode. Claude's ordinary assistant text arrives as partials
@@ -2741,9 +2814,9 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(emitted.message).not.toContain('claude login');
 		});
 
-		it('uses claude login for claude-code even when the pattern message is generic', () => {
+		it('uses the claude login command even when the pattern message is generic', () => {
 			// Pattern-58 style message: no login command in the text. The
-			// agentId map must still produce "claude login" so Claude SSH
+			// agentId map must still produce "claude /login" so Claude SSH
 			// users keep actionable guidance.
 			const mockParser = mockAuthParser(
 				'claude-code',
@@ -2769,20 +2842,20 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(errorSpy).toHaveBeenCalledTimes(1);
 			const emitted = errorSpy.mock.calls[0][1];
 			expect(emitted.message).toBe(
-				'Authentication failed on remote host "build-box". SSH into the remote and run "claude login" to re-authenticate.'
+				'Authentication failed on remote host "build-box". SSH into the remote and run "claude /login" to re-authenticate.'
 			);
-			expect(emitted.message).toContain('claude login');
+			expect(emitted.message).toContain('claude /login');
 		});
 
 		it('omits a login command for agents without a known CLI login', () => {
 			const mockParser = mockAuthParser(
-				'opencode',
+				'hermes',
 				'Authentication required. Please configure your credentials.'
 			);
 
 			const { handler, sessionId, emitter } = createTestContext({
 				isStreamJsonMode: true,
-				toolType: 'opencode',
+				toolType: 'hermes',
 				outputParser: mockParser as any,
 				sshRemoteId: 'remote-1',
 				sshRemoteHost: 'build-box',
@@ -2801,8 +2874,33 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(emitted.message).toBe(
 				'Authentication failed on remote host "build-box". SSH into the remote to re-authenticate.'
 			);
-			expect(emitted.message).not.toContain('claude login');
+			expect(emitted.message).not.toContain('claude /login');
 			expect(emitted.message).not.toContain('grok login');
+		});
+
+		it('names the TUI slash command for agents whose login is not a one-liner', () => {
+			const mockParser = mockAuthParser('factory-droid', 'Authentication failed.');
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'factory-droid',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'authentication failed' }) + '\n'
+			);
+
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "droid" then type "/login" to re-authenticate.'
+			);
 		});
 	});
 

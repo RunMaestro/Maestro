@@ -18,6 +18,7 @@ import type { FlatFileItem } from '../FileSearchModal';
 
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
+import type { GitLogModalData } from '../../stores/modalStore';
 
 // Utility Modal Components
 import { QuickActionsModal } from '../QuickActionsModal';
@@ -26,6 +27,7 @@ import { FileSearchModal } from '../FileSearchModal';
 import { CrossTabSearchModal } from '../CrossTabSearchModal';
 import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
+import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -196,13 +198,15 @@ export interface AppUtilityModalsProps {
 	gitDiffPreview: string | null;
 	/** Repo the diff came from, when taken for a non-active agent. */
 	gitDiffCwd?: string | null;
+	/** Agent the diff was taken for, so the viewer can name it. */
+	gitDiffSessionId?: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
 
 	// GitLogViewer
 	gitLogOpen: boolean;
 	/** Explicit repo to show, when opened for a non-active agent. */
-	gitLogTarget?: { cwd: string; sshRemoteId?: string } | null;
+	gitLogTarget?: GitLogModalData | null;
 	onCloseGitLog: () => void;
 
 	// Shared by both git viewers: open a clicked file path as a preview tab.
@@ -450,6 +454,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// GitDiffViewer
 	gitDiffPreview,
 	gitDiffCwd,
+	gitDiffSessionId,
 	gitViewerCwd,
 	onCloseGitDiff,
 	// GitLogViewer
@@ -541,6 +546,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozeTabOpen = useModalStore(selectModalOpen('snoozeTab'));
 	const snoozeTabData = useModalStore(selectModalData('snoozeTab'));
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
+	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
+	// and option lists itself, so all it needs from here is the theme.
+	const modelEffortOpen = useModalStore(selectModalOpen('modelEffort'));
+	const modelEffortData = useModalStore(selectModalData('modelEffort'));
+	const closeModelEffort = useCallback(
+		() => useModalStore.getState().closeModal('modelEffort'),
+		[]
+	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
@@ -705,6 +718,9 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					<GitDiffViewer
 						diffText={gitDiffPreview}
 						cwd={gitDiffCwd ?? gitViewerCwd}
+						// Falls back to the active agent, matching the cwd fallback
+						// above: the header names whichever agent's repo is on screen.
+						sessionId={gitDiffSessionId ?? activeSession?.id}
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}
@@ -719,6 +735,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<Suspense fallback={null}>
 					<GitLogViewer
 						cwd={gitLogTarget?.cwd ?? gitViewerCwd}
+						sessionId={gitLogTarget?.sessionId ?? activeSession?.id}
 						theme={theme}
 						onClose={onCloseGitLog}
 						onOpenFile={onOpenGitFile}
@@ -882,6 +899,11 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						closeSnoozeTab();
 					}}
 				/>
+			)}
+
+			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}
+			{modelEffortOpen && modelEffortData && (
+				<ModelEffortModal theme={theme} tabId={modelEffortData.tabId} onClose={closeModelEffort} />
 			)}
 
 			{/* --- SNOOZED TABS (list across all agents) --- */}

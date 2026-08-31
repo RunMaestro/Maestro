@@ -68,6 +68,8 @@ vi.mock('lucide-react', () => {
 		// KeyboardStats icons
 		Keyboard: createIcon('keyboard', '⌨️'),
 		Sparkles: createIcon('sparkles', '✨'),
+		// AgentOverviewCards agent filter icon
+		Search: createIcon('search', '🔎'),
 	};
 });
 
@@ -270,13 +272,14 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(7);
+				expect(tabs).toHaveLength(8);
 				expect(tabs[0]).toHaveTextContent('Overview');
 				expect(tabs[1]).toHaveTextContent('Agent Overview');
 				expect(tabs[2]).toHaveTextContent('Agents');
-				expect(tabs[3]).toHaveTextContent('Tokens');
-				expect(tabs[4]).toHaveTextContent('Activity');
-				expect(tabs[5]).toHaveTextContent('Auto Run');
+				expect(tabs[3]).toHaveTextContent('Groups');
+				expect(tabs[4]).toHaveTextContent('Tokens');
+				expect(tabs[5]).toHaveTextContent('Activity');
+				expect(tabs[6]).toHaveTextContent('Auto Run');
 			});
 		});
 
@@ -1624,7 +1627,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(7);
+				expect(tabs).toHaveLength(8);
 
 				// First tab (Overview) should be selected
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
@@ -1693,7 +1696,9 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Press ArrowLeft while on first tab - should wrap to the last tab
+			// Press ArrowLeft while on first tab - should wrap to the LAST tab,
+			// addressed by position from the end so adding a tab cannot turn a
+			// wrap-around test into an off-by-one failure.
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
 
 			await waitFor(() => {
@@ -1712,8 +1717,8 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Navigate to the last tab by wrapping backwards off the first
-			fireEvent.keyDown(tablist, { key: 'ArrowLeft' }); // Wraps to last
+			// Navigate to the last tab by wrapping backwards off the first.
+			fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
@@ -1941,8 +1946,9 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Auto Run view - select by name so adding tabs can't break this
-			fireEvent.click(screen.getByRole('tab', { name: /auto run/i }));
+			// Switch to Auto Run view - use the tab button specifically, addressed
+			// by name so inserting a tab cannot silently retarget the click.
+			fireEvent.click(screen.getByRole('tab', { name: 'Auto Run' }));
 
 			await waitFor(() => {
 				expect(screen.getByTestId('section-autorun-stats')).toBeInTheDocument();

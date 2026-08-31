@@ -56,6 +56,28 @@ describe('validatePluginManifest', () => {
 		).toBeNull();
 	});
 
+	it('accepts an optional releaseDate and keeps it verbatim', () => {
+		const { manifest, errors } = validatePluginManifest(
+			validManifest({ releaseDate: ' 2026-07-10 ' })
+		);
+		expect(errors).toEqual([]);
+		expect(manifest?.releaseDate).toBe('2026-07-10');
+	});
+
+	it('omits releaseDate when the manifest does not declare one', () => {
+		const { manifest } = validatePluginManifest(validManifest());
+		expect(manifest?.releaseDate).toBeUndefined();
+	});
+
+	it('rejects a releaseDate that is not a well-formed calendar day', () => {
+		expect(validatePluginManifest(validManifest({ releaseDate: 'July 2026' })).manifest).toBeNull();
+		expect(validatePluginManifest(validManifest({ releaseDate: '2026-7-1' })).manifest).toBeNull();
+		expect(validatePluginManifest(validManifest({ releaseDate: 20260710 })).manifest).toBeNull();
+		expect(
+			validatePluginManifest(validManifest({ releaseDate: '2026-13-40' })).manifest
+		).toBeNull();
+	});
+
 	it('rejects an out-of-range tier', () => {
 		expect(validatePluginManifest(validManifest({ tier: 3 })).manifest).toBeNull();
 		expect(validatePluginManifest(validManifest({ tier: '0' })).manifest).toBeNull();

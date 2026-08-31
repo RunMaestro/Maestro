@@ -1,8 +1,9 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 
@@ -61,9 +62,15 @@ describe('QueuedItemsList force-send shortcut gate', () => {
 	const forceSendProps = {
 		forcedParallelEnabled: true,
 		onForceSendQueuedItem: vi.fn(),
+		// Full eligibility, not the narrowed busy-context this used to pass. The
+		// inline card no longer re-derives "can I force this?" - main's fix made
+		// both surfaces read one decision, so the fixture has to supply it.
 		getForceSendContext: () => ({
 			targetTabBusy: false,
 			otherBusyTabs: [{ id: 'tab-2', displayName: 'Tab 2' }],
+			requiresParallel: true,
+			canForce: true,
+			blockedReason: undefined,
 		}),
 		activeTabId: 'tab-1',
 	};
@@ -85,7 +92,10 @@ describe('QueuedItemsList force-send shortcut gate', () => {
 		setup({ ...forceSendProps, shortcutEnabled: false });
 		fireShortcut();
 		// The per-item button is still there; the confirmation modal is not.
-		expect(screen.getByTitle(/Force send this message now/i)).toBeInTheDocument();
+		// The tooltip copy now comes from getForceSendTitle and varies with the
+		// eligibility, so match on the parallel-send wording this fixture produces
+		// rather than the old fixed "Force send this message now".
+		expect(screen.getByTitle(/Send now, running in parallel/i)).toBeInTheDocument();
 		expect(screen.queryByText('Force Send Message?')).toBeNull();
 	});
 });
@@ -160,5 +170,220 @@ describe('QueuedItemsList drag-to-reorder', () => {
 		fireEvent.mouseUp(window);
 
 		expect(onReorderItems).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The edit-message modal is opened from two places: the pencil on a queued row,
+ * and the "Edit Last Queued Message" shortcut, which has no path into this
+ * component. Both go through `uiStore.editingQueuedItemId`, so these tests drive
+ * the store rather than the component's internals.
+ */
+describe('QueuedItemsList edit modal', () => {
+	const editable = item({ id: 'q1', text: 'a queued message' });
+
+	function renderList(queue: QueuedItem[] = [editable]) {
+		const onEditQueuedItem = vi.fn();
+		const utils = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					onEditQueuedItem={onEditQueuedItem}
+				/>
+			</LayerStackProvider>
+		);
+		return { onEditQueuedItem, ...utils };
+	}
+
+	beforeEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	afterEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	it('opens the modal for the item named by uiStore, with no click involved', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		renderList();
+
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('a queued message');
+	});
+
+	it('records the clicked row in uiStore and opens its modal', () => {
+		renderList();
+		fireEvent.click(screen.getByTitle('Edit message and images'));
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+		expect(screen.getByPlaceholderText('Message to send…')).toBeInTheDocument();
+	});
+
+	it('clears the id when the item is dispatched out of the queue', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		const { rerender } = renderList();
+
+		rerender(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[item({ id: 'q2', text: 'the next one' })]}
+					theme={mockTheme}
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
+	});
+
+	// "Edit Last Queued Message" can target a message on another tab and switch to
+	// it. If this list cleared the id just because the item is not in ITS slice,
+	// it would race that switch and cancel the open before the new tab renders.
+	it('keeps the id when the item is queued for a tab other than this one', () => {
+		useUIStore.getState().setEditingQueuedItemId('q-other');
+		render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[editable, item({ id: 'q-other', tabId: 'tab-2' })]}
+					theme={mockTheme}
+					activeTabId="tab-1"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q-other');
+		// Not rendered here - the owning tab's list opens it once we land there.
+		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
+	});
+
+	it('opens the modal once the owning tab is the active one', () => {
+		useUIStore.getState().setEditingQueuedItemId('q-other');
+		const queue = [editable, item({ id: 'q-other', tabId: 'tab-2', text: 'from the other tab' })];
+		const { rerender } = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					activeTabId="tab-1"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		rerender(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					activeTabId="tab-2"
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('from the other tab');
+	});
+});
+
+describe('QueuedItemsList turn setting pills', () => {
+	// The queue can sit through any number of model changes, so naming the frozen
+	// values on the row is the only way the user can tell which pending message
+	// is on the big model before it runs.
+	it('names the model and effort the item was queued with', () => {
+		setup({
+			executionQueue: [item({ turnSettings: { model: 'opus', effort: 'xhigh' } })],
+		});
+		expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+		expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('xhigh');
+	});
+
+	// An item queued on the agent's own default is not labeled with a guess.
+	it('renders no pills for an item queued on the agent default', () => {
+		setup({ executionQueue: [item({ turnSettings: {} })] });
+		expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+	});
+});
+
+/**
+ * The inline QUEUED card and the Execution Queue modal are two views of one
+ * decision. They disagreed: the modal asked getForceSendEligibility, the inline
+ * card re-derived the answer from a narrowed {targetTabBusy, otherBusyTabs} and
+ * HID the button in cases the helper allows. On a quiet agent - idle target,
+ * nothing else running - force send is always permitted, and the chat showed
+ * nothing while the modal showed a working button.
+ *
+ * These assert the inline card now mirrors the modal: shown when force sending
+ * is either possible or one settings toggle away, hidden when the block is a
+ * dead end the user cannot act on from the card.
+ */
+describe('QueuedItemsList force send', () => {
+	const eligibility = (over: Record<string, unknown> = {}) => ({
+		targetTabBusy: false,
+		otherBusyTabs: [],
+		requiresParallel: false,
+		canForce: true,
+		blockedReason: undefined,
+		...over,
+	});
+
+	const withForceSend = (ctx: unknown, extra: Record<string, unknown> = {}) =>
+		setup({
+			onForceSendQueuedItem: vi.fn(),
+			getForceSendContext: () => ctx,
+			...extra,
+		});
+
+	it('offers Force Send on a quiet agent - idle target, nothing else busy', () => {
+		// The always-allowed case the old rule hid: it required at least one OTHER
+		// busy tab, so jumping the queue on an idle agent was unreachable.
+		withForceSend(eligibility());
+		const button = screen.getByRole('button', { name: /Force Send/i });
+		expect(button).toBeEnabled();
+		expect(button.getAttribute('title')).toMatch(/ahead of the rest of the queue/i);
+	});
+
+	it('offers Force Send even when Forced Parallel Execution is off', () => {
+		// forcedParallelEnabled is an INPUT to the helper, not a gate in front of
+		// it. With nothing else running the setting is irrelevant.
+		withForceSend(eligibility(), { forcedParallelEnabled: false });
+		expect(screen.getByRole('button', { name: /Force Send/i })).toBeEnabled();
+	});
+
+	it('hides Force Send when the target tab is already working', () => {
+		// A tab runs one turn at a time, so this item is simply next in line and
+		// the wait resolves itself. Offering a control whose only possible state
+		// is disabled reads as the button being broken.
+		withForceSend(
+			eligibility({ targetTabBusy: true, canForce: false, blockedReason: 'target-tab-busy' })
+		);
+		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
+	});
+
+	it('shows Force Send disabled when another tab is busy and forced parallel is off', () => {
+		withForceSend(
+			eligibility({
+				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+				requiresParallel: true,
+				canForce: false,
+				blockedReason: 'needs-forced-parallel',
+			})
+		);
+		const button = screen.getByRole('button', { name: /Force Send/i });
+		expect(button).toBeDisabled();
+		expect(button.getAttribute('title')).toMatch(/Forced Parallel Execution/i);
+	});
+
+	it('hides Force Send entirely when the item has no tab left to run on', () => {
+		// The button could never work here, at any point in the future.
+		withForceSend(eligibility({ canForce: false, blockedReason: 'no-target-tab' }));
+		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
+	});
+
+	it('hides Force Send when no eligibility is available', () => {
+		withForceSend(null);
+		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
 	});
 });

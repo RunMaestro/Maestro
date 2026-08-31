@@ -50,15 +50,15 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 
 	return (
 		<div className="space-y-5">
-			<ConductorProfileSection
-				theme={theme}
-				conductorProfile={settings.conductorProfile}
-				setConductorProfile={settings.setConductorProfile}
-			/>
 			<GlobalHotkeySection
 				theme={theme}
 				globalShowHotkey={settings.globalShowHotkey}
 				setGlobalShowHotkey={settings.setGlobalShowHotkey}
+			/>
+			<ConductorProfileSection
+				theme={theme}
+				conductorProfile={settings.conductorProfile}
+				setConductorProfile={settings.setConductorProfile}
 			/>
 			<ShellSettingsSection
 				theme={theme}

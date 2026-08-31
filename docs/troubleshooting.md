@@ -78,6 +78,8 @@ This is useful when an agent becomes unresponsive or you need to diagnose proces
 
 ## Agent Errors
 
+Two of the errors below rarely reach you at all. **Rate Limit Exceeded** and a spent plan quota are handled by [Agent Resilience](/agent-resilience), which resends your prompt on its own and shows a live countdown card in the transcript instead of a modal. The table applies when resilience is turned off for that agent, or when the failure is one it deliberately does not retry.
+
 When an AI agent encounters an error, Maestro displays a modal with clear recovery options. Common error types include:
 
 | Error Type                  | Description                        | Recovery Options                               |
@@ -96,6 +98,15 @@ Each error modal shows:
 - Timestamp of when the error occurred
 - Collapsible JSON details for debugging
 - Recovery action buttons specific to the error type
+
+### Expired Provider Credentials
+
+An expired token is handled differently from the errors above, because it takes down every agent AND every Cue pipeline on that provider at once. Instead of the generic error modal, Maestro opens a re-authentication dialog with a terminal embedded in it and runs the provider's own login command for you (`claude /login`, `codex login`, `opencode auth login`, and so on). Finish the login in that terminal and click Done. The agent keeps its view and its transcript.
+
+Two details worth knowing:
+
+- **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on.
+- **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
 
 ## Debug Package
 

@@ -170,6 +170,15 @@ describe('GraphLegend', () => {
 			expect(screen.getByText(formatShortcutKeys(['Meta', 'f']))).toBeInTheDocument();
 			expect(screen.getByText('Focus search')).toBeInTheDocument();
 		});
+
+		it('displays the preview-length shortcut', () => {
+			// P used to duplicate Enter; the legend is where a user finds out it
+			// now cycles preview length instead.
+			render(<GraphLegend {...defaultProps} />);
+
+			expect(screen.getByText('P')).toBeInTheDocument();
+			expect(screen.getByText('Cycle preview length (ends at Off)')).toBeInTheDocument();
+		});
 	});
 
 	describe('Mouse Actions Section', () => {

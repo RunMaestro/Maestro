@@ -32,8 +32,22 @@ import { useCueToggle } from '../../hooks/cue/useCueToggle';
 import { CueModalHeader, type CueModalTab } from './CueModalHeader';
 import { CueDashboard } from './CueDashboard';
 import { ActivityLog } from './ActivityLog';
+import { PipelineListTab } from './PipelineListTab';
+import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
+
+// In-memory only - last tab the user was on. Reopening the modal lands here
+// instead of snapping back to Dashboard, matching how the Settings modal
+// behaves. Resets on app restart by design, and an explicit `initialTab`
+// (a deep link, `maestro-cli open cue --tab ...`) always wins over it.
+let lastOpenCueTab: CueModalTab | null = null;
+
+/** Test-only: clear the remembered tab so suites that assume a fresh open
+ *  aren't polluted by a prior test in the same file. */
+export function __resetLastOpenCueTabForTests(): void {
+	lastOpenCueTab = null;
+}
 
 export interface CueModalProps {
 	theme: Theme;
@@ -74,6 +88,15 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 				toolType: s.toolType,
 				projectRoot: s.projectRoot,
 			})),
+		[allSessions]
+	);
+
+	// Agents that can own a scheduled task. Terminal agents are excluded: they
+	// have no AI turn to send a prompt into.
+	const activeSessionId = useSessionStore((state) => state.activeSessionId);
+	const scheduledTaskAgents = useMemo(
+		() =>
+			allSessions.filter((s) => s.toolType !== 'terminal').map((s) => ({ id: s.id, name: s.name })),
 		[allSessions]
 	);
 
@@ -129,8 +152,18 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	});
 
 	// Read initial tab from modal data (e.g., when navigating from YAML editor)
+	// Resolved once in the lazy initializer rather than via a restore effect:
+	// under StrictMode a restore-via-effect double-fires and clobbers the
+	// remembered value with the default before it lands.
 	const cueModalData = useModalStore(selectModalData('cueModal'));
-	const [activeTab, setActiveTab] = useState<CueModalTab>(cueModalData?.initialTab ?? 'dashboard');
+	const [activeTab, setActiveTab] = useState<CueModalTab>(
+		() => cueModalData?.initialTab ?? lastOpenCueTab ?? 'dashboard'
+	);
+
+	// Remember the tab for the next open.
+	useEffect(() => {
+		lastOpenCueTab = activeTab;
+	}, [activeTab]);
 
 	// Graph data (owned by hook: fetch on mount + tab change, cancellation race guard, refreshGraphData)
 	const {
@@ -158,7 +191,14 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		nonce: string;
 	} | null>(null);
 
-	const handleViewInPipeline = useCallback(
+	// Jump to the graph tab with a specific pipeline pre-selected. The nonce is
+	// what lets the editor re-apply the same target on a repeat click.
+	const handleViewInGraph = useCallback((pipelineId: string | null) => {
+		setPendingPipelineId({ id: pipelineId, nonce: generateId() });
+		setActiveTab('pipeline');
+	}, []);
+
+	const handleViewInGraphFromSession = useCallback(
 		(session: CueSessionStatus) => {
 			// Find the pipeline by session-membership, not by color. Multiple
 			// pipelines can share a color (e.g. two orange pipelines), so the
@@ -172,10 +212,9 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						node.data.sessionId === session.sessionId
 				)
 			);
-			setPendingPipelineId({ id: pipeline?.id ?? null, nonce: generateId() });
-			setActiveTab('pipeline');
+			handleViewInGraph(pipeline?.id ?? null);
 		},
-		[dashboardPipelines]
+		[dashboardPipelines, handleViewInGraph]
 	);
 
 	const handleRemoveCue = useCallback(
@@ -233,7 +272,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	// Wrap tab switching so navigating away from the pipeline tab clears the
 	// pending selection token - prevents a stale nonce from re-snapping the editor
-	// to the "View in Pipeline" target on the next remount.
+	// to the "View in Graph" target on the next remount.
 	const handleSetActiveTab = useCallback((tab: CueModalTab) => {
 		if (tab !== 'pipeline') setPendingPipelineId(null);
 		setActiveTab(tab);
@@ -241,7 +280,14 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	// Cmd/Ctrl+Shift+[/] cycles between tabs. Disabled while help is open
 	// so the help view's keyboard handlers stay in charge.
-	const tabsRef = useRef<readonly CueModalTab[]>(['dashboard', 'pipeline', 'activity', 'backup']);
+	const tabsRef = useRef<readonly CueModalTab[]>([
+		'dashboard',
+		'scheduled',
+		'pipeline',
+		'pipeline-list',
+		'activity',
+		'backup',
+	]);
 	useEffect(() => {
 		const handleTabCycle = (e: KeyboardEvent) => {
 			if (showHelpRef.current) return;
@@ -337,14 +383,36 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									executionCount={eventCount}
 									activeRunsExpanded={activeRunsExpanded}
 									setActiveRunsExpanded={setActiveRunsExpanded}
-									onViewInPipeline={handleViewInPipeline}
+									onViewInGraph={handleViewInGraphFromSession}
 									onEditYaml={handleEditYaml}
 									onRemoveCue={handleRemoveCue}
 									onTriggerSubscription={triggerSubscription}
 									onStopRun={stopRun}
 									onStopAll={stopAll}
+									focusSessionId={cueModalData?.focusSessionId}
 								/>
 							</div>
+						) : activeTab === 'scheduled' ? (
+							<ScheduledTasksTab
+								theme={theme}
+								active
+								agents={scheduledTaskAgents}
+								defaultAgentId={activeSessionId ?? undefined}
+							/>
+						) : activeTab === 'pipeline-list' ? (
+							<PipelineListTab
+								theme={theme}
+								pipelines={dashboardPipelines}
+								graphSessions={graphSessions}
+								activeRuns={activeRuns}
+								activityLog={activityLog}
+								loading={loading || graphInitialLoading}
+								error={error || graphError}
+								onRetry={handleRetry}
+								onViewInGraph={handleViewInGraph}
+								onTriggerSubscription={triggerSubscription}
+								onRenamed={handleRetry}
+							/>
 						) : activeTab === 'activity' ? (
 							<div className="flex-1 min-h-0 px-5 py-4 select-text">
 								<ActivityLog

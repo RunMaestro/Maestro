@@ -36,6 +36,15 @@ import type { InputAreaProps } from './types';
 import { filterCommandHistory, getCurrentCommandHistory } from './utils/commandHistory';
 import { resolveCommandCwd } from '../../services/shellCommand';
 import { CommandModeBar } from './components/CommandModeBar';
+import { AiCommandProposal } from './components/AiCommandProposal';
+import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
+import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import {
+	buildSlotRemap,
+	moveStagedImage,
+	renumberScreenshotReferences,
+} from '../../utils/stagedImageOrder';
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -123,6 +132,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onCancelMerge,
 		// Inline wizard mode props
 		onExitWizard,
+		onStopWizardTurn,
 		// Wizard thinking toggle
 		wizardShowThinking = false,
 		onToggleWizardShowThinking,
@@ -167,10 +177,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const isResumingSession = !!activeTab?.agentSessionId;
 	const commandMode = useComposerInputStore(selectAiCommandMode);
 	const canAttachImages = useMemo(() => {
-		// Command mode pipes the draft to a shell, which has nothing to do with an
-		// image. Hide the affordance rather than leaving a button that stages an
-		// attachment the send path will drop on the floor.
-		if (commandMode) return false;
+		// Neither command rung has anywhere to put an image: one pipes the draft to
+		// a shell, the other asks for a command line. Hide the affordance rather
+		// than leaving a button that stages an attachment the send path drops on
+		// the floor.
+		if (commandMode !== 'off') return false;
 		// Check if images are supported - depends on whether we're resuming an existing session
 		// If the active tab has an agentSessionId, we're resuming and need to check supportsImageInputOnResume
 		return isResumingSession
@@ -211,13 +222,49 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// completion over files, dirs, branches, tags, and prior commands). Read from
 	// the store rather than sniffed from the text - the `!` is consumed on entry,
 	// so the draft looks like any other string.
-	const isCommandModeDraft = !isTerminalMode && commandMode;
-	const isShellInput = isTerminalMode || isCommandModeDraft;
+	const isShellCommandDraft = !isTerminalMode && commandMode === 'shell';
+	// AI command mode holds prose, not a command line, so it gets NONE of those
+	// shell affordances - completing a branch name into an English sentence is
+	// noise, and a `$` in front of "delete the build output" is a lie.
+	const isAiCommandDraft = !isTerminalMode && commandMode === 'ai';
+	const isShellInput = isTerminalMode || isShellCommandDraft;
+
+	// The in-flight suggestion / proposed command for THIS tab, if any. Parked
+	// per tab, so switching away and back finds the same card waiting.
+	const aiCommandEntry = useAiCommandStore(selectAiCommandEntry(session.id, session.activeTabId));
+	const setAiCommandChoice = useAiCommandStore((s) => s.setAiCommandChoice);
+	// What the bar advertises. While a request is in flight the entry's stamp
+	// wins: settings are codified at send time, so changing the model mid-request
+	// applies from the NEXT one, and the bar must not claim otherwise.
+	const { turnModel, turnEffort } = useMemo(
+		() => codifyTurnSettings(activeTab, session),
+		[activeTab, session]
+	);
+	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : turnModel;
+	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : turnEffort;
 
 	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
 	// Non-reactive store handles for the change handler below.
 	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
 	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
+
+	// Reordering the strip reorders what the agent receives, so any `Screenshot N`
+	// already sitting in the draft is now pointing at the wrong picture. Rewrite
+	// those references through the same permutation, in one place, so the strip
+	// and the organizer modal cannot drift on it.
+	const handleReorderStagedImages = useCallback(
+		(from: number, to: number) => {
+			const remap = buildSlotRemap(stagedImages.length, from, to);
+			if (remap.size === 0) return;
+			setStagedImages((prev) => moveStagedImage(prev, from, to));
+			// Read at call time: this fires on a drop, so the store always holds the
+			// live draft and subscribing here would re-render on every keystroke.
+			const draft = useComposerInputStore.getState().aiValue;
+			const renumbered = renumberScreenshotReferences(draft, remap);
+			if (renumbered !== draft) setInputValue(renumbered);
+		},
+		[stagedImages.length, setStagedImages, setInputValue]
+	);
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 
@@ -300,7 +347,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode,
 		slashCommandOpen,
 		atMentionOpen,
-		isCommandMode: commandMode,
+		commandMode,
 		setCommandMode: setAiCommandMode,
 		// Read at call time, not from the `inputValue` closure: onChange fires
 		// before setInputValue lands, so the store still holds the pre-edit text -
@@ -385,6 +432,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				isInitializing={wizardState.isInitializing ?? false}
 				isBusy={wizardState.isWaiting || activeTab?.state === 'busy'}
 				onExitWizard={onExitWizard}
+				onStopTurn={onStopWizardTurn}
 				enterToSend={enterToSend}
 				setEnterToSend={setEnterToSend}
 				onInputFocus={onInputFocus}
@@ -412,6 +460,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					theme={theme}
 					sourceSessionId={session.id}
 					sourceTabId={getActiveTab(session)?.id}
+					onSessionClick={onSessionClick}
 				/>
 			)}
 
@@ -457,6 +506,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				setLightboxImage={setLightboxImage}
 				setStagedImages={setStagedImages}
 				openAnnotator={openAnnotator}
+				onReorder={handleReorderStagedImages}
 			/>
 
 			<SlashCommandPopover
@@ -534,12 +584,33 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								: theme.colors.bgMain,
 						}}
 					>
-						{isCommandModeDraft && (
+						{(isShellCommandDraft || isAiCommandDraft) && (
 							<CommandModeBar
 								theme={theme}
+								mode={isAiCommandDraft ? 'ai' : 'shell'}
 								cwd={resolveCommandCwd(session)}
 								remoteName={session.sshRemote?.name}
 								isGitRepo={session.isGitRepo}
+								model={aiCommandModel}
+								effort={aiCommandEffort}
+							/>
+						)}
+
+						{isAiCommandDraft && aiCommandEntry && (
+							<AiCommandProposal
+								theme={theme}
+								entry={aiCommandEntry}
+								onAccept={() => acceptAiCommand(session, aiCommandEntry)}
+								onDismiss={() => {
+									// Hand the request back so the user can refine it, and put the
+									// caret where they can: declining is nearly always "that is not
+									// what I meant", not "never mind".
+									setInputValue(dismissAiCommand(aiCommandEntry));
+									inputRef.current?.focus();
+								}}
+								onChoose={(choice) =>
+									setAiCommandChoice(aiCommandKey(session.id, aiCommandEntry.tabId), choice)
+								}
 							/>
 						)}
 
@@ -547,7 +618,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							session={session}
 							theme={theme}
 							isTerminalMode={isTerminalMode}
-							isCommandModeDraft={isCommandModeDraft}
+							isCommandModeDraft={isShellCommandDraft}
+							isAiCommandDraft={isAiCommandDraft}
+							awaitingAiCommand={!!aiCommandEntry}
 							inputValue={inputValue}
 							spellCheckEnabled={spellCheckEnabled}
 							inputRef={inputRef}

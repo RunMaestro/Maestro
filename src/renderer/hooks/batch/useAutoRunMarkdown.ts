@@ -10,6 +10,8 @@ import {
 } from '../../utils/markdownConfig';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
+import { remarkAlert } from '../../components/Markdown/remarkAlert';
+import { remarkMaestroMarkers } from '../../components/Markdown/remarkMaestroMarkers';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import { MermaidRenderer } from '../../components/MermaidRenderer';
@@ -18,6 +20,7 @@ import React from 'react';
 import { openUrl } from '../../utils/openUrl';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
+import { useStableCallback } from '../utils/useStableCallback';
 
 export interface UseAutoRunMarkdownParams {
 	theme: Theme;
@@ -45,6 +48,11 @@ export interface UseAutoRunMarkdownParams {
 	enableBionifyReadingMode?: boolean;
 	bionifyIntensity?: number;
 	bionifyAlgorithm?: string;
+	/**
+	 * Enables clickable task checkboxes in the preview. Receives the 1-based
+	 * source line of the task; resolves false when the write did not happen.
+	 */
+	onTaskToggle?: (sourceLine: number) => Promise<boolean>;
 }
 
 export interface UseAutoRunMarkdownReturn {
@@ -72,6 +80,7 @@ export function useAutoRunMarkdown({
 	enableBionifyReadingMode = false,
 	bionifyIntensity,
 	bionifyAlgorithm,
+	onTaskToggle,
 }: UseAutoRunMarkdownParams): UseAutoRunMarkdownReturn {
 	// 1. Memoize prose CSS styles - only regenerate when theme changes
 	const proseStyles = useMemo(() => generateAutoRunProseStyles(theme), [theme]);
@@ -154,13 +163,34 @@ export function useAutoRunMarkdown({
 
 	// 8. Memoize remarkPlugins - include remarkFileLinks when we have file tree
 	const remarkPlugins = useMemo(() => {
-		const plugins: any[] = [...REMARK_GFM_PLUGINS, remarkFrontmatter, remarkFrontmatterTable];
+		const plugins: any[] = [
+			...REMARK_GFM_PLUGINS,
+			remarkAlert,
+			remarkFrontmatter,
+			remarkFrontmatterTable,
+			// Marker pills matter most here: this is the panel with the Run button,
+			// so a gate or halt that will block the run has to be visible from it.
+			remarkMaestroMarkers,
+		];
 		if (fileTree.length > 0 || homeDir) {
 			// cwd is empty since we're at the root of the Auto Run folder
 			plugins.push([remarkFileLinks, { indices: fileTreeIndices || undefined, cwd: '', homeDir }]);
 		}
 		return plugins;
 	}, [fileTree, fileTreeIndices, homeDir]);
+
+	// 9. Task toggling, pinned to one identity. A toggle handler naturally closes
+	// over the document content, so it is reborn on every edit - and rebuilding
+	// the component map below remounts the whole rendered document, throwing away
+	// the reader's scroll position. Stabilizing here means no caller can cause
+	// that by writing an ordinary useCallback.
+	const stableTaskToggle = useStableCallback(
+		(sourceLine: number): Promise<boolean> =>
+			onTaskToggle ? onTaskToggle(sourceLine) : Promise.resolve(false)
+	);
+	// Presence still has to reach the factory: passing nothing keeps checkboxes
+	// read-only, which is how a locked document stays locked.
+	const taskToggle = onTaskToggle ? stableTaskToggle : undefined;
 
 	// 9. Base markdown components - stable unless theme, folderPath, or callbacks change
 	// Separated from search highlighting to prevent rebuilds on every search state change
@@ -181,6 +211,7 @@ export function useAutoRunMarkdown({
 			enableBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
+			onTaskToggle: taskToggle,
 		});
 
 		// Add custom image renderer for AttachmentImage
@@ -206,6 +237,7 @@ export function useAutoRunMarkdown({
 		enableBionifyReadingMode,
 		bionifyIntensity,
 		bionifyAlgorithm,
+		taskToggle,
 	]);
 
 	// 10. Search-highlighted components - only used in preview mode with active search
@@ -232,6 +264,7 @@ export function useAutoRunMarkdown({
 				currentMatchIndex,
 				onMatchRendered: handleMatchRendered,
 			},
+			onTaskToggle: taskToggle,
 		});
 
 		return {
@@ -258,6 +291,7 @@ export function useAutoRunMarkdown({
 		totalMatches,
 		currentMatchIndex,
 		handleMatchRendered,
+		taskToggle,
 	]);
 
 	// 11. Use search-highlighted components when available, otherwise use base components

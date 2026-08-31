@@ -16,6 +16,10 @@ import { useAppInitialization } from '../../../renderer/hooks/ui/useAppInitializ
 const mockSettingsState: Record<string, unknown> = {
 	settingsLoaded: false,
 	suppressWindowsWarning: false,
+	typographyPromptSeen: false,
+	themePromptSeen: false,
+	agentPowersPromptSeen: false,
+	activeThemeId: 'dracula',
 	enableBetaUpdates: false,
 	checkForUpdatesOnStartup: false,
 	leaderboardRegistration: null,
@@ -54,6 +58,8 @@ vi.mock('../../../renderer/stores/settingsStore', () => ({
 const mockSessionState: Record<string, unknown> = {
 	sessionsLoaded: false,
 	initialFileTreeReady: false,
+	// The first-run series reads this to tell a fresh install from an upgrade.
+	sessions: [],
 };
 
 vi.mock('../../../renderer/stores/sessionStore', () => ({
@@ -130,6 +136,21 @@ vi.mock('../../../renderer/services/speckit', () => ({
 	getSpeckitCommands: vi.fn(() => Promise.resolve(mockSpeckitCommands)),
 }));
 
+const mockFlushOutbox = vi.fn(() => Promise.resolve({ sent: 0, pending: 0 }));
+const mockRecoverUncommitted = vi.fn(() => Promise.resolve(0));
+const mockReportDrift = vi.fn(() => Promise.resolve());
+
+vi.mock('../../../renderer/services/leaderboard', () => ({
+	flushLeaderboardOutbox: (...args: unknown[]) => mockFlushOutbox(...(args as [])),
+	recoverUncommittedAutoRunCredit: (...args: unknown[]) => mockRecoverUncommitted(...(args as [])),
+	reportLeaderboardDrift: (...args: unknown[]) => mockReportDrift(...(args as [])),
+}));
+
+// No WindowProvider in these tests; the hook treats that as the main window.
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindowContextOptional: () => null,
+}));
+
 vi.mock('../../../renderer/services/openspec', () => ({
 	getOpenSpecCommands: vi.fn(() => Promise.resolve(mockOpenspecCommands)),
 }));
@@ -142,6 +163,13 @@ const mockExposeWindowsWarningModalDebug = vi.fn();
 vi.mock('../../../renderer/components/WindowsWarningModal', () => ({
 	exposeWindowsWarningModalDebug: (...args: unknown[]) =>
 		mockExposeWindowsWarningModalDebug(...args),
+}));
+
+const mockExposeOnboardingSeriesDebug = vi.fn();
+const mockStartOnboardingSeries = vi.fn();
+vi.mock('../../../renderer/stores/onboardingSeriesStore', () => ({
+	exposeOnboardingSeriesDebug: (...args: unknown[]) => mockExposeOnboardingSeriesDebug(...args),
+	startOnboardingSeries: (...args: unknown[]) => mockStartOnboardingSeries(...args),
 }));
 
 // ============================================================================
@@ -210,8 +238,13 @@ function resetStores() {
 		lastAcknowledgedBadgeLevel: 0,
 	};
 
+	mockSettingsState.typographyPromptSeen = false;
+	mockSettingsState.themePromptSeen = false;
+	mockSettingsState.agentPowersPromptSeen = false;
+	mockSettingsState.activeThemeId = 'dracula';
 	mockSessionState.sessionsLoaded = false;
 	mockSessionState.initialFileTreeReady = false;
+	mockSessionState.sessions = [];
 	mockTabStoreState.fileGistUrls = {};
 }
 
@@ -417,6 +450,98 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(mockSetWindowsWarningModalOpen).not.toHaveBeenCalledWith(true);
+		});
+	});
+
+	// --- First-run modal series ---
+	describe('first-run series', () => {
+		function loaded() {
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = true;
+		}
+
+		it('exposes the debug entry point', () => {
+			renderHook(() => useAppInitialization());
+
+			expect(mockExposeOnboardingSeriesDebug).toHaveBeenCalled();
+		});
+
+		it('starts the series once settings and sessions have loaded', () => {
+			loaded();
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledTimes(1);
+		});
+
+		it('waits for sessions, since that is what tells a returning user apart', () => {
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = false;
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).not.toHaveBeenCalled();
+		});
+
+		it('waits for settings, so a default flag cannot be mistaken for an answer', () => {
+			mockSettingsState.settingsLoaded = false;
+			mockSessionState.sessionsLoaded = true;
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).not.toHaveBeenCalled();
+		});
+
+		it('passes every seen flag, so each step can be gated on its own', () => {
+			// One flag for the whole series would stop a later step from ever
+			// reaching users who answered the earlier ones.
+			loaded();
+			mockSettingsState.typographyPromptSeen = true;
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({
+					seen: { typography: true, theme: false, agentPowers: false },
+				})
+			);
+		});
+
+		it('reports a fresh install as a new user', () => {
+			loaded();
+			mockSessionState.sessions = [];
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ audience: 'new' })
+			);
+		});
+
+		it('reports an install that already has agents as returning', () => {
+			loaded();
+			mockSessionState.sessions = [{ id: 'a' }];
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ audience: 'returning' })
+			);
+		});
+
+		it('passes the active theme, which gates the theme step', () => {
+			loaded();
+			mockSettingsState.activeThemeId = 'nord';
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ activeThemeId: 'nord' })
+			);
+		});
+
+		it('starts at most once per mount', () => {
+			// The flag writes come back through the store as state changes, and
+			// the series must not restart on the re-render that follows.
+			loaded();
+			const { rerender } = renderHook(() => useAppInitialization());
+			rerender();
+			rerender();
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -647,6 +772,74 @@ describe('useAppInitialization', () => {
 			});
 
 			expect(mockLeaderboardSync).not.toHaveBeenCalled();
+		});
+
+		it('should report drift instead of silently skipping when server is behind local', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.leaderboardRegistration = {
+				authToken: 'token123',
+				email: 'user@example.com',
+			};
+			mockSettingsState.autoRunStats = {
+				cumulativeTimeMs: 3_693_225_045,
+				totalRuns: 10,
+				currentBadgeLevel: 3,
+				longestRunMs: 500,
+				longestRunTimestamp: 0,
+				lastBadgeUnlockLevel: 3,
+				lastAcknowledgedBadgeLevel: 3,
+			};
+			mockLeaderboardSync.mockResolvedValue({
+				success: true,
+				found: true,
+				data: { cumulativeTimeMs: 3_555_745_597, totalRuns: 9, badgeLevel: 3 },
+			});
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3500);
+			});
+
+			// Everything owed ships before the comparison, so the gap is real drift.
+			expect(mockRecoverUncommitted).toHaveBeenCalled();
+			expect(mockFlushOutbox).toHaveBeenCalled();
+			expect(mockReportDrift).toHaveBeenCalledWith(3_693_225_045, 3_555_745_597);
+			// Never overwrite the user's local total behind their back.
+			expect(mockSettingsState.setAutoRunStats).not.toHaveBeenCalled();
+		});
+
+		it('should not report drift when the server is ahead', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.leaderboardRegistration = {
+				authToken: 'token123',
+				email: 'user@example.com',
+			};
+			mockSettingsState.autoRunStats = {
+				cumulativeTimeMs: 100,
+				totalRuns: 1,
+				currentBadgeLevel: 0,
+				longestRunMs: 50,
+				longestRunTimestamp: 0,
+				lastBadgeUnlockLevel: 0,
+				lastAcknowledgedBadgeLevel: 0,
+			};
+			mockLeaderboardSync.mockResolvedValue({
+				success: true,
+				found: true,
+				data: { cumulativeTimeMs: 500, totalRuns: 5, badgeLevel: 2 },
+			});
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3500);
+			});
+
+			expect(mockReportDrift).not.toHaveBeenCalled();
+			expect(mockSettingsState.setAutoRunStats).toHaveBeenCalled();
 		});
 
 		it('should not update when server stats are lower', async () => {

@@ -33,6 +33,7 @@ import type {
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
+import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore, selectSessionById } from './sessionStore';
@@ -44,7 +45,9 @@ import { maybeReturnToPrimary } from './failoverStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
+import { dispatchCrossAgentMentionsForMessage } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
+import { applyQueuedItemRelease } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -317,11 +320,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) return;
 
+		// The login itself runs in the re-authentication modal (opened by the
+		// caller), so this only has to clear the error and select the agent whose
+		// provider failed - switching the agent into terminal mode would leave the
+		// user in a shell they never asked for once the modal closes.
 		get().clearAgentError(sessionId);
-
-		// Switch to terminal mode for re-auth (clear activeFileTabId to prevent orphaned file preview)
 		useSessionStore.getState().setActiveSessionId(sessionId);
-		updateSession(sessionId, (s) => ({ ...s, inputMode: 'terminal', activeFileTabId: null }));
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {
@@ -374,12 +378,42 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
 
+		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message
+		// becomes this agent's turn - not when the user typed it. Deferring is the
+		// whole point: consulting at submit time pulls the mentioned agent into a
+		// question that is still sitting behind other queued work.
+		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+			dispatchCrossAgentMentionsForMessage(item.text, session, targetTab.id);
+
+			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
+			// dispatch. Return before spawning - and before `noteDispatch`, since there
+			// is no local turn for Agent Resilience to retry. The dequeue already marked
+			// this tab busy and appended the user's bubble, so release it here; nothing
+			// else will, because no process is starting. Going idle with items still
+			// queued is what lets the drain pick up the next one.
+			if (item.crossAgentOnly) {
+				useSessionStore
+					.getState()
+					.setSessions((prev) =>
+						prev.map((s) => (s.id === sessionId ? applyQueuedItemRelease(s, targetTab.id) : s))
+					);
+				return;
+			}
+		}
+
+		// The model/effort this turn runs under were frozen when the user queued
+		// it, so a queue that drains after the user switched models still spawns
+		// each item on what it was queued with. Falls back to the live values only
+		// for items queued before the capture existed.
+		const { turnModel, turnEffort } = codifyQueuedTurnSettings(item, targetTab, session);
+
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
 		// tab so it matches the error listener's tab) so it can be auto-resent if
 		// this turn fails with a transient upstream error. We record the item with
 		// its tabId pinned to the resolved target - `item.tabId` may be undefined
-		// when the item fell back to the active tab.
-		noteDispatch(sessionId, { ...item, tabId: targetTab.id }, deps);
+		// when the item fell back to the active tab. `crossAgentMention` is dropped:
+		// the consult just fired, and an auto-retry of this turn must not re-fire it.
+		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
 		// Provider Failover: lazy fail-back probe. If this agent has sat on a backup
 		// endpoint past its dwell time, move it back to the primary now so THIS turn
@@ -457,8 +491,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomArgs: session.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: targetTab.customModel ?? session.customModel,
-					sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
+					sessionCustomModel: turnModel,
+					sessionCustomEffort: turnEffort,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
@@ -556,8 +590,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: targetTab.customModel ?? session.customModel,
-						sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
+						sessionCustomModel: turnModel,
+						sessionCustomEffort: turnEffort,
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});

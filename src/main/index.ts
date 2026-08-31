@@ -1,7 +1,6 @@
 import {
 	app,
 	BrowserWindow,
-	Menu,
 	powerMonitor,
 	protocol,
 	safeStorage,
@@ -11,6 +10,7 @@ import {
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { installApplicationMenu } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -100,6 +100,7 @@ import { executeCuePrompt, recordCueHistoryEntry, stopCueRun } from './cue/cue-e
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -138,6 +139,7 @@ import { CONCERTO_HTML_SCHEME } from '../shared/concerto-html';
 import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
+import { closeAllParquetFiles } from './parquet/parquet-file';
 import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
@@ -468,6 +470,16 @@ const settingsWatcher = createSettingsWatcher({
 	getBroadcastWindows: () => BrowserWindow.getAllWindows(),
 	getSettingsPath: () => syncPath,
 	getAgentConfigsPath: () => productionDataPath,
+	onSettingsChangedExternally: () => {
+		// Re-apply settings the MAIN process acts on. Without this, a CLI write
+		// updates the file and the renderer while the main process keeps running
+		// on the value it read at startup - for sleep prevention that means the
+		// OS power assertion stays held after the user has turned the feature off.
+		const enabled = store.get('preventSleepEnabled') === true;
+		if (enabled !== powerManager.isEnabled()) {
+			powerManager.setEnabled(enabled);
+		}
+	},
 });
 
 // Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
@@ -1306,6 +1318,18 @@ app
 					agentConfigValues,
 				});
 
+				// Cue spawns agents outside the ProcessManager, so a failed run is the
+				// only place an expired token can surface for a pipeline. Without this
+				// the whole board goes quietly red until someone types a message.
+				reportCueAuthFailure(
+					mainWindow,
+					result,
+					storedSession.toolType,
+					storedSession.sessionSshRemoteConfig?.enabled
+						? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
+						: undefined
+				);
+
 				const historyEntry = recordCueHistoryEntry(result, {
 					id: storedSession.id,
 					name: storedSession.name,
@@ -1770,7 +1794,7 @@ app
 		};
 		/**
 		 * Main-side mirror of the renderer's `aiTabFocusFields()`
-		 * (`src/renderer/utils/tabHelpers.ts`): land a session on an AI tab by
+		 * (`src/renderer/utils/tabHelpers`): land a session on an AI tab by
 		 * clearing every non-AI view that would otherwise outrank it in the render
 		 * precedence. Shared by `tabs.focus` and `sessions.focus` so the two plugin
 		 * verbs can never drift into different notions of "focused".
@@ -2827,90 +2851,10 @@ app
 		// plugins flag, so enabling the feature later begins firing without a restart.
 		pluginScheduler?.start();
 
-		// Set custom application menu to prevent macOS from injecting native
-		// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
-		// menu items into the default Window menu. Without this, those keyboard
-		// events are intercepted at the NSMenu level and never reach the renderer.
-		//
-		// IMPORTANT: Do NOT include { role: 'close' } in the Window submenu.
-		// The 'close' role registers Cmd+W as a native accelerator, which intercepts
-		// the keystroke at the NSMenu level before it reaches the renderer. This
-		// breaks Cmd+W tab-close shortcuts in both AI and terminal modes. Window
-		// closing is handled by the app lifecycle (Cmd+Q quits, red traffic light
-		// hides) so the native Close menu item is unnecessary.
-		if (isMacOS()) {
-			const template: Electron.MenuItemConstructorOptions[] = [
-				{
-					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
-					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
-					// quit role (as "Quit and Keep Windows"), and that keystroke sits
-					// one modifier away from Opt+Q (Maestro Cue), causing accidental
-					// quits. Click events from accelerators carry modifier flags, so
-					// we can detect Option held and ignore the keystroke entirely.
-					role: 'appMenu',
-					submenu: [
-						{ role: 'about' },
-						{ type: 'separator' },
-						{ role: 'services' },
-						{ type: 'separator' },
-						{ role: 'hide' },
-						{ role: 'hideOthers' },
-						{ role: 'unhide' },
-						{ type: 'separator' },
-						{
-							label: 'Quit Maestro',
-							accelerator: 'Cmd+Q',
-							click: (_item, _window, event) => {
-								if (event?.altKey) {
-									logger.info(
-										'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
-										'Menu'
-									);
-									return;
-								}
-								app.quit();
-							},
-						},
-					],
-				},
-				{
-					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
-					// `undo` / `redo`. Those built-in roles register Cmd+Z /
-					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
-					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W - see the note
-					// above the appMenu block). Removing them frees Cmd+Z for the
-					// image annotator's stroke-undo handler.
-					//
-					// Side effect: Chromium in Electron relies on the Edit > Undo
-					// menu role to deliver Cmd+Z to focused textareas/inputs on
-					// macOS, so without it native text-field undo silently does
-					// nothing. The renderer-side `useTextEditorUndo` hook
-					// (src/renderer/hooks/keyboard/useTextEditorUndo.ts) restores
-					// that behavior by calling `document.execCommand('undo')` on
-					// text targets. The annotator's own Cmd+Z listener bails out
-					// for text targets, so the two paths don't conflict.
-					label: 'Edit',
-					submenu: [
-						{ role: 'cut' },
-						{ role: 'copy' },
-						{ role: 'paste' },
-						{ role: 'pasteAndMatchStyle' },
-						{ role: 'delete' },
-						{ type: 'separator' },
-						{ role: 'selectAll' },
-					],
-				},
-				{
-					label: 'Window',
-					submenu: [{ role: 'minimize' }, { role: 'zoom' }],
-				},
-			];
-			Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-		} else {
-			// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
-			Menu.setApplicationMenu(null);
-		}
+		// Install the application menu (File / Edit / View / Window on macOS,
+		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
+		// menu is display-only and how clicks are routed back to the renderer.
+		installApplicationMenu();
 
 		// Restore the saved multi-window layout (or a single primary window when
 		// there is nothing saved - backward compatible).
@@ -2940,6 +2884,10 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		// Release parquet file descriptors (and their cached scans) on the way
+		// out. The idle reaper would get to them eventually, but a preview tab
+		// left open otherwise holds a descriptor until the process dies.
+		app.on('will-quit', () => void closeAllParquetFiles());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);

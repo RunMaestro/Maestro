@@ -88,6 +88,8 @@ function atomicWriteFileSync(filePath: string, content: string): void {
 // Store file structures (as used by Electron Store)
 interface SessionsStore {
 	sessions: SessionInfo[];
+	/** Agent the desktop UI currently has selected (400ms-debounced write). */
+	activeSessionId?: string;
 }
 
 interface GroupsStore {
@@ -113,6 +115,17 @@ interface AgentConfigsStore {
 export function readSessions(): SessionInfo[] {
 	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
 	return data?.sessions || [];
+}
+
+/**
+ * The agent the desktop UI currently has selected, or null when the app has
+ * never recorded one. Lives in the sessions store file next to the agents
+ * themselves, so this is the same read `readSessions` already does.
+ */
+export function readActiveAgentId(): string | null {
+	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
+	const id = data?.activeSessionId;
+	return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 /**

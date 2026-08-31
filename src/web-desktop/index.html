@@ -20,17 +20,6 @@
 		     + onload swap trick: mobile Safari defers fetching print-media
 		     stylesheets until an actual print, so onload never fires and the font
 		     never loads, leaving the app in a serifed Courier fallback. -->
-		<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-		<link
-			rel="preload"
-			as="style"
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-		/>
-		<link
-			rel="stylesheet"
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-		/>
 		<style>
 			html,
 			body,
@@ -40,9 +29,20 @@
 				height: 100%;
 				background: #0a0a0a;
 				color: #eee;
-				font-family:
-					'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco,
-					'Courier New', monospace;
+				/* Follows the interface font setting, same as the desktop shell.
+				   The literals are only the pre-React fallback for the splash. */
+				font-family: var(
+					--maestro-font-interface,
+					'JetBrains Mono',
+					'Fira Code',
+					ui-monospace,
+					'SF Mono',
+					SFMono-Regular,
+					Menlo,
+					Monaco,
+					'Courier New',
+					monospace
+				);
 				-webkit-font-smoothing: antialiased;
 				-moz-osx-font-smoothing: grayscale;
 			}
@@ -59,6 +59,12 @@
 				gap: 20px;
 			}
 			.md-splash__wordmark {
+				/* The brand mark never follows the interface font. Without this it
+				   inherits `body`, which resolves --maestro-font-interface, so the
+				   logo changed shape with the user's reading preference. Kept in
+				   sync by hand with WORDMARK_FONT_STACK in src/shared/fontStack.ts;
+				   this paints before any JavaScript runs and cannot import it. */
+				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 				font-weight: 700;
 				font-size: 22px;
 				letter-spacing: 0.35em;
@@ -113,39 +119,61 @@
 			// window 'error' (covers SyntaxError in the entry module, which a
 			// try/catch in bootstrap can't see) and 'unhandledrejection' (covers a
 			// rejected dynamic import) route here.
+			//
+			// These listeners must be registered before the entry module is parsed,
+			// which is why they live inline. They only decide anything themselves
+			// while the bundle is not yet running: once bootstrap.ts installs
+			// window.__maestroHandleLoadFailure, that takes over, because by then
+			// the failure could just as easily be a stale hashed chunk in a
+			// long-lived tab (recoverable by reloading) or an app-level bug the
+			// React error boundary should own - neither of which should wipe #root
+			// or blame the network. See src/web-desktop/loadFailure.ts.
 			(function () {
 				var shown = false;
-				function showError(title, detail) {
+				var NETWORK_HINT =
+					'If this device is on a different Wi-Fi network than the computer running Maestro, or the network blocks device-to-device traffic, the page can fail to load. Confirm both are on the same network and retry.';
+				function escapeHtml(value) {
+					return String(value == null ? '' : value).replace(/[&<>]/g, function (c) {
+						return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+					});
+				}
+				function showError(title, detail, hint) {
 					if (shown) return;
 					shown = true;
 					var root = document.getElementById('root');
 					if (!root) return;
-					var safe = String(detail == null ? '' : detail).replace(/[&<>]/g, function (c) {
-						return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
-					});
 					root.innerHTML =
 						'<div class="md-error"><h2>' +
-						title +
+						escapeHtml(title) +
 						'</h2><pre>' +
-						safe +
-						'</pre><div class="md-error__hint">If this device is on a different Wi-Fi network than the computer running Maestro, or the network blocks device-to-device traffic, the page can fail to load. Confirm both are on the same network and retry.</div></div>';
+						escapeHtml(detail) +
+						'</pre><div class="md-error__hint">' +
+						escapeHtml(hint || NETWORK_HINT) +
+						'</div></div>';
+				}
+				function report(reason) {
+					var handle = window.__maestroHandleLoadFailure;
+					if (handle) {
+						handle(reason);
+						return;
+					}
+					// Bundle never got far enough to install the policy handler, so
+					// this really is a "couldn't load Maestro at all" failure and the
+					// network hint is the right guess.
+					showError(
+						'Maestro web-desktop failed to load',
+						(reason && (reason.stack || reason.message)) || String(reason)
+					);
 				}
 				window.addEventListener('error', function (e) {
 					// Ignore resource-load errors that bubble as generic Events with
 					// no error object (e.g. an image); only surface real script errors.
 					if (e && (e.error || e.message)) {
-						showError(
-							'Maestro web-desktop failed to load',
-							(e.error && (e.error.stack || e.error.message)) || e.message
-						);
+						report(e.error || new Error(e.message));
 					}
 				});
 				window.addEventListener('unhandledrejection', function (e) {
-					var reason = e && e.reason;
-					showError(
-						'Maestro web-desktop failed to load',
-						(reason && (reason.stack || reason.message)) || String(reason)
-					);
+					report(e && e.reason);
 				});
 				window.__maestroShowBootError = showError;
 			})();

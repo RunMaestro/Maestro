@@ -679,6 +679,74 @@ export async function readBinaryFileRemoteAsBase64(
 }
 
 /**
+ * Read one fixed-size block of a remote binary file as base64.
+ *
+ * The block-oriented shape is deliberate. `dd bs=<size> skip=<index>` seeks
+ * directly to `index * size` rather than reading and discarding the leading
+ * bytes, so fetching block 7 of a file costs the same as fetching block 0.
+ * (Verified: a 6 MB block-aligned read off a 655 MB file returns in under a
+ * millisecond.) Byte-exact ranges would need `bs=1`, which reads one byte per
+ * syscall and is thousands of times slower, so callers align to blocks and
+ * slice locally if they need something finer.
+ *
+ * Why this exists: the whole-file {@link readBinaryFileRemoteAsBase64} holds
+ * the entire base64 payload AND the decoded buffer in memory at once, which
+ * for a large file is several times the file size in the main process with no
+ * way to report progress. Fetching block by block bounds that to one block and
+ * gives the caller a natural place to report how far along it is.
+ *
+ * `count=1` keeps each call to exactly one block; a short final block is
+ * returned as-is, and reading past EOF yields empty data rather than an error.
+ * `2>/dev/null` suppresses dd's progress summary, which it writes to stderr
+ * and which would otherwise be mistaken for a failure.
+ *
+ * @param filePath Path to the file on the remote host
+ * @param sshRemote SSH remote configuration
+ * @param blockIndex 0-based block number
+ * @param blockSize Block size in bytes (the caller's chunk size)
+ * @param deps Optional dependencies for testing
+ * @returns The block's bytes as a whitespace-free base64 string
+ */
+export async function readBinaryFileBlockRemoteAsBase64(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	blockIndex: number,
+	blockSize: number,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string>> {
+	if (!Number.isInteger(blockIndex) || blockIndex < 0) {
+		return { success: false, error: `Invalid block index: ${blockIndex}` };
+	}
+	if (!Number.isInteger(blockSize) || blockSize <= 0) {
+		return { success: false, error: `Invalid block size: ${blockSize}` };
+	}
+
+	const escapedPath = shellEscapeRemotePath(filePath);
+	const remoteCommand = `dd if=${escapedPath} bs=${blockSize} skip=${blockIndex} count=1 2>/dev/null | base64`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to read file: ${filePath}`;
+		return {
+			success: false,
+			error: error.includes('No such file')
+				? `File not found: ${filePath}`
+				: error.includes('Is a directory')
+					? `Path is a directory: ${filePath}`
+					: error.includes('Permission denied')
+						? `Permission denied: ${filePath}`
+						: error,
+		};
+	}
+
+	return {
+		success: true,
+		data: result.stdout.replace(/\s+/g, ''),
+	};
+}
+
+/**
  * Read a remote file from a byte offset to EOF via `tail -c +N`.
  *
  * Built for incremental polling of an append-only log (e.g. Copilot's
@@ -1153,6 +1221,161 @@ export async function deleteRemote(
 				: error.includes('No such file')
 					? `Path not found: ${targetPath}`
 					: error,
+		};
+	}
+
+	return { success: true };
+}
+
+/**
+ * Conservative cap on the byte length of a single batched `rm` command line.
+ *
+ * The command is executed by the remote login shell, so what actually bounds it
+ * is the remote host's `ARG_MAX` (256 KB on macOS, typically 2 MB on Linux),
+ * minus the environment. 32 KB sits far below the smallest of those on any host
+ * we might land on, and still fits well over a thousand ordinary paths per
+ * round trip, so the chunking never becomes the bottleneck.
+ */
+const REMOTE_DELETE_COMMAND_MAX_BYTES = 32 * 1024;
+
+/**
+ * Split escaped paths into chunks whose joined command line stays under
+ * `REMOTE_DELETE_COMMAND_MAX_BYTES`. A single path longer than the cap still
+ * gets its own chunk rather than being dropped: the remote shell is then the
+ * one to reject it, with a real error, instead of us silently skipping it.
+ */
+function chunkEscapedPaths(escapedPaths: string[], prefixBytes: number): string[][] {
+	const chunks: string[][] = [];
+	let current: string[] = [];
+	let currentBytes = prefixBytes;
+
+	for (const escaped of escapedPaths) {
+		// +1 for the space separating this argument from the previous one.
+		const cost = Buffer.byteLength(escaped, 'utf8') + 1;
+		if (current.length > 0 && currentBytes + cost > REMOTE_DELETE_COMMAND_MAX_BYTES) {
+			chunks.push(current);
+			current = [];
+			currentBytes = prefixBytes;
+		}
+		current.push(escaped);
+		currentBytes += cost;
+	}
+
+	if (current.length > 0) {
+		chunks.push(current);
+	}
+	return chunks;
+}
+
+/**
+ * Delete many files or directories on a remote host via SSH in as few round
+ * trips as possible.
+ *
+ * `deleteRemote` opens one SSH connection per path. Deleting a multi-select of
+ * 125 files that way means 125 handshakes, which is what made bulk delete take
+ * over 30 seconds (issue #1423). This passes the whole set to a single `rm` per
+ * chunk instead, so the usual case is one round trip regardless of count.
+ *
+ * `rm` reports failures on stderr but exits non-zero without saying WHICH
+ * argument failed, so a failed chunk is retried one path at a time to recover
+ * per-path attribution. That fallback only runs on the error path, so the happy
+ * path stays at one connection.
+ *
+ * @param targetPaths Paths to delete
+ * @param sshRemote SSH remote configuration
+ * @param recursive Whether to recursively delete directories (default: true)
+ * @param deps Optional dependencies for testing
+ * @returns One result per input path, in input order
+ */
+export async function deleteManyRemote(
+	targetPaths: string[],
+	sshRemote: SshRemoteConfig,
+	recursive: boolean = true,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>[]> {
+	if (targetPaths.length === 0) return [];
+
+	// Use rm -rf for recursive delete (directories), rm -f for files.
+	// The -f flag prevents errors if a path doesn't exist.
+	const rmFlags = recursive ? '-rf' : '-f';
+	const commandPrefix = `rm ${rmFlags} `;
+
+	// Escape once, then chunk on the escaped length - that is what the remote
+	// shell actually has to fit, and escaping can grow a path substantially.
+	const escapedPaths = targetPaths.map((p) => shellEscapeRemotePath(p));
+	const indices = targetPaths.map((_, i) => i);
+	const results: RemoteFsResult<void>[] = new Array(targetPaths.length);
+
+	let cursor = 0;
+	for (const chunk of chunkEscapedPaths(escapedPaths, Buffer.byteLength(commandPrefix, 'utf8'))) {
+		const chunkIndices = indices.slice(cursor, cursor + chunk.length);
+		cursor += chunk.length;
+
+		const result = await execRemoteCommand(sshRemote, commandPrefix + chunk.join(' '), deps);
+
+		if (result.exitCode === 0) {
+			for (const index of chunkIndices) {
+				results[index] = { success: true };
+			}
+			continue;
+		}
+
+		// The chunk failed as a whole and `rm` won't tell us which path was at
+		// fault, so fall back to per-path deletes to attribute the failure. Some
+		// of these will succeed - `rm` keeps going past a bad argument, so a
+		// non-zero exit does not mean nothing in the chunk was removed.
+		for (const index of chunkIndices) {
+			results[index] = await deleteRemote(targetPaths[index], sshRemote, recursive, deps);
+		}
+	}
+
+	return results;
+}
+
+/**
+ * Zip a directory on a remote host via SSH.
+ *
+ * Runs `zip -r` from the folder's parent so the archive contains the folder
+ * itself as its single top-level entry (matching the local archiver path).
+ * Symlinks are stored rather than followed, so a self-referencing link cannot
+ * make the archive grow without bound.
+ *
+ * @param folderPath Absolute path of the folder to compress
+ * @param destZipPath Absolute path the .zip should be written to
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ * @returns Success/failure result
+ */
+export async function compressFolderRemote(
+	folderPath: string,
+	destZipPath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>> {
+	const trimmed = folderPath.replace(/\/+$/, '');
+	const lastSlash = trimmed.lastIndexOf('/');
+	const parentPath = lastSlash > 0 ? trimmed.slice(0, lastSlash) : lastSlash === 0 ? '/' : '.';
+	const folderName = trimmed.slice(lastSlash + 1);
+
+	const escapedParent = shellEscapeRemotePath(parentPath);
+	const escapedDest = shellEscapeRemotePath(destZipPath);
+	const escapedName = shellEscape(folderName);
+	const remoteCommand = `cd ${escapedParent} && zip -r -q -y ${escapedDest} ${escapedName}`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to compress: ${folderPath}`;
+		// 127 is the shell's "command not found" - the remote host has no `zip`.
+		if (result.exitCode === 127 || /zip: (command )?not found/i.test(error)) {
+			return {
+				success: false,
+				error: 'The remote host does not have the `zip` command installed',
+			};
+		}
+		return {
+			success: false,
+			error: error.includes('Permission denied') ? `Permission denied: ${destZipPath}` : error,
 		};
 	}
 

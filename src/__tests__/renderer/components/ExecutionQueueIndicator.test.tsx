@@ -276,6 +276,19 @@ describe('ExecutionQueueIndicator', () => {
 	});
 
 	describe('tab grouping and pills', () => {
+		it('should render the tab name in the interface font, not the code face', () => {
+			// A tab name is prose - typed by the user, or auto-named from their
+			// prompt. `font-mono` resolves to the CODE face now, which put these
+			// labels in a different font from every other label around them once
+			// the interface went proportional.
+			const session = createSession({
+				executionQueue: [createQueuedItem({ tabName: 'MyTab' })],
+			});
+			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
+
+			expect(screen.getByText('MyTab').className).not.toContain('font-mono');
+		});
+
 		it('should display tab name in pill', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem({ tabName: 'MyTab' })],
@@ -343,6 +356,26 @@ describe('ExecutionQueueIndicator', () => {
 			const hasTabB = root.textContent?.includes('TabB');
 			const hasOverflowIndicator = root.textContent?.includes('+1');
 			expect(hasTabB || hasOverflowIndicator).toBe(true);
+		});
+
+		it("labels a pill from the live tab, not from each item's queue-time snapshot", () => {
+			// Both items target tab-1, but the first was queued before auto-naming
+			// ran, so its snapshot still reads "New". Grouping keys on tabId, so a
+			// snapshot-derived label made one tab render as two different names
+			// depending on which item happened to arrive first.
+			const session = createSession({
+				aiTabs: [{ id: 'tab-1', name: 'PR1427', state: 'idle' }] as unknown as Session['aiTabs'],
+				executionQueue: [
+					createQueuedItem({ tabId: 'tab-1', tabName: 'New' }),
+					createQueuedItem({ tabId: 'tab-1', tabName: 'PR1427' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
+			expect(root).toHaveTextContent('PR1427 (2)');
+			expect(root.textContent).not.toContain('New');
 		});
 
 		it('should use "Unknown" for items without tabName', () => {

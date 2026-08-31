@@ -66,7 +66,7 @@ function makeProps(
 	return {
 		sessions: [],
 		theme,
-		onViewInPipeline: vi.fn(),
+		onViewInGraph: vi.fn(),
 		onEditYaml: vi.fn(),
 		onRemoveCue: vi.fn(),
 		onTriggerSubscription: vi.fn(),
@@ -83,6 +83,63 @@ describe('SessionsTable', () => {
 	it('renders empty-state message when sessions array is empty', () => {
 		render(<SessionsTable {...makeProps()} />);
 		expect(screen.getByText(/No sessions have a cue config file/)).toBeInTheDocument();
+	});
+
+	// Right-clicking one agent opens a table of EVERY Cue-enabled agent, so the
+	// row the user asked for has to be marked or the menu item is a promise the
+	// modal does not keep.
+	describe('focused row', () => {
+		it('marks the right-clicked agent row', () => {
+			render(
+				<SessionsTable
+					{...makeProps({
+						sessions: [makeSession('s1', 'Agent-1'), makeSession('s2', 'Agent-2')],
+						focusSessionId: 's2',
+					})}
+				/>
+			);
+
+			const focused = screen.getByTestId('cue-session-row-focused');
+			expect(focused).toHaveTextContent('Agent-2');
+			expect(focused).not.toHaveTextContent('Agent-1');
+		});
+
+		it('marks exactly one row', () => {
+			render(
+				<SessionsTable
+					{...makeProps({
+						sessions: [makeSession('s1'), makeSession('s2'), makeSession('s3')],
+						focusSessionId: 's2',
+					})}
+				/>
+			);
+
+			expect(screen.getAllByTestId('cue-session-row-focused')).toHaveLength(1);
+		});
+
+		// The global entry points (hotkey, command palette, Settings) open the
+		// dashboard with no agent in hand and must look exactly as before.
+		it('marks nothing when opened without an agent', () => {
+			render(
+				<SessionsTable {...makeProps({ sessions: [makeSession('s1'), makeSession('s2')] })} />
+			);
+
+			expect(screen.queryByTestId('cue-session-row-focused')).not.toBeInTheDocument();
+		});
+
+		it('scrolls the focused row into view', () => {
+			const scrollIntoView = vi.fn();
+			// jsdom does not implement scrollIntoView.
+			Element.prototype.scrollIntoView = scrollIntoView;
+
+			render(
+				<SessionsTable
+					{...makeProps({ sessions: [makeSession('s1'), makeSession('s2')], focusSessionId: 's2' })}
+				/>
+			);
+
+			expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+		});
 	});
 
 	it('renders session name and agent type columns', () => {

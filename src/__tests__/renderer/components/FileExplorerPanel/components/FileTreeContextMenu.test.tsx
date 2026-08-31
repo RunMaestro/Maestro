@@ -66,6 +66,8 @@ const defaultProps = {
 	onNewAgentHere: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
+	onStageForAutoRun: vi.fn(),
+	onCompressFolder: vi.fn(),
 	onPreviewMulti: vi.fn(),
 	onQueueMedia: vi.fn(),
 	onOpenInDefaultAppMulti: vi.fn(),
@@ -95,6 +97,27 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Reveal in Finder')).toBeTruthy();
 		expect(screen.getByText('Rename')).toBeTruthy();
 		expect(screen.getByText('Delete')).toBeTruthy();
+	});
+
+	// Right-clicking a top-level file is the only way to create a sibling in the
+	// workspace root when the root has no folder to right-click.
+	it('offers New File and New Folder on a file, creating alongside it', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		fireEvent.click(screen.getByText('New Folder'));
+		expect(defaultProps.onOpenNewFolder).toHaveBeenCalled();
+	});
+
+	it('offers New File and New Folder on the empty-space root menu', () => {
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={{ x: 10, y: 20, node: null, path: '' }} />
+		);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		expect(screen.getByText('New Folder')).toBeTruthy();
+		// Root menu has no target row, so nothing to rename or delete.
+		expect(screen.queryByText('Rename')).toBeNull();
 	});
 
 	it('shows New File + Preview all + Copy Path + Reveal + Rename + Delete for a folder', () => {
@@ -144,6 +167,26 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.queryByText('New Agent Here')).toBeNull();
 		// The rest of the folder menu is unaffected.
 		expect(screen.getByText('New Folder')).toBeTruthy();
+	});
+
+	it('offers Compress on a folder, including one with nothing to preview', () => {
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />
+		);
+		fireEvent.click(screen.getByText('Compress'));
+		expect(defaultProps.onCompressFolder).toHaveBeenCalled();
+		unmount();
+
+		// An empty folder still zips - there is just nothing inside the archive.
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(emptyFolderNode)} />
+		);
+		expect(screen.getByText('Compress')).toBeTruthy();
+	});
+
+	it('does not offer Compress on a file', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		expect(screen.queryByText('Compress')).toBeNull();
 	});
 
 	it('pluralizes the preview-all label to singular for one previewable file', () => {
@@ -399,5 +442,101 @@ describe('FileTreeContextMenu', () => {
 		);
 		const menu = document.body.querySelector('.fixed') as HTMLElement;
 		expect(menu.style.opacity).toBe('0');
+	});
+
+	// The menu is shrink-to-fit and positioned by measured width, so letting it
+	// grow is free - a wrapped label just looks broken. Every other context menu
+	// in the app already sets this.
+	it('never wraps a menu label', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+		const menu = document.body.querySelector('.fixed') as HTMLElement;
+		expect(menu.className).toContain('whitespace-nowrap');
+	});
+
+	describe('Auto Run staging', () => {
+		it('offers staging when the folder holds Auto Run documents', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					autoRunStagedCount={11}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage 11 Documents for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('uses the singular label for one document', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					autoRunStagedCount={1}
+				/>
+			);
+
+			expect(screen.getByText('Stage Document for Auto Run')).toBeInTheDocument();
+		});
+
+		it('hides staging for a folder with no Auto Run documents', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('offers staging on a single Auto Run document file', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					autoRunStagedCount={1}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage Document for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging on a file outside the Auto Run folder', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('offers staging for a multi-selection of Auto Run documents', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					autoRunStagedCount={5}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage 5 Documents for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging for a multi-selection outside the Auto Run folder', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(fileNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+				/>
+			);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
 	});
 });

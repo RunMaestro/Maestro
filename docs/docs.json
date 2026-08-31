@@ -56,8 +56,11 @@
 					"cross-agent-mentions",
 					"image-annotator",
 					"media-player",
+					"file-formats",
+					"parquet-preview",
 					"remote-control",
 					"ssh-remote-execution",
+					"agent-resilience",
 					"feedback",
 					"configuration"
 				]

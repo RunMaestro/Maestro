@@ -87,6 +87,7 @@ function TabBarInner({
 	onTerminalTabRename,
 	onCopyTerminalBuffer,
 	onPublishTerminalBufferGist,
+	onPublishFileGist,
 	onSendTerminalBufferToAgent,
 	onTerminalTabConfigureStartupCommand,
 	onCopyBrowserContent,
@@ -387,7 +388,7 @@ function TabBarInner({
 	// the ref, auto-dissolves the group below two panes). No-op when the payload is
 	// not a pane drag or lacks the group/leaf ids.
 	const promotePaneFromDrag = useCallback(
-		(e: React.DragEvent, insertIndex: number | null): boolean => {
+		(e: React.DragEvent, targetTabId: string | null): boolean => {
 			const payload = readTabTilePayload(e.dataTransfer);
 			if (!payload || payload.source !== 'pane' || !payload.groupId || !payload.leafId) {
 				return false;
@@ -395,9 +396,18 @@ function TabBarInner({
 			if (!sessionId) return false;
 			const groupId = payload.groupId;
 			const leafId = payload.leafId;
-			updateSessionWith(sessionId, (s) =>
-				promotePaneToStandalone(s, groupId, leafId, insertIndex ?? s.unifiedTabOrder.length)
-			);
+			updateSessionWith(sessionId, (s) => {
+				// Resolve the landing slot inside the updater, against the order itself:
+				// the chip's position in the STRIP is a different index space (hidden and
+				// tiled tabs keep refs the strip never renders).
+				const idx = targetTabId ? s.unifiedTabOrder.findIndex((r) => r.id === targetTabId) : -1;
+				return promotePaneToStandalone(
+					s,
+					groupId,
+					leafId,
+					idx === -1 ? s.unifiedTabOrder.length : idx
+				);
+			});
 			return true;
 		},
 		[sessionId]
@@ -407,8 +417,7 @@ function TabBarInner({
 		(targetTabId: string, e: React.DragEvent) => {
 			e.preventDefault();
 			// A tiled pane dropped onto a chip promotes out at that chip's position.
-			const targetIndex = (unifiedTabs ?? []).findIndex((ut) => ut.id === targetTabId);
-			if (promotePaneFromDrag(e, targetIndex === -1 ? null : targetIndex)) {
+			if (promotePaneFromDrag(e, targetTabId)) {
 				setDraggingTabId(null);
 				setDragOverTabId(null);
 				return;
@@ -416,9 +425,7 @@ function TabBarInner({
 			const sourceTabId = e.dataTransfer.getData('text/plain');
 			if (sourceTabId && sourceTabId !== targetTabId) {
 				if (unifiedTabs && onUnifiedTabReorder) {
-					const si = unifiedTabs.findIndex((ut) => ut.id === sourceTabId);
-					const ti = unifiedTabs.findIndex((ut) => ut.id === targetTabId);
-					if (si !== -1 && ti !== -1) onUnifiedTabReorder(si, ti);
+					onUnifiedTabReorder(sourceTabId, targetTabId);
 				} else if (onTabReorder) {
 					const si = tabs.findIndex((t) => t.id === sourceTabId);
 					const ti = tabs.findIndex((t) => t.id === targetTabId);
@@ -450,9 +457,39 @@ function TabBarInner({
 				e.preventDefault();
 				setDraggingTabId(null);
 				setDragOverTabId(null);
+				return;
 			}
+
+			// A chip released on the bar's own background: the strip's padding, the
+			// gap between two chips, or the empty space past the last one.
+			//
+			// This used to be inert for a defensible reason - the bar had no
+			// `dragover` handler at all, so the browser rejected the drop and the
+			// chip snapped back. Nothing happened, and the cursor said so. Tiling
+			// changed that without meaning to: every tab drag now carries a tile
+			// payload, `handleBarDragOver` accepts anything carrying one, and the
+			// cursor started promising a move that this handler then declined,
+			// because the only thing it knew was promoting a tiled pane.
+			//
+			// A target that advertises a drop has to honour it. Past the last chip
+			// reads as "put it at the end", so that is what it does.
+			const sourceTabId = e.dataTransfer.getData('text/plain');
+			if (!sourceTabId) return;
+			e.preventDefault();
+			if (unifiedTabs && onUnifiedTabReorder) {
+				// "Past the last chip" = dropped onto the last one, dragging forwards,
+				// which lands the tab just past it.
+				const lastId = unifiedTabs[unifiedTabs.length - 1]?.id;
+				if (lastId) onUnifiedTabReorder(sourceTabId, lastId);
+			} else if (onTabReorder) {
+				const si = tabs.findIndex((t) => t.id === sourceTabId);
+				const ti = tabs.length - 1;
+				if (si !== -1 && si !== ti) onTabReorder(si, ti);
+			}
+			setDraggingTabId(null);
+			setDragOverTabId(null);
 		},
-		[promotePaneFromDrag]
+		[promotePaneFromDrag, tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
 	const handleRenameRequest = useCallback(
@@ -479,8 +516,9 @@ function TabBarInner({
 	const handleMoveToFirst = useCallback(
 		(tabId: string) => {
 			if (unifiedTabs && onUnifiedTabReorder) {
-				const i = unifiedTabs.findIndex((ut) => ut.id === tabId);
-				if (i > 0) onUnifiedTabReorder(i, 0);
+				// Dropped on the first chip, dragging backwards: lands in its slot.
+				const firstId = unifiedTabs[0]?.id;
+				if (firstId && firstId !== tabId) onUnifiedTabReorder(tabId, firstId);
 			} else if (onTabReorder) {
 				const i = tabs.findIndex((t) => t.id === tabId);
 				if (i > 0) onTabReorder(i, 0);
@@ -492,8 +530,9 @@ function TabBarInner({
 	const handleMoveToLast = useCallback(
 		(tabId: string) => {
 			if (unifiedTabs && onUnifiedTabReorder) {
-				const i = unifiedTabs.findIndex((ut) => ut.id === tabId);
-				if (i >= 0 && i < unifiedTabs.length - 1) onUnifiedTabReorder(i, unifiedTabs.length - 1);
+				// Dropped on the last chip, dragging forwards: lands just past it.
+				const lastId = unifiedTabs[unifiedTabs.length - 1]?.id;
+				if (lastId && lastId !== tabId) onUnifiedTabReorder(tabId, lastId);
 			} else if (onTabReorder) {
 				const i = tabs.findIndex((t) => t.id === tabId);
 				if (i < tabs.length - 1) onTabReorder(i, tabs.length - 1);
@@ -771,6 +810,8 @@ function TabBarInner({
 										isDragOver={dragOverTabId === fileTab.id}
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
 										onRename={onFileTabRename}
+										onSnooze={onSnooze || undefined}
+										onPublishGist={ghCliAvailable ? onPublishFileGist : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -810,6 +851,7 @@ function TabBarInner({
 										isDragging={draggingTabId === terminalTab.id}
 										isDragOver={dragOverTabId === terminalTab.id}
 										registerRef={(el) => registerTabRef(terminalTab.id, el)}
+										onSnooze={onSnooze || undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -849,6 +891,7 @@ function TabBarInner({
 										isDragging={draggingTabId === browserTab.id}
 										isDragOver={dragOverTabId === browserTab.id}
 										registerRef={(el) => registerTabRef(browserTab.id, el)}
+										onSnooze={onSnooze || undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -882,6 +925,9 @@ function TabBarInner({
 										onRename={onGroupRename}
 										onSetEmoji={onGroupSetEmoji}
 										onBreakApart={onGroupBreakApart}
+										// Same handler the tab items use: the modal it opens resolves the
+										// id's kind for itself, so a group needs no separate entry point.
+										onSnooze={onSnooze || undefined}
 										onDragStart={handleDragStart}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}

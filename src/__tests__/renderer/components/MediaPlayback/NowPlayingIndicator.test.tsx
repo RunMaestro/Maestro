@@ -21,7 +21,7 @@ function seed(overrides: Partial<ReturnType<typeof useMediaPlaybackStore.getStat
 		history: [],
 		playing: true,
 		dismissed: true,
-		minimized: false,
+		dormant: false,
 		pendingAutoplay: false,
 		toggleRequest: 0,
 		resumeTimes: {},
@@ -48,6 +48,25 @@ describe('NowPlayingIndicator', () => {
 		seed({ dismissed: false });
 		render(<NowPlayingIndicator theme={mockTheme} />);
 		expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+	});
+
+	it('stays hidden for a queue restored from disk until the player is used', () => {
+		// Launching with yesterday's queue still loaded must not put media
+		// controls in the header: nothing is playing and the user opened nothing.
+		seed({ playing: false, dormant: true });
+		render(<NowPlayingIndicator theme={mockTheme} />);
+		expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+	});
+
+	it('appears once the restored queue is woken', () => {
+		seed({ playing: false, dormant: true });
+		const { rerender } = render(<NowPlayingIndicator theme={mockTheme} />);
+		expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+
+		useMediaPlaybackStore.getState().restore();
+		useMediaPlaybackStore.setState({ dismissed: true });
+		rerender(<NowPlayingIndicator theme={mockTheme} />);
+		expect(screen.getByTestId('now-playing-indicator')).toBeTruthy();
 	});
 
 	it('disappears when the player is closed', () => {
@@ -126,8 +145,26 @@ describe('NowPlayingIndicator', () => {
 		expect(screen.getByTestId('now-playing-toggle').getAttribute('title')).toContain('podcast.mp3');
 	});
 
-	it('never shrinks, so it cannot be the thing that squeezes the header', () => {
+	// This pill used to be `shrink-0`, back when the MAESTRO wordmark carried
+	// `truncate` and was the header row's shrink target. A clipped brand reads as
+	// a rendering bug, so the wordmark now drops out whole and this pill inherits
+	// the role: its filename is already truncated, and a clipped filename is
+	// ordinary.
+	it("can shrink, since it is now the header row's yield of last resort", () => {
 		render(<NowPlayingIndicator theme={mockTheme} />);
-		expect(screen.getByTestId('now-playing-indicator').className).toContain('shrink-0');
+		const pill = screen.getByTestId('now-playing-indicator');
+		expect(pill.className).not.toContain('shrink-0');
+		// It needs min-w-0 to be able to shrink at all: a flex item defaults to
+		// min-width:auto and would refuse to go below its content.
+		expect(pill.className).toContain('min-w-0');
+		expect(screen.getByTestId('now-playing-toggle').className).toContain('min-w-0');
+	});
+
+	it('never sheds a control, only the filename', () => {
+		render(<NowPlayingIndicator theme={mockTheme} />);
+		// Both buttons and the divider are the entire transport a minimized player
+		// has, so they must not be what gets squeezed.
+		expect(screen.getByTestId('now-playing-restore').querySelector('svg, span')).toBeTruthy();
+		expect(screen.getByText('podcast.mp3').className).toContain('truncate');
 	});
 });

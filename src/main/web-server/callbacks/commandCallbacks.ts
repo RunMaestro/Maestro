@@ -149,27 +149,29 @@ export function registerCommandCallbacks(
 
 	// Set up callback for web server to switch session mode through the desktop
 	// This forwards to the renderer which handles state updates and broadcasts
-	server.setSwitchModeCallback(async (sessionId: string, mode: 'ai' | 'terminal') => {
-		logger.info(
-			`[Web→Desktop] Mode switch callback invoked: session=${sessionId}, mode=${mode}`,
-			'WebServer'
-		);
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for switchMode', 'WebServer');
-			return false;
-		}
+	server.setSwitchModeCallback(
+		async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => {
+			logger.info(
+				`[Web→Desktop] Mode switch callback invoked: session=${sessionId}, mode=${mode}`,
+				'WebServer'
+			);
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for switchMode', 'WebServer');
+				return false;
+			}
 
-		// Forward to renderer - it will handle mode switch and broadcasts
-		// This ensures web mode switches go through exact same code path as desktop
-		logger.info(`[Web→Desktop] Sending IPC remote:switchMode to renderer`, 'WebServer');
-		if (!isWebContentsAvailable(mainWindow)) {
-			logger.warn('webContents is not available for switchMode', 'WebServer');
-			return false;
+			// Forward to renderer - it will handle mode switch and broadcasts
+			// This ensures web mode switches go through exact same code path as desktop
+			logger.info(`[Web→Desktop] Sending IPC remote:switchMode to renderer`, 'WebServer');
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for switchMode', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:switchMode', sessionId, mode, background === true);
+			return true;
 		}
-		mainWindow.webContents.send('remote:switchMode', sessionId, mode);
-		return true;
-	});
+	);
 
 	// Set up callback for web server to select/switch to a session in the desktop
 	// This forwards to the renderer which handles state updates and broadcasts

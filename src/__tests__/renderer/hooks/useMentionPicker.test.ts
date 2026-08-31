@@ -160,6 +160,23 @@ describe('buildMentionAccept', () => {
 		expect(res.caretPos).toBe(res.value.length);
 	});
 
+	it('expands a group into its member tokens instead of inserting the group', () => {
+		const groupItem: MentionPickerItem = {
+			kind: 'group',
+			value: '@Squad ',
+			displayText: 'Squad',
+			groupId: 'g1',
+			memberSessionIds: ['a', 'b'],
+			memberMentionValue: '@Alpha @Beta ',
+			score: 0,
+		};
+		const res = buildMentionAccept('ping @sq', 5, 'sq', groupItem);
+		expect(res.value).toBe('ping @Alpha @Beta ');
+		expect(res.keepOpen).toBe(false);
+		// Caret lands past the whole expansion, not one member's length.
+		expect(res.caretPos).toBe('ping @Alpha @Beta '.length);
+	});
+
 	it('drills into a directory: keeps open and re-filters inside it', () => {
 		const res = buildMentionAccept('@sr', 0, 'sr', dirItem('src'));
 		expect(res.value).toBe('@src/');

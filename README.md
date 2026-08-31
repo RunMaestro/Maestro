@@ -41,6 +41,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 - 💻 **[Command Line Interface](https://docs.runmaestro.ai/cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
 - 🚀 **Multi-Agent Management** - Run unlimited agents and terminal sessions in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **Message Queueing** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Never lose a thought.
+- 🛡️ **[Agent Resilience](https://docs.runmaestro.ai/agent-resilience)** - Providers fail; your turn does not have to. When a turn dies on `529 Overloaded` or a spent plan quota, Maestro resends the exact prompt on its own, backing off in seconds for a blip or waiting for the real reset time it reads out of the error. One live status card replaces the wall of error dialogs, Auto Run batches resume themselves, and an agent can optionally fail over to a backup endpoint instead of waiting out the window.
 
 ### Core Features
 
@@ -49,6 +50,8 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 - 📋 **Session Discovery** - Automatically discovers and imports existing sessions from all supported providers, including conversations from before Maestro was installed. Browse, search, star, rename, and resume any session.
 - 🔀 **Git Integration** - Automatic repo detection, branch display, diff viewer, commit logs, and git-aware file completion. Work with git without leaving the app.
 - 📁 **[File Explorer](https://docs.runmaestro.ai/general-usage#file-explorer-and-preview)** - Browse project files with syntax highlighting, markdown preview, and image viewing. Reference files in prompts with `@` mentions.
+- 🗃️ **[File Formats](https://docs.runmaestro.ai/file-formats)** - Data files open in a viewer built for them, several with their own filtering language: jq over JSON and JSONL, sortable filtered tables for CSV and TSV, rendered Mermaid diagrams, and audio and video in a floating player.
+- 🧮 **[Parquet Preview](https://docs.runmaestro.ai/parquet-preview)** - Parquet files open as a live, filterable table with a schema rail. A typed query language (`ts >= now-7d and price > 100`) runs against the whole file while Maestro skips the row groups it can prove cannot match, so a multi-gigabyte file filters instantly and never loads into memory.
 - 🔍 **[Powerful Output Filtering](https://docs.runmaestro.ai/general-usage#output-filtering)** - Search and filter AI output with include/exclude modes, regex support, and per-response local filters.
 - ⚡ **[Slash Commands](https://docs.runmaestro.ai/slash-commands)** - Extensible command system with autocomplete. Create custom commands with template variables for your workflows.
 - 💾 **Draft Auto-Save** - Never lose work. Drafts are automatically saved and restored per session.
@@ -59,7 +62,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 ### Analytics & Visualization
 
-- 📊 **Usage Dashboard** - Comprehensive analytics for tracking AI usage patterns across all sessions. View aggregated statistics with multiple time ranges (day, week, month, year, all time), compare agent performance, analyze user vs. Auto Run activity distribution, and explore activity heatmaps. Includes CSV export, real-time updates, and configurable colorblind-friendly palettes. Access via `Opt+Cmd+U` (macOS) / `Alt+Ctrl+U` (Windows/Linux) or the Command K menu.
+- 📊 **Usage Dashboard** - Comprehensive analytics for tracking AI usage patterns across all sessions. View aggregated statistics with multiple time ranges (day, week, month, year, all time), compare agent performance, analyze user vs. Auto Run activity distribution, and explore activity heatmaps. Fuzzy-filter your agents, then click any one to drill into its stats and see the breakdown per AI tab. Includes CSV export, real-time updates, and configurable colorblind-friendly palettes. Access via `Opt+Cmd+U` (macOS) / `Alt+Ctrl+U` (Windows/Linux) or the Command K menu.
 - 🕸️ **Document Graph** - Visual knowledge graph of your markdown documentation. Automatically discovers internal `[[wiki-links]]` and `[markdown](links)`, visualizes document relationships with interactive nodes and edges. Toggle between force-directed and hierarchical layouts, search/filter documents, navigate via keyboard, and track external link references. Includes mini-map, legend, and pagination for large directories. Access from the File Explorer context menu or Command K menu.
 
 #### Keyboard Shortcuts for Analytics Features
@@ -73,15 +76,19 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 | Jump to first/last section | Home / End               |
 | Close dashboard            | Escape                   |
 
+On the Agents tab, Escape clears the agent filter first when it holds text, so filtering never costs you the dashboard.
+
 **Document Graph** (Command K → "Document Graph"):
 
-| Action                      | Key                            |
-| --------------------------- | ------------------------------ |
-| Navigate to connected node  | Arrow Up/Down/Left/Right       |
-| Cycle through connections   | Tab                            |
-| Open selected document/link | Enter                          |
-| Close graph                 | Escape                         |
-| Search documents            | Focus search input, type query |
+| Action                       | Key                            |
+| ---------------------------- | ------------------------------ |
+| Navigate to connected node   | Arrow Up/Down/Left/Right       |
+| Cycle through connections    | Tab                            |
+| Preview document / open link | Enter                          |
+| Recenter graph on node       | Space                          |
+| Cycle preview length         | P                              |
+| Close graph                  | Escape                         |
+| Search documents             | Focus search input, type query |
 
 Additional interactions: Drag nodes to reposition, scroll to zoom, use mini-map for overview.
 
@@ -124,6 +131,7 @@ npm run dev
 | Toggle Sidebar      | `Cmd+B`           | `Ctrl+B`            |
 | New Tab             | `Cmd+T`           | `Ctrl+T`            |
 | Usage Dashboard     | `Opt+Cmd+U`       | `Alt+Ctrl+U`        |
+| Concerto Stage      | `Opt+C`           | `Alt+C`             |
 | All Shortcuts       | `Cmd+/`           | `Ctrl+/`            |
 
 [Full keyboard shortcut reference](https://docs.runmaestro.ai/keyboard-shortcuts)
@@ -189,10 +197,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture detai
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=runmaestro%2Fmaestro&type=date&legend=top-left">
+<a href="https://star-history.dera.page/#runmaestro/maestro&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=runmaestro/maestro&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=runmaestro/maestro&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=runmaestro/maestro&type=date&legend=top-left" />
  </picture>
 </a>

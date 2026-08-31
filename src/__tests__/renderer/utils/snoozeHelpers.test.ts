@@ -7,6 +7,7 @@ import {
 	getDueSnoozes,
 	collectSnoozedTabs,
 	getSnoozedTabLabel,
+	migrateLegacySnoozedTabs,
 } from '../../../renderer/utils/snoozeHelpers';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -412,5 +413,55 @@ describe('back-from-snooze transcript card', () => {
 		// The duplicate tab is discarded, so the note has to follow the user to
 		// the tab they actually land on or it is lost entirely.
 		expect(returnLog(woken.session, 'z')!.snoozeReturn!.note).toBe('still relevant');
+	});
+});
+
+describe('migrateLegacySnoozedTabs', () => {
+	/** A snooze written before SnoozedTabEntry carried a kind tag. */
+	function untaggedSnooze(session: Session): Session {
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR, 'legacy note')!;
+		const entry = { ...snoozed.session.snoozedTabs![0] } as Record<string, unknown>;
+		delete entry.type;
+		return { ...snoozed.session, snoozedTabs: [entry] as never };
+	}
+
+	it('tags a legacy untagged snooze as an AI tab', () => {
+		const legacy = untaggedSnooze(buildSession());
+		const migrated = migrateLegacySnoozedTabs(legacy);
+
+		expect(migrated.snoozedTabs![0].type).toBe('ai');
+		expect(migrated.snoozedTabs![0].note).toBe('legacy note');
+	});
+
+	it('gives the migrated entry a real label instead of a blank row', () => {
+		const legacy = untaggedSnooze(buildSession());
+		expect(getSnoozedTabLabel(legacy.snoozedTabs![0])).toBeUndefined();
+
+		const migrated = migrateLegacySnoozedTabs(legacy);
+		expect(getSnoozedTabLabel(migrated.snoozedTabs![0])).toBe('Bravo');
+	});
+
+	it('restores the tab on wake once migrated', () => {
+		const legacy = untaggedSnooze(buildSession());
+		const snoozeId = legacy.snoozedTabs![0].id;
+
+		// Untagged: the wake refuses rather than clearing the snooze and losing
+		// the transcript with it.
+		expect(wakeSnoozedTab(legacy, snoozeId)).toBeNull();
+		expect(legacy.snoozedTabs).toHaveLength(1);
+
+		const woken = wakeSnoozedTab(migrateLegacySnoozedTabs(legacy), snoozeId)!;
+		expect(woken.session.aiTabs.map((t) => t.id)).toEqual(['a', 'b', 'c']);
+		expect(woken.session.snoozedTabs).toHaveLength(0);
+	});
+
+	it('leaves an already-tagged session untouched', () => {
+		const tagged = snoozeTab(buildSession(), 'b', Date.now() + HOUR)!.session;
+		expect(migrateLegacySnoozedTabs(tagged)).toBe(tagged);
+	});
+
+	it('is a no-op for a session with no snoozes', () => {
+		const session = buildSession();
+		expect(migrateLegacySnoozedTabs(session)).toBe(session);
 	});
 });

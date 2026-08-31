@@ -114,7 +114,12 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsSessionId: true, // thread_id in thread.started event - Verified
 		supportsImageInput: true, // -i, --image flag - Documented
 		supportsImageInputOnResume: true, // Images are written to disk and paths embedded in prompt text (codex exec resume doesn't support -i flag)
-		supportsSlashCommands: false, // None - Verified
+		// Custom `/name` entries only: skills (<CODEX_HOME>/skills/<name>/SKILL.md,
+		// .codex/skills/) and legacy prompts (<CODEX_HOME>/prompts/*.md). Read off
+		// disk by discoverCodexSlashCommands and expanded renderer-side, since
+		// `codex exec` does not expand a slash itself. Codex's BUILT-IN commands
+		// stay unsupported - they are TUI-internal with no prompt to inline.
+		supportsSlashCommands: true,
 		supportsSessionStorage: true, // ~/.codex/sessions/YYYY/MM/DD/*.jsonl - Verified
 		supportsCostTracking: false, // Token counts only - Codex doesn't provide cost, pricing varies by model
 		supportsUsageStats: true, // usage in turn.completed events - Verified
@@ -172,6 +177,45 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no Gemini CLI available to probe
+	},
+
+	/**
+	 * Antigravity CLI (`agy`) - Google's terminal coding agent, the CLI surface of
+	 * Antigravity and the successor to the Gemini CLI effort above.
+	 *
+	 * Capabilities below are derived from the published headless-mode contract
+	 * (https://antigravity.google/docs/cli/headless) rather than from a live run,
+	 * so the agent ships as beta. Anything the docs do not state outright is left
+	 * false rather than guessed at.
+	 */
+	antigravity: {
+		supportsResume: true, // --conversation <id>
+		supportsReadOnlyMode: false, // No flag makes it read-only; workspace writes stay auto-allowed
+		supportsJsonOutput: true, // --output-format stream-json
+		supportsSessionId: true, // conversation_id on init/step_update/result
+		supportsImageInput: false, // No documented attachment flag
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false, // Slash commands are TUI-only, not exposed to headless runs
+		supportsSessionStorage: false, // On-disk conversation format is undocumented
+		supportsCostTracking: false, // usage reports tokens only, no cost
+		supportsUsageStats: true, // usage: input/output/thinking/cache_read/total tokens
+		supportsBatchMode: true, // -p / --print / --prompt
+		requiresPromptToStart: true, // Headless runs require -p; there is no idle non-interactive mode
+		supportsStreaming: true, // stream-json emits step_update deltas
+		supportsResultMessages: true, // Terminal `result` event
+		supportsModelSelection: true, // --model <slug>
+		supportsStreamJsonInput: false, // No stdin stream-json input format
+		supportsThinkingDisplay: false, // thinking_tokens are counted, but no reasoning text step type is documented
+		supportsContextMerge: true, // Context can be delivered through the prompt
+		supportsContextExport: false, // Requires session storage
+		supportsWizard: false, // Structured-output wizard flow unverified against a live CLI
+		supportsGroupChatModeration: false, // Unverified
+		usesJsonLineOutput: true, // stream-json is newline-delimited JSON
+		usesCombinedContextWindow: false, // Gemini reports input and output separately
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+		supportsPromptViaStdin: false, // Docs give the prompt as `-p "<text>"`; stdin delivery is unstated
+		supportsAdditionalDirectories: false, // No documented flag for extra workspace roots
 	},
 
 	/**

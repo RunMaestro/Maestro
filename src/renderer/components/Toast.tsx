@@ -4,8 +4,9 @@ import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
-import { formatDurationParts as formatDuration } from '../../shared/formatters';
+import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { withMonoFallback } from '../../shared/fontStack';
 import { Z_LAYERS } from '../constants/zLayers';
 import { CopyIconButton } from './ui';
 
@@ -222,7 +223,9 @@ const ToastItem = memo(function ToastItem({
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if needed) */}
+					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if
+					    needed). The arrival time rides the title row below instead, so a
+					    toast with no agent context does not spend a line on a lone clock. */}
 					{(toast.group || toast.project || toast.tabName) && (
 						<div
 							className="flex flex-wrap items-center gap-2 text-xs mb-1"
@@ -262,9 +265,25 @@ const ToastItem = memo(function ToastItem({
 						</div>
 					)}
 
-					{/* Title */}
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						{toast.title}
+					{/* Title, with the arrival time pinned right on the same line. Every
+					    toast is stamped, not just the ones that carry agent context. */}
+					<div className="flex items-baseline gap-2">
+						<div
+							className="font-medium text-sm min-w-0 flex-1"
+							style={{ color: theme.colors.textMain }}
+						>
+							{toast.title}
+						</div>
+						{toast.timestamp > 0 && (
+							<time
+								className="flex-shrink-0 text-xs tabular-nums"
+								style={{ color: theme.colors.textDim }}
+								dateTime={new Date(toast.timestamp).toISOString()}
+								title={formatTimestamp(toast.timestamp, 'full')}
+							>
+								{formatTimestamp(toast.timestamp, 'smart')}
+							</time>
+						)}
 					</div>
 
 					{/* Message */}
@@ -296,7 +315,7 @@ const ToastItem = memo(function ToastItem({
 					)}
 
 					{/* Duration badge */}
-					{toast.taskDuration && toast.taskDuration > 0 && (
+					{typeof toast.taskDuration === 'number' && toast.taskDuration > 0 && (
 						<div
 							className="flex items-center gap-1 text-xs mt-2"
 							style={{ color: theme.colors.textDim }}
@@ -354,7 +373,7 @@ const ToastItem = memo(function ToastItem({
 			</div>
 
 			{/* Progress bar - hidden for dismissible (sticky) toasts */}
-			{!toast.dismissible && toast.duration && toast.duration > 0 && (
+			{!toast.dismissible && typeof toast.duration === 'number' && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"
 					style={{
@@ -387,12 +406,19 @@ export const ToastContainer = memo(function ToastContainer({
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const widthDimensions = getToastWidthDimensions(toastWidth, rightPanelWidth);
 
+	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
+	// the element that carries the interface font. Without restating it here
+	// they inherit the body's default face, so a user who switched the UI font
+	// kept getting toasts in the old one. Same monospace safety net the shell
+	// applies, so a bare picker name can't fall through to serif.
+	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
+
 	if (toasts.length === 0) return null;
 
 	return createPortal(
 		<div
 			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST }}
+			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST, fontFamily }}
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (

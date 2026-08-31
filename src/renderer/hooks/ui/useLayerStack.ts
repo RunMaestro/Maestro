@@ -82,16 +82,27 @@ export interface LayerStackAPI {
 	getLayers: () => Layer[];
 
 	/**
-	 * Check if any layers are currently open
-	 * Use this to block global shortcuts when modals/overlays are active
-	 * @returns true if at least one layer is registered
+	 * Check if any shortcut-blocking layer is currently open
+	 *
+	 * Layers that declared `blocksAppShortcuts: false` are skipped - they are
+	 * passive panels that happen to be stacked, not surfaces that own the
+	 * keyboard. For the structural "is anything stacked?" question use
+	 * `layerCount`.
+	 *
+	 * @returns true if at least one such layer is registered
 	 */
 	hasOpenLayers: () => boolean;
 
 	/**
 	 * Check if any true modal (not overlay) is currently open
 	 * Modals block ALL shortcuts, overlays allow some navigation shortcuts
-	 * @returns true if at least one modal layer is registered
+	 *
+	 * A modal-type layer that declared `blocksLowerLayers: false` (a dropdown, a
+	 * docked search bar, a floating panel) is NOT a true modal: it said it does
+	 * not block what is under it, so it must not silently block the keyboard
+	 * either. Those fall through to the caller's overlay handling.
+	 *
+	 * @returns true if at least one true modal layer is registered
 	 */
 	hasOpenModal: () => boolean;
 
@@ -100,6 +111,17 @@ export interface LayerStackAPI {
 	 * @returns Number of registered layers
 	 */
 	layerCount: number;
+}
+
+/**
+ * Does this layer suppress the app's global shortcuts while it is open?
+ *
+ * The flag is optional, so an undefined value means "yes" - every layer written
+ * before passive panels existed keeps its old behavior, and only a surface that
+ * explicitly opts out becomes transparent to the keyboard.
+ */
+function blocksAppShortcuts(layer: Layer): boolean {
+	return layer.blocksAppShortcuts !== false;
 }
 
 /**
@@ -114,6 +136,10 @@ export function useLayerStack(): LayerStackAPI {
 	// Key: layer id, Value: current Escape handler
 	const handlerRefs = useRef<Map<string, () => void>>(new Map());
 
+	// What had keyboard focus when each layer opened.
+	// Key: layer id, Value: the element to hand the caret back to on close.
+	const focusOriginRefs = useRef<Map<string, HTMLElement>>(new Map());
+
 	/**
 	 * Register a new layer in the stack
 	 */
@@ -123,6 +149,15 @@ export function useLayerStack(): LayerStackAPI {
 
 		// Store the initial handler in the ref map
 		handlerRefs.current.set(id, newLayer.onEscape);
+
+		// Remember what the user was typing in before this layer took the
+		// keyboard, so closing it can hand the caret back (see unregisterLayer).
+		if (newLayer.capturesFocus !== false) {
+			const origin = document.activeElement;
+			if (origin instanceof HTMLElement && origin !== document.body) {
+				focusOriginRefs.current.set(id, origin);
+			}
+		}
 
 		// Add layer and sort by priority (ascending order - lowest priority first)
 		setLayers((prev: Layer[]) => {
@@ -141,8 +176,30 @@ export function useLayerStack(): LayerStackAPI {
 		// Remove from handler refs
 		handlerRefs.current.delete(id);
 
+		const focusOrigin = focusOriginRefs.current.get(id);
+		focusOriginRefs.current.delete(id);
+
 		// Remove from layers state
 		setLayers((prev: Layer[]) => prev.filter((layer: Layer) => layer.id !== id));
+
+		// Hand the caret back to whatever had it before this layer opened. Nothing
+		// used to do this, so dismissing a modal left focus on `document.body`:
+		// the pane behind it looked ready and then swallowed the next keystroke,
+		// which in a keyboard-first app reads as the app locking up.
+		//
+		// Deferred a tick because the layer's DOM is still mounted at this point -
+		// focusing now would be undone by its own teardown. Restored ONLY when
+		// focus landed nowhere, which is the signal that no one else claimed it:
+		// a modal that deliberately moves focus on its way out (opening a tab,
+		// focusing a result) has already set an active element, and a surface that
+		// restores focus itself via `useFocusOnClose` gets there first.
+		if (!focusOrigin) return;
+		setTimeout(() => {
+			if (!focusOrigin.isConnected) return;
+			const current = document.activeElement;
+			if (current && current !== document.body && current.isConnected) return;
+			focusOrigin.focus();
+		}, 0);
 	}, []);
 
 	/**
@@ -168,17 +225,20 @@ export function useLayerStack(): LayerStackAPI {
 	}, [layers]);
 
 	/**
-	 * Check if any layers are open
+	 * Check if any shortcut-blocking layer is open
 	 */
 	const hasOpenLayers = useCallback((): boolean => {
-		return layers.length > 0;
+		return layers.some(blocksAppShortcuts);
 	}, [layers]);
 
 	/**
 	 * Check if any true modal (not overlay) is open
 	 */
 	const hasOpenModal = useCallback((): boolean => {
-		return layers.some((layer: Layer) => layer.type === 'modal');
+		return layers.some(
+			(layer: Layer) =>
+				layer.type === 'modal' && layer.blocksLowerLayers && blocksAppShortcuts(layer)
+		);
 	}, [layers]);
 
 	/**
@@ -229,6 +289,7 @@ export function useLayerStack(): LayerStackAPI {
 							type: layer.type,
 							priority: layer.priority,
 							blocksLower: layer.blocksLowerLayers,
+							blocksShortcuts: layer.blocksAppShortcuts !== false,
 							focusTrap: layer.focusTrap,
 							ariaLabel: layer.ariaLabel || 'N/A',
 						}))

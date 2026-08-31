@@ -7,25 +7,20 @@ import type {
 	Theme,
 	FailoverConfig,
 } from '../../types';
+import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
 export const NEW_SESSION_MESSAGE_MAX_LENGTH = 5000;
 
-// Supported agents that are fully implemented
-export const SUPPORTED_AGENTS = [
-	'claude-code',
-	'opencode',
-	'codex',
-	'factory-droid',
-	'copilot-cli',
-	'qwen3-coder',
-	'omp',
-	'hermes',
-	'pi',
-	'grok',
-	'cursor-cli',
-];
+/**
+ * Providers a user may pick in the New Agent modal.
+ *
+ * Re-exported from the shared picker registry rather than hand-written, so this
+ * list cannot drift from the wizard's tile strip or the Group Chat moderator
+ * dropdown the way it did while Grok and Qwen3 Coder were listed only here.
+ */
+export const SUPPORTED_AGENTS: readonly string[] = PICKABLE_AGENT_IDS;
 
 export interface AgentDebugInfo {
 	agentId: string;
@@ -140,7 +135,16 @@ export interface AgentPickerGridProps {
 	theme: Theme;
 	loading: boolean;
 	sshConnectionError: string | null;
-	sortedAgents: AgentConfig[];
+	/** The rows to render - already sorted AND filtered by the availability toggle. */
+	visibleAgents: AgentConfig[];
+	/** Supported providers detected on the target machine, across the WHOLE list. */
+	availableProviderCount: number;
+	/** Supported providers in total. Never the length of `visibleAgents`. */
+	totalProviderCount: number;
+	/** Follows "available" in the summary - "locally" or "on <host>". */
+	providerLocationLabel: string;
+	showAllProviders: boolean;
+	onShowAllProvidersChange: (showAll: boolean) => void;
 	selectedAgent: string;
 	expandedAgent: string | null;
 	refreshingAgent: string | null;

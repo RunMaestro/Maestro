@@ -112,6 +112,7 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 	}),
 	formatMetaKey: vi.fn(() => 'Ctrl'),
 	formatMetaKeyName: vi.fn(() => 'Ctrl'),
+	formatAltKeyName: vi.fn(() => 'Alt'),
 	formatEnterToSend: vi.fn((enterToSend: boolean) => (enterToSend ? 'Enter' : 'Ctrl + Enter')),
 	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) =>
 		enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'
@@ -282,9 +283,11 @@ const mockMaestro = {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
 		submit: vi.fn().mockResolvedValue({ success: true }),
 		composePrompt: vi.fn().mockResolvedValue({ prompt: 'composed feedback prompt' }),
-		getConversationPrompt: vi
-			.fn()
-			.mockResolvedValue({ prompt: 'system prompt', environment: '- Maestro version: test' }),
+		getConversationPrompt: vi.fn().mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: test',
+			cwd: '/home/test',
+		}),
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
@@ -316,6 +319,7 @@ const mockMaestro = {
 		worktreeInfo: vi.fn().mockResolvedValue({ success: true, exists: false, isWorktree: false }),
 		getRepoRoot: vi.fn().mockResolvedValue({ success: true, root: '/path/to/project' }),
 		log: vi.fn().mockResolvedValue({ entries: [], error: undefined }),
+		graph: vi.fn().mockResolvedValue({ nodes: [], error: undefined }),
 		commitCount: vi.fn().mockResolvedValue({ count: 0, error: null }),
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),
@@ -327,6 +331,16 @@ const mockMaestro = {
 			ahead: 0,
 			uncommittedChanges: 0,
 		}),
+	},
+	attachments: {
+		// Mirrors userData/attachments/{sessionId}/{filename} on the host.
+		save: vi.fn((sessionId: string, _base64: string, filename: string) =>
+			Promise.resolve({ success: true, path: `/userData/attachments/${sessionId}/${filename}` })
+		),
+		load: vi.fn().mockResolvedValue({ success: true, dataUrl: '' }),
+		delete: vi.fn().mockResolvedValue({ success: true }),
+		list: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/userData/attachments' }),
 	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),

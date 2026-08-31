@@ -20,6 +20,8 @@ import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
+import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
+import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
 
 /**
  * Configuration for document processing
@@ -187,27 +189,46 @@ export interface DocumentReadResult {
 }
 
 /**
+ * Per-task model/effort resolved from the document's `MAESTRO:MODEL` hint.
+ * Undefined on either axis means the agent's configured value stands.
+ */
+export interface AutoRunTurnOverrides {
+	modelOverride?: string;
+	effortOverride?: string;
+}
+
+/**
+ * Spawn one Auto Run task.
+ *
+ * The canonical signature for the whole Auto Run callback chain
+ * (`useBatchHandlers` -> `useBatchProcessor` -> `useBatchRunner` ->
+ * `useDocumentProcessor`). It was declared separately at three of those levels,
+ * which meant adding an argument here required finding and editing all three or
+ * the value was silently dropped partway down. One type, imported by the rest.
+ */
+export type AutoRunSpawnAgentFn = (
+	sessionId: string,
+	prompt: string,
+	cwdOverride?: string,
+	turnSettings?: AutoRunTurnOverrides
+) => Promise<{
+	success: boolean;
+	response?: string;
+	agentSessionId?: string;
+	usageStats?: UsageStats;
+	contextUsage?: number;
+	error?: string;
+	errorKind?: AgentSpawnErrorKind;
+}>;
+
+/**
  * Callbacks required for document processing
  */
 export interface DocumentProcessorCallbacks {
 	/**
 	 * Spawn an agent with a prompt
 	 */
-	onSpawnAgent: (
-		sessionId: string,
-		prompt: string,
-		cwdOverride?: string,
-		/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
-		options?: SpawnAgentRunOverrides
-	) => Promise<{
-		success: boolean;
-		response?: string;
-		agentSessionId?: string;
-		usageStats?: UsageStats;
-		contextUsage?: number;
-		error?: string;
-		errorKind?: AgentSpawnErrorKind;
-	}>;
+	onSpawnAgent: AutoRunSpawnAgentFn;
 }
 
 /**
@@ -345,11 +366,13 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				documentPath: docFilePath,
 			};
 
+			let documentContent = '';
 			if (docReadResult.success && docReadResult.content) {
 				const expandedDocContent = substituteTemplateVariables(
 					docReadResult.content,
 					templateContext
 				);
+				documentContent = expandedDocContent;
 
 				// Write the expanded content back to the document temporarily
 				// (Agent will read this file, so it needs the expanded variables)
@@ -363,12 +386,45 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				}
 			}
 
+			// Resolve this task's model hint from the document. Recomputed per
+			// dispatch rather than tracked as run state, so editing the document
+			// mid-run takes effect on the next task and there is nothing to get out
+			// of sync. Mirrors the CLI engine, which reads the same helpers.
+			// Three sources can name a model, narrowest first: the document's hint for
+			// THIS phase, the override set on this run in the Auto Run config, then the
+			// agent's own setting. `resolveTurnSettings` already prefers the hint over
+			// whatever baseline it is handed, so the run-scoped override goes in as that
+			// baseline. Passing the hint alone (or the run override alone) would make
+			// starting a run with an explicit model silently do nothing on any document
+			// that carries a MAESTRO:MODEL marker, or vice versa.
+			const turnSettings = resolveTurnSettings(
+				session.toolType,
+				findActiveModelHint(documentContent),
+				runOverrides?.modelOverride ?? session.customModel,
+				runOverrides?.effortOverride ?? session.customEffort
+			);
+			for (const warning of turnSettings.warnings) {
+				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
+			}
+
 			// Resolve the task-selection block placeholder before the generic template
 			// substitution pass so any variables inside the swapped-in block are also
 			// expanded. No-op if the user has removed the placeholder from their prompt.
+			// In document mode, tell the agent to stop at the point where the
+			// document asks for DIFFERENT settings: it is already running under
+			// the settings resolved above, so it cannot honour a change it reads
+			// halfway down. The loop comes back around and re-resolves for the
+			// rest. Same content and baseline as the resolve above, so the two
+			// cannot disagree about where the boundary is.
+			const hintSegment = countTasksUnderActiveHint(
+				documentContent,
+				session.toolType,
+				session.customModel,
+				session.customEffort
+			);
 			const promptWithSelectionBlock = customPrompt.replace(
 				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
-				getTaskSelectionBlock(taskSelectionMode)
+				getTaskSelectionBlock(taskSelectionMode, hintSegment)
 			);
 
 			// Substitute template variables in the prompt. Each task spawns a fresh
@@ -388,7 +444,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				session.id,
 				finalPrompt,
 				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
-				runOverrides
+				{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
 			);
 
 			// Capture elapsed time (machine sleep excluded)

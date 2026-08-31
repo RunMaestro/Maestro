@@ -8,7 +8,11 @@ import type {
 	AgentError,
 	QueuedItem,
 } from '../../types';
-import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
+import type {
+	CopyContextOptions,
+	PublishTextAsGistOptions,
+} from '../../hooks/tabs/useTabExportHandlers';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 
 export interface SlashCommand {
 	command: string;
@@ -143,9 +147,13 @@ export interface MainPanelProps {
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/**
+	 * Force Send eligibility for a queued item: can it be dispatched now, why not
+	 * if it can't, and which other tabs are working. Carries the FULL
+	 * ForceSendEligibility so the inline card renders the same decision the
+	 * Execution Queue modal does instead of re-deriving one from a subset.
+	 */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	onOpenQueueBrowser?: () => void;
 
 	// Auto mode props
@@ -158,7 +166,7 @@ export interface MainPanelProps {
 	onNewTab?: () => void;
 	onRequestTabRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	onUpdateTabByClaudeSessionId?: (
@@ -297,8 +305,12 @@ export interface MainPanelProps {
 	onPublishTabGist?: (tabId: string) => void;
 	/** Copy arbitrary text to the clipboard (wired by MainPanel for terminal buffer actions). */
 	onCopyText?: (text: string, subject?: string) => void;
-	/** Queue arbitrary text for the Gist modal (wired by MainPanel for terminal buffer actions). */
-	onPublishTextAsGist?: (text: string, filenameStem: string) => void;
+	/** Queue arbitrary text for the Gist modal (wired by MainPanel for terminal buffer and file tab actions). */
+	onPublishTextAsGist?: (
+		text: string,
+		filenameStem: string,
+		options?: PublishTextAsGistOptions
+	) => void;
 	/** Queue arbitrary text for Send to Agent (wired by MainPanel for terminal buffer actions). */
 	onSendTextToAgent?: (text: string, sourceName: string) => void;
 
@@ -352,6 +364,8 @@ export interface MainPanelProps {
 	onWizardClearError?: () => void;
 	/** Called when user exits inline wizard mode (Escape or clicks pill) */
 	onExitWizard?: () => void;
+	/** Stop the wizard turn currently running on the active tab */
+	onStopWizardTurn?: (tabId?: string) => void;
 	/** Toggle showing wizard thinking instead of filler phrases */
 	onToggleWizardShowThinking?: () => void;
 	/** Called when user cancels document generation */

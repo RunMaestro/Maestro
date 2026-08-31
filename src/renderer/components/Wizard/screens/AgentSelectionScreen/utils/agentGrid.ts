@@ -1,51 +1,45 @@
-import { AGENT_TILES } from './agentTiles';
-
-export const GRID_COLS = 4;
-export const GRID_ROWS = Math.ceil(AGENT_TILES.length / GRID_COLS);
-
-// Tiles render into a grid that is GRID_COLS * 2 columns wide, each tile spanning
-// 2 columns. The extra multiplier lets a short final row start on a half-column so
-// it stays centered under the full rows above it.
-const TILES_IN_LAST_ROW = AGENT_TILES.length % GRID_COLS;
-export const LAST_ROW_START_INDEX =
-	TILES_IN_LAST_ROW === 0 ? -1 : AGENT_TILES.length - TILES_IN_LAST_ROW;
-export const LAST_ROW_COL_START_CLASS =
-	TILES_IN_LAST_ROW === 1
-		? 'col-start-4'
-		: TILES_IN_LAST_ROW === 2
-			? 'col-start-3'
-			: TILES_IN_LAST_ROW === 3
-				? 'col-start-2'
-				: '';
-
-export function getAgentTileColSpanClass(index: number): string {
-	return index === LAST_ROW_START_INDEX ? `col-span-2 ${LAST_ROW_COL_START_CLASS}` : 'col-span-2';
-}
-
-export function getNextAgentTileIndex(currentIndex: number, key: string): number {
-	const currentRow = Math.floor(currentIndex / GRID_COLS);
-	const currentCol = currentIndex % GRID_COLS;
+/**
+ * Keyboard movement across the provider tiles.
+ *
+ * The tiles are either one horizontally scrolling row (every supported
+ * provider, which no longer fits above the Continue button) or a centered block
+ * that wraps into at most two rows (the shorter filtered list). `columns` is
+ * what tells the two apart: left/right always step one tile, and up/down jump a
+ * whole row, which is a no-op when the row holds everything.
+ *
+ * Movement is clamped rather than wrapped: running off the end should stop, not
+ * teleport the focus ring back to the far side of a row the user can't see. A
+ * downward step out of a full row into a shorter last row lands on the last
+ * tile rather than refusing to move, since refusing reads as a dead key.
+ *
+ * `tileCount` is the count of tiles CURRENTLY RENDERED, not the provider total.
+ * The list can be filtered to the installed providers, so an index into the
+ * full registry names a different tile than the one under the focus ring.
+ */
+export function getNextAgentTileIndex(
+	currentIndex: number,
+	key: string,
+	tileCount: number,
+	columns: number = tileCount
+): number {
+	if (tileCount <= 0) return currentIndex;
+	const perRow = columns > 0 ? columns : tileCount;
 
 	switch (key) {
-		case 'ArrowUp':
-			if (currentRow > 0) {
-				return (currentRow - 1) * GRID_COLS + currentCol;
-			}
-			return currentIndex;
-
-		case 'ArrowDown': {
-			if (currentRow >= GRID_ROWS - 1) return currentIndex;
-			const newIndex = (currentRow + 1) * GRID_COLS + currentCol;
-			return newIndex < AGENT_TILES.length ? newIndex : currentIndex;
-		}
-
 		case 'ArrowLeft':
-			return currentCol > 0 ? currentIndex - 1 : currentIndex;
+			return currentIndex > 0 ? currentIndex - 1 : currentIndex;
 
 		case 'ArrowRight':
-			return currentCol < GRID_COLS - 1 && currentIndex + 1 < AGENT_TILES.length
-				? currentIndex + 1
-				: currentIndex;
+			return currentIndex + 1 < tileCount ? currentIndex + 1 : currentIndex;
+
+		case 'ArrowUp':
+			return currentIndex - perRow >= 0 ? currentIndex - perRow : currentIndex;
+
+		case 'ArrowDown': {
+			if (currentIndex + perRow < tileCount) return currentIndex + perRow;
+			const lastRowStart = (Math.ceil(tileCount / perRow) - 1) * perRow;
+			return currentIndex < lastRowStart ? tileCount - 1 : currentIndex;
+		}
 
 		default:
 			return currentIndex;

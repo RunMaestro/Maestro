@@ -8,6 +8,7 @@ import {
 import { DEFAULT_BROWSER_TAB_URL } from '../../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrderUtils';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { useUIStore } from '../../../stores/uiStore';
 import { createBrowserTab, normalizeBrowserTabUpdates } from './browserTabHelpers';
 import type { BrowserTabHandlersReturn } from './types';
 
@@ -15,6 +16,9 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 	const handleNewBrowserTab = useCallback((options?: { ephemeral?: boolean }) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
+		// Captured inside the updater so focus is only requested for a tab that was
+		// actually created.
+		let createdTabId: string | null = null;
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -24,6 +28,7 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					isLoading: homeUrl !== DEFAULT_BROWSER_TAB_URL,
 					ephemeral: options?.ephemeral,
 				});
+				createdTabId = newBrowserTab.id;
 
 				return {
 					...s,
@@ -42,6 +47,12 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 				};
 			})
 		);
+		// A new browser tab is opened to go somewhere, so put the caret in the address
+		// bar (selected) rather than leaving it wherever it was. The request retries
+		// until the keep-alive overlay that owns the input has mounted.
+		if (createdTabId) {
+			useUIStore.getState().requestTabFocus({ type: 'browser', id: createdTabId });
+		}
 	}, []);
 
 	const handleOpenBrowserTabAt = useCallback((url: string, options?: { title?: string }) => {

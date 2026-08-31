@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
 	ArrowDown,
 	ArrowDownToLine,
@@ -26,8 +26,10 @@ import {
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
+import { GitRunningBadge } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -167,6 +169,13 @@ export function SessionContextMenu({
 	const [renamingWindowId, setRenamingWindowId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
 
+	// Same ordering the Left Bar uses for its group headers, so the submenu
+	// reads in the order the user already scans the sidebar in.
+	const sortedGroups = useMemo(
+		() => [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
+		[groups]
+	);
+
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
@@ -246,6 +255,18 @@ export function SessionContextMenu({
 				minWidth: '10rem',
 			}}
 		>
+			{/* Names the agent this menu acts on. Right-clicking a row in a long
+			    Left Bar pops the menu away from that row, so without it the
+			    destructive items at the bottom are unattributed. */}
+			<div
+				className="px-3 py-1 text-[10px] uppercase tracking-wider opacity-60"
+				style={{ color: theme.colors.textDim }}
+				title={session.name}
+			>
+				<span className="block truncate max-w-[12rem]">{session.name}</span>
+			</div>
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
 			{!session.isPianola && (
 				<button
 					type="button"
@@ -367,7 +388,7 @@ export function SessionContextMenu({
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 							)}
 
-							{groups.map((group) => (
+							{sortedGroups.map((group) => (
 								<button
 									type="button"
 									key={group.id}
@@ -627,11 +648,21 @@ export function SessionContextMenu({
 							<ArrowDownToLine className="w-3.5 h-3.5" />
 							Git Pull
 						</span>
-						{gitActions.behind > 0 && (
-							<span className="flex items-center gap-0.5 text-[10px] text-red-500">
-								<ArrowDown className="w-3 h-3" />
-								{gitActions.behind}
-							</span>
+						{/* A backgrounded pull outranks the behind count, which is stale
+						    until it finishes anyway. */}
+						{gitActions.pullRunning ? (
+							<GitRunningBadge
+								theme={theme}
+								className="flex items-center gap-1 text-[10px]"
+								testId="session-context-git-pull-running"
+							/>
+						) : (
+							gitActions.behind > 0 && (
+								<span className="flex items-center gap-0.5 text-[10px] text-red-500">
+									<ArrowDown className="w-3 h-3" />
+									{gitActions.behind}
+								</span>
+							)
 						)}
 					</button>
 					<button
@@ -648,11 +679,19 @@ export function SessionContextMenu({
 							<ArrowUpFromLine className="w-3.5 h-3.5" />
 							Git Push
 						</span>
-						{gitActions.ahead > 0 && (
-							<span className="flex items-center gap-0.5 text-[10px] text-green-500">
-								<ArrowUp className="w-3 h-3" />
-								{gitActions.ahead}
-							</span>
+						{gitActions.pushRunning ? (
+							<GitRunningBadge
+								theme={theme}
+								className="flex items-center gap-1 text-[10px]"
+								testId="session-context-git-push-running"
+							/>
+						) : (
+							gitActions.ahead > 0 && (
+								<span className="flex items-center gap-0.5 text-[10px] text-green-500">
+									<ArrowUp className="w-3 h-3" />
+									{gitActions.ahead}
+								</span>
+							)
 						)}
 					</button>
 					<button

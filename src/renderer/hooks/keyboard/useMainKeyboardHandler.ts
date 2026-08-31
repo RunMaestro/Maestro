@@ -1,20 +1,55 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { moveActiveUnifiedTabToEdge, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	moveActiveUnifiedTabToEdge,
+	toggleReadOnlyModeFields,
+	setActiveTab,
+} from '../../utils/tabHelpers';
 import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { useNotificationStore } from '../../stores/notificationStore';
+import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { stepMediaItem } from '../../utils/mediaItems';
 import { getTabDisplayName } from '../../utils/tabHelpers';
-import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
+import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
+import { FONT_ZOOM_DEFAULT, FONT_ZOOM_STEP, clampFontZoom } from '../../../shared/typography';
+import { useUIStore } from '../../stores/uiStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
+import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
+import { tileNewTabInSession } from '../../services/tileNewTabAction';
+import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
+import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 
-// Font size keyboard shortcut constants
-const FONT_SIZE_STEP = 2;
-const FONT_SIZE_MIN = 10;
-const FONT_SIZE_MAX = 24;
-const FONT_SIZE_DEFAULT = 14;
+/**
+ * Open the floating media player on whatever it should be showing.
+ *
+ * The store owns the reasoning, so this key and the palette command cannot
+ * disagree about what "open the player" means. Read at press time, so a queue
+ * that advanced since the last render cannot strand the shortcut on a finished
+ * file.
+ */
+function openMediaPlayerFromShortcut(): void {
+	useMediaPlaybackStore.getState().openPlayer();
+}
+
+/**
+ * Step the queue by one, the same way MediaPlaybackHost's own transport does.
+ * No-op when there is nothing loaded - stepping from nowhere has no meaning.
+ */
+function stepMediaFromShortcut(direction: 1 | -1): void {
+	const state = useMediaPlaybackStore.getState();
+	if (!state.activeItemId) return;
+	const next = stepMediaItem(state.items, state.activeItemId, direction);
+	if (next) state.setActiveItem(next.id, { autoplay: true });
+}
 
 /**
  * Context object passed to the main keyboard handler via ref.
@@ -38,6 +73,22 @@ const FONT_SIZE_DEFAULT = 14;
 
 /** Delay (ms) to allow React re-render before focusing the input element. */
 const FOCUS_AFTER_RENDER_DELAY_MS = 50;
+
+/**
+ * The "Tile New ... Below" shortcut family, paired with the tab kind each one
+ * creates. All four ship on Ctrl+Cmd (T / J / B / F), the same namespace as the
+ * pane commands, so they are matched with `isPaneShortcut` rather than
+ * `isShortcut` - the general matcher folds Meta and Ctrl into one modifier and
+ * would fire these on a plain Cmd+T. Keeping them in one table means adding a
+ * tileable kind is a single line here rather than a fourth branch in the
+ * keydown chain.
+ */
+const TILE_SHORTCUTS: ReadonlyArray<{ shortcutId: string; kind: TileableTabKind }> = [
+	{ shortcutId: 'tileTerminalBelow', kind: 'terminal' },
+	{ shortcutId: 'tileAiBelow', kind: 'ai' },
+	{ shortcutId: 'tileBrowserBelow', kind: 'browser' },
+	{ shortcutId: 'tileFileBelow', kind: 'file' },
+];
 
 export type KeyboardHandlerContext = any;
 
@@ -225,11 +276,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
 					(e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}');
-				// Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) and next-unread (Alt+Cmd+ArrowDown) even when modals are open
+				// Allow sidebar toggle shortcuts (Alt+Cmd+Left/Right) even when modals are open
 				const isLayoutShortcut =
-					e.altKey &&
-					(e.metaKey || e.ctrlKey) &&
-					(e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowDown');
+					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+				// Next unread / draft tab is benign navigation, so it stays live behind a
+				// modal. Resolved by SHORTCUT ID rather than by key, for two reasons: it
+				// has already moved combos once and the hard-coded arrow left behind by
+				// that move silently stopped matching it, and a user who REBINDS it would
+				// otherwise get a shortcut that dies the moment any modal is open -
+				// including the Shortcuts settings pane they rebound it in.
+				const isNextUnreadTabShortcut = ctx.isShortcut(e, 'nextUnreadTab');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();
 				const isRightPanelShortcut =
@@ -307,6 +363,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.activeFocus === 'right' &&
 					ctx.activeRightTab === 'files' &&
 					ctx.fileTreeFilterOpen;
+				// Cmd+F on a focused side pane is that pane's local filter, even if
+				// the transcript Find bar is still open from earlier.
+				const isPaneLocalFindShortcut =
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					keyLower === 'f' &&
+					(ctx.activeFocus === 'right' || ctx.activeFocus === 'sidebar');
+				// The Concerto keys stay live through the guard. The stage is a
+				// workspace surface, not a dialog, so its own toggle has to be able to
+				// close it - a toggle that only ever opens is a dead keypress. And
+				// cadenzas float ABOVE every modal, so the only way to stash a stack of
+				// them while something else is open is to let this key through.
+				const isConcertoToggleShortcut =
+					(ctx.isShortcut(e, 'toggleConcerto') || ctx.isShortcut(e, 'toggleCadenzas')) &&
+					ctx.encoreFeatures?.concerto === true;
 				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
 				const isFontSizeShortcut =
 					(e.metaKey || e.ctrlKey) &&
@@ -350,12 +422,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					// jumpToBottom, jumpToTerminal, markdown toggle, and font size to work (these are benign navigation/viewing preferences)
 					if (
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
 						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
 						!isFontSizeShortcut &&
+						!isConcertoToggleShortcut &&
 						!isPromptComposerCycleShortcut
 					) {
 						return;
@@ -370,6 +444,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (
 						!isCycleShortcut &&
 						!isLayoutShortcut &&
+						!isNextUnreadTabShortcut &&
 						!isRightPanelShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
@@ -383,8 +458,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isBrowserFindShortcut &&
 						!isBrowserNavShortcut &&
 						!isFileFilterRefocusShortcut &&
+						!isPaneLocalFindShortcut &&
 						!isOutputSearchGlobalShortcut &&
 						!isOutputSearchRefocusShortcut &&
+						!isConcertoToggleShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
@@ -411,6 +488,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// Escape in main area focuses terminal output
 			if (ctx.handleEscapeInMain(e)) return;
 
+			// Which "Tile New ... Below" command this event matches, if any. Resolved
+			// once here rather than as four more links in the else-if chain below.
+			// isPaneShortcut, not isShortcut: the family lives on Ctrl+Cmd and the
+			// general matcher treats Ctrl and Cmd as the same modifier, so it would
+			// report a match on a bare Cmd+T.
+			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isPaneShortcut(e, t.shortcutId)) ?? null;
+
 			// Helper to track shortcut usage for keyboard mastery gamification
 			// AND for the daily-usage time series shown on the Usage Dashboard.
 			// Mastery is short-circuited on second+ firings of the same shortcut
@@ -428,18 +512,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			};
 
 			// Cmd+F while the output find bar is already open: bring focus back to its
-			// input from anywhere instead of no-opping. The find bar's own keydown
-			// handler only opens search when it's closed, so without this re-pressing
-			// the shortcut after focus moved away (e.g. to the AI input) does nothing.
+			// input from anywhere in the MAIN chat, instead of no-opping. Do NOT steal
+			// the chord when a side pane is focused: the Right Bar (Files/History) and
+			// Left Bar have their own Cmd+F filters, and a click on those panes is the
+			// user asking for that filter, not the transcript Find they left open.
+			const sidePaneOwnsFind = ctx.activeFocus === 'right' || ctx.activeFocus === 'sidebar';
 			if (
 				isActiveOutputSearchOpen() &&
+				!sidePaneOwnsFind &&
 				(e.metaKey || e.ctrlKey) &&
 				!e.altKey &&
 				!e.shiftKey &&
 				e.key.toLowerCase() === 'f'
 			) {
 				e.preventDefault();
-				document.querySelector<HTMLInputElement>('.terminal-output input')?.focus();
+				document.querySelector<HTMLInputElement>(OUTPUT_SEARCH_INPUT_SELECTOR)?.focus();
 				return;
 			}
 
@@ -575,6 +662,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				}
 				trackShortcut('toggleMode');
+			} else if (matchedTile) {
+				// The tile-below family. Each is the tiled twin of its plain "new tab"
+				// chord: instead of a new tab that takes over the panel, split the
+				// current view and put the new tab in the bottom half. Unlike the pane
+				// commands above this is NOT gated on an existing group - tiling into a
+				// single view is what creates the first one. tileNewTabInSession focuses
+				// the new pane; it flashes and no-ops when the agent has nothing on
+				// screen to tile with.
+				e.preventDefault();
+				if (ctx.activeSessionId) {
+					tileNewTabInSession(ctx.activeSessionId, matchedTile.kind);
+					trackShortcut(matchedTile.shortcutId);
+				}
 			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
 				e.preventDefault();
 				if (useSessionStore.getState().sessions.length > 0) {
@@ -600,6 +700,41 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setSettingsModalOpen(true);
 				trackShortcut('settings');
+			} else if (ctx.isShortcut(e, 'openThemeSettings')) {
+				e.preventDefault();
+				ctx.setSettingsTab?.('theme');
+				ctx.setSettingsModalOpen(true);
+				trackShortcut('openThemeSettings');
+			} else if (ctx.isShortcut(e, 'showSnoozeList')) {
+				// Registered unbound since Part 3 and never wired, so binding a key to
+				// it did nothing. Same route the tab strip and the palette already use.
+				e.preventDefault();
+				useModalStore.getState().openModal('snoozedTabs');
+				trackShortcut('showSnoozeList');
+			} else if (ctx.isShortcut(e, 'openLeaderboard')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('leaderboard');
+				trackShortcut('openLeaderboard');
+			} else if (ctx.isShortcut(e, 'clearAllNotifications')) {
+				e.preventDefault();
+				useNotificationStore.getState().clearToasts();
+				trackShortcut('clearAllNotifications');
+			} else if (ctx.isShortcut(e, 'openMediaPlayer')) {
+				e.preventDefault();
+				openMediaPlayerFromShortcut();
+				trackShortcut('openMediaPlayer');
+			} else if (ctx.isShortcut(e, 'mediaPlayPause')) {
+				e.preventDefault();
+				useMediaPlaybackStore.getState().requestToggle();
+				trackShortcut('mediaPlayPause');
+			} else if (ctx.isShortcut(e, 'mediaNext')) {
+				e.preventDefault();
+				stepMediaFromShortcut(1);
+				trackShortcut('mediaNext');
+			} else if (ctx.isShortcut(e, 'mediaPrev')) {
+				e.preventDefault();
+				stepMediaFromShortcut(-1);
+				trackShortcut('mediaPrev');
 			} else if (ctx.isShortcut(e, 'agentSettings')) {
 				// In group chat, open the moderator's settings for the active chat.
 				// Otherwise open agent settings for the current session.
@@ -675,11 +810,25 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Only act in AI mode - the composer is AI-only. While it's already
 				// open, the hotkey cycles between windowed and full-screen instead of
 				// being a no-op.
-				if (activeSession?.inputMode === 'ai') {
+				// A group chat is an AI surface too, but it has no inputMode of its
+				// own: activeSession still points at whatever agent was selected
+				// before the room was opened, so gating on that alone made the
+				// hotkey work or silently die depending on an unrelated agent's mode.
+				if (ctx.activeGroupChatId || activeSession?.inputMode === 'ai') {
 					const composerOpen = useModalStore.getState().modals.get('promptComposer')?.open === true;
 					if (ctx.activeGroupChatId && !composerOpen) ctx.flushGroupChatDraft?.();
 					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
+				}
+			} else if (ctx.isShortcut(e, 'openModelEffort')) {
+				e.preventDefault();
+				// AI-only: a file, terminal, or browser tab has no model to retune.
+				// Resolved through resolveActiveTabRef so a focused pane in a tiled
+				// group is retuned rather than the standalone tab hidden behind it.
+				const modelEffortRef = activeSession ? resolveActiveTabRef(activeSession) : null;
+				if (modelEffortRef?.type === 'ai') {
+					useModalStore.getState().openModal('modelEffort', { tabId: modelEffortRef.id });
+					trackShortcut('openModelEffort');
 				}
 			} else if (ctx.isShortcut(e, 'openWizard')) {
 				e.preventDefault();
@@ -788,6 +937,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
 				trackShortcut('openCue');
+			} else if (ctx.isShortcut(e, 'toggleConcerto') && ctx.encoreFeatures?.concerto) {
+				// Toggle, not open: the stage is a window the user parks and brings
+				// back, and its panels keep running either way.
+				e.preventDefault();
+				getModalActions().toggleConcertoStage();
+				trackShortcut('toggleConcerto');
+			} else if (ctx.isShortcut(e, 'toggleCadenzas') && ctx.encoreFeatures?.concerto) {
+				e.preventDefault();
+				toggleAllCadenzas();
+				trackShortcut('toggleCadenzas');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -796,6 +955,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.toggleShowUnreadAgentsOnly();
 				trackShortcut('filterUnreadAgents');
+			} else if (ctx.isShortcut(e, 'forcedParallelSend')) {
+				// The composer owns this chord while the caret is inside it - only it
+				// can read the live draft it may need to send. Everywhere else the
+				// chord still has to work: with an empty draft it force-sends the
+				// newest eligible QUEUED item, and the queue is drawn in the
+				// transcript, so requiring focus in a textarea made the shortcut look
+				// broken from the one place the user was actually looking at the thing
+				// it acts on. The composer decides what to do with it (see
+				// runForcedParallelSend); this branch only says the chord fired.
+				const composerRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
+				const cameFromComposer = !!composerRef?.current && e.target === composerRef.current;
+				if (!cameFromComposer && useSettingsStore.getState().forcedParallelExecution) {
+					e.preventDefault();
+					window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+				}
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)
@@ -841,6 +1015,60 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
+			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
+				// Open the edit modal on the newest queued message.
+				e.preventDefault();
+				// Read the session at KEYPRESS time instead of trusting the snapshot
+				// `ctx` captured during the last render. The pencil on a queued row
+				// reads live props, so a stale snapshot here is the one way this
+				// shortcut can disagree with the queue the user is looking at and
+				// claim nothing is queued while a card sits on screen. Reuse the
+				// store's own selector so the fallback matches the rest of the app.
+				const session = selectActiveSession(useSessionStore.getState()) ?? undefined;
+				const queue = session?.executionQueue ?? [];
+				// Commands are the only thing skipped - they carry no editable prompt
+				// text. Nothing else is filtered OUT: the queue the user sees is not
+				// filtered by tab membership, so a filter here could only reject an
+				// item Maestro is actively displaying.
+				const editable = queue.filter((item) => item.type !== 'command');
+				// An item whose tab is gone has no transcript to open the modal in, so
+				// prefer items we can actually show. This RANKS rather than filters:
+				// falling back to the full list keeps a missing tab from turning into
+				// "nothing is queued".
+				const renderable = editable.filter((item) =>
+					session?.aiTabs?.some((tab) => tab.id === item.tabId)
+				);
+				const pool = renderable.length > 0 ? renderable : editable;
+				// Prefer the tab on screen, else this agent's newest queued message on
+				// any tab - the queue is agent-level and the status bar already
+				// advertises it across tabs ("1 item queued - <tab name> - Click to view").
+				const target =
+					[...pool].reverse().find((item) => item.tabId === session?.activeTabId) ??
+					pool[pool.length - 1];
+				if (!session) {
+					notifyCenterFlash({ message: 'No agent selected', color: 'yellow' });
+				} else if (!target) {
+					// Say WHICH empty this is. "No queued message" on a screen showing a
+					// queued message is the least useful thing this can report.
+					notifyCenterFlash({
+						message: queue.length > 0 ? 'Only commands are queued' : 'Nothing queued to edit',
+						color: 'yellow',
+					});
+				} else {
+					// The modal renders inside its OWN tab's transcript, so land there
+					// first - whether the message belongs to another AI tab, or a
+					// file/terminal/browser view is currently covering this one.
+					// setActiveTab returns the session unchanged when we are already in
+					// the right place, which is the check for whether to write at all;
+					// the patch itself is applied against fresh state so this cannot
+					// clobber a concurrent update with the snapshot read above.
+					const switched = setActiveTab(session, target.tabId);
+					if (switched && switched.session !== session) {
+						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(target.tabId) }));
+					}
+					useUIStore.getState().setEditingQueuedItemId(target.id);
+					trackShortcut('editLastQueuedMessage');
+				}
 			} else if (ctx.isShortcut(e, 'jumpToTerminal')) {
 				e.preventDefault();
 				if (activeSession && !ctx.activeGroupChatId) {
@@ -889,32 +1117,65 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			// Font size shortcuts: Cmd+= (zoom in), Cmd+- (zoom out), Cmd+Shift+0 (reset)
+			// Zoom shortcuts: Cmd+= (in), Cmd+- (out), Cmd+Shift+0 (reset).
+			//
+			// These move `fontZoom`, a multiplier applied to every surface size
+			// equally, NOT the interface size directly. Each surface now carries
+			// its own size, and pushing the base around would have compressed
+			// those differences on the way up and lost them entirely at the
+			// clamp - so a user who set the terminal smaller than the chat would
+			// watch that distinction dissolve after a few keypresses. A pure
+			// multiplier preserves the ratios exactly and is perfectly
+			// reversible, which is what makes the reset below able to restore
+			// custom sizes rather than flatten them.
 			if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
 				if (e.key === '=' || e.key === '+') {
 					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					const newSize = Math.min(fontSize + FONT_SIZE_STEP, FONT_SIZE_MAX);
-					if (newSize !== fontSize) setFontSize(newSize);
+					const { fontZoom, setFontZoom } = useSettingsStore.getState();
+					const next = clampFontZoom(fontZoom + FONT_ZOOM_STEP);
+					if (next !== fontZoom) setFontZoom(next);
 					trackShortcut('fontSizeIncrease');
 					return;
 				}
 				if (e.key === '-') {
 					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					const newSize = Math.max(fontSize - FONT_SIZE_STEP, FONT_SIZE_MIN);
-					if (newSize !== fontSize) setFontSize(newSize);
+					const { fontZoom, setFontZoom } = useSettingsStore.getState();
+					const next = clampFontZoom(fontZoom - FONT_ZOOM_STEP);
+					if (next !== fontZoom) setFontZoom(next);
 					trackShortcut('fontSizeDecrease');
 					return;
 				}
 			}
-			// Cmd+Shift+0: Reset font size (Cmd+0 is reserved for "Go to Last Tab")
+			// Cmd+Shift+0: reset the zoom (Cmd+0 is reserved for "Go to Last Tab").
+			// Resets ONLY the zoom, deliberately: the per-surface sizes are a
+			// preference the user set in Settings, not zoom state, and wiping
+			// them from a keystroke would be unrecoverable. Settings -> Display
+			// has Factory Reset Fonts for that.
 			if (ctx.isShortcut(e, 'fontSizeReset')) {
 				e.preventDefault();
-				const { fontSize, setFontSize } = useSettingsStore.getState();
-				if (fontSize !== FONT_SIZE_DEFAULT) setFontSize(FONT_SIZE_DEFAULT);
+				const { fontZoom, setFontZoom } = useSettingsStore.getState();
+				if (fontZoom !== FONT_ZOOM_DEFAULT) setFontZoom(FONT_ZOOM_DEFAULT);
 				trackShortcut('fontSizeReset');
 				return;
+			}
+
+			// A group chat has no AI tabs, so the tab-cycling chord is free there and
+			// walks the Right Bar's two panels (Participants / History) instead. It
+			// opens the Right Bar when it is closed: switching a pane the user cannot
+			// see is indistinguishable from the shortcut doing nothing. Focus moves
+			// with it so the panel it lands on answers the arrow keys straight away,
+			// rather than needing a click first.
+			if (ctx.activeGroupChatId) {
+				const wantsTabCycle = ctx.isTabShortcut(e, 'nextTab') || ctx.isTabShortcut(e, 'prevTab');
+				if (wantsTabCycle) {
+					e.preventDefault();
+					const { rightPanelOpen, setRightPanelOpen } = useUIStore.getState();
+					if (!rightPanelOpen) setRightPanelOpen(true);
+					toggleGroupChatRightTab();
+					ctx.setActiveFocus('right');
+					trackShortcut(ctx.isTabShortcut(e, 'nextTab') ? 'nextTab' : 'prevTab');
+					return;
+				}
 			}
 
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).
@@ -1292,12 +1553,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			// Cmd+F contextual shortcuts - prioritize explicit focus over input mode
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+			// Cmd+F contextual shortcuts - prioritize explicit focus over input mode.
+			// Alt is excluded: Opt+Cmd+F is searchAllTabs (cross-tab message search)
+			// and must not also open in-tab Find, group Find, Files filter, or
+			// terminal/browser find.
+			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				// Browser-tab in-page find takes precedence whenever a browser tab is
 				// the active tab. Routed both here (when webview isn't focused) and via
 				// `onBrowserTabShortcutKey` (when it is).
-				if (activeSession?.activeBrowserTabId && !e.altKey) {
+				if (activeSession?.activeBrowserTabId) {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openBrowserFind();
 					trackShortcut('searchOutput');
@@ -1332,6 +1596,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openTerminalSearch();
 					trackShortcut('searchTerminal');
+				} else if (ctx.activeGroupChatId) {
+					// Group chat replaces MainPanel/TerminalOutput, so Find must open here.
+					// When the Right Bar history tab is focused, leave Cmd+F to that panel's filter.
+					const groupRightTab = useGroupChatStore.getState().groupChatRightTab;
+					if (ctx.activeFocus === 'right' && groupRightTab === 'history') {
+						trackShortcut('filterHistory');
+					} else {
+						e.preventDefault();
+						useUIStore
+							.getState()
+							.setOutputSearchOpen(groupChatOutputSearchKey(ctx.activeGroupChatId), true);
+						trackShortcut('searchOutput');
+					}
 				} else if (ctx.activeFocus === 'main') {
 					// Main panel search - handled by TerminalOutput component, just track here
 					trackShortcut('searchOutput');

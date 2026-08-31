@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
+import {
+	isParquetPreviewMarker,
+	parseParquetPreviewMarker,
+} from '../../../../shared/parquet/preview';
 
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
@@ -26,8 +30,26 @@ vi.mock('../../../../main/utils/drag-out-icon', () => ({
 // Mock synchronous fs (existsSync) used by the drag-out handler's path filter.
 vi.mock('fs', () => {
 	const existsSync = vi.fn(() => true);
-	return { existsSync, default: { existsSync } };
+	// The compress handler streams an archive to disk; a stub stream that fires
+	// 'close' on the next tick stands in for the real write.
+	const createWriteStream = vi.fn(() => ({
+		on: (event: string, cb: () => void) => {
+			if (event === 'close') setTimeout(cb, 0);
+		},
+	}));
+	return { existsSync, createWriteStream, default: { existsSync, createWriteStream } };
 });
+
+// Mock archiver - the compress handler only needs pipe/directory/finalize.
+const archiveMock = {
+	on: vi.fn(),
+	pipe: vi.fn(),
+	directory: vi.fn(),
+	finalize: vi.fn().mockResolvedValue(undefined),
+};
+vi.mock('archiver', () => ({
+	default: vi.fn(() => archiveMock),
+}));
 
 // Mock os module
 vi.mock('os', () => ({
@@ -70,7 +92,9 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	renameRemote: vi.fn(),
 	mkdirRemote: vi.fn(),
 	deleteRemote: vi.fn(),
+	deleteManyRemote: vi.fn(),
 	countItemsRemote: vi.fn(),
+	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
 	existsRemote: vi.fn(),
 }));
@@ -92,10 +116,13 @@ import {
 	renameRemote,
 	mkdirRemote,
 	deleteRemote,
+	deleteManyRemote,
 	writeFileRemote,
 	existsRemote,
+	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
+import path from 'path';
 
 describe('filesystem handlers', () => {
 	beforeEach(() => {
@@ -122,6 +149,7 @@ describe('filesystem handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:copyPath', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:mkdir', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:delete', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith('fs:deleteMany', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:countItems', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:fetchImageAsBase64', expect.any(Function));
 		});
@@ -336,6 +364,47 @@ describe('filesystem handlers', () => {
 			const result = await handler!({}, '/test/icon.svg');
 
 			expect(result).toMatch(/^data:image\/svg\+xml;base64,/);
+		});
+
+		it('short-circuits a parquet file to a marker instead of reading it as text', async () => {
+			// Parquet is binary, columnar, and routinely larger than RAM. Reading
+			// it as UTF-8 would corrupt it and blow up the IPC payload for a file
+			// the viewer only ever reads a window of, so the handler hands back a
+			// marker and the ParquetViewer queries it over `parquet:*` instead.
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/data/events.parquet');
+
+			expect(isParquetPreviewMarker(result)).toBe(true);
+			expect(parseParquetPreviewMarker(result)).toBe('/data/events.parquet');
+			// The whole point: the file is never opened here.
+			expect(fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('short-circuits every parquet extension, including over SSH', async () => {
+			const handler = registeredHandlers.get('fs:readFile');
+
+			for (const path of ['/d/a.parquet', '/d/b.parq', '/d/c.pq', '/d/D.PARQUET']) {
+				expect([path, isParquetPreviewMarker(await handler!({}, path))]).toEqual([path, true]);
+			}
+
+			// Remote parquet takes the same path: the reader fetches the file into
+			// a local cache itself, so this must NOT fall through to the SSH text
+			// read (which would mangle the binary through a `cat` over stdout).
+			const remote = await handler!({}, '/remote/events.parquet', 'remote-7');
+			expect(isParquetPreviewMarker(remote)).toBe(true);
+			expect(fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('does not mistake a file inside a .parquet directory for a parquet file', async () => {
+			// Hive-style layouts are full of `.../table.parquet/part-0` paths, and
+			// the file being opened there is the part, not the directory.
+			vi.mocked(fs.readFile).mockResolvedValue('plain text' as any);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/data/table.parquet/notes.txt');
+
+			expect(result).toBe('plain text');
+			expect(fs.readFile).toHaveBeenCalledWith('/data/table.parquet/notes.txt', 'utf-8');
 		});
 
 		it('should return null when path resolves to a directory (EISDIR)', async () => {
@@ -619,6 +688,81 @@ describe('filesystem handlers', () => {
 		});
 	});
 
+	describe('fs:compressFolder', () => {
+		it('zips a folder into <name>.zip beside it, nesting under the folder name', async () => {
+			vi.mocked(existsSync).mockReturnValue(false);
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			const result = await handler!({}, '/project/Competition');
+
+			expect(archiveMock.directory).toHaveBeenCalledWith('/project/Competition', 'Competition');
+			expect(result).toEqual({
+				success: true,
+				// The handler builds the destination with path.join, so the expected
+				// separator is the host's. Hardcoding '/' fails on Windows even
+				// though the product is correct.
+				path: path.join('/project', 'Competition.zip'),
+				name: 'Competition.zip',
+			});
+		});
+
+		it('increments a numeric suffix until the archive name is free', async () => {
+			// Competition.zip and Competition-1.zip are taken; -2 is free. The
+			// candidates are path.join'd by the handler, so the mock has to match on
+			// the host's separator or the collision is never seen and the suffix
+			// never advances.
+			const taken = [
+				path.join('/project', 'Competition.zip'),
+				path.join('/project', 'Competition-1.zip'),
+			];
+			vi.mocked(existsSync).mockImplementation((candidate) => taken.includes(candidate as string));
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			const result = await handler!({}, '/project/Competition');
+
+			expect(result).toEqual({
+				success: true,
+				path: path.join('/project', 'Competition-2.zip'),
+				name: 'Competition-2.zip',
+			});
+		});
+
+		it('compresses over SSH when sshRemoteId is set', async () => {
+			const sshConfig = { id: 'remote-1', host: 'example.com' };
+			vi.mocked(getSshRemoteById).mockReturnValue(sshConfig as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: false });
+			vi.mocked(compressFolderRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			const result = await handler!({}, '/remote/project/docs', { sshRemoteId: 'remote-1' });
+
+			expect(compressFolderRemote).toHaveBeenCalledWith(
+				'/remote/project/docs',
+				'/remote/project/docs.zip',
+				sshConfig
+			);
+			expect(result).toEqual({
+				success: true,
+				path: '/remote/project/docs.zip',
+				name: 'docs.zip',
+			});
+		});
+
+		it('throws when the remote compress fails', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'remote-1' } as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: false });
+			vi.mocked(compressFolderRemote).mockResolvedValue({
+				success: false,
+				error: 'zip not installed',
+			});
+
+			const handler = registeredHandlers.get('fs:compressFolder');
+			await expect(handler!({}, '/remote/docs', { sshRemoteId: 'remote-1' })).rejects.toThrow(
+				'zip not installed'
+			);
+		});
+	});
+
 	describe('fs:copyPath', () => {
 		it('should copy a path recursively without overwriting by default', async () => {
 			vi.mocked(fs.cp).mockResolvedValue(undefined);
@@ -831,6 +975,109 @@ describe('filesystem handlers', () => {
 
 			expect(deleteRemote).toHaveBeenCalledWith('/remote/file.txt', mockSshConfig, true);
 			expect(result).toEqual({ success: true });
+		});
+	});
+
+	describe('fs:deleteMany', () => {
+		it('deletes every local path in one call and reports each outcome', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, ['/test/a.txt', '/test/b.txt', '/test/c.txt']);
+
+			expect(fs.unlink).toHaveBeenCalledTimes(3);
+			expect(result).toEqual({
+				results: [
+					{ path: '/test/a.txt', success: true },
+					{ path: '/test/b.txt', success: true },
+					{ path: '/test/c.txt', success: true },
+				],
+			});
+		});
+
+		it('keeps deleting past a failure and attributes it to the right path', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(fs.unlink).mockImplementation(async (target) => {
+				if (target === '/test/b.txt') throw new Error('EACCES: permission denied');
+			});
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, ['/test/a.txt', '/test/b.txt', '/test/c.txt']);
+
+			// One bad file must not sink the rest of the batch, and the caller
+			// needs to know WHICH path failed to report it.
+			expect(result.results).toEqual([
+				{ path: '/test/a.txt', success: true },
+				{ path: '/test/b.txt', success: false, error: 'EACCES: permission denied' },
+				{ path: '/test/c.txt', success: true },
+			]);
+		});
+
+		it('routes directories through rm and files through unlink', async () => {
+			vi.mocked(fs.stat).mockImplementation(
+				async (target) => ({ isDirectory: () => target === '/test/folder' }) as any
+			);
+			vi.mocked(fs.rm).mockResolvedValue(undefined);
+			vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			await handler!({}, ['/test/folder', '/test/file.txt']);
+
+			expect(fs.rm).toHaveBeenCalledWith('/test/folder', { recursive: true, force: true });
+			expect(fs.unlink).toHaveBeenCalledWith('/test/file.txt');
+		});
+
+		it('sends the whole remote batch to deleteManyRemote in one go', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(deleteManyRemote).mockResolvedValue([
+				{ success: true },
+				{ success: false, error: 'Permission denied: /remote/b.txt' },
+			]);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, ['/remote/a.txt', '/remote/b.txt'], {
+				sshRemoteId: 'remote-1',
+			});
+
+			// One SSH round trip for the batch, not one handshake per file.
+			expect(deleteManyRemote).toHaveBeenCalledTimes(1);
+			expect(deleteManyRemote).toHaveBeenCalledWith(
+				['/remote/a.txt', '/remote/b.txt'],
+				mockSshConfig,
+				true
+			);
+			expect(deleteRemote).not.toHaveBeenCalled();
+			expect(result).toEqual({
+				results: [
+					{ path: '/remote/a.txt', success: true },
+					{ path: '/remote/b.txt', success: false, error: 'Permission denied: /remote/b.txt' },
+				],
+			});
+		});
+
+		it('throws when the SSH remote cannot be resolved', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as any);
+
+			const handler = registeredHandlers.get('fs:deleteMany');
+
+			// A missing remote is a config failure for the whole call, not N
+			// identical per-path errors - and it must never fall through to a
+			// LOCAL delete of paths the user meant to remove on the remote host.
+			await expect(handler!({}, ['/remote/a.txt'], { sshRemoteId: 'gone' })).rejects.toThrow(
+				'SSH remote not found: gone'
+			);
+			expect(fs.unlink).not.toHaveBeenCalled();
+		});
+
+		it('short-circuits an empty batch without touching the filesystem', async () => {
+			const handler = registeredHandlers.get('fs:deleteMany');
+			const result = await handler!({}, []);
+
+			expect(result).toEqual({ results: [] });
+			expect(fs.unlink).not.toHaveBeenCalled();
+			expect(deleteManyRemote).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1070,7 +1317,10 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 			const result = await handler!({}, 'https://example.com/image.jpg');
 
-			expect(global.fetch).toHaveBeenCalledWith('https://example.com/image.jpg');
+			expect(global.fetch).toHaveBeenCalledWith(
+				'https://example.com/image.jpg',
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
+			);
 			expect(result).toMatch(/^data:image\/jpeg;base64,/);
 		});
 
@@ -1200,7 +1450,10 @@ describe('filesystem handlers', () => {
 				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 				const result = await handler!({}, 'https://cdn.example.com/image.png');
 
-				expect(global.fetch).toHaveBeenCalledWith('https://cdn.example.com/image.png');
+				expect(global.fetch).toHaveBeenCalledWith(
+					'https://cdn.example.com/image.png',
+					expect.objectContaining({ signal: expect.any(AbortSignal) })
+				);
 				expect(result).toMatch(/^data:image\/png;base64,/);
 			});
 		});

@@ -35,6 +35,7 @@ import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
+import { reportAuthFailure } from '../../../stores/authOutageStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -419,8 +420,28 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				}
 			}
 
+			const erroredSession = getSessions().find((s) => s.id === actualSessionId);
+
 			if (!isSessionNotFound && !willAutoRetry) {
-				openModal('agentError', { sessionId: actualSessionId });
+				// An expired token is not a per-turn error: it fails every agent on
+				// that provider at once. The outage store groups them, so the tenth
+				// agent to fail joins the prompt already on screen instead of stacking
+				// a tenth copy of it - and joining is what puts the agent on the list
+				// of work to resume once the login succeeds.
+				if (agentError.type === 'auth_expired') {
+					const { opened, providerKey } = reportAuthFailure({
+						sessionId: actualSessionId,
+						message: agentError.message,
+						// Recorded now so the resume can replay exactly this turn. Same
+						// resolution the state update above used: the tab named by the
+						// process id, else the active one.
+						tabId:
+							tabIdFromSession ?? (erroredSession ? getActiveTab(erroredSession)?.id : undefined),
+					});
+					if (opened && providerKey) openModal('reauth', { providerKey });
+				} else {
+					openModal('agentError', { sessionId: actualSessionId });
+				}
 			}
 		});
 
@@ -434,4 +455,23 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		deps.pauseBatchOnErrorRef,
 		ownedGate,
 	]);
+
+	// Auth expiry raised outside the streaming path (Cue pipeline runs). Those
+	// agents are spawned by Cue itself, so they never reach `agent:error` - and
+	// an unattended pipeline is exactly the case where a silent auth failure
+	// costs the most. Routed through the same outage store as an interactive
+	// failure, so a board where both chat agents and pipelines share one expired
+	// token still produces exactly one prompt listing all of them.
+	useEffect(() => {
+		return window.maestro.process.onAuthExpired((payload) => {
+			const { opened, providerKey } = reportAuthFailure({
+				sessionId: payload.sessionId,
+				message: payload.message,
+				fromPipeline: payload.fromPipeline,
+			});
+			if (opened && providerKey) {
+				useModalStore.getState().openModal('reauth', { providerKey });
+			}
+		});
+	}, []);
 }

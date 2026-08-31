@@ -21,6 +21,10 @@ import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidati
 import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
+import {
+	filterToAvailableProviders,
+	providerLocationLabel,
+} from '../../utils/providerAvailability';
 import { logger } from '../../utils/logger';
 import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
@@ -38,6 +42,7 @@ export function NewInstanceModal({
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [selectedAgent, setSelectedAgent] = useState('');
 	const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+	const [showAllProviders, setShowAllProviders] = useState(false);
 	const [workingDir, setWorkingDir] = useState('');
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
 	const [instanceName, setInstanceName] = useState('');
@@ -720,13 +725,43 @@ export function NewInstanceModal({
 		return () => window.removeEventListener('keydown', handler, true);
 	}, [isOpen, handleSelectFolder, handleCreate, isFormValid, isSshEnabled]);
 
-	// Sort agents: supported first, then coming soon at the bottom
+	// Sort agents: supported first, then coming soon at the bottom. Each bucket is
+	// alphabetical by the name the row renders, matching the wizard's tile strip
+	// and the Group Chat moderator dropdown.
 	const sortedAgents = useMemo(() => {
+		const byName = (a: AgentConfig, b: AgentConfig) => a.name.localeCompare(b.name);
 		const visible = agents.filter((a) => !a.hidden);
-		const supported = visible.filter((a) => SUPPORTED_AGENTS.includes(a.id));
-		const comingSoon = visible.filter((a) => !SUPPORTED_AGENTS.includes(a.id));
+		const supported = visible.filter((a) => SUPPORTED_AGENTS.includes(a.id)).sort(byName);
+		const comingSoon = visible.filter((a) => !SUPPORTED_AGENTS.includes(a.id)).sort(byName);
 		return [...supported, ...comingSoon];
 	}, [agents]);
+
+	// The rows the picker draws. Same rule as the wizard's tile strip: hide what
+	// this machine cannot run, unless asked, and never filter down to nothing.
+	const visibleAgents = useMemo(
+		() =>
+			filterToAvailableProviders(
+				sortedAgents,
+				(agent) => SUPPORTED_AGENTS.includes(agent.id) && !!agent.available,
+				showAllProviders,
+				(agent) => agent.id === selectedAgent
+			),
+		[sortedAgents, showAllProviders, selectedAgent]
+	);
+
+	// Counted over ALL supported providers, not the filtered rows - a count that
+	// shrank with the list would read "4 of 4" and answer nothing.
+	const providerCounts = useMemo(() => {
+		const supported = sortedAgents.filter((agent) => SUPPORTED_AGENTS.includes(agent.id));
+		return {
+			total: supported.length,
+			available: supported.filter((agent) => agent.available).length,
+		};
+	}, [sortedAgents]);
+
+	// The counts describe whichever machine detection probed, so name that machine
+	// rather than claiming "locally" while an SSH remote is selected.
+	const providerLocation = useMemo(() => providerLocationLabel(sshRemoteHost), [sshRemoteHost]);
 
 	// Effects - load agents and optionally pre-fill from source session
 	// Dependency uses sourceSession?.id (not the full object) so unrelated
@@ -897,7 +932,12 @@ export function NewInstanceModal({
 					theme={theme}
 					loading={loading}
 					sshConnectionError={sshConnectionError}
-					sortedAgents={sortedAgents}
+					visibleAgents={visibleAgents}
+					availableProviderCount={providerCounts.available}
+					totalProviderCount={providerCounts.total}
+					providerLocationLabel={providerLocation}
+					showAllProviders={showAllProviders}
+					onShowAllProvidersChange={setShowAllProviders}
 					selectedAgent={selectedAgent}
 					expandedAgent={expandedAgent}
 					refreshingAgent={refreshingAgent}

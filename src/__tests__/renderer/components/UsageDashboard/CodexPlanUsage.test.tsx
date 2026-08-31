@@ -7,7 +7,7 @@
  *   - multi-account tab selection
  *   - accessible quota progress bars
  *   - non-authenticated/error rows
- *   - refresh IPC wiring
+ *   - refresh IPC wiring, incl. the Cmd+R hotkey
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -239,6 +239,22 @@ describe('CodexPlanUsage - refresh wiring', () => {
 		});
 	});
 
+	it('re-samples on Cmd+R when the panel owns the hotkey', async () => {
+		render(<CodexPlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		await waitFor(() => {
+			expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('ignores Cmd+R when the panel does not own the hotkey', () => {
+		render(<CodexPlanUsage theme={theme} />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
 	it('disables the refresh button while a refresh is already in flight', () => {
 		useCodexUsageStore.setState({
 			snapshots: {},
@@ -331,5 +347,37 @@ describe('CodexPlanUsage - hide/show accounts (list view)', () => {
 
 		expect(screen.queryByTestId('codex-plan-visibility-default')).toBeNull();
 		expect(screen.queryByTestId('codex-plan-show-all')).toBeNull();
+	});
+});
+
+describe('CodexPlanUsage - agent count badge', () => {
+	const snapshotFor = (key: string) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		codexHomeKey: key,
+		authState: 'authenticated',
+		session: { percent: 40, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekly: { percent: 20, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('counts the agents pointed at each CODEX_HOME', () => {
+		seedSnapshots({
+			'/Users/me/.codex-work': snapshotFor('/Users/me/.codex-work'),
+			'/Users/me/.codex-side': snapshotFor('/Users/me/.codex-side'),
+		});
+		seedSessions(['/Users/me/.codex-work', '/Users/me/.codex-work', '/Users/me/.codex-side']);
+
+		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('codex-plan-agents-work')).toHaveTextContent('2 agents');
+		expect(screen.getByTestId('codex-plan-agents-side')).toHaveTextContent('1 agent');
+	});
+
+	it('shows the count on an account that has no snapshot yet', () => {
+		seedSessions(['/Users/me/.codex-pending']);
+
+		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('codex-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.getByTestId('codex-plan-agents-pending')).toHaveTextContent('1 agent');
 	});
 });

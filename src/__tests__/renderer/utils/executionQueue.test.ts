@@ -5,8 +5,15 @@ import {
 	hasRunnableQueueItem,
 	takeNextRunnableQueueItem,
 	reorderQueueItem,
+	resolveQueuedItemTabName,
+	hasWorkAheadOfNewMessage,
+	applyQueuedItemRelease,
+	getForceSendEligibility,
+	shouldOfferForceSend,
 } from '../../../renderer/utils/executionQueue';
-import type { QueuedItem } from '../../../renderer/types';
+import type { AITab, QueuedItem, Session } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 
 function item(id: string, paused = false): QueuedItem {
 	return { id, timestamp: 0, tabId: 'tab-1', type: 'message', text: id, paused };
@@ -90,5 +97,184 @@ describe('reorderQueueItem', () => {
 		const q = [tabItem('a', 'tab-1'), tabItem('x', 'tab-2')];
 		// tab-1 has only one item, so index 1 is out of range for its view.
 		expect(reorderQueueItem(q, 0, 1, 'tab-1')).toBe(q);
+	});
+});
+
+describe('hasWorkAheadOfNewMessage', () => {
+	it('is false for an idle agent with an empty queue', () => {
+		const session = createMockSession({ aiTabs: [createMockAITab({ id: 'tab-1' })] });
+		expect(hasWorkAheadOfNewMessage(session)).toBe(false);
+	});
+
+	it('is true while any tab is mid-turn, including a closed-but-thinking orphan', () => {
+		const busy = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+		});
+		expect(hasWorkAheadOfNewMessage(busy)).toBe(true);
+
+		// A tab closed mid-send keeps working in the background and still holds
+		// the agent's order, so a new message lands behind it.
+		const orphaned = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			orphanedThinkingTabs: [createMockAITab({ id: 'tab-gone', state: 'busy' })],
+		});
+		expect(hasWorkAheadOfNewMessage(orphaned)).toBe(true);
+	});
+
+	it('is true when an item is waiting, and false when every item is held', () => {
+		const queued = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			executionQueue: [item('a')],
+		});
+		expect(hasWorkAheadOfNewMessage(queued)).toBe(true);
+
+		// A paused item is invisible to dispatch, so nothing is actually ahead.
+		const held = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			executionQueue: [item('a', true)],
+		});
+		expect(hasWorkAheadOfNewMessage(held)).toBe(false);
+	});
+
+	it('is true while Auto Run is active, which never marks the agent busy', () => {
+		const session = createMockSession({ aiTabs: [createMockAITab({ id: 'tab-1' })] });
+		expect(hasWorkAheadOfNewMessage(session, { autoRunActive: true })).toBe(true);
+	});
+});
+
+describe('applyQueuedItemRelease', () => {
+	it('returns the agent to idle when the released tab was the only one working', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 123,
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 123 })],
+		});
+
+		const next = applyQueuedItemRelease(session, 'tab-1');
+
+		expect(next.aiTabs[0].state).toBe('idle');
+		expect(next.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(next.state).toBe('idle');
+		expect(next.busySource).toBeUndefined();
+		expect(next.thinkingStartTime).toBeUndefined();
+	});
+
+	it('keeps the agent busy when another tab is still mid-turn', () => {
+		// Blanking the agent state here would strand the other tab's thinking pill.
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 123,
+			aiTabs: [
+				createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 123 }),
+				createMockAITab({ id: 'tab-2', state: 'busy', thinkingStartTime: 456 }),
+			],
+		});
+
+		const next = applyQueuedItemRelease(session, 'tab-1');
+
+		expect(next.aiTabs[0].state).toBe('idle');
+		expect(next.aiTabs[1].state).toBe('busy');
+		expect(next.state).toBe('busy');
+		expect(next.thinkingStartTime).toBe(123);
+	});
+
+	it('keeps the agent busy for a still-thinking orphan tab', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			orphanedThinkingTabs: [createMockAITab({ id: 'tab-gone', state: 'busy' })],
+		});
+
+		const next = applyQueuedItemRelease(session, 'tab-1');
+
+		expect(next.state).toBe('busy');
+		expect(next.orphanedThinkingTabs?.[0].state).toBe('busy');
+	});
+
+	it('leaves the queue untouched', () => {
+		const session = createMockSession({
+			state: 'busy',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			executionQueue: [item('a'), item('b')],
+		});
+
+		expect(applyQueuedItemRelease(session, 'tab-1').executionQueue.map((i) => i.id)).toEqual([
+			'a',
+			'b',
+		]);
+	});
+});
+
+describe('resolveQueuedItemTabName', () => {
+	const tab = (id: string, name?: string) => ({ id, name, state: 'idle' }) as unknown as AITab;
+	const session = (tabs: AITab[], orphans: AITab[] = []) =>
+		({ aiTabs: tabs, orphanedThinkingTabs: orphans }) as unknown as Session;
+
+	it('prefers the live tab name over the snapshot taken when the item was queued', () => {
+		const queued = { tabId: 'tab-1', tabName: 'New' };
+		expect(resolveQueuedItemTabName(session([tab('tab-1', 'PR #1427')]), queued)).toBe('PR #1427');
+	});
+
+	it('gives two items on the same tab the same label once that tab is named', () => {
+		const s = session([tab('tab-1', 'PR #1427')]);
+		const first = { tabId: 'tab-1', tabName: 'New' };
+		const second = { tabId: 'tab-1', tabName: 'PR #1427' };
+		expect(resolveQueuedItemTabName(s, first)).toBe(resolveQueuedItemTabName(s, second));
+	});
+
+	it('falls back to an orphaned (closed but draining) tab before the snapshot', () => {
+		const s = session([], [tab('tab-9', 'Draining Tab')]);
+		expect(resolveQueuedItemTabName(s, { tabId: 'tab-9', tabName: 'Stale' })).toBe('Draining Tab');
+	});
+
+	it('falls back to the snapshot when the tab is gone entirely', () => {
+		expect(resolveQueuedItemTabName(session([]), { tabId: 'gone', tabName: 'Old Name' })).toBe(
+			'Old Name'
+		);
+	});
+});
+
+describe('shouldOfferForceSend', () => {
+	const tab = (id: string, state: 'idle' | 'busy') => ({ id, state }) as unknown as AITab;
+	const session = (tabs: AITab[]) => ({ aiTabs: tabs }) as unknown as Session;
+	const queued = { tabId: 'tab-1' };
+	const eligibility = (tabs: AITab[], forcedParallelEnabled = true) =>
+		getForceSendEligibility(session(tabs), queued, { forcedParallelEnabled });
+
+	it('offers the control on a quiet agent, where forcing is always allowed', () => {
+		const e = eligibility([tab('tab-1', 'idle')]);
+		expect(e.canForce).toBe(true);
+		expect(shouldOfferForceSend(e)).toBe(true);
+	});
+
+	it('offers it disabled when only the Forced Parallel setting is in the way', () => {
+		// The one blocked reason the user can act on: the tooltip names a
+		// setting, so the dimmed button is a signpost rather than a dead control.
+		const e = eligibility([tab('tab-1', 'idle'), tab('tab-2', 'busy')], false);
+		expect(e.blockedReason).toBe('needs-forced-parallel');
+		expect(shouldOfferForceSend(e)).toBe(true);
+	});
+
+	it("hides it when the item's own tab is mid-turn", () => {
+		// A tab runs one turn at a time, so the item is next in line by
+		// definition and the wait resolves itself.
+		const e = eligibility([tab('tab-1', 'busy')]);
+		expect(e.blockedReason).toBe('target-tab-busy');
+		expect(shouldOfferForceSend(e)).toBe(false);
+	});
+
+	it('hides it when there is no tab left to run on', () => {
+		// No AI tabs at all, so there is not even an active tab to fall back to.
+		const e = eligibility([]);
+		expect(e.blockedReason).toBe('no-target-tab');
+		expect(shouldOfferForceSend(e)).toBe(false);
+	});
+
+	it('hides it when eligibility has not been computed', () => {
+		expect(shouldOfferForceSend(null)).toBe(false);
+		expect(shouldOfferForceSend(undefined)).toBe(false);
 	});
 });

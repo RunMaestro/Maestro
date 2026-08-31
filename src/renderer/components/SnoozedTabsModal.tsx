@@ -13,7 +13,8 @@ import { useState, useMemo, useCallback } from 'react';
 import { Clock, RotateCcw, CalendarClock, X, StickyNote, History } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { Modal } from './ui';
+import { CountBadge, Modal } from './ui';
+import { getTabKindIcon, getTabKindColor } from './TabBar/tabBarUtils';
 import { SnoozeTabModal } from './SnoozeTabModal';
 import { useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
@@ -21,6 +22,7 @@ import { notifyToast } from '../stores/notificationStore';
 import {
 	collectSnoozedTabs,
 	getSnoozedTabLabel,
+	isSnoozedGroup,
 	buildSnoozeHistoryRecord,
 } from '../utils/snoozeHelpers';
 import { recordSnoozeResolution, useSnoozeHistoryStore } from '../stores/snoozeHistoryStore';
@@ -172,6 +174,9 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 							{items.map(({ entry, sessionId, sessionName }) => {
 								const label = getSnoozedTabLabel(entry);
 								const overdue = entry.wakeAt <= Date.now();
+								// One icon map for every mixed-kind list, so a parked file here and
+								// a parked file in the closed-tab history never disagree.
+								const KindIcon = getTabKindIcon(entry.type);
 
 								return (
 									<div
@@ -184,12 +189,29 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 									>
 										<div className="flex items-start gap-3">
 											<div className="flex-1 min-w-0 select-text">
-												<div
-													className="text-sm truncate"
-													style={{ color: theme.colors.textMain }}
-													title={label}
-												>
-													{label}
+												<div className="flex items-center gap-1.5 min-w-0">
+													<KindIcon
+														className="w-3.5 h-3.5 shrink-0"
+														style={{ color: getTabKindColor(entry.type, theme) }}
+														aria-hidden
+													/>
+													<div
+														className="text-sm truncate"
+														style={{ color: theme.colors.textMain }}
+														title={label}
+													>
+														{label}
+													</div>
+													{/* A group's row says how much is parked; a single tab is
+													    self-evidently one thing and gets no badge. */}
+													{isSnoozedGroup(entry) && (
+														<CountBadge
+															count={entry.members.length}
+															label="panel"
+															theme={theme}
+															data-testid="snoozed-group-panel-count"
+														/>
+													)}
 												</div>
 
 												<div

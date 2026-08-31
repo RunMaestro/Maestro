@@ -16,6 +16,8 @@ import { computeSortedSessions } from './computeSortedSessions';
 import { useStarredItems } from './useStarredItems';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { scopeSessionsToOwningWindow } from '../../utils/windowTargets';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useActiveOutageSessionSignature } from '../../stores/retryStore';
@@ -38,6 +40,10 @@ function SidebarNavSyncInner() {
 	// jump-badge / nav projection, matching the rendered list.
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const stuckOutageSignature = useActiveOutageSessionSignature();
+	// Pianola persists in the session store while its Encore flag is off, so the
+	// nav projections must drop it or keyboard cycling lands on an agent the Left
+	// Bar does not render.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
 
 	const setSortedProjection = useSidebarNavStore((s) => s.setSortedProjection);
 	const setStarredItems = useSidebarNavStore((s) => s.setStarredItems);
@@ -45,8 +51,11 @@ function SidebarNavSyncInner() {
 	// Same window scope SessionList applies so keyboard / unread / cycle read the
 	// agents this window actually shows (primary catch-all / secondary claimed).
 	const sessionsForWindow = useMemo(
-		() => scopeSessionsToOwningWindow(sessions, ownsSession),
-		[sessions, ownsSession]
+		() =>
+			filterSessionsVisibleInSidebar(scopeSessionsToOwningWindow(sessions, ownsSession), {
+				pianolaEnabled,
+			}),
+		[sessions, ownsSession, pianolaEnabled]
 	);
 
 	// useLayoutEffect (not useEffect): publish before paint and before parent

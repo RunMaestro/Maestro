@@ -24,6 +24,24 @@ import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
+import {
+	previousComposerCommandMode,
+	type ComposerCommandMode,
+} from '../../utils/shellCommandInput';
+import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
+import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { useEventListener } from '../utils/useEventListener';
+
+/**
+ * Window event that runs Forced Parallel Send from outside the composer.
+ *
+ * The composer owns the behavior (it holds the draft and `processInput`), so
+ * the window-level keyboard handler asks for it by name rather than
+ * reimplementing the decision. Exported here, next to its only listener, so the
+ * two ends of the bridge stay in one place.
+ */
+export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
 
 // ============================================================================
 // Dependencies interface
@@ -55,10 +73,10 @@ export interface InputKeyDownDeps {
 		filter?: TabCompletionFilter,
 		commandMode?: boolean
 	) => TabCompletionSuggestion[];
-	/** Whether the AI composer is in command mode, read at call time. */
-	getCommandMode: () => boolean;
-	/** Enter/leave command mode (Escape / Backspace on an empty command line). */
-	setCommandMode: (commandMode: boolean) => void;
+	/** Which rung of the bang ladder the AI composer is on, read at call time. */
+	getCommandMode: () => ComposerCommandMode;
+	/** Move to another rung (Escape / Backspace on an empty command line). */
+	setCommandMode: (commandMode: ComposerCommandMode) => void;
 	/** Ref to the input textarea */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	/** Ref to the terminal output container */
@@ -121,6 +139,37 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		setCommandHistorySelectedIndex,
 	} = useInputContext();
 
+	/**
+	 * Forced Parallel Send, from wherever the user pressed it.
+	 *
+	 * What the chord acts on - the tab's draft and its execution queue - belongs
+	 * to the TAB, not to the textarea, so gating it on composer focus made it
+	 * look broken from the transcript, which is exactly where the queued items
+	 * the user wants to force through are drawn. `useMainKeyboardHandler`
+	 * dispatches {@link FORCED_PARALLEL_SEND_EVENT} when the chord reaches the
+	 * window unhandled; both paths land here so the two can never drift on what
+	 * an empty draft means.
+	 */
+	const runForcedParallelSend = useCallback(() => {
+		if (!useSettingsStore.getState().forcedParallelExecution) return;
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (activeSession?.inputMode !== 'ai') return;
+
+		trackShortcutUsage('forcedParallelSend');
+		// Empty draft: open the Force Send confirmation for the most recent
+		// eligible queued item - the keyboard equivalent of clicking that item's
+		// Force Send button. With text in the draft, send the draft in parallel.
+		if (getInputValue().trim().length === 0) {
+			logger.info('[ForcedParallel] Empty input, dispatching triggerForceSendQueued');
+			window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
+			return;
+		}
+		logger.info('[ForcedParallel] Draft present, calling processInput');
+		processInput(undefined, { forceParallel: true });
+	}, [getInputValue, processInput]);
+
+	useEventListener(FORCED_PARALLEL_SEND_EVENT, runForcedParallelSend);
+
 	const handleInputKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
@@ -147,11 +196,87 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				return; // Let the modal handle keys
 			}
 
-			// Tab completion serves both shell surfaces: the terminal composer, and
-			// the AI composer while it is in command mode, which is a shell line
-			// even though the tab is in AI mode.
-			const isCommandMode = activeSession?.inputMode === 'ai' && getCommandMode();
+			// Which rung the AI composer is on. Only the 'shell' rung is a command
+			// line: AI command mode holds prose, so it gets none of the shell
+			// affordances below (completion, history recall, the `$` prefix).
+			const commandMode: ComposerCommandMode =
+				activeSession?.inputMode === 'ai' ? getCommandMode() : 'off';
+			const isCommandMode = commandMode === 'shell';
 			const isShellInput = activeSession?.inputMode === 'terminal' || isCommandMode;
+
+			// A proposed command owns the keyboard until it is answered. Handled
+			// before every other branch because the caret deliberately stays in the
+			// textarea (see InputTextarea's readOnly), so Enter / arrows / Escape
+			// would otherwise be read as composing rather than as an answer.
+			const aiCommandEntry =
+				commandMode === 'ai' && activeSession
+					? getAiCommandEntry(activeSession.id, activeSession.activeTabId)
+					: undefined;
+			if (aiCommandEntry && activeSession) {
+				const entryKey = aiCommandKey(aiCommandEntry.sessionId, aiCommandEntry.tabId);
+				const decline = () => {
+					// The request text comes back so the user can refine it. Declining is
+					// nearly always "not what I meant", not "never mind".
+					setInputValue(dismissAiCommand(aiCommandEntry));
+					inputRef.current?.focus();
+				};
+
+				if (e.key === 'Escape') {
+					e.preventDefault();
+					// Same reason as the ladder branch below: a window-level Escape
+					// listener blurs the composer, and the caret has to stay here.
+					e.stopPropagation();
+					decline();
+					return;
+				}
+
+				if (aiCommandEntry.status === 'proposed') {
+					if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+						e.preventDefault();
+						// Left is Run, right is Cancel - the order they are drawn in.
+						useAiCommandStore
+							.getState()
+							.setAiCommandChoice(entryKey, e.key === 'ArrowLeft' ? 'run' : 'cancel');
+						return;
+					}
+					if (e.key === 'y' || e.key === 'Y') {
+						e.preventDefault();
+						acceptAiCommand(activeSession, aiCommandEntry);
+						return;
+					}
+					if (e.key === 'n' || e.key === 'N') {
+						e.preventDefault();
+						decline();
+						return;
+					}
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						if (aiCommandEntry.choice === 'run') {
+							acceptAiCommand(activeSession, aiCommandEntry);
+						} else {
+							decline();
+						}
+						return;
+					}
+				}
+
+				if (e.key === 'Enter') {
+					// Thinking: nothing to answer yet. Error: Enter hands the request
+					// back, which is one more Enter away from a retry.
+					e.preventDefault();
+					if (aiCommandEntry.status === 'error') decline();
+					return;
+				}
+
+				if (e.key === 'Backspace') {
+					// Swallowed, not passed to the ladder below: Backspace on an empty
+					// line would step down a rung and leave this card parked on a tab
+					// that no longer shows it, to reappear the next time the user
+					// climbs back. Answering the card is the only way past it.
+					e.preventDefault();
+					return;
+				}
+			}
 
 			// Leaving command mode. The composer holds no `!` to delete (the gesture
 			// consumed it), so the mode needs its own way out: Escape on an empty
@@ -166,7 +291,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Backspace stays on a strictly empty line: it is an editing key, and on
 			// "   " the user is deleting a space, not asking to leave.
 			if (
-				isCommandMode &&
+				commandMode !== 'off' &&
 				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
 			) {
 				e.preventDefault();
@@ -179,7 +304,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// below. Verified: with propagation the composer ends up blurred, with
 				// it stopped the caret stays put.
 				e.stopPropagation();
-				setCommandMode(false);
+				// One rung down: AI command -> command mode -> the agent.
+				setCommandMode(previousComposerCommandMode(commandMode));
 				// Belt and braces alongside the line above: exiting hands the input back
 				// to the agent, so the user is still typing. Explicit rather than relying
 				// on React not remounting the textarea when the mode bar and `$` prefix
@@ -344,55 +470,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// Note: This check is inside the `e.key === 'Enter'` guard, so the shortcut's
 				// main key must be Enter. Non-Enter shortcuts are not supported by design.
 				if (settings.forcedParallelExecution && activeSession?.inputMode === 'ai') {
-					const shortcuts = settings.shortcuts;
-					const fpShortcut = shortcuts.forcedParallelSend;
-					if (fpShortcut) {
-						const fpKeys = fpShortcut.keys.map((k: string) => k.toLowerCase());
-						const fpNeedsMeta =
-							fpKeys.includes('meta') || fpKeys.includes('ctrl') || fpKeys.includes('command');
-						const fpNeedsShift = fpKeys.includes('shift');
-						const fpNeedsAlt = fpKeys.includes('alt');
-						const fpMainKey = fpKeys[fpKeys.length - 1];
-						const metaPressed = e.metaKey || e.ctrlKey;
-
-						logger.info('[ForcedParallel] Shortcut check:', undefined, {
-							metaPressed,
-							fpNeedsMeta,
-							shiftKey: e.shiftKey,
-							fpNeedsShift,
-							altKey: e.altKey,
-							fpNeedsAlt,
-							key: e.key.toLowerCase(),
-							fpMainKey,
-							match:
-								metaPressed === fpNeedsMeta &&
-								e.shiftKey === fpNeedsShift &&
-								e.altKey === fpNeedsAlt &&
-								e.key.toLowerCase() === fpMainKey,
-						});
-
-						if (
-							metaPressed === fpNeedsMeta &&
-							e.shiftKey === fpNeedsShift &&
-							e.altKey === fpNeedsAlt &&
-							e.key.toLowerCase() === fpMainKey
-						) {
-							e.preventDefault();
-							trackShortcutUsage('forcedParallelSend');
-							// Empty input + shortcut: open the Force Send confirmation modal for
-							// the most recent eligible queued item (keyboard equivalent of
-							// clicking the per-item Force Send button).
-							if (inputValue.trim().length === 0) {
-								logger.info(
-									'[ForcedParallel] Shortcut matched on empty input, dispatching triggerForceSendQueued'
-								);
-								window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
-								return;
-							}
-							logger.info('[ForcedParallel] Shortcut matched, calling processInput');
-							processInput(undefined, { forceParallel: true });
-							return;
-						}
+					const fpShortcut = settings.shortcuts.forcedParallelSend;
+					if (fpShortcut && eventMatchesShortcutKeys(e, fpShortcut.keys)) {
+						e.preventDefault();
+						runForcedParallelSend();
+						return;
 					}
 				}
 

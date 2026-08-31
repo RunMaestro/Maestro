@@ -7,8 +7,11 @@
  *
  * Renders in normal flow at the top of the input area (next to the thinking
  * pill). Clicking it expands a small dropdown listing each in-flight request -
- * the consulted agent's name plus elapsed seconds. Renders nothing when no
- * cross-agent responses are in flight for this tab.
+ * the consulted agent's name plus elapsed seconds. Each agent chip is a deep
+ * link: clicking it jumps to that agent AND to the consult tab actually running
+ * the request (the same jump the response bubble's attribution header makes),
+ * rather than landing on whatever tab that agent last had active. Renders
+ * nothing when no cross-agent responses are in flight for this tab.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -27,12 +30,19 @@ interface CrossAgentResponseIndicatorProps {
 	sourceSessionId: string | null | undefined;
 	/** The active AI tab within that agent (matches the dispatch's sourceTabId). */
 	sourceTabId: string | null | undefined;
+	/**
+	 * Jump to an agent (and optionally one of its AI tabs). Shared with
+	 * ThinkingStatusPill / ExecutionQueueIndicator, so a chip click lands the same
+	 * way every other cross-agent navigation affordance does.
+	 */
+	onSessionClick?: (sessionId: string, tabId?: string) => void;
 }
 
 export function CrossAgentResponseIndicator({
 	theme,
 	sourceSessionId,
 	sourceTabId,
+	onSessionClick,
 }: CrossAgentResponseIndicatorProps): JSX.Element | null {
 	const requests = useCrossAgentInFlightStore((s) => s.requests);
 	const inFlight = useMemo(
@@ -103,16 +113,29 @@ export function CrossAgentResponseIndicator({
 				{expanded &&
 					inFlight.map((req) => {
 						const elapsedSec = Math.max(0, Math.floor((now - req.startedAt) / 1000));
+						// The chip is only a link when we can navigate. Without a handler it
+						// stays a plain, non-focusable label rather than a button that does
+						// nothing when clicked.
+						const canJump = Boolean(onSessionClick);
 						return (
-							<div
+							<button
 								key={req.requestId}
-								className="flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs"
+								type="button"
+								disabled={!canJump}
+								onClick={() => onSessionClick?.(req.targetSessionId, req.targetTabId)}
+								className={`flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs outline-none transition-colors ${
+									canJump ? 'cursor-pointer hover:opacity-90' : 'cursor-default'
+								}`}
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									border: `1px solid ${theme.colors.border}`,
 									color: theme.colors.textMain,
 								}}
-								title={`${req.targetAgentName} · ${elapsedSec}s`}
+								title={
+									canJump
+										? `Jump to ${req.targetAgentName} · ${elapsedSec}s`
+										: `${req.targetAgentName} · ${elapsedSec}s`
+								}
 							>
 								<span className="shrink-0 leading-none">
 									{getAgentIcon(req.targetToolType ?? '')}
@@ -123,7 +146,7 @@ export function CrossAgentResponseIndicator({
 								<span className="shrink-0 tabular-nums" style={{ color: theme.colors.textDim }}>
 									{elapsedSec}s
 								</span>
-							</div>
+							</button>
 						);
 					})}
 			</div>

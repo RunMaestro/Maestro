@@ -17,11 +17,22 @@
  * - Thinking toggle
  *
  * Keyboard shortcuts:
- * - Escape: Opens exit confirmation dialog
+ * - Escape (mid-turn): Stops the running turn, staying in the wizard
+ * - Escape (idle): Opens exit confirmation dialog
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Terminal, Wand2, ImageIcon, ArrowUp, PenLine, X, Keyboard, Brain } from 'lucide-react';
+import {
+	Terminal,
+	Wand2,
+	ImageIcon,
+	ArrowUp,
+	PenLine,
+	X,
+	Keyboard,
+	Brain,
+	Square,
+} from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import { WizardPill } from './WizardPill';
 import { WizardConfidenceGauge } from './WizardConfidenceGauge';
@@ -33,6 +44,10 @@ import {
 } from '../../utils/shortcutFormatter';
 import { useSessionStore } from '../../stores/sessionStore';
 import { closeTab } from '../../utils/tabHelpers';
+import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
+
+/** Height cap for the wizard composer; past it the textarea scrolls. */
+const WIZARD_TEXTAREA_MAX_HEIGHT = 112;
 
 interface WizardInputPanelProps {
 	/** Current session with wizard state */
@@ -69,6 +84,8 @@ interface WizardInputPanelProps {
 	isInitializing?: boolean;
 	/** Handler for exiting wizard mode */
 	onExitWizard: () => void;
+	/** Stop the turn currently running on this tab, without leaving the wizard */
+	onStopTurn?: (tabId?: string) => void;
 	/** Enter to send setting */
 	enterToSend: boolean;
 	/** Set enter to send setting */
@@ -120,6 +137,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	isBusy,
 	isInitializing = false,
 	onExitWizard,
+	onStopTurn,
 	enterToSend,
 	setEnterToSend,
 	onInputFocus,
@@ -132,13 +150,13 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	// State for exit confirmation dialog
 	const [showExitConfirm, setShowExitConfirm] = useState(false);
 
-	// Auto-resize textarea when inputValue changes
-	useEffect(() => {
-		if (inputRef.current) {
-			inputRef.current.style.height = 'auto';
-			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 112)}px`;
-		}
-	}, [inputValue, inputRef]);
+	// Auto-resize the textarea to fit its content, keeping the caret visible once
+	// the composer is tall enough to scroll.
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: inputValue,
+		maxHeight: WIZARD_TEXTAREA_MAX_HEIGHT,
+	});
 
 	// Auto-focus input on mount (this component only renders when wizard is active)
 	useEffect(() => {
@@ -149,35 +167,30 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 		return () => cancelAnimationFrame(rafId);
 	}, [inputRef]);
 
-	// Handle Escape key to show exit confirmation (only if user has interacted)
+	const handleStopTurn = useCallback(() => {
+		onStopTurn?.(session.activeTabId);
+		inputRef.current?.focus();
+	}, [onStopTurn, session.activeTabId, inputRef]);
+
+	// Escape is a LADDER, and no rung of it destroys anything without a confirmation:
+	//   1. mid-turn  -> stop the running turn, stay in the wizard
+	//   2. otherwise -> open the exit confirmation
+	//   3. dialog open -> the dialog's own Escape cancels it
+	// Leaving the wizard is only ever reachable through the dialog's red button (or
+	// Enter, which it focuses). There is deliberately NO condition under which Escape
+	// exits directly: the old "no interaction yet, just close the tab" shortcut read
+	// the conversation to decide, so two Escapes during the very first turn - when
+	// history still looks empty - silently threw the whole wizard away.
 	const handleEscapeKey = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				e.stopPropagation();
-				const hasUserMessages = session.wizardState?.conversationHistory?.some(
-					(m) => m.role === 'user'
-				);
-				const hasInput = inputValue.trim() !== '';
-				const hasImages = stagedImages.length > 0;
-				if (hasUserMessages || hasInput || hasImages) {
-					setShowExitConfirm(true);
-				} else {
-					// No interaction - close the tab if safe, otherwise just exit wizard
-					const { setSessions } = useSessionStore.getState();
-					const activeTabId = session.activeTabId;
-					if (activeTabId && session.aiTabs.length > 1) {
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== session.id) return s;
-								const result = closeTab(s, activeTabId, false, { skipHistory: true });
-								return result ? result.session : s;
-							})
-						);
-					} else {
-						onExitWizard();
-					}
+				if (isBusy && onStopTurn) {
+					handleStopTurn();
+					return;
 				}
+				setShowExitConfirm(true);
 				return;
 			}
 			// Block Enter (any modifier combo) from triggering send while the wizard is
@@ -190,14 +203,33 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			// Forward other key events to the parent handler
 			handleInputKeyDown(e);
 		},
-		[handleInputKeyDown, session, inputValue, stagedImages, onExitWizard, isBusy]
+		[handleInputKeyDown, isBusy, onStopTurn, handleStopTurn]
 	);
 
-	// Handle exit confirmation
+	// Handle exit confirmation. Reached ONLY from the dialog, never straight off a keypress.
 	const handleConfirmExit = useCallback(() => {
 		setShowExitConfirm(false);
+		// A wizard that got its own fresh tab is disposable, so close the tab outright.
+		// `/wizard` also runs IN PLACE though, and then the tab may hold a real
+		// conversation that has nothing to do with the wizard - exit wizard mode and
+		// hand that tab back instead. System logs don't count as a conversation: the
+		// wizard writes its own "Starting wizard..." line.
+		const { setSessions } = useSessionStore.getState();
+		const activeTabId = session.activeTabId;
+		const hostTab = session.aiTabs.find((t) => t.id === activeTabId);
+		const hostTabHasConversation = (hostTab?.logs ?? []).some((log) => log.source !== 'system');
+		if (activeTabId && session.aiTabs.length > 1 && !hostTabHasConversation) {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== session.id) return s;
+					const result = closeTab(s, activeTabId, false, { skipHistory: true });
+					return result ? result.session : s;
+				})
+			);
+			return;
+		}
 		onExitWizard();
-	}, [onExitWizard]);
+	}, [onExitWizard, session]);
 
 	// Handle cancel exit
 	const handleCancelExit = useCallback(() => {
@@ -275,21 +307,20 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 							<textarea
 								ref={inputRef}
 								className="flex-1 bg-transparent text-sm outline-none px-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
-								style={{ color: theme.colors.textMain, maxHeight: '7rem' }}
+								style={{
+									color: theme.colors.textMain,
+									maxHeight: `${WIZARD_TEXTAREA_MAX_HEIGHT}px`,
+								}}
 								placeholder="Tell the wizard about your project..."
 								value={inputValue}
 								onFocus={onInputFocus}
 								onBlur={onInputBlur}
 								onChange={(e) => {
-									const value = e.target.value;
-									setInputValue(value);
-
-									// Auto-grow logic deferred to next animation frame
-									const textarea = e.target;
-									requestAnimationFrame(() => {
-										textarea.style.height = 'auto';
-										textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
-									});
+									// Auto-grow is owned by useAutosizeTextarea above: it runs on the
+									// committed value, so dictation and other programmatic edits resize
+									// too, and it keeps the caret in view instead of scrolling back to
+									// the top on every keystroke.
+									setInputValue(e.target.value);
 								}}
 								onKeyDown={handleEscapeKey}
 								onPaste={handlePaste}
@@ -403,20 +434,35 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 							<Wand2 className="w-4 h-4" style={{ color: theme.colors.accent }} />
 						)}
 					</button>
-					{/* Send button */}
-					<button
-						type="button"
-						onClick={() => processInput()}
-						disabled={isBusy}
-						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
-						title={isBusy ? 'Wizard is thinking…' : 'Send message'}
-					>
-						<ArrowUp className="w-4 h-4" />
-					</button>
+					{/* Send button, or Stop while a turn is running - Escape does the same thing,
+					    but a keyboard-only exit strands anyone on a tablet or remote desktop. */}
+					{isBusy && onStopTurn ? (
+						<button
+							type="button"
+							onClick={handleStopTurn}
+							className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
+							style={{ backgroundColor: theme.colors.error, color: 'white' }}
+							title="Stop this turn (Esc)"
+							aria-label="Stop this turn"
+							data-testid="wizard-stop-turn-button"
+						>
+							<Square className="w-4 h-4" fill="currentColor" />
+						</button>
+					) : (
+						<button
+							type="button"
+							onClick={() => processInput()}
+							disabled={isBusy}
+							className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.accentForeground,
+							}}
+							title={isBusy ? 'Wizard is thinking…' : 'Send message'}
+						>
+							<ArrowUp className="w-4 h-4" />
+						</button>
+					)}
 				</div>
 			</div>
 

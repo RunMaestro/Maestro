@@ -19,6 +19,7 @@ import { CalendarDays, Clock, BellRing } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, CalendarPicker } from './ui';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import {
 	parseSnoozeInput,
 	formatSnoozeTarget,
@@ -67,6 +68,12 @@ export function SnoozeTabModal({
 	);
 
 	const inputRef = useRef<HTMLInputElement>(null);
+
+	// The note is free-form prose the user writes to their future self, so the
+	// height they drag it to is a preference worth remembering. Capped so a long
+	// note can't be dragged tall enough to push the presets and date picker out
+	// of view inside the modal's own scroll area.
+	const noteResize = useResizableTextarea({ sizeKey: 'snooze-tab-note', maxHeight: 320 });
 
 	// `now` is captured per keystroke rather than per render so relative
 	// expressions ("2h") stay pinned while typing instead of drifting.
@@ -146,7 +153,25 @@ export function SnoozeTabModal({
 				/>
 			}
 		>
-			<div className="flex flex-col gap-4">
+			<div
+				className="flex flex-col gap-4"
+				// Cmd/Ctrl+Enter commits from anywhere in the dialog - the note
+				// textarea, the calendar, the time field, a focused preset. Every one
+				// of those was mouse-only: the single keyboard commit path was plain
+				// Enter in the free-form input, which is the field a user is least
+				// likely to be in when they are done. Plain Enter stays a newline in
+				// the textarea, which is why the chord has to carry a modifier.
+				//
+				// Same shape as QueuedItemEditModal. Modal-local, so it is not a
+				// registered shortcut id - there is nothing here to rebind.
+				onKeyDown={(e) => {
+					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && resolved.at != null) {
+						e.preventDefault();
+						e.stopPropagation();
+						handleConfirm();
+					}
+				}}
+			>
 				{/* What's being snoozed */}
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim }}>
 					{tabLabel}
@@ -184,7 +209,15 @@ export function SnoozeTabModal({
 						value={expression}
 						onChange={(e) => setExpression(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter' && resolved.at != null) {
+							// PLAIN Enter only. `e.key === 'Enter'` is also true for
+							// Cmd/Ctrl+Enter, so without this guard the body handler below
+							// and this one both fire for the same keypress: onConfirm runs
+							// twice, which snoozes twice and closes the modal twice.
+							//
+							// Deliberately an explicit modifier test rather than a
+							// `defaultPrevented` check - the split records which control
+							// owns which chord, instead of leaving it to event ordering.
+							if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && resolved.at != null) {
 								e.preventDefault();
 								handleConfirm();
 							}
@@ -248,15 +281,17 @@ export function SnoozeTabModal({
 						Note to self <span className="normal-case tracking-normal">(optional)</span>
 					</label>
 					<textarea
+						ref={noteResize.textareaRef}
 						value={note}
 						onChange={(e) => setNote(e.target.value)}
 						rows={2}
 						placeholder="Why are you coming back to this?"
-						className="w-full px-2.5 py-1.5 rounded text-sm outline-none resize-none"
+						className="w-full px-2.5 py-1.5 rounded text-sm outline-none resize-y"
 						style={{
 							backgroundColor: theme.colors.bgMain,
 							color: theme.colors.textMain,
 							border: `1px solid ${theme.colors.border}`,
+							...noteResize.style,
 						}}
 					/>
 				</div>

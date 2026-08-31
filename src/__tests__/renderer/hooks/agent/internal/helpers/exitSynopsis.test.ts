@@ -232,6 +232,32 @@ describe('runExitSynopsis', () => {
 		expect(deps.updateLastSynopsisTime).not.toHaveBeenCalled();
 	});
 
+	it('surfaces the provider error instead of writing it to History', async () => {
+		// The failure mode this guards: a synopsis whose resume no longer fits
+		// the model's context window prints "Prompt is too long" and exits. That
+		// text must never become the entry, and the turn it failed to cover must
+		// stay eligible for the next synopsis (no lastSynopsisTime stamp).
+		const deps = makeDeps();
+		deps.spawn.mockResolvedValue({
+			success: false,
+			response: 'Prompt is too long',
+			error: 'Prompt is too long',
+			errorKind: 'process-exit',
+		});
+
+		await runExitSynopsis(makeSynopsisData(), deps);
+
+		expect(deps.addHistory).not.toHaveBeenCalled();
+		expect(deps.updateLastSynopsisTime).not.toHaveBeenCalled();
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				color: 'yellow',
+				title: 'Synopsis failed',
+				message: 'Prompt is too long',
+			})
+		);
+	});
+
 	it('returns silently when spawn ref is null', async () => {
 		const deps = makeDeps();
 		(deps as any).spawnBackgroundSynopsisRef = { current: null };

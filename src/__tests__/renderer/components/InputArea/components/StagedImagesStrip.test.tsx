@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { createEvent, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StagedImagesStrip } from '../../../../../renderer/components/InputArea/components/StagedImagesStrip';
 import { inputAreaTheme } from '../_fixtures';
 
@@ -13,6 +13,7 @@ describe('StagedImagesStrip', () => {
 				setLightboxImage={vi.fn()}
 				setStagedImages={vi.fn()}
 				openAnnotator={vi.fn()}
+				onReorder={vi.fn()}
 				{...overrides}
 			/>
 		);
@@ -30,6 +31,7 @@ describe('StagedImagesStrip', () => {
 				setLightboxImage={vi.fn()}
 				setStagedImages={vi.fn()}
 				openAnnotator={vi.fn()}
+				onReorder={vi.fn()}
 			/>
 		);
 		expect(screen.queryByRole('img')).not.toBeInTheDocument();
@@ -39,7 +41,9 @@ describe('StagedImagesStrip', () => {
 		const setLightboxImage = vi.fn();
 		renderStrip({ setLightboxImage });
 
-		fireEvent.click(screen.getAllByRole('img')[0]);
+		// The tile, not the <img>: the image is decorative and pointer-events-none,
+		// so a real press lands on the wrapper that carries the drag and the click.
+		fireEvent.click(tileOf(0));
 
 		expect(setLightboxImage).toHaveBeenCalledWith(
 			'data:image/png;base64,a',
@@ -73,5 +77,164 @@ describe('StagedImagesStrip', () => {
 		expect(updater(['data:image/png;base64,a', 'data:image/png;base64,b'])).toEqual([
 			'data:image/png;base64,b',
 		]);
+	});
+
+	// Drag-to-reorder. jsdom has no layout engine and no DragEvent, so the tests
+	// have to supply both halves of the geometry the drop math reads: a stubbed
+	// rect per tile, and a clientX that survives onto the event (fireEvent's init
+	// object drops mouse coordinates when it falls back to plain Event).
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	/**
+	 * The tile wrapper: drag source, drop target, and click target at once. The
+	 * thumbnail image is `pointer-events-none`, so this is also the element a
+	 * real press hit-tests to.
+	 */
+	function tileOf(index: number): HTMLElement {
+		return screen.getAllByRole('button', { name: /^Staged image/ })[index];
+	}
+
+	/** Where a drag starts. Same element as the tile now; kept for readability. */
+	function thumbOf(index: number): HTMLElement {
+		return tileOf(index);
+	}
+
+	/** Lay the tiles out as two 100px-wide boxes side by side. */
+	function stubTileLayout(tiles: HTMLElement[]) {
+		const rects = new Map(tiles.map((tile, i) => [tile, { left: i * 100, width: 100 }]));
+		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+			this: Element
+		) {
+			const r = rects.get(this as HTMLElement) ?? { left: 0, width: 0 };
+			return {
+				...r,
+				right: r.left + r.width,
+				top: 0,
+				bottom: 64,
+				height: 64,
+				x: r.left,
+				y: 0,
+				toJSON: () => ({}),
+			} as DOMRect;
+		});
+	}
+
+	function makeDataTransfer() {
+		const store: Record<string, string> = {};
+		return {
+			types: [] as string[],
+			effectAllowed: '',
+			dropEffect: '',
+			setData(type: string, value: string) {
+				store[type] = value;
+				if (!this.types.includes(type)) this.types.push(type);
+			},
+			getData(type: string) {
+				return store[type] ?? '';
+			},
+		};
+	}
+
+	function fireAt(
+		kind: 'dragOver' | 'drop',
+		target: HTMLElement,
+		dataTransfer: unknown,
+		clientX: number
+	) {
+		const event = createEvent[kind](target, { dataTransfer });
+		Object.defineProperty(event, 'clientX', { value: clientX });
+		fireEvent(target, event);
+	}
+
+	it('reports a drop past a later tile as a forward move', () => {
+		const onReorder = vi.fn();
+		renderStrip({ onReorder });
+		const tiles = [tileOf(0), tileOf(1)];
+		stubTileLayout(tiles);
+		const dataTransfer = makeDataTransfer();
+
+		fireEvent.dragStart(thumbOf(0), { dataTransfer });
+		// Right of the second tile's midpoint: the gap AFTER it.
+		fireAt('dragOver', tiles[1], dataTransfer, 180);
+		fireAt('drop', tiles[1], dataTransfer, 180);
+
+		expect(onReorder).toHaveBeenCalledWith(0, 1);
+	});
+
+	it('reports a drop before an earlier tile as a backward move', () => {
+		const onReorder = vi.fn();
+		renderStrip({ onReorder });
+		const tiles = [tileOf(0), tileOf(1)];
+		stubTileLayout(tiles);
+		const dataTransfer = makeDataTransfer();
+
+		fireEvent.dragStart(thumbOf(1), { dataTransfer });
+		// Left of the first tile's midpoint: the gap BEFORE it.
+		fireAt('dragOver', tiles[0], dataTransfer, 20);
+		fireAt('drop', tiles[0], dataTransfer, 20);
+
+		expect(onReorder).toHaveBeenCalledWith(1, 0);
+	});
+
+	it('ignores a drop into the dragged image own gap', () => {
+		const onReorder = vi.fn();
+		renderStrip({ onReorder });
+		const tiles = [tileOf(0), tileOf(1)];
+		stubTileLayout(tiles);
+		const dataTransfer = makeDataTransfer();
+
+		fireEvent.dragStart(thumbOf(0), { dataTransfer });
+		fireAt('dragOver', tiles[0], dataTransfer, 20);
+		fireAt('drop', tiles[0], dataTransfer, 20);
+
+		expect(onReorder).not.toHaveBeenCalled();
+	});
+
+	it('drags from a plain element, never a form control', () => {
+		// Regression guard for the reason the strip could not be dragged into the
+		// chat at all: the thumbnail was wrapped in a <button>, and Blink drops
+		// the drag when a form control consumes the press for activation. That
+		// held whether `draggable` sat on the button or on an ancestor, so the
+		// test asserts the shape of the DOM rather than which element carries the
+		// attribute.
+		renderStrip();
+
+		const tile = tileOf(0);
+		expect(tile.tagName).not.toBe('BUTTON');
+		expect(tile.getAttribute('draggable')).toBe('true');
+		// The image must not be hit-testable: its own draggable="false" computes
+		// -webkit-user-drag: none, which would stop the drag if it were the target.
+		const img = screen.getAllByRole('presentation', { hidden: true })[0];
+		expect(img.className).toContain('pointer-events-none');
+		// The per-image controls opt out, so pressing one cannot start a tile drag.
+		for (const control of within(tile).getAllByRole('button')) {
+			expect(control.getAttribute('draggable')).toBe('false');
+		}
+	});
+
+	it('hides the organizer button when only one image is staged', () => {
+		// Nothing to compare and nothing to reorder: the button would open a modal
+		// with no work in it.
+		renderStrip({ stagedImages: ['data:image/png;base64,a'] });
+
+		expect(screen.queryByLabelText('Open image organizer')).not.toBeInTheDocument();
+	});
+
+	it('shows the organizer button from two images up', () => {
+		renderStrip();
+
+		expect(screen.getByLabelText('Open image organizer')).toBeInTheDocument();
+	});
+
+	it('carries the slot reference as plain text so a drop on the composer reads it', () => {
+		renderStrip();
+		const dataTransfer = makeDataTransfer();
+
+		fireEvent.dragStart(thumbOf(1), { dataTransfer });
+
+		expect(dataTransfer.getData('text/plain')).toBe('Screenshot 2');
+		expect(dataTransfer.getData('application/x-maestro-staged-image')).toBe('1');
 	});
 });

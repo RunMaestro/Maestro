@@ -251,7 +251,14 @@ describe('parseDirectorNotesNarrative', () => {
 		});
 
 		it('rejects an unterminated object', () => {
-			expectParseError('{ "version": 1, "sections": [1, 2, }', /Response is not valid JSON:/);
+			expectParseError('{ "version": 1, "sections": [1, 2, ', /never closed/);
+		});
+
+		// A `}` where a `]` belonged used to balance a plain depth counter back to
+		// zero, so the slice handed to JSON.parse looked complete and the error
+		// blamed the syntax rather than the bracket. Name what actually happened.
+		it('rejects a container closed with the wrong bracket', () => {
+			expectParseError('{ "version": 1, "sections": [1, 2, }', /brackets do not match/);
 		});
 	});
 
@@ -617,6 +624,24 @@ describe('recoverDirectorNotesNarrative', () => {
 			expect(result.narrative).toEqual(JSON.parse(fullResponse));
 			expect(result.reason).toContain('closing punctuation');
 			expect(result.reason).toContain('No report content was lost');
+			expect(result.reason).not.toContain('cut off');
+		});
+
+		// The field failure this whole branch exists for, verbatim: a 16 KB report
+		// whose final `]` came out as `}`. Every section and bullet was written -
+		// only one character was wrong - but the bracket-blind scanners counted
+		// the object as balanced, so the repair path declared "nothing to repair"
+		// and the user got a parse error over a report that was entirely intact.
+		it('reports lossless when the last container was closed with the wrong bracket', () => {
+			// The `]` that closes `sections` comes out as a second `}`.
+			const fumbled = fullResponse.slice(0, -2) + '}}';
+			expect(parseDirectorNotesNarrative(fumbled).ok).toBe(false);
+
+			const result = recoverDirectorNotesNarrative(fumbled);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(true);
+			expect(result.narrative).toEqual(JSON.parse(fullResponse));
 			expect(result.reason).not.toContain('cut off');
 		});
 

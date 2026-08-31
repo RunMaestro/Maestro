@@ -4,11 +4,26 @@ import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { mockTheme } from '../../helpers/mockTheme';
+
+/**
+ * Put an AI command request (and optionally its answer) on a tab, the way
+ * `requestAiCommand` would. Fixed request id so tests can resolve/fail it.
+ */
+function seedAiCommand(sessionId: string, tabId: string, command?: string) {
+	useAiCommandStore.getState().beginAiCommand({
+		requestId: 'req-1',
+		sessionId,
+		tabId,
+		request: 'what is eating disk space',
+	});
+	if (command) useAiCommandStore.getState().resolveAiCommand('req-1', command);
+}
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
@@ -170,10 +185,10 @@ const createDefaultProps = (
 	overrides: Partial<Parameters<typeof InputArea>[0]> & {
 		inputValue?: string;
 		/** Command mode is composer state, not a `!` in the text - seed it here. */
-		commandMode?: boolean;
+		commandMode?: 'off' | 'shell' | 'ai';
 	} = {}
 ) => {
-	const { inputValue = '', commandMode = false, ...rest } = overrides;
+	const { inputValue = '', commandMode = 'off', ...rest } = overrides;
 	useComposerInputStore.setState({
 		aiValue: inputValue,
 		terminalValue: inputValue,
@@ -751,8 +766,11 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const images = screen.getAllByRole('img');
-			expect(images).toHaveLength(2);
+			// One tile per staged image. The thumbnail <img> is decorative
+			// (alt="") so the accessible name lives on the tile, which is also the
+			// drag source and the click target.
+			const tiles = screen.getAllByRole('button', { name: /^Staged image/ });
+			expect(tiles).toHaveLength(2);
 		});
 
 		it('does NOT show staged images in terminal mode', () => {
@@ -763,7 +781,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			expect(screen.queryByRole('img')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Staged image/ })).not.toBeInTheDocument();
 		});
 
 		it('calls setLightboxImage when clicking staged image', () => {
@@ -776,7 +794,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByRole('img'));
+			fireEvent.click(screen.getByRole('button', { name: /^Staged image/ }));
 
 			expect(setLightboxImage).toHaveBeenCalledWith(
 				'data:image/png;base64,ABC123',
@@ -1228,7 +1246,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai', cwd: '/Users/test/project' }),
 				inputValue: 'git status',
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
@@ -1239,7 +1257,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
 				inputValue: '',
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
@@ -1249,7 +1267,7 @@ describe('InputArea', () => {
 		it('tells the user how to get out', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
@@ -1273,7 +1291,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
 				inputValue: '!important note',
-				commandMode: false,
+				commandMode: 'off',
 			});
 			render(<InputArea {...props} />);
 
@@ -1284,11 +1302,103 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'terminal' }),
 				inputValue: 'ls',
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
 			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('AI Command Mode', () => {
+		beforeEach(() => {
+			useAiCommandStore.setState({ entries: {} });
+		});
+
+		function aiCommandProps(overrides: Record<string, unknown> = {}) {
+			return createDefaultProps({
+				session: createMockSession({ inputMode: 'ai', cwd: '/Users/test/project' }),
+				commandMode: 'ai',
+				...overrides,
+			});
+		}
+
+		it('shows the AI command bar instead of the shell one', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(screen.getByText('AI Command')).toBeInTheDocument();
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+
+		it('says Escape steps back to command mode, not out to the agent', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(screen.getByText(/back to Command Mode/)).toBeInTheDocument();
+		});
+
+		it('asks for a description rather than a command line', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(
+				screen.getByPlaceholderText(/Describe what you want to accomplish/)
+			).toBeInTheDocument();
+		});
+
+		it('shows a spinner while the model is working', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId);
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-thinking')).toBeInTheDocument();
+			expect(screen.getByText('Processing')).toBeInTheDocument();
+		});
+
+		it('shows the proposed command with Run and Cancel', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId, 'du -sh * | sort -rh');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-proposed')).toHaveTextContent('du -sh * | sort -rh');
+			expect(screen.getByTestId('ai-command-run')).toBeInTheDocument();
+			expect(screen.getByTestId('ai-command-cancel')).toBeInTheDocument();
+		});
+
+		it('keeps the request on screen so the command can be judged against it', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId, 'du -sh *');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('what is eating disk space')).toBeInTheDocument();
+		});
+
+		it('surfaces a failure instead of proposing nothing', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId);
+			useAiCommandStore.getState().failAiCommand('req-1', 'the model returned no command');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-error')).toHaveTextContent(
+				'the model returned no command'
+			);
+		});
+
+		it('does not render a proposal parked on a different tab', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, 'some-other-tab', 'du -sh *');
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByTestId('ai-command-proposal')).not.toBeInTheDocument();
+		});
+
+		it('does not offer shell tab completion for a prose request', () => {
+			const props = aiCommandProps({
+				inputValue: 'delete the build output',
+				tabCompletionOpen: true,
+				tabCompletionSuggestions: [{ value: 'build', type: 'file', displayText: 'build' }],
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Tab Completion')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1326,7 +1436,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai', isGitRepo: true }),
 				inputValue: 'git checkout ma',
-				commandMode: true,
+				commandMode: 'shell',
 				tabCompletionOpen: true,
 				tabCompletionSuggestions: [
 					{ value: 'git checkout main', type: 'branch', displayText: 'main' },

@@ -404,12 +404,12 @@ describe('TerminalOutput', () => {
 			});
 		}
 
-		function renderLogs(logs: LogEntry[]) {
+		function renderLogs(logs: LogEntry[], propOverrides: Record<string, unknown> = {}) {
 			const session = createDefaultSession({
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
-			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+			return render(<TerminalOutput {...createDefaultProps({ session, ...propOverrides })} />);
 		}
 
 		it('gives the command its own row instead of appending it to the agent reply', () => {
@@ -477,6 +477,57 @@ describe('TerminalOutput', () => {
 			const { container } = renderLogs(logs);
 
 			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+		});
+
+		it('offers delete on a finished card when the transcript is editable', () => {
+			// The card takes an early return and never reaches the shared hover
+			// toolbar, so it has to carry the affordance itself - this asserts the
+			// props actually arrive from TerminalOutput.
+			renderLogs([commandCard()], { onDeleteLog: vi.fn() });
+
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
+		});
+
+		it('repaints a finished card that produced no output at all', () => {
+			// Regression: the LogItem memo compared `log.text`, which never changes
+			// for a silent command (`!true`), so the card stayed frozen mid-run -
+			// spinner up, Stop offered, and delete hidden behind its finished gate.
+			// Both `tabs` (what this file's getActiveTab mock reads) and `aiTabs`
+			// (what TerminalOutput's active-tab useMemo keys on). A session carrying
+			// only one of them can never repaint on a rerender, which would make
+			// this test assert the harness rather than the component.
+			const sessionWith = (log: LogEntry) => {
+				const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [log], isUnread: false }];
+				return createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			};
+			const onDeleteLog = vi.fn();
+
+			const running = commandCard({
+				text: '',
+				shellCommand: { command: 'true', cwd: '/repo', status: 'running' },
+			});
+			const { rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(running), onDeleteLog })} />
+			);
+			expect(screen.queryByTestId('shell-command-delete')).not.toBeInTheDocument();
+
+			const finished = commandCard({
+				text: '',
+				shellCommand: {
+					command: 'true',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+					durationMs: 12,
+				},
+			});
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(finished), onDeleteLog })} />
+			);
+
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			expect(screen.queryByText('Stop')).not.toBeInTheDocument();
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
 		});
 	});
 
@@ -1235,7 +1286,10 @@ describe('TerminalOutput', () => {
 					executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 				});
 
-			it('does not render Force Send button when forcedParallelEnabled is false', () => {
+			// The inline card mirrors the Execution Queue modal exactly: present
+			// when force sending is possible or one settings toggle away, absent
+			// when the block is a dead end the user cannot act on from the card.
+			it('renders Force Send disabled when forced parallel is off and another tab is busy', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: false,
@@ -1243,13 +1297,19 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: false,
+						blockedReason: 'needs-forced-parallel' as const,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeDisabled();
 			});
 
-			it('does not render Force Send button when target tab is busy', () => {
+			it('hides Force Send when the target tab is busy', () => {
+				// The card is rendered under the turn that tab is already running,
+				// so the queued item is next in line by definition and there is
+				// nothing to force.
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: true,
@@ -1257,13 +1317,16 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: true,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: false,
+						blockedReason: 'target-tab-busy' as const,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.queryByRole('button', { name: /Force Send/ })).toBeNull();
 			});
 
-			it('does not render Force Send button when no other tabs are busy', () => {
+			it('renders Force Send ENABLED on a quiet agent - the always-allowed case', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: true,
@@ -1271,10 +1334,12 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [],
+						requiresParallel: false,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeEnabled();
 			});
 
 			it('renders Force Send button when enabled, target idle, and another tab busy', () => {
@@ -1285,6 +1350,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1302,6 +1369,8 @@ describe('TerminalOutput', () => {
 							{ id: 'tab-2', displayName: 'Refactor' },
 							{ id: 'tab-3', displayName: 'A1B2C3D4' },
 						],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1323,6 +1392,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1342,6 +1413,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1366,6 +1439,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1403,6 +1478,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -3621,6 +3698,138 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('model / effort pill rendering', () => {
+		it('labels each response with the model and effort its turn was sent with', () => {
+			// The point of the pills: the user switched configuration mid-conversation,
+			// so each response has to say which one produced it.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by opus',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-2',
+					text: 'answered by sonnet',
+					source: 'stdout',
+					turnModel: 'sonnet',
+					turnEffort: 'low',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.getByText('sonnet')).toBeInTheDocument();
+			expect(screen.getByText('low')).toBeInTheDocument();
+		});
+
+		it('renders on non-Claude agents, which have no token-source pill', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					turnModel: 'gpt-5',
+					turnEffort: 'medium',
+				}),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('gpt-5')).toBeInTheDocument();
+			expect(screen.getByText('medium')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
+		it('omits a pill whose value is unset, meaning the agent default applied', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout', turnModel: 'opus' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pills on user messages', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('keeps the pills when a system banner leads the response group', () => {
+			// Same collapse trap the token-source pill hit: the combined entry is
+			// built from `[0]`, which here is the banner and carries no stamp.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'banner',
+					text: 'Adaptive Mode: switched from API Limits to Time Limits.',
+					source: 'system',
+				}),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'streamed response',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'xhigh',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('xhigh');
 		});
 	});
 

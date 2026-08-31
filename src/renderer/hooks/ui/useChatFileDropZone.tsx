@@ -12,6 +12,15 @@
  * `onDrop` (the shared `handleDrop` from useInputHandlers), which inserts an
  * @mention or stages an image.
  *
+ * A staged-image thumbnail dragged out of the composer strip is ACCEPTED but
+ * never lights up the overlay. Accepted, because the natural gesture is to
+ * drag it up into the conversation rather than onto the two-line textarea, and
+ * a region that silently refuses the drop reads as a broken feature. Without
+ * the overlay, because the strip sits inside this same region: an ordinary
+ * in-strip reorder bubbles its dragenter up here, and a full-panel "drop file
+ * here" banner flashing across every reorder is worse than no affordance at
+ * all.
+ *
  * This intentionally does NOT use a window-level overlay: only the region under
  * the cursor reacts, so the left bar, the Files/History/Auto Run panel, and
  * other regions stay inert.
@@ -19,12 +28,18 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Theme } from '../../types';
+import { dragCarriesStagedImage } from '../../components/InputArea/components/stagedImageDrag';
 
 /** True when a drag carries OS files or a Files-panel row (chat-attachable). */
 function dragCarriesChatPayload(dataTransfer: DataTransfer | null): boolean {
 	if (!dataTransfer) return false;
 	const types = Array.from(dataTransfer.types);
 	return types.includes('Files') || types.includes('application/x-maestro-file-path');
+}
+
+/** True for anything this region should let go through to `onDrop`. */
+function dragIsDroppable(dataTransfer: DataTransfer | null): boolean {
+	return dragCarriesChatPayload(dataTransfer) || dragCarriesStagedImage(dataTransfer);
 }
 
 export interface ChatFileDropZone {
@@ -66,7 +81,7 @@ export function useChatFileDropZone(
 
 	const onDragOver = useCallback(
 		(e: React.DragEvent<HTMLElement>) => {
-			if (!enabled || !dragCarriesChatPayload(e.dataTransfer)) return;
+			if (!enabled || !dragIsDroppable(e.dataTransfer)) return;
 			// Required for the drop event to fire on this element.
 			e.preventDefault();
 		},
@@ -84,7 +99,7 @@ export function useChatFileDropZone(
 
 	const handleDrop = useCallback(
 		(e: React.DragEvent<HTMLElement>) => {
-			if (!enabled || !dragCarriesChatPayload(e.dataTransfer)) return;
+			if (!enabled || !dragIsDroppable(e.dataTransfer)) return;
 			e.preventDefault();
 			reset();
 			onDrop(e);

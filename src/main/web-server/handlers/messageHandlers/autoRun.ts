@@ -243,6 +243,101 @@ export function handleConfigureAutoRun(
 }
 
 /**
+ * Handle launch_goal_run message - start a desktop-owned Goal-Driven Auto Run
+ * (`maestro-cli goal-run --visible`).
+ *
+ * Unlike `configure_auto_run` this carries no documents: goal mode is
+ * document-less, and the renderer routes it to the same `startBatchRun({
+ * goalConfig })` entry point the Auto Run modal's Go button uses. The reply
+ * carries a machine-readable `code` on failure so the CLI can distinguish
+ * "agent is busy" from "no such agent" without matching on prose.
+ */
+export function handleLaunchGoalRun(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = message.sessionId as string;
+	logger.info(`[Web] Received launch_goal_run message: session=${sessionId}`, LOG_CONTEXT);
+
+	if (!sessionId) {
+		ctx.sendError(client, 'Missing sessionId');
+		return;
+	}
+
+	const goal = typeof message.goal === 'string' ? message.goal.trim() : '';
+	if (!goal) {
+		ctx.sendError(client, 'goal must be a non-empty string');
+		return;
+	}
+
+	if (message.exitCriteria !== undefined && typeof message.exitCriteria !== 'string') {
+		ctx.sendError(client, 'exitCriteria must be a string');
+		return;
+	}
+
+	// `null` is meaningful here (run indefinitely) and must survive the boundary,
+	// so it is checked before the numeric validation rather than folded into it.
+	let maxIterations: number | null | undefined;
+	if (message.maxIterations !== undefined && message.maxIterations !== null) {
+		const parsed = Number(message.maxIterations);
+		if (!Number.isInteger(parsed) || parsed < 1) {
+			ctx.sendError(client, 'maxIterations must be a positive integer or null');
+			return;
+		}
+		maxIterations = parsed;
+	} else {
+		maxIterations = message.maxIterations === null ? null : undefined;
+	}
+
+	// Same rule as configure_auto_run: an empty override would pin the run to a
+	// nonexistent model instead of falling back to the agent default.
+	if (
+		message.model !== undefined &&
+		(typeof message.model !== 'string' || message.model.trim() === '')
+	) {
+		ctx.sendError(client, 'model must be a non-empty string');
+		return;
+	}
+	if (
+		message.effort !== undefined &&
+		(typeof message.effort !== 'string' || message.effort.trim() === '')
+	) {
+		ctx.sendError(client, 'effort must be a non-empty string');
+		return;
+	}
+
+	if (!ctx.callbacks.launchGoalRun) {
+		ctx.sendError(client, 'Goal run launch not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.launchGoalRun(sessionId, {
+			goal,
+			exitCriteria: (message.exitCriteria as string | undefined)?.trim() || undefined,
+			maxIterations,
+			model: message.model as string | undefined,
+			effort: message.effort as string | undefined,
+		})
+		.then((result) => {
+			ctx.send(client, {
+				type: 'launch_goal_run_result',
+				success: result.success,
+				tabId: result.tabId,
+				code: result.code,
+				error: result.error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			captureException(error, { extra: { sessionId, message: 'launch_goal_run' } });
+			ctx.sendError(client, `Failed to launch goal run: ${error.message}`);
+		});
+}
+
+/**
  * Handle set_auto_run_folder message - update the Auto Run folder for an
  * existing session. Mirrors desktop's `dialog.selectFolder` flow: the renderer
  * lists docs from the new path, persists the choice to session storage, and

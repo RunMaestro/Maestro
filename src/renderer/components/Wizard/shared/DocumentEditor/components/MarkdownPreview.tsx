@@ -4,7 +4,16 @@ import type { Components } from 'react-markdown';
 import type { PluggableList } from 'unified';
 import type { Theme } from '../../../../../types';
 import { REMARK_GFM_PLUGINS } from '../../../../../utils/markdownConfig';
+import { remarkAlert } from '../../../../Markdown/remarkAlert';
+import { remarkMaestroMarkers } from '../../../../Markdown/remarkMaestroMarkers';
 import { REHYPE_PLUGINS } from '../constants';
+
+/**
+ * GFM + GitHub `[!NOTE]`-style callouts, matching the chat and file-preview
+ * stacks, plus Auto Run marker pills - this editor is where a playbook is
+ * written, so a gate or halt has to be visible while it is being authored.
+ */
+const REMARK_PLUGINS: PluggableList = [...REMARK_GFM_PLUGINS, remarkAlert, remarkMaestroMarkers];
 
 interface MarkdownPreviewProps {
 	content: string;
@@ -48,7 +57,7 @@ export function MarkdownPreview({
 			<style>{proseStyles}</style>
 			<div className="prose prose-sm max-w-none">
 				<ReactMarkdown
-					remarkPlugins={REMARK_GFM_PLUGINS}
+					remarkPlugins={REMARK_PLUGINS}
 					rehypePlugins={REHYPE_PLUGINS as PluggableList}
 					components={markdownComponents}
 				>

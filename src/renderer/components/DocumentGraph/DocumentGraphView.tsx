@@ -18,6 +18,7 @@ import {
 	X,
 	Network,
 	ExternalLink,
+	Unlink,
 	RefreshCw,
 	Search,
 	ChevronDown,
@@ -36,6 +37,16 @@ import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { usePersistedPanelWidth } from '../../hooks/ui/usePersistedPanelWidth';
+import { useResizablePanel } from '../../hooks/ui/useResizablePanel';
+import { viewportModalSize } from '../../utils/modalSizing';
+import {
+	previewMaxWidthForContainer,
+	PREVIEW_DEFAULT_WIDTH,
+	PREVIEW_MIN_WIDTH,
+	PREVIEW_MAX_WIDTH,
+	PREVIEW_WIDTH_STORAGE_KEY,
+} from './previewPaneSizing';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -60,86 +71,45 @@ import {
 import {
 	type MindMapLayoutType,
 	LAYOUT_LABELS,
+	MIND_MAP_LAYOUT_TYPES,
+	nextMindMapLayout,
 	SPACING_SCALE_DEFAULT,
 	SPACING_SCALE_MIN,
 	SPACING_SCALE_MAX,
 	SPACING_SCALE_STEP,
 } from './mindMapLayouts';
+import {
+	formatNeighborDepth,
+	NEIGHBOR_DEPTH_ALL,
+	NEIGHBOR_DEPTH_MAX,
+	nextNeighborDepth,
+} from './neighborDepth';
+import {
+	clampPreviewCharLimit,
+	formatPreviewCharLimit,
+	isPreviewOff,
+	nextPreviewCharLimit,
+	PREVIEW_CHAR_LIMIT_MAX,
+	PREVIEW_CHAR_LIMIT_MIN,
+	PREVIEW_CHAR_LIMIT_STEP,
+} from './previewCharLimit';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
-import type { FileNode } from '../../types/fileTree';
+import { buildFileTreeFromPaths } from '../../utils/fileTree';
+import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
 
-/**
- * Build a file tree structure from graph node file paths.
- * This enables wiki-link resolution in the preview panel.
- */
-function buildFileTreeFromPaths(filePaths: string[]): FileNode[] {
-	const root: FileNode[] = [];
-	const folderMap = new Map<string, FileNode>();
-
-	for (const filePath of filePaths) {
-		if (!filePath) continue;
-
-		const parts = filePath.split('/');
-		let currentLevel = root;
-		let currentPath = '';
-
-		for (let i = 0; i < parts.length; i++) {
-			const part = parts[i];
-			const isLastPart = i === parts.length - 1;
-			currentPath = currentPath ? `${currentPath}/${part}` : part;
-
-			if (isLastPart) {
-				// It's a file
-				currentLevel.push({
-					name: part,
-					type: 'file',
-					fullPath: filePath,
-				});
-			} else {
-				// It's a folder - check if it already exists
-				let folder = folderMap.get(currentPath);
-				if (!folder) {
-					folder = {
-						name: part,
-						type: 'folder',
-						isFolder: true,
-						children: [],
-					};
-					folderMap.set(currentPath, folder);
-					currentLevel.push(folder);
-				}
-				currentLevel = folder.children!;
-			}
-		}
-	}
-
-	return root;
-}
 /** Default maximum number of nodes to load initially */
 const DEFAULT_MAX_NODES = 200;
 /** Number of additional nodes to load when clicking "Load more" */
 const LOAD_MORE_INCREMENT = 25;
-
-/**
- * Count markdown tasks (checkboxes) in content
- * Reuses pattern from FilePreview.tsx
- */
-const countMarkdownTasks = (content: string): { completed: number; total: number } => {
-	const openMatches = content.match(/^[\s]*[-*]\s*\[\s*\]/gm);
-	const closedMatches = content.match(/^[\s]*[-*]\s*\[[xX]\]/gm);
-	const open = openMatches?.length || 0;
-	const closed = closedMatches?.length || 0;
-	return { completed: closed, total: open + closed };
-};
 
 /**
  * Format date for display in footer
@@ -170,6 +140,14 @@ export interface DocumentGraphViewProps {
 	onExternalLinkOpen?: (url: string) => void;
 	/** Required file path (relative to rootPath) to focus on - the center of the mind map */
 	focusFilePath: string;
+	/**
+	 * Explicit set of files to graph (relative to rootPath). Switches the view
+	 * from FOCUS mode ("what does this document reach?") to SCOPE mode ("how do
+	 * these documents relate, and which of them relate to nothing?").
+	 */
+	scopeFiles?: string[];
+	/** Directory whose markdown files form the scope. Ignored when `scopeFiles` is set. */
+	scopeDirectory?: string;
 	/** Callback when focus file is consumed (cleared after focusing) */
 	onFocusFileConsumed?: () => void;
 	/** Default setting for showing external links (from settings) */
@@ -205,6 +183,8 @@ export function DocumentGraphView({
 	onDocumentOpen,
 	onExternalLinkOpen,
 	focusFilePath,
+	scopeFiles,
+	scopeDirectory,
 	onFocusFileConsumed: _onFocusFileConsumed,
 	defaultShowExternalLinks = false,
 	onExternalLinksChange,
@@ -226,12 +206,26 @@ export function DocumentGraphView({
 	const [error, setError] = useState<string | null>(null);
 	const [progress, setProgress] = useState<ProgressData | null>(null);
 
+	/**
+	 * Files in the scope that connect to nothing else in it. Reported by the
+	 * builder rather than re-derived here: it owns the edge list, and a second
+	 * opinion about what counts as connected is a second thing to get wrong.
+	 */
+	const [orphanFiles, setOrphanFiles] = useState<string[]>([]);
+
 	// Settings state
 	const [includeExternalLinks, setIncludeExternalLinks] = useState(defaultShowExternalLinks);
+	// Orphans start visible: the whole reason to graph a hand-picked scope is to
+	// see which of those documents stand alone, so hiding them by default would
+	// hide the answer.
+	const [showOrphans, setShowOrphans] = useState(true);
 	const [neighborDepth, setNeighborDepth] = useState(defaultNeighborDepth);
 	const [showDepthSlider, setShowDepthSlider] = useState(false);
 	const [previewCharLimit, setPreviewCharLimit] = useState(defaultPreviewCharLimit);
 	const [showPreviewSlider, setShowPreviewSlider] = useState(false);
+	// The toolbar pill reads "active" whenever previews are not at the shipped
+	// 100-character default - Off is as deliberate a choice as 500 is.
+	const previewNonDefault = previewCharLimit !== 100;
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
@@ -617,6 +611,8 @@ export function DocumentGraphView({
 				const graphData = await buildGraphData({
 					rootPath,
 					focusFile: focusFilePath,
+					scopeFiles,
+					scopeDirectory,
 					maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
 					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
 					onProgress: handleProgress,
@@ -702,8 +698,12 @@ export function DocumentGraphView({
 					setLinks(allMindMapLinks);
 				}
 
-				// Set active focus file from the required focusFilePath prop
-				setActiveFocusFile(focusFilePath);
+				// Take the center the builder actually used. In scope mode it may
+				// have auto-picked the highest-degree file, and keeping the
+				// requested (possibly empty) path here renders an empty graph on
+				// top of a perfectly good node set.
+				setActiveFocusFile(graphData.centerFile || focusFilePath);
+				setOrphanFiles(graphData.orphanFiles);
 
 				// Streaming BFS is done - clear the in-flight badge.
 				setExpandingGraph(false);
@@ -739,6 +739,8 @@ export function DocumentGraphView({
 			handleBacklinkUpdate,
 			handleBacklinkComplete,
 			sshRemoteId,
+			scopeFiles,
+			scopeDirectory,
 		]
 	);
 
@@ -897,8 +899,9 @@ export function DocumentGraphView({
 			.readFile(fullPath, sshRemoteId)
 			.then((content) => {
 				if (!content) return;
-				const tasks = countMarkdownTasks(content);
-				setSelectedNodeTasks(tasks.total > 0 ? tasks : null);
+				const { open, closed } = countMarkdownTasks(content);
+				const total = open + closed;
+				setSelectedNodeTasks(total > 0 ? { completed: closed, total } : null);
 			})
 			.catch(() => {
 				setSelectedNodeTasks(null);
@@ -963,25 +966,38 @@ export function DocumentGraphView({
 	/**
 	 * Handle neighbor depth change
 	 */
-	const handleNeighborDepthChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newDepth = parseInt(e.target.value, 10);
+	const applyNeighborDepth = useCallback(
+		(newDepth: number) => {
 			setNeighborDepth(newDepth);
 			onNeighborDepthChange?.(newDepth);
 		},
 		[onNeighborDepthChange]
 	);
 
+	const handleNeighborDepthChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			applyNeighborDepth(parseInt(e.target.value, 10));
+		},
+		[applyNeighborDepth]
+	);
+
 	/**
 	 * Handle preview character limit change
 	 */
-	const handlePreviewCharLimitChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newLimit = parseInt(e.target.value, 10);
-			setPreviewCharLimit(newLimit);
-			onPreviewCharLimitChange?.(newLimit);
+	const applyPreviewCharLimit = useCallback(
+		(newLimit: number) => {
+			const clamped = clampPreviewCharLimit(newLimit);
+			setPreviewCharLimit(clamped);
+			onPreviewCharLimitChange?.(clamped);
 		},
 		[onPreviewCharLimitChange]
+	);
+
+	const handlePreviewCharLimitChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			applyPreviewCharLimit(parseInt(e.target.value, 10));
+		},
+		[applyPreviewCharLimit]
 	);
 
 	/**
@@ -1334,44 +1350,118 @@ export function DocumentGraphView({
 	);
 
 	/**
-	 * Handle container keyboard shortcuts (Cmd+F for search; +/- for node spacing)
+	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
+	 * P preview length; +/- node spacing)
 	 */
-	const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
-		// Cmd+F or Ctrl+F to focus search
-		if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+	const handleContainerKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			// Cmd+F or Ctrl+F to focus search
+			if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+				e.preventDefault();
+				searchInputRef.current?.focus();
+				searchInputRef.current?.select();
+				return;
+			}
+
+			// Everything below is an unmodified single key, so skip when a modifier
+			// is held (browser zoom on Cmd/Ctrl +/-, OS chords) and when the user is
+			// typing into an input (the search box, the sliders).
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			const target = e.target as HTMLElement | null;
+			const tag = target?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+
+			// L cycles the layout; D widens the neighbor depth. Both go through the
+			// same handlers the toolbar controls use, so a key press persists the
+			// choice and clears layout-specific drag overrides exactly like a click.
+			if (e.key === 'l' || e.key === 'L') {
+				e.preventDefault();
+				handleLayoutTypeChange(nextMindMapLayout(layoutType));
+				return;
+			}
+			if (e.key === 'd' || e.key === 'D') {
+				e.preventDefault();
+				applyNeighborDepth(nextNeighborDepth(neighborDepth));
+				return;
+			}
+			// P cycles preview length, ending at Off (filename pills). It used to
+			// be a second spelling of Enter's in-graph preview, which spent a key
+			// on a duplicate of a binding the user already has.
+			if (e.key === 'p' || e.key === 'P') {
+				e.preventDefault();
+				applyPreviewCharLimit(nextPreviewCharLimit(previewCharLimit));
+				return;
+			}
+
+			// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
+			const isIncrease = e.key === '+' || e.key === '=';
+			const isDecrease = e.key === '-' || e.key === '_';
+			if (!isIncrease && !isDecrease) return;
+
 			e.preventDefault();
-			searchInputRef.current?.focus();
-			searchInputRef.current?.select();
-			return;
-		}
-
-		// +/- adjust node spacing in any layout. Skip when modifiers are held so
-		// browser zoom (Cmd/Ctrl +/-) and similar shortcuts still work, and skip
-		// when typing into an input (search box, sliders).
-		if (e.metaKey || e.ctrlKey || e.altKey) return;
-		const target = e.target as HTMLElement | null;
-		const tag = target?.tagName;
-		if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
-
-		// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
-		const isIncrease = e.key === '+' || e.key === '=';
-		const isDecrease = e.key === '-' || e.key === '_';
-		if (!isIncrease && !isDecrease) return;
-
-		e.preventDefault();
-		setSpacingScale((prev) => {
-			const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
-			const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
-			// Round to one decimal to avoid floating-point drift.
-			return Math.round(clamped * 10) / 10;
-		});
-	}, []);
+			setSpacingScale((prev) => {
+				const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
+				const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
+				// Round to one decimal to avoid floating-point drift.
+				return Math.round(clamped * 10) / 10;
+			});
+		},
+		[
+			applyNeighborDepth,
+			applyPreviewCharLimit,
+			handleLayoutTypeChange,
+			layoutType,
+			neighborDepth,
+			previewCharLimit,
+		]
+	);
+	// The graph is a canvas the user pans around in, so its useful default is
+	// "as much of the screen as a modal may take" rather than a fixed box - the
+	// old 1200x760 default was a postage stamp on a large display. clampModalSize
+	// caps this at the shared 90% viewport ratio.
+	const defaultModalSize = useMemo(
+		() => viewportModalSize({ width: 0.95, height: 0.95 }),
+		// Recomputing per render would fight the resize listener inside the hook,
+		// which already re-clamps the live size when the viewport changes.
+		[]
+	);
 	const resizableModal = useResizableModal({
 		resizeKey: 'document-graph',
-		defaultSize: { width: 1200, height: 760 },
+		defaultSize: defaultModalSize,
 		minSize: { width: 760, height: 500 },
 		enabled: isOpen,
 		externalRef: containerRef,
+	});
+
+	// Preview pane width: dragged by its left edge, remembered across opens.
+	const {
+		width: previewWidth,
+		setWidth: setPreviewWidth,
+		reset: resetPreviewWidth,
+	} = usePersistedPanelWidth(PREVIEW_WIDTH_STORAGE_KEY, {
+		defaultWidth: PREVIEW_DEFAULT_WIDTH,
+		minWidth: PREVIEW_MIN_WIDTH,
+		maxWidth: PREVIEW_MAX_WIDTH,
+	});
+	// Leave a strip of graph visible no matter how wide the pane is dragged. The
+	// container can be narrower than the stored width (a small modal, a resized
+	// window), so the live clamp is separate from the stored bounds.
+	const previewMaxWidth = previewMaxWidthForContainer(graphDimensions.width);
+	// The drag must start from the width actually on screen, not the stored one:
+	// when the container is narrower than the remembered width the pane renders
+	// clamped, and starting the delta from the larger value snaps it wider on the
+	// first mousemove.
+	const renderedPreviewWidth = Math.min(previewWidth, previewMaxWidth);
+	const {
+		panelRef: previewPanelRef,
+		isResizing: isPreviewResizing,
+		onResizeStart: onPreviewResizeStart,
+	} = useResizablePanel({
+		width: renderedPreviewWidth,
+		minWidth: PREVIEW_MIN_WIDTH,
+		maxWidth: previewMaxWidth,
+		setWidth: setPreviewWidth,
+		side: 'right',
 	});
 
 	if (!isOpen) return null;
@@ -1506,7 +1596,7 @@ export function DocumentGraphView({
 								onMouseLeave={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
 								}
-								title={`Layout: ${LAYOUT_LABELS[layoutType].name}`}
+								title={`Layout: ${LAYOUT_LABELS[layoutType].name} (L to cycle)`}
 							>
 								<Network className="w-4 h-4" />
 								{LAYOUT_LABELS[layoutType].name}
@@ -1522,35 +1612,33 @@ export function DocumentGraphView({
 										minWidth: 200,
 									}}
 								>
-									{(['mindmap', 'radial', 'hierarchical', 'force'] as MindMapLayoutType[]).map(
-										(type) => (
-											<button
-												key={type}
-												onClick={() => handleLayoutTypeChange(type)}
-												className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
-												style={{
-													backgroundColor:
-														layoutType === type ? `${theme.colors.accent}15` : 'transparent',
-													color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
-												}}
-												onMouseEnter={(e) =>
-													(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-												}
-												onMouseLeave={(e) =>
-													(e.currentTarget.style.backgroundColor =
-														layoutType === type ? `${theme.colors.accent}15` : 'transparent')
-												}
+									{MIND_MAP_LAYOUT_TYPES.map((type) => (
+										<button
+											key={type}
+											onClick={() => handleLayoutTypeChange(type)}
+											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
+											style={{
+												backgroundColor:
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent',
+												color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
+											}}
+											onMouseEnter={(e) =>
+												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+											}
+											onMouseLeave={(e) =>
+												(e.currentTarget.style.backgroundColor =
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent')
+											}
+										>
+											<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
+											<span
+												className="text-xs whitespace-nowrap shrink-0"
+												style={{ color: theme.colors.textDim }}
 											>
-												<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
-												<span
-													className="text-xs whitespace-nowrap shrink-0"
-													style={{ color: theme.colors.textDim }}
-												>
-													{LAYOUT_LABELS[type].description}
-												</span>
-											</button>
-										)
-									)}
+												{LAYOUT_LABELS[type].description}
+											</span>
+										</button>
+									))}
 								</div>
 							)}
 						</div>
@@ -1574,12 +1662,12 @@ export function DocumentGraphView({
 								}
 								title={
 									neighborDepth > 0
-										? `Showing ${neighborDepth} level${neighborDepth > 1 ? 's' : ''} of neighbors`
-										: 'Show all nodes'
+										? `Showing ${neighborDepth} level${neighborDepth > 1 ? 's' : ''} of neighbors (D to widen)`
+										: 'Showing all nodes (D to cycle)'
 								}
 							>
 								<Sliders className="w-4 h-4" />
-								Depth: {neighborDepth === 0 ? 'All' : neighborDepth}
+								Depth: {formatNeighborDepth(neighborDepth)}
 							</button>
 
 							{showDepthSlider && (
@@ -1596,13 +1684,13 @@ export function DocumentGraphView({
 											Neighbor Depth
 										</span>
 										<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-											{neighborDepth === 0 ? 'All' : neighborDepth}
+											{formatNeighborDepth(neighborDepth)}
 										</span>
 									</div>
 									<input
 										type="range"
-										min="0"
-										max="5"
+										min={NEIGHBOR_DEPTH_ALL}
+										max={NEIGHBOR_DEPTH_MAX}
 										value={neighborDepth}
 										onChange={handleNeighborDepthChange}
 										className="w-full"
@@ -1634,25 +1722,27 @@ export function DocumentGraphView({
 								onClick={() => openDropdown('preview')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
-									backgroundColor:
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`,
-									color: previewCharLimit > 100 ? theme.colors.accent : theme.colors.textDim,
+									backgroundColor: previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+									color: previewNonDefault ? theme.colors.accent : theme.colors.textDim,
 								}}
 								onMouseEnter={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
 								}
 								onMouseLeave={(e) =>
-									(e.currentTarget.style.backgroundColor =
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`)
+									(e.currentTarget.style.backgroundColor = previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`)
 								}
-								title={`Preview text limit: ${previewCharLimit} characters`}
+								title={
+									isPreviewOff(previewCharLimit)
+										? 'Previews off - nodes are filename pills (P to cycle)'
+										: `Preview text limit: ${previewCharLimit} characters (P to cycle)`
+								}
 							>
 								<Type className="w-4 h-4" />
-								Preview: {previewCharLimit}
+								Preview: {formatPreviewCharLimit(previewCharLimit)}
 							</button>
 
 							{showPreviewSlider && (
@@ -1669,14 +1759,14 @@ export function DocumentGraphView({
 											Preview Characters
 										</span>
 										<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-											{previewCharLimit}
+											{formatPreviewCharLimit(previewCharLimit)}
 										</span>
 									</div>
 									<input
 										type="range"
-										min="50"
-										max="500"
-										step="50"
+										min={PREVIEW_CHAR_LIMIT_MIN}
+										max={PREVIEW_CHAR_LIMIT_MAX}
+										step={PREVIEW_CHAR_LIMIT_STEP}
 										value={previewCharLimit}
 										onChange={handlePreviewCharLimitChange}
 										className="w-full"
@@ -1686,13 +1776,17 @@ export function DocumentGraphView({
 										className="flex justify-between text-xs mt-1"
 										style={{ color: theme.colors.textDim }}
 									>
-										<span>50</span>
+										<span>Off</span>
+										<span>100</span>
 										<span>200</span>
-										<span>350</span>
+										<span>300</span>
+										<span>400</span>
 										<span>500</span>
 									</div>
 									<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-										Characters shown in document previews
+										{isPreviewOff(previewCharLimit)
+											? 'Nodes render as filename pills, with no preview text'
+											: 'Characters shown in document previews'}
 									</p>
 								</div>
 							)}
@@ -1721,6 +1815,31 @@ export function DocumentGraphView({
 							<ExternalLink className="w-4 h-4" />
 							External
 						</button>
+
+						{/* Unlinked (orphan) toggle. Only scope mode can produce orphans,
+						    so the control stays hidden in focus mode rather than
+						    offering a toggle that can never change anything. */}
+						{orphanFiles.length > 0 && (
+							<button
+								onClick={() => setShowOrphans((v) => !v)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+								style={{
+									backgroundColor: showOrphans
+										? `${theme.colors.warning}25`
+										: `${theme.colors.warning}10`,
+									color: showOrphans ? theme.colors.warning : theme.colors.textDim,
+								}}
+								title={
+									showOrphans
+										? `Hide the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+										: `Show the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+								}
+								data-testid="document-graph-orphan-toggle"
+							>
+								<Unlink className="w-4 h-4" />
+								Unlinked {orphanFiles.length}
+							</button>
+						)}
 
 						{/* Reset Layout Button - only show when positions have been modified */}
 						{nodePositions.size > 0 && (
@@ -1907,6 +2026,7 @@ export function DocumentGraphView({
 							height={graphDimensions.height}
 							maxDepth={neighborDepth || 2}
 							showExternalLinks={includeExternalLinks}
+							showOrphans={showOrphans}
 							selectedNodeId={selectedNodeId}
 							onNodeSelect={handleNodeSelect}
 							onNodeDoubleClick={handleNodeDoubleClick}
@@ -1964,15 +2084,35 @@ export function DocumentGraphView({
 					{/* Markdown Preview Panel */}
 					{(previewFile || previewLoading || previewError) && (
 						<div
+							ref={previewPanelRef}
 							className="absolute top-4 right-4 bottom-4 rounded-lg shadow-2xl border flex flex-col z-50 outline-none"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								borderColor: theme.colors.border,
-								width: 'min(560px, 42vw)',
+								width: renderedPreviewWidth,
 								maxWidth: '90%',
 							}}
 							onKeyDown={handlePreviewKeyDown}
 						>
+							{/* Drag the left edge to widen/narrow; double-click restores the default. */}
+							<div
+								className={`absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent z-20 ${
+									isPreviewResizing ? '' : 'transition-colors'
+								}`}
+								style={{ borderLeftColor: isPreviewResizing ? theme.colors.accent : undefined }}
+								onPointerDown={onPreviewResizeStart}
+								onDoubleClick={resetPreviewWidth}
+								onMouseEnter={(e) => (e.currentTarget.style.borderLeftColor = theme.colors.accent)}
+								onMouseLeave={(e) =>
+									(e.currentTarget.style.borderLeftColor = isPreviewResizing
+										? theme.colors.accent
+										: 'transparent')
+								}
+								role="separator"
+								aria-orientation="vertical"
+								aria-label="Resize document preview"
+								title="Drag to resize (double-click to reset)"
+							/>
 							<style>{generateProseStyles({ theme, scopeSelector: '.graph-preview' })}</style>
 							<div
 								className="px-4 py-3 border-b flex items-center justify-between gap-3"

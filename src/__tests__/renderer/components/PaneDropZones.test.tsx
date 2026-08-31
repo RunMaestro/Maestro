@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, waitFor, act } from '@testing-library/react';
 import { PaneDropZones } from '../../../renderer/components/MainPanel/PaneDropZones';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { TAB_TILE_MIME } from '../../../renderer/utils/tabDragPayload';
@@ -30,6 +30,15 @@ function mockDataTransfer(payload: TabTilePayload) {
 		dropEffect: 'none',
 		effectAllowed: 'all',
 	} as unknown as DataTransfer;
+}
+
+/**
+ * Arm the overlay the way a real drag does. The payload MUST ride the dragstart:
+ * `dragover` can only see the MIME list, so the overlay captures which tab is being
+ * dragged here, and that is what lets it withhold the hint on a self-drop.
+ */
+function startDrag(dataTransfer: DataTransfer) {
+	fireEvent(window, Object.assign(new Event('dragstart'), { dataTransfer }));
 }
 
 describe('PaneDropZones drop', () => {
@@ -70,8 +79,7 @@ describe('PaneDropZones drop', () => {
 		const overlay = container.firstChild as HTMLElement;
 		const dt = mockDataTransfer({ ref: { type: 'ai', id: 'b' }, source: 'tab-bar' });
 
-		// Arm the overlay the way a real drag does (window dragstart).
-		fireEvent(window, new Event('dragstart'));
+		startDrag(dt);
 		fireEvent.dragOver(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
 		fireEvent.drop(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
 
@@ -83,10 +91,10 @@ describe('PaneDropZones drop', () => {
 		expect(notifyCenterFlash).toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }));
 	});
 
-	it('is a no-op when the currently-displayed tab is dropped onto its own view', () => {
-		// The single-view has nothing to pair a self-drop with, so tiling the active
-		// tab onto itself must do nothing. This is the trap that reads as "release does
-		// nothing": to tile you must drag a DIFFERENT (background) tab onto the view.
+	it('offers no drop target when the currently-displayed tab is dragged over its own view', () => {
+		// A tab tiles beside ANOTHER tab, never itself, so dragging the tab that is
+		// already on screen must stay a plain tab-bar reorder: no highlight, no accepted
+		// drop, and therefore no "you can't do that" flash to dismiss.
 		const session = createMockSession({
 			id: 's1',
 			aiTabs: [{ id: 'a', name: 'Alpha', logs: [] }] as never,
@@ -111,17 +119,22 @@ describe('PaneDropZones drop', () => {
 		const overlay = container.firstChild as HTMLElement;
 		// Drag the SAME tab that is on screen (id 'a').
 		const dt = mockDataTransfer({ ref: { type: 'ai', id: 'a' }, source: 'tab-bar' });
-		fireEvent(window, new Event('dragstart'));
-		fireEvent.dragOver(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
+		startDrag(dt);
+		const dragOver = fireEvent.dragOver(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
 		fireEvent.drop(overlay, { dataTransfer: dt, clientX: 10, clientY: 100 });
+
+		// The drag is refused rather than accepted-and-ignored: a prevented dragover is
+		// what makes the cursor promise a drop, so it must NOT be prevented here.
+		expect(dragOver).toBe(true);
+		expect(dt.dropEffect).toBe('none');
+		// No highlight rectangle is painted over the view.
+		expect(overlay.querySelector('div')).toBeNull();
 
 		const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1')!;
 		expect(updated.tabGroups).toHaveLength(0);
 		expect(updated.activeGroupId).toBeNull();
 		expect(onGroupActivated).not.toHaveBeenCalled();
-		// Instead of silently doing nothing, the self-drop now explains why with a
-		// yellow flash telling the user to drag a different tab.
-		expect(notifyCenterFlash).toHaveBeenCalledWith(expect.objectContaining({ color: 'yellow' }));
+		expect(notifyCenterFlash).not.toHaveBeenCalled();
 	});
 
 	// The group path (dropping onto an existing tiled group) can't be driven through
@@ -166,5 +179,91 @@ describe('PaneDropZones drop', () => {
 		expect(leafCount).toBe(3);
 		// The dragged tab moved out of the standalone strip into the group.
 		expect(out.unifiedTabOrder.some((r) => r.id === 'c')).toBe(false);
+	});
+	it('does not arm the overlay synchronously inside dragstart', async () => {
+		// Regression guard. Arming re-renders this component, and doing that
+		// synchronously inside `dragstart` cancels the drag Chromium is still
+		// setting up: the browser fires `dragstart`, then `dragend`, with no drag
+		// session at all. Because the listener is on `window`, that killed EVERY
+		// native drag in the app - a staged-image thumbnail could not be dragged
+		// out of the composer while tab tiling was on screen.
+		//
+		// So the overlay must still be click-through when `dragstart` returns, and
+		// only become a live drop target on a later task.
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [{ id: 'a', name: 'Alpha', logs: [] }] as never,
+			activeTabId: 'a',
+			unifiedTabOrder: [{ type: 'ai', id: 'a' }],
+		});
+		useSessionStore.getState().setSessions([session]);
+
+		const { container } = render(
+			<PaneDropZones
+				session={session}
+				activeGroup={null}
+				activeStandaloneRef={{ type: 'ai', id: 'a' }}
+				activeStandaloneTitle="Alpha"
+				theme={theme}
+				onGroupActivated={vi.fn()}
+			/>
+		);
+		const overlay = container.firstChild as HTMLElement;
+		expect(overlay.className).toContain('pointer-events-none');
+
+		startDrag(mockDataTransfer({ ref: { type: 'ai', id: 'a' }, source: 'tab-bar' }));
+
+		// Synchronously after dragstart the overlay is still inert.
+		expect(overlay.className).toContain('pointer-events-none');
+
+		// ...and it arms on the next macrotask, long before a pointer could reach it.
+		await waitFor(() => expect(overlay.className).not.toContain('pointer-events-none'));
+	});
+	it('never arms for a drag that is not a tab-tiling drag', async () => {
+		// Regression guard. This listener is on `window`, so it sees EVERY native
+		// drag in the app, and an armed overlay spans the whole panel at z-30 -
+		// above the composer. Arming for an unrelated drag makes the overlay
+		// swallow its `dragover`/`drop`: staged-image thumbnails could not be
+		// reordered because every event meant for a tile landed on the overlay
+		// instead. The zones only exist for tiling, so a drag with no tiling
+		// payload must leave them click-through.
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [{ id: 'a', name: 'Alpha', logs: [] }] as never,
+			activeTabId: 'a',
+			unifiedTabOrder: [{ type: 'ai', id: 'a' }],
+		});
+		useSessionStore.getState().setSessions([session]);
+
+		const { container } = render(
+			<PaneDropZones
+				session={session}
+				activeGroup={null}
+				activeStandaloneRef={{ type: 'ai', id: 'a' }}
+				activeStandaloneTitle="Alpha"
+				theme={theme}
+				onGroupActivated={vi.fn()}
+			/>
+		);
+		const overlay = container.firstChild as HTMLElement;
+
+		// A staged-image thumbnail leaving the composer: no tiling payload.
+		const foreign = {
+			types: ['application/x-maestro-staged-image', 'text/plain'],
+			getData: (t: string) => (t === 'application/x-maestro-staged-image' ? '0' : 'Screenshot 1'),
+			setData: () => {},
+			dropEffect: 'none',
+			effectAllowed: 'copyMove',
+		} as unknown as DataTransfer;
+
+		startDrag(foreign);
+
+		// Still inert immediately, and it must STAY inert past the deferred arm the
+		// tiling path uses, so the drop reaches the thumbnail behind it.
+		expect(overlay.className).toContain('pointer-events-none');
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+		expect(overlay.className).toContain('pointer-events-none');
 	});
 });

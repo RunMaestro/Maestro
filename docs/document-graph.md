@@ -34,6 +34,34 @@ After you've opened a Document Graph at least once, a **graph icon** (branch ico
 
 Right-click any markdown file in the File Explorer and select **Document Graph** to open the graph focused on that file.
 
+### From a Folder or a Selection
+
+Right-click a **folder** and choose **Open in Document Graph** to graph every
+markdown file beneath it. Or select several markdown files (`Cmd`/`Ctrl+click`,
+or `Shift+click` for a range), right-click, and choose **Open N in Document
+Graph**.
+
+These open a _scoped_ graph, which answers a different question from the
+single-file graph. A single-file graph walks outward from one document and can
+only ever show what that document reaches. A scoped graph shows exactly the
+files you picked - including the ones that link to nothing, which is the only
+way an unlinked document is visible at all. Links pointing outside the scope
+stay broken rather than dragging their targets in.
+
+The center is picked automatically: whichever document in the scope has the most
+links. Right-click a specific file inside a selection to center on that one
+instead.
+
+### From the Command Line
+
+```bash
+maestro-cli open-graph docs/
+maestro-cli open-graph docs/a.md docs/b.md --focus docs/a.md
+```
+
+See [open-graph](/cli-reference#maestro-cli-open-graph-paths) for the full
+options.
+
 ### Using Go to File
 
 Press `Cmd+G` / `Ctrl+G` to open the fuzzy file finder, navigate to any markdown file, then use `Cmd+Shift+G` to jump to the Document Graph from there.
@@ -45,11 +73,18 @@ The Document Graph is designed for keyboard-first navigation:
 | Action                        | Key                               |
 | ----------------------------- | --------------------------------- |
 | Navigate between nodes        | `Arrow Keys` (spatial detection)  |
-| Recenter view on node         | `Enter` (for document nodes)      |
+| Preview document in-graph     | `Enter` (for document nodes)      |
 | Open external URL             | `Enter` (for external link nodes) |
+| Recenter view on node         | `Space`                           |
 | Open document in File Preview | `O`                               |
+| Cycle layout                  | `L`                               |
+| Widen neighbor depth          | `D`                               |
+| Cycle preview length          | `P`                               |
+| Adjust node spacing           | `+` / `-`                         |
 | Focus search                  | `Cmd/Ctrl+F`                      |
 | Close graph or help panel     | `Esc`                             |
+
+`L` steps through Mind Map, Radial, Hierarchical, and Force, in the same order as the layout dropdown. `D` widens the depth one level per press (1 through 5, then All, then back to 1). `P` steps the preview length through Off, 50, 100, 200, 350, and 500 characters.
 
 ### Mouse Controls
 
@@ -60,6 +95,7 @@ The Document Graph is designed for keyboard-first navigation:
 - **Shift+Scroll** to pan the canvas
 - **Pan** by dragging the background
 - **Mini-map** in the bottom-left corner shows the whole graph; click or drag on it to jump the main view to that spot
+- **Drag the left edge** of the in-graph document preview to make it wider or narrower; the width is remembered. Double-click that edge to restore the default.
 
 ## Graph Controls
 
@@ -74,7 +110,17 @@ Adjust the **Depth** slider to control how many levels of connections are shown 
 - **Depth: 2** - Show connections and their connections (default)
 - **Depth: 3-5** - Show deeper relationship chains
 
-Lower depth values keep the graph focused and improve performance; higher values reveal more of the document ecosystem. The depth can be adjusted from 0 (All) to 5.
+Lower depth values keep the graph focused and improve performance; higher values reveal more of the document ecosystem. The depth can be adjusted from 0 (All) to 5. Press `D` to widen it one level per press without opening the slider.
+
+### Layout
+
+The **layout** dropdown switches how nodes are arranged: Mind Map (tree columns), Radial (concentric rings), Hierarchical (top-down rows), and Force (physics simulation). Press `L` to step through them in that order. Switching layouts clears any nodes you dragged, since those positions belong to the layout they were set in.
+
+### Preview Length
+
+The **Preview** slider sets how much of each document's opening text is drawn inside its node, from 0 up to 500 characters. Press `P` to step through Off, 50, 100, 200, 350, and 500 without opening the slider.
+
+At **Off** a document is drawn as a filename pill - no body box, no preview text, no folder path. That is the densest reading of a large graph: many more nodes fit on screen at once, and the shape of the link structure is what you see instead of the content. Raise the limit again when you want to read what a document is about without opening it.
 
 ### External Links
 
@@ -84,6 +130,22 @@ Toggle **External** to show or hide external URL links found in your documents:
 - **Disabled** - Only internal document relationships are shown
 
 External link nodes help you see which external resources your documentation references.
+
+### Unlinked Documents
+
+In a scoped graph, an **Unlinked N** button appears whenever some of the scoped
+documents connect to nothing else in the scope. They are drawn in a band below
+the graph with a dashed amber border, and the button hides them.
+
+They are shown by default: the reason to graph a hand-picked set is usually to
+find out which of those documents stand alone, so hiding them would hide the
+answer.
+
+"Unlinked" covers two cases, both invisible from the center: a document with no
+links at all, and a small cluster that links only within itself.
+
+This button does not appear on a single-file graph, where an unreachable
+document never becomes a node in the first place.
 
 ### Search
 
@@ -112,6 +174,8 @@ Each document node displays:
 - **Filename** - The document name
 - **Folder indicator** - Shows the parent directory (e.g., "docs")
 - **Content preview** - A snippet of the document's content
+
+With the Preview slider at **Off** (or after pressing `P` around to Off), only the filename remains and each node is drawn as a compact pill.
 
 ## Tips for Effective Use
 
@@ -149,7 +213,12 @@ The Document Graph is especially useful for:
 | Re-open last graph        | Via `Cmd+K` menu | Via `Ctrl+K` menu |
 | Go to File (fuzzy finder) | `Cmd+G`          | `Ctrl+G`          |
 | Navigate nodes            | `Arrow Keys`     | `Arrow Keys`      |
-| Recenter on node          | `Enter`          | `Enter`           |
+| Preview document in-graph | `Enter`          | `Enter`           |
+| Recenter on node          | `Space`          | `Space`           |
 | Open document in preview  | `O`              | `O`               |
+| Cycle layout              | `L`              | `L`               |
+| Widen neighbor depth      | `D`              | `D`               |
+| Cycle preview length      | `P`              | `P`               |
+| Adjust node spacing       | `+` / `-`        | `+` / `-`         |
 | Focus search              | `Cmd+F`          | `Ctrl+F`          |
 | Close graph               | `Esc`            | `Esc`             |

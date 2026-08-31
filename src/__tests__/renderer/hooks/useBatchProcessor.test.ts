@@ -3740,13 +3740,12 @@ describe('useBatchProcessor hook', () => {
 				);
 			});
 
-			// Should have called spawn with cwd override. The 4th arg is the run-scoped
-			// model/effort override, undefined for a run that uses the agent default.
+			// Should have called spawn with cwd override
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
 				'test-session-id',
 				'Test',
 				'/custom/worktree',
-				undefined
+				expect.anything()
 			);
 		});
 	});
@@ -4032,13 +4031,12 @@ describe('useBatchProcessor hook', () => {
 				undefined // sshRemoteId (undefined for local sessions)
 			);
 
-			// Should have spawned agent with worktree path. The 4th arg is the run-scoped
-			// model/effort override, undefined for a run that uses the agent default.
+			// Should have spawned agent with worktree path
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
 				'test-session-id',
 				'Test',
 				'/test/worktree',
-				undefined
+				expect.anything()
 			);
 		});
 
@@ -6394,15 +6392,17 @@ describe('useBatchProcessor hook', () => {
 			});
 		});
 
-		it('passes no overrides at all when the config omits both fields', async () => {
+		it('resolves both axes to undefined when the config omits them', async () => {
 			await startRun({});
 
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
-				'test-session-id',
-				'Test',
-				undefined,
-				undefined
-			);
+			// The document processor always resolves a turn-settings object now (it
+			// has to, to carry a document's model hint), so the 4th argument is
+			// present but empty on both axes. That is what "no override" looks like:
+			// the spawn falls through to the agent's own configured values.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: undefined,
+				effortOverride: undefined,
+			});
 		});
 	});
 });

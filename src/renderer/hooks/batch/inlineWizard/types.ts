@@ -1,4 +1,5 @@
 import type { ExistingDocument } from '../../../utils/existingDocsDetector';
+import type { WizardTabActivity } from '../../../utils/wizardActivity';
 import type { ToolType, ThinkingMode } from '../../../types';
 import type { ConversationCallbacks } from '../../../services/inlineWizardConversation';
 import type { DocumentGenerationCallbacks } from '../../../services/inlineWizardDocumentGeneration';
@@ -202,12 +203,15 @@ export interface UseInlineWizardReturn {
 	/** Check if a specific tab has an active wizard */
 	isWizardActiveForTab: (tabId: string) => boolean;
 	/**
-	 * Map of session IDs (Session.id, not provider session) that have at least one
-	 * tab with the inline wizard active. Value carries an `isGeneratingDocs` flag
-	 * that's true when any such tab is in the Auto Run doc generation phase, so
-	 * the Left Bar indicator can pulse during generation.
+	 * Every tab currently running the inline wizard, keyed by tab id, carrying the
+	 * agent that owns it and whether it's in the Auto Run doc generation phase.
+	 *
+	 * This is the authoritative record of wizard activity - `AITab.wizardState` is a
+	 * render mirror kept only for the active tab. Consumers that show an indicator
+	 * against an AGENT must roll this up through `rollUpWizardActivityToSessions()`
+	 * so the indicator can only light for a tab that's actually open.
 	 */
-	wizardActiveSessions: Map<string, { isGeneratingDocs: boolean }>;
+	wizardActiveTabs: ReadonlyMap<string, WizardTabActivity>;
 	/**
 	 * Start the wizard with intent parsing flow.
 	 */
@@ -237,6 +241,14 @@ export interface UseInlineWizardReturn {
 		callbacks?: ConversationCallbacks,
 		explicitTabId?: string
 	) => Promise<void>;
+	/**
+	 * Stop the turn currently running on a tab, keeping the wizard open.
+	 * Kills the wizard's agent process, discards the pending response, and appends a
+	 * "stopped" note to the conversation so the user can redirect it.
+	 * @param explicitTabId - Tab to stop. Defaults to the last-touched wizard tab.
+	 * @returns true when a turn was actually in flight and got stopped.
+	 */
+	cancelTurn: (explicitTabId?: string) => Promise<boolean>;
 	/**
 	 * Mark the given tab as the "current" wizard.
 	 */

@@ -46,6 +46,96 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: '',
 		category: 'appearance',
 	},
+	chatFontFamily: {
+		description:
+			'Font family for the AI chat transcript, independent of the UI font. Accepts any CSS font-family string. When empty, the chat inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	filePreviewFontFamily: {
+		description:
+			'Font family for rendered file previews, independent of the UI font. Accepts any CSS font-family string. When empty, the preview inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	fileEditorFontFamily: {
+		description:
+			'Font family for the file editor, independent of the UI font. Accepts any CSS font-family string. When empty, the editor inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	chatFontSize: {
+		description:
+			'Font size in px for the AI chat transcript, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	terminalFontSize: {
+		description:
+			'Font size in px for the command terminal, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	filePreviewFontSize: {
+		description:
+			'Font size in px for a file being read, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	fileEditorFontSize: {
+		description:
+			'Font size in px for a file being edited, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	documentGraphFontFamily: {
+		description:
+			'Font family for node titles and previews in the document graph. Empty inherits the interface font; "@terminal" follows the terminal font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	documentGraphFontSize: {
+		description:
+			'Font size in px for document graph node titles, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	fontZoom: {
+		description:
+			'Zoom multiplier applied to every surface font size equally, moved by Cmd/Ctrl+= and Cmd/Ctrl+-. Preserves the relative proportions between surfaces.',
+		type: 'number',
+		default: 1,
+		category: 'appearance',
+	},
+	typographyPromptSeen: {
+		description:
+			'Whether the first-run typography chooser has been shown. False on a fresh install and on any install predating the chooser, which is what shows it to existing users once after the update.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	themePromptSeen: {
+		description:
+			'Whether the first-run theme chooser has been shown. Its own flag rather than one for the whole first-run series, so a later step can be added without re-showing this one.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	agentPowersPromptSeen: {
+		description: 'Whether the "your agents can drive Maestro" first-run step has been shown.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	customFonts: {
 		description: 'List of user-installed custom font names available in the font picker.',
 		type: 'array',
@@ -213,7 +303,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath, delete.',
 		type: 'object',
 		default: {
 			save: true,
@@ -230,6 +320,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			openInDefault: true,
 			revealInFolder: true,
 			copyPath: true,
+			delete: true,
 		},
 		category: 'appearance',
 	},

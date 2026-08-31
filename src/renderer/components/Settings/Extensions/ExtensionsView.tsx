@@ -6,20 +6,30 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { Search, FolderPlus, Puzzle } from 'lucide-react';
+import { Search, FolderPlus, Puzzle, ChevronLeft } from 'lucide-react';
 import type { EncoreFeatureFlags, Theme } from '../../../types';
 import type { ReactNode } from 'react';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { usePersistedChoice } from '../../../hooks/ui/usePersistedChoice';
+import { useGridColumnCount } from '../../../hooks/ui/useGridColumnCount';
+import { useListNavigation } from '../../../hooks/keyboard/useListNavigation';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { useExtensions } from './useExtensions';
-import { ExtensionsGrid } from './ExtensionsGrid';
+import { ExtensionsGrid, ACTIVE_EXTENSION_TILE_SELECTOR } from './ExtensionsGrid';
 import { ExtensionDetails } from './ExtensionDetails';
+import { SegmentedControl } from '../../ui/SegmentedControl';
 import { FirstPartyEnableModal } from './FirstPartyEnableModal';
 import {
 	CATEGORY_FILTERS,
 	CATEGORY_LABELS,
+	EXTENSION_SORT_STORAGE_KEY,
+	EXTENSION_SORT_VALUES,
+	SORT_OPTIONS,
 	filterExtensions,
+	sortExtensions,
 	type CategoryFilter,
+	type ExtensionSort,
+	type UnifiedExtension,
 } from './extensionModel';
 
 interface ExtensionsViewProps {
@@ -51,19 +61,73 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	const [category, setCategory] = useState<CategoryFilter>('all');
 	const [onlyInstalled, setOnlyInstalled] = useState(false);
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	// Remembered rather than reset per visit: which order the grid reads in is a
+	// standing preference, and Settings unmounts this view on every tab switch.
+	const { value: sort, setValue: setSort } = usePersistedChoice<ExtensionSort>(
+		EXTENSION_SORT_STORAGE_KEY,
+		EXTENSION_SORT_VALUES,
+		'name'
+	);
 
 	const visible = useMemo(
-		() => filterExtensions(extensions, { category, onlyInstalled, query }),
-		[extensions, category, onlyInstalled, query]
+		() => sortExtensions(filterExtensions(extensions, { category, onlyInstalled, query }), sort),
+		[extensions, category, onlyInstalled, query, sort]
 	);
 
 	// The selected tile, resolved against the live list so it stays fresh after
 	// enable/disable/uninstall (and disappears if the plugin is removed).
 	const selected = selectedKey ? extensions.find((e) => e.key === selectedKey) : undefined;
 
+	// Keyboard navigation over the tile grid. The active index lives HERE rather
+	// than in the grid because the grid unmounts while the details pane is open -
+	// keeping it here is what lets Escape drop the user back on the tile they
+	// opened instead of resetting them to the first one.
+	// The grid element lives in STATE, not a ref: it unmounts while the details
+	// pane is open, and a ref's `.current` changing is invisible to React - the
+	// column measurement would stay bound to the old, detached grid and read as
+	// a single column for the rest of the visit, quietly turning the row jump
+	// back into a one-tile step.
+	const [gridEl, setGridEl] = useState<HTMLDivElement | null>(null);
+	const columns = useGridColumnCount(gridEl, visible.length);
+	const openDetails = useCallback((ext: UnifiedExtension) => setSelectedKey(ext.key), []);
+
+	const {
+		selectedIndex: activeIndex,
+		setSelectedIndex: setActiveIndex,
+		handleKeyDown: handleGridKeyDown,
+	} = useListNavigation({
+		listLength: visible.length,
+		columns,
+		enablePageNavigation: true,
+		// Enter arrives here rather than through the tile's own click: the hook
+		// calls preventDefault, which suppresses the button's default activation,
+		// so the details pane opens exactly once.
+		onSelect: (index) => {
+			const ext = visible[index];
+			if (ext) openDetails(ext);
+		},
+		enabled: !selected,
+	});
+
+	// Re-sorting renumbers the grid, so carry the keyboard cursor by TILE rather
+	// than by index - otherwise switching to Newest silently moves the ring onto
+	// whatever extension happens to land in that slot.
+	const handleSortChange = useCallback(
+		(next: ExtensionSort) => {
+			const activeKey = visible[activeIndex]?.key;
+			setSort(next);
+			if (!activeKey) return;
+			const nextIndex = sortExtensions(visible, next).findIndex((e) => e.key === activeKey);
+			if (nextIndex >= 0) setActiveIndex(nextIndex);
+		},
+		[visible, activeIndex, setSort, setActiveIndex]
+	);
+
 	// While the details pane is open it owns Escape: back to the grid, not out of
 	// the whole Settings modal. Non-blocking / no focus trap so the rest of
 	// Settings (search, tab switching) keeps working underneath.
+	// Remounting the grid is what restores focus to the tile that was opened -
+	// see ExtensionsGrid's mount-focus effect.
 	const closeDetails = useCallback(() => setSelectedKey(null), []);
 	useModalLayer(MODAL_PRIORITIES.EXTENSION_DETAILS, 'Extension Details', closeDetails, {
 		enabled: Boolean(selected),
@@ -84,9 +148,21 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Plugins
 				</h3>
-				{/* Installing belongs to the marketplace grid, not to one plugin's
-				    details pane - showing it there reads as "install this plugin". */}
-				{!selected && (
+				{/* One header slot, two jobs. Installing belongs to the marketplace
+				    grid, not to one plugin's details pane - shown there it reads as
+				    "install this plugin" - so the details pane spends the slot on the
+				    way back to the grid instead. */}
+				{selected ? (
+					<button
+						type="button"
+						data-testid="extensions-back"
+						onClick={closeDetails}
+						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<ChevronLeft className="w-3.5 h-3.5" /> All plugins
+					</button>
+				) : (
 					<button
 						type="button"
 						data-testid="extensions-install"
@@ -130,7 +206,6 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					ext={selected}
 					contributions={contributions}
 					busy={busyId === selected.id}
-					onBack={closeDetails}
 					onTogglePlugin={togglePlugin}
 					onToggleBuiltin={toggleBuiltin}
 					onUninstall={uninstallPlugin}
@@ -164,8 +239,8 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 						})}
 					</div>
 
-					{/* Search + only-installed */}
-					<div className="flex items-center gap-2 mb-4">
+					{/* Search + sort + only-installed */}
+					<div className="flex items-center gap-2 mb-4 flex-wrap">
 						<div
 							className="flex items-center gap-2 flex-1 px-2.5 py-1.5 rounded-lg border"
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -176,10 +251,30 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 								data-testid="extensions-search"
 								value={query}
 								onChange={(e) => setQuery(e.target.value)}
+								onKeyDown={(e) => {
+									// Down out of the search box is the way into the grid without
+									// reaching for Tab, which has to cross the only-installed toggle.
+									if (e.key !== 'ArrowDown') return;
+									e.preventDefault();
+									gridEl?.querySelector<HTMLButtonElement>(ACTIVE_EXTENSION_TILE_SELECTOR)?.focus();
+								}}
 								placeholder="Search extensions…"
 								className="bg-transparent flex-1 text-sm outline-none"
 								style={{ color: theme.colors.textMain }}
 								aria-label="Search extensions"
+							/>
+						</div>
+						<div className="flex items-center gap-1.5 flex-shrink-0">
+							<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								Sort
+							</span>
+							<SegmentedControl
+								value={sort}
+								onChange={handleSortChange}
+								options={SORT_OPTIONS}
+								theme={theme}
+								ariaLabel="Sort extensions"
+								testId="extensions-sort"
 							/>
 						</div>
 						<button
@@ -213,7 +308,11 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					<ExtensionsGrid
 						theme={theme}
 						extensions={visible}
-						onSelect={(ext) => setSelectedKey(ext.key)}
+						onSelect={openDetails}
+						activeIndex={activeIndex}
+						onActiveIndexChange={setActiveIndex}
+						onKeyDown={handleGridKeyDown}
+						onGridElement={setGridEl}
 					/>
 				</>
 			)}

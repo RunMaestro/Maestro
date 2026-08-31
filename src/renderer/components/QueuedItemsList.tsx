@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, memo } from 'react';
+import React, { useState, useCallback, useEffect, useRef, memo } from 'react';
 import {
 	X,
 	ChevronDown,
@@ -12,12 +12,15 @@ import {
 	ImageIcon,
 } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
-import type { BusyTabSummary } from '../utils/executionQueue';
+import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
+import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { TurnSettingPills } from './ui/TurnSettingPills';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useUIStore } from '../stores/uiStore';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -56,10 +59,7 @@ interface QueuedItemsListProps {
 	// Lookup for tab state/name used by the Force Send button + confirm modal.
 	// Returns the tab's current busy state, the other tabs currently busy in the
 	// same agent, and the item's own target tab display name.
-	getForceSendContext?: (item: QueuedItem) => {
-		targetTabBusy: boolean;
-		otherBusyTabs: BusyTabSummary[];
-	} | null;
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	// Whether this list answers the global Force Send keyboard shortcut. Defaults
 	// to true (the single-view chat is the only list on screen). A tiled group
 	// renders one list per AI pane, so only the focused pane's list opts in -
@@ -106,8 +106,11 @@ export const QueuedItemsList = memo(
 		// Force Send confirmation state
 		const [forceSendConfirmId, setForceSendConfirmId] = useState<string | null>(null);
 
-		// Edit-message modal state (holds the id of the item being edited)
-		const [editItemId, setEditItemId] = useState<string | null>(null);
+		// Edit-message modal state (holds the id of the item being edited). Kept in
+		// uiStore rather than local state so the "Edit Last Queued Message"
+		// shortcut can open this modal without reaching into the transcript.
+		const editItemId = useUIStore((s) => s.editingQueuedItemId);
+		const setEditItemId = useUIStore((s) => s.setEditingQueuedItemId);
 
 		// Track which queued messages are expanded (for viewing full content)
 		const [expandedQueuedMessages, setExpandedQueuedMessages] = useState<Set<string>>(new Set());
@@ -120,6 +123,19 @@ export const QueuedItemsList = memo(
 		// Refs for confirm-button focus management in confirmation modals
 		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
 		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+
+		// A queued item can be dispatched or removed while its edit modal is open
+		// (or while this list is unmounted). Drop the id once the item leaves the
+		// queue so the modal closes instead of lingering as dead state.
+		//
+		// This checks the WHOLE queue, not this tab's slice: "Edit Last Queued
+		// Message" can target a message on another tab and switch to it, and
+		// clearing on the filtered list would race that switch and cancel the open.
+		// Not being on this tab means "not visible yet", not "gone".
+		const editItemMissing = !!editItemId && !executionQueue.some((item) => item.id === editItemId);
+		useEffect(() => {
+			if (editItemMissing) setEditItemId(null);
+		}, [editItemMissing, setEditItemId]);
 
 		// Can only drag if we have reorder handler and more than 1 item
 		const canDrag = !!onReorderItems && filteredQueue.length > 1;
@@ -188,8 +204,13 @@ export const QueuedItemsList = memo(
 			for (let i = filteredQueue.length - 1; i >= 0; i--) {
 				const item = filteredQueue[i];
 				if (item.forceParallel) continue;
+				// Ask the shared helper, not the busy-tab shape of it. The old test
+				// skipped any item with an idle target and nothing else running -
+				// exactly the case where force send is ALWAYS allowed - so the
+				// shortcut was dead on a quiet agent, which is when a user is most
+				// likely to reach for it.
 				const ctx = getForceSendContext(item);
-				if (!ctx || ctx.targetTabBusy || ctx.otherBusyTabs.length === 0) continue;
+				if (!ctx?.canForce) continue;
 				setForceSendConfirmId(item.id);
 				return;
 			}
@@ -227,21 +248,24 @@ export const QueuedItemsList = memo(
 				{/* Queued items (wrapped so drop-indicator lines align to the cards) */}
 				<div className="mx-6">
 					{filteredQueue.map((item, index) => {
-						// Force Send visibility: setting enabled, item not already forceParallel,
-						// a handler is wired, the target tab is idle (force-parallel only helps
-						// when *this* tab can dispatch), and at least one other tab is busy
-						// (otherwise nothing to bypass).
+						// Ask for eligibility whenever a handler is wired and the item is
+						// not already flagged to run in parallel. `forcedParallelEnabled` is
+						// deliberately NOT a gate here: it is one of the inputs the shared
+						// helper weighs, and gating on it up front hid the button in every
+						// case where force send is allowed without it - jumping the queue
+						// order, or releasing a held item on an otherwise idle agent.
 						const forceSendContext =
-							forcedParallelEnabled &&
-							onForceSendQueuedItem &&
-							getForceSendContext &&
-							!item.forceParallel
+							onForceSendQueuedItem && getForceSendContext && !item.forceParallel
 								? getForceSendContext(item)
 								: null;
-						const showForceSendButton =
-							!!forceSendContext &&
-							!forceSendContext.targetTabBusy &&
-							forceSendContext.otherBusyTabs.length > 0;
+						// Same rule as the Execution Queue modal, deliberately - see
+						// shouldOfferForceSend for why a busy target tab hides the button
+						// rather than dimming it.
+						const showForceSendButton = shouldOfferForceSend(forceSendContext);
+						const canForceSend = !!forceSendContext?.canForce;
+						const forceSendTitle = forceSendContext
+							? getForceSendTitle(forceSendContext)
+							: undefined;
 
 						return (
 							<React.Fragment key={item.id}>
@@ -274,6 +298,8 @@ export const QueuedItemsList = memo(
 											: undefined
 									}
 									showForceSendButton={showForceSendButton}
+									canForceSend={canForceSend}
+									forceSendTitle={forceSendTitle}
 									onForceSend={() => setForceSendConfirmId(item.id)}
 									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
@@ -364,7 +390,7 @@ export const QueuedItemsList = memo(
 												className="inline-block w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.warning }}
 											/>
-											<span className="font-mono">{tab.displayName}</span>
+											<span>{tab.displayName}</span>
 										</li>
 									))}
 								</ul>
@@ -418,6 +444,10 @@ interface QueuedItemRowProps {
 	onCopy: () => void;
 	onEdit?: () => void;
 	showForceSendButton: boolean;
+	/** False when the item cannot be forced right now - button renders disabled. */
+	canForceSend: boolean;
+	/** Why it can or cannot be forced. Shown as the button's tooltip. */
+	forceSendTitle?: string;
 	onForceSend: () => void;
 	onTogglePause?: () => void;
 	onRequestRemove: () => void;
@@ -441,6 +471,8 @@ function QueuedItemRow({
 	onCopy,
 	onEdit,
 	showForceSendButton,
+	canForceSend,
+	forceSendTitle,
 	onForceSend,
 	onTogglePause,
 	onRequestRemove,
@@ -612,25 +644,49 @@ function QueuedItemRow({
 				)}
 
 				{/* Bottom footer: Force Send anchored bottom-left, control
-				    buttons anchored bottom-right (always visible). mt-auto
-				    pushes the row to the bottom of the flex column. */}
-				<div className={`mt-auto pt-2 flex items-center gap-2 ${canDrag ? 'pl-4' : ''}`}>
-					{showForceSendButton && (
-						<button
-							onClick={onForceSend}
-							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium hover:opacity-80 transition-opacity"
-							style={{
-								backgroundColor: theme.colors.warning + '33',
-								color: theme.colors.warning,
-							}}
-							title="Force send this message now (skips cross-tab wait)"
-						>
-							<Hammer className="w-3.5 h-3.5" />
-							Force Send
-						</button>
-					)}
+				    buttons anchored bottom-right (always visible), model/effort
+				    pills centered between them. mt-auto pushes the row to the
+				    bottom of the flex column. The three-column grid is what puts
+				    the pills on the card's true center line the way the finished
+				    turn's pills sit on the message's: the outer columns are equal
+				    1fr tracks, so the middle one stays centered no matter how wide
+				    the Force Send button or the control cluster gets, and nothing
+				    overlaps the way an absolutely-positioned center would. */}
+				<div
+					className={`mt-auto pt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 ${canDrag ? 'pl-4' : ''}`}
+				>
+					<div className="flex items-center gap-2 min-w-0">
+						{showForceSendButton && (
+							<button
+								onClick={onForceSend}
+								disabled={!canForceSend}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80 disabled:cursor-default"
+								style={{
+									backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
+									color: theme.colors.warning,
+									opacity: canForceSend ? 1 : 0.5,
+								}}
+								title={forceSendTitle}
+							>
+								<Hammer className="w-3.5 h-3.5" />
+								Force Send
+							</button>
+						)}
+					</div>
 
-					<div className="ml-auto flex items-center gap-1">
+					{/* What this item will actually run under. The queue can sit through
+					    any number of model/effort changes, so naming the frozen values
+					    here is the only way the user can tell which pending message is
+					    on the big model. Same pills the finished turn gets. */}
+					<div className="flex items-center justify-center gap-1 min-w-0">
+						<TurnSettingPills
+							theme={theme}
+							model={item.turnSettings?.model}
+							effort={item.turnSettings?.effort}
+						/>
+					</div>
+
+					<div className="flex items-center justify-end gap-1">
 						{/* Edit button */}
 						{onEdit && (
 							<button

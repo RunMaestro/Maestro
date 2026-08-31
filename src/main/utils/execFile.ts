@@ -2,6 +2,9 @@ import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { isWindows } from '../../shared/platformDetection';
+// Cycle-safe: processTree only reaches back into this module from inside its
+// own function bodies, so neither module's top level depends on the other.
+import { killProcessTreeNow } from './processTree';
 
 const execFileAsync = promisify(execFile);
 
@@ -82,6 +85,61 @@ export function needsWindowsShell(command: string): boolean {
 }
 
 /**
+ * Keyed by `keyof ExecOptions` so adding a field to the interface without
+ * listing it here is a compile error, not a silent misclassification.
+ */
+const EXEC_OPTIONS_FIELD_NAMES: Record<keyof ExecOptions, true> = {
+	input: true,
+	timeout: true,
+	env: true,
+};
+const EXEC_OPTIONS_FIELDS = new Set(Object.keys(EXEC_OPTIONS_FIELD_NAMES));
+
+/**
+ * Distinguish the legacy `options: NodeJS.ProcessEnv` signature from the
+ * structured `ExecOptions` form. Key presence alone is ambiguous - a real
+ * environment variable can be named `input`, `timeout`, or `env` - and value
+ * type alone isn't enough either: a real ExecOptions.input and a same-named
+ * env var are both strings, and `{ timeout: undefined }` is valid
+ * ExecOptions that no type check can distinguish from "key absent".
+ *
+ * What actually is unambiguous: every real caller's legacy env dict carries
+ * other environment variables alongside anything that happens to collide
+ * with a reserved name (PATH, HOME, ... - checked against every call site in
+ * this codebase). So if literally every key present is one of the three
+ * ExecOptions fields, it cannot be a real environment - a lone `{ input:
+ * 'x' }` is ExecOptions, but `{ input: 'x', PATH: '/bin' }` is a legacy env
+ * dict that happens to define a var called `input`. Combined with the
+ * value-shape checks (which still catch the case where an ExecOptions value
+ * is typed but sits alongside a field this function doesn't know about) that
+ * closes the gap for both known collision shapes.
+ */
+function resolveExecOptions(options: ExecOptions | NodeJS.ProcessEnv | undefined): {
+	env: NodeJS.ProcessEnv | undefined;
+	input: string | undefined;
+	timeout: number | undefined;
+} {
+	if (!options) {
+		return { env: undefined, input: undefined, timeout: undefined };
+	}
+
+	const opts = options as ExecOptions;
+	const keys = Object.keys(opts);
+	const allKeysAreExecOptionsFields =
+		keys.length > 0 && keys.every((k) => EXEC_OPTIONS_FIELDS.has(k));
+	const isExecOptions =
+		allKeysAreExecOptionsFields ||
+		('timeout' in opts && typeof opts.timeout === 'number') ||
+		('env' in opts && opts.env !== null && typeof opts.env === 'object');
+
+	if (isExecOptions) {
+		return { env: opts.env, input: opts.input, timeout: opts.timeout };
+	}
+	// Legacy signature: the whole object is the env to use.
+	return { env: options as NodeJS.ProcessEnv, input: undefined, timeout: undefined };
+}
+
+/**
  * Safely execute a command without shell injection vulnerabilities
  * Uses execFile instead of exec to prevent shell interpretation
  *
@@ -99,23 +157,7 @@ export async function execFileNoThrow(
 	cwd?: string,
 	options?: ExecOptions | NodeJS.ProcessEnv
 ): Promise<ExecResult> {
-	// Handle backward compatibility: options can be env (old signature) or ExecOptions (new)
-	let env: NodeJS.ProcessEnv | undefined;
-	let input: string | undefined;
-	let timeout: number | undefined;
-
-	if (options) {
-		if ('input' in options || 'timeout' in options || 'env' in options) {
-			// New signature with ExecOptions
-			const execOpts = options as ExecOptions;
-			input = execOpts.input;
-			timeout = execOpts.timeout;
-			env = execOpts.env;
-		} else {
-			// Old signature with just env
-			env = options as NodeJS.ProcessEnv;
-		}
-	}
+	const { env, input, timeout } = resolveExecOptions(options);
 
 	// If input is provided, use spawn instead of execFile to write to stdin
 	if (input !== undefined) {
@@ -270,7 +312,8 @@ export function execFileStreaming(
 	const result = new Promise<ExecResult>((resolve) => {
 		// Spawn failures emit both 'error' and 'close'. Prefer the errno from
 		// 'error' (ENOENT, EACCES, ...) over close's platform-specific sentinel
-		// (null / -2 / 1), which would otherwise win the Promise race.
+		// (null / -2 / 1), which would otherwise win the Promise race. That is why
+		// 'close' is registered LAST in this block - do not hoist it.
 		let spawnErr: NodeJS.ErrnoException | undefined;
 		let settled = false;
 
@@ -279,6 +322,16 @@ export function execFileStreaming(
 			settled = true;
 			resolve(payload);
 		};
+
+		// A cancelled run resolves on `exit`, not `close`. `close` waits for every
+		// copy of the stdio pipes to be released, and a grandchild that inherited
+		// them (a pre-push hook, say) can hold them open past the kill. The tree
+		// kill takes those grandchildren too, but this makes Cancel independent of
+		// whether the OS finished tearing the pipes down.
+		child.on('exit', () => {
+			if (!cancelled) return;
+			settle({ stdout, stderr, exitCode: 'SIGTERM' });
+		});
 
 		child.on('error', (err) => {
 			spawnErr = err as NodeJS.ErrnoException;
@@ -303,7 +356,11 @@ export function execFileStreaming(
 		result,
 		cancel: () => {
 			cancelled = true;
-			child.kill();
+			// SIGTERM to the direct child is not enough: `git push` runs its hooks
+			// as children, so signalling git alone leaves a pre-push test suite
+			// running and the transfer neither dead nor finished. Kill the tree.
+			if (child.pid) killProcessTreeNow(child.pid, { label: `exec:${command}` });
+			else child.kill();
 		},
 	};
 }

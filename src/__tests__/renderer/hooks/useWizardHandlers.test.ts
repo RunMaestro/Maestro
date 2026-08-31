@@ -1611,8 +1611,10 @@ describe('useWizardHandlers', () => {
 			expect(summaryLog!.text).toContain('1 document');
 			expect(summaryLog!.text).toContain('2 tasks');
 
-			// endInlineWizard should be called
-			expect(deps.inlineWizardContext.endWizard).toHaveBeenCalled();
+			// endInlineWizard must name the tab it completed. Falling back to the hook's
+			// last-touched wizard ends someone else's, leaving this one registered on a
+			// tab that no longer shows a wizard - a permanent wand in the Left Bar.
+			expect(deps.inlineWizardContext.endWizard).toHaveBeenCalledWith(tab.id);
 
 			// Should refresh auto run and clear input
 			expect(deps.handleAutoRunRefreshRef.current).toHaveBeenCalled();

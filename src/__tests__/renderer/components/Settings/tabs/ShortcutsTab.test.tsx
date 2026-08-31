@@ -254,6 +254,31 @@ describe('ShortcutsTab', () => {
 		});
 	});
 
+	it('refuses Cmd+Shift+Down, which the OS owns for extending a text selection', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		const shortcutButton = screen.getByText('Meta+n');
+		fireEvent.click(shortcutButton);
+
+		fireEvent.keyDown(shortcutButton, {
+			key: 'ArrowDown',
+			code: 'ArrowDown',
+			metaKey: true,
+			shiftKey: true,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		});
+
+		// Nothing else is bound to it, so the conflict check would have accepted
+		// it. The reserved-combo guard is the only thing standing in the way.
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		expect(screen.getByText(/reserved by the system/)).toBeInTheDocument();
+	});
+
 	it('should record tab shortcuts with setTabShortcuts', async () => {
 		render(<ShortcutsTab theme={mockTheme} />);
 
@@ -460,5 +485,62 @@ describe('ShortcutsTab', () => {
 
 		expect(screen.queryByText('General')).not.toBeInTheDocument();
 		expect(screen.queryByText('AI Tab')).not.toBeInTheDocument();
+	});
+});
+
+/**
+ * Unbound shortcuts: an action can ship with `keys: []` so the user assigns
+ * their own chord (the tile-below family for AI, browser, and file tabs).
+ * `formatShortcutKeys([])` is an empty string, which would render as a blank
+ * button nobody can tell is clickable, so the row must read "Not set" and stay
+ * recordable. Lives in its own describe because the shared mock's counts are
+ * asserted elsewhere.
+ */
+describe('ShortcutsTab unbound shortcuts', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		mockShortcuts['tile-ai'] = { id: 'tile-ai', label: 'Tile New AI Chat Below', keys: [] };
+	});
+
+	afterEach(() => {
+		delete mockShortcuts['tile-ai'];
+		vi.useRealTimers();
+		vi.clearAllMocks();
+	});
+
+	it('labels a shortcut with no keys as "Not set"', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		expect(screen.getByText('Tile New AI Chat Below')).toBeInTheDocument();
+		expect(screen.getByText('Not set')).toBeInTheDocument();
+	});
+
+	it('records a chord onto an unbound shortcut', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		const button = screen.getByText('Not set');
+		fireEvent.click(button);
+		expect(screen.getByText('Press keys...')).toBeInTheDocument();
+
+		fireEvent.keyDown(button, {
+			key: 'y',
+			metaKey: true,
+			shiftKey: true,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		});
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'tile-ai': { ...mockShortcuts['tile-ai'], keys: ['Meta', 'Shift', 'y'] },
+		});
 	});
 });

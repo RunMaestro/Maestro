@@ -33,6 +33,8 @@ Use markdown checkboxes in your documents:
 
 **Tip**: Press `Cmd+L` (Mac) or `Ctrl+L` (Windows/Linux) to quickly insert a new checkbox at your cursor position.
 
+**Ticking a box by hand**: in the Auto Run panel's rendered preview, click a checkbox to toggle it and the document is rewritten on disk - useful for marking something you finished yourself, or for re-arming a task by unticking it. The boxes are read-only while an Auto Run is executing that document, matching its disabled editor.
+
 ### Task Granularity: Two Approaches
 
 There are two viable ways to structure work across Auto Run documents. Pick the one that fits your project - they can also coexist.
@@ -80,6 +82,28 @@ Auto Run supports running multiple documents in sequence:
 The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.
 
 The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`. See [CLI](cli.md#per-run-model-override).
+
+### Staging Documents from the Files Tab
+
+The Auto Run folder shows up in the **Files** tab like any other directory, so a
+run list is one right-click away. Right-click anything inside the agent's Auto
+Run folder and choose **Stage Documents for Auto Run**:
+
+- **A folder** stages every document beneath it, nested subfolders included.
+- **A single markdown file** stages just that document.
+- **A multi-selection** stages every document in it. Select the files
+  (`Cmd`/`Ctrl`-click or `Shift`-click), then right-click one of them.
+  Right-clicking a row _outside_ the selection stages only that row instead.
+
+The run configuration modal opens with those documents already queued, in the
+same order the Auto Run dropdown lists them - not the order you selected them.
+From there it is the ordinary modal: reorder, duplicate, set per-document
+options, then **Go**.
+
+The entry only appears when something under the cursor actually resolves to an
+Auto Run document, and it counts what it will stage ("Stage 6 Documents for Auto
+Run"). An empty folder, a non-markdown file, or anything outside the Auto Run
+folder offers nothing.
 
 ## Fresh Context: Task vs Document
 
@@ -181,6 +205,8 @@ The runner will:
 
 While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
 
+Thoughts are buffered from the moment the agent starts thinking, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+
 It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
 
 - **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
@@ -188,15 +214,19 @@ It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flo
 - **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
 - **Search** - filter the captured thoughts with the search box; matches are highlighted.
 
-The button doubles as the live indicator: while capturing it pulses and reads **Capturing**.
+The button highlights once there are buffered thoughts waiting to be read, and its tooltip gives the count.
 
-**Open, minimize, close:**
+**Open, close, clear:**
 
-- **Open** starts capturing for that agent and shows the panel.
-- **Minimize** collapses the panel but **keeps capturing** in the background, so you can reopen it later and review everything since you opened it.
-- **Close** stops capturing and clears that agent's buffer.
+- **Open** shows the panel, already backfilled with everything the agent has thought so far.
+- **Close** (the X, or Escape) hides the panel and keeps recording, so reopening it later still has the run's history.
+- **Clear** (the trash icon) is the only thing that discards a buffer.
 
-Capture is in-memory only - it does not survive an app restart, and the buffer is bounded so a long run can't grow memory without limit (the oldest thoughts are dropped once the cap is reached, noted as "trimmed" in the panel header). Running several Auto Runs at once? Each agent captures into its own independent stream; opening the panel for one agent never mixes in another's thoughts.
+There is no minimize. It used to mean "hide the panel but keep capturing," which is what closing does now. The panel takes no keyboard focus, so your shortcuts keep working while it is open.
+
+Once a run finishes, the Right Panel's run card goes away and takes its **View Thoughts** button with it. The buffer outlives the run, so a **Thoughts** button appears at the bottom of the Auto Run panel for as long as there is something buffered to read.
+
+Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: thoughts per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 
 ## Session Isolation
 
@@ -252,7 +282,7 @@ For editing complex Auto Run documents, use the **Expanded Editor** - a fullscre
 **To open the Expanded Editor:**
 
 - Click the **expand icon** (↗️) in the top-right corner of the Auto Run panel
-- Or press `Cmd+Shift+E` (Mac) / `Ctrl+Shift+E` (Windows/Linux) to toggle - works from anywhere in the interface, even when the Auto Run panel is closed
+- Or press `Cmd+Shift+3` (Mac) / `Ctrl+Shift+3` (Windows/Linux) to toggle - works from anywhere in the interface, even when the Auto Run panel is closed
 - Or open the Command Palette (`Cmd+K`) and pick **Auto Run Expanded Preview**
 
 ![Expanded Auto Run Editor](./screenshots/autorun-expanded.png)
@@ -267,7 +297,7 @@ The Expanded Editor provides:
 
 Click **Collapse** or press `Esc` to return to the sidebar panel view.
 
-> **Maestro Pro Tip - a scratch pad from anywhere:** Because `Cmd+Shift+E` and the Command Palette open the Expanded Editor from anywhere (the Auto Run panel doesn't need to be open), it doubles as an always-available scratch pad. Keep a throwaway document in your Auto Run folder and, as ideas surface mid-session, pop open the editor and jot down tasks you want to kick off later. When you wrap up your interactive work, run that document to dispatch the whole batch at once.
+> **Maestro Pro Tip - a scratch pad from anywhere:** Because `Cmd+Shift+3` and the Command Palette open the Expanded Editor from anywhere (the Auto Run panel doesn't need to be open), it doubles as an always-available scratch pad. Keep a throwaway document in your Auto Run folder and, as ideas surface mid-session, pop open the editor and jot down tasks you want to kick off later. When you wrap up your interactive work, run that document to dispatch the whole batch at once.
 
 ## Saving Documents
 
@@ -278,6 +308,104 @@ Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the *
 ## Image Support
 
 Paste images directly into your documents. Images are saved to an `images/` subfolder with relative paths for portability.
+
+## Model Tier and Effort
+
+Most playbooks change gears partway through. Surveying an existing codebase is cheap, mechanical work; designing the migration that follows is not. Rather than running everything at one setting, a marker sets the model tier and effort level:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Summarize the current request flow
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
+```
+
+That document runs three tasks cheaply, one expensively, and the fourth back at the cheap setting. Both attributes take `low`, `medium`, or `high`, and both are optional:
+
+| Attribute | Controls                   | Values                             |
+| --------- | -------------------------- | ---------------------------------- |
+| `tier`    | Which model runs the task  | `low`, `medium`, `high`, `default` |
+| `effort`  | How hard that model thinks | `low`, `medium`, `high`, `default` |
+
+### Placement is the scope
+
+| Where you put the marker  | What it covers                                        |
+| ------------------------- | ----------------------------------------------------- |
+| On its own line           | Everything below it, until the next standalone marker |
+| At the end of a task line | That one task; the next task reverts                  |
+
+So there are three useful scopes from two placements:
+
+- **Whole document** - one standalone marker above the first task.
+- **A phase** - a standalone marker under each section heading. Each one takes over where the previous left off.
+- **A single task** - an inline marker on that task's line. When the task finishes, whatever was in effect before takes back over.
+
+Markers render as nothing in the Auto Run panel (they are HTML comments), so a task with an inline hint still reads as plain task text.
+
+### The two layer per axis
+
+An inline marker only overrides the axes it names. Given a document-wide `tier="low" effort="high"`, a task marked `<!-- MAESTRO:MODEL tier="high" -->` runs at high tier **and** high effort - it inherits the effort rather than resetting it. Use `default` to push one axis explicitly back to the agent's own configuration:
+
+```markdown
+<!-- MAESTRO:MODEL tier="high" effort="high" -->
+
+- [ ] Design the caching layer
+- [ ] Rename the config keys <!-- MAESTRO:MODEL tier="default" effort="default" -->
+```
+
+### Markers in per-document mode
+
+In per-task mode each dispatch is one task, so a marker is honored on the task it names and nothing special happens.
+
+Per-document mode hands the agent the whole file in one run, and a run has one model. When the document changes settings partway down, Auto Run stops the dispatch at that boundary instead: the agent is told to complete only the tasks that share the current settings, and the runner comes straight back around with the next set resolved fresh. A document with a `low` header and one inline `high` task therefore runs as two dispatches, at two different models, without you splitting the file.
+
+A document that names no markers - which is every playbook written before this feature - is unaffected. It is still a single whole-document dispatch, with the same prompt text it has always had.
+
+The boundary is measured on the resolved model and effort, not on the words. On a provider with no tier table (Codex, Copilot-CLI, OpenCode), `tier="low"` and `tier="high"` both fall back to the agent's own model, so they resolve to the same settings and the run is not split. Ending one dispatch to start another at an identical configuration would cost a turn and buy nothing.
+
+### `low`, `medium`, and `high` are positions, not literal values
+
+The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's effort ladder runs `low, medium, high, xhigh, max`, so:
+
+| You write         | Claude Code sends | Codex sends |
+| ----------------- | ----------------- | ----------- |
+| `effort="low"`    | `low`             | `minimal`   |
+| `effort="medium"` | `high`            | `medium`    |
+| `effort="high"`   | `max`             | `xhigh`     |
+
+Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
+
+### Provider support
+
+| Provider      | Model tier              | Effort |
+| ------------- | ----------------------- | ------ |
+| Claude Code   | Yes (haiku/sonnet/opus) | Yes    |
+| Factory Droid | Yes                     | Yes    |
+| Codex         | Agent default           | Yes    |
+| Copilot-CLI   | Agent default           | Yes    |
+| OpenCode      | Agent default           | None   |
+
+Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
+
+### When to reach for it
+
+Use a hint when a task's cost and its difficulty are genuinely mismatched. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs **less** than running the whole playbook at the default.
+
+Do not decorate every task. A document with a marker on all ten says nothing about which two actually matter, and omitting markers entirely is the right default - every task then uses the agent's own configured model and effort.
+
+Hints are re-read before every task, so editing a marker while a playbook is running takes effect on the next task. There is no cached state to reset. Markers inside fenced code blocks are ignored, so a playbook can document this syntax without changing its own behavior.
+
+### Synopses always run cheap
+
+The per-task synopsis is pinned to the cheapest model and lowest effort regardless of what the task itself ran at, and the same applies to the synopsis after a regular AI chat turn. A synopsis summarizes work that already happened, so paying premium rates for a few sentences of prose is waste - on a long playbook that is one expensive turn per task. There is nothing to configure.
+
+## Provider Outages During a Run
+
+A run does not die because the provider had a bad minute. If a task fails on `529 Overloaded` or a spent plan quota, [Agent Resilience](/agent-resilience) parks the loop, waits out the backoff (for a quota failure, until the real reset time), and resumes the run from where it stopped. You get a **Auto Run: retrying** toast and a History entry recording the outage, rather than a run that quietly stalled overnight.
+
+Cancel the auto-retry from the status card in the transcript and the usual resume, skip, and abort controls come back. Resilience is on by default per agent; batches launched from `maestro-cli` do not auto-retry.
 
 ## Stopping the Runner
 
@@ -298,6 +426,31 @@ If an agent pauses mid-run because it hit a provider limit (a rate, token, or cr
 How it decides to resume: for Claude it reads your actual plan usage and only resumes when credits are genuinely available again; for every other provider (and Claude on an SSH remote) it simply retries on the interval - if the limit is still in force the agent re-pauses and the next check tries again. Probing is cheap, so it keeps trying the whole window.
 
 This survives a full app restart. If you reboot while an agent is limit-paused, Maestro restores the pause and resumes the **agent's conversation** (it continues from its own transcript) and drains any work you had queued. One caveat: the Auto Run / Goal-Driven **loop controller** does not survive a restart - the agent session and its queued messages resume, but the orchestration loop that was stepping through your document does not pick back up automatically. Manually resolving the error, or manually resuming or stopping the agent, always takes precedence and cancels auto-resume for that agent.
+
+## Marker Pills
+
+Every Maestro marker is an HTML comment, which means it renders as nothing. That is right for the file - other markdown tools ignore it, and an agent editing the document leaves it alone - but it is wrong for you. Two of the three markers do not merely change how a run behaves, they stop it:
+
+- A leftover **HITL gate** pauses every re-run until the box below it is ticked.
+- A leftover **halt marker** makes Auto Run refuse to start at all.
+
+Both present the same way: you press **Run** and nothing happens, with the cause sitting in text the panel does not draw.
+
+So Maestro renders each marker as a small pill wherever the document is previewed - the Auto Run panel, the file preview, the wizard's document editor, and the Playbook Exchange preview. The pill says what the marker **does**, not what it is called:
+
+| Pill                          | Meaning                                                           |
+| ----------------------------- | ----------------------------------------------------------------- |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.      |
+| ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                   |
+| ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it. |
+| ◆ **high model, high effort** | A live model hint governing the next task.                        |
+| ◆ **Unknown setting**         | A misspelled value. It will be ignored at run time.               |
+
+A pill carries the marker's reason text alongside it, so a gate reads as "Pauses here - Add STRIPE_SECRET_KEY to .env" rather than making you go find out why.
+
+Pills reflect **state, not just presence**. A gate above an unchecked task and a gate above a checked one are nearly identical in the source, but only the first will stop your run, so only the first is drawn as live. Markers inside fenced code blocks draw no pill at all, which is why the examples throughout this page render as plain text.
+
+Marker pills appear only on document surfaces. An agent that mentions the marker syntax in a chat message is describing a marker, not configuring one, so that text keeps rendering as ordinary prose.
 
 ## Halt Marker (Agent Early Exit)
 

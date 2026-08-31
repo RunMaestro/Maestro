@@ -109,8 +109,27 @@ export async function runExitSynopsis(
 						sessionId: synopsisData.sessionId,
 						agentSessionId: synopsisData.agentSessionId,
 						hasResponse: !!result.response,
+						error: result.error,
 					}
 				);
+				// Say so rather than going quiet. The usual cause is a transcript
+				// too long to resume, which repeats on every turn until the user
+				// starts a fresh tab - and the History entry they are waiting for
+				// never arrives. `lastSynopsisTime` is deliberately NOT stamped
+				// here, so the next successful synopsis still covers this turn.
+				if (result.error) {
+					notifyToast({
+						color: 'yellow',
+						title: 'Synopsis failed',
+						message: result.error,
+						group: synopsisData.groupName,
+						project: synopsisData.projectName,
+						sessionId: synopsisData.sessionId,
+						tabId: synopsisData.tabId,
+						tabName: synopsisData.tabName,
+						skipCustomNotification: true,
+					});
+				}
 			}
 			return;
 		}

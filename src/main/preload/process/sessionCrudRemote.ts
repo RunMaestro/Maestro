@@ -7,17 +7,25 @@ export function createSessionCrudRemoteApi() {
 		 * agent in a git worktree branched off a parent agent, without Auto Run.
 		 */
 		onRemoteCreateWorktreeSession: (
-			callback: (parentSessionId: string, config: any, responseChannel: string) => void
+			callback: (
+				parentSessionId: string,
+				config: any,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				parentSessionId: string,
 				config: any,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => {
 				try {
 					// callback may return a promise even though typed as void
-					Promise.resolve(callback(parentSessionId, config, responseChannel)).catch((error) => {
+					Promise.resolve(
+						callback(parentSessionId, config, responseChannel, background === true)
+					).catch((error) => {
 						ipcRenderer.send(responseChannel, {
 							success: false,
 							error: error instanceof Error ? error.message : String(error),

@@ -94,6 +94,15 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
+// Spy on the query-event write buffer so `close()`'s flush is observable.
+// Everything else in the module stays real - only the flush entry point is
+// swapped, so the rest of the stats module keeps working through `index.ts`.
+const mockFlushQueryEventsSync = vi.fn();
+vi.mock('../../../main/stats/query-events-buffer', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/stats/query-events-buffer')>()),
+	flushQueryEventsSync: () => mockFlushQueryEventsSync(),
+}));
+
 // Import types only - we'll test the type definitions
 import type {
 	QueryEvent,
@@ -286,13 +295,14 @@ describe('StatsDB class (mocked)', () => {
 
 			// Migrations v1-v8: initial schema, is_remote column, session_lifecycle
 			// table, compound indexes, is_worktree column, image_annotations table,
-			// shortcut_usage_daily table, multi_window_usage_daily table.
-			expect(db.getTargetVersion()).toBe(8);
+			// shortcut_usage_daily table, multi_window_usage_daily table,
+			// query_events token/cost columns.
+			expect(db.getTargetVersion()).toBe(9);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 8 }];
+				if (sql === 'user_version') return [{ user_version: 9 }];
 				return undefined;
 			});
 
@@ -323,8 +333,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(8);
-			expect(db.getTargetVersion()).toBe(8);
+			expect(db.getCurrentVersion()).toBe(9);
+			expect(db.getTargetVersion()).toBe(9);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 
@@ -480,6 +490,44 @@ describe('StatsDB class (mocked)', () => {
 
 			expect(mockDb.close).toHaveBeenCalled();
 			expect(db.isReady()).toBe(false);
+		});
+
+		// MAESTRO-ZC: the buffer has its own `before-quit` flush listener, but
+		// listener order across modules is not guaranteed and the quit handler
+		// re-emits `before-quit`, so that flush could land after this close and
+		// write against a dead connection. Flushing here is what makes the last
+		// events of a session survive.
+		it('flushes buffered query events BEFORE closing the connection', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+			// initialize() closes probe connections of its own, so start the
+			// ordering window at the point we actually care about.
+			mockDb.close.mockClear();
+			mockFlushQueryEventsSync.mockClear();
+
+			db.close();
+
+			expect(mockFlushQueryEventsSync).toHaveBeenCalledTimes(1);
+			expect(mockDb.close).toHaveBeenCalledTimes(1);
+			expect(mockFlushQueryEventsSync.mock.invocationCallOrder[0]).toBeLessThan(
+				mockDb.close.mock.invocationCallOrder[0]
+			);
+		});
+
+		it('does not flush into a database it already believes is corrupt', async () => {
+			// The corruption-recovery paths close `this.db` directly rather than
+			// going through close(), so recovery must not trigger a write.
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+			mockDb.close.mockClear();
+			mockFlushQueryEventsSync.mockClear();
+
+			db.restoreFromBackup('/path/to/backup');
+
+			expect(mockDb.close).toHaveBeenCalledTimes(1);
+			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -227,8 +227,28 @@ export function noteDispatch(
 	const active = useRetryStore.getState().retries[key];
 	if (active && active.status === 'scheduled') {
 		logger.info('[retry] New dispatch supersedes pending retry', undefined, { key });
+		// Resolve the outage BEFORE dropping the entry. `removeEntry` alone only
+		// clears the timer, leaving the outage record `active` with a nextRetryAt
+		// in the past - the transcript card then ticks "Failing for" upward
+		// forever, reads "Next attempt: now…", and its Stop button is inert
+		// (cancelRetry early-returns on the missing entry). Superseding is a real
+		// end to the outage, so it freezes the card like a user cancel does.
+		resolveOutage(active.outageId, 'stopped');
 		removeEntry(key);
 	}
+}
+
+/**
+ * Whether this tab has a retry timer still counting down. Distinct from "has an
+ * entry": an `'in-flight'` entry is a resend already dispatched and awaiting its
+ * outcome, which must NOT block anything.
+ *
+ * Callers use this to keep a scheduled retry from being trampled - most
+ * importantly the exit listener, which would otherwise drain the execution queue
+ * into the same provider that just refused the turn.
+ */
+export function hasPendingRetry(sessionId: string, tabId: string): boolean {
+	return useRetryStore.getState().retries[keyFor(sessionId, tabId)]?.status === 'scheduled';
 }
 
 /**
@@ -433,6 +453,56 @@ export function retryNow(sessionId: string, tabId: string): void {
 	if (!useRetryStore.getState().retries[key]) return;
 	clearTimer(key);
 	void fireRetry(key);
+}
+
+/**
+ * Replay the turns an agent lost to expired credentials, after the user has
+ * re-authenticated the provider.
+ *
+ * This is deliberately NOT part of the auto-retry machinery above.
+ * `auth_expired` is in `NON_RETRYABLE_TYPES` because a timer can never fix it -
+ * only a human logging in can, and retrying on a schedule would loop forever.
+ * But once that human HAS logged in, the exact prompts are still sitting in the
+ * dispatch snapshots, and making the user find and retype them is the thing
+ * this whole feature exists to avoid. So the replay reuses the snapshots on a
+ * human-driven trigger instead of a timed one.
+ *
+ * Each replay goes through `processQueuedItem`, the same path a normal send
+ * takes, so images and slash commands survive intact. Anything the user queued
+ * behind the failed turn is untouched here: it drains on its own when the
+ * replayed turn exits.
+ *
+ * @param tabIds - Only the tabs that actually failed. A tab whose last turn
+ *   succeeded also has a snapshot, and resending it would put a message the
+ *   user never asked for back on the wire.
+ */
+export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
+	for (const tabId of tabIds) {
+		const key = keyFor(sessionId, tabId);
+
+		// A pending auto-retry for this tab (e.g. an availability blip that landed
+		// on the same tab) is superseded: we are dispatching that work right now.
+		removeEntry(key);
+
+		const snapshot = snapshots.get(key);
+		if (!snapshot) {
+			// Snapshots live in memory only, so an app restart between the failure
+			// and the login leaves nothing to replay. The prompt is still in the
+			// transcript and the queue is intact - the user just has to press send.
+			logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
+			continue;
+		}
+
+		logger.info('[retry] Replaying a turn lost to expired credentials', undefined, { key });
+		void useAgentStore
+			.getState()
+			.processQueuedItem(sessionId, snapshot.item, snapshot.deps)
+			.catch((error: unknown) => {
+				// A dispatch-time throw surfaces through the normal agent-error path;
+				// it must not abort the replay of the remaining tabs.
+				logger.error('[retry] Replay after re-auth threw', undefined, error);
+			});
+	}
 }
 
 /**

@@ -32,6 +32,8 @@ import type {
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
+	ReadTerminalTabPayload,
+	ReadTerminalTabResult,
 } from '../../types';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -53,7 +55,10 @@ export interface WebClientMessage {
 	filePath?: string;
 	focus?: boolean;
 	force?: boolean;
+	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
 	background?: boolean;
+	/** open_file_tab only: the older, weaker `--no-switch` ask. */
+	switchToAgent?: boolean;
 	[key: string]: unknown;
 }
 
@@ -103,16 +108,24 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean
 	) => Promise<boolean>;
-	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
+	switchMode: (
+		sessionId: string,
+		mode: 'ai' | 'terminal',
+		background?: boolean
+	) => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
-	newTab: (sessionId: string) => Promise<{ tabId: string } | null>;
+	newTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (sessionId: string, tabId: string, newName: string) => Promise<boolean>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
-	openFileTab: (sessionId: string, filePath: string, switchToAgent: boolean) => Promise<boolean>;
+	openFileTab: (
+		sessionId: string,
+		filePath: string,
+		options: { background: boolean; switchToAgent: boolean }
+	) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	openBrowserTab: (
 		sessionId: string,
@@ -120,15 +133,29 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
+	/** Render the Document Graph over an explicit file set or directory. */
+	openDocumentGraph: (params: {
+		sessionId: string;
+		files?: string[];
+		directory?: string;
+		focusPath?: string;
+	}) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (
 		sessionId: string,
 		payload: { tabRef?: string; data: string }
 	) => Promise<{ success: boolean; error?: string; tabId?: string; tabName?: string }>;
 	listTerminalTabs: (sessionId?: string) => Promise<TerminalTabInfo[]>;
+	readTerminalTab: (
+		sessionId: string,
+		payload: ReadTerminalTabPayload
+	) => Promise<ReadTerminalTabResult>;
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string,
@@ -178,6 +205,22 @@ export interface MessageHandlerCallbacks {
 			};
 		}
 	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	/**
+	 * Launch a desktop-owned Goal-Driven Auto Run (`goal-run --visible`). Goal
+	 * mode is document-less, so this carries a free-text goal rather than a
+	 * document list; the renderer routes it to the same `startBatchRun` entry
+	 * point the Auto Run modal's Go button uses.
+	 */
+	launchGoalRun: (
+		sessionId: string,
+		config: {
+			goal: string;
+			exitCriteria?: string;
+			maxIterations?: number | null;
+			model?: string;
+			effort?: string;
+		}
+	) => Promise<{ success: boolean; tabId?: string; code?: string; error?: string }>;
 	setSessionAutoRunFolder: (
 		sessionId: string,
 		folderPath: string
@@ -240,14 +283,16 @@ export interface MessageHandlerCallbacks {
 		toolType: string,
 		cwd: string,
 		groupId?: string,
-		config?: CreateSessionConfig
+		config?: CreateSessionConfig,
+		background?: boolean
 	) => Promise<{ sessionId: string } | null>;
 	createWorktreeSession: (
 		parentSessionId: string,
 		config: {
 			branchName: string;
 			baseBranch?: string;
-		}
+		},
+		background?: boolean
 	) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
@@ -278,7 +323,8 @@ export interface MessageHandlerCallbacks {
 	createGist: (
 		sessionId: string,
 		description: string,
-		isPublic: boolean
+		isPublic: boolean,
+		agentSessionId?: string
 	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;

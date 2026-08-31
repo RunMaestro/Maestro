@@ -38,9 +38,27 @@ export interface ClaudeUsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
 	authState?: 'authenticated' | 'unauthenticated';
-	session: { percent: number; resetsAt: string };
-	weekAllModels: { percent: number; resetsAt: string };
-	weekSonnetOnly: { percent: number; resetsAt: string };
+	/**
+	 * The Anthropic account this config dir was logged into at sample time.
+	 * Absent for dirs that have never been logged into, and for snapshots
+	 * cached before these fields existed - the panel falls back to the config
+	 * dir name in both cases. `accountUuid` is what lets the panel spot two
+	 * dirs sharing one account (and therefore one quota bucket).
+	 */
+	accountEmail?: string;
+	accountUuid?: string;
+	organizationName?: string;
+	// `resetsAt` is absent when claude's panel painted a percentage but no
+	// "Resets ..." row (it omits the row for an idle 0% window). Render the
+	// percentage anyway and drop the caption.
+	session: { percent: number; resetsAt?: string };
+	weekAllModels: { percent: number; resetsAt?: string };
+	/**
+	 * The separately-metered premium-model weekly limit. The field name is
+	 * historical - claude has renamed this window from "Sonnet only" to "Opus"
+	 * to "Fable" - so `label` carries whatever the panel actually called it.
+	 */
+	weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 }
 
 interface ClaudeUsageState {

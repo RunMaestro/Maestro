@@ -126,7 +126,7 @@ const mockShortcuts: Record<string, Shortcut> = {
 	viewGitLog: { id: 'viewGitLog', keys: ['Cmd', 'G'], enabled: true },
 	toggleMarkdownMode: { id: 'toggleMarkdownMode', keys: ['Cmd', 'M'], enabled: true },
 	createDebugPackage: { id: 'createDebugPackage', keys: ['Alt', 'Cmd', 'D'], enabled: true },
-	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Alt', 'Meta', 'ArrowDown'], enabled: true },
+	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Meta', 'Shift', 'ArrowDown'], enabled: true },
 	navBack: { id: 'navBack', keys: ['Meta', 'Shift', ','], enabled: true },
 	navForward: { id: 'navForward', keys: ['Meta', 'Shift', '.'], enabled: true },
 };

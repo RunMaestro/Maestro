@@ -3,6 +3,8 @@
 // Command-line interface for Maestro
 
 import { Command } from 'commander';
+import { asThinkingMode, type ThinkingMode } from '../shared/types';
+import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -15,7 +17,9 @@ import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { openGraph } from './commands/open-graph';
 import { openBrowser, closeBrowser } from './commands/open-browser';
+import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
@@ -45,6 +49,7 @@ import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
+import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
@@ -52,6 +57,14 @@ import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
+import {
+	displayFont,
+	displayFontList,
+	displayFontSize,
+	displayFontsCatalog,
+	displayPreset,
+	displayZoom,
+} from './commands/display-font';
 import { settingsReset } from './commands/settings-reset';
 import {
 	settingsAgentList,
@@ -89,7 +102,22 @@ import {
 } from './commands/auto-run-control';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
-import { tabNew, tabClose, tabRename, tabStar } from './commands/tab';
+import {
+	tabNew,
+	tabClose,
+	tabRename,
+	tabStar,
+	tabMove,
+	tabUnread,
+	tabSaveToHistory,
+	tabThinking,
+	tabReadOnly,
+	tabModel,
+	tabEffort,
+	tabEnterToSend,
+	tabShow,
+} from './commands/tab';
+import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
@@ -298,6 +326,11 @@ program
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option(
+		'--visible',
+		'Run inside the Maestro desktop app (visible Auto Run) instead of headlessly'
+	)
+	.option('--wait', 'With --visible, wait for the agent to become available if busy')
+	.option(
 		'--model <model>',
 		"Model to use for this run only, overriding the agent's configured default"
 	)
@@ -378,6 +411,7 @@ program
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
 	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
+	.option('--background', 'Leave the new tab in the background (default; with --new-tab)')
 	.option(
 		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
@@ -465,9 +499,26 @@ program
 	.command('open-file <file-path>')
 	.description('Open a file as a preview tab in the Maestro desktop app')
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
-	.option('--no-switch', "Don't switch the Maestro UI to the target agent/tab")
+	.option(
+		'--background',
+		'Open the preview tab without changing anything currently rendered, on any agent'
+	)
+	.option('--focus', 'Switch to the file after opening it (default)')
+	.option('--no-switch', "Don't switch to the target agent, but still activate the tab there")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
+
+// Open graph command - render a Document Graph over specific documents.
+//
+// Its own verb rather than a `open <surface>` entry: `open_modal` carries only
+// a surface name and a tab, and a graph needs a file set.
+program
+	.command('open-graph [paths...]')
+	.description('Open the Document Graph over specific markdown files or a directory')
+	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(openGraph);
 
 // Open browser command - open a URL in a browser tab in the Maestro desktop app
 program
@@ -478,8 +529,21 @@ program
 		'--background',
 		'Create the tab without focusing it or switching agents (use for agent research, then close-browser when done)'
 	)
+	.option('--focus', 'Switch to the browser tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openBrowser);
+
+// Open modal command - bring up a Maestro surface (Cue, Settings, Usage
+// Dashboard, ...) in the running desktop app, optionally on a given tab. Prints
+// the hotkey / command-palette / click paths too, so an agent that opens a
+// surface for the user can also teach them how to reach it by hand.
+program
+	.command('open [surface]')
+	.description('Open a Maestro modal or dashboard (use --list to see every surface)')
+	.option('-t, --tab <tab>', 'Deep-link to a tab within the surface')
+	.option('--list', 'List every openable surface, its tabs, and its shortcut')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(openModal);
 
 // Close browser command - close a browser tab opened via open-browser
 program
@@ -500,6 +564,8 @@ program
 		'--command <command>',
 		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
 	)
+	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--focus', 'Switch to the terminal tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
 
@@ -516,6 +582,19 @@ program
 	.option('--no-enter', 'Type the command without pressing Enter')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sendTerminal);
+
+// Read-terminal command - read the scrollback of an existing Maestro terminal tab
+program
+	.command('read-terminal')
+	.description("Read a Maestro terminal tab's output")
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--tab <id-or-name>',
+		"Terminal tab ID or display name (defaults to the agent's active terminal)"
+	)
+	.option('--tail <n>', `Return only the last N lines (default: ${DEFAULT_TAIL_LINES})`)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(readTerminal);
 
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program
@@ -633,18 +712,28 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
 
-// Cue schedule - author / inspect / cancel one-shot `time.once` subscriptions.
-// Primary agent surface for "in 20 minutes do X" or "remind me at 4pm…" - writes
-// directly to the agent's `.maestro/cue.yaml` so it works without the desktop
-// app running. See `cue-schedule.ts` for the full flag matrix.
+// Cue schedule - author / inspect / edit / cancel Scheduled Tasks (the
+// clock-driven subscriptions: time.once, time.scheduled, time.heartbeat).
+// Primary agent surface for "in 20 minutes do X", "remind me at 4pm…", and
+// "every weekday at 9am…" - writes directly to the agent's `.maestro/cue.yaml`
+// so it works without the desktop app running. The same tasks are listed and
+// editable in the app under Maestro Cue → Scheduled Tasks. See
+// `cue-schedule.ts` for the full flag matrix.
 cue
 	.command('schedule')
-	.description('Schedule a one-shot Cue task (or --list / --cancel pending tasks)')
-	.option('--in <duration>', 'Fire after a relative delay (e.g. 30s, 20m, 2h, 1d)')
-	.option('--at <timestamp>', 'Fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local time)')
-	.option('--list', 'List all pending one-shot tasks across agents')
-	.option('--cancel <name>', 'Cancel a pending one-shot task by name')
-	.option('-a, --agent <id-or-name>', 'Target agent (required when creating)')
+	.description('Create a scheduled task (or --list / --cancel / --reschedule / --pause)')
+	.option('--in <duration>', 'One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)')
+	.option('--at <timestamp>', 'One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)')
+	.option('--daily-at <times>', 'Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)')
+	.option('--days <days>', 'Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)')
+	.option('--every <duration>', 'Repeating: fire on an interval (e.g. 30m, 2h, 1d)')
+	.option('--list', 'List scheduled tasks across agents')
+	.option('--kind <kind>', 'Filter --list by kind: once, daily, interval, all (default: all)')
+	.option('--cancel <name>', 'Cancel a scheduled task by name')
+	.option('--reschedule <name>', 'Change when an existing task fires (pass the timing flag too)')
+	.option('--pause <name>', 'Disable a task without deleting it')
+	.option('--resume <name>', 'Re-enable a paused task')
+	.option('-a, --agent <id-or-name>', 'Target agent (required when creating; scopes other modes)')
 	.option('-p, --prompt <text>', 'Prompt to send when the task fires')
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
@@ -772,7 +861,7 @@ program
 	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
 	.option(
 		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, gemini-cli, qwen3-coder)',
+		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)',
 		'claude-code'
 	)
 	.option('-g, --group <id>', 'Group ID to assign the agent to')
@@ -800,6 +889,8 @@ program
 		'--auto-run-folder <path>',
 		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
 	)
+	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
+	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
@@ -852,6 +943,8 @@ program
 		'-m, --message <text>',
 		'Optional initial prompt to dispatch to the new agent after creation'
 	)
+	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
+	.option('--focus', 'Select the new worktree agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createWorktree);
 
@@ -909,6 +1002,7 @@ program
 		'Claude token source: api | tui | dynamic (Claude Code agents only)'
 	)
 	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
 		'Switch the agent provider (resets tabs + clears provider config; requires --force)'
@@ -924,6 +1018,21 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, newName, options) => renameAgent(agentId, newName, options));
 
+// Bookmark commands - pin/unpin an agent in the Left Bar's Bookmarks section.
+// Mirrors the "Add Bookmark" context-menu item and Cmd+Shift+B. These are
+// explicit set operations, not a toggle, so re-running is idempotent.
+program
+	.command('bookmark <agent-id>')
+	.description("Bookmark an agent (pins it to the Left Bar's Bookmarks section)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => setBookmark(agentId, true, options));
+
+program
+	.command('unbookmark <agent-id>')
+	.description("Remove an agent's bookmark")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => setBookmark(agentId, false, options));
+
 // Focus agent command - select/focus an agent (and optionally a tab) in the UI
 program
 	.command('focus-agent <agent-id>')
@@ -936,43 +1045,122 @@ program
 program
 	.command('switch-mode <agent-id> <mode>')
 	.description('Switch an agent between "ai" and "terminal" mode')
+	.option(
+		'--background',
+		'Refuse the switch if the agent is the one on screen, rather than changing what the user is looking at'
+	)
+	.option('--focus', 'Switch even when the agent is the one on screen (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, mode, options) => switchMode(agentId, mode, options));
 
-// Tab commands - manage an agent's AI tabs in the desktop app
+// Tab commands - manage an agent's AI tabs in the desktop app. Every verb that
+// takes <tab-id> also accepts the literal "active" (with -a to say whose).
 const tab = program.command('tab').description("Manage an agent's tabs in the desktop app");
+
+/**
+ * Options every tab-targeted verb shares: --agent disambiguates the "active"
+ * tab id, --json switches to machine output. Registered once so a new verb
+ * can't quietly ship without them.
+ */
+const tabTargetOptions = (cmd: Command): Command =>
+	cmd
+		.option('-a, --agent <id>', 'Whose active tab, when <tab-id> is "active"')
+		.option('--json', 'Output as JSON (for scripting)');
 
 tab
 	.command('new')
 	.description('Open a new tab for an agent (optionally seeded with a prompt)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('-p, --prompt <text>', 'Seed the new AI tab with this prompt')
+	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--focus', 'Switch to the new tab after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabNew(options));
 
-tab
-	.command('close <tab-id>')
+tabTargetOptions(tab.command('close <tab-id>'))
 	.description('Close a tab (owning agent is resolved automatically)')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabClose(tabId, options));
 
-tab
-	.command('rename <tab-id> <new-name>')
+tabTargetOptions(tab.command('rename <tab-id> <new-name>'))
 	.description('Rename a tab')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, newName, options) => tabRename(tabId, newName, options));
 
-tab
-	.command('star <tab-id>')
+tabTargetOptions(tab.command('star <tab-id>'))
 	.description('Star a tab')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabStar(tabId, true, options));
 
-tab
-	.command('unstar <tab-id>')
+tabTargetOptions(tab.command('unstar <tab-id>'))
 	.description('Unstar a tab')
-	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => tabStar(tabId, false, options));
+
+tabTargetOptions(tab.command('unread <tab-id>'))
+	.description('Mark a tab unread (flags it for the human in the tab bar)')
+	.action((tabId, options) => tabUnread(tabId, true, options));
+
+tabTargetOptions(tab.command('read <tab-id>'))
+	.description("Clear a tab's unread marker")
+	.action((tabId, options) => tabUnread(tabId, false, options));
+
+/**
+ * Read a boolean tab argument, or exit with the same message every verb uses.
+ * `parseCliBool` throws; the tab verbs are the only place that wants that
+ * turned into a plain exit before the desktop is ever contacted.
+ */
+function tabBoolArg(value: string, label: string): boolean {
+	try {
+		return parseCliBool(value, label);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return process.exit(1);
+	}
+}
+
+tabTargetOptions(tab.command('save-to-history <tab-id> <bool>'))
+	.description("Enable/disable synopsizing this tab's completions into History (true/false)")
+	.action((tabId, bool, options) =>
+		tabSaveToHistory(tabId, tabBoolArg(bool, 'save-to-history'), options)
+	);
+
+tabTargetOptions(tab.command('show <tab-id>'))
+	.description("Show one tab's settings (model, effort, thinking, access, history)")
+	.action((tabId, options) => tabShow(tabId, options));
+
+tabTargetOptions(tab.command('thinking <tab-id> <mode>'))
+	.description('Set the thinking display: off, on, sticky, or cycle')
+	.action((tabId, mode, options) => {
+		const v = String(mode).trim().toLowerCase();
+		if (v !== 'cycle' && asThinkingMode(v) === undefined) {
+			console.error(`Invalid mode "${mode}". Use off, on, sticky, or cycle.`);
+			process.exit(1);
+		}
+		return tabThinking(tabId, v as ThinkingMode | 'cycle', options);
+	});
+
+tabTargetOptions(tab.command('read-only <tab-id> <bool>'))
+	.description('Put the tab in read-only/plan mode so the agent cannot modify files')
+	.action((tabId, bool, options) => tabReadOnly(tabId, tabBoolArg(bool, 'read-only'), options));
+
+tabTargetOptions(tab.command('model <tab-id> <model>'))
+	.description('Override the model for this tab ("inherit" clears the override)')
+	.action((tabId, model, options) =>
+		tabModel(tabId, isInheritValue(model) ? null : model, options)
+	);
+
+tabTargetOptions(tab.command('effort <tab-id> <level>'))
+	.description('Override the effort/reasoning level for this tab ("inherit" clears it)')
+	.action((tabId, level, options) =>
+		tabEffort(tabId, isInheritValue(level) ? null : level, options)
+	);
+
+tabTargetOptions(tab.command('enter-to-send <tab-id> <bool>'))
+	.description('Per-tab send key: true = Enter, false = Cmd+Enter, "inherit" = global setting')
+	.action((tabId, bool, options) =>
+		tabEnterToSend(tabId, isInheritValue(bool) ? null : tabBoolArg(bool, 'enter-to-send'), options)
+	);
+
+tabTargetOptions(tab.command('move <tab-id> <position>'))
+	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
+	.action((tabId, position, options) => tabMove(tabId, position, options));
 
 // Create SSH remote command - add a new SSH remote configuration
 program
@@ -1003,6 +1191,53 @@ program
 	.description('Remove an SSH remote configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeSshRemote);
+
+// Display / typography commands
+//
+// Addressed by SURFACE rather than by settings key: `settings set` can already
+// write these ten keys, but only if you know their names and the
+// empty-string-means-inherit convention. These validate against the shared
+// registry, so a scripted setup can put the app in a known typographic state.
+const display = program
+	.command('display')
+	.description('View and manage typography (fonts, sizes, zoom)');
+
+display
+	.command('font [surface] [value]')
+	.description(
+		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((surface: string | undefined, value: string | undefined, options: { json?: boolean }) => {
+		if (!surface) displayFontList(options);
+		else displayFont(surface, value, options);
+	});
+
+display
+	.command('size <surface> [value]')
+	.description('Get or set a surface font size in px. Pass "inherit" to follow the interface size.')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontSize);
+
+display
+	.command('zoom [level]')
+	.description('Get or set the global zoom applied to every surface (e.g. 125% or 1.25)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayZoom);
+
+display
+	.command('preset [name]')
+	.description(
+		'Get the active typography preset, or reset every font and size to one (default | hacker)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayPreset);
+
+display
+	.command('fonts')
+	.description('List the fonts bundled with Maestro (guaranteed available on any machine)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontsCatalog);
 
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');
@@ -1332,6 +1567,10 @@ gist
 	)
 	.option('-d, --description <text>', 'Gist description')
 	.option('-p, --public', 'Create a public gist (default: private)')
+	.option(
+		'-s, --session <id>',
+		"Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs"
+	)
 	.action(gistCreate);
 
 // Notify commands - surface notifications in the Maestro desktop app

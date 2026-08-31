@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 
 interface FileTreeTruncatedBannerProps {
@@ -7,6 +7,8 @@ interface FileTreeTruncatedBannerProps {
 	onLoadMore: () => void;
 	onLoadAll: () => void;
 	isRefreshing: boolean;
+	/** Collapses the banner down to the hazard icon next to the path row. */
+	onCollapse: () => void;
 }
 
 export function FileTreeTruncatedBanner({
@@ -15,6 +17,7 @@ export function FileTreeTruncatedBanner({
 	onLoadMore,
 	onLoadAll,
 	isRefreshing,
+	onCollapse,
 }: FileTreeTruncatedBannerProps) {
 	const capLabel =
 		previousCap !== undefined && Number.isFinite(previousCap)
@@ -71,6 +74,16 @@ export function FileTreeTruncatedBanner({
 					</button>
 				</div>
 			</div>
+			<button
+				type="button"
+				onClick={onCollapse}
+				aria-label="Minimize file scan warning"
+				title="Minimize (click the warning icon next to the path to reopen)"
+				className="flex-shrink-0 p-0.5 rounded opacity-50 hover:opacity-100 transition-opacity"
+				style={{ color: theme.colors.textMain }}
+			>
+				<X className="w-3.5 h-3.5" />
+			</button>
 		</div>
 	);
 }

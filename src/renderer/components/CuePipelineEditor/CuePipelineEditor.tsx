@@ -32,6 +32,7 @@ import {
 	arrangePipelineNodes,
 	untanglePipelineNodes,
 	arrangePipelineGroups,
+	beautifyPipelineLayouts,
 } from './utils/pipelineAutoArrange';
 import { ConfirmModal } from '../ConfirmModal';
 import { LayoutGrid } from 'lucide-react';
@@ -53,7 +54,7 @@ export interface CuePipelineEditorProps {
 	/** Callback fired after a successful save. Used by CueModal to refresh
 	 *  dashboard graph data so saved state is visible immediately (Fix #3). */
 	onSaveSuccess?: () => void;
-	/** Pre-select a specific pipeline when navigating from "View in Pipeline".
+	/** Pre-select a specific pipeline when navigating from "View in Graph".
 	 *  Nonce ensures repeated clicks on the same pipeline re-trigger selection. */
 	initialPipelineId?: { id: string | null; nonce: string };
 	/** True while the initial graph-data fetch is in flight. Combined with the
@@ -150,7 +151,7 @@ function CuePipelineEditorInner({
 		pipelineState: stateHook.pipelineState,
 	});
 
-	// When opened via "View in Pipeline", pre-select the resolved pipeline once
+	// When opened via "View in Graph", pre-select the resolved pipeline once
 	// the pipeline list has loaded. appliedNonce prevents pipelines.length changes
 	// (e.g. a pipeline being added) from overriding a subsequent user selection.
 	const appliedNonce = useRef<string | null>(null);
@@ -176,6 +177,7 @@ function CuePipelineEditorInner({
 		setPipelineState,
 		isAllPipelinesView,
 		isDirty,
+		savedStateRef,
 		saveStatus,
 		validationErrors,
 		runningPipelineIds,
@@ -447,20 +449,25 @@ function CuePipelineEditorInner({
 	// flow-depth columns. Either way: mutate canonical state (flips dirty,
 	// undoable via Discard), persist like a drag, then re-fit so the result
 	// is centered in view.
+	// Snapshot the CURRENTLY rendered node widths before a layout pass.
+	// Nodes render at `width: max-content`, so the layout can only space
+	// columns correctly if it knows each node's real width - ReactFlow has
+	// already measured them. Keyed by canonical node id (strip the
+	// `${pipelineId}:` composite prefix). Heights are fixed per type, so
+	// only width needs measuring.
+	const snapshotMeasuredWidths = useCallback(() => {
+		const measuredWidths = new Map<string, number>();
+		for (const n of reactFlowInstance.getNodes()) {
+			if (typeof n.width !== 'number' || n.width <= 0) continue;
+			const sep = n.id.indexOf(':');
+			measuredWidths.set(sep === -1 ? n.id : n.id.slice(sep + 1), n.width);
+		}
+		return measuredWidths;
+	}, [reactFlowInstance]);
+
 	const handleArrange = useCallback(
 		(mode: 'tidy' | 'untangle') => {
-			// Snapshot the CURRENTLY rendered node widths before mutating state.
-			// Nodes render at `width: max-content`, so the layout can only space
-			// columns correctly if it knows each node's real width - ReactFlow has
-			// already measured them. Keyed by canonical node id (strip the
-			// `${pipelineId}:` composite prefix). Heights are fixed per type, so
-			// only width needs measuring.
-			const measuredWidths = new Map<string, number>();
-			for (const n of reactFlowInstance.getNodes()) {
-				if (typeof n.width !== 'number' || n.width <= 0) continue;
-				const sep = n.id.indexOf(':');
-				measuredWidths.set(sep === -1 ? n.id : n.id.slice(sep + 1), n.width);
-			}
+			const measuredWidths = snapshotMeasuredWidths();
 
 			setPipelineState((prev) => {
 				if (prev.selectedPipelineId === null) {
@@ -509,8 +516,98 @@ function CuePipelineEditorInner({
 			// Wait for React → ReactFlow to re-measure the moved nodes before fitting.
 			setTimeout(() => reactFlowInstance.fitView({ padding: 0.2, duration: 300 }), 180);
 		},
-		[setPipelineState, persistLayout, stableYOffsetsRef, reactFlowInstance, containerRef]
+		[
+			setPipelineState,
+			persistLayout,
+			stableYOffsetsRef,
+			reactFlowInstance,
+			containerRef,
+			snapshotMeasuredWidths,
+		]
 	);
+
+	// ─── Auto-heal: the layout maintains itself ────────────────────────────
+	// The canvas is machine-formatted (gofmt for pipelines): whenever a
+	// pipeline's TOPOLOGY changes - a node dropped, an edge connected, a node
+	// or edge deleted, a node duplicated, a discard reloading from YAML - the
+	// whole board is re-beautified automatically: crossing-minimized flow
+	// columns per pipeline, masonry-packed group cards. Nobody should ever
+	// need the Tidy/Arrange buttons to make it presentable; they remain as
+	// explicit "re-layout now" verbs.
+	//
+	// Topology signatures are per-pipeline (sorted node ids + edge pairs), so
+	// drags and data edits (renames, prompt/config changes, color changes)
+	// never trigger a heal - the untangle order-seed respects drag ordering,
+	// and healing on keystrokes would make the config panels unusable.
+	//
+	// Dirtiness is preserved, not created: when the pre-heal state matched
+	// savedStateRef (clean - e.g. right after Discard restores naive YAML
+	// positions), the ref is advanced to the healed snapshot so healing alone
+	// never raises the unsaved-changes banner. A real user mutation is already
+	// dirty before the heal and stays dirty.
+	const topologySignaturesRef = useRef<Map<string, string> | null>(null);
+	useEffect(() => {
+		// Until the initial restore lands, pipelines are empty/partial; the load
+		// path (usePipelineLayout) beautifies its own result, so the first
+		// observation here just records signatures.
+		if (!pipelinesLoaded) return;
+		const signatures = new Map(
+			pipelineState.pipelines.map((p) => [
+				p.id,
+				p.nodes
+					.map((n) => n.id)
+					.sort()
+					.join(',') +
+					';' +
+					p.edges
+						.map((e) => `${e.source}>${e.target}`)
+						.sort()
+						.join(','),
+			])
+		);
+		const prev = topologySignaturesRef.current;
+		topologySignaturesRef.current = signatures;
+		if (!prev) return;
+		let structureChanged = prev.size !== signatures.size;
+		if (!structureChanged) {
+			for (const [id, sig] of signatures) {
+				if (prev.get(id) !== sig) {
+					structureChanged = true;
+					break;
+				}
+			}
+		}
+		if (!structureChanged) return;
+
+		const basePipelines = pipelineState.pipelines;
+		const rect = containerRef.current?.getBoundingClientRect();
+		const viewport =
+			rect && rect.width > 0 && rect.height > 0
+				? { width: rect.width, height: rect.height }
+				: { width: window.innerWidth, height: window.innerHeight };
+		const healed = beautifyPipelineLayouts(basePipelines, viewport, snapshotMeasuredWidths());
+		const baseJson = JSON.stringify(basePipelines);
+		const healedJson = JSON.stringify(healed);
+		if (healedJson === baseJson) return;
+
+		// Explicit machine re-layout: let the resync adopt the healed positions
+		// even while dirty (same one-shot flag the Tidy/Arrange buttons use).
+		forceAdoptComputedRef.current = true;
+		setPipelineState((prevState) =>
+			prevState.pipelines === basePipelines ? { ...prevState, pipelines: healed } : prevState
+		);
+		if (savedStateRef.current === baseJson) {
+			savedStateRef.current = healedJson;
+		}
+		persistLayout();
+	}, [
+		pipelineState.pipelines,
+		pipelinesLoaded,
+		setPipelineState,
+		persistLayout,
+		savedStateRef,
+		snapshotMeasuredWidths,
+	]);
 
 	const arrangeConfirmMessage = useMemo(() => {
 		if (isAllPipelinesView) {

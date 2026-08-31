@@ -294,6 +294,17 @@ export function useBatchedSessionUpdates(
 
 								const shouldTagInteractive = isInteractive && !logData.isStderr;
 
+								// Stamp the turn's codified model/effort onto the entry so the
+								// transcript records which configuration produced this response
+								// (rendered as footer pills next to the token-source pill). Read
+								// from the tab's send-time stamp, never the live tab/agent values:
+								// a model change made while this turn streams applies to the NEXT
+								// message, not to the one already running.
+								const turnSettings = {
+									...(tab.turnModel ? { turnModel: tab.turnModel } : {}),
+									...(tab.turnEffort ? { turnEffort: tab.turnEffort } : {}),
+								};
+
 								let updatedLogs: LogEntry[];
 								if (shouldGroup) {
 									updatedLogs = [...existingLogs];
@@ -301,6 +312,7 @@ export function useBatchedSessionUpdates(
 										...lastLog,
 										text: lastLog.text + logData.data,
 										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+										...turnSettings,
 									};
 								} else {
 									const newLog: LogEntry = {
@@ -309,6 +321,7 @@ export function useBatchedSessionUpdates(
 										source: logSource,
 										text: logData.data,
 										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+										...turnSettings,
 									};
 									updatedLogs = [...existingLogs, newLog];
 								}

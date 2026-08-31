@@ -40,11 +40,17 @@ interface UseDragToMoveResult {
 	isExternalDrag: boolean;
 	/**
 	 * True while an in-tree row drag is in flight (set on the row's dragstart,
-	 * cleared on dragend). Drives the "move to root" receptacle, which only
-	 * needs to appear while the user is actually dragging a tree item - mirrors
-	 * the Left Bar's "Drop here to ungroup" zone that shows only mid-drag.
+	 * cleared on dragend). Drives the mid-drag footer: the drag-out hint always,
+	 * plus the "move to root" receptacle when `showRootReceptacle` agrees.
 	 */
 	internalDragActive: boolean;
+	/**
+	 * True while the "move to root" receptacle should be mounted - an in-tree
+	 * drag whose items don't all already sit at the workspace root. Narrower
+	 * than `internalDragActive` on purpose: root items have nowhere to go, so
+	 * offering the target would be a dead drop.
+	 */
+	showRootReceptacle: boolean;
 	moveConflict: MoveConflictState | null;
 	isMoving: boolean;
 	performMoves: (
@@ -80,6 +86,7 @@ export function useDragToMove({
 	const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
 	const [isExternalDrag, setIsExternalDrag] = useState(false);
 	const [internalDragActive, setInternalDragActive] = useState(false);
+	const [showRootReceptacle, setShowRootReceptacle] = useState(false);
 	// Guards the deferred dragstart flag: if the drag ends before the next tick
 	// (a flick or instant cancel), we must not flip the receptacle on afterwards.
 	const dragActiveRef = useRef(false);
@@ -495,24 +502,27 @@ export function useDragToMove({
 	// always fires - successful drop or cancel - so it doubly clears any leftover
 	// hover state in case the drop happened outside a registered handler.
 	//
-	// The flag flip is deferred to the next tick on purpose: mounting the
-	// receptacle reflows the panel, and Chromium ABORTS an in-flight drag if the
-	// layout mutates synchronously inside the dragstart handler. Letting dragstart
-	// finish first (drag image captured) before the DOM grows keeps the drag alive.
-	const handleInternalDragStart = useCallback((showRootReceptacle: boolean) => {
+	// The flag flip is deferred to the next tick on purpose: mounting the mid-drag
+	// footer (hint + receptacle) reflows the panel, and Chromium ABORTS an
+	// in-flight drag if the layout mutates synchronously inside the dragstart
+	// handler. Letting dragstart finish first (drag image captured) before the DOM
+	// grows keeps the drag alive.
+	const handleInternalDragStart = useCallback((wantsRootReceptacle: boolean) => {
 		dragActiveRef.current = true;
-		// Skip mounting the receptacle when every dragged item already sits at the
-		// workspace root - there's nothing to move there. dragActiveRef still flips
-		// so dragend cleanup stays symmetric.
-		if (!showRootReceptacle) return;
 		setTimeout(() => {
-			if (dragActiveRef.current) setInternalDragActive(true);
+			if (!dragActiveRef.current) return;
+			setInternalDragActive(true);
+			// The receptacle is skipped when every dragged item already sits at the
+			// workspace root - there's nothing to move there - but the drag itself is
+			// still active, so the drag-out hint below it stays.
+			if (wantsRootReceptacle) setShowRootReceptacle(true);
 		}, 0);
 	}, []);
 
 	const handleInternalDragEnd = useCallback(() => {
 		dragActiveRef.current = false;
 		setInternalDragActive(false);
+		setShowRootReceptacle(false);
 		setDragOverFolder(null);
 		setIsExternalDrag(false);
 	}, []);
@@ -521,6 +531,7 @@ export function useDragToMove({
 		dragOverFolder,
 		isExternalDrag,
 		internalDragActive,
+		showRootReceptacle,
 		moveConflict,
 		isMoving,
 		performMoves,

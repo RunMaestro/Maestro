@@ -13,6 +13,7 @@ import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { asThinkingMode } from '../../../shared/types';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -29,6 +30,7 @@ import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { notifyToast } from '../../stores/notificationStore';
+import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
 import {
 	canCreateGroupInside,
 	removeGroupAndPromoteChildren,
@@ -58,7 +60,7 @@ export interface UseAppRemoteEventListenersDeps {
 			/** Optional 1-based line to jump to once the editor mounts (deep links). */
 			pendingScrollToLine?: number;
 		},
-		options?: { targetSessionId?: string }
+		options?: { targetSessionId?: string; activate?: boolean }
 	) => void;
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
@@ -100,9 +102,20 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, switchToAgent, line } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, background, switchToAgent, line } = (e as CustomEvent).detail as {
 			sessionId: string;
 			filePath: string;
+			/**
+			 * true = create the preview tab without moving the human at all: neither
+			 * the active agent nor the active tab inside any agent changes. Absent
+			 * means an in-app open (a toast click, a file-tree click, a deep link),
+			 * which is a human asking to be taken there.
+			 */
+			background?: boolean;
+			/**
+			 * false = the older, weaker `--no-switch` ask: stay on the current agent,
+			 * but still activate the tab inside the target one. Absent means switch.
+			 */
 			switchToAgent?: boolean;
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
@@ -115,9 +128,18 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 		const sshRemoteId =
 			session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-		// Honor `--no-switch`: register the tab on the target agent but leave the
-		// active agent untouched so the CLI invocation doesn't hijack focus.
-		if (switchToAgent !== false) {
+		// Three distinct outcomes, because `--no-switch` and `--background` are
+		// different asks and both have to keep working:
+		//
+		//   neither          -> switch agent, activate the tab (today's default)
+		//   --no-switch      -> stay on this agent, still activate the tab there
+		//   --background     -> touch nothing that is currently rendered, anywhere
+		//
+		// Suppressing only the agent switch was never enough for the strong case:
+		// a file tab outranks the AI tab in the render precedence, so activating
+		// one changes the view even when the caller stayed on the same agent.
+		// That is exactly why `--no-switch` reads like `--background` and is not.
+		if (!background && switchToAgent !== false) {
 			setActiveSessionId(sessionId);
 		}
 		try {
@@ -137,7 +159,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						sshRemoteId,
 						pendingScrollToLine: line,
 					},
-					{ targetSessionId: sessionId }
+					{ targetSessionId: sessionId, activate: !background }
 				);
 			}
 		} catch (error) {
@@ -256,10 +278,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Acks success to responseChannel so the CLI only reports success after
 	// the tab is actually created.
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
-		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+		const { sessionId, config, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
 			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
 			responseChannel?: string;
+			background?: boolean;
 		};
 		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
@@ -272,7 +295,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			ack(false);
 			return;
 		}
-		setActiveSessionId(sessionId);
+		if (!background) {
+			setActiveSessionId(sessionId);
+		}
 		const baseTab = createTerminalTabHelper(
 			config?.shell,
 			config?.cwd ?? session.cwd,
@@ -287,8 +312,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
-				const updated = addTerminalTabHelper(s, tab);
-				return { ...updated, inputMode: 'terminal' as const };
+				// A background terminal is added to the tab bar and nothing else:
+				// `activate: false` leaves every active-* id alone, and the mode is
+				// left as-is because flipping the agent into terminal mode is itself
+				// a view change for anyone looking at that agent.
+				if (background) return addTerminalTabHelper(s, tab, { activate: false });
+				return { ...addTerminalTabHelper(s, tab), inputMode: 'terminal' as const };
 			})
 		);
 		ack(true, tab.id);
@@ -755,13 +784,127 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
+	// Handle a remote Goal-Driven Auto Run launch from the CLI
+	// (`maestro-cli goal-run --visible`). Routes to the SAME
+	// `startBatchRun({ goalConfig })` entry point the Auto Run modal's Go button
+	// uses, so the run is desktop-owned: it appears in the Auto Run surface, is
+	// stoppable via `stop-auto-run`, and shows up in `session list` for free.
+	//
+	// Unlike `maestro:configureAutoRun`, this does NOT ack success up front.
+	// Every cheap failure is checked synchronously before the agent is claimed,
+	// and the reply then waits for the run to actually reach a running state -
+	// a CLI that is told "launched" needs that to be true.
+	useEventListener('maestro:launchGoalRun', async (e: Event) => {
+		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			config: {
+				goal: string;
+				exitCriteria?: string;
+				maxIterations?: number | null;
+				model?: string;
+				effort?: string;
+			};
+			responseChannel: string;
+		};
+
+		const respond = (result: { success: boolean; tabId?: string; code?: string; error?: string }) =>
+			window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, result);
+
+		const session =
+			sessionsRef.current.find((s) => s.id === sessionId) ||
+			selectSessionById(sessionId)(useSessionStore.getState());
+		if (!session) {
+			respond({
+				success: false,
+				code: 'SESSION_NOT_FOUND',
+				error: `Agent ${sessionId} not found`,
+			});
+			return;
+		}
+
+		const goal = config?.goal?.trim() ?? '';
+		if (!goal) {
+			respond({ success: false, code: 'EMPTY_GOAL', error: 'A non-empty goal is required' });
+			return;
+		}
+
+		// The goal runner honors this too, but it bails with only a toast, which
+		// would surface to the CLI as an opaque failed launch.
+		if (useSettingsStore.getState().autoRunDisabled) {
+			respond({
+				success: false,
+				code: 'AUTO_RUN_DISABLED',
+				error: 'Auto Run is disabled in Settings',
+			});
+			return;
+		}
+
+		// Synchronous claim - see goalRunLaunch.ts for why this cannot be a plain
+		// isRunning read.
+		if (!reserveGoalRunLaunch(sessionId)) {
+			respond({
+				success: false,
+				code: 'AGENT_BUSY',
+				error: `Agent "${session.name}" already has an Auto Run in progress`,
+			});
+			return;
+		}
+
+		try {
+			const batchConfig: BatchRunConfig = {
+				documents: [],
+				prompt: '',
+				loopEnabled: false,
+				maxLoops: null,
+				goalConfig: {
+					goal,
+					exitCriteria: config.exitCriteria?.trim() ?? '',
+					maxIterations: config.maxIterations ?? null,
+				},
+				...(config.model && { model: config.model }),
+				...(config.effort && { effort: config.effort }),
+			};
+
+			// Goal mode is document-less, so folderPath is only used for history
+			// bookkeeping; the agent runs in its own cwd.
+			const runPromise = startBatchRun(sessionId, batchConfig, session.autoRunFolderPath || '');
+			runPromise.catch((err) => {
+				logger.error('[Remote] Visible goal run failed:', undefined, err);
+			});
+
+			const started = await waitForGoalRunStart(sessionId, runPromise);
+			if (!started) {
+				respond({
+					success: false,
+					code: 'LAUNCH_FAILED',
+					error:
+						'The desktop app did not start the goal run (check the Auto Run prompt template and Settings)',
+				});
+				return;
+			}
+
+			// Goal runs attach to the AGENT, not a tab, and surface on whichever AI
+			// tab is active - that is the tab the returned deep link addresses.
+			respond({ success: true, tabId: session.activeTabId });
+		} catch (error) {
+			captureException(error, { extra: { event: 'maestro:launchGoalRun', sessionId } });
+			respond({
+				success: false,
+				code: 'LAUNCH_FAILED',
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			releaseGoalRunLaunch(sessionId);
+		}
+	});
+
 	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
 	// git worktree branched off a parent agent, without an Auto Run playbook.
 	// Reuses spawnWorktreeAgentAndDispatch (the same helper the Auto Run launch
 	// path uses) but skips the batch dispatch: the new agent is left idle, and
 	// the CLI optionally follows up with `dispatch` to send an initial prompt.
 	useEventListener('maestro:createWorktreeSession', async (e: Event) => {
-		const { parentSessionId, config, responseChannel } = (e as CustomEvent).detail;
+		const { parentSessionId, config, responseChannel, background } = (e as CustomEvent).detail;
 
 		try {
 			const parent = sessionsRef.current.find((s) => s.id === parentSessionId);
@@ -802,6 +945,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					error: 'Failed to create worktree agent',
 				});
 				return;
+			}
+
+			// spawnWorktreeAgentAndDispatch does not select the child on its own
+			// (unlike the desktop worktree flows, where a human clicked Create), so
+			// background placement is already the behaviour here and `--focus` is
+			// what has to be implemented rather than suppressed.
+			if (!background) {
+				setActiveSessionId(newSessionId);
 			}
 
 			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
@@ -1130,7 +1281,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote create session from web interface
 	useEventListener('maestro:remoteCreateSession', async (e: Event) => {
-		const { name, toolType, cwd, groupId, config, responseChannel } = (e as CustomEvent).detail;
+		const { name, toolType, cwd, groupId, config, responseChannel, background } = (e as CustomEvent)
+			.detail;
 		try {
 			// Get agent definition to validate
 			const agent = await (window as any).maestro.agents.get(toolType);
@@ -1261,7 +1413,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
-			setActiveSessionId(newId);
+			// A background create leaves the Left Bar selection where it is. The
+			// agent still exists, is listed, and is addressable by the id handed
+			// back - it just does not take the window from whoever is working.
+			if (!background) {
+				setActiveSessionId(newId);
+			}
 			(window as any).maestro.stats.recordSessionCreated({
 				sessionId: newId,
 				agentType: toolType,
@@ -1510,8 +1667,103 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 
+		// A patch carrying a `tabId` targets one AI tab inside the agent rather
+		// than the agent itself. It rides this message (instead of a new one)
+		// because everything a scriptable write needs is already here: an
+		// allowlist, a response channel the caller can await, and a setMany flush
+		// so the value is on disk before the ack. Prefer extending this for new
+		// persistent state over adding another fire-and-forget renderer channel.
+		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
+		if (targetTabId !== undefined) {
+			// Everything the composer chips toggle, keyed by the value it accepts.
+			// The type is enforced here rather than trusted from the wire: these
+			// land straight in the persisted tab, so a bad value (a string in
+			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
+			// chip rather than a rejected command.
+			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
+				starred: 'boolean',
+				hasUnread: 'boolean',
+				saveToHistory: 'boolean',
+				readOnlyMode: 'boolean',
+				enterToSend: 'boolean',
+				showThinking: 'thinking',
+				customModel: 'string',
+				customEffort: 'string',
+			};
+			const tabPatch: Record<string, unknown> = {};
+			for (const key of Object.keys(patchObj)) {
+				const kind = TAB_EDITABLE_KEYS[key];
+				if (!kind) continue;
+				const value = patchObj[key];
+				// `null` clears the field, which is how a tab drops an override and
+				// goes back to inheriting the agent's model/effort or the global
+				// enter-to-send setting. Distinct from `false`.
+				if (value === null) {
+					tabPatch[key] = undefined;
+					continue;
+				}
+				const valid =
+					kind === 'boolean'
+						? typeof value === 'boolean'
+						: kind === 'string'
+							? typeof value === 'string'
+							: asThinkingMode(value) !== undefined;
+				if (!valid) {
+					window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+						success: false,
+						error: `Invalid value for tab field '${key}'`,
+					});
+					return;
+				}
+				tabPatch[key] = value;
+			}
+
+			if (Object.keys(tabPatch).length === 0) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'No editable tab fields in patch',
+				});
+				return;
+			}
+
+			if (!session.aiTabs?.some((t) => t.id === targetTabId)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Tab not found',
+				});
+				return;
+			}
+
+			const applyTabPatch = (s: Session): Session => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
+			});
+
+			setSessions((prev: Session[]) =>
+				prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
+			);
+
+			try {
+				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
+			}
+
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
+			return;
+		}
+
 		// Allowlist of editable session config keys. Anything else in the patch is
 		// ignored so the CLI can't write arbitrary Session internals.
+		//
+		// Two groups live here. The spawn-time settings (the Edit Agent modal
+		// fields) take effect on the next launch. The UI-state fields below them
+		// are what the user would otherwise toggle by clicking in the Left Bar;
+		// they apply immediately and are flushed to disk by the setMany below, so
+		// a CLI read straight after the write sees the new value rather than
+		// waiting on the renderer's 2s debounce.
 		const EDITABLE_KEYS = new Set([
 			'nudgeMessage',
 			'newSessionMessage',
@@ -1529,6 +1781,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
+			// UI state
+			'bookmarked',
 		]);
 
 		// Build the field patch. A `null` value clears the field (sets undefined);

@@ -101,10 +101,15 @@ const READY_REGEX = /[›❯]\s/;
 // Robustness against Anthropic rewording is NOT worth buying with broad matching
 // here; if the banner text changes, the maestro-p first-byte/idle timeouts still
 // fail the turn loudly rather than dropping it. Match only the two real Max-plan
-// window banners ("5-hour"/"weekly" limit reached/exceeded) and Claude's exact
-// "Claude [AI] usage limit reached" string.
+// window banners ("5-hour"/"weekly" limit reached/exceeded), Claude's exact
+// "Claude [AI] usage limit reached" string, and the current banner wording
+// ("You've hit your session limit - resets 11:40am (America/Chicago)").
+//
+// That last one is LINE-ANCHORED rather than free-floating for the same reason:
+// the TUI paints the banner as its own line (box-drawing chars and padding
+// allowed before it), whereas an agent discussing limits says it mid-sentence.
 const LIMIT_REGEX =
-	/\b(?:5-hour|weekly)\s+limit\s+(?:reached|exceeded)\b|\bClaude(?:\s+AI)?\s+usage\s+limit\s+reached\b/i;
+	/\b(?:5-hour|weekly)\s+limit\s+(?:reached|exceeded)\b|\bClaude(?:\s+AI)?\s+usage\s+limit\s+reached\b|^[^\w]*you\s*(?:'|’)?\s*ve\s+hit\s+your\s+(?:session|weekly|5[\s-]?hour|opus|usage)\s+limit\b/i;
 
 // Claude TUI v2.1.143+ shows a "Quick safety check: Is this a project you
 // created or one you trust?" prompt on first launch in any folder, with

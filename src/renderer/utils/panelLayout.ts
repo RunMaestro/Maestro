@@ -1,5 +1,5 @@
 // Panel layout helpers - pure, side-effect-free tree utilities for tmux-style
-// tab tiling (split panes). Mirrors the functional style of tabHelpers.ts and
+// tab tiling (split panes). Mirrors the functional style of tabHelpers and
 // terminalTabHelpers.ts: every function takes a node/group and returns a new
 // one, never mutating its input.
 //
@@ -119,7 +119,7 @@ export function dropZoneToSplit(
 }
 
 /** Compare two tab refs by type + id (leaves reference tabs by value, not identity). */
-function sameTabRef(a: UnifiedTabRef, b: UnifiedTabRef): boolean {
+export function sameTabRef(a: UnifiedTabRef, b: UnifiedTabRef): boolean {
 	return a.type === b.type && a.id === b.id;
 }
 
@@ -858,7 +858,7 @@ function activateRestoredPane(session: Session, groupId: string, ref: UnifiedTab
  * rather than restoring one, so pulling it into a rebuilt group would yank a live
  * tab out of wherever the user currently has it.
  *
- * Lives here rather than beside `reopenUnifiedClosedTab` because tabHelpers.ts
+ * Lives here rather than beside `reopenUnifiedClosedTab` because tabHelpers
  * must not import this module (it would close an import cycle).
  */
 export function reopenClosedTabWithTiling(session: Session): ReopenUnifiedClosedTabResult | null {
@@ -1271,7 +1271,7 @@ function parentSplitDirection(node: PanelLayoutNode, leafId: string): 'row' | 'c
 }
 
 /** Id of the first (top-left) leaf in a layout, or null for an empty tree. */
-function firstLeafId(node: PanelLayoutNode): string | null {
+export function firstLeafId(node: PanelLayoutNode): string | null {
 	if (node.kind === 'leaf') return node.id;
 	for (const child of node.children) {
 		const id = firstLeafId(child);

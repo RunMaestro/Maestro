@@ -11,10 +11,15 @@
  */
 
 import { useCallback } from 'react';
-import type { QueuedItem, SessionState } from '../../types';
+import type { QueuedItem } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { applyQueuedItemDispatch, getQueueBusyContext } from '../../utils/executionQueue';
+import {
+	applyQueuedItemDispatch,
+	applyQueuedItemRelease,
+	getQueueBusyContext,
+} from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -125,13 +130,33 @@ export function useQueueHandlers({
 
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: { text: string; images: string[] }) => {
+			// Re-resolve the pending consult against the EDITED text: the user may
+			// have added or removed an `@agent` mention, and the item's stale flag
+			// would otherwise consult the wrong agent (or nobody) when it dispatches.
+			//
+			// BOTH flags have to be re-derived, not just `crossAgentMention`. Whether
+			// this agent answers at all is decided by where the mention sits, and the
+			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
+			// spawning locally, and the reverse must stop spawning. Leaving
+			// `crossAgentOnly` behind silently discards half of what the user edited.
+			const mentionPlan = planCrossAgentMentions(patch.text, sessionId);
+			const crossAgentMention = !!mentionPlan;
+			const crossAgentOnly = mentionPlan?.suppressLocal ?? false;
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					return {
 						...s,
 						executionQueue: s.executionQueue.map((item) =>
-							item.id === itemId ? { ...item, text: patch.text, images: patch.images } : item
+							item.id === itemId
+								? {
+										...item,
+										text: patch.text,
+										images: patch.images,
+										crossAgentMention,
+										crossAgentOnly,
+									}
+								: item
 						),
 					};
 				})
@@ -170,23 +195,9 @@ export function useQueueHandlers({
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						const aiTabs = s.aiTabs.map((tab) =>
-							tab.id === dispatchItem.tabId
-								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-								: tab
-						);
-						const stillWorking = aiTabs.some((tab) => tab.state === 'busy');
 						return {
-							...s,
+							...applyQueuedItemRelease(s, dispatchItem.tabId),
 							executionQueue: [dispatchItem, ...s.executionQueue],
-							aiTabs,
-							...(stillWorking
-								? {}
-								: {
-										state: 'idle' as SessionState,
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									}),
 						};
 					})
 				);

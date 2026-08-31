@@ -31,8 +31,12 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../types';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
-import { getLevelIndex } from '../constants/keyboardMastery';
+import { FIXED_SHORTCUTS } from '../constants/shortcuts';
+import {
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+	getLevelIndex,
+} from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import {
@@ -50,8 +54,8 @@ import {
 	sanitizeSnoozeHistory,
 	SNOOZE_HISTORY_SETTINGS_KEY,
 } from './snoozeHistoryStore';
-import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
-import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { ModalPosition, ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { normalizeModalPosition, sanitizeModalSizes } from '../utils/modalSizing';
 import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice';
 import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
 import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
@@ -198,11 +202,6 @@ const DEFAULT_KEYBOARD_MASTERY_STATS: KeyboardMasteryStats = {
 	lastAcknowledgedLevel: 0,
 };
 
-const TOTAL_SHORTCUTS_COUNT =
-	Object.keys(DEFAULT_SHORTCUTS).length +
-	Object.keys(TAB_SHORTCUTS).length +
-	Object.keys(FIXED_SHORTCUTS).length;
-
 const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	wizardStartCount: 0,
 	wizardCompletionCount: 0,
@@ -254,6 +253,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
+	'delete',
 ] as const;
 
 export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
@@ -361,6 +361,10 @@ export interface SettingsStoreState
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
+	/** Concerto stage presentation: true = popped out into a floating window. */
+	concertoStageFloating: boolean;
+	/** Where the popped-out Concerto stage was last dragged to, or null. */
+	concertoStagePosition: ModalPosition | null;
 	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
@@ -477,6 +481,8 @@ export interface SettingsStoreActions
 	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
 	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
+	setConcertoStageFloating: (value: boolean) => void;
+	setConcertoStagePosition: (value: ModalPosition | null) => void;
 	/** Remember the height a user dragged a resizable textarea to. */
 	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
@@ -704,6 +710,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
+		concertoStageFloating: false,
+		concertoStagePosition: null,
 		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
@@ -939,6 +947,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		resetModalSizes: () => {
 			set({ modalSizes: {} });
 			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setConcertoStageFloating: (value) => {
+			set({ concertoStageFloating: value });
+			window.maestro.settings.set('concertoStageFloating', value);
+		},
+
+		setConcertoStagePosition: (value) => {
+			const normalized = value ? normalizeModalPosition(value) : null;
+			set({ concertoStagePosition: normalized });
+			window.maestro.settings.set('concertoStagePosition', normalized);
 		},
 
 		setTextareaHeight: (key, value) => {
@@ -1199,7 +1218,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		},
 
 		setDocumentGraphPreviewCharLimit: (value) => {
-			const clamped = Math.max(50, Math.min(500, value));
+			// 0 is a real value, not a floor to clamp away: it means "previews off",
+			// which draws each node as a filename pill.
+			const clamped = Math.max(0, Math.min(500, value));
 			set({ documentGraphPreviewCharLimit: clamped });
 			window.maestro.settings.set('documentGraphPreviewCharLimit', clamped);
 		},
@@ -1758,8 +1779,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// Add new shortcut to the list
 			const updatedShortcuts = [...currentStats.usedShortcuts, shortcutId];
 
-			// Calculate new percentage and level
-			const percentage = (updatedShortcuts.length / TOTAL_SHORTCUTS_COUNT) * 100;
+			// Calculate new percentage and level over the BOUND shortcuts only - an
+			// unbound one can never be fired, so counting it would make the top
+			// level unreachable. Read from the live maps so a binding the user
+			// cleared in Settings leaves the denominator too.
+			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const percentage =
+				bound.length > 0
+					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
+					: 0;
 			const newLevelIndex = getLevelIndex(percentage);
 
 			// Check if user leveled up
@@ -1915,6 +1943,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['modalSizes'] !== undefined)
 			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
 
+		if (allSettings['concertoStageFloating'] !== undefined)
+			patch.concertoStageFloating = allSettings['concertoStageFloating'] === true;
+
+		if (allSettings['concertoStagePosition'] !== undefined)
+			patch.concertoStagePosition = normalizeModalPosition(allSettings['concertoStagePosition']);
+
 		if (allSettings['textareaHeights'] !== undefined)
 			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
 
@@ -1996,6 +2030,31 @@ export async function loadAllSettings(): Promise<void> {
 			const commandsById = new Map<string, CustomAICommand>();
 			DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
 			(allSettings['customAICommands'] as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
+				// The persisted array is whatever is on disk, not necessarily CustomAICommand[]:
+				// electron-store hands back hand-edited / sync-mangled / legacy-schema entries
+				// unchanged. Every consumer keys off `id` (edit, save, reset, delete, React keys),
+				// so an entry without one is unusable and would otherwise be stored under the
+				// Map key `undefined` and rendered anyway. Skip it instead of crashing later.
+				// `id`, `command` and `prompt` are all load-bearing: consumers key off
+				// `id` (edit, save, reset, delete, React keys), and the panel calls
+				// `command.startsWith('/')` and `prompt.substring(...)` directly, so a
+				// missing one is a crash rather than a cosmetic gap. `description` is
+				// only rendered, so default it instead of discarding a command the
+				// user may still want.
+				if (
+					!cmd ||
+					typeof cmd !== 'object' ||
+					typeof cmd.id !== 'string' ||
+					!cmd.id ||
+					typeof cmd.command !== 'string' ||
+					typeof cmd.prompt !== 'string'
+				) {
+					logger.warn('Skipping malformed customAICommands entry (missing id, command or prompt)');
+					return;
+				}
+				if (typeof cmd.description !== 'string') {
+					cmd = { ...cmd, description: '' };
+				}
 				// Migration: Skip old /synopsis command
 				if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
 					return;
@@ -2028,28 +2087,21 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		if (allSettings['autoRunStats'] !== undefined) {
-			let stats = {
+			// NOTE: a `concurrentAutoRunTimeMigrationApplied` migration used to add
+			// 3 hours to `cumulativeTimeMs` here. It was removed because it grew the
+			// local total without submitting a delta, which is exactly what
+			// `services/leaderboard.ts` forbids: the 3 hours never reached the
+			// leaderboard, pushed the local total above the server's, and (before the
+			// drift branch in useAppInitialization) latched the startup sync off for
+			// good. It was also keyed per install, so a multi-machine user collected
+			// it once per machine, and it fired for installs that never saw the
+			// concurrent-tallying bug at all (the flag is only written by the
+			// migration, so a brand new install qualified after its first run).
+			// Installs that already took the 3 hours keep them; nothing claws back.
+			patch.autoRunStats = {
 				...DEFAULT_AUTO_RUN_STATS,
 				...(allSettings['autoRunStats'] as Partial<AutoRunStats>),
 			};
-
-			// One-time migration: Add 3 hours to compensate for concurrent Auto Run tallying bug
-			const concurrentAutoRunTimeMigrationApplied =
-				allSettings['concurrentAutoRunTimeMigrationApplied'];
-			if (!concurrentAutoRunTimeMigrationApplied && stats.cumulativeTimeMs > 0) {
-				const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-				stats = {
-					...stats,
-					cumulativeTimeMs: stats.cumulativeTimeMs + THREE_HOURS_MS,
-				};
-				window.maestro.settings.set('autoRunStats', stats);
-				window.maestro.settings.set('concurrentAutoRunTimeMigrationApplied', true);
-				logger.info(
-					'[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time'
-				);
-			}
-
-			patch.autoRunStats = stats;
 		}
 
 		if (allSettings['usageStats'] !== undefined) {
@@ -2156,10 +2208,13 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		// The play queue outlives a restart so a half-listened playlist is still
-		// there tomorrow. It comes back hidden and paused: restoring what was
-		// queued should not start a podcast at launch, and the Left Bar's
-		// now-playing indicator is what advertises that it is loaded. Recently
-		// played is NOT restored - it is per-session by design.
+		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
+		// what was queued should not start a podcast at launch, and it should not
+		// put media controls in the Left Bar header either, since the user has not
+		// played anything yet. The command palette's "Open Media Player" is what
+		// reaches a dormant queue, and the first thing the user opens or
+		// queues wakes it. Recently played is NOT restored - it is per-session by
+		// design.
 		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
 			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
 			const items = sanitizeMediaItems(stored?.items);
@@ -2173,6 +2228,7 @@ export async function loadAllSettings(): Promise<void> {
 					resumeTimes: sanitizeMediaTimes(stored?.resumeTimes, ids),
 					durations: sanitizeMediaTimes(stored?.durations, ids),
 					dismissed: true,
+					dormant: true,
 					playing: false,
 					pendingAutoplay: false,
 				});
@@ -2233,7 +2289,10 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['documentGraphPreviewCharLimit'] !== undefined) {
 			const charLimit = allSettings['documentGraphPreviewCharLimit'] as number;
-			if (typeof charLimit === 'number' && charLimit >= 50 && charLimit <= 500) {
+			// 0 means "previews off" (filename pills), so the floor is 0, not 50 -
+			// a stricter floor here would silently discard the user's saved choice
+			// on every launch and snap the graph back to full cards.
+			if (typeof charLimit === 'number' && charLimit >= 0 && charLimit <= 500) {
 				patch.documentGraphPreviewCharLimit = charLimit;
 			}
 		}
@@ -2515,6 +2574,17 @@ export function getSettingsActions() {
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setTerminalFontFamily: state.setTerminalFontFamily,
+		setChatFontFamily: state.setChatFontFamily,
+		setFilePreviewFontFamily: state.setFilePreviewFontFamily,
+		setFileEditorFontFamily: state.setFileEditorFontFamily,
+		setSurfaceFontFamily: state.setSurfaceFontFamily,
+		setSurfaceFontSize: state.setSurfaceFontSize,
+		setFontZoom: state.setFontZoom,
+		resetTypography: state.resetTypography,
+		setTypographyPromptSeen: state.setTypographyPromptSeen,
+		setThemePromptSeen: state.setThemePromptSeen,
+		setAgentPowersPromptSeen: state.setAgentPowersPromptSeen,
+		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,
 		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,
@@ -2530,6 +2600,8 @@ export function getSettingsActions() {
 		setModalSize: state.setModalSize,
 		resetModalSize: state.resetModalSize,
 		resetModalSizes: state.resetModalSizes,
+		setConcertoStageFloating: state.setConcertoStageFloating,
+		setConcertoStagePosition: state.setConcertoStagePosition,
 		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
