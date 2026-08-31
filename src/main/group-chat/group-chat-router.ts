@@ -195,6 +195,22 @@ const MODERATOR_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
 const moderatorTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
+ * Puts a room back to rest: clears the running state and releases its power
+ * block. These two always belong together - a room left non-idle is reported as
+ * a running chat by `collectActiveOperations` (so quitting warns about work that
+ * finished, and Quit When Idle never fires again), and a leaked power block
+ * keeps the machine awake for the same phantom.
+ *
+ * Exported because the three places that decide "all participants are done" live
+ * in three different files, and only this one has `powerManager` - a caller that
+ * emits the state change but cannot release the block fixes half the bug.
+ */
+export function settleGroupChatToIdle(groupChatId: string): void {
+	groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+	powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+}
+
+/**
  * Registers a response timeout for the moderator.
  * If the moderator doesn't exit in MODERATOR_RESPONSE_TIMEOUT_MS, the state is
  * force-reset to idle so the chat doesn't hang forever.
@@ -309,21 +325,33 @@ function setParticipantResponseTimeout(
 		}
 
 		const isLast = markParticipantResponded(groupChatId, participantName);
-		if (isLast && processManager && agentDetector) {
-			spawnModeratorSynthesis(groupChatId, processManager, agentDetector).catch((err) => {
-				logger.error('Failed to spawn moderator synthesis after participant timeout', LOG_CONTEXT, {
-					error: err,
-					groupChatId,
-					participantName,
+		if (isLast) {
+			// The room is done either way. Whether synthesis can run is a separate
+			// question from whether the room is still working, and folding the two
+			// into one condition is what left a timed-out room stuck on
+			// 'agent-working' forever: `processManager`/`agentDetector` are optional
+			// here, so an undefined one skipped the clear along with the spawn.
+			if (processManager && agentDetector) {
+				spawnModeratorSynthesis(groupChatId, processManager, agentDetector).catch((err) => {
+					logger.error(
+						'Failed to spawn moderator synthesis after participant timeout',
+						LOG_CONTEXT,
+						{
+							error: err,
+							groupChatId,
+							participantName,
+						}
+					);
+					captureException(err, {
+						operation: 'groupChat:spawnSynthesisAfterTimeout',
+						groupChatId,
+						participantName,
+					});
+					settleGroupChatToIdle(groupChatId);
 				});
-				captureException(err, {
-					operation: 'groupChat:spawnSynthesisAfterTimeout',
-					groupChatId,
-					participantName,
-				});
-				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
-			});
+			} else {
+				settleGroupChatToIdle(groupChatId);
+			}
 		}
 	}, PARTICIPANT_RESPONSE_TIMEOUT_MS);
 
