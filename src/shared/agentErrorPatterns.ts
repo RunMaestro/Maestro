@@ -968,6 +968,17 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: false,
 		},
 		{
+			// Agent command not found for openclaude.
+			// MUST stay ahead of the claude entry below: that pattern is
+			// `.*claude.*`, which also matches "openclaude", and the first match
+			// wins - so the order is what stops an OpenClaude failure from telling
+			// the user to go install Claude Code.
+			pattern:
+				/bash:.*openclaude.*command not found|sh:.*openclaude.*command not found|zsh:.*command not found:.*openclaude/i,
+			message: 'OpenClaude command not found. Ensure OpenClaude is installed.',
+			recoverable: false,
+		},
+		{
 			// Agent command not found (shell reports command not found)
 			// bash/sh format: "bash: claude: command not found"
 			// zsh format: "zsh: command not found: claude"
@@ -995,7 +1006,7 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			// More specific pattern: requires path-like structure before the binary name
 			// Matches: "/usr/local/bin/claude: No such file or directory"
 			// Does NOT match: "claude: error: File 'foo.txt': No such file or directory" (normal file errors)
-			pattern: /\/[^\s:]*\/(claude|opencode|codex):\s*No such file or directory/i,
+			pattern: /\/[^\s:]*\/(openclaude|claude|opencode|codex):\s*No such file or directory/i,
 			message: 'Agent binary not found at the specified path. Ensure the agent is installed.',
 			recoverable: false,
 		},
@@ -1554,6 +1565,10 @@ const ANTIGRAVITY_ERROR_PATTERNS: AgentErrorPatterns = {
 
 const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
+	// OpenClaude is a fork of Claude Code and fails with the same strings. The
+	// messages in this bank name WHAT failed rather than a brand or a terminal
+	// command, so sharing the set is what keeps the two from drifting apart.
+	['openclaude', CLAUDE_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],

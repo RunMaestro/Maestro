@@ -544,7 +544,12 @@ function buildArgsForAgent(agent: any): string[] {
 	const agentId = agent.id;
 
 	switch (agentId) {
-		case 'claude-code': {
+		// OpenClaude forks Claude Code and accepts these flags verbatim
+		// (`--output-format`, `--include-partial-messages`, and both the
+		// `--allowedTools` and `--allowed-tools` spellings), so it shares the
+		// branch rather than getting a copy that drifts.
+		case 'claude-code':
+		case 'openclaude': {
 			const args = [...(agent.args || [])];
 			// Ensure stream-json output format for proper parsing and thinking-chunk events
 			if (!args.includes('--output-format')) {

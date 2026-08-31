@@ -658,7 +658,12 @@ class ConversationManager {
 		const agentId = agent.id || this.session?.agentType;
 
 		switch (agentId) {
-			case 'claude-code': {
+			// OpenClaude forks Claude Code and accepts these flags verbatim
+			// (`--output-format`, `--include-partial-messages`, and both the
+			// `--allowedTools` and `--allowed-tools` spellings), so it shares the
+			// branch rather than getting a copy that drifts.
+			case 'claude-code':
+			case 'openclaude': {
 				// Claude Code: start with base args, add required flags for streaming and thinking
 				const args = [...(agent.args || [])];
 				// Ensure stream-json output format for proper parsing and thinking-chunk events

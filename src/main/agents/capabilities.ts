@@ -404,6 +404,56 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * OpenClaude - Open coding CLI that routes to any LLM provider
+	 * https://github.com/Gitlawb/openclaude
+	 *
+	 * A fork of Claude Code that keeps its headless CLI surface flag for flag,
+	 * so the flags and the stream-json schema are Claude's. What is NOT inherited
+	 * is anything that assumes Anthropic specifically, or anything that reaches
+	 * into `~/.claude`.
+	 */
+	openclaude: {
+		supportsResume: true, // -r/--resume <id>, same as Claude Code
+		supportsReadOnlyMode: true, // --permission-mode plan
+		// Deliberately false: standard mode is Maestro's permission RELAY, which
+		// injects --permission-prompt-tool plus an --mcp-config pointing at a local
+		// stdio bridge. That path is wired for claude-code only (see
+		// ipc/handlers/process/handle-spawn.ts), so advertising the capability here
+		// would offer the user a mode that spawns without the relay and aborts on
+		// the first tool call. OpenClaude gets Full Access / Plan-Mode, like every
+		// other non-Claude provider.
+		supportsStandardPermissionMode: false,
+		supportsJsonOutput: true, // --output-format stream-json
+		supportsSessionId: true, // session_id on the stream, same field name
+		supportsImageInput: true, // --input-format stream-json carries image blocks
+		supportsImageInputOnResume: true, // Follows supportsImageInput, as on Claude Code
+		supportsSlashCommands: true, // /provider, /onboard-github, plus skill-backed commands
+		supportsSessionStorage: true, // ~/.openclaude/projects/<encoded-path>/<id>.jsonl
+		supportsCostTracking: true, // total_cost_usd on the result event
+		supportsUsageStats: true, // usage / modelUsage on assistant and result events
+		supportsBatchMode: true, // -p/--print
+		requiresPromptToStart: false, // --print reads the prompt from stdin
+		supportsStreaming: true, // stream-json events
+		supportsResultMessages: true, // "result" event type
+		supportsModelSelection: true, // --model <model>
+		supportsStreamJsonInput: true, // --input-format stream-json
+		supportsPromptViaStdin: true, // `openclaude -p` reads the prompt from stdin
+		supportsThinkingDisplay: true, // Emits streaming assistant messages
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Structured output over the same stream-json schema
+		supportsGroupChatModeration: true, // Same spawn path as Claude Code
+		usesJsonLineOutput: false, // stream-json, not the JSONL batch shape
+		usesCombinedContextWindow: false, // Separate input/output limits, as on Claude Code
+		supportsAppendSystemPrompt: true, // --append-system-prompt
+		// Deliberately false: project memory reads ~/.claude/projects/<path>/memory/.
+		// OpenClaude stores under ~/.openclaude and explicitly does not read ~/.claude,
+		// so the Memory Viewer would open on another provider's notes.
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: true, // --add-dir <dirs...>
+	},
+
+	/**
 	 * Factory Droid - Enterprise AI coding assistant from Factory
 	 * https://docs.factory.ai/cli
 	 *

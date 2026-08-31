@@ -840,6 +840,72 @@ describe('YourAgentOutputParser', () => {
 
 ---
 
+### OpenClaude ✅ Implemented (fork of Claude Code)
+
+| Aspect           | Value                                    |
+| ---------------- | ---------------------------------------- |
+| Binary           | `openclaude`                             |
+| Install          | `npm install -g @gitlawb/openclaude`     |
+| JSON Output      | `--output-format stream-json`            |
+| Resume           | `--resume <session-id>`                  |
+| Read-only        | `--permission-mode plan`                 |
+| Session ID Field | `session_id` (snake_case)                |
+| Session Storage  | `~/.openclaude/projects/<encoded-path>/` |
+| Model Selection  | `--model <model>`                        |
+| Provider Setup   | `/provider` inside the TUI               |
+
+[OpenClaude](https://github.com/Gitlawb/openclaude) is a fork of Claude Code
+that routes to whichever backend the user configures (OpenAI-compatible APIs,
+Gemini, GitHub Models, Ollama, Bedrock, Vertex, and others). It keeps the
+headless CLI surface flag for flag and emits a byte-identical stream-json
+schema, down to `session_id`, `modelUsage`, `total_cost_usd` and
+`parent_tool_use_id`.
+
+So the integration is a thin layer rather than a parallel copy:
+
+- `OpenClaudeOutputParser` subclasses `ClaudeOutputParser`, overriding only
+  `agentId` (which is what routes error matching and stamps emitted errors).
+- `OpenClaudeSessionStorage` subclasses `ClaudeSessionStorage` and supplies a
+  `ClaudeStorageBrand` of `{ homeDirName: '.openclaude', originsStoreName:
+'openclaude-session-origins' }`. To make that possible, Claude's projects
+  directory and origins store moved off hard-coded names onto that brand.
+- Error patterns are shared outright. The Claude bank's messages name WHAT
+  failed rather than a brand or a terminal command, and sharing the set is what
+  stops the two from drifting apart.
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/openclaude-output-parser.ts`
+- ✅ Session Storage: `src/main/storage/openclaude-session-storage.ts`
+- ✅ Error Patterns: shares `CLAUDE_ERROR_PATTERNS`
+- ✅ Provider pickers, wizard logo, path probing (Windows + POSIX), SSH remote
+  PATH, token-coverage maps, context groomer, built-in slash commands
+
+**Deliberately NOT inherited from Claude Code:**
+
+| Not inherited                     | Why                                                                                                                                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supportsStandardPermissionMode`  | Standard mode is Maestro's permission relay, which injects `--permission-prompt-tool` + an `--mcp-config` pointing at a local stdio bridge. `handle-spawn.ts` gates that on `claude-code`. See the follow-up below. |
+| `supportsProjectMemory`           | Project memory reads `~/.claude/projects/<path>/memory/`. OpenClaude stores under `~/.openclaude` and explicitly does not read `~/.claude`, so the Memory Viewer would open another provider's notes.               |
+| `interactiveCommand: 'maestro-p'` | `maestro-p` drives the real Claude TUI, a different binary. OpenClaude runs the API/print path only.                                                                                                                |
+| `defaultEnvVars`                  | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is a Claude Code knob.                                                                                                                                                       |
+| Tier/effort model tables          | OpenClaude's model IDs are whatever the configured provider exposes, discovered at runtime. A shipped guess would rot into naming a model the user cannot run.                                                      |
+
+**Known follow-ups:**
+
+- OpenClaude does expose `--permission-prompt-tool`, so standard permission mode
+  is reachable. Wiring it means widening the `isClaudeCode` gate in
+  `src/main/ipc/handlers/process/handle-spawn.ts` and verifying the relay's
+  `--mcp-config` payload against a live binary. Left out of the base
+  integration deliberately: advertising the capability without the relay would
+  offer a mode that aborts on the first tool call.
+- No effort discovery. Claude Code's `effort` option is `dynamic: true` and
+  scrapes the Claude CLI's own help text; OpenClaude's wording is its own, so
+  the levels its `--effort` flag documents are listed statically.
+- No Coworking MCP installer or `MCP_CONFIG_BY_AGENT` entry.
+
+---
+
 ### OpenCode 🔄 Stub Ready
 
 | Aspect           | Value                                                         |

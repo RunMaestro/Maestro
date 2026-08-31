@@ -19,7 +19,7 @@ import type { AdditionalDirectory } from './types';
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
  *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
- *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
+ *   {{TOOL_TYPE}}         - Agent type (claude-code, openclaude, codex, opencode, factory-droid)
  *
  * Path Variables:
  *   {{CWD}}               - Current working directory

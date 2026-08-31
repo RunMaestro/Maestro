@@ -22,6 +22,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	antigravity: 'Antigravity CLI',
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
+	openclaude: 'OpenClaude',
 	'factory-droid': 'Factory Droid',
 	hermes: 'Hermes',
 	pi: 'Pi',
@@ -43,11 +44,15 @@ export function getAgentDisplayName(agentId: AgentId | string): string {
 
 /**
  * Agents that use "plan mode" rather than true read-only mode.
- * Claude Code uses --permission-mode plan, OpenCode uses --agent plan.
+ * Claude Code and OpenClaude use --permission-mode plan, OpenCode uses --agent plan.
  * These agents can still read files but the CLI calls it "plan mode".
  * Other agents (Codex, Factory Droid) have true read-only enforcement.
  */
-const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['claude-code', 'opencode']);
+const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'claude-code',
+	'openclaude',
+	'opencode',
+]);
 
 /**
  * Get the UI label for the read-only mode pill based on the agent.
@@ -134,6 +139,7 @@ export function resolveTabPermissionMode(
  */
 export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'opencode',
+	'openclaude',
 	'factory-droid',
 	'hermes',
 	'pi',
@@ -188,6 +194,7 @@ export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
 	grok: { description: "xAI's AI coding assistant", brandColor: '#B4B8C0' },
 	hermes: { description: "Nous Research's AI coding assistant", brandColor: '#2323FF' },
 	omp: { description: 'Multi-model coding agent', brandColor: '#9B4DFF' },
+	openclaude: { description: 'Open coding CLI for any LLM provider', brandColor: '#0EA5E9' },
 	opencode: { description: 'Open-source AI coding assistant', brandColor: '#F97316' },
 	pi: { description: 'Your own agent harness', brandColor: '#E4E4E7' },
 	'qwen3-coder': { description: "Alibaba's AI coding assistant", brandColor: '#615CED' },
@@ -264,6 +271,10 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	'gemini-cli': { binary: 'gemini', args: '', followUp: '/auth' },
 	'qwen3-coder': { binary: 'qwen3-coder', args: '', followUp: '/auth' },
 	opencode: { binary: 'opencode', args: 'auth login' },
+	// OpenClaude has no login subcommand for the provider profiles it actually
+	// runs on: `/provider` inside the TUI is the guided setup, and `auth login`
+	// only covers the first-party Anthropic route. Point the user at the TUI.
+	openclaude: { binary: 'openclaude', args: '', followUp: '/provider' },
 	'factory-droid': { binary: 'droid', args: '', followUp: '/login' },
 	'copilot-cli': { binary: 'copilot', args: 'login' },
 	// Antigravity has no login subcommand: headless runs reuse the credentials

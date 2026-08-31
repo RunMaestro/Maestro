@@ -55,6 +55,7 @@ export {
 // Import parser implementations
 import { ClaudeOutputParser } from './claude-output-parser';
 import { OpenCodeOutputParser } from './opencode-output-parser';
+import { OpenClaudeOutputParser } from './openclaude-output-parser';
 import { CodexOutputParser } from './codex-output-parser';
 import { FactoryDroidOutputParser } from './factory-droid-output-parser';
 import { CopilotOutputParser } from './copilot-output-parser';
@@ -73,6 +74,7 @@ import { logger } from '../utils/logger';
 // Export parser classes for direct use if needed
 export { ClaudeOutputParser } from './claude-output-parser';
 export { OpenCodeOutputParser } from './opencode-output-parser';
+export { OpenClaudeOutputParser } from './openclaude-output-parser';
 export { CodexOutputParser } from './codex-output-parser';
 export { FactoryDroidOutputParser } from './factory-droid-output-parser';
 export { CopilotOutputParser } from './copilot-output-parser';
@@ -95,6 +97,7 @@ export function initializeOutputParsers(): void {
 	// Register all parser implementations
 	registerOutputParser(new ClaudeOutputParser());
 	registerOutputParser(new OpenCodeOutputParser());
+	registerOutputParser(new OpenClaudeOutputParser());
 	registerOutputParser(new CodexOutputParser());
 	registerOutputParser(new FactoryDroidOutputParser());
 	registerOutputParser(new CopilotOutputParser());

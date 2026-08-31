@@ -95,6 +95,28 @@ export const AGENT_ARTIFACTS: Partial<Record<ToolType, string[]>> = {
 		'Claude Code',
 		'CLAUDE.md',
 	],
+	openclaude: [
+		// Slash commands
+		'/clear',
+		'/compact',
+		'/cost',
+		'/doctor',
+		'/help',
+		'/memory',
+		'/model',
+		'/provider',
+		'/repomap',
+		'/review',
+		'/usage',
+		'/logout',
+		'/login',
+		'/config',
+		// Brand references. Deliberately no model names: OpenClaude routes to
+		// whatever provider the user configured, so stripping 'gpt-4o' or
+		// 'qwen2.5-coder' would strip the answer rather than an artifact.
+		'OpenClaude',
+		'openclaude',
+	],
 	opencode: [
 		// Slash commands
 		'/help',
@@ -151,6 +173,14 @@ export const AGENT_TARGET_NOTES: Partial<Record<ToolType, string>> = {
     It can read and edit files, run terminal commands, search code, and interact with git.
     It uses slash commands like /compact, /clear, /cost for session management.
     It can handle large codebases and multi-file changes.
+  `,
+	openclaude: `
+    OpenClaude is an open-source coding-agent CLI, a fork of Claude Code.
+    It routes to whichever provider the user configured (OpenAI-compatible APIs,
+    Gemini, GitHub Models, Ollama, and others), so do not assume an Anthropic model.
+    It can read and edit files, run terminal commands, search code, and interact with git.
+    It uses slash commands like /compact, /clear, /cost for session management,
+    plus /provider for switching backends.
   `,
 	opencode: `
     OpenCode is a multi-model AI coding assistant.

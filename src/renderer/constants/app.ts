@@ -102,6 +102,30 @@ export const OPENCODE_BUILTIN_COMMANDS: Record<string, string> = {
 };
 
 /**
+ * Built-in OpenClaude slash commands with their descriptions.
+ *
+ * OpenClaude forks Claude Code and keeps its command set, so the shared entries
+ * are spread rather than retyped. `init` is overridden because OpenClaude does
+ * not read `CLAUDE.md`, and the entries below it are the fork's own.
+ *
+ * This map only supplies DESCRIPTIONS for commands the agent itself reports on
+ * its init event, so an entry for a command a given build does not ship is
+ * never rendered.
+ */
+export const OPENCLAUDE_BUILTIN_COMMANDS: Record<string, string> = {
+	...CLAUDE_BUILTIN_COMMANDS,
+	init: 'Initialize project agent instructions',
+	provider: 'Guided provider setup and saved profiles',
+	'onboard-github': 'Interactive GitHub Models onboarding',
+	model: 'Switch the model for this session',
+	models: 'List models available from the configured provider',
+	effort: 'Set the effort level for model usage',
+	repomap: 'Show the repo map (codebase intelligence)',
+	usage: 'Show provider usage and limits',
+	doctor: 'Check installation health',
+};
+
+/**
  * Built-in GitHub Copilot CLI slash commands with their descriptions
  */
 export const COPILOT_BUILTIN_COMMANDS: Record<string, string> = {
@@ -126,6 +150,7 @@ export const COPILOT_BUILTIN_COMMANDS: Record<string, string> = {
 const AGENT_BUILTIN_COMMANDS: Record<string, Record<string, string>> = {
 	'claude-code': CLAUDE_BUILTIN_COMMANDS,
 	opencode: OPENCODE_BUILTIN_COMMANDS,
+	openclaude: OPENCLAUDE_BUILTIN_COMMANDS,
 	copilot: COPILOT_BUILTIN_COMMANDS,
 };
 

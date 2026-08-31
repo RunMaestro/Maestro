@@ -569,7 +569,12 @@ export class FeedbackConversationManager {
 		const baseArgs = (agent.args || []).filter((arg: string) => !PERMISSION_BYPASS_FLAGS.has(arg));
 
 		switch (agentId) {
-			case 'claude-code': {
+			// OpenClaude forks Claude Code and accepts these flags verbatim
+			// (`--output-format`, `--include-partial-messages`, and both the
+			// `--allowedTools` and `--allowed-tools` spellings), so it shares the
+			// branch rather than getting a copy that drifts.
+			case 'claude-code':
+			case 'openclaude': {
 				const args = [...baseArgs];
 				if (!args.includes('--output-format')) {
 					args.push('--output-format', 'stream-json');
