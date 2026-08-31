@@ -22,6 +22,10 @@ const mockSetCustomThemeColors = vi.fn();
 const mockSetCustomThemeBaseId = vi.fn();
 const mockSetThemeGloss = vi.fn();
 
+// Mutable so a test can model a store that has not hydrated `themeGloss` yet,
+// or a settings blob written by a build that predates the setting.
+let mockThemeGloss: string | undefined = 'off';
+
 // Mock useSettings hook
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
@@ -45,7 +49,7 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setCustomThemeColors: mockSetCustomThemeColors,
 		customThemeBaseId: 'dracula',
 		setCustomThemeBaseId: mockSetCustomThemeBaseId,
-		themeGloss: 'off',
+		themeGloss: mockThemeGloss,
 		setThemeGloss: mockSetThemeGloss,
 	}),
 }));
@@ -117,6 +121,7 @@ describe('ThemeTab', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
+		mockThemeGloss = 'off';
 	});
 
 	it('should display theme mode sections', async () => {
@@ -349,6 +354,32 @@ describe('ThemeTab', () => {
 			});
 
 			expect(mockSetThemeGloss).toHaveBeenCalledWith('strong');
+		});
+
+		it('survives an undefined level instead of taking the whole modal down', async () => {
+			// `GLOSS_LEVEL_META[level]` is a lookup, so an undefined level threw and
+			// unmounted the ENTIRE Settings modal, not just this section. The store
+			// hydrates asynchronously and an older settings blob has no `themeGloss`
+			// at all, so this is a state that really occurs.
+			mockThemeGloss = undefined;
+
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByRole('slider', { name: 'Intensity' })).toHaveValue('0');
+		});
+
+		it('falls back to Off for an unrecognized stored level', async () => {
+			mockThemeGloss = 'shiny';
+
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByRole('slider', { name: 'Intensity' })).toHaveValue('0');
 		});
 
 		it('disables the slider on a light theme, where gloss has no effect', async () => {

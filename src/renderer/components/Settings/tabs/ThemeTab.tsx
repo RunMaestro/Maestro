@@ -14,6 +14,7 @@ import { Slider } from '../../widgets';
 import {
 	GLOSS_LEVELS,
 	GLOSS_LEVEL_META,
+	asGlossLevel,
 	glossLevelAtIndex,
 	glossLevelIndex,
 } from '../../../../shared/themeGloss';
@@ -48,6 +49,13 @@ export function ThemeTab({
 
 	const themePickerRef = useRef<HTMLDivElement>(null);
 	const isLightTheme = theme.mode === 'light';
+
+	// Narrowed rather than trusted. `GLOSS_LEVEL_META[level]` is a lookup, so an
+	// undefined or unrecognized value throws and takes the ENTIRE Settings modal
+	// down with it, not just this section. The store hydrates asynchronously and
+	// a settings blob written by an older build has no `themeGloss` at all, so
+	// undefined is a state that really occurs rather than a theoretical one.
+	const glossLevel = asGlossLevel(themeGloss);
 
 	// Auto-focus theme picker on mount
 	useEffect(() => {
@@ -117,7 +125,7 @@ export function ThemeTab({
 				<Slider
 					theme={theme}
 					label="Intensity"
-					value={glossLevelIndex(themeGloss)}
+					value={glossLevelIndex(glossLevel)}
 					onChange={(index) => setThemeGloss(glossLevelAtIndex(index))}
 					tickLabels={GLOSS_TICK_LABELS}
 					disabled={isLightTheme}
@@ -125,7 +133,7 @@ export function ThemeTab({
 				<p className="text-[11px] opacity-55 mt-2">
 					{isLightTheme
 						? 'Gloss is off on light themes: a white highlight on a light surface is invisible at best and muddy at worst.'
-						: GLOSS_LEVEL_META[themeGloss].description}
+						: GLOSS_LEVEL_META[glossLevel].description}
 				</p>
 			</div>
 
