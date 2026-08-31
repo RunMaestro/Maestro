@@ -70,6 +70,12 @@ The retry goes out for the prompt that actually failed. Your queue then drains i
 
 Sending a **new** message while a retry is counting down is different: that is you moving on, so it takes over. The countdown stops, the outage card freezes into a stopped summary, and your new prompt goes out instead.
 
+## Prompts that arrive from automation
+
+A turn does not have to be typed to be covered. Prompts that arrive from `maestro-cli dispatch`, a Cue pipeline, or the web and mobile composer are ordinary desktop turns, and they retry on exactly the same rules as one you typed yourself.
+
+This matters more for automation than for interactive use: when a scheduled pipeline hits a quota wall at 3am, nobody is watching to press **Try now**.
+
 ## Turning it on and off
 
 Both toggles live in the **New Agent** dialog when you create an agent, and in **Edit Agent** afterwards. To reach Edit Agent, right-click the agent in the Left Bar and choose **Edit Agent...**, or press `Cmd+K` / `Ctrl+K` and pick **Edit Agent**.
@@ -88,7 +94,7 @@ When a batch turn fails with a retryable error, Maestro parks the loop rather th
 You can still take over: cancel the auto-retry from the status card and the batch's usual resume, skip, and abort controls come back.
 
 <Note>
-Auto Run batches launched from `maestro-cli` do not auto-retry. Resilience is a desktop feature, and the CLI's batch runner reports the failure instead.
+Auto Run batches launched from `maestro-cli` do not auto-retry. Resilience is a desktop feature, and the CLI's batch runner reports the failure instead. A prompt sent INTO the running desktop app with `maestro-cli dispatch` is different: it is a normal desktop turn and retries like any other.
 </Note>
 
 ## Provider Failover

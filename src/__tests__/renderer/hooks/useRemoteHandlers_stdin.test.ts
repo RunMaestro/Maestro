@@ -22,6 +22,12 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 // Mock modules BEFORE importing the hook
 // ============================================================================
 
+// Capture Agent Resilience snapshots without pulling in the real store.
+const noteDispatchMock = vi.fn();
+vi.mock('../../../renderer/stores/retryStore', () => ({
+	noteDispatch: (...args: unknown[]) => noteDispatchMock(...args),
+}));
+
 vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => 'mock-id-' + Math.random().toString(36).slice(2, 8)),
 }));
@@ -189,6 +195,41 @@ afterEach(() => {
 // ============================================================================
 // Tests
 // ============================================================================
+
+// Agent Resilience: prompts that arrive from `maestro-cli dispatch`, a Cue
+// pipeline, or the web/mobile composer come through THIS handler, which spawns
+// directly instead of going through `agentStore.processQueuedItem` (where the
+// desktop composer records its retry snapshot). Without a snapshot here,
+// `scheduleRetryForError` logs "No prompt snapshot to resend" and falls back to
+// the error modal - so every unattended prompt lost auto-retry, which is the
+// case that needs it most. Verified live before this test was written: the app
+// really did refuse to retry a CLI-dispatched prompt that hit a plan limit.
+describe('useRemoteHandlers - Agent Resilience prompt snapshot', () => {
+	it('records a retry snapshot so a remote prompt can be auto-resent', async () => {
+		const session = createMockSession();
+		const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+		renderHook(() => useRemoteHandlers(deps));
+		const handler = getRemoteCommandHandler();
+
+		await act(async () => {
+			await handler(
+				new CustomEvent('maestro:remoteCommand', {
+					detail: { sessionId: 'session-1', command: 'explain this code', inputMode: 'ai' },
+				})
+			);
+		});
+
+		expect(noteDispatchMock).toHaveBeenCalled();
+		const [snapSessionId, item] = noteDispatchMock.mock.calls[0];
+		expect(snapSessionId).toBe('session-1');
+		// Pinned to the resolved target tab, so a replay lands on the tab this
+		// spawn actually wrote to rather than the agent's current active tab.
+		expect(item.tabId).toBe('tab-1');
+		expect(item.type).toBe('message');
+		expect(item.text).toBe('explain this code');
+	});
+});
 
 describe('useRemoteHandlers - remote command stdin flags (integration)', () => {
 	it('should pass sendPromptViaStdinRaw=true in spawn call on Windows without SSH', async () => {
