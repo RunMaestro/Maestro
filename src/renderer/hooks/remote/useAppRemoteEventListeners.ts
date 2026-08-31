@@ -25,6 +25,12 @@ import {
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
+import { spawnPtyForTab } from '../../services/terminalSpawn';
+import { useTabStore } from '../../stores/tabStore';
+import {
+	createTabPidChangeHandler,
+	createTabStateChangeHandler,
+} from '../../components/TerminalView';
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
@@ -315,6 +321,44 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return { ...addTerminalTabHelper(s, tab), inputMode: 'terminal' as const };
 			})
 		);
+
+		// Start the shell here rather than leaving it to TerminalView. That component
+		// only renders the agent the user is looking at, and only spawns for the ACTIVE
+		// tab (or a non-active one carrying a startup command), so a backgrounded
+		// terminal never got a PTY at all: the tab existed, `send-terminal` reported
+		// "has no running shell yet", and the only fix was to click it - which is the
+		// one thing `--background` exists to avoid. Spawning at creation makes the tab
+		// usable immediately no matter which agent is on screen.
+		//
+		// Safe to call unconditionally: the spawn dedupes in-flight calls by process
+		// id, and once the PID lands TerminalView's own `pid !== 0` check stops it
+		// spawning a second one when it later mounts.
+		const sessionForSpawn = selectSessionById(sessionId)(useSessionStore.getState());
+		if (sessionForSpawn) {
+			void spawnPtyForTab({
+				session: sessionForSpawn,
+				tab,
+				onPid: createTabPidChangeHandler(sessionId),
+				onSpawnFailure: (tabId, isPersistent, message) => {
+					// No xterm to write into from here, so report through the store and a
+					// toast. Persistent tabs stay as restartable husks exactly as they do
+					// on the view path; scratch tabs are closed.
+					logger.warn('Background terminal PTY spawn failed', 'RemoteEvents', {
+						sessionId,
+						tabId,
+						isPersistent,
+						message,
+					});
+					if (isPersistent) {
+						createTabStateChangeHandler(sessionId)(tabId, 'exited');
+					} else {
+						useTabStore.getState().closeTerminalTab(tabId, 'spawn-failure');
+					}
+					notifyToast({ type: 'error', title: 'Failed to start terminal', message });
+				},
+			});
+		}
+
 		ack(true, tab.id);
 	});
 

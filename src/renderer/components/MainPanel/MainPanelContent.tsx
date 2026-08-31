@@ -430,7 +430,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 
 	// Self-sourced from settingsStore
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
-	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
@@ -847,7 +846,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							theme={theme}
 							fontFamily={fontFamily}
 							fontSize={Math.round(fontSize * 0.85)}
-							defaultShell={defaultShell}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}
 							onTabPidChange={createTabPidChangeHandler(sessionId)}
 							searchOpen={isCurrentSession ? terminalSearchOpen : false}
