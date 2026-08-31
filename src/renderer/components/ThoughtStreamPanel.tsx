@@ -265,7 +265,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 								</div>
 								<div
 									className="prose max-w-none break-words"
-									style={{ fontSize: '12px', color: theme.colors.textMain }}
+									style={{ fontSize: '0.75rem', color: theme.colors.textMain }}
 								>
 									<Markdown
 										preset="document"

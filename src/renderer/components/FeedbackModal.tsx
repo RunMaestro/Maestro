@@ -465,7 +465,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={handleDiscard}
-								className="px-4 py-2 rounded border transition-colors hover:bg-white/5"
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
 								style={{ borderColor: theme.colors.border, color: theme.colors.error }}
 							>
 								Discard
@@ -474,7 +474,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={() => setConfirmCloseOpen(false)}
-								className="px-4 py-2 rounded border transition-colors hover:bg-white/5"
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>
 								Keep editing
@@ -482,7 +482,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={handleSaveAndClose}
-								className="px-4 py-2 rounded transition-colors hover:opacity-90"
+								className="px-4 py-1.5 rounded transition-colors hover:opacity-90 text-sm"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.accentForeground,

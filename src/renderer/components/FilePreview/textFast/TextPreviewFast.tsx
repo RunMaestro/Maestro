@@ -266,7 +266,7 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 				{pages.length === 0 ? (
 					<div
 						data-testid="text-fast-skeleton"
-						style={{ padding: '24px', color: theme.colors.textDim, fontSize: '13px' }}
+						style={{ padding: '24px', color: theme.colors.textDim, fontSize: '0.8125rem' }}
 					>
 						Parsing large file…
 					</div>

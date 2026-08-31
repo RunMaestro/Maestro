@@ -497,6 +497,20 @@ export interface ModalFooterProps {
 }
 
 /**
+ * The footer button classes, exported so a modal that needs a THIRD button
+ * (Reset, Don't Save, Retry) can hand-roll its row without re-deriving the
+ * type scale.
+ *
+ * Five modals had already done exactly that and every one of them omitted a
+ * size class, so their buttons took the interface font directly - the same
+ * defect ModalFooter itself carried until it was given `text-sm`. A hand-rolled
+ * footer is legitimate; silently inventing its own scale is not.
+ */
+export const MODAL_BUTTON_BASE_CLASS =
+	'px-4 py-1.5 rounded text-sm transition-colors outline-none focus:ring-2 focus:ring-offset-1';
+export const MODAL_BUTTON_SECONDARY_CLASS = `${MODAL_BUTTON_BASE_CLASS} border hover:bg-white/5`;
+
+/**
  * The standard Cancel / Confirm pair, shared by ~36 modals.
  *
  * `text-sm` is explicit rather than inherited. These buttons carried no size

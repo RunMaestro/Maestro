@@ -2383,7 +2383,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading giant preview…
@@ -2409,7 +2409,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2481,7 +2481,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2552,7 +2552,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…

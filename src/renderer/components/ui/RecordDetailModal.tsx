@@ -272,7 +272,7 @@ export function RecordDetailModal({
 							No fields match "{query}"
 						</div>
 					) : (
-						<table className="w-full" style={{ borderCollapse: 'collapse', fontSize: '13px' }}>
+						<table className="w-full" style={{ borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
 							<tbody>
 								{visibleFields.map((field, i) => (
 									<tr

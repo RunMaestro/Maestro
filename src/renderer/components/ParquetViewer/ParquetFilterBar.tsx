@@ -184,7 +184,10 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 							className="w-full bg-transparent outline-none text-xs"
 							style={{
 								color: theme.colors.textMain,
-								fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+								// A filter expression is code, so this stays a code face - but
+								// it follows the user's chosen one (the shared `font-mono`
+								// variable) rather than a hard-coded stack.
+								fontFamily: 'var(--maestro-font-mono, ui-monospace, SFMono-Regular, monospace)',
 								textDecoration: problem ? 'underline wavy' : 'none',
 								textDecorationColor: problem ? theme.colors.error : undefined,
 								textUnderlineOffset: '3px',

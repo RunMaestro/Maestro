@@ -592,7 +592,7 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 			<div className="flex items-baseline gap-2 mt-0.5">
 				<span
 					className="font-bold"
-					style={{ color: theme.colors.textMain, fontSize: '20px' }}
+					style={{ color: theme.colors.textMain, fontSize: '1.25rem' }}
 					title={`${totalTokens.toLocaleString()} tokens`}
 				>
 					{formatNumber(totalTokens)}

@@ -428,7 +428,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					<button
 						type="button"
 						onClick={handleDismiss}
-						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						Not Now
@@ -436,7 +436,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					<button
 						type="button"
 						onClick={handleResume}
-						className="px-4 py-2 rounded transition-colors"
+						className="px-4 py-1.5 rounded transition-colors text-sm"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,

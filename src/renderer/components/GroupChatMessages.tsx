@@ -18,6 +18,7 @@ import {
 import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2 } from 'lucide-react';
 import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { useSurfaceTypography } from '../hooks/ui/useSurfaceTypography';
 import { stripMarkdown } from '../utils/textProcessing';
 import { generateParticipantColor, buildParticipantColorMap } from '../utils/participantColors';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
@@ -86,6 +87,10 @@ export const GroupChatMessages = memo(
 		},
 		ref
 	) {
+		// Group chat is an AI transcript, so it rides the AI Chat surface rather
+		// than inheriting whatever the app shell happens to be set to.
+		const { fontFamily: chatFontFamily, fontSize: chatFontSize } = useSurfaceTypography('chat');
+
 		const containerRef = useRef<HTMLDivElement | null>(null);
 		const setContainerRef = useCallback(
 			(el: HTMLDivElement | null) => {
@@ -287,6 +292,13 @@ export const GroupChatMessages = memo(
 				role="region"
 				aria-label="Group chat messages"
 				className="group-chat-messages flex-1 overflow-y-auto scrollbar-thin py-2 outline-none"
+				// A group chat IS an AI transcript, so it follows the AI Chat font
+				// like the main panel and the tiled panes do. Set on the scroll
+				// container and inherited by every message below, the same way
+				// TerminalOutput carries it - the markdown, the tool cards, and the
+				// code fences nested several components deep all pick it up without
+				// being touched.
+				style={{ fontFamily: chatFontFamily, fontSize: `${chatFontSize}px` }}
 				onKeyDown={(e) => {
 					if (
 						(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') ||

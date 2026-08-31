@@ -116,7 +116,7 @@ const SummaryCardsRow = memo(function SummaryCardsRow({
 	);
 
 	const sublabelStyle: React.CSSProperties = {
-		fontSize: '10px',
+		fontSize: '0.625rem',
 		color: theme.colors.textDim,
 		marginTop: 2,
 	};
