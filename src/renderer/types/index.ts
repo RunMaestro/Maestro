@@ -66,6 +66,7 @@ export type {
 } from '../../shared/providerFailover';
 import type { FailoverConfig } from '../../shared/providerFailover';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
+import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
@@ -1099,7 +1100,7 @@ export interface Session {
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
 	customContextWindow?: number; // Custom context window size (overrides agent-level)
-	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
+	documentGraphLayout?: MindMapLayoutType; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally
 	sessionSshRemoteConfig?: {

@@ -44,6 +44,8 @@ import {
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
+import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
+import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { isToastWidth } from '../../shared/toastWidth';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
@@ -126,13 +128,13 @@ function getCommitCommandPrompt(): string {
 // Shared Type Aliases
 // ============================================================================
 
-export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'hierarchical' | 'force';
-const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
-	'mindmap',
-	'radial',
-	'hierarchical',
-	'force',
-];
+/**
+ * Alias kept for the existing call sites. The layout names themselves live in
+ * `DocumentGraph/layoutTypes`, which is also what the graph's own toolbar and
+ * `L` cycle read - a private copy here silently rejected any layout added to
+ * the graph but not mirrored into this file.
+ */
+export type DocumentGraphLayoutType = MindMapLayoutType;
 
 // ============================================================================
 // Default Constants
@@ -1333,7 +1335,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		},
 
 		setDocumentGraphLayoutType: (value) => {
-			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'hierarchical';
+			const layoutType = isMindMapLayoutType(value) ? value : 'hierarchical';
 			set({ documentGraphLayoutType: layoutType });
 			window.maestro.settings.set('documentGraphLayoutType', layoutType);
 		},
@@ -2805,8 +2807,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['documentGraphLayoutType'] !== undefined) {
 			const lt = allSettings['documentGraphLayoutType'] as string;
-			if (DOCUMENT_GRAPH_LAYOUT_TYPES.includes(lt as DocumentGraphLayoutType)) {
-				patch.documentGraphLayoutType = lt as DocumentGraphLayoutType;
+			if (isMindMapLayoutType(lt)) {
+				patch.documentGraphLayoutType = lt;
 			}
 		}
 

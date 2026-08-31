@@ -84,6 +84,9 @@ Tips and gotchas:
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
 | Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
 
+`Cmd+E` toggles edit and preview on a markdown File Preview and in the Memories
+viewer (`Cmd+Shift+M`), where the pane opens on the rendered document.
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
@@ -383,12 +386,21 @@ you are half-way through typing.
 | Cycle layout                      | `L`          |
 | Widen neighbor depth              | `D`          |
 | Cycle preview length              | `P`          |
+| Fit the whole graph on screen     | `F`          |
 | Increase / decrease node spacing  | `+` / `-`    |
 | Close the preview, then the graph | `Esc`        |
 
 `P` walks the node preview length through Off, 50, 100, 200, 350, and 500
 characters. At **Off** each document is drawn as a filename pill with no body
 box, which is the densest way to read the shape of a large graph.
+
+`L` walks the six layouts: **Mind Map** (tree columns), **Radial** (concentric
+rings), **Hierarchical** (top-down rows), **Force** (physics simulation),
+**Lobes** (documents grouped by which other documents they link to), and
+**Timeline** (one column per day, oldest on the left, captioned with the date).
+
+`F` re-frames the whole graph in the window. The graph also fits itself when it
+opens and whenever the layout or preview length changes.
 
 ## Customizing Shortcuts
 
