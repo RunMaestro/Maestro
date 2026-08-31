@@ -252,6 +252,82 @@ describe('HistoryFilterToggle', () => {
 		expect(screen.getByText('USER')).toBeInTheDocument();
 		expect(screen.getByText('CUE')).toBeInTheDocument();
 	});
+	describe('fillWidth', () => {
+		/**
+		 * The pills share their toolbar row with the search and help buttons. The
+		 * row neither wraps nor scrolls, and nothing in it used to shrink, so once
+		 * the pills outgrew the space the overflow spilled out of both ends of a
+		 * centred row and took the two buttons with it.
+		 */
+		it('claims the leftover width instead of holding its natural size', () => {
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+					fillWidth
+				/>
+			);
+			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
+			expect(row.className).toContain('flex-1');
+			expect(row.className).toContain('min-w-0');
+			// Measuring is only meaningful once the row is granted the free space.
+			expect(row.className).not.toContain('flex-shrink-0');
+		});
+
+		it('never lets the pills paint over the buttons beside them', () => {
+			// The last-resort guarantee: at an interface font the bottom rung
+			// cannot absorb, the pills clip rather than the controls.
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+					fillWidth
+				/>
+			);
+			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
+			expect(row.className).toContain('overflow-hidden');
+		});
+
+		it('measures the labels off to one side, not the live pills', () => {
+			// Measuring the rendered pills would feed each density choice into the
+			// next one and oscillate. The mirror is fixed at the base size, so its
+			// width is a property of the font rather than of the current rung.
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+					visibleTypes={['USER', 'AGENT', 'AUTO', 'CUE']}
+					fillWidth
+				/>
+			);
+			const mirror = container.querySelector<HTMLElement>(
+				'[data-testid="history-filter-pill-mirror"]'
+			)!;
+			expect(mirror.textContent).toBe('USERAGENTAUTOCUE');
+			expect(mirror.style.visibility).toBe('hidden');
+			expect(mirror.getAttribute('aria-hidden')).toBe('true');
+			expect(mirror.className).toContain('absolute');
+		});
+
+		it('keeps its natural width when the row does not own the leftover space', () => {
+			// Director's Notes puts the pills beside an activity graph that already
+			// claims it; two flex-1 children would just split the row in half.
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+				/>
+			);
+			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
+			expect(row.className).toContain('flex-shrink-0');
+			expect(container.querySelector('[data-testid="history-filter-pill-mirror"]')).toBeNull();
+		});
+	});
+
 	describe('type scale', () => {
 		/**
 		 * These pills sit beside the search button and the activity graph as

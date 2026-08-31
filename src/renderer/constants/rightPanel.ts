@@ -34,7 +34,14 @@ export const RIGHT_PANEL_COMPACT_THRESHOLD = 420;
  * stop responding to Cmd+= while everything around it kept scaling, which is
  * the same class of bug in reverse. Only the STEP moves.
  */
-export const RIGHT_PANEL_PILL_FONT_SIZE = '0.5625rem';
+export const RIGHT_PANEL_PILL_FONT_REM = 0.5625;
+
+/**
+ * The same value as a CSS length. Derived rather than restated so the density
+ * ladder in `HistoryFilterToggle` (which scales the number) and the style it
+ * writes can never disagree about the base step.
+ */
+export const RIGHT_PANEL_PILL_FONT_SIZE = `${RIGHT_PANEL_PILL_FONT_REM}rem`;
 
 /**
  * Line height for the pills. Stated explicitly because dropping Tailwind's

@@ -2157,6 +2157,25 @@ Testing this drives `leftSidebarWidth` in `useSettingsStore` directly, the same 
 
 ---
 
+## Right Bar Toolbar Density (`historyPillDensity`)
+
+The History panel's toolbar is the same problem one panel over, and it is worth reading as the counter-example to a static threshold. The row is `[search button][USER][AGENT][AUTO][CUE][help button]`, it neither wraps nor scrolls, and it used to decide its own density from one number: `rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD`.
+
+**A panel width cannot answer "does this fit".** What the pills need also depends on the interface font (the root is a proportional face now, and Inter's capitals average nearer 0.7em where Roboto Mono was a flat 0.6em), on the Cmd+= zoom, and on whether Cue is on - three pills or four. Same 420px panel, several different answers. When the answer came out wrong nothing shrank, because every child was `flex-shrink-0`: the overflow spilled out of both ends of a centred row and clipped the search and help buttons off the edges. A control the user cannot see is a control they do not have.
+
+The fix is to measure, and the shape of it generalizes:
+
+- **The row claims the leftover width** (`flex-1 min-w-0`) so that measuring it reports what is FREE. A `flex-shrink-0` row always measures its own natural width, which says nothing about whether its neighbours still fit - so the ladder is opt-in via `fillWidth`, and the opt-in is also the layout change that makes it meaningful. The Director's Notes copy of the same component sits beside an activity graph that already claims the leftover width, so it leaves the flag off.
+- **Measure a mirror, never the live controls.** A hidden, out-of-flow copy of the labels at the BASE size gives a width that is a property of the font rather than of the rung currently rendered. Feeding the rendered pills back in would make each choice depend on the last one and oscillate.
+- **Everything else is arithmetic, not a second measurement.** Label advance scales linearly with font size and the tracking is in `em`, so one measured width covers every rung. The padding, icon, and gaps are rem-based, so they are computed from the live root font size rather than from pixel literals - a literal is right only at a 16px root, which is the bug in miniature.
+- **Declare a yield order.** `PILL_DENSITIES` gives up the icon first (it repeats what the pill spells out in words, and the glyph plus its gap is over an em per pill), then padding, then two steps of type size. Line height is fixed at every rung, so the pills keep one height and the toolbar does not change shape as the panel is dragged.
+- **Keep a last-resort guarantee.** The row is `overflow-hidden`, so at an interface font the bottom rung cannot absorb, the pills clip and the buttons do not. Pick which one loses; do not leave it to paint order.
+- **Keep the static prediction as the pre-measurement prior.** `useElementWidth` reports 0 until its first observation, so the first paint has nothing to compare. The old `compact` flag is exactly the right guess for that one frame, which is why the prop stayed.
+
+The selection logic is a pure function (`resolvePillDensity` in `src/renderer/components/History/historyPillDensity.ts`) precisely so it can be tested: jsdom has no layout engine, so the component test can only assert the layout contract (the row fills, the mirror exists, the overflow is contained) and the arithmetic has to be exercised separately.
+
+---
+
 ## Tab System
 
 Each agent supports multiple AI tabs within its workspace. Tab management hooks live in `src/renderer/hooks/tabs/`.

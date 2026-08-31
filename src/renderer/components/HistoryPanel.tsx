@@ -835,6 +835,7 @@ export const HistoryPanel = React.memo(
 							theme={theme}
 							visibleTypes={visibleTypes}
 							compact={compact}
+							fillWidth
 						/>
 
 						{/* Activity graph inline when only 2 types (no CUE).
