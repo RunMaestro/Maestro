@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PREVIEW_WIDTH_STORAGE_KEY } from '../../../../renderer/components/DocumentGraph/previewPaneSizing';
 import { nextMindMapLayout } from '../../../../renderer/components/DocumentGraph/mindMapLayouts';
+import { nextScrollMode } from '../../../../renderer/components/DocumentGraph/scrollMode';
 import {
 	NEIGHBOR_DEPTH_ALL,
 	NEIGHBOR_DEPTH_MAX,
@@ -2209,11 +2210,11 @@ describe('DocumentGraphView', () => {
 			});
 		});
 
-		describe('container shortcuts (L / D / P / +-)', () => {
+		describe('container shortcuts (L / D / P / F / S / +-)', () => {
 			// L cycles the layout, D widens the neighbor depth, P cycles the preview
-			// length. All route through the SAME handlers the toolbar controls use,
-			// so a key press persists the choice and clears layout-specific drag
-			// overrides like a click.
+			// length, S swaps the scroll wheel binding. All route through the SAME
+			// handlers the toolbar controls use, so a key press persists the choice
+			// and clears layout-specific drag overrides like a click.
 			const isBareKey = (e: {
 				key: string;
 				metaKey?: boolean;
@@ -2255,6 +2256,31 @@ describe('DocumentGraphView', () => {
 				];
 				expect(canvasHandled).not.toContain('p');
 				expect(canvasHandled).not.toContain('P');
+			});
+
+			it('S swaps the scroll wheel between zoom and pan', () => {
+				expect(nextScrollMode('zoom')).toBe('pan');
+				expect(nextScrollMode('pan')).toBe('zoom');
+			});
+
+			it('does not collide S with a key the canvas already claims', () => {
+				// The canvas handler runs first and returns on the keys below, so a
+				// container binding on one of them would never fire.
+				const canvasHandled = [
+					'ArrowUp',
+					'ArrowDown',
+					'ArrowLeft',
+					'ArrowRight',
+					'Enter',
+					' ',
+					'o',
+					'O',
+				];
+				const containerHandled = ['l', 'd', 'p', 'f', 's', '+', '=', '-', '_'];
+				expect(canvasHandled.some((key) => containerHandled.includes(key.toLowerCase()))).toBe(
+					false
+				);
+				expect(new Set(containerHandled).size).toBe(containerHandled.length);
 			});
 
 			it('ignores L and D while a modifier is held', () => {

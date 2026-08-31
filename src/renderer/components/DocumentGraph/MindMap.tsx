@@ -30,6 +30,7 @@ import {
 	EXTERNAL_NODE_HEIGHT,
 } from './mindMapLayouts';
 import { isPreviewOff } from './previewCharLimit';
+import { DEFAULT_SCROLL_MODE, type GraphScrollMode } from './scrollMode';
 import { logger } from '../../utils/logger';
 import { GraphMiniMap } from './GraphMiniMap';
 
@@ -144,6 +145,11 @@ export interface MindMapProps {
 	containerRef?: React.RefObject<HTMLDivElement>;
 	/** Whether the help/legend drawer is open - slides the minimap clear of it */
 	legendExpanded?: boolean;
+	/**
+	 * What the scroll wheel does. `zoom` (the default) zooms toward the cursor
+	 * and pans on Shift; `pan` swaps the two.
+	 */
+	scrollMode?: GraphScrollMode;
 	/**
 	 * Bump this to re-frame the whole graph on screen. It is a token rather than
 	 * a callback because the fit has to happen inside the canvas, which owns the
@@ -694,6 +700,7 @@ export function MindMap({
 	containerRef: externalContainerRef,
 	legendExpanded = false,
 	fitToken = 0,
+	scrollMode = DEFAULT_SCROLL_MODE,
 }: MindMapProps) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const internalContainerRef = useRef<HTMLDivElement>(null);
@@ -1203,21 +1210,35 @@ export function MindMap({
 		[screenToCanvas, findNodeAtPoint, onNodeContextMenu]
 	);
 
+	// The live scroll mode, read through a ref so the wheel handler below can
+	// stay a stable callback. Rebuilding it on every mode change would detach
+	// and reattach the listener, and a trackpad's momentum scroll keeps
+	// delivering events across that gap.
+	const scrollModeRef = useRef(scrollMode);
+	scrollModeRef.current = scrollMode;
+
 	// Wheel handler - must be attached manually with passive: false.
 	// Uses functional updater to avoid stale closures and jitter.
-	// Plain scroll zooms toward the cursor; Shift+scroll pans the canvas
-	// (mirrors the Cue pipeline canvas, where Shift activates panning).
+	//
+	// Which gesture zooms and which pans is the user's choice (the `S` key, the
+	// toolbar pill, the Help panel toggle). Shift always reaches the OTHER
+	// action, so both are available in either mode.
 	const handleWheel = useCallback((e: WheelEvent) => {
 		e.preventDefault();
 
 		const rect = canvasRef.current?.getBoundingClientRect();
 		if (!rect) return;
 
-		// Shift+scroll pans instead of zooming. Browsers translate a vertical
-		// mouse wheel into deltaX while Shift is held, and trackpads report
-		// deltaX/deltaY directly, so subtracting both axes covers every device
-		// (the unused axis is ~0).
-		if (e.shiftKey) {
+		// Shift inverts the mode rather than naming an action, which is what
+		// keeps the modifier meaningful in both: in Zoom mode it pans (as it
+		// always has, mirroring the Cue pipeline canvas), and in Pan mode it
+		// zooms, so a user who switched to Pan has not lost access to zoom.
+		const panning = (scrollModeRef.current === 'pan') !== e.shiftKey;
+
+		if (panning) {
+			// Browsers translate a vertical mouse wheel into deltaX while Shift
+			// is held, and trackpads report deltaX/deltaY directly, so
+			// subtracting both axes covers every device (the unused axis is ~0).
 			setTransform((prev) => ({
 				...prev,
 				panX: prev.panX - e.deltaX,

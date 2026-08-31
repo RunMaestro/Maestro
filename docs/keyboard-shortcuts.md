@@ -376,20 +376,21 @@ you are half-way through typing.
 
 ## Document Graph
 
-| Action                            | Key          |
-| --------------------------------- | ------------ |
-| Navigate to connected nodes       | `Arrow Keys` |
-| Preview document in-graph         | `Enter`      |
-| Open URL (external link)          | `Enter`      |
-| Re-center the graph on a node     | `Space`      |
-| Open document in File Preview     | `O`          |
-| Focus the search box              | `Cmd+F`      |
-| Cycle layout                      | `L`          |
-| Widen neighbor depth              | `D`          |
-| Cycle preview length              | `P`          |
-| Fit the whole graph on screen     | `F`          |
-| Increase / decrease node spacing  | `+` / `-`    |
-| Close the preview, then the graph | `Esc`        |
+| Action                             | Key          |
+| ---------------------------------- | ------------ |
+| Navigate to connected nodes        | `Arrow Keys` |
+| Preview document in-graph          | `Enter`      |
+| Open URL (external link)           | `Enter`      |
+| Re-center the graph on a node      | `Space`      |
+| Open document in File Preview      | `O`          |
+| Focus the search box               | `Cmd+F`      |
+| Cycle layout                       | `L`          |
+| Widen neighbor depth               | `D`          |
+| Cycle preview length               | `P`          |
+| Fit the whole graph on screen      | `F`          |
+| Switch scroll between zoom and pan | `S`          |
+| Increase / decrease node spacing   | `+` / `-`    |
+| Close the preview, then the graph  | `Esc`        |
 
 `P` walks the node preview length through Off, 50, 100, 200, 350, and 500
 characters. At **Off** each document is drawn as a filename pill with no body
@@ -402,6 +403,13 @@ rings), **Hierarchical** (top-down rows), **Force** (physics simulation),
 
 `F` re-frames the whole graph in the window. The graph also fits itself when it
 opens and whenever the layout or preview length changes.
+
+`S` switches what the scroll wheel does. In **Zoom** (the default) the wheel
+zooms toward the cursor and `Shift`+scroll pans; in **Pan** the wheel pans in
+both directions and `Shift`+scroll zooms. Pan is what you want once the framing
+is right and you are reading across a wide graph, where every scroll otherwise
+changes the zoom you just set. The mode is also a toolbar pill and an inline
+toggle in the Help panel, and it is remembered between visits.
 
 ## Customizing Shortcuts
 
