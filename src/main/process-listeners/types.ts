@@ -95,6 +95,8 @@ export interface ProcessListenerDependencies {
 			processManager: ProcessManager | undefined
 		) => Promise<void>;
 		markParticipantResponded: (groupChatId: string, participantName: string) => boolean;
+		/** Clears the room's running state and releases its power block. */
+		settleGroupChatToIdle: (groupChatId: string) => void;
 		spawnModeratorSynthesis: (
 			groupChatId: string,
 			processManager: ProcessManager,

@@ -69,6 +69,7 @@ import {
 	clearPendingParticipants,
 	routeAgentResponse,
 	markParticipantResponded,
+	settleGroupChatToIdle,
 	spawnModeratorSynthesis,
 } from '../../group-chat/group-chat-router';
 
@@ -657,12 +658,32 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				// Maestro session - so we must call markParticipantResponded here.
 				const agentDetector = getAgentDetector();
 				const isLast = markParticipantResponded(groupChatId, participantName);
-				if (isLast && processManager && agentDetector) {
-					logger.info(
-						`All participants responded after autorun, spawning synthesis for ${groupChatId}`,
-						LOG_CONTEXT
-					);
-					await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+				if (isLast) {
+					// Same split as the exit listener and the participant timeout: the
+					// room is finished whether or not synthesis can run, so the clear
+					// must not ride on the spawn's preconditions. A synthesis THROW has
+					// to settle the room too - this one is awaited rather than caught,
+					// so a rejection used to leave the room on 'agent-working' with its
+					// power block held, which the quit dialog reports as a running chat.
+					if (processManager && agentDetector) {
+						logger.info(
+							`All participants responded after autorun, spawning synthesis for ${groupChatId}`,
+							LOG_CONTEXT
+						);
+						try {
+							await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+						} catch (err) {
+							logger.error(
+								`Failed to spawn synthesis after autorun for ${groupChatId}`,
+								LOG_CONTEXT,
+								{ error: err, participantName }
+							);
+							settleGroupChatToIdle(groupChatId);
+							throw err;
+						}
+					} else {
+						settleGroupChatToIdle(groupChatId);
+					}
 				}
 			}
 		)
