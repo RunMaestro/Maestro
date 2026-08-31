@@ -142,8 +142,12 @@ describe('PowerManager', () => {
 			powerManager.setEnabled(true);
 			powerManager.addBlockReason('test:session1');
 
-			expect(vi.mocked(mockBlocker.start)).toHaveBeenCalledWith('prevent-display-sleep');
+			// Defaults to app-suspension, NOT display-sleep. Holding a display-sleep
+			// assertion is how macOS decides a user is present, and doing so
+			// indefinitely starves the OS's whole deferred-maintenance tier.
+			expect(vi.mocked(mockBlocker.start)).toHaveBeenCalledWith('prevent-app-suspension');
 			expect(powerManager.getStatus().blocking).toBe(true);
+			expect(powerManager.getStatus().blockerType).toBe('prevent-app-suspension');
 		});
 
 		it('should NOT start additional blocker with existing reasons', async () => {
@@ -634,6 +638,94 @@ describe('PowerManager', () => {
 			expect(Array.isArray(status.reasons)).toBe(true);
 			expect(typeof status.platform).toBe('string');
 			expect(['darwin', 'win32', 'linux']).toContain(status.platform);
+		});
+	});
+
+	/**
+	 * Regression coverage for the fault where Maestro held a display-sleep
+	 * assertion for its whole uptime. On macOS that assertion is the signal the
+	 * OS uses to decide a user is present, so holding one indefinitely made the
+	 * Duet Activity Scheduler refuse every discretionary maintenance job -
+	 * Spotlight indexing, Photos analysis, XProtect scans, database cleanups.
+	 */
+	describe('blocker type selection', () => {
+		it('defaults to prevent-app-suspension so the display can still sleep', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('cue:run:run-1');
+
+			expect(vi.mocked(mockBlocker.start)).toHaveBeenCalledWith('prevent-app-suspension');
+		});
+
+		it('honours an explicit prevent-display-sleep request', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('presentation:1', 'prevent-display-sleep');
+
+			expect(vi.mocked(mockBlocker.start)).toHaveBeenCalledWith('prevent-display-sleep');
+			expect(powerManager.getStatus().blockerType).toBe('prevent-display-sleep');
+		});
+
+		it('upgrades to display-sleep when a stronger reason joins', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('cue:run:run-1');
+			expect(powerManager.getStatus().blockerType).toBe('prevent-app-suspension');
+
+			// Electron only honours the highest-precedence type, so the weaker
+			// blocker has to be torn down and restarted at the stronger one.
+			powerManager.addBlockReason('presentation:1', 'prevent-display-sleep');
+
+			expect(vi.mocked(mockBlocker.stop)).toHaveBeenCalled();
+			expect(vi.mocked(mockBlocker.start)).toHaveBeenLastCalledWith('prevent-display-sleep');
+			expect(powerManager.getStatus().blockerType).toBe('prevent-display-sleep');
+		});
+
+		it('downgrades back to app-suspension when the stronger reason leaves', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('cue:run:run-1');
+			powerManager.addBlockReason('presentation:1', 'prevent-display-sleep');
+			powerManager.removeBlockReason('presentation:1');
+
+			// Still blocking (run-1 remains) but the display is free to sleep again.
+			expect(powerManager.getStatus().blocking).toBe(true);
+			expect(powerManager.getStatus().blockerType).toBe('prevent-app-suspension');
+			expect(vi.mocked(mockBlocker.start)).toHaveBeenLastCalledWith('prevent-app-suspension');
+		});
+
+		it('stops blocking entirely once every reason is gone', async () => {
+			const { powerManager } = PowerManagerModule;
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('cue:run:run-1');
+			powerManager.addBlockReason('presentation:1', 'prevent-display-sleep');
+			powerManager.removeBlockReason('cue:run:run-1');
+			powerManager.removeBlockReason('presentation:1');
+
+			expect(powerManager.getStatus().blocking).toBe(false);
+			expect(powerManager.getStatus().blockerType).toBeNull();
+		});
+
+		it('does not restart the blocker when the required type is unchanged', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('cue:run:run-1');
+			vi.mocked(mockBlocker.start).mockClear();
+
+			powerManager.addBlockReason('cue:run:run-2');
+
+			expect(vi.mocked(mockBlocker.start)).not.toHaveBeenCalled();
 		});
 	});
 });

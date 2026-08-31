@@ -29,6 +29,7 @@ import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingBufferResponder';
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
+import { useRemoteTerminalBufferResponder } from '../../hooks/terminal/useRemoteTerminalBufferResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import {
 	aiTabFocusFields,
@@ -276,6 +277,10 @@ export const MainPanel = React.memo(
 		// `coworking` Encore flag is off.
 		useCoworkingRegistrySync();
 		useCoworkingBufferResponder(terminalViewRefs);
+
+		// Serve CLI/web `read-terminal` requests. Lives here because the xterm
+		// scrollback exists only in the mounted TerminalView, not in the store.
+		useRemoteTerminalBufferResponder(terminalViewRefs);
 
 		// Extract tab handlers from props
 		const {

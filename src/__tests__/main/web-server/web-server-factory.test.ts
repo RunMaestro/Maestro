@@ -53,6 +53,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
 			setListTerminalTabsCallback = vi.fn();
+			setReadTerminalTabCallback = vi.fn();
 			setNewAITabWithPromptCallback = vi.fn();
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
@@ -1943,6 +1944,7 @@ describe('web-server/web-server-factory', () => {
 				'session-1',
 				'a description',
 				true,
+				undefined,
 				expect.any(String)
 			);
 		});

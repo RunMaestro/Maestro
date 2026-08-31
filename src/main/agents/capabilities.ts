@@ -114,7 +114,12 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsSessionId: true, // thread_id in thread.started event - Verified
 		supportsImageInput: true, // -i, --image flag - Documented
 		supportsImageInputOnResume: true, // Images are written to disk and paths embedded in prompt text (codex exec resume doesn't support -i flag)
-		supportsSlashCommands: false, // None - Verified
+		// Custom `/name` entries only: skills (<CODEX_HOME>/skills/<name>/SKILL.md,
+		// .codex/skills/) and legacy prompts (<CODEX_HOME>/prompts/*.md). Read off
+		// disk by discoverCodexSlashCommands and expanded renderer-side, since
+		// `codex exec` does not expand a slash itself. Codex's BUILT-IN commands
+		// stay unsupported - they are TUI-internal with no prompt to inline.
+		supportsSlashCommands: true,
 		supportsSessionStorage: true, // ~/.codex/sessions/YYYY/MM/DD/*.jsonl - Verified
 		supportsCostTracking: false, // Token counts only - Codex doesn't provide cost, pricing varies by model
 		supportsUsageStats: true, // usage in turn.completed events - Verified

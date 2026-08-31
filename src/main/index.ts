@@ -470,6 +470,16 @@ const settingsWatcher = createSettingsWatcher({
 	getBroadcastWindows: () => BrowserWindow.getAllWindows(),
 	getSettingsPath: () => syncPath,
 	getAgentConfigsPath: () => productionDataPath,
+	onSettingsChangedExternally: () => {
+		// Re-apply settings the MAIN process acts on. Without this, a CLI write
+		// updates the file and the renderer while the main process keeps running
+		// on the value it read at startup - for sleep prevention that means the
+		// OS power assertion stays held after the user has turned the feature off.
+		const enabled = store.get('preventSleepEnabled') === true;
+		if (enabled !== powerManager.isEnabled()) {
+			powerManager.setEnabled(enabled);
+		}
+	},
 });
 
 // Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173

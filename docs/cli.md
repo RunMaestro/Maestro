@@ -1329,6 +1329,42 @@ Notes:
 - The terminal must have a running shell. A tab that has never been displayed has no shell yet: open it with `open-terminal --command` instead, or select it in the app first.
 - Text is typed into the shell verbatim. If something is already half-typed at the prompt, your command lands on the end of it.
 
+#### Read a Terminal Tab's Output
+
+`send-terminal` types into a shell; `read-terminal` reads back what it printed. Without it the terminal is write-only from a script's point of view: `open-terminal --command "npm run dev"` is the right way to run a long-lived process, but nothing could observe whether it came up.
+
+```bash
+# Last 200 lines of the agent's active terminal
+maestro-cli read-terminal
+
+# Target a specific tab, by ID or by name
+maestro-cli read-terminal --tab <tab-id>
+maestro-cli read-terminal --tab "Dev server" --tail 50
+
+# Run something, then read what it printed
+maestro-cli send-terminal --tab "Dev server" "npm run build" && \
+    sleep 5 && maestro-cli read-terminal --tab "Dev server"
+
+# Structured output - `busy` tells you whether the command is still running
+maestro-cli read-terminal --tab "Dev server" --json
+```
+
+| Flag                 | Description                          | Default                     |
+| -------------------- | ------------------------------------ | --------------------------- |
+| `-a, --agent <id>`   | Target agent by ID                   | active agent                |
+| `--tab <id-or-name>` | Terminal tab ID, or its display name | the agent's active terminal |
+| `--tail <n>`         | Return only the last N lines         | 200                         |
+| `--json`             | JSON output for scripting            | plain text                  |
+
+`--json` returns `{ tabId, name, cwd, state, busy, totalLines, lines: [...] }`. `busy` is the useful one for automation: it distinguishes "the command finished and this is its final output" from "it is still running and there is more to come". `totalLines` is the size of the buffer before `--tail` truncation, so you can tell a complete read from a partial one.
+
+Notes:
+
+- Output is plain text. The scrollback comes from the terminal emulator, which has already interpreted the escape sequences, so there are no colour codes to strip.
+- Reads are bounded on purpose. A `tail -f` tab can hold an enormous buffer, and the default cap keeps it from swamping the caller; reads are capped app-side regardless of `--tail`.
+- The tab needs a live buffer. Terminals stay mounted once their agent has been on screen, but a tab belonging to an agent never visited since launch has nothing to read yet - select the agent once, then read.
+- Tab resolution matches `send-terminal` exactly: an ID matches across every agent, a name only within the target agent.
+
 #### List Open Terminal Tabs
 
 Terminal tabs live in the desktop app, so this asks the running app rather than reading from disk.
@@ -1771,12 +1807,16 @@ maestro-cli gist create <agent-id> -d "Auth refactor pairing session"
 
 # Make it public
 maestro-cli gist create <agent-id> --public -d "Repro for issue #1234"
+
+# Publish one provider session instead of the agent's open tabs
+maestro-cli gist create <agent-id> --session <session-id>
 ```
 
-| Flag                       | Description                            | Default |
-| -------------------------- | -------------------------------------- | ------- |
-| `-d, --description <text>` | Gist description                       | -       |
-| `-p, --public`             | Create a public gist (default private) | private |
+| Flag                       | Description                                                        | Default        |
+| -------------------------- | ------------------------------------------------------------------ | -------------- |
+| `-d, --description <text>` | Gist description                                                   | -              |
+| `-p, --public`             | Create a public gist (default private)                             | private        |
+| `-s, --session <id>`       | Publish one provider session's transcript instead of the open tabs | the agent tabs |
 
 Output is JSON with the gist URL on success:
 
@@ -1784,7 +1824,21 @@ Output is JSON with the gist URL on success:
 { "success": true, "agentId": "a1b2c3d4-...", "gistUrl": "https://gist.github.com/..." }
 ```
 
-Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh auth login`). Error codes: `AGENT_NOT_FOUND`, `MAESTRO_NOT_RUNNING`, `GIST_CREATE_FAILED`.
+### Publishing a headless session
+
+Without `--session`, `gist create` publishes the transcripts of the agent's **open AI tabs** in the desktop app. Headless callers (chat bridges, playbooks, Cue pipelines, CI) run their conversations with `maestro-cli send -s <session-id>` and have no tab, so for them that publishes an unrelated conversation - and a gist is readable by anyone holding the URL.
+
+Pass the same session id you sent with:
+
+```bash
+SESSION=$(maestro-cli send <agent-id> "..." | jq -r .sessionId)
+maestro-cli send <agent-id> "follow-up" -s "$SESSION"
+maestro-cli gist create <agent-id> --session "$SESSION"
+```
+
+The desktop app publishes that session and nothing else: it uses the open tab holding the session when there is one, otherwise it reads the provider's stored transcript (SSH remotes included). If the session cannot be found it fails with `GIST_CREATE_FAILED` rather than falling back to the open tabs. The response echoes `agentSessionId` so you can confirm what was published.
+
+Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh auth login`). Error codes: `AGENT_NOT_FOUND`, `INVALID_SESSION`, `MAESTRO_NOT_RUNNING`, `GIST_CREATE_FAILED`.
 
 ## Scheduling with Cron
 

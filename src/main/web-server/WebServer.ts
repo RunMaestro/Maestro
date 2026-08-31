@@ -76,6 +76,8 @@ import type {
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
 	ListTerminalTabsCallback,
+	ReadTerminalTabCallback,
+	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
 	EnqueueCommandCallback,
 	ListQueueCallback,
@@ -495,6 +497,10 @@ export class WebServer {
 
 	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
 		this.callbackRegistry.setListTerminalTabsCallback(callback);
+	}
+
+	setReadTerminalTabCallback(callback: ReadTerminalTabCallback): void {
+		this.callbackRegistry.setReadTerminalTabCallback(callback);
 	}
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
@@ -1012,6 +1018,8 @@ export class WebServer {
 				this.callbackRegistry.writeTerminalTab(sessionId, payload),
 			listTerminalTabs: async (sessionId?: string) =>
 				this.callbackRegistry.listTerminalTabs(sessionId),
+			readTerminalTab: async (sessionId: string, payload: ReadTerminalTabPayload) =>
+				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			enqueueCommand: async (
@@ -1127,8 +1135,12 @@ export class WebServer {
 				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
 			summarizeContext: async (sessionId: string) =>
 				this.callbackRegistry.summarizeContext(sessionId),
-			createGist: async (sessionId: string, description: string, isPublic: boolean) =>
-				this.callbackRegistry.createGist(sessionId, description, isPublic),
+			createGist: async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				agentSessionId?: string
+			) => this.callbackRegistry.createGist(sessionId, description, isPublic, agentSessionId),
 			getCueSubscriptions: async (sessionId?: string) =>
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>

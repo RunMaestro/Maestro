@@ -129,6 +129,15 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			.fn()
 			.mockResolvedValue({ success: true, tabId: 'terminal-tab-1', tabName: 'Dev server' }),
 		listTerminalTabs: vi.fn().mockResolvedValue([]),
+		readTerminalTab: vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'terminal-tab-1',
+			tabName: 'Dev server',
+			cwd: '/home/user/project',
+			state: 'busy',
+			content: 'line one\nline two',
+			totalLines: 2,
+		}),
 		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
 		enqueueCommand: vi.fn().mockResolvedValue({
 			success: true,
@@ -1668,6 +1677,93 @@ describe('WebSocketMessageHandler', () => {
 
 			await vi.waitFor(() => {
 				expect(callbacks.listTerminalTabs).toHaveBeenCalledWith(undefined);
+			});
+		});
+	});
+
+	describe('Read Terminal Tab (Web → Desktop)', () => {
+		it('should return the scrollback along with the tab it came from', async () => {
+			handler.handleMessage(client, {
+				type: 'read_terminal_tab',
+				sessionId: 'session-1',
+				tail: 50,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.readTerminalTab).toHaveBeenCalledWith('session-1', {
+					tabRef: undefined,
+					tail: 50,
+				});
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.type).toBe('read_terminal_tab_result');
+				expect(response.success).toBe(true);
+				expect(response.content).toBe('line one\nline two');
+				expect(response.tabName).toBe('Dev server');
+				// `state` is what lets a caller tell a finished command from a
+				// running one, so it has to survive the hop.
+				expect(response.state).toBe('busy');
+				expect(response.totalLines).toBe(2);
+			});
+		});
+
+		it('should forward an explicit tabRef', async () => {
+			handler.handleMessage(client, {
+				type: 'read_terminal_tab',
+				sessionId: 'session-1',
+				tabRef: 'Dev server',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.readTerminalTab).toHaveBeenCalledWith('session-1', {
+					tabRef: 'Dev server',
+					tail: undefined,
+				});
+			});
+		});
+
+		it('should reject a missing sessionId', async () => {
+			handler.handleMessage(client, { type: 'read_terminal_tab' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('read_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId');
+			expect(callbacks.readTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject a non-positive tail', async () => {
+			handler.handleMessage(client, {
+				type: 'read_terminal_tab',
+				sessionId: 'session-1',
+				tail: 0,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid tail');
+			expect(callbacks.readTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should surface a failed read rather than reporting empty output', async () => {
+			(callbacks.readTerminalTab as any).mockResolvedValue({
+				success: false,
+				error: 'Terminal "Dev server" has no live buffer yet.',
+			});
+			handler.handleMessage(client, {
+				type: 'read_terminal_tab',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.success).toBe(false);
+				expect(response.error).toContain('no live buffer');
+				expect(response.content).toBeUndefined();
 			});
 		});
 	});
@@ -3391,7 +3487,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false);
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false, undefined);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -3407,7 +3503,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false);
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined);
 			});
 		});
 
@@ -3451,6 +3547,51 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('create_gist_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('boom');
+		});
+
+		it('forwards agentSessionId so a headless session can be published', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				agentSessionId: 'provider-session-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith(
+					'session-1',
+					'',
+					false,
+					'provider-session-9'
+				);
+			});
+		});
+
+		it('rejects a blank agentSessionId instead of publishing the open tabs', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				agentSessionId: '',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('agentSessionId');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
+		});
+
+		it('rejects a non-string agentSessionId', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				agentSessionId: 42,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('agentSessionId');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
 		});
 
 		it('replies with create_gist_result when createGist callback is unconfigured', () => {

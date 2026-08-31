@@ -812,6 +812,85 @@ export async function handleWriteTerminalTab(
 }
 
 /**
+ * Handle read_terminal_tab message - read a terminal tab's scrollback. The
+ * counterpart to write_terminal_tab: that one types into a shell, this reads
+ * back what it printed, so an agent can observe a command it started.
+ *
+ * Like the write path, the tab is resolved in the renderer, since terminal
+ * tabs (and their xterm buffers) live only in renderer state.
+ */
+export async function handleReadTerminalTab(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const rawTabRef = message.tabRef;
+	const rawTail = message.tail;
+
+	const sendErrorResult = (error: string) => {
+		ctx.send(client, {
+			type: 'read_terminal_tab_result',
+			success: false,
+			error,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId) {
+		sendErrorResult('Missing sessionId');
+		return;
+	}
+	if (rawTabRef !== undefined && typeof rawTabRef !== 'string') {
+		sendErrorResult('Invalid tabRef: must be a string');
+		return;
+	}
+	if (
+		rawTail !== undefined &&
+		(typeof rawTail !== 'number' || !Number.isFinite(rawTail) || rawTail < 1)
+	) {
+		sendErrorResult('Invalid tail: must be a positive number');
+		return;
+	}
+
+	const session = ctx.callbacks.getSessions?.().find((s) => s.id === sessionId);
+	if (!session) {
+		sendErrorResult('Session not found');
+		return;
+	}
+
+	if (!ctx.callbacks.readTerminalTab) {
+		sendErrorResult('Terminal reads not configured');
+		return;
+	}
+
+	try {
+		const result = await ctx.callbacks.readTerminalTab(sessionId, {
+			tabRef: typeof rawTabRef === 'string' ? rawTabRef : undefined,
+			tail: typeof rawTail === 'number' ? Math.floor(rawTail) : undefined,
+		});
+		ctx.send(client, {
+			type: 'read_terminal_tab_result',
+			success: result.success,
+			error: result.error,
+			tabId: result.tabId,
+			tabName: result.tabName,
+			cwd: result.cwd,
+			state: result.state,
+			content: result.content,
+			totalLines: result.totalLines,
+			sessionId,
+			requestId: message.requestId,
+		});
+	} catch (error) {
+		sendErrorResult(
+			`Failed to read terminal tab: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+}
+
+/**
  * Handle list_terminal_tabs message - enumerate open desktop terminal tabs,
  * optionally scoped to one agent.
  */

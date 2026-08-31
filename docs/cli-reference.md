@@ -386,6 +386,17 @@ Run a command in an existing Maestro terminal tab
 | `--no-enter`         | Type the command without pressing Enter                                   | -       |
 | `--json`             | Output as JSON (for scripting)                                            | -       |
 
+## `maestro-cli read-terminal`
+
+Read a Maestro terminal tab's output
+
+| Option               | Description                                                               | Default |
+| -------------------- | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`   | Target agent by ID (defaults to active)                                   | -       |
+| `--tab <id-or-name>` | Terminal tab ID or display name (defaults to the agent's active terminal) | -       |
+| `--tail <n>`         | Return only the last N lines (default: 200)                               | -       |
+| `--json`             | Output as JSON (for scripting)                                            | -       |
+
 ## `maestro-cli refresh-files`
 
 Refresh the file tree in the Maestro desktop app
@@ -1324,10 +1335,11 @@ Publish session context to GitHub gists
 
 Publish an agent's session transcript as a GitHub gist (requires running Maestro app)
 
-| Option                     | Description                             | Default |
-| -------------------------- | --------------------------------------- | ------- |
-| `-d, --description <text>` | Gist description                        | -       |
-| `-p, --public`             | Create a public gist (default: private) | -       |
+| Option                     | Description                                                                                              | Default |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- | ------- |
+| `-d, --description <text>` | Gist description                                                                                         | -       |
+| `-p, --public`             | Create a public gist (default: private)                                                                  | -       |
+| `-s, --session <id>`       | Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs | -       |
 
 ## `maestro-cli notify`
 

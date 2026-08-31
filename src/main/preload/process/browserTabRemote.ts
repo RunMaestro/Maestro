@@ -179,6 +179,54 @@ export function createBrowserTabRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to remote terminal scrollback reads from CLI/web interface.
+		 * Renderer must ack via sendRemoteReadTerminalTabResponse.
+		 */
+		onRemoteReadTerminalTab: (
+			callback: (
+				sessionId: string,
+				payload: { tabRef?: string; tail?: number },
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				payload: { tabRef?: string; tail?: number },
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, payload, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, error: 'Renderer error' });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:readTerminalTab', handler);
+			return () => ipcRenderer.removeListener('remote:readTerminalTab', handler);
+		},
+
+		/**
+		 * Send response for a remote terminal scrollback read. The resolved tab is
+		 * echoed back so the CLI can report which terminal it actually read.
+		 */
+		sendRemoteReadTerminalTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			result?: {
+				error?: string;
+				tabId?: string;
+				tabName?: string;
+				cwd?: string;
+				state?: string;
+				content?: string;
+				totalLines?: number;
+			}
+		): void => {
+			ipcRenderer.send(responseChannel, { success, ...result });
+		},
+
+		/**
 		 * Subscribe to remote "new AI tab with prompt" from CLI/web interface.
 		 * Renderer must ack success via sendRemoteNewAITabWithPromptResponse.
 		 * Ack false before rethrowing synchronous callback errors so the CLI
