@@ -397,6 +397,7 @@ The file list is focused when the viewer opens, so these work right away. See
 | Previous / next memory     | `Up/Down Arrow`      | `Up/Down Arrow`      |
 | Delete the selected memory | `Backspace` or `Del` | `Backspace` or `Del` |
 | Jump to the filter box     | `/` or `Cmd+F`       | `/` or `Ctrl+F`      |
+| Toggle Preview / Edit      | `Cmd+E`              | `Ctrl+E`             |
 | Step back out              | `Esc`                | `Esc`                |
 
 `/` only jumps to the filter when you are not already typing, so a slash typed

@@ -553,14 +553,28 @@ onEscapeRef.current = () => {
 
 Losing the whole pane while trying to reset a filter is the bug this prevents. The clear button is the always-available path either way.
 
-**`collapsible` is for a row that cannot wrap.** A stats bar or toolbar that lays out on one line has no room for a permanently-open 280px box, and the box is usually the widest thing on it. Pass `collapsible` and the control shrinks to its magnifier until it is focused or holds a query; a live query keeps it open even unfocused, because collapsing then would hide the reason the list is short.
+**The box does not collapse, and a crowded row is not the reason to make it.** A `collapsible` variant that shrank to its magnifier until focused was tried and removed: hiding the primary control of a pane to buy horizontal space trades a layout problem for a discoverability one, and the neighbour it had to hide to fit (the Memory Viewer's unlinked chip) was a control too. When a toolbar cannot fit on one line, move what is NOT a control off that line instead - the Memory Viewer sends its corpus stats to a footer, which leaves the whole row for things the user can actually press.
 
-Two details make it safe:
+### A Surface That Reads and Edits Markdown
 
-- The input stays **mounted** when collapsed, squeezed to zero width. A host that focuses the box by hotkey holds a ref to that element, and unmounting it would null the ref - the key would silently do nothing, which reads as a broken shortcut rather than a closed box.
-- The open-on-click handler sits on the **wrapper**, not on a button around the icon. A second focusable element would carry the same accessible name as the input it fronts, so "the filter box" would match two nodes.
+Any pane whose content is a markdown document rides the **File Preview stack**, not a bare `<textarea>`:
 
-Pair it with `onExpandedChange` when the host has a neighbour to stand down while the box is wide. The Memory Viewer hides its unlinked chip that way: the chip is a filter too, so the two never need to be reachable at the same instant.
+- **Reading** - `<Markdown preset="document">` inside a scroll container, with `<style>{generateProseStyles({ theme, scopeSelector })}</style>` so the document typography is scoped to that pane instead of leaking heading and table rules onto the chrome around it.
+- **Editing** - `<MarkdownEditor>` from `components/FilePreview/markdownEditor`, which brings CodeMirror syntax colouring, the wrap-aware line-number gutter, and an imperative handle (`focus`, `scrollToLine`, `setSearchMatches`, scroll-percent sync).
+- **Switching** - `Cmd/Ctrl+E`, read from the user's LIVE `toggleMarkdownMode` binding via `eventMatchesShortcutKeys`, never from a literal `e`. One chord flips a file preview and a memory alike; two spellings of one idea is how a keyboard stops being predictable.
+
+**Open in Preview.** A markdown pane is opened to read far more often than to write, so the rendered document is the default state and editing is one keystroke away rather than the state the user has to leave.
+
+Four details that are easy to miss:
+
+- **A modal layer must bind the chord itself.** A pane registered through `useModalLayer` blocks lower layers, so the app-level `toggleMarkdownMode` handler never runs while it is up.
+- **Hand the caret over on the switch.** Entering Edit must focus the editor (`requestAnimationFrame(() => editorRef.current?.focus())`); without it a writable surface appears while every keystroke still goes wherever focus already was, which reads as the editor being broken. Leaving Edit hands focus back to the list.
+- **Key the editor on the filename.** Undo history belongs to one document. Carried across a file switch, an undo pastes the previous file's text into this one.
+- **Put the border on a wrapper.** CM6 measures its viewport against its own host element, so a border on that host is counted twice once the content scrolls.
+
+**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect. Build those ranges with the same `splitOnMatches()` the rendered preview highlights with (`utils/highlightMatches`) so the two modes cannot disagree about what counts as a hit, and pass `-1` for the active index when the query is a FILTER rather than a find bar - there is no cursor into the results, so every hit gets the same wash.
+
+`MemoryViewer` is the reference implementation.
 
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 

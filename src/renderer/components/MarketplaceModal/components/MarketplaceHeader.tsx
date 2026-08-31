@@ -47,7 +47,7 @@ export const MarketplaceHeader = forwardRef<HTMLButtonElement, MarketplaceHeader
 						</button>
 						{showHelp && (
 							<div
-								className="absolute top-full left-0 mt-2 w-80 p-4 rounded-lg shadow-xl z-50"
+								className="absolute top-full left-0 mt-2 w-96 p-4 rounded-lg shadow-xl z-50"
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									border: `1px solid ${theme.colors.border}`,
@@ -60,6 +60,14 @@ export const MarketplaceHeader = forwardRef<HTMLButtonElement, MarketplaceHeader
 									The Playbook Exchange is a curated collection of Auto Run playbooks for common
 									workflows. Browse, preview, and import playbooks directly into your Auto Run
 									folder.
+								</p>
+								<h4 className="text-xs font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+									Use One as Reference
+								</h4>
+								<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
+									A playbook does not have to be run as-is. Import one to pull it down locally, then
+									talk to your agent about what you want and point it at the imported file as
+									reference material. Customize it to your desire.
 								</p>
 								<h4 className="text-xs font-semibold mb-1" style={{ color: theme.colors.textMain }}>
 									Submit Your Playbook

@@ -190,7 +190,12 @@ export function AgentSessionsBrowser({
 		MODAL_PRIORITIES.AGENT_SESSIONS,
 		'Agent Sessions Browser',
 		() => {
-			if (viewingSessionRef.current) {
+			// The layer stack handles Escape at capture on window, so the rename
+			// input never sees the key - cancel an in-progress rename here first,
+			// or renaming a session and pressing Escape closes the whole browser.
+			if (renamingSessionId) {
+				cancelRename();
+			} else if (viewingSessionRef.current) {
 				clearViewingSession();
 			} else {
 				onCloseRef.current();
