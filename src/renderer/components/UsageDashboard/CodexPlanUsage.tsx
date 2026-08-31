@@ -13,7 +13,7 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
 import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import { useUIStore } from '../../stores/uiStore';
-import { makeAccountKeyHelpers } from './quota/quotaFormatting';
+import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaFormatting';
 import {
 	QuotaAccountEmail,
 	QuotaAccountPill,
@@ -21,6 +21,7 @@ import {
 	QuotaAccountTabs,
 	QuotaBarRow,
 	QuotaPendingRow,
+	QuotaLastRefreshed,
 	QuotaRefreshControls,
 	QuotaShowAllToggle,
 	QuotaVisibilityToggle,
@@ -187,6 +188,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 		? (snapshots[effectiveSelectedKey] ?? null)
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
+	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
 
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
@@ -377,6 +379,12 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					theme={theme}
 				/>
 			) : null}
+
+			<QuotaLastRefreshed
+				sampledAtMs={lastSampledAtMs}
+				theme={theme}
+				testIdPrefix={TEST_ID_PREFIX}
+			/>
 		</div>
 	);
 });

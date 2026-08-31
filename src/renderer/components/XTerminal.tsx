@@ -7,6 +7,7 @@ import type { ISearchOptions } from '@xterm/addon-search';
 import type { ILink } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { Theme } from '../../shared/theme-types';
+import { MONO_FALLBACK_STACK, withMonoFallback } from '../../shared/fontStack';
 import type { ITheme } from '@xterm/xterm';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import {
@@ -104,6 +105,92 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 	// processing state to become inconsistent (keydown blocked but keyup allowed),
 	// breaking interactive apps like vim/vi/nano that depend on Escape.
 	return 'handle';
+}
+
+// ============================================================================
+// Font stack
+// ============================================================================
+
+/** Measures the advance width of one character in a given CSS font shorthand. */
+export type MeasureAdvance = (cssFont: string, char: string) => number;
+
+/**
+ * Whether a font stack resolves to a fixed-pitch face, by measurement.
+ *
+ * Asking the font system "are you monospace?" is not possible from CSS, so this
+ * measures instead: in a fixed-pitch face every glyph shares one advance, so
+ * the widest (`W`) and one of the narrowest (`i`) come out equal. In Avenir
+ * Next - the font this was found with - they are 1025 and 296, a 3.5x spread.
+ *
+ * A tolerance is used rather than strict equality because subpixel metrics and
+ * hinting can leave a fractional difference in a genuinely monospace face.
+ *
+ * Unmeasurable input (no canvas, a zero width) returns true: without evidence
+ * we do not second-guess the user's font.
+ */
+export function isFixedPitchStack(
+	fontFamily: string,
+	fontSize: number,
+	measureAdvance: MeasureAdvance
+): boolean {
+	const cssFont = `${fontSize}px ${fontFamily}`;
+	let wide: number;
+	let narrow: number;
+	try {
+		wide = measureAdvance(cssFont, 'W');
+		narrow = measureAdvance(cssFont, 'i');
+	} catch {
+		return true;
+	}
+	if (!Number.isFinite(wide) || !Number.isFinite(narrow) || wide <= 0 || narrow <= 0) return true;
+	return Math.abs(wide - narrow) <= wide * 0.02;
+}
+
+/**
+ * Pick the font the terminal should actually render with.
+ *
+ * A terminal in a proportional font is not merely ugly, it is wrong: xterm
+ * sizes its grid from the advance of `W` and then puts every character on that
+ * fixed pitch, so narrow letters trail a large gap (`Cl aude`, `Mi crosoft`)
+ * while wide ones sit flush. The whole grid - box drawing, TUI alignment,
+ * cursor position - is built on the assumption that one glyph is one cell.
+ *
+ * The terminal font INHERITS the interface font whenever the user has not set
+ * one of its own (see `resolveSurfaceFont`), so picking a proportional UI font
+ * silently breaks every terminal. That is not a preference the terminal can
+ * honor, so it is overridden here rather than rendering a broken grid.
+ *
+ * The fallback chain comes from the shared `withMonoFallback`, which every
+ * other surface degrades through - it only covers a font that fails to
+ * RESOLVE, and cannot help when the configured font resolves perfectly well
+ * and simply is not fixed-pitch. That is what the measurement above is for;
+ * the two mechanisms cover different failures and compose.
+ */
+export function resolveTerminalFontFamily(
+	fontFamily: string,
+	fontSize: number,
+	measureAdvance: MeasureAdvance | null
+): string {
+	const stack = withMonoFallback(fontFamily);
+	// No way to measure (jsdom, no canvas): keep the configured stack rather
+	// than overriding a font that may well be fine.
+	if (!measureAdvance) return stack;
+	if (isFixedPitchStack(stack, fontSize, measureAdvance)) return stack;
+	return MONO_FALLBACK_STACK;
+}
+
+/** Canvas-backed {@link MeasureAdvance}, or null where canvas is unavailable. */
+export function createCanvasMeasureAdvance(): MeasureAdvance | null {
+	try {
+		const ctx = document.createElement('canvas').getContext('2d');
+		if (!ctx) return null;
+		return (cssFont, char) => {
+			ctx.font = cssFont;
+			return ctx.measureText(char).width;
+		};
+	} catch {
+		return null;
+	}
 }
 
 // ============================================================================
@@ -265,6 +352,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const fitAddonRef = useRef<FitAddon | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
+	// Canvas used to check the configured font is fixed-pitch. Created once and
+	// reused: a terminal in a proportional font renders a broken grid, and the
+	// only way to detect that is to measure two glyphs.
+	const measureAdvanceRef = useRef<MeasureAdvance | null>(null);
+	if (measureAdvanceRef.current === null) {
+		measureAdvanceRef.current = createCanvasMeasureAdvance();
+	}
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const selectionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const lastAutoCopiedSelectionRef = useRef<string>('');
@@ -474,7 +568,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// (macOS) / Shift+drag (win/linux) force a local selection so copy works
 			// regardless of what's running. Matches iTerm2 / Terminal.app muscle memory.
 			macOptionClickForcesSelection: true,
-			fontFamily,
+			fontFamily: resolveTerminalFontFamily(fontFamily, fontSize, measureAdvanceRef.current),
 			fontSize,
 			theme: mapThemeToXterm(theme),
 			// Route OSC 8 hyperlinks (escape-code terminal links) through openUrl so they
@@ -808,7 +902,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	// Update font settings when props change
 	useEffect(() => {
 		if (terminalRef.current) {
-			terminalRef.current.options.fontFamily = fontFamily;
+			terminalRef.current.options.fontFamily = resolveTerminalFontFamily(
+				fontFamily,
+				fontSize,
+				measureAdvanceRef.current
+			);
 			terminalRef.current.options.fontSize = fontSize;
 			// Guard: skip fit() when the container is hidden (display:none → offsetWidth/Height = 0).
 			// Calling fit() on a zero-size container resizes the terminal to the minimum (2×2),

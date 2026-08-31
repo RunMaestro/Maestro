@@ -6,6 +6,7 @@ import { findDetectedAgent } from '../utils/agentAvailability';
 
 export function useAgentSelectionKeyboard({
 	tiles,
+	tileColumns,
 	isNameFieldFocused,
 	focusedTileIndex,
 	detectedAgents,
@@ -52,7 +53,12 @@ export function useAgentSelectionKeyboard({
 				case 'ArrowLeft':
 				case 'ArrowRight': {
 					event.preventDefault();
-					const nextIndex = getNextAgentTileIndex(focusedTileIndex, event.key, tiles.length);
+					const nextIndex = getNextAgentTileIndex(
+						focusedTileIndex,
+						event.key,
+						tiles.length,
+						tileColumns
+					);
 					if (nextIndex !== focusedTileIndex) {
 						setFocusedTileIndex(nextIndex);
 						// A disabled tile cannot take DOM focus, so this is a no-op on one.
@@ -90,6 +96,7 @@ export function useAgentSelectionKeyboard({
 		},
 		[
 			tiles,
+			tileColumns,
 			isNameFieldFocused,
 			focusedTileIndex,
 			detectedAgents,

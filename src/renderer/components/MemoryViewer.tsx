@@ -1,13 +1,20 @@
 /**
  * MemoryViewer - full-panel overlay for browsing/editing Claude Code per-project memory.
  *
- * Mirrors the Claude Sessions browser shell (same header pattern, stats bar, close button) and
- * reuses the shared DualPaneFileEditor for the list + markdown editor layout. Gated by the
+ * Mirrors the Claude Sessions browser shell (same header pattern, close button) and reuses the
+ * shared DualPaneFileEditor for the list + markdown editor layout. Gated by the
  * `supportsProjectMemory` capability on the active agent; today only Claude Code qualifies.
+ *
+ * Chrome layout, top to bottom: a title header, a TOOLBAR that carries every
+ * control (filter, unlinked chip, Graph, the Edit/Preview switch), the split
+ * view, and a STATS FOOTER. The corpus figures are reference material rather
+ * than controls, so they sit at the bottom out of the way of the row the user
+ * actually reaches for - the toolbar is one non-wrapping line, and the stats
+ * used to be what forced it to wrap.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Plus, X, Database, FileText, Clock, Zap } from 'lucide-react';
+import { Brain, Plus, X, Database, FileText, Clock, Zap, Unlink, Network } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { formatSize, formatRelativeTime, formatNumber } from '../utils/formatters';
 import { estimateTokenCount } from '../../shared/formatters';
@@ -18,8 +25,43 @@ import { DualPaneFileEditor, type DualPaneFileEditorItem } from './shared/DualPa
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import { FilterInput } from './ui/FilterInput';
+import { HeaderActionButton } from './ui/HeaderActionButton';
+import { SegmentedControl } from './ui/SegmentedControl';
+import { Markdown } from './Markdown';
+import { MarkdownEditor, type MarkdownEditorHandle } from './FilePreview/markdownEditor';
+import { generateProseStyles } from '../utils/markdownConfig';
+import { splitOnMatches } from '../utils/highlightMatches';
+import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
+import { isTextInputTarget } from '../utils/messageScrollNavigation';
 import { useModalStore } from '../stores/modalStore';
+
+/** Which half of the Edit/Preview switch is showing. */
+type MemoryViewMode = 'preview' | 'edit';
+
+const VIEW_MODE_OPTIONS = [
+	{ value: 'preview' as const, label: 'Preview', title: 'Rendered markdown' },
+	{ value: 'edit' as const, label: 'Edit', title: 'Syntax-highlighted source' },
+];
+
+/**
+ * Byte offsets of every filter hit in the document, for the editor's painted
+ * search decorations.
+ *
+ * Built from the SAME `splitOnMatches` the rendered preview highlights with, so
+ * the two modes cannot disagree about what counts as a hit - the segment list
+ * already carries each part's start offset, so the matches are just the ones
+ * flagged `isMatch`.
+ */
+function searchMatchRanges(text: string, query: string): { from: number; to: number }[] {
+	if (!query) return [];
+	return splitOnMatches(text, query)
+		.filter((segment) => segment.isMatch)
+		.map((segment) => ({ from: segment.start, to: segment.start + segment.text.length }));
+}
 
 interface MemoryViewerProps {
 	theme: Theme;
@@ -117,6 +159,12 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const debouncedFilter = useDebouncedValue(filterQuery, 150);
 	const [matches, setMatches] = useState<Map<string, string | undefined> | null>(null);
 
+	// Memories nothing points at. Claude reads MEMORY.md to decide what to load,
+	// so an unreferenced entry is written but never recalled - the filter exists
+	// to make that visible, since nothing else in the app shows it.
+	const [orphans, setOrphans] = useState<string[]>([]);
+	const [showOnlyOrphans, setShowOnlyOrphans] = useState(false);
+
 	// Bumped after a delete so focus returns to the list and the next Backspace
 	// keeps working (the row that had focus was just unmounted).
 	const [listFocusToken, setListFocusToken] = useState(0);
@@ -126,19 +174,131 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const [createError, setCreateError] = useState<string | null>(null);
 	const [isCreating, setIsCreating] = useState(false);
 	const createInputRef = useRef<HTMLInputElement>(null);
+	const filterInputRef = useRef<HTMLInputElement>(null);
+	const editorRef = useRef<MarkdownEditorHandle>(null);
+	const previewScrollRef = useRef<HTMLDivElement>(null);
+
+	/**
+	 * Reading or writing. Memory files are read far more often than they are
+	 * edited - the usual reason to open this pane is "what do I already know
+	 * about X?" - so the default is the rendered document, and editing is one
+	 * keystroke away rather than the state you have to leave.
+	 */
+	const [viewMode, setViewMode] = useState<MemoryViewMode>('preview');
+
+	/** Move keyboard focus back to the file list (see `listFocusToken`). */
+	const focusList = useCallback(() => setListFocusToken((t) => t + 1), []);
 
 	const layerIdRef = useRef<string>();
-	// Escape clears an active filter before it closes the viewer: the layer
-	// stack handles the key at capture, so an input-local handler would never
-	// see it and the user would lose the whole pane while resetting a filter.
+	/**
+	 * Escape is a LADDER, climbed one rung per press, never skipping to close.
+	 *
+	 *   1. caret in the filter box -> hand focus back to the list, query intact
+	 *   2. filter still has text    -> clear it
+	 *   3. otherwise                -> close the viewer
+	 *
+	 * Rung 1 is what makes "filter, then arrow through the hits" work: the
+	 * query has to survive the key that gets you out of the text box, or the
+	 * results you were about to walk vanish as you reach for them.
+	 *
+	 * It all lives here because the layer stack handles Escape at CAPTURE on
+	 * `window`, so `FilterInput`'s own Escape handler never sees the key inside
+	 * a registered surface - and without this ladder the whole pane would close
+	 * while the user was only trying to leave the filter box.
+	 */
 	const onEscapeRef = useRef<() => void>(() => {});
 	onEscapeRef.current = () => {
+		// `visibleNamesRef` guards the hand-off: a filter that matched nothing has
+		// no row to focus, so blurring would drop focus on <body> and the arrows
+		// the user just reached for would do nothing. In that case fall through
+		// to clearing the filter, which is the useful move anyway.
+		if (document.activeElement === filterInputRef.current && visibleNamesRef.current.length > 0) {
+			filterInputRef.current?.blur();
+			focusList();
+			return;
+		}
 		if (filterQuery) {
 			setFilterQuery('');
 			return;
 		}
 		onClose();
 	};
+
+	/**
+	 * Jump to the filter box: Cmd/Ctrl+F, or bare `/`.
+	 *
+	 * The two guards differ on purpose. `/` is a legal character, so it only
+	 * takes effect when the caret is NOT in a text field - otherwise typing a
+	 * path into the memory editor would fling focus into the filter mid-word.
+	 * Cmd+F carries a modifier and means nothing else here, so it works from
+	 * anywhere including the editor.
+	 *
+	 * Skipped entirely while the New Memory dialog is up: it sits on top, and a
+	 * surface the user cannot see should not be stealing their keystrokes.
+	 */
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			const isFindChord = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f';
+			const isSlash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey;
+			if (!isFindChord && !isSlash) return;
+			if (isSlash && isTextInputTarget(e.target)) return;
+
+			e.preventDefault();
+			e.stopPropagation();
+			filterInputRef.current?.focus();
+			filterInputRef.current?.select();
+		},
+		{ enabled: !createModalOpen }
+	);
+
+	/**
+	 * Cmd/Ctrl+E flips between the rendered document and the source editor.
+	 *
+	 * It reads the user's LIVE binding for `toggleMarkdownMode` rather than
+	 * testing for a literal `e`, so the chord that flips a file preview and the
+	 * chord that flips a memory stay the same key after a remap - two spellings
+	 * of one idea is exactly how a keyboard stops being predictable.
+	 *
+	 * Bound here rather than left to the global handler because this pane
+	 * registers as a modal layer that blocks lower layers, so the app-level
+	 * shortcut never reaches its own handler while the pane is up.
+	 */
+	const toggleModeKeys = useSettingsStore((s) => s.shortcuts.toggleMarkdownMode?.keys);
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (!eventMatchesShortcutKeys(e, toggleModeKeys)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			setViewMode((mode) => (mode === 'preview' ? 'edit' : 'preview'));
+		},
+		{ enabled: !createModalOpen }
+	);
+
+	/**
+	 * Land the caret in the editor when the user switches to Edit, and hand it
+	 * back to the list when they leave. Without the first half, Cmd+E puts a
+	 * writable surface on screen that silently swallows nothing - every
+	 * keystroke still goes to whatever had focus before, which reads as the
+	 * editor being broken.
+	 *
+	 * Skipped on the initial render (`preview` is the default, and there is
+	 * nothing to hand focus back from) and while the New Memory dialog is up.
+	 */
+	const previousViewModeRef = useRef(viewMode);
+	useEffect(() => {
+		const previous = previousViewModeRef.current;
+		previousViewModeRef.current = viewMode;
+		if (previous === viewMode || createModalOpen) return;
+		if (viewMode === 'edit') {
+			requestAnimationFrame(() => editorRef.current?.focus());
+		} else {
+			focusList();
+		}
+	}, [viewMode, createModalOpen, focusList]);
 
 	const { registerLayer, unregisterLayer } = useLayerStack();
 
@@ -250,23 +410,34 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		}
 		let cancelled = false;
 		void (async () => {
-			const result = await window.maestro.memory.search(projectPath, query, agentId);
-			if (cancelled) return;
-			if (!result.success) {
-				setActionError(result.error || 'Failed to search memory');
-				return;
+			try {
+				const result = await window.maestro.memory.search(projectPath, query, agentId);
+				if (cancelled) return;
+				if (!result.success) {
+					setActionError(result.error || 'Failed to search memory');
+					return;
+				}
+				setMatches(new Map((result.matches || []).map((m) => [m.name, m.snippet])));
+			} catch (err) {
+				// Report it rather than leaving the list silently unfiltered - the
+				// user typed a query and is owed an answer either way.
+				if (!cancelled) setActionError(String(err));
 			}
-			setMatches(new Map((result.matches || []).map((m) => [m.name, m.snippet])));
 		})();
 		return () => {
 			cancelled = true;
 		};
 	}, [debouncedFilter, projectPath, agentId, entries]);
 
-	const filteredEntries = useMemo(
-		() => (matches ? entries.filter((e) => matches.has(e.name)) : entries),
-		[entries, matches]
-	);
+	const orphanSet = useMemo(() => new Set(orphans), [orphans]);
+
+	// The two filters compose rather than override: "unlinked entries mentioning
+	// worktrees" is a real question, and making the chip clear the search box
+	// would answer a different one.
+	const filteredEntries = useMemo(() => {
+		const byQuery = matches ? entries.filter((e) => matches.has(e.name)) : entries;
+		return showOnlyOrphans ? byQuery.filter((e) => orphanSet.has(e.name)) : byQuery;
+	}, [entries, matches, showOnlyOrphans, orphanSet]);
 
 	// Read at delete time to pick the next selection; a ref keeps the delete
 	// callbacks off the filtered list's identity.
@@ -282,6 +453,31 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		const first = filteredEntries[0];
 		if (first) void loadEntry(first.name);
 	}, [matches, filteredEntries, selectedName, hasUnsavedChanges, loadEntry]);
+
+	// Recomputed whenever the file set changes: every create, delete, and save
+	// goes through reloadList, and each of those can make or break a reference.
+	useEffect(() => {
+		if (!projectPath || entries.length === 0) {
+			setOrphans([]);
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			try {
+				const result = await window.maestro.memory.orphans(projectPath, agentId);
+				if (cancelled || !result.success) return;
+				setOrphans(result.orphans ?? []);
+			} catch {
+				// The chip is purely additive, so losing it is a safe degradation -
+				// and an unguarded await here surfaces as an unhandled rejection
+				// rather than anything the user could act on.
+				if (!cancelled) setOrphans([]);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [projectPath, agentId, entries]);
 
 	const handleSelect = useCallback(
 		async (name: string) => {
@@ -365,6 +561,29 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		[performDelete]
 	);
 
+	/**
+	 * Graph how the memories link to each other.
+	 *
+	 * Scoped to the memory directory and rooted there explicitly: memory lives
+	 * under `~/.claude/projects/<encoded>/memory/`, outside the project, so the
+	 * graph's usual project root would resolve every path to nothing.
+	 *
+	 * The viewer closes on the way out. Both are full-window views on the same
+	 * agent, so leaving this one mounted underneath would strand it behind a
+	 * surface the user cannot see past.
+	 */
+	const handleOpenGraph = useCallback(() => {
+		if (!directoryPath) return;
+		useFileExplorerStore.getState().openGraphScope({
+			directory: '',
+			rootPath: directoryPath,
+			// Center on MEMORY.md when it exists - it is the index every other
+			// entry hangs off, so it is the hub a reader expects in the middle.
+			focusPath: entries.some((e) => e.name === 'MEMORY.md') ? 'MEMORY.md' : undefined,
+		});
+		onClose();
+	}, [directoryPath, entries, onClose]);
+
 	const handleCreate = useCallback(() => {
 		if (!projectPath) return;
 		if (hasUnsavedChanges) {
@@ -424,14 +643,16 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				const isCurrent = e.name === selectedName;
 				const snippet = matches?.get(e.name);
 				const meta = `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`;
+				const orphaned = orphanSet.has(e.name);
+				const description = orphaned ? `${meta}\nunlinked - nothing points at this` : meta;
 				return {
 					id: e.name,
 					label: e.name,
-					description: snippet ? `${meta}\nmatch: ${snippet}` : meta,
+					description: snippet ? `${description}\nmatch: ${snippet}` : description,
 					isModified: isCurrent && hasUnsavedChanges,
 				};
 			}),
-		[filteredEntries, matches, selectedName, hasUnsavedChanges]
+		[filteredEntries, matches, selectedName, hasUnsavedChanges, orphanSet]
 	);
 
 	const editorTokenCount = useMemo(
@@ -439,24 +660,81 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		[selectedName, editedContent]
 	);
 
+	/**
+	 * Repaint the editor's filter highlights whenever the query or the document
+	 * changes. Pushed imperatively rather than passed as a prop because CM6 owns
+	 * its own document: re-rendering the component would not move a decoration,
+	 * and rebuilding the view would throw away the undo history and the caret.
+	 *
+	 * `-1` for the active index means "wash every hit equally" - this is a
+	 * filter, not a find bar, so there is no cursor into the results to paint
+	 * one of them differently from the rest.
+	 */
+	const filterQueryTrimmed = debouncedFilter.trim();
+	useEffect(() => {
+		if (viewMode !== 'edit') return;
+		editorRef.current?.setSearchMatches(searchMatchRanges(editedContent, filterQueryTrimmed), -1);
+	}, [viewMode, editedContent, filterQueryTrimmed]);
+
 	const renderEditorBody = useCallback(() => {
+		if (viewMode === 'preview') {
+			return (
+				<div
+					ref={previewScrollRef}
+					className="memory-preview flex-1 min-h-0 overflow-y-auto rounded px-4 py-3 border outline-none"
+					// Focusable so the pane can be scrolled with the keyboard the
+					// moment it is shown; a reading surface you have to click first
+					// is a reading surface the arrow keys appear broken on.
+					tabIndex={0}
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+					data-testid="memory-preview"
+				>
+					<Markdown
+						preset="document"
+						content={editedContent}
+						theme={theme}
+						containerRef={previewScrollRef}
+						searchHighlight={
+							filterQueryTrimmed ? { query: filterQueryTrimmed, currentMatchIndex: -1 } : undefined
+						}
+					/>
+				</div>
+			);
+		}
+
+		// Same CodeMirror editor the File Preview edits with, so a memory file is
+		// syntax-coloured exactly like any other markdown document in the app and
+		// the line-number gutter stays aligned through soft wraps.
+		//
+		// Keyed on the filename so switching memories remounts the view: undo
+		// history belongs to one document, and carrying it across files lets an
+		// undo paste the previous file's text into this one.
 		return (
-			<textarea
-				className="dual-pane-textarea"
-				value={editedContent}
-				onChange={(e) => {
-					setEditedContent(e.target.value);
-					setHasUnsavedChanges(e.target.value !== originalContent);
-				}}
-				spellCheck={false}
-				style={{
-					borderColor: theme.colors.border,
-					backgroundColor: theme.colors.bgMain,
-					color: theme.colors.textMain,
-				}}
-			/>
+			// The border lives on a wrapper rather than on the editor's own host:
+			// CM6 measures its viewport against that host, and a border on it is
+			// counted twice once the content scrolls.
+			<div
+				className="flex-1 min-h-0 flex rounded border overflow-hidden"
+				style={{ borderColor: theme.colors.border }}
+			>
+				<MarkdownEditor
+					key={selectedName ?? 'memory'}
+					ref={editorRef}
+					value={editedContent}
+					onChange={(next) => {
+						setEditedContent(next);
+						setHasUnsavedChanges(next !== originalContent);
+					}}
+					language="markdown"
+					theme={theme}
+				/>
+			</div>
 		);
-	}, [editedContent, originalContent, theme]);
+	}, [viewMode, editedContent, originalContent, theme, filterQueryTrimmed, selectedName]);
 
 	// Cheap estimate: ~4 bytes/token for English text (matches estimateTokenCount from shared/formatters).
 	const estimatedTokens = useMemo(() => Math.ceil(stats.totalBytes / 4), [stats.totalBytes]);
@@ -465,6 +743,10 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 
 	return (
 		<div className="flex-1 flex flex-col h-full" style={{ backgroundColor: theme.colors.bgMain }}>
+			{/* Scoped so the rendered memory picks up the app's document typography
+			    without leaking heading and table rules onto the chrome around it. */}
+			<style>{generateProseStyles({ theme, scopeSelector: '.memory-preview' })}</style>
+
 			{/* Header */}
 			<div
 				className="h-16 border-b flex items-center justify-between px-6 shrink-0"
@@ -477,18 +759,14 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					</span>
 				</div>
 				<div className="flex items-center gap-2">
-					<button
+					<HeaderActionButton
+						theme={theme}
 						onClick={handleCreate}
-						className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
+						icon={<Plus />}
 						title="Create a new memory file"
 					>
-						<Plus className="w-4 h-4" />
 						New Memory
-					</button>
+					</HeaderActionButton>
 					<button
 						onClick={onClose}
 						className="p-2 rounded hover:bg-white/5 transition-colors"
@@ -500,42 +778,16 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				</div>
 			</div>
 
-			{/* Stats bar */}
+			{/* Toolbar: everything the user can act on, in one non-wrapping row.
+			    Filter first because it is what gets reached for most, then the
+			    two things that narrow or re-shape the same list, then the view
+			    switch pushed right - it acts on the pane rather than the list. */}
 			<div
-				className="px-6 py-3 border-b shrink-0 flex items-center gap-6 text-xs"
+				className="px-6 py-3 border-b shrink-0 flex items-center gap-3 text-xs"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 			>
-				<span className="flex items-center gap-1.5">
-					<FileText className="w-3.5 h-3.5" />
-					{stats.fileCount} {stats.fileCount === 1 ? 'file' : 'files'}
-				</span>
-				<span className="flex items-center gap-1.5">
-					<Database className="w-3.5 h-3.5" />
-					{formatSize(stats.totalBytes)}
-				</span>
-				<span className="flex items-center gap-1.5">
-					<Zap className="w-3.5 h-3.5" />~{formatNumber(estimatedTokens)} tokens
-				</span>
-				{stats.firstCreatedAt && (
-					<span
-						className="flex items-center gap-1.5"
-						title={new Date(stats.firstCreatedAt).toLocaleString()}
-					>
-						<Clock className="w-3.5 h-3.5" />
-						first created {formatRelativeTime(stats.firstCreatedAt)}
-					</span>
-				)}
-				{stats.lastModifiedAt && (
-					<span
-						className="flex items-center gap-1.5"
-						title={new Date(stats.lastModifiedAt).toLocaleString()}
-					>
-						<Clock className="w-3.5 h-3.5" />
-						last edited {formatRelativeTime(stats.lastModifiedAt)}
-					</span>
-				)}
-				<div className="flex-1" />
 				<FilterInput
+					ref={filterInputRef}
 					theme={theme}
 					value={filterQuery}
 					onChange={setFilterQuery}
@@ -543,6 +795,48 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					ariaLabel="Filter memories by name or content"
 					width={280}
 					resultLabel={matches ? `${filteredEntries.length}/${entries.length}` : undefined}
+				/>
+				{orphans.length > 0 && (
+					<button
+						onClick={() => setShowOnlyOrphans((v) => !v)}
+						className="flex items-center gap-1.5 px-2 py-1 rounded text-xs whitespace-nowrap shrink-0 transition-colors"
+						style={{
+							backgroundColor: showOnlyOrphans
+								? `${theme.colors.warning}25`
+								: `${theme.colors.warning}10`,
+							color: showOnlyOrphans ? theme.colors.warning : theme.colors.textDim,
+						}}
+						title={
+							showOnlyOrphans
+								? 'Show all memories'
+								: `Show only the ${orphans.length} ${orphans.length === 1 ? 'memory' : 'memories'} nothing links to - Claude never loads these`
+						}
+						data-testid="memory-orphan-filter"
+					>
+						<Unlink className="w-3.5 h-3.5" />
+						{orphans.length} unlinked
+					</button>
+				)}
+				{entries.length > 0 && (
+					<HeaderActionButton
+						theme={theme}
+						onClick={handleOpenGraph}
+						variant="ghost"
+						icon={<Network />}
+						title="Graph how these memories link to each other"
+						testId="memory-open-graph"
+					>
+						Graph
+					</HeaderActionButton>
+				)}
+				<div className="flex-1" />
+				<SegmentedControl
+					value={viewMode}
+					onChange={setViewMode}
+					options={VIEW_MODE_OPTIONS}
+					theme={theme}
+					ariaLabel="Show the memory as a rendered document or as editable source"
+					testId="memory-view-mode"
 				/>
 			</div>
 
@@ -569,17 +863,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					>
 						<Brain className="w-10 h-10 opacity-30" />
 						<div>No memory files yet for this project.</div>
-						<button
-							onClick={handleCreate}
-							className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-							style={{
-								backgroundColor: theme.colors.accent,
-								color: theme.colors.accentForeground,
-							}}
-						>
-							<Plus className="w-4 h-4" />
+						<HeaderActionButton theme={theme} onClick={handleCreate} icon={<Plus />}>
 							Create first memory
-						</button>
+						</HeaderActionButton>
 					</div>
 				) : (
 					<DualPaneFileEditor
@@ -588,9 +874,11 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						selectedId={selectedName}
 						onSelect={handleSelect}
 						emptyStateMessage={
-							matches && filteredEntries.length === 0
-								? `No memory matches "${debouncedFilter.trim()}"`
-								: 'Select a memory file to view'
+							filteredEntries.length === 0 && showOnlyOrphans
+								? 'No unlinked memories match'
+								: matches && filteredEntries.length === 0
+									? `No memory matches "${debouncedFilter.trim()}"`
+									: 'Select a memory file to view'
 						}
 						editorTitle={selectedName ?? undefined}
 						editorTokenCount={editorTokenCount}
@@ -598,9 +886,11 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						renderEditorBody={renderEditorBody}
 						successMessage={successMessage}
 						errorMessage={actionError}
+						highlightQuery={debouncedFilter.trim()}
 						listWidthStorageKey="maestro.memoryViewer.listWidth"
 						onDeleteItem={requestDelete}
 						listFocusToken={listFocusToken}
+						autoFocusList
 						primaryAction={{
 							label: isSaving ? 'Saving…' : 'Save',
 							loading: isSaving,
@@ -620,6 +910,45 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						}
 						openInFinderPath={directoryPath}
 					/>
+				)}
+			</div>
+
+			{/* Stats footer: what the corpus IS, rather than anything to do with
+			    it. Reference figures belong out of the way of the controls, and
+			    a footer is where the eye already goes for a total. */}
+			<div
+				className="px-6 py-2 border-t shrink-0 flex items-center gap-6 text-xs overflow-x-auto"
+				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+				data-testid="memory-stats-footer"
+			>
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+					<FileText className="w-3.5 h-3.5" />
+					{stats.fileCount} {stats.fileCount === 1 ? 'file' : 'files'}
+				</span>
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+					<Database className="w-3.5 h-3.5" />
+					{formatSize(stats.totalBytes)}
+				</span>
+				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+					<Zap className="w-3.5 h-3.5" />~{formatNumber(estimatedTokens)} tokens
+				</span>
+				{stats.firstCreatedAt && (
+					<span
+						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
+						title={new Date(stats.firstCreatedAt).toLocaleString()}
+					>
+						<Clock className="w-3.5 h-3.5" />
+						first created {formatRelativeTime(stats.firstCreatedAt)}
+					</span>
+				)}
+				{stats.lastModifiedAt && (
+					<span
+						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
+						title={new Date(stats.lastModifiedAt).toLocaleString()}
+					>
+						<Clock className="w-3.5 h-3.5" />
+						last edited {formatRelativeTime(stats.lastModifiedAt)}
+					</span>
 				)}
 			</div>
 

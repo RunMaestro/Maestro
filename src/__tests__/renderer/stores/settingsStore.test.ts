@@ -18,8 +18,17 @@ import {
 	useMediaPlaybackStore,
 } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import {
+	DEFAULT_SHORTCUTS,
+	TAB_SHORTCUTS,
+	FIXED_SHORTCUTS,
+} from '../../../renderer/constants/shortcuts';
+import {
+	KEYBOARD_MASTERY_LEVELS,
+	collectBoundShortcuts,
+} from '../../../renderer/constants/keyboardMastery';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
+import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 
 // Pull defaults from a freshly-initialized store so tests don't need to re-import them.
 // Deep-cloned so test mutations can't affect the captured reference.
@@ -200,6 +209,15 @@ describe('settingsStore', () => {
 			expect(state.shellEnvVars).toEqual({});
 			expect(state.ghPath).toBe('');
 			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			// Every surface font defaults to empty, meaning "inherit the interface
+			// font", so a fresh install pins no surface to a face of its own.
+			expect(state.terminalFontFamily).toBe('');
+			expect(state.chatFontFamily).toBe('');
+			expect(state.filePreviewFontFamily).toBe('');
+			expect(state.fileEditorFontFamily).toBe('');
+			// False on a fresh install AND on every install predating the chooser,
+			// which is what makes one gate serve new and existing users alike.
+			expect(state.typographyPromptSeen).toBe(false);
 			expect(state.fontSize).toBe(14);
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
@@ -343,6 +361,58 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setFontFamily('Fira Code');
 				expect(useSettingsStore.getState().fontFamily).toBe('Fira Code');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontFamily', 'Fira Code');
+			});
+
+			it.each([
+				['setTerminalFontFamily', 'terminalFontFamily'],
+				['setChatFontFamily', 'chatFontFamily'],
+				['setFilePreviewFontFamily', 'filePreviewFontFamily'],
+				['setFileEditorFontFamily', 'fileEditorFontFamily'],
+			] as const)('%s updates state and persists', (action, key) => {
+				const store = useSettingsStore.getState() as unknown as Record<
+					string,
+					(value: string) => void
+				>;
+				store[action]('Verdana');
+				expect((useSettingsStore.getState() as unknown as Record<string, string>)[key]).toBe(
+					'Verdana'
+				);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(key, 'Verdana');
+			});
+
+			it('applyTypographyPreset writes every font field in one state update', () => {
+				useSettingsStore.getState().applyTypographyPreset('default');
+				const state = useSettingsStore.getState();
+				const preset = TYPOGRAPHY_PRESETS.default.fonts;
+
+				expect(state.fontFamily).toBe(preset.fontFamily);
+				expect(state.chatFontFamily).toBe(preset.chatFontFamily);
+				expect(state.terminalFontFamily).toBe(preset.terminalFontFamily);
+				expect(state.filePreviewFontFamily).toBe(preset.filePreviewFontFamily);
+				expect(state.fileEditorFontFamily).toBe(preset.fileEditorFontFamily);
+
+				for (const [key, value] of Object.entries(preset)) {
+					expect(window.maestro.settings.set).toHaveBeenCalledWith(key, value);
+				}
+			});
+
+			it('applyTypographyPreset round-trips between the two presets', () => {
+				// A preset that skipped a surface would leave the other preset's
+				// value there, so Default -> Hacker would not restore Hacker.
+				useSettingsStore.getState().applyTypographyPreset('default');
+				useSettingsStore.getState().applyTypographyPreset('hacker');
+				const state = useSettingsStore.getState();
+
+				expect(state.fontFamily).toBe(TYPOGRAPHY_PRESETS.hacker.fonts.fontFamily);
+				expect(state.terminalFontFamily).toBe('');
+				expect(state.filePreviewFontFamily).toBe('');
+				expect(state.fileEditorFontFamily).toBe('');
+			});
+
+			it('setTypographyPromptSeen updates state and persists', () => {
+				useSettingsStore.getState().setTypographyPromptSeen(true);
+				expect(useSettingsStore.getState().typographyPromptSeen).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('typographyPromptSeen', true);
 			});
 
 			it('setFontSize updates state and persists', () => {
@@ -906,9 +976,15 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().documentGraphMaxNodes).toBe(500);
 		});
 
-		it('setDocumentGraphPreviewCharLimit clamps to 50-500', () => {
-			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(10);
-			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(50);
+		it('setDocumentGraphPreviewCharLimit clamps to 0-500, keeping 0 as "previews off"', () => {
+			// 0 is a mode, not a floor violation: it draws each graph node as a
+			// filename pill. Clamping it up to 50 would make the setting
+			// unreachable and snap the graph back to full cards.
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(0);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
+
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(-10);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
 
 			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(1000);
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(500);
@@ -1474,39 +1550,69 @@ describe('settingsStore', () => {
 			]);
 		});
 
+		// The denominator is the shortcuts that actually have a chord bound, so the
+		// ids used here have to be real ones - made-up ids count for nothing.
+		const boundShortcutIds = () =>
+			collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS).map((s) => s.id);
+
 		it('recordShortcutUsage detects level-up', () => {
-			// To trigger level 1 (student), we need >= 25% of total shortcuts
-			// Total = DEFAULT_SHORTCUTS + TAB_SHORTCUTS + FIXED_SHORTCUTS keys
-			const totalShortcuts =
-				Object.keys(DEFAULT_SHORTCUTS).length + Object.keys(TAB_SHORTCUTS).length + 8; // FIXED_SHORTCUTS has 8 entries
+			const bound = boundShortcutIds();
+			// Level 1 (Student) starts at 25% of the bound shortcuts.
+			const needed = Math.ceil(bound.length * 0.25);
 
-			const needed = Math.ceil(totalShortcuts * 0.25);
-
-			// Pre-populate with enough shortcuts to be just below level 1
-			const fakeShortcuts: string[] = [];
-			for (let i = 0; i < needed - 1; i++) {
-				fakeShortcuts.push(`fake-shortcut-${i}`);
-			}
+			// Pre-populate to one short of the threshold.
 			useSettingsStore.setState({
 				keyboardMasteryStats: {
 					...DEFAULT_KEYBOARD_MASTERY_STATS,
-					usedShortcuts: fakeShortcuts,
+					usedShortcuts: bound.slice(0, needed - 1),
 					currentLevel: 0,
 				},
 			});
 
-			const result = useSettingsStore
-				.getState()
-				.recordShortcutUsage(`shortcut-that-triggers-level-up`);
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[needed - 1]);
 
-			// The new shortcut should have been added
 			expect(useSettingsStore.getState().keyboardMasteryStats.usedShortcuts).toHaveLength(needed);
+			expect(result.newLevel).toBe(1);
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(1);
+		});
 
-			// If this crossed the threshold, newLevel should be 1
-			if (result.newLevel !== null) {
-				expect(result.newLevel).toBeGreaterThan(0);
-				expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBeGreaterThan(0);
-			}
+		it('recordShortcutUsage ignores ids that have no chord bound', () => {
+			const bound = boundShortcutIds();
+			const needed = Math.ceil(bound.length * 0.25);
+
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, needed - 1),
+					currentLevel: 0,
+				},
+			});
+
+			// An unbound action can never be fired, so recording one must not move
+			// the level - otherwise the numerator outruns its own denominator.
+			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => s.keys.length === 0);
+			expect(unbound).toBeDefined();
+			const result = useSettingsStore.getState().recordShortcutUsage(unbound!.id);
+
+			expect(result.newLevel).toBeNull();
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(0);
+		});
+
+		it('reaches 100% once every bound shortcut has been used', () => {
+			const bound = boundShortcutIds();
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, -1),
+					currentLevel: 3,
+				},
+			});
+
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[bound.length - 1]);
+
+			// Unbound shortcuts used to sit in the denominator, which made the top
+			// level unreachable no matter how many chords the user learned.
+			expect(result.newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
 		});
 
 		it('acknowledgeKeyboardMasteryLevel updates level', () => {
@@ -1587,6 +1693,10 @@ describe('settingsStore', () => {
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',
+				chatFontFamily: 'Verdana',
+				filePreviewFontFamily: 'Georgia',
+				fileEditorFontFamily: 'Iosevka',
+				typographyPromptSeen: true,
 				fontSize: 16,
 				activeThemeId: 'one-dark-pro',
 				enterToSendAI: true,
@@ -1597,6 +1707,10 @@ describe('settingsStore', () => {
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('JetBrains Mono');
+			expect(state.chatFontFamily).toBe('Verdana');
+			expect(state.filePreviewFontFamily).toBe('Georgia');
+			expect(state.fileEditorFontFamily).toBe('Iosevka');
+			expect(state.typographyPromptSeen).toBe(true);
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');
 			expect(state.enterToSendAI).toBe(true);
@@ -2686,6 +2800,19 @@ describe('settingsStore', () => {
 
 			// Invalid value rejected, keeps default
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(100);
+		});
+
+		it('keeps a saved documentGraphPreviewCharLimit of 0 on load', async () => {
+			// The "previews off" choice round-trips through settings on every
+			// launch. A floor of 50 in the load validator would discard it
+			// silently and the graph would come back as full cards each time.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				documentGraphPreviewCharLimit: 0,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
 		});
 
 		it('validates documentGraphLayoutType on load (rejects invalid)', async () => {

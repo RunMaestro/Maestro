@@ -40,6 +40,8 @@ import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import {
 	formatDurationHuman as formatDuration,
+	formatDurationWords,
+	formatElapsedTickerCompact,
 	formatNumber,
 	formatCost,
 	formatTokensCompact,
@@ -590,7 +592,7 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 			<div className="flex items-baseline gap-2 mt-0.5">
 				<span
 					className="font-bold"
-					style={{ color: theme.colors.textMain, fontSize: '20px' }}
+					style={{ color: theme.colors.textMain, fontSize: '1.25rem' }}
 					title={`${totalTokens.toLocaleString()} tokens`}
 				>
 					{formatNumber(totalTokens)}
@@ -682,7 +684,9 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 		return () => window.clearInterval(interval);
 	}, [earliestThinkingStart]);
 
-	const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+	// Seconds below a minute, humanized segments past it - a long turn reads
+	// `20m 4s`, never `1203s`. The aria label spells the units out loud.
+	const elapsedLabel = formatElapsedTickerCompact(elapsedMs);
 	const isThinking = earliestThinkingStart !== null;
 	const activeCount = activeSessions.length;
 
@@ -739,10 +743,10 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 							className="mt-3 inline-flex items-center gap-1.5 text-[11px] animate-pulse"
 							style={{ color: theme.colors.warning }}
 							data-testid="realtime-thinking-elapsed"
-							aria-label={`Thinking for ${elapsedSeconds} seconds`}
+							aria-label={`Thinking for ${formatDurationWords(elapsedMs)}`}
 						>
 							<Clock className="w-3 h-3" aria-hidden="true" />
-							Thinking: {elapsedSeconds}s
+							Thinking: {elapsedLabel}
 						</div>
 					)}
 				</div>

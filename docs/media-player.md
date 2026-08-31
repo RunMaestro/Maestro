@@ -66,7 +66,7 @@ Playback speed is global and persists: pick 1.5x once and every file after it st
 
 ### Keyboard
 
-Click the player to focus it, then:
+The player takes focus when you bring it up from the Command Palette or the Left Bar pill, so these work straight away. Click it to focus it if you got there another way.
 
 | Key                   | Action                    |
 | --------------------- | ------------------------- |
@@ -78,6 +78,7 @@ Click the player to focus it, then:
 | `L`                   | Loop                      |
 | `,` / `.`             | Slower / faster           |
 | `F`                   | Fullscreen (video)        |
+| `Esc`                 | Minimize to the Left Bar  |
 
 ## The play queue and Recently Played
 
@@ -111,7 +112,11 @@ The pill names the file it is holding, and drops to just the two buttons on a na
 
 **Close** (the `x` button) stops playback and puts the player away. The rest of your queue is left intact, so opening any media file brings the player back with the playlist still there.
 
-You can also reopen a minimized player from the Command Palette with **Show Floating Media Player**. Adding files to the queue brings it back too, so a batch you just queued never lands somewhere you cannot see it. What is loaded keeps playing either way.
+**Open Media Player** in the Command Palette brings the player back on whatever it should be showing: the loaded track if there is one, otherwise the last thing you played. A track you closed comes back in the queue, paused, at the position you stopped at, so closing the player is never how you lose your place.
+
+`Esc` minimizes rather than closes, so a reflexive press can never stop what you are listening to. It closes the queue or history list first if one is open, and it leaves a fullscreen video alone, since Escape is already how you come back out of fullscreen.
+
+The same **Open Media Player** command brings a minimized player back, focused, so `Esc` puts it away again without a click first. Adding files to the queue brings it back too, so a batch you just queued never lands somewhere you cannot see it - including when every file you picked was already in the queue. What is loaded keeps playing either way.
 
 ## Tips
 

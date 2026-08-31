@@ -52,6 +52,7 @@ import { hardBreakInlineFields } from '../Markdown/preprocess';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
@@ -610,6 +611,14 @@ export const FilePreview = React.memo(
 		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
 		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
 		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
+		// Reading and editing are separate typographic jobs, so they are separate
+		// settings: a proportional face is easier to read a document in, while an
+		// editor wants the line-number gutter to stay aligned. Empty means "inherit
+		// the interface font", which is what resolveSurfaceFont resolves.
+		const previewTypography = useSurfaceTypography('filePreview');
+		const editorTypography = useSurfaceTypography('fileEditor');
+		const previewFontFamily = previewTypography.fontFamily;
+		const editorFontFamily = editorTypography.fontFamily;
 		const hasActiveSearch = searchQuery.trim().length > 0;
 		const effectiveBionifyReadingMode = bionifyReadingMode && !hasActiveSearch;
 
@@ -1892,6 +1901,17 @@ export const FilePreview = React.memo(
 						{
 							overscrollBehavior: 'contain',
 							'--fp-font-scale': String(fontScale),
+							// The prose tiers (rich markdown, markdown Fast, text Fast) set no
+							// font of their own, so the File Preview font reaches all three by
+							// inheritance from here. The two CM6 tiers own `.cm-scroller`'s
+							// font and take theirs as a prop instead.
+							fontFamily: previewFontFamily,
+							// The prose tiers (rich markdown, markdown Fast) carry no size
+							// of their own and scale off this one in `em`, so the File
+							// Preview size setting reaches them by inheritance. The two
+							// CodeMirror tiers own their scroller's font and take theirs
+							// as a prop instead.
+							fontSize: `${previewTypography.fontSize}px`,
 						} as React.CSSProperties
 					}
 				>
@@ -2271,6 +2291,8 @@ export const FilePreview = React.memo(
 							wrap={fileEditWordWrap}
 							showLineNumbers={fileEditShowLineNumbers}
 							fontScale={fontScale}
+							fontFamily={editorFontFamily}
+							baseFontPx={editorTypography.fontSize}
 							onLineNumberContextMenu={(lineNumber, event) => {
 								setLineCtxMenu({
 									lineNumber,
@@ -2361,7 +2383,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading giant preview…
@@ -2376,6 +2398,8 @@ export const FilePreview = React.memo(
 								containerRef={markdownContainerRef}
 								filePath={file.path}
 								fontScale={fontScale}
+								fontFamily={previewFontFamily}
+								baseFontPx={previewTypography.fontSize}
 							/>
 						</Suspense>
 					) : isMarkdown && previewTier === 'fast' && !markdownEditMode ? (
@@ -2385,7 +2409,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2457,7 +2481,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2472,6 +2496,7 @@ export const FilePreview = React.memo(
 								containerRef={markdownContainerRef}
 								filePath={file.path}
 								fontScale={fontScale}
+								baseFontPx={previewTypography.fontSize}
 							/>
 						</Suspense>
 					) : isReadableText && !markdownEditMode ? (
@@ -2527,7 +2552,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2542,6 +2567,7 @@ export const FilePreview = React.memo(
 								containerRef={markdownContainerRef}
 								filePath={file.path}
 								fontScale={fontScale}
+								baseFontPx={previewTypography.fontSize}
 							/>
 						</Suspense>
 					) : (

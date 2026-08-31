@@ -18,6 +18,7 @@ import {
 	X,
 	Network,
 	ExternalLink,
+	Unlink,
 	RefreshCw,
 	Search,
 	ChevronDown,
@@ -83,6 +84,15 @@ import {
 	NEIGHBOR_DEPTH_MAX,
 	nextNeighborDepth,
 } from './neighborDepth';
+import {
+	clampPreviewCharLimit,
+	formatPreviewCharLimit,
+	isPreviewOff,
+	nextPreviewCharLimit,
+	PREVIEW_CHAR_LIMIT_MAX,
+	PREVIEW_CHAR_LIMIT_MIN,
+	PREVIEW_CHAR_LIMIT_STEP,
+} from './previewCharLimit';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
@@ -130,6 +140,14 @@ export interface DocumentGraphViewProps {
 	onExternalLinkOpen?: (url: string) => void;
 	/** Required file path (relative to rootPath) to focus on - the center of the mind map */
 	focusFilePath: string;
+	/**
+	 * Explicit set of files to graph (relative to rootPath). Switches the view
+	 * from FOCUS mode ("what does this document reach?") to SCOPE mode ("how do
+	 * these documents relate, and which of them relate to nothing?").
+	 */
+	scopeFiles?: string[];
+	/** Directory whose markdown files form the scope. Ignored when `scopeFiles` is set. */
+	scopeDirectory?: string;
 	/** Callback when focus file is consumed (cleared after focusing) */
 	onFocusFileConsumed?: () => void;
 	/** Default setting for showing external links (from settings) */
@@ -165,6 +183,8 @@ export function DocumentGraphView({
 	onDocumentOpen,
 	onExternalLinkOpen,
 	focusFilePath,
+	scopeFiles,
+	scopeDirectory,
 	onFocusFileConsumed: _onFocusFileConsumed,
 	defaultShowExternalLinks = false,
 	onExternalLinksChange,
@@ -186,15 +206,32 @@ export function DocumentGraphView({
 	const [error, setError] = useState<string | null>(null);
 	const [progress, setProgress] = useState<ProgressData | null>(null);
 
+	/**
+	 * Files in the scope that connect to nothing else in it. Reported by the
+	 * builder rather than re-derived here: it owns the edge list, and a second
+	 * opinion about what counts as connected is a second thing to get wrong.
+	 */
+	const [orphanFiles, setOrphanFiles] = useState<string[]>([]);
+
 	// Settings state
 	const [includeExternalLinks, setIncludeExternalLinks] = useState(defaultShowExternalLinks);
+	// Orphans start visible: the whole reason to graph a hand-picked scope is to
+	// see which of those documents stand alone, so hiding them by default would
+	// hide the answer.
+	const [showOrphans, setShowOrphans] = useState(true);
 	const [neighborDepth, setNeighborDepth] = useState(defaultNeighborDepth);
 	const [showDepthSlider, setShowDepthSlider] = useState(false);
 	const [previewCharLimit, setPreviewCharLimit] = useState(defaultPreviewCharLimit);
 	const [showPreviewSlider, setShowPreviewSlider] = useState(false);
+	// The toolbar pill reads "active" whenever previews are not at the shipped
+	// 100-character default - Off is as deliberate a choice as 500 is.
+	const previewNonDefault = previewCharLimit !== 100;
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
+	// Bumped by `F` to re-frame the whole graph. A token rather than a callback
+	// because the transform lives inside the canvas component.
+	const [fitToken, setFitToken] = useState(0);
 
 	// Close all other dropdowns when opening one
 	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
@@ -577,6 +614,8 @@ export function DocumentGraphView({
 				const graphData = await buildGraphData({
 					rootPath,
 					focusFile: focusFilePath,
+					scopeFiles,
+					scopeDirectory,
 					maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
 					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
 					onProgress: handleProgress,
@@ -662,8 +701,12 @@ export function DocumentGraphView({
 					setLinks(allMindMapLinks);
 				}
 
-				// Set active focus file from the required focusFilePath prop
-				setActiveFocusFile(focusFilePath);
+				// Take the center the builder actually used. In scope mode it may
+				// have auto-picked the highest-degree file, and keeping the
+				// requested (possibly empty) path here renders an empty graph on
+				// top of a perfectly good node set.
+				setActiveFocusFile(graphData.centerFile || focusFilePath);
+				setOrphanFiles(graphData.orphanFiles);
 
 				// Streaming BFS is done - clear the in-flight badge.
 				setExpandingGraph(false);
@@ -699,6 +742,8 @@ export function DocumentGraphView({
 			handleBacklinkUpdate,
 			handleBacklinkComplete,
 			sshRemoteId,
+			scopeFiles,
+			scopeDirectory,
 		]
 	);
 
@@ -942,13 +987,20 @@ export function DocumentGraphView({
 	/**
 	 * Handle preview character limit change
 	 */
-	const handlePreviewCharLimitChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newLimit = parseInt(e.target.value, 10);
-			setPreviewCharLimit(newLimit);
-			onPreviewCharLimitChange?.(newLimit);
+	const applyPreviewCharLimit = useCallback(
+		(newLimit: number) => {
+			const clamped = clampPreviewCharLimit(newLimit);
+			setPreviewCharLimit(clamped);
+			onPreviewCharLimitChange?.(clamped);
 		},
 		[onPreviewCharLimitChange]
+	);
+
+	const handlePreviewCharLimitChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			applyPreviewCharLimit(parseInt(e.target.value, 10));
+		},
+		[applyPreviewCharLimit]
 	);
 
 	/**
@@ -1302,7 +1354,7 @@ export function DocumentGraphView({
 
 	/**
 	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
-	 * +/- node spacing)
+	 * P preview length; F fit to view; +/- node spacing)
 	 */
 	const handleContainerKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -1335,6 +1387,22 @@ export function DocumentGraphView({
 				applyNeighborDepth(nextNeighborDepth(neighborDepth));
 				return;
 			}
+			// P cycles preview length, ending at Off (filename pills). It used to
+			// be a second spelling of Enter's in-graph preview, which spent a key
+			// on a duplicate of a binding the user already has.
+			if (e.key === 'p' || e.key === 'P') {
+				e.preventDefault();
+				applyPreviewCharLimit(nextPreviewCharLimit(previewCharLimit));
+				return;
+			}
+
+			// F re-frames the entire graph. Zooming out by hand cannot always get
+			// there, so this is the only reliable way back to the whole picture.
+			if (e.key === 'f' || e.key === 'F') {
+				e.preventDefault();
+				setFitToken((prev) => prev + 1);
+				return;
+			}
 
 			// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
 			const isIncrease = e.key === '+' || e.key === '=';
@@ -1349,7 +1417,14 @@ export function DocumentGraphView({
 				return Math.round(clamped * 10) / 10;
 			});
 		},
-		[applyNeighborDepth, handleLayoutTypeChange, layoutType, neighborDepth]
+		[
+			applyNeighborDepth,
+			applyPreviewCharLimit,
+			handleLayoutTypeChange,
+			layoutType,
+			neighborDepth,
+			previewCharLimit,
+		]
 	);
 	// The graph is a canvas the user pans around in, so its useful default is
 	// "as much of the screen as a modal may take" rather than a fixed box - the
@@ -1658,25 +1733,27 @@ export function DocumentGraphView({
 								onClick={() => openDropdown('preview')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
-									backgroundColor:
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`,
-									color: previewCharLimit > 100 ? theme.colors.accent : theme.colors.textDim,
+									backgroundColor: previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+									color: previewNonDefault ? theme.colors.accent : theme.colors.textDim,
 								}}
 								onMouseEnter={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
 								}
 								onMouseLeave={(e) =>
-									(e.currentTarget.style.backgroundColor =
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`)
+									(e.currentTarget.style.backgroundColor = previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`)
 								}
-								title={`Preview text limit: ${previewCharLimit} characters`}
+								title={
+									isPreviewOff(previewCharLimit)
+										? 'Previews off - nodes are filename pills (P to cycle)'
+										: `Preview text limit: ${previewCharLimit} characters (P to cycle)`
+								}
 							>
 								<Type className="w-4 h-4" />
-								Preview: {previewCharLimit}
+								Preview: {formatPreviewCharLimit(previewCharLimit)}
 							</button>
 
 							{showPreviewSlider && (
@@ -1693,14 +1770,14 @@ export function DocumentGraphView({
 											Preview Characters
 										</span>
 										<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-											{previewCharLimit}
+											{formatPreviewCharLimit(previewCharLimit)}
 										</span>
 									</div>
 									<input
 										type="range"
-										min="50"
-										max="500"
-										step="50"
+										min={PREVIEW_CHAR_LIMIT_MIN}
+										max={PREVIEW_CHAR_LIMIT_MAX}
+										step={PREVIEW_CHAR_LIMIT_STEP}
 										value={previewCharLimit}
 										onChange={handlePreviewCharLimitChange}
 										className="w-full"
@@ -1710,13 +1787,17 @@ export function DocumentGraphView({
 										className="flex justify-between text-xs mt-1"
 										style={{ color: theme.colors.textDim }}
 									>
-										<span>50</span>
+										<span>Off</span>
+										<span>100</span>
 										<span>200</span>
-										<span>350</span>
+										<span>300</span>
+										<span>400</span>
 										<span>500</span>
 									</div>
 									<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-										Characters shown in document previews
+										{isPreviewOff(previewCharLimit)
+											? 'Nodes render as filename pills, with no preview text'
+											: 'Characters shown in document previews'}
 									</p>
 								</div>
 							)}
@@ -1745,6 +1826,31 @@ export function DocumentGraphView({
 							<ExternalLink className="w-4 h-4" />
 							External
 						</button>
+
+						{/* Unlinked (orphan) toggle. Only scope mode can produce orphans,
+						    so the control stays hidden in focus mode rather than
+						    offering a toggle that can never change anything. */}
+						{orphanFiles.length > 0 && (
+							<button
+								onClick={() => setShowOrphans((v) => !v)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+								style={{
+									backgroundColor: showOrphans
+										? `${theme.colors.warning}25`
+										: `${theme.colors.warning}10`,
+									color: showOrphans ? theme.colors.warning : theme.colors.textDim,
+								}}
+								title={
+									showOrphans
+										? `Hide the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+										: `Show the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+								}
+								data-testid="document-graph-orphan-toggle"
+							>
+								<Unlink className="w-4 h-4" />
+								Unlinked {orphanFiles.length}
+							</button>
+						)}
 
 						{/* Reset Layout Button - only show when positions have been modified */}
 						{nodePositions.size > 0 && (
@@ -1931,6 +2037,7 @@ export function DocumentGraphView({
 							height={graphDimensions.height}
 							maxDepth={neighborDepth || 2}
 							showExternalLinks={includeExternalLinks}
+							showOrphans={showOrphans}
 							selectedNodeId={selectedNodeId}
 							onNodeSelect={handleNodeSelect}
 							onNodeDoubleClick={handleNodeDoubleClick}
@@ -1949,6 +2056,7 @@ export function DocumentGraphView({
 							onNodePositionChange={handleNodePositionChange}
 							containerRef={mindMapContainerRef}
 							legendExpanded={legendExpanded}
+							fitToken={fitToken}
 						/>
 					) : (
 						<div

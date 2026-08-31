@@ -32,6 +32,8 @@ import type {
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
+	ReadTerminalTabPayload,
+	ReadTerminalTabResult,
 } from '../../types';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -133,6 +135,13 @@ export interface MessageHandlerCallbacks {
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
+	/** Render the Document Graph over an explicit file set or directory. */
+	openDocumentGraph: (params: {
+		sessionId: string;
+		files?: string[];
+		directory?: string;
+		focusPath?: string;
+	}) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
 		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
@@ -143,6 +152,10 @@ export interface MessageHandlerCallbacks {
 		payload: { tabRef?: string; data: string }
 	) => Promise<{ success: boolean; error?: string; tabId?: string; tabName?: string }>;
 	listTerminalTabs: (sessionId?: string) => Promise<TerminalTabInfo[]>;
+	readTerminalTab: (
+		sessionId: string,
+		payload: ReadTerminalTabPayload
+	) => Promise<ReadTerminalTabResult>;
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string,
@@ -310,7 +323,8 @@ export interface MessageHandlerCallbacks {
 	createGist: (
 		sessionId: string,
 		description: string,
-		isPublic: boolean
+		isPublic: boolean,
+		agentSessionId?: string
 	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;

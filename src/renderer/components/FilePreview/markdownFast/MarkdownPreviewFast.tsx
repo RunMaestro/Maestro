@@ -262,7 +262,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 				{blocks.length === 0 ? (
 					<div
 						data-testid="markdown-fast-skeleton"
-						style={{ padding: '24px', color: theme.colors.textDim, fontSize: '13px' }}
+						style={{ padding: '24px', color: theme.colors.textDim, fontSize: '0.8125rem' }}
 					>
 						Parsing large markdown…
 					</div>

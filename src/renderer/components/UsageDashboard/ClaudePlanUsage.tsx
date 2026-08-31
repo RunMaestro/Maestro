@@ -23,13 +23,14 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
 import { useUIStore } from '../../stores/uiStore';
-import { makeAccountKeyHelpers } from './quota/quotaFormatting';
+import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaFormatting';
 import {
 	QuotaAccountEmail,
 	QuotaAccountPill,
 	QuotaAccountTabs,
 	QuotaAgentCountBadge,
 	QuotaBarRow,
+	QuotaLastRefreshed,
 	QuotaPendingRow,
 	QuotaRefreshControls,
 	QuotaSharedAccountBadge,
@@ -196,6 +197,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		? (snapshots[effectiveSelectedKey] ?? null)
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
+	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
 
 	// Config dirs that resolve to one Anthropic account share a single quota
 	// bucket, so their bars are identical by construction. Resolve the sibling
@@ -425,6 +427,12 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					theme={theme}
 				/>
 			) : null}
+
+			<QuotaLastRefreshed
+				sampledAtMs={lastSampledAtMs}
+				theme={theme}
+				testIdPrefix={TEST_ID_PREFIX}
+			/>
 		</div>
 	);
 });

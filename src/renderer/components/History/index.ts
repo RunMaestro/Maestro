@@ -6,3 +6,4 @@ export * from './HistoryStatsBar';
 export * from './HostSourceFilter';
 export * from './LookbackSelector';
 export * from './historyFilterPersistence';
+export * from './historyPillDensity';

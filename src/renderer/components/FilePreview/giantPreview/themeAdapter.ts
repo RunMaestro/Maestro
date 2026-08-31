@@ -32,7 +32,12 @@ export const EDITOR_BASE_FONT_PX = 13;
  *
  * Pure: theme in, extension out. No side effects, no DOM.
  */
-export function buildEditorTheme(theme: Theme, fontScale = 1): Extension {
+export function buildEditorTheme(
+	theme: Theme,
+	fontScale = 1,
+	fontFamily?: string,
+	baseFontPx: number = EDITOR_BASE_FONT_PX
+): Extension {
 	const c = theme.colors;
 	const isDark = theme.mode !== 'light';
 
@@ -44,9 +49,18 @@ export function buildEditorTheme(theme: Theme, fontScale = 1): Extension {
 				height: '100%',
 			},
 			'.cm-scroller': {
+				// CM6 sets its own font on `.cm-scroller`, so the surface font cannot
+				// arrive by inheritance from the pane the way the prose tiers get it -
+				// it has to be threaded in here. Undefined keeps the built-in stack,
+				// which is what the read-only Giant tier used before per-surface fonts.
 				fontFamily:
+					fontFamily ??
 					'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-				fontSize: `${EDITOR_BASE_FONT_PX * fontScale}px`,
+				// `baseFontPx` is the File Preview / File Editor size setting; the
+				// hard-coded constant survives only as its default. `fontScale` is
+				// the pane's own zoom control, which multiplies on top - two
+				// independent knobs, and the surface size is the one that persists.
+				fontSize: `${Math.round(baseFontPx * fontScale * 10) / 10}px`,
 				lineHeight: '1.6',
 			},
 			'.cm-content': {

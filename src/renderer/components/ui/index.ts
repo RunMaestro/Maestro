@@ -44,6 +44,9 @@ export type { SpinnerProps } from './Spinner';
 export { Pager } from './Pager';
 export type { PagerProps } from './Pager';
 
+export { HeaderActionButton } from './HeaderActionButton';
+export type { HeaderActionButtonProps } from './HeaderActionButton';
+
 export { GhostIconButton } from './GhostIconButton';
 export type { GhostIconButtonProps } from './GhostIconButton';
 

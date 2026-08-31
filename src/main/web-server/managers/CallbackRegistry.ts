@@ -22,6 +22,8 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenDocumentGraphCallback,
+	OpenDocumentGraphParams,
 	OpenModalCallback,
 	OpenModalParams,
 	RefreshFileTreeCallback,
@@ -37,6 +39,9 @@ import type {
 	WriteTerminalTabResult,
 	ListTerminalTabsCallback,
 	TerminalTabInfo,
+	ReadTerminalTabCallback,
+	ReadTerminalTabPayload,
+	ReadTerminalTabResult,
 	NewAITabWithPromptCallback,
 	EnqueueCommandCallback,
 	EnqueueCommandResult,
@@ -162,6 +167,7 @@ export interface WebServerCallbacks {
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
+	openDocumentGraph: OpenDocumentGraphCallback | null;
 	openModal: OpenModalCallback | null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
@@ -169,6 +175,7 @@ export interface WebServerCallbacks {
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
+	readTerminalTab: ReadTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	enqueueCommand: EnqueueCommandCallback | null;
 	listQueue: ListQueueCallback | null;
@@ -259,6 +266,7 @@ export class CallbackRegistry {
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
+		openDocumentGraph: null,
 		openModal: null,
 		refreshFileTree: null,
 		openBrowserTab: null,
@@ -266,6 +274,7 @@ export class CallbackRegistry {
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
+		readTerminalTab: null,
 		newAITabWithPrompt: null,
 		enqueueCommand: null,
 		listQueue: null,
@@ -445,6 +454,11 @@ export class CallbackRegistry {
 		return this.callbacks.openFileTab(sessionId, filePath, options);
 	}
 
+	async openDocumentGraph(params: OpenDocumentGraphParams): Promise<boolean> {
+		if (!this.callbacks.openDocumentGraph) return false;
+		return this.callbacks.openDocumentGraph(params);
+	}
+
 	async openModal(params: OpenModalParams): Promise<boolean> {
 		if (!this.callbacks.openModal) return false;
 		return this.callbacks.openModal(params);
@@ -491,6 +505,16 @@ export class CallbackRegistry {
 	async listTerminalTabs(sessionId?: string): Promise<TerminalTabInfo[]> {
 		if (!this.callbacks.listTerminalTabs) return [];
 		return this.callbacks.listTerminalTabs(sessionId);
+	}
+
+	async readTerminalTab(
+		sessionId: string,
+		payload: ReadTerminalTabPayload
+	): Promise<ReadTerminalTabResult> {
+		if (!this.callbacks.readTerminalTab) {
+			return { success: false, error: 'Terminal reads not configured' };
+		}
+		return this.callbacks.readTerminalTab(sessionId, payload);
 	}
 
 	async newAITabWithPrompt(
@@ -839,12 +863,13 @@ export class CallbackRegistry {
 	async createGist(
 		sessionId: string,
 		description: string,
-		isPublic: boolean
+		isPublic: boolean,
+		agentSessionId?: string
 	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
 		if (!this.callbacks.createGist) {
 			return { success: false, error: 'Gist creation not configured' };
 		}
-		return this.callbacks.createGist(sessionId, description, isPublic);
+		return this.callbacks.createGist(sessionId, description, isPublic, agentSessionId);
 	}
 
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
@@ -1068,6 +1093,10 @@ export class CallbackRegistry {
 		this.callbacks.openFileTab = callback;
 	}
 
+	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
+		this.callbacks.openDocumentGraph = callback;
+	}
+
 	setOpenModalCallback(callback: OpenModalCallback): void {
 		this.callbacks.openModal = callback;
 	}
@@ -1090,6 +1119,10 @@ export class CallbackRegistry {
 
 	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
 		this.callbacks.listTerminalTabs = callback;
+	}
+
+	setReadTerminalTabCallback(callback: ReadTerminalTabCallback): void {
+		this.callbacks.readTerminalTab = callback;
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {

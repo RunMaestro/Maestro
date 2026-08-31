@@ -383,5 +383,68 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		})
 	);
 
+	/**
+	 * Simulate a provider credential failure.
+	 *
+	 * Emits the REAL `agent:error` / `agent:authExpired` event rather than
+	 * poking the renderer's stores, so everything downstream runs exactly as it
+	 * does in production: classification, the provider-scoped outage grouping,
+	 * the modal, the login PTY, and the resume that replays blocked turns.
+	 * Anything that only works when a test reaches past the IPC boundary is a
+	 * bug this is meant to catch, not hide.
+	 *
+	 * Expects the FULL process id (`{sessionId}-ai-{tabId}`) for the interactive
+	 * path, because that is what a real agent error carries and it is how the
+	 * failing tab is identified for replay.
+	 */
+	ipcMain.handle(
+		'debug:simulateAuthExpiry',
+		createIpcHandler(
+			handlerOpts('simulateAuthExpiry'),
+			async (payload: {
+				processSessionId: string;
+				agentId: string;
+				sshRemoteId?: string;
+				fromPipeline?: boolean;
+			}) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+					throw new Error('No main window available');
+				}
+
+				const message =
+					'Session expired. Please run "claude /login" to re-authenticate. [simulated]';
+
+				if (payload.fromPipeline) {
+					// The Cue path: these agents are spawned outside the ProcessManager,
+					// so they arrive on their own channel and carry the base agent id.
+					mainWindow.webContents.send('agent:authExpired', {
+						sessionId: payload.processSessionId,
+						agentId: payload.agentId,
+						sshRemoteId: payload.sshRemoteId,
+						message,
+						fromPipeline: true,
+					});
+				} else {
+					mainWindow.webContents.send('agent:error', payload.processSessionId, {
+						type: 'auth_expired',
+						message,
+						recoverable: true,
+						agentId: payload.agentId,
+						sshRemoteId: payload.sshRemoteId,
+						timestamp: Date.now(),
+					});
+				}
+
+				logger.info(`${LOG_CONTEXT} Simulated auth expiry`, undefined, {
+					processSessionId: payload.processSessionId,
+					agentId: payload.agentId,
+					fromPipeline: !!payload.fromPipeline,
+				});
+				return { success: true };
+			}
+		)
+	);
+
 	logger.debug(`${LOG_CONTEXT} Debug IPC handlers registered`);
 }

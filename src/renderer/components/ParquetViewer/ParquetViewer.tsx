@@ -37,6 +37,7 @@ import { Columns3, Database, Download, RefreshCw, AlertTriangle } from 'lucide-r
 
 import type {
 	ParquetCellValue,
+	ParquetFetchProgress,
 	ParquetFileInfo,
 	ParquetQueryResult,
 	ParquetSortSpec,
@@ -47,6 +48,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { notifyToast } from '../../stores/notificationStore';
+import { ProgressBar } from '../ui/ProgressBar';
 import { RecordDetailModal, type RecordDetailField } from '../ui/RecordDetailModal';
 import { ParquetFilterBar, type ParquetFilterBarHandle } from './ParquetFilterBar';
 import { ParquetGrid } from './ParquetGrid';
@@ -108,6 +110,11 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 		const [busy, setBusy] = useState(false);
 		const [detailRow, setDetailRow] = useState<number | null>(null);
 		const [countingRequested, setCountingRequested] = useState(false);
+		/**
+		 * Remote-copy progress, set only while an SSH-backed file is being
+		 * pulled across. Null for a local file, which is opened in place.
+		 */
+		const [fetchProgress, setFetchProgress] = useState<ParquetFetchProgress | null>(null);
 		const schemaPanel = usePersistedToggle('parquet-schema-panel', true);
 
 		// Typing a filter must not fire a scan per keystroke. 250ms is long enough
@@ -131,12 +138,26 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 
 		// -- Open the file --------------------------------------------------------
 
+		// Armed before the open effect below so the first chunk's progress is
+		// not missed. Effects run in declaration order, and a listener attached
+		// after `open()` starts would drop however many chunks landed first.
+		useEffect(() => {
+			return window.maestro.parquet.onFetchProgress((progress) => {
+				// Ignore other tabs' copies: every viewer in this window hears
+				// every event, and a second open would otherwise drive this
+				// tab's bar with someone else's byte counts.
+				if (progress.remotePath !== filePath) return;
+				setFetchProgress(progress.done ? null : progress);
+			});
+		}, [filePath]);
+
 		useEffect(() => {
 			let cancelled = false;
 			setInfo(null);
 			setOpenError(null);
 			setData(EMPTY_DATA);
 			setResult(null);
+			setFetchProgress(null);
 
 			window.maestro.parquet
 				.open(filePath, sshRemoteId)
@@ -145,6 +166,11 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 				})
 				.catch((error: unknown) => {
 					if (!cancelled) setOpenError(error instanceof Error ? error.message : String(error));
+				})
+				.finally(() => {
+					// The copy is over either way; a bar left on screen under an
+					// error message reads as still-working.
+					if (!cancelled) setFetchProgress(null);
 				});
 
 			return () => {
@@ -367,6 +393,41 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 		}
 
 		if (!info) {
+			// Two different waits, and conflating them would be a lie in both
+			// directions. Reading a footer is a few kilobytes and effectively
+			// instant, so it gets a spinner. Copying a remote file across SSH
+			// is megabytes over a network with a known total, so it gets a real
+			// bar - the whole reason remote opens felt broken before was that
+			// this multi-second transfer rendered as an idle spinner.
+			if (fetchProgress) {
+				return (
+					<div
+						className="flex flex-col items-center justify-center h-full gap-3 px-8"
+						data-testid="parquet-fetch-progress"
+					>
+						<div className="text-sm" style={{ color: theme.colors.textMain }}>
+							Copying {fileName} from the remote host
+						</div>
+						<div className="w-full" style={{ maxWidth: 380 }}>
+							<ProgressBar
+								value={fetchProgress.receivedBytes}
+								total={fetchProgress.totalBytes}
+								theme={theme}
+								label={`Copying ${fileName} from the remote host`}
+								testId="parquet-fetch-progress-bar"
+							/>
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							{formatSize(fetchProgress.receivedBytes)} of {formatSize(fetchProgress.totalBytes)}
+						</div>
+						<div className="text-[11px] text-center" style={{ color: theme.colors.textDim }}>
+							There is no byte-range channel over SSH, so the whole file has to come across before
+							any of it can be read.
+						</div>
+					</div>
+				);
+			}
+
 			return (
 				<div
 					className="flex items-center justify-center h-full gap-2 text-sm"

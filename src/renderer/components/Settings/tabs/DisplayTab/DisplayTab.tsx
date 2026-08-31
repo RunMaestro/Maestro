@@ -7,8 +7,8 @@ import {
 	DocumentGraphSection,
 	FileEditPreviewSection,
 	FileIndexingSection,
-	FontFamilySection,
-	FontSizeSection,
+	FontsSection,
+	FontZoomSection,
 	GroupChatSection,
 	IconThemeSection,
 	LeftSidePanelSection,
@@ -18,6 +18,7 @@ import {
 	MessageAlignmentSection,
 	ModalLayoutSection,
 	TabOptionsSection,
+	TypographyResetSection,
 	WindowChromeSection,
 } from './components';
 import { useBionifyAlgorithmState, useFontConfigurationState } from './hooks';
@@ -38,29 +39,35 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 	return (
 		<div className="space-y-5">
-			<div data-setting-id="display-font-family">
-				<FontFamilySection
-					theme={theme}
-					fontFamily={settings.fontFamily}
-					setFontFamily={settings.setFontFamily}
-					fontConfiguration={fontConfiguration}
-				/>
-			</div>
-			<div data-setting-id="display-terminal-font-family">
-				<FontFamilySection
-					theme={theme}
-					heading="Terminal Font"
-					description="Font for the command terminal. Leave on 'Same as interface font' to inherit the UI font, or pick any installed font (e.g. a Nerd Font for shell prompt symbols)."
-					fontFamily={settings.terminalFontFamily}
-					setFontFamily={settings.setTerminalFontFamily}
-					fontConfiguration={fontConfiguration}
-					inheritOption={{ value: '', label: 'Same as interface font' }}
-				/>
-			</div>
-			<FontSizeSection
+			<TypographyResetSection
 				theme={theme}
-				fontSize={settings.fontSize}
-				setFontSize={settings.setFontSize}
+				fonts={{
+					fontFamily: settings.fontFamily,
+					chatFontFamily: settings.chatFontFamily,
+					terminalFontFamily: settings.terminalFontFamily,
+					filePreviewFontFamily: settings.filePreviewFontFamily,
+					fileEditorFontFamily: settings.fileEditorFontFamily,
+				}}
+				sizes={{
+					fontSize: settings.fontSize,
+					chatFontSize: settings.chatFontSize,
+					terminalFontSize: settings.terminalFontSize,
+					filePreviewFontSize: settings.filePreviewFontSize,
+					fileEditorFontSize: settings.fileEditorFontSize,
+				}}
+				onReset={settings.resetTypography}
+			/>
+			<FontsSection
+				theme={theme}
+				settings={settings as unknown as Record<string, unknown>}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
+			/>
+			<FontZoomSection
+				theme={theme}
+				fontZoom={settings.fontZoom}
+				setFontZoom={settings.setFontZoom}
 			/>
 			<MaxLogBufferSection
 				theme={theme}

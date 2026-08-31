@@ -1,4 +1,4 @@
-import type { KeyboardMasteryLevel } from '../types';
+import type { KeyboardMasteryLevel, Shortcut } from '../types';
 
 export interface KeyboardMasteryLevelDef {
 	id: KeyboardMasteryLevel;
@@ -43,4 +43,45 @@ export function getLevelIndex(percentage: number): number {
 		}
 	}
 	return index;
+}
+
+/**
+ * Merge shortcut maps and keep only the shortcuts that actually have a chord
+ * bound to them.
+ *
+ * A shortcut with no keys cannot be fired, so it can never be "used": counting
+ * one in the mastery denominator caps the user below 100% forever, and listing
+ * it under "Unused Shortcuts" tells them to go press a chord that does not
+ * exist. Every mastery figure runs its maps through here first.
+ *
+ * Later maps win on id, matching the spread order the call sites already used.
+ * Bindings are read from the LIVE maps rather than the defaults, so clearing a
+ * binding in Settings -> Shortcuts drops it from the denominator too.
+ */
+export function collectBoundShortcuts(
+	...maps: (Record<string, Shortcut> | undefined)[]
+): Shortcut[] {
+	const merged = new Map<string, Shortcut>();
+	for (const map of maps) {
+		if (!map) continue;
+		for (const [id, shortcut] of Object.entries(map)) {
+			merged.set(id, shortcut);
+		}
+	}
+	return Array.from(merged.values()).filter((shortcut) => shortcut.keys.length > 0);
+}
+
+/**
+ * How many of the bound shortcuts the user has fired.
+ *
+ * Not the same as `usedShortcuts.length`: that list keeps ids whose binding was
+ * later cleared or removed from the app, which would push the numerator past
+ * the denominator and report more than 100%.
+ */
+export function countUsedBoundShortcuts(
+	bound: readonly Shortcut[],
+	usedShortcutIds: Iterable<string>
+): number {
+	const used = usedShortcutIds instanceof Set ? usedShortcutIds : new Set(usedShortcutIds);
+	return bound.filter((shortcut) => used.has(shortcut.id)).length;
 }

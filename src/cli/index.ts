@@ -17,6 +17,7 @@ import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { openGraph } from './commands/open-graph';
 import { openBrowser, closeBrowser } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
@@ -48,6 +49,7 @@ import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
+import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
@@ -55,6 +57,14 @@ import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
+import {
+	displayFont,
+	displayFontList,
+	displayFontSize,
+	displayFontsCatalog,
+	displayPreset,
+	displayZoom,
+} from './commands/display-font';
 import { settingsReset } from './commands/settings-reset';
 import {
 	settingsAgentList,
@@ -498,6 +508,18 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
 
+// Open graph command - render a Document Graph over specific documents.
+//
+// Its own verb rather than a `open <surface>` entry: `open_modal` carries only
+// a surface name and a tab, and a graph needs a file set.
+program
+	.command('open-graph [paths...]')
+	.description('Open the Document Graph over specific markdown files or a directory')
+	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(openGraph);
+
 // Open browser command - open a URL in a browser tab in the Maestro desktop app
 program
 	.command('open-browser <url>')
@@ -560,6 +582,19 @@ program
 	.option('--no-enter', 'Type the command without pressing Enter')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sendTerminal);
+
+// Read-terminal command - read the scrollback of an existing Maestro terminal tab
+program
+	.command('read-terminal')
+	.description("Read a Maestro terminal tab's output")
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--tab <id-or-name>',
+		"Terminal tab ID or display name (defaults to the agent's active terminal)"
+	)
+	.option('--tail <n>', `Return only the last N lines (default: ${DEFAULT_TAIL_LINES})`)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(readTerminal);
 
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program
@@ -1157,6 +1192,53 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeSshRemote);
 
+// Display / typography commands
+//
+// Addressed by SURFACE rather than by settings key: `settings set` can already
+// write these ten keys, but only if you know their names and the
+// empty-string-means-inherit convention. These validate against the shared
+// registry, so a scripted setup can put the app in a known typographic state.
+const display = program
+	.command('display')
+	.description('View and manage typography (fonts, sizes, zoom)');
+
+display
+	.command('font [surface] [value]')
+	.description(
+		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((surface: string | undefined, value: string | undefined, options: { json?: boolean }) => {
+		if (!surface) displayFontList(options);
+		else displayFont(surface, value, options);
+	});
+
+display
+	.command('size <surface> [value]')
+	.description('Get or set a surface font size in px. Pass "inherit" to follow the interface size.')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontSize);
+
+display
+	.command('zoom [level]')
+	.description('Get or set the global zoom applied to every surface (e.g. 125% or 1.25)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayZoom);
+
+display
+	.command('preset [name]')
+	.description(
+		'Get the active typography preset, or reset every font and size to one (default | hacker)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayPreset);
+
+display
+	.command('fonts')
+	.description('List the fonts bundled with Maestro (guaranteed available on any machine)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontsCatalog);
+
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');
 
@@ -1485,6 +1567,10 @@ gist
 	)
 	.option('-d, --description <text>', 'Gist description')
 	.option('-p, --public', 'Create a public gist (default: private)')
+	.option(
+		'-s, --session <id>',
+		"Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs"
+	)
 	.action(gistCreate);
 
 // Notify commands - surface notifications in the Maestro desktop app

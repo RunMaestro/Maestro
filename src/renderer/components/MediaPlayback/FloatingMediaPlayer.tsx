@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type ReactNode,
+} from 'react';
 import { FileAudio, FileVideo, GripVertical, History, ListMusic, Minus, X } from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
@@ -166,14 +175,64 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	} | null>(null);
 	const [gesturing, setGesturing] = useState(false);
 
+	const frameRef = useRef<HTMLDivElement>(null);
+	const focusRequest = useMediaPlaybackStore((s) => s.focusRequest);
+
+	// Take the caret whenever something asked for the player to be brought up.
+	//
+	// A layout effect, so it runs in the same commit that made the frame visible
+	// and BEFORE the deferred focus restore the layer stack schedules when the
+	// command palette unmounts - that restore stands down once it sees focus has
+	// landed somewhere, so getting there first is what keeps the caret here.
+	// Skipped on the very first render (`focusRequest` starts at 0), or a queue
+	// restored from disk would pull focus at launch.
+	useLayoutEffect(() => {
+		if (focusRequest === 0) return;
+		frameRef.current?.focus();
+	}, [focusRequest]);
+
 	const beginMove = useCallback(
 		(e: React.MouseEvent) => {
 			if (e.button !== 0) return;
 			e.preventDefault();
+			// `preventDefault` suppresses the click's own focus, so claim it here
+			// instead. Without this, grabbing the title bar leaves focus wherever it
+			// was and Escape would go to the surface behind the player the user is
+			// currently holding onto.
+			frameRef.current?.focus();
 			gestureRef.current = { mode: 'move', startX: e.clientX, startY: e.clientY, origin: rect };
 			setGesturing(true);
 		},
 		[rect]
+	);
+
+	/**
+	 * Escape minimizes, matching every other dismissible surface in the app -
+	 * except that for this one "dismiss" has to mean MINIMIZE, never close. The
+	 * player is the one surface whose close button stops something the user is
+	 * listening to, and a reflexive Escape must not be able to kill playback.
+	 *
+	 * Scoped to the widget rather than registered with the layer stack: the
+	 * player is not modal, it floats over a workspace the user keeps typing in,
+	 * so Escape belongs to it only while focus is actually inside it.
+	 */
+	const handleKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.key !== 'Escape' || e.metaKey || e.ctrlKey || e.altKey) return;
+			// A fullscreen video is already using Escape to come back out of
+			// fullscreen; minimizing on the way would hide the player the user was
+			// only trying to un-maximize.
+			if (document.fullscreenElement) return;
+			// An open list is the innermost thing Escape can close, so it goes first.
+			if (openList) {
+				setOpenList(null);
+			} else {
+				dismiss();
+			}
+			e.preventDefault();
+			e.stopPropagation();
+		},
+		[openList, dismiss]
 	);
 
 	const beginResize = useCallback(
@@ -287,6 +346,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 
 	return (
 		<div
+			ref={frameRef}
 			data-testid="floating-media-player"
 			// Minimized keeps the frame mounted and merely invisible. `visibility:
 			// hidden` (not unmounting, not zero size) is what keeps a video's decode
@@ -294,7 +354,12 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 			// use it - and `aria-hidden` keeps the off-screen controls out of the
 			// accessibility tree while the header pill stands in for them.
 			aria-hidden={hidden || undefined}
-			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none"
+			// Focusable but not in the tab order: the widget floats over a workspace
+			// the user is typing in, so it must never steal a Tab. -1 is enough to
+			// hold focus after a click, which is what scopes Escape to it.
+			tabIndex={-1}
+			onKeyDown={handleKeyDown}
+			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none outline-none"
 			style={{
 				top: rect.top,
 				left: rect.left,

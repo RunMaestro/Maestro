@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { FloatingMediaPlayer } from '../../../../renderer/components/MediaPlayback/FloatingMediaPlayer';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import {
@@ -60,6 +60,7 @@ describe('FloatingMediaPlayer', () => {
 			dismissed: false,
 			pendingAutoplay: false,
 			toggleRequest: 0,
+			focusRequest: 0,
 			resumeTimes: {},
 			durations: {},
 			floatPosition: null,
@@ -89,6 +90,133 @@ describe('FloatingMediaPlayer', () => {
 		expect(state.activeItemId).toBe(item().id);
 		// The queue entry survives, so restoring finds the same file loaded.
 		expect(state.items).toHaveLength(1);
+	});
+
+	describe('focus', () => {
+		it('takes the caret when something asks for the player to be shown', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+			expect(document.activeElement).not.toBe(frame());
+
+			// What the palette entry and the header pill's restore button both do.
+			act(() => useMediaPlaybackStore.getState().restore());
+
+			// Landing focused is what makes Escape and the transport keys work
+			// without a click first - a keyboard-opened surface must not be
+			// keyboard-dead.
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('does not grab focus on the first render', () => {
+			// A queue restored from disk renders the widget without anyone asking
+			// for it, so mounting must not pull the caret out of the composer.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+			expect(document.activeElement).not.toBe(frame());
+		});
+
+		it('re-focuses on a second request', () => {
+			// The widget is never unmounted, so the nonce is what lets "show the
+			// player" fire twice; a boolean would latch after the first.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id });
+			renderPlayer();
+			act(() => useMediaPlaybackStore.getState().restore());
+			(document.activeElement as HTMLElement).blur();
+
+			act(() => useMediaPlaybackStore.getState().restore());
+
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('opening then pressing Escape minimizes, with no click in between', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, dismissed: true });
+			renderPlayer();
+
+			act(() => useMediaPlaybackStore.getState().restore());
+			fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+		});
+	});
+
+	describe('Escape', () => {
+		it('minimizes rather than closing, so playback survives a reflex', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(true);
+			// The whole reason Escape is wired to minimize and not to close: this is
+			// the one surface whose close button stops something the user is
+			// listening to.
+			expect(state.playing).toBe(true);
+			expect(state.activeItemId).toBe(a.id);
+		});
+
+		it('closes an open list first, leaving the player up', () => {
+			const a = item();
+			const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: b.id });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('leaves a fullscreen video alone', () => {
+			// Escape is already spoken for: it is how the user gets back OUT of
+			// fullscreen. Minimizing on the way would hide the player they were only
+			// trying to un-maximize.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+			Object.defineProperty(document, 'fullscreenElement', {
+				configurable: true,
+				value: frame(),
+			});
+
+			fireEvent.keyDown(frame(), { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+			Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+		});
+
+		it('ignores a modified Escape', () => {
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id });
+			renderPlayer();
+
+			fireEvent.keyDown(frame(), { key: 'Escape', metaKey: true });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('is reachable after grabbing the title bar', () => {
+			// The drag handler calls preventDefault, which suppresses the click's own
+			// focus. Without the widget claiming focus itself, Escape after a drag
+			// would go to whatever surface is behind the player instead.
+			const a = item();
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
+			renderPlayer();
+
+			fireEvent.mouseDown(frame().firstElementChild!, { button: 0, clientX: 300, clientY: 300 });
+			fireEvent.mouseUp(window);
+			expect(document.activeElement).toBe(frame());
+
+			fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+			expect(useMediaPlaybackStore.getState().playing).toBe(true);
+		});
 	});
 
 	it('closing stops playback and releases the player', () => {

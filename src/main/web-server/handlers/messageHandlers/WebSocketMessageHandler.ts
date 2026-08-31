@@ -17,6 +17,7 @@
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
  * - open_file_tab: Open a file in a preview tab
+ * - open_document_graph: Render the Document Graph over a file set or directory
  * - refresh_file_tree: Refresh the file tree for a session
  * - get_file_tree: Read directory tree from filesystem for web file explorer
  * - get_settings: Fetch current web settings
@@ -94,9 +95,11 @@ import {
 	handleReorderTab,
 	handleToggleBookmark,
 	handleOpenFileTab,
+	handleOpenDocumentGraph,
 	handleOpenBrowserTab,
 	handleOpenModal,
 	handleWriteTerminalTab,
+	handleReadTerminalTab,
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
 	handleOpenTerminalTab,
@@ -290,12 +293,20 @@ export class WebSocketMessageHandler {
 				handleOpenFileTab(this.ctx, client, message);
 				break;
 
+			case 'open_document_graph':
+				handleOpenDocumentGraph(this.ctx, client, message);
+				break;
+
 			case 'write_terminal_tab':
 				void handleWriteTerminalTab(this.ctx, client, message);
 				break;
 
 			case 'list_terminal_tabs':
 				void handleListTerminalTabs(this.ctx, client, message);
+				break;
+
+			case 'read_terminal_tab':
+				void handleReadTerminalTab(this.ctx, client, message);
 				break;
 
 			case 'open_modal':

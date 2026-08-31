@@ -21,10 +21,22 @@ import { exportParquetMatches, queryParquet } from '../../parquet/parquet-query'
 export function registerParquetHandlers(): void {
 	// Open a parquet file and read its footer. Cheap even for multi-GB files:
 	// the footer is a few kilobytes and no data page is touched.
+	//
+	// The exception is a file on an SSH remote, which has to be copied across
+	// first because there is no byte-range channel over an SSH shell. That copy
+	// is the only slow part of opening anything, so it reports progress back to
+	// the sender on `parquet:fetchProgress`. Progress goes to the WebContents
+	// that asked rather than to every window: two windows can have different
+	// files open, and a broadcast would make each of them render the other's
+	// progress bar.
 	ipcMain.handle(
 		'parquet:open',
-		async (_event, filePath: string, sshRemoteId?: string): Promise<ParquetFileInfo> =>
-			openParquetFile(filePath, sshRemoteId)
+		async (event, filePath: string, sshRemoteId?: string): Promise<ParquetFileInfo> =>
+			openParquetFile(filePath, sshRemoteId, (progress) => {
+				if (!event.sender.isDestroyed()) {
+					event.sender.send('parquet:fetchProgress', progress);
+				}
+			})
 	);
 
 	// Read one window of rows. See src/main/parquet/parquet-query.ts for the

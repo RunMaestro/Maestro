@@ -19,6 +19,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { GroupChat } from '../../../shared/group-chat-types';
 import { pickNextGroupChatIdAfterDelete } from '../../utils/groupChatOrdering';
+import { applyGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
@@ -531,11 +532,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	);
 
 	const handleGroupChatRightTabChange = useCallback((tab: GroupChatRightTab) => {
-		const { setGroupChatRightTab, activeGroupChatId } = useGroupChatStore.getState();
-		setGroupChatRightTab(tab);
-		if (activeGroupChatId) {
-			window.maestro.settings.set(`groupChatRightTab:${activeGroupChatId}`, tab);
-		}
+		applyGroupChatRightTab(tab);
 	}, []);
 
 	const handleJumpToGroupChatMessage = useCallback((timestamp: number) => {

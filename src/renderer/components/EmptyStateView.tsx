@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { Wordmark } from './ui/Wordmark';
 import {
 	Wand2,
 	Bot,
@@ -75,12 +76,7 @@ export function EmptyStateView({
 				{/* Left: Logo and Name */}
 				<div className="flex items-center gap-2">
 					<Wand2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h1
-						className="font-bold tracking-widest text-lg"
-						style={{ color: theme.colors.textMain }}
-					>
-						MAESTRO
-					</h1>
+					<Wordmark as="h1" className="text-lg" style={{ color: theme.colors.textMain }} />
 				</div>
 
 				{/* Right: Hamburger Menu */}

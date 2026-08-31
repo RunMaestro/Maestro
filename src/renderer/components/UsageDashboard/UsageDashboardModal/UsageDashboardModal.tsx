@@ -15,11 +15,13 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
+import { GroupDetailModal } from '../GroupDetailModal';
 import { AgentDetailModal } from '../AgentDetailModal';
 import { EmptyState } from '../EmptyState';
 import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
 import { TokenSeriesProvider } from '../TokenSeriesContext';
+import type { GroupStatRollup } from '../../../../shared/statsGroupRollup';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../../hooks/ui/useResizableModal';
@@ -109,16 +111,11 @@ export function UsageDashboardModal({
 	// the only consumer, and threading them through AppInfoModals would add a
 	// prop to a component that has no other reason to know about groups.
 	const groups = useSessionStore((s) => s.groups);
-	// Group the user drilled into from the Groups tab. Holds the member ids
-	// rather than the group id so the Agents grid stays restricted to exactly
-	// the agents that were in the group when it was clicked - re-deriving from
-	// the live group would silently change the set under a user who is reading
-	// it, and the chip names a group that no longer matches what is shown.
-	const [groupDrillDown, setGroupDrillDown] = useState<{
-		id: string;
-		label: string;
-		sessionIds: string[];
-	} | null>(null);
+	// The group whose detail modal is open. Holds the whole rollup rather than an
+	// id: the modal renders the same totals the clicked tile showed, and
+	// re-deriving them would let the two disagree if the aggregation refreshed
+	// underneath (the dashboard polls stats:updated) while the modal was open.
+	const [detailGroup, setDetailGroup] = useState<GroupStatRollup | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -135,32 +132,16 @@ export function UsageDashboardModal({
 		onViewModeChanged: handleViewModeChanged,
 	});
 
-	// Drill into a group: jump to the Agents grid restricted to its members.
-	// Reusing that grid is the point - the answer to "which agents made this
-	// group's numbers" is the agent grid, and a second per-group grid would be
-	// the same tiles with a different data source.
-	const handleSelectGroup = useCallback(
-		(rollup: { groupId: string; name: string; sessions: Array<{ id: string }> }) => {
-			setGroupDrillDown({
-				id: rollup.groupId,
-				label: rollup.name,
-				sessionIds: rollup.sessions.map((s) => s.id),
-			});
-			switchViewMode('agents');
-		},
-		[switchViewMode]
-	);
+	// Clicking a group tile opens its detail modal - the per-agent breakdown of
+	// the totals on the tile. It does NOT switch tabs: the Agents tab answers a
+	// different question ("show me every agent"), and its own group dropdown
+	// covers narrowing that grid.
+	const handleSelectGroup = useCallback((rollup: GroupStatRollup) => setDetailGroup(rollup), []);
 
-	const clearGroupDrillDown = useCallback(() => setGroupDrillDown(null), []);
-
-	// Leaving the Agents tab by any route drops the restriction. Without this
-	// the user returns to Agents days later still filtered to a group they no
-	// longer remember picking, which reads as agents having disappeared.
-	useEffect(() => {
-		if (viewMode !== 'agents' && viewMode !== 'groups') {
-			setGroupDrillDown(null);
-		}
-	}, [viewMode]);
+	// An agent row inside the group modal opens the per-agent modal ON TOP,
+	// rather than replacing it - the group stays behind so Escape walks back to
+	// the breakdown the user came from instead of dumping them on the grid.
+	const handleSelectGroupMember = useCallback((session: Session) => setDetailSession(session), []);
 
 	// Reset time range to default when modal opens
 	useEffect(() => {
@@ -336,9 +317,7 @@ export function UsageDashboardModal({
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
 						onShowAgentDetails={setDetailSession}
-						restrictToSessionIds={groupDrillDown?.sessionIds ?? null}
-						restrictionLabel={groupDrillDown?.label}
-						onClearRestriction={clearGroupDrillDown}
+						groups={groups}
 					/>
 				);
 			case 'groups':
@@ -349,7 +328,7 @@ export function UsageDashboardModal({
 						theme={theme}
 						sessions={sessions}
 						groups={groups}
-						activeGroupId={groupDrillDown?.id ?? null}
+						activeGroupId={detailGroup?.groupId ?? null}
 						onSelectGroup={handleSelectGroup}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
@@ -486,6 +465,17 @@ export function UsageDashboardModal({
 					databaseSize={databaseSize}
 				/>
 			</div>
+
+			{detailGroup && data && (
+				<GroupDetailModal
+					rollup={detailGroup}
+					sessions={sessions}
+					data={data}
+					theme={theme}
+					onClose={() => setDetailGroup(null)}
+					onSelectAgent={handleSelectGroupMember}
+				/>
+			)}
 
 			{detailSession && data && (
 				<AgentDetailModal

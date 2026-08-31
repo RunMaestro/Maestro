@@ -175,6 +175,7 @@ const GroupCard = memo(function GroupCard({
 			stats={stats}
 			sparkline={sparkline}
 			animationIndex={animationIndex}
+			size="lg"
 			isSelected={isSelected}
 			// The Ungrouped bucket is not a real group the user created, so it
 			// carries the same dashed treatment worktree agents get.
@@ -300,7 +301,13 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 			) : (
 				<div
 					className="grid gap-3"
-					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+					// Twice the agent grid's 220px. A group tile is larger than the
+					// agents it contains, and it carries four stats whose values are
+					// the long ones - "142h 5m", "220.7M", "$187.18" - so the width
+					// buys legible numbers rather than whitespace. Trading a column
+					// for extra rows is the right way round here: the grid scrolls
+					// vertically, so a row costs nothing a clipped value does not.
+					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))' }}
 					data-testid="group-overview-cards"
 					role="region"
 					aria-label="Group usage overview"

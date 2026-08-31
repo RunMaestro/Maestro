@@ -8,6 +8,7 @@
  *   - Splash screen coordination (wait for settings + sessions)
  *   - GitHub CLI availability check
  *   - Windows warning modal for Windows users
+ *   - First-run modal series (typography, theme, agent powers)
  *   - File gist URLs loading from settings
  *   - Beta updates setting sync
  *   - Update check on startup
@@ -31,6 +32,10 @@ import { getOpenSpecCommands } from '../../services/openspec';
 import { getBmadCommands } from '../../services/bmad';
 import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
+import {
+	exposeOnboardingSeriesDebug,
+	startOnboardingSeries,
+} from '../../stores/onboardingSeriesStore';
 import type { GistInfo } from '../../components/GistPublishModal';
 import {
 	flushLeaderboardOutbox,
@@ -69,6 +74,14 @@ export function useAppInitialization(): AppInitializationReturn {
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const initialFileTreeReady = useSessionStore((s) => s.initialFileTreeReady);
 	const suppressWindowsWarning = useSettingsStore((s) => s.suppressWindowsWarning);
+	const typographyPromptSeen = useSettingsStore((s) => s.typographyPromptSeen);
+	const themePromptSeen = useSettingsStore((s) => s.themePromptSeen);
+	const agentPowersPromptSeen = useSettingsStore((s) => s.agentPowersPromptSeen);
+	const activeThemeId = useSettingsStore((s) => s.activeThemeId);
+	// "Does this user already have agents" is the only signal that separates a
+	// fresh install from one that predates these steps, and it needs no new
+	// persisted state.
+	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
 	const enableBetaUpdates = useSettingsStore((s) => s.enableBetaUpdates);
 	const checkForUpdatesOnStartup = useSettingsStore((s) => s.checkForUpdatesOnStartup);
 	const leaderboardAuthToken = useSettingsStore((s) => s.leaderboardRegistration?.authToken);
@@ -158,6 +171,45 @@ export function useAppInitialization(): AppInitializationReturn {
 				logger.error('[App] Failed to detect platform for Windows warning:', undefined, error);
 			});
 	}, [settingsLoaded, suppressWindowsWarning]);
+
+	// --- First-run modal series (typography -> theme -> agent powers) ---
+	// Each step carries its own seen flag, so this fires whenever ANY of them is
+	// still unshown - which is what lets a later step reach users who already
+	// answered the earlier ones. Every flag is false on a fresh install and on
+	// every install predating its step, so one gate serves both audiences; the
+	// modals change their own copy.
+	//
+	// Gated on sessionsLoaded because "does this user already have agents" is
+	// what tells a new user from a returning one, and on isMainWindow so a
+	// second window does not ask the same questions again.
+	const onboardingSeriesStartedRef = useRef(false);
+	useEffect(() => {
+		exposeOnboardingSeriesDebug();
+
+		if (!settingsLoaded || !sessionsLoaded) return;
+		if (!isMainWindow) return;
+		if (onboardingSeriesStartedRef.current) return;
+		onboardingSeriesStartedRef.current = true;
+
+		startOnboardingSeries({
+			audience: hasAnySession ? 'returning' : 'new',
+			seen: {
+				typography: typographyPromptSeen,
+				theme: themePromptSeen,
+				agentPowers: agentPowersPromptSeen,
+			},
+			activeThemeId,
+		});
+	}, [
+		settingsLoaded,
+		sessionsLoaded,
+		isMainWindow,
+		hasAnySession,
+		typographyPromptSeen,
+		themePromptSeen,
+		agentPowersPromptSeen,
+		activeThemeId,
+	]);
 
 	// --- Load file gist URLs from settings ---
 	useEffect(() => {

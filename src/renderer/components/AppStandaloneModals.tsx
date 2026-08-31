@@ -1,10 +1,11 @@
-import { lazy, memo, Suspense, useMemo } from 'react';
+import { lazy, memo, Suspense, useCallback, useMemo } from 'react';
 import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -16,6 +17,7 @@ import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
+import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
 import { GitPillModals } from './GitPillModals';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -228,6 +230,7 @@ function AppStandaloneModalsInner({
 		debugPackageModalOpen,
 		windowsWarningModalOpen,
 		setWindowsWarningModalOpen,
+		openSettings,
 		setDebugPackageModalOpen,
 		debugApplicationStatsOpen,
 		setDebugApplicationStatsOpen,
@@ -266,6 +269,9 @@ function AppStandaloneModalsInner({
 	// Self-source file explorer state
 	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
 	const graphFocusFilePath = useFileExplorerStore((s) => s.graphFocusFilePath);
+	const graphScopeFiles = useFileExplorerStore((s) => s.graphScopeFiles);
+	const graphScopeDirectory = useFileExplorerStore((s) => s.graphScopeDirectory);
+	const graphRootPath = useFileExplorerStore((s) => s.graphRootPath);
 
 	// Self-source tab gist content
 	const tabGistContent = useTabStore((s) => s.tabGistContent);
@@ -273,6 +279,11 @@ function AppStandaloneModalsInner({
 	// Self-source active session
 	const activeSession = useActiveSession();
 
+	// Typography chooser: "does this user already have agents" is what tells a
+	// returning user from a fresh install, and it is the only signal that needs
+	// no new persisted state. A returning user with every agent deleted gets the
+	// new-user copy, which offers the same two choices - harmless either way.
+	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
 	// Merge plugin-contributed themes into the picker list through the shared
 	// contribution registry (built-in always wins an id collision). Identical to
 	// THEMES when the plugins Encore flag is off (no contributions).
@@ -300,6 +311,16 @@ function AppStandaloneModalsInner({
 				onOpenDebugPackage={() => setDebugPackageModalOpen(true)}
 				useBetaChannel={enableBetaUpdates}
 				onSetUseBetaChannel={setEnableBetaUpdates}
+			/>
+
+			{/* --- FIRST-RUN SERIES: typography -> theme -> agent powers ---
+			    One step on screen at a time; see OnboardingSeriesHost. */}
+			<OnboardingSeriesHost
+				theme={theme}
+				themes={mergedThemes}
+				isReturningUser={hasAnySession}
+				onOpenSettings={(tab) => openSettings(tab)}
+				hasActiveAgent={Boolean(activeSession)}
 			/>
 
 			{/* --- CELEBRATION OVERLAYS --- */}
@@ -508,8 +529,14 @@ function AppStandaloneModalsInner({
 			)}
 
 			{/* --- DOCUMENT GRAPH VIEW (Mind Map, lazy-loaded) --- */}
-			{/* Only render when a focus file is provided - mind map requires a center document */}
-			{graphFocusFilePath && (
+			{/* Needs something to draw: either a focus document, or a scope the
+			    builder can pick a center from. `graphScopeDirectory` may legitimately
+			    be `''` (the project root), so it is compared against undefined
+			    rather than tested for truthiness - `''` is falsy and the root
+			    directory is a real scope. */}
+			{(graphFocusFilePath ||
+				(graphScopeFiles && graphScopeFiles.length > 0) ||
+				graphScopeDirectory !== undefined) && (
 				<Suspense fallback={null}>
 					<DocumentGraphView
 						isOpen={isGraphViewOpen}
@@ -521,10 +548,14 @@ function AppStandaloneModalsInner({
 							});
 						}}
 						theme={theme}
-						rootPath={activeSession?.projectRoot || activeSession?.cwd || ''}
+						rootPath={graphRootPath || activeSession?.projectRoot || activeSession?.cwd || ''}
 						onDocumentOpen={async (filePath) => {
-							// Open the document in a file tab (migrated from legacy setPreviewFile overlay)
-							const treeRoot = activeSession?.projectRoot || activeSession?.cwd || '';
+							// Resolve against the SAME root the graph was built with. A scoped
+							// graph can be rooted outside the project (memory lives under
+							// ~/.claude), and rebuilding the project root here would open a
+							// path that does not exist.
+							const treeRoot =
+								graphRootPath || activeSession?.projectRoot || activeSession?.cwd || '';
 							const fullPath = `${treeRoot}/${filePath}`;
 							const filename = filePath.split('/').pop() || filePath;
 							// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
@@ -560,7 +591,9 @@ function AppStandaloneModalsInner({
 							// Open external URL in default browser
 							openUrl(url);
 						}}
-						focusFilePath={graphFocusFilePath}
+						focusFilePath={graphFocusFilePath ?? ''}
+						scopeFiles={graphScopeFiles}
+						scopeDirectory={graphScopeDirectory}
 						defaultShowExternalLinks={documentGraphShowExternalLinks}
 						onExternalLinksChange={onExternalLinksChange}
 						defaultMaxNodes={documentGraphMaxNodes}

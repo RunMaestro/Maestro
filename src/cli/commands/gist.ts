@@ -1,6 +1,11 @@
 // Gist create - publish an agent's session transcript to a GitHub gist.
 // Routes through the running Maestro desktop app (which holds live tab
 // transcripts) and reuses the existing `gh gist create` IPC handler.
+//
+// `--session` narrows the publish to one provider session instead of the
+// agent's open AI tabs. Headless callers (Maestro Relay, playbooks, Cue, CI)
+// hold a session id from `send -s <id>` and have no desktop tab, so without it
+// they publish whatever unrelated conversation the agent has open.
 
 import { resolveAgentId } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
@@ -8,11 +13,13 @@ import { withMaestroClient } from '../services/maestro-client';
 interface GistCreateOptions {
 	description?: string;
 	public?: boolean;
+	session?: string;
 }
 
 interface GistCreateResponse {
 	success: boolean;
 	agentId?: string;
+	agentSessionId?: string;
 	gistUrl?: string;
 	error?: string;
 	code?: string;
@@ -36,6 +43,15 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 	const description = options.description ?? '';
 	const isPublic = Boolean(options.public);
 
+	// Reject a blank `--session` rather than dropping it: falling through to the
+	// agent's open tabs would publish a different conversation than the one the
+	// caller named, and a gist is readable by anyone with the URL.
+	const agentSessionId = options.session?.trim();
+	if (options.session !== undefined && !agentSessionId) {
+		emitErrorJson('--session requires a non-empty session id', 'INVALID_SESSION');
+		process.exit(1);
+	}
+
 	try {
 		const result = await withMaestroClient((client) =>
 			client.sendCommand<{
@@ -48,6 +64,7 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 					sessionId: agentId,
 					description,
 					isPublic,
+					...(agentSessionId ? { agentSessionId } : {}),
 				},
 				'create_gist_result',
 				60000
@@ -62,6 +79,7 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 		const response: GistCreateResponse = {
 			success: true,
 			agentId,
+			...(agentSessionId ? { agentSessionId } : {}),
 			gistUrl: result.gistUrl,
 		};
 		console.log(JSON.stringify(response, null, 2));

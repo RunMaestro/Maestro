@@ -70,6 +70,7 @@ export type {
 } from '../../shared/providerFailover';
 import type { FailoverConfig } from '../../shared/providerFailover';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
+import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
@@ -92,6 +93,10 @@ export type UsageDashboardViewMode =
 	| 'shortcuts';
 export type SettingsTab =
 	| 'general'
+	// SettingsModal has always rendered a Display tab and accepted it as an
+	// `initialTab`; it was simply missing from this union, so nothing could
+	// deep-link there through openSettings().
+	| 'display'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
@@ -1404,7 +1409,7 @@ export interface Session {
 	 * value-comparison heuristic gets exactly the codex case wrong.
 	 */
 	contextWindowSource?: 'user-edited';
-	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
+	documentGraphLayout?: MindMapLayoutType; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally
 	sessionSshRemoteConfig?: {

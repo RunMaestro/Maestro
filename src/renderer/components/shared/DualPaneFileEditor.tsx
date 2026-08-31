@@ -12,6 +12,7 @@
  *   - Unsaved-changes guard before switching selection
  *   - Keyboard navigation once a row has focus: Up/Down walk the visible rows,
  *     Backspace/Delete raise `onDeleteItem` for the selected one
+ *   - Optional `autoFocusList` so those keys work without clicking a row first
  *
  * Consumers (Maestro Prompts, Memory Viewer) pass in the data + editor body;
  * this component owns the chrome and common styling.
@@ -22,6 +23,7 @@ import { ExternalLink, ChevronDown, ChevronRight } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { formatTokensCompact } from '../../../shared/formatters';
+import { highlightMatches } from '../../utils/highlightMatches';
 import './DualPaneFileEditor.css';
 
 export interface DualPaneFileEditorItem {
@@ -151,6 +153,26 @@ export interface DualPaneFileEditorProps {
 	 * knows when its own async work settled; the list does not.
 	 */
 	listFocusToken?: number;
+
+	/**
+	 * Put DOM focus on the selected row as soon as the list first has a
+	 * selection, so Up/Down and Backspace work without clicking a row first.
+	 *
+	 * Only for a surface whose primary job is walking the list (the Memory
+	 * Viewer). It claims focus ONCE, and only if nothing else has taken it -
+	 * a user who went straight for the filter box keeps the caret there.
+	 */
+	autoFocusList?: boolean;
+
+	/**
+	 * Active filter text. When set, the matching run inside each row's label is
+	 * marked, so a filtered list shows WHY each row survived rather than leaving
+	 * the reader to scan for it.
+	 *
+	 * Purely presentational - filtering itself stays the consumer's job, since
+	 * only it knows whether a row matched on its name or somewhere in its body.
+	 */
+	highlightQuery?: string;
 }
 
 const DEFAULT_LIST_WIDTH = 220;
@@ -196,6 +218,8 @@ export function DualPaneFileEditor({
 	listWidthStorageKey,
 	onDeleteItem,
 	listFocusToken,
+	autoFocusList,
+	highlightQuery,
 }: DualPaneFileEditorProps): JSX.Element {
 	const selectedItem = items.find((i) => i.id === selectedId) ?? null;
 
@@ -304,6 +328,21 @@ export function DualPaneFileEditor({
 		lastFocusTokenRef.current = listFocusToken;
 		if (selectedId) focusRow(selectedId);
 	}, [listFocusToken, selectedId, focusRow]);
+
+	// Initial focus (see `autoFocusList`). The list loads async, so this cannot
+	// run on mount - it waits for the first selection. It fires once and defers
+	// to anything that already holds focus, so a user who clicked into the
+	// filter box while the list was loading is not yanked back out of it.
+	const didAutoFocusRef = useRef(false);
+	useEffect(() => {
+		if (!autoFocusList || didAutoFocusRef.current) return;
+		if (!selectedId || isExpanded || showHelp) return;
+		const active = document.activeElement;
+		const focusIsIdle = !active || active === document.body;
+		if (!focusIsIdle && !listRef.current?.contains(active)) return;
+		didAutoFocusRef.current = true;
+		focusRow(selectedId);
+	}, [autoFocusList, selectedId, isExpanded, showHelp, focusRow]);
 
 	const handleListKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -578,7 +617,11 @@ export function DualPaneFileEditor({
 					color: theme.colors.textMain,
 				}}
 			>
-				<span className="dual-pane-list-item-name">{item.label}</span>
+				<span className="dual-pane-list-item-name">
+					{highlightQuery
+						? highlightMatches(item.label, highlightQuery, theme.colors.accent)
+						: item.label}
+				</span>
 				<span className="dual-pane-list-item-meta">
 					{item.isModified && (
 						<span

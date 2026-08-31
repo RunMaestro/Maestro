@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import React from 'react';
 import { ShortcutsHelpModal } from '../../../renderer/components/ShortcutsHelpModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
@@ -271,7 +271,7 @@ describe('ShortcutsHelpModal', () => {
 					<ShortcutsHelpModal theme={mockTheme} shortcuts={mockShortcuts} onClose={mockOnClose} />
 				</TestWrapper>
 			);
-			const modalContent = container.querySelector('[style*="width: min(calc(400px"]');
+			const modalContent = container.querySelector('[data-modal-resize-key="shortcuts-help"]');
 			expect(modalContent).toHaveStyle({
 				backgroundColor: mockTheme.colors.bgSidebar,
 				borderColor: mockTheme.colors.border,
@@ -347,9 +347,10 @@ describe('ShortcutsHelpModal', () => {
 			const backdrop = container.querySelector('.fixed.inset-0');
 			expect(backdrop).toBeInTheDocument();
 
-			// Check dialog width (Modal component uses inline style instead of Tailwind class)
-			const dialogBox = container.querySelector('[style*="width: min(calc(400px"]');
+			// The dialog is a resizable frame keyed by resizeKey, not a fixed-width box
+			const dialogBox = container.querySelector('[data-modal-resize-key="shortcuts-help"]');
 			expect(dialogBox).toBeInTheDocument();
+			expect(dialogBox).toHaveStyle({ width: '620px' });
 		});
 
 		it('has scrollable shortcuts container', () => {
@@ -359,9 +360,11 @@ describe('ShortcutsHelpModal', () => {
 				</TestWrapper>
 			);
 
-			const scrollContainer = container.querySelector('.max-h-\\[400px\\]');
+			// The list fills the resizable frame rather than capping at a fixed height,
+			// so a taller modal shows more shortcuts instead of dead space.
+			const scrollContainer = container.querySelector('.overflow-y-auto.flex-1');
 			expect(scrollContainer).toBeInTheDocument();
-			expect(scrollContainer).toHaveClass('overflow-y-auto');
+			expect(scrollContainer).toHaveClass('min-h-0');
 		});
 	});
 
@@ -771,6 +774,76 @@ describe('ShortcutsHelpModal', () => {
 			const trophyIcons = container.querySelectorAll('svg.lucide-trophy');
 			// With FIXED_SHORTCUTS included, we won't be at 100%, so no trophy
 			expect(trophyIcons.length).toBe(0);
+		});
+
+		// ===== UNBOUND SHORTCUTS =====
+		// A shortcut with no chord cannot be fired, so it must not sit in the
+		// mastery denominator (which would pin the bar below 100% forever) and it
+		// must not be drawn as something the user can go press.
+		describe('unbound shortcuts', () => {
+			const withUnbound = (): Record<string, Shortcut> => ({
+				...mockShortcuts,
+				'no-chord': {
+					id: 'no-chord',
+					label: 'No Chord Action',
+					keys: [],
+					category: 'general',
+				},
+			});
+
+			const renderModal = (
+				shortcuts: Record<string, Shortcut>,
+				masteryStats: KeyboardMasteryStats
+			) =>
+				render(
+					<TestWrapper>
+						<ShortcutsHelpModal
+							theme={mockTheme}
+							shortcuts={shortcuts}
+							tabShortcuts={{}}
+							onClose={mockOnClose}
+							keyboardMasteryStats={masteryStats}
+						/>
+					</TestWrapper>
+				);
+
+			// "3 / 12 mastered (25%)" -> [3, 12]
+			const masteryCounts = (): [number, number] => {
+				const text = screen.getByText(/mastered/).textContent ?? '';
+				const match = text.match(/(\d+)\s*\/\s*(\d+)/);
+				return [Number(match?.[1]), Number(match?.[2])];
+			};
+
+			it('keeps an unbound shortcut out of the mastery denominator', () => {
+				const { unmount } = renderModal(mockShortcuts, createMockMasteryStats(['new-session']));
+				const [, boundTotal] = masteryCounts();
+				unmount();
+
+				renderModal(withUnbound(), createMockMasteryStats(['new-session']));
+
+				expect(masteryCounts()[1]).toBe(boundTotal);
+			});
+
+			it('marks the unbound shortcut Unassigned instead of drawing an empty chord', () => {
+				renderModal(withUnbound(), createMockMasteryStats(['new-session']));
+
+				const row = screen.getByText('No Chord Action').closest('div.justify-between');
+				expect(row).not.toBeNull();
+				expect(within(row as HTMLElement).getByText('Unassigned')).toBeInTheDocument();
+				// No progress circle either - there is nothing to go press.
+				expect((row as HTMLElement).querySelectorAll('span.rounded-full.border')).toHaveLength(0);
+			});
+
+			it('never counts a used id whose binding is gone', () => {
+				renderModal(
+					withUnbound(),
+					createMockMasteryStats(['new-session', 'no-chord', 'retired-shortcut'])
+				);
+
+				const [used, total] = masteryCounts();
+				expect(used).toBe(1);
+				expect(used).toBeLessThanOrEqual(total);
+			});
 		});
 
 		it('does not show next level hint at 100%', () => {

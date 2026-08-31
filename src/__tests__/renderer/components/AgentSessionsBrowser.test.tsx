@@ -1526,6 +1526,41 @@ describe('AgentSessionsBrowser', () => {
 			expect(savedWithNewName).toBe(false);
 		});
 
+		it('exits rename on Escape without closing the modal', async () => {
+			const onClose = vi.fn();
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps({ onClose })} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButtons = screen.getAllByTestId('icon-edit');
+			await act(async () => {
+				fireEvent.click(editButtons[0].closest('button')!);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.queryByPlaceholderText('Enter session name...')).toBeInTheDocument();
+
+			// The layer stack sees Escape at capture on window before the input does
+			await act(async () => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
 		it('submits rename on blur', async () => {
 			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
@@ -2367,6 +2402,65 @@ describe('AgentSessionsBrowser', () => {
 
 			expect(onResumeSession).toHaveBeenCalled();
 		});
+
+		it('resumes session with Cmd+R in detail view', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onResumeSession = vi.fn();
+			const props = createDefaultProps({ onResumeSession });
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			// The chord is claimed at the window level, so it fires wherever focus is
+			await act(async () => {
+				fireEvent.keyDown(window, { key: 'r', metaKey: true });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(onResumeSession).toHaveBeenCalled();
+		});
+
+		it('ignores Cmd+R in the list view', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onResumeSession = vi.fn();
+			const props = createDefaultProps({ onResumeSession });
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.keyDown(window, { key: 'r', metaKey: true });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(onResumeSession).not.toHaveBeenCalled();
+		});
 	});
 
 	// ============================================================================
@@ -2743,6 +2837,48 @@ describe('AgentSessionsBrowser', () => {
 	// ============================================================================
 
 	describe('rename in detail view', () => {
+		it('exits rename on Escape without leaving the detail view', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButtons = screen.getAllByTestId('icon-edit');
+			await act(async () => {
+				fireEvent.click(editButtons[0].closest('button')!);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.queryByPlaceholderText('Enter session name...')).toBeInTheDocument();
+
+			await act(async () => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			// Rename ends, but the detail view stays open (Resume is detail-view only)
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
+			expect(screen.getByText('Resume')).toBeInTheDocument();
+		});
+
 		it('allows renaming in detail view header', async () => {
 			const session = createMockClaudeSession({ sessionId: 'session-1' });
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({

@@ -3,6 +3,7 @@ import {
 	readDirRemote,
 	readFileRemote,
 	readBinaryFileRemoteAsBase64,
+	readBinaryFileBlockRemoteAsBase64,
 	readFileTailRemote,
 	statRemote,
 	directorySizeRemote,
@@ -445,6 +446,100 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('File not found');
+		});
+	});
+
+	describe('readBinaryFileBlockRemoteAsBase64', () => {
+		it('seeks with dd by block index rather than reading and discarding', async () => {
+			const deps = createMockDeps({ stdout: 'YWJj\n', stderr: '', exitCode: 0 });
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/data/events.parquet',
+				baseConfig,
+				7,
+				4194304,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('YWJj');
+
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1] as string[];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			// `bs`/`skip` is what makes this a seek: dd jumps to block*size
+			// instead of streaming past the earlier bytes. `count=1` keeps the
+			// read to exactly one block.
+			expect(remoteCommand).toContain('bs=4194304');
+			expect(remoteCommand).toContain('skip=7');
+			expect(remoteCommand).toContain('count=1');
+			expect(remoteCommand).toContain('| base64');
+			// dd writes its summary to stderr; without this it looks like failure.
+			expect(remoteCommand).toContain('2>/dev/null');
+		});
+
+		it('strips the line wrapping GNU base64 adds', async () => {
+			const deps = createMockDeps({ stdout: 'aVBO\nRw0K\nGgoA\n', stderr: '', exitCode: 0 });
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/f.parquet',
+				baseConfig,
+				0,
+				1024,
+				deps
+			);
+
+			expect(result.data).toBe('aVBORw0KGgoA');
+		});
+
+		it('returns empty data past EOF instead of erroring', async () => {
+			// dd past the end exits 0 with nothing on stdout. The caller uses
+			// that to detect a file that shrank mid-transfer.
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/f.parquet',
+				baseConfig,
+				99,
+				1024,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('');
+		});
+
+		it('maps a missing file to a file-not-found error', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'dd: /missing.parquet: No such file or directory',
+				exitCode: 1,
+			});
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/missing.parquet',
+				baseConfig,
+				0,
+				1024,
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('File not found');
+		});
+
+		it('rejects a nonsensical block index or size without touching the network', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			expect(
+				(await readBinaryFileBlockRemoteAsBase64('/f', baseConfig, -1, 1024, deps)).success
+			).toBe(false);
+			expect((await readBinaryFileBlockRemoteAsBase64('/f', baseConfig, 0, 0, deps)).success).toBe(
+				false
+			);
+			expect(
+				(await readBinaryFileBlockRemoteAsBase64('/f', baseConfig, 1.5, 1024, deps)).success
+			).toBe(false);
+			expect(deps.execSsh).not.toHaveBeenCalled();
 		});
 	});
 

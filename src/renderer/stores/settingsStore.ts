@@ -31,9 +31,15 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../types';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
-import { getLevelIndex } from '../constants/keyboardMastery';
+import { FIXED_SHORTCUTS } from '../constants/shortcuts';
+import {
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+	getLevelIndex,
+} from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
+import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
@@ -152,13 +158,13 @@ function getCommitCommandPrompt(): string {
 // Shared Type Aliases
 // ============================================================================
 
-export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'hierarchical' | 'force';
-const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
-	'mindmap',
-	'radial',
-	'hierarchical',
-	'force',
-];
+/**
+ * Alias kept for the existing call sites. The layout names themselves live in
+ * `DocumentGraph/layoutTypes`, which is also what the graph's own toolbar and
+ * `L` cycle read - a private copy here silently rejected any layout added to
+ * the graph but not mirrored into this file.
+ */
+export type DocumentGraphLayoutType = MindMapLayoutType;
 
 const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 	autoGroomContexts: true,
@@ -197,11 +203,6 @@ const DEFAULT_KEYBOARD_MASTERY_STATS: KeyboardMasteryStats = {
 	lastLevelUpTimestamp: 0,
 	lastAcknowledgedLevel: 0,
 };
-
-const TOTAL_SHORTCUTS_COUNT =
-	Object.keys(DEFAULT_SHORTCUTS).length +
-	Object.keys(TAB_SHORTCUTS).length +
-	Object.keys(FIXED_SHORTCUTS).length;
 
 const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	wizardStartCount: 0,
@@ -1219,13 +1220,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		},
 
 		setDocumentGraphPreviewCharLimit: (value) => {
-			const clamped = Math.max(50, Math.min(500, value));
+			// 0 is a real value, not a floor to clamp away: it means "previews off",
+			// which draws each node as a filename pill.
+			const clamped = Math.max(0, Math.min(500, value));
 			set({ documentGraphPreviewCharLimit: clamped });
 			window.maestro.settings.set('documentGraphPreviewCharLimit', clamped);
 		},
 
 		setDocumentGraphLayoutType: (value) => {
-			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'hierarchical';
+			const layoutType = isMindMapLayoutType(value) ? value : 'hierarchical';
 			set({ documentGraphLayoutType: layoutType });
 			window.maestro.settings.set('documentGraphLayoutType', layoutType);
 		},
@@ -1778,8 +1781,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// Add new shortcut to the list
 			const updatedShortcuts = [...currentStats.usedShortcuts, shortcutId];
 
-			// Calculate new percentage and level
-			const percentage = (updatedShortcuts.length / TOTAL_SHORTCUTS_COUNT) * 100;
+			// Calculate new percentage and level over the BOUND shortcuts only - an
+			// unbound one can never be fired, so counting it would make the top
+			// level unreachable. Read from the live maps so a binding the user
+			// cleared in Settings leaves the denominator too.
+			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const percentage =
+				bound.length > 0
+					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
+					: 0;
 			const newLevelIndex = getLevelIndex(percentage);
 
 			// Check if user leveled up
@@ -2203,8 +2213,8 @@ export async function loadAllSettings(): Promise<void> {
 		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
 		// what was queued should not start a podcast at launch, and it should not
 		// put media controls in the Left Bar header either, since the user has not
-		// played anything yet. The command palette's "Show Floating Media Player"
-		// is what reaches a dormant queue, and the first thing the user opens or
+		// played anything yet. The command palette's "Open Media Player" is what
+		// reaches a dormant queue, and the first thing the user opens or
 		// queues wakes it. Recently played is NOT restored - it is per-session by
 		// design.
 		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
@@ -2281,15 +2291,18 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['documentGraphPreviewCharLimit'] !== undefined) {
 			const charLimit = allSettings['documentGraphPreviewCharLimit'] as number;
-			if (typeof charLimit === 'number' && charLimit >= 50 && charLimit <= 500) {
+			// 0 means "previews off" (filename pills), so the floor is 0, not 50 -
+			// a stricter floor here would silently discard the user's saved choice
+			// on every launch and snap the graph back to full cards.
+			if (typeof charLimit === 'number' && charLimit >= 0 && charLimit <= 500) {
 				patch.documentGraphPreviewCharLimit = charLimit;
 			}
 		}
 
 		if (allSettings['documentGraphLayoutType'] !== undefined) {
 			const lt = allSettings['documentGraphLayoutType'] as string;
-			if (DOCUMENT_GRAPH_LAYOUT_TYPES.includes(lt as DocumentGraphLayoutType)) {
-				patch.documentGraphLayoutType = lt as DocumentGraphLayoutType;
+			if (isMindMapLayoutType(lt)) {
+				patch.documentGraphLayoutType = lt;
 			}
 		}
 
@@ -2563,6 +2576,17 @@ export function getSettingsActions() {
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setTerminalFontFamily: state.setTerminalFontFamily,
+		setChatFontFamily: state.setChatFontFamily,
+		setFilePreviewFontFamily: state.setFilePreviewFontFamily,
+		setFileEditorFontFamily: state.setFileEditorFontFamily,
+		setSurfaceFontFamily: state.setSurfaceFontFamily,
+		setSurfaceFontSize: state.setSurfaceFontSize,
+		setFontZoom: state.setFontZoom,
+		resetTypography: state.resetTypography,
+		setTypographyPromptSeen: state.setTypographyPromptSeen,
+		setThemePromptSeen: state.setThemePromptSeen,
+		setAgentPowersPromptSeen: state.setAgentPowersPromptSeen,
+		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,
 		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,

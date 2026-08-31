@@ -16,6 +16,10 @@ import { useAppInitialization } from '../../../renderer/hooks/ui/useAppInitializ
 const mockSettingsState: Record<string, unknown> = {
 	settingsLoaded: false,
 	suppressWindowsWarning: false,
+	typographyPromptSeen: false,
+	themePromptSeen: false,
+	agentPowersPromptSeen: false,
+	activeThemeId: 'dracula',
 	enableBetaUpdates: false,
 	checkForUpdatesOnStartup: false,
 	leaderboardRegistration: null,
@@ -54,6 +58,8 @@ vi.mock('../../../renderer/stores/settingsStore', () => ({
 const mockSessionState: Record<string, unknown> = {
 	sessionsLoaded: false,
 	initialFileTreeReady: false,
+	// The first-run series reads this to tell a fresh install from an upgrade.
+	sessions: [],
 };
 
 vi.mock('../../../renderer/stores/sessionStore', () => ({
@@ -159,6 +165,13 @@ vi.mock('../../../renderer/components/WindowsWarningModal', () => ({
 		mockExposeWindowsWarningModalDebug(...args),
 }));
 
+const mockExposeOnboardingSeriesDebug = vi.fn();
+const mockStartOnboardingSeries = vi.fn();
+vi.mock('../../../renderer/stores/onboardingSeriesStore', () => ({
+	exposeOnboardingSeriesDebug: (...args: unknown[]) => mockExposeOnboardingSeriesDebug(...args),
+	startOnboardingSeries: (...args: unknown[]) => mockStartOnboardingSeries(...args),
+}));
+
 // ============================================================================
 // Mock window.maestro
 // ============================================================================
@@ -225,8 +238,13 @@ function resetStores() {
 		lastAcknowledgedBadgeLevel: 0,
 	};
 
+	mockSettingsState.typographyPromptSeen = false;
+	mockSettingsState.themePromptSeen = false;
+	mockSettingsState.agentPowersPromptSeen = false;
+	mockSettingsState.activeThemeId = 'dracula';
 	mockSessionState.sessionsLoaded = false;
 	mockSessionState.initialFileTreeReady = false;
+	mockSessionState.sessions = [];
 	mockTabStoreState.fileGistUrls = {};
 }
 
@@ -432,6 +450,98 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(mockSetWindowsWarningModalOpen).not.toHaveBeenCalledWith(true);
+		});
+	});
+
+	// --- First-run modal series ---
+	describe('first-run series', () => {
+		function loaded() {
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = true;
+		}
+
+		it('exposes the debug entry point', () => {
+			renderHook(() => useAppInitialization());
+
+			expect(mockExposeOnboardingSeriesDebug).toHaveBeenCalled();
+		});
+
+		it('starts the series once settings and sessions have loaded', () => {
+			loaded();
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledTimes(1);
+		});
+
+		it('waits for sessions, since that is what tells a returning user apart', () => {
+			mockSettingsState.settingsLoaded = true;
+			mockSessionState.sessionsLoaded = false;
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).not.toHaveBeenCalled();
+		});
+
+		it('waits for settings, so a default flag cannot be mistaken for an answer', () => {
+			mockSettingsState.settingsLoaded = false;
+			mockSessionState.sessionsLoaded = true;
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).not.toHaveBeenCalled();
+		});
+
+		it('passes every seen flag, so each step can be gated on its own', () => {
+			// One flag for the whole series would stop a later step from ever
+			// reaching users who answered the earlier ones.
+			loaded();
+			mockSettingsState.typographyPromptSeen = true;
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({
+					seen: { typography: true, theme: false, agentPowers: false },
+				})
+			);
+		});
+
+		it('reports a fresh install as a new user', () => {
+			loaded();
+			mockSessionState.sessions = [];
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ audience: 'new' })
+			);
+		});
+
+		it('reports an install that already has agents as returning', () => {
+			loaded();
+			mockSessionState.sessions = [{ id: 'a' }];
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ audience: 'returning' })
+			);
+		});
+
+		it('passes the active theme, which gates the theme step', () => {
+			loaded();
+			mockSettingsState.activeThemeId = 'nord';
+			renderHook(() => useAppInitialization());
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
+				expect.objectContaining({ activeThemeId: 'nord' })
+			);
+		});
+
+		it('starts at most once per mount', () => {
+			// The flag writes come back through the store as state changes, and
+			// the series must not restart on the re-render that follows.
+			loaded();
+			const { rerender } = renderHook(() => useAppInitialization());
+			rerender();
+			rerender();
+
+			expect(mockStartOnboardingSeries).toHaveBeenCalledTimes(1);
 		});
 	});
 

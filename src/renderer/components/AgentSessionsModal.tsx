@@ -10,6 +10,7 @@ import {
 	Star,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { HeaderActionButton } from './ui/HeaderActionButton';
 import { Spinner } from './ui/Spinner';
 import { EmptyStatePlaceholder } from './ui/EmptyStatePlaceholder';
 import { EscCloseButton } from './ui/EscCloseButton';
@@ -503,17 +504,9 @@ export function AgentSessionsModal({
 									{totalMessages} messages • {formatRelativeTime(viewingSession.modifiedAt)}
 								</div>
 							</div>
-							<button
-								onClick={handleResume}
-								className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-								style={{
-									backgroundColor: theme.colors.accent,
-									color: theme.colors.accentForeground,
-								}}
-							>
-								<Play className="w-4 h-4" />
+							<HeaderActionButton theme={theme} onClick={handleResume} icon={<Play />}>
 								Resume
-							</button>
+							</HeaderActionButton>
 						</>
 					) : (
 						<>

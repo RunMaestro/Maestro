@@ -1,7 +1,8 @@
 /**
  * Tests for the canvas-based mind map layout algorithms (mindMapLayouts.ts)
  *
- * Verifies the four layout algorithms (Mind Map, Radial, Hierarchical, Force-Directed),
+ * Verifies the six layout algorithms (Mind Map, Radial, Hierarchical, Force-Directed,
+ * Lobes, Timeline),
  * the calculateLayout dispatcher, shared utilities, and constants.
  */
 
@@ -20,12 +21,19 @@ import {
 	calculateRadialLayout,
 	calculateHierarchicalLayout,
 	calculateForceLayout,
+	calculateLobesLayout,
+	calculateTimelineLayout,
 	buildAdjacencyMap,
 	calculateNodeHeight,
+	calculateNodeWidth,
+	NODE_PILL_MIN_WIDTH,
+	NODE_PILL_CHAR_WIDTH,
+	NODE_PILL_CHROME_WIDTH,
 	NODE_WIDTH,
 	NODE_HEADER_HEIGHT,
 	NODE_SUBHEADER_HEIGHT,
 	NODE_HEIGHT_BASE,
+	NODE_PILL_HEIGHT,
 	DESC_LINE_HEIGHT,
 	CHARS_PER_LINE,
 	DESC_PADDING,
@@ -34,6 +42,7 @@ import {
 	EXTERNAL_NODE_HEIGHT,
 	CANVAS_PADDING,
 } from '../../../../renderer/components/DocumentGraph/mindMapLayouts';
+import { PREVIEW_CHAR_LIMIT_OFF } from '../../../../renderer/components/DocumentGraph/previewCharLimit';
 
 // ============================================================================
 // Test Helpers
@@ -166,10 +175,15 @@ describe('mindMapLayouts', () => {
 			expect(nextMindMapLayout('mindmap')).toBe('radial');
 			expect(nextMindMapLayout('radial')).toBe('hierarchical');
 			expect(nextMindMapLayout('hierarchical')).toBe('force');
+			expect(nextMindMapLayout('force')).toBe('lobes');
+			expect(nextMindMapLayout('lobes')).toBe('timeline');
 		});
 
 		it('wraps at the end of the list', () => {
-			expect(nextMindMapLayout('force')).toBe('mindmap');
+			// Read the last entry rather than naming it, so adding a layout does
+			// not turn this into a false failure about the wrap behaviour.
+			const last = MIND_MAP_LAYOUT_TYPES[MIND_MAP_LAYOUT_TYPES.length - 1];
+			expect(nextMindMapLayout(last)).toBe(MIND_MAP_LAYOUT_TYPES[0]);
 		});
 
 		it('visits every layout exactly once per cycle', () => {
@@ -215,6 +229,15 @@ describe('mindMapLayouts', () => {
 			const a = calculateNodeHeight('Test text here', 100);
 			const b = calculateNodeHeight('Test text here', 100);
 			expect(a).toBe(b);
+		});
+
+		it('collapses to a pill when previews are off, however long the text', () => {
+			// Off is a mode, not a zero-length preview: the body box and the folder
+			// sub-header both go away, so the height cannot depend on the content.
+			expect(calculateNodeHeight('A'.repeat(500), 0)).toBe(NODE_PILL_HEIGHT);
+			expect(calculateNodeHeight('short', 0)).toBe(NODE_PILL_HEIGHT);
+			expect(calculateNodeHeight(undefined, 0)).toBe(NODE_PILL_HEIGHT);
+			expect(NODE_PILL_HEIGHT).toBeLessThan(NODE_HEIGHT_BASE);
 		});
 	});
 
@@ -723,6 +746,356 @@ describe('mindMapLayouts', () => {
 	// ====================================================================
 	// Layout comparison: different algorithms produce different positions
 	// ====================================================================
+
+	// ====================================================================
+	// Node width (pill sizing)
+	// ====================================================================
+	describe('calculateNodeWidth', () => {
+		it('returns the full card width whenever previews are on', () => {
+			expect(calculateNodeWidth('a', 100)).toBe(NODE_WIDTH);
+			expect(calculateNodeWidth('a-very-long-document-name', 500)).toBe(NODE_WIDTH);
+		});
+
+		it('measures the filename when previews are off', () => {
+			// A pill draws 32px tall. Reserving a full 260px card width for it is
+			// what pushed the radial rings out to thousands of pixels.
+			const short = calculateNodeWidth('todo', PREVIEW_CHAR_LIMIT_OFF);
+			expect(short).toBeLessThan(NODE_WIDTH);
+			expect(short).toBeGreaterThanOrEqual(NODE_PILL_MIN_WIDTH);
+		});
+
+		it('grows with the label but never past the card width', () => {
+			const short = calculateNodeWidth('abcdefghij', PREVIEW_CHAR_LIMIT_OFF);
+			const longer = calculateNodeWidth('abcdefghijklmnopqrst', PREVIEW_CHAR_LIMIT_OFF);
+			expect(longer).toBeGreaterThan(short);
+			expect(calculateNodeWidth('x'.repeat(200), PREVIEW_CHAR_LIMIT_OFF)).toBe(NODE_WIDTH);
+		});
+
+		it('keeps a one-character filename clickable', () => {
+			expect(calculateNodeWidth('a', PREVIEW_CHAR_LIMIT_OFF)).toBe(NODE_PILL_MIN_WIDTH);
+			expect(calculateNodeWidth(undefined, PREVIEW_CHAR_LIMIT_OFF)).toBe(NODE_PILL_MIN_WIDTH);
+		});
+
+		it('reserves exactly the width the renderer truncates against', () => {
+			// The renderer fits `(width - CHROME) / CHAR_WIDTH` characters. A pill
+			// sized here must therefore hold its own label without clipping.
+			const label = 'twelve-chars';
+			const width = calculateNodeWidth(label, PREVIEW_CHAR_LIMIT_OFF);
+			const fits = Math.floor((width - NODE_PILL_CHROME_WIDTH) / NODE_PILL_CHAR_WIDTH);
+			expect(fits).toBeGreaterThanOrEqual(label.length);
+		});
+	});
+
+	// ====================================================================
+	// Radial band packing
+	// ====================================================================
+	describe('calculateRadialLayout ring banding', () => {
+		/** A hub with `count` documents hanging off it, all at depth 1. */
+		function buildHub(count: number) {
+			const center = createNode('center');
+			const nodes = [center];
+			const links: MindMapLink[] = [];
+			for (let i = 0; i < count; i++) {
+				const id = `n${String(i).padStart(3, '0')}`;
+				nodes.push(createNode(id, { depth: 1 }));
+				links.push(createLink('center', id));
+			}
+			return { nodes, links };
+		}
+
+		function maxRadius(result: ReturnType<typeof calculateRadialLayout>): number {
+			return result.nodes.reduce((max, n) => Math.max(max, Math.hypot(n.x - 600, n.y - 400)), 0);
+		}
+
+		function layoutHub(count: number, previewCharLimit: number) {
+			const { nodes, links } = buildHub(count);
+			return calculateRadialLayout(
+				nodes,
+				links,
+				buildAdjacencyMap(links),
+				'center.md',
+				2,
+				1200,
+				800,
+				false,
+				previewCharLimit
+			);
+		}
+
+		it('places every sibling', () => {
+			const result = layoutHub(60, PREVIEW_CHAR_LIMIT_OFF);
+			expect(result.nodes).toHaveLength(61);
+		});
+
+		it('spills a crowded depth into sub-bands instead of one huge ring', () => {
+			// The old layout sized a ring as N * arcLength / 2pi, so 60 siblings
+			// produced a multi-thousand-pixel circle nothing could frame. Banding
+			// makes the radius grow with roughly sqrt(N) instead.
+			const result = layoutHub(60, PREVIEW_CHAR_LIMIT_OFF);
+			const radii = new Set(
+				result.nodes
+					.filter((n) => n.id !== 'center')
+					.map((n) => Math.round(Math.hypot(n.x - 600, n.y - 400)))
+			);
+			expect(radii.size).toBeGreaterThan(1);
+			expect(maxRadius(result)).toBeLessThan(1200);
+		});
+
+		it('grows sub-linearly in sibling count', () => {
+			const small = maxRadius(layoutHub(12, PREVIEW_CHAR_LIMIT_OFF));
+			const large = maxRadius(layoutHub(48, PREVIEW_CHAR_LIMIT_OFF));
+			// Four times the nodes must not cost four times the radius.
+			expect(large).toBeLessThan(small * 4);
+		});
+
+		it('does not overlap two nodes on the same band', () => {
+			const result = layoutHub(24, PREVIEW_CHAR_LIMIT_OFF);
+			const placed = result.nodes.filter((n) => n.id !== 'center');
+			for (let i = 0; i < placed.length; i++) {
+				for (let j = i + 1; j < placed.length; j++) {
+					const a = placed[i];
+					const b = placed[j];
+					const overlapsX = Math.abs(a.x - b.x) < (a.width + b.width) / 2;
+					const overlapsY = Math.abs(a.y - b.y) < (a.height + b.height) / 2;
+					expect(overlapsX && overlapsY).toBe(false);
+				}
+			}
+		});
+
+		it('is deterministic', () => {
+			const first = layoutHub(30, PREVIEW_CHAR_LIMIT_OFF).nodes.map((n) => [n.id, n.x, n.y]);
+			const second = layoutHub(30, PREVIEW_CHAR_LIMIT_OFF).nodes.map((n) => [n.id, n.x, n.y]);
+			expect(first).toEqual(second);
+		});
+
+		it('bounds the whole graph, so it can be framed on screen', () => {
+			const result = layoutHub(60, PREVIEW_CHAR_LIMIT_OFF);
+			for (const node of result.nodes) {
+				expect(node.x - node.width / 2).toBeGreaterThanOrEqual(result.bounds.minX);
+				expect(node.x + node.width / 2).toBeLessThanOrEqual(result.bounds.maxX);
+				expect(node.y - node.height / 2).toBeGreaterThanOrEqual(result.bounds.minY);
+				expect(node.y + node.height / 2).toBeLessThanOrEqual(result.bounds.maxY);
+			}
+		});
+	});
+
+	// ====================================================================
+	// Lobes
+	// ====================================================================
+	describe('calculateLobesLayout', () => {
+		/**
+		 * Two densely-linked clusters joined by a single bridge, plus the center.
+		 * Label propagation should separate the clusters.
+		 */
+		function buildTwoClusterGraph() {
+			const nodes = [createNode('center')];
+			const links: MindMapLink[] = [];
+			const cluster = (prefix: string, size: number) => {
+				const ids: string[] = [];
+				for (let i = 0; i < size; i++) {
+					const id = `${prefix}${i}`;
+					ids.push(id);
+					nodes.push(createNode(id, { depth: 1 }));
+				}
+				for (let i = 0; i < ids.length; i++) {
+					for (let j = i + 1; j < ids.length; j++) {
+						links.push(createLink(ids[i], ids[j]));
+					}
+				}
+				return ids;
+			};
+			const a = cluster('a', 5);
+			const b = cluster('b', 5);
+			links.push(createLink('center', a[0]));
+			links.push(createLink('center', b[0]));
+			return { nodes, links, a, b };
+		}
+
+		function layoutClusters(previewCharLimit = 100) {
+			const { nodes, links, a, b } = buildTwoClusterGraph();
+			const result = calculateLobesLayout(
+				nodes,
+				links,
+				buildAdjacencyMap(links),
+				'center.md',
+				3,
+				1200,
+				800,
+				false,
+				previewCharLimit
+			);
+			return { result, a, b };
+		}
+
+		it('places every visible document exactly once', () => {
+			const { result } = layoutClusters();
+			expect(result.nodes).toHaveLength(11);
+			expect(new Set(result.nodes.map((n) => n.id)).size).toBe(11);
+		});
+
+		it('keeps a cluster closer to itself than to the other cluster', () => {
+			const { result, a, b } = layoutClusters();
+			const at = (id: string) => result.nodes.find((n) => n.id === id)!;
+			const centroid = (ids: string[]) => ({
+				x: ids.reduce((sum, id) => sum + at(id).x, 0) / ids.length,
+				y: ids.reduce((sum, id) => sum + at(id).y, 0) / ids.length,
+			});
+			const ca = centroid(a);
+			const cb = centroid(b);
+			const spread = (ids: string[], c: { x: number; y: number }) =>
+				Math.max(...ids.map((id) => Math.hypot(at(id).x - c.x, at(id).y - c.y)));
+			const separation = Math.hypot(ca.x - cb.x, ca.y - cb.y);
+			expect(separation).toBeGreaterThan(Math.max(spread(a, ca), spread(b, cb)));
+		});
+
+		it('draws every link between placed nodes, not just adjacent depths', () => {
+			// The cross-cluster edges are the whole reason to look at this layout,
+			// so a depth filter here would hide the answer.
+			const { result } = layoutClusters();
+			const ids = new Set(result.nodes.map((n) => n.id));
+			const intra = result.links.filter(
+				(l) => l.source.startsWith('a') && l.target.startsWith('a')
+			);
+			expect(intra.length).toBeGreaterThan(0);
+			result.links.forEach((link) => {
+				expect(ids.has(link.source)).toBe(true);
+				expect(ids.has(link.target)).toBe(true);
+			});
+		});
+
+		it('marks exactly one node as focused', () => {
+			const { result } = layoutClusters();
+			expect(result.nodes.filter((n) => n.isFocused)).toHaveLength(1);
+			expect(result.nodes.find((n) => n.isFocused)?.id).toBe('center');
+		});
+
+		it('is deterministic across runs', () => {
+			const first = layoutClusters().result.nodes.map((n) => [n.id, n.x, n.y]);
+			const second = layoutClusters().result.nodes.map((n) => [n.id, n.x, n.y]);
+			expect(first).toEqual(second);
+		});
+
+		it('handles a graph with no links at all', () => {
+			const nodes = [createNode('center'), createNode('lonely')];
+			const result = calculateLobesLayout(
+				nodes,
+				[],
+				buildAdjacencyMap([]),
+				'center.md',
+				3,
+				1200,
+				800,
+				false,
+				100
+			);
+			expect(result.nodes.length).toBeGreaterThan(0);
+			result.nodes.forEach((n) => {
+				expect(Number.isFinite(n.x)).toBe(true);
+				expect(Number.isFinite(n.y)).toBe(true);
+			});
+		});
+	});
+
+	// ====================================================================
+	// Timeline
+	// ====================================================================
+	describe('calculateTimelineLayout', () => {
+		const DAY = 86400000;
+		const BASE = Date.UTC(2026, 0, 15, 12, 0, 0);
+
+		function buildDatedGraph() {
+			const center = createNode('center', { mtime: BASE });
+			const older = createNode('older', { depth: 1, mtime: BASE - 2 * DAY });
+			const oldest = createNode('oldest', { depth: 1, mtime: BASE - 5 * DAY });
+			const undated = createNode('undated', { depth: 1, mtime: 0 });
+			const links = [
+				createLink('center', 'older'),
+				createLink('center', 'oldest'),
+				createLink('center', 'undated'),
+			];
+			return { nodes: [center, older, oldest, undated], links };
+		}
+
+		function layoutDated() {
+			const { nodes, links } = buildDatedGraph();
+			return calculateTimelineLayout(
+				nodes,
+				links,
+				buildAdjacencyMap(links),
+				'center.md',
+				3,
+				1200,
+				800,
+				false,
+				100
+			);
+		}
+
+		it('orders columns oldest to newest, left to right', () => {
+			const result = layoutDated();
+			const at = (id: string) => result.nodes.find((n) => n.id === id)!;
+			expect(at('oldest').x).toBeLessThan(at('older').x);
+			expect(at('older').x).toBeLessThan(at('center').x);
+		});
+
+		it('leads with an Undated column rather than dating a file to 1970', () => {
+			const result = layoutDated();
+			const at = (id: string) => result.nodes.find((n) => n.id === id)!;
+			expect(at('undated').x).toBeLessThan(at('oldest').x);
+			expect(result.axisLabels?.[0]?.text).toBe('Undated');
+		});
+
+		it('captions every column, since an uncaptioned time axis says nothing', () => {
+			const result = layoutDated();
+			const columnCount = new Set(result.nodes.map((n) => Math.round(n.x))).size;
+			expect(result.axisLabels).toHaveLength(columnCount);
+		});
+
+		it('groups documents modified on the same day into one column', () => {
+			const center = createNode('center', { mtime: BASE });
+			const sameDay = createNode('sameDay', { depth: 1, mtime: BASE + 3600000 });
+			const links = [createLink('center', 'sameDay')];
+			const result = calculateTimelineLayout(
+				[center, sameDay],
+				links,
+				buildAdjacencyMap(links),
+				'center.md',
+				3,
+				1200,
+				800,
+				false,
+				100
+			);
+			const xs = result.nodes.map((n) => Math.round(n.x));
+			expect(new Set(xs).size).toBe(1);
+			expect(result.axisLabels).toHaveLength(1);
+		});
+
+		it('does not stack two documents on top of each other in a column', () => {
+			const result = layoutDated();
+			const byColumn = new Map<number, typeof result.nodes>();
+			result.nodes.forEach((n) => {
+				const key = Math.round(n.x);
+				if (!byColumn.has(key)) byColumn.set(key, []);
+				byColumn.get(key)!.push(n);
+			});
+			byColumn.forEach((column) => {
+				const sorted = [...column].sort((a, b) => a.y - b.y);
+				for (let i = 1; i < sorted.length; i++) {
+					const prev = sorted[i - 1];
+					expect(sorted[i].y - sorted[i].height / 2).toBeGreaterThanOrEqual(
+						prev.y + prev.height / 2 - 0.001
+					);
+				}
+			});
+		});
+
+		it('frames its own captions in the reported bounds', () => {
+			const result = layoutDated();
+			const topLabel = Math.min(...(result.axisLabels ?? []).map((l) => l.y));
+			expect(result.bounds.minY).toBeLessThan(topLabel);
+		});
+	});
 
 	describe('layout algorithm diversity', () => {
 		it('different algorithms produce different node positions', () => {

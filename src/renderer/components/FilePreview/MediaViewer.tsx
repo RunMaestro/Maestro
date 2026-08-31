@@ -490,6 +490,14 @@ export const MediaViewer = memo(function MediaViewer({
 			if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
 
 			switch (e.key) {
+				// Escape closes the speed menu and goes no further. Anywhere else it
+				// is left to bubble, because the surface AROUND the player owns what
+				// Escape means there (the floating widget minimizes on it) and an
+				// open menu is the only thing the player itself has to dismiss.
+				case 'Escape':
+					if (!rateMenuOpen) return;
+					setRateMenuOpen(false);
+					break;
 				case ' ':
 				case 'k':
 					togglePlay();
@@ -539,6 +547,7 @@ export const MediaViewer = memo(function MediaViewer({
 			stepRate,
 			isVideo,
 			enterFullscreen,
+			rateMenuOpen,
 		]
 	);
 

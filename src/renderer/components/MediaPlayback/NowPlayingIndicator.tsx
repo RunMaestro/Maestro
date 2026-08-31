@@ -75,7 +75,7 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 				// `min-w-0` so the label span below can actually shrink inside it; a
 				// flex item defaults to min-width:auto and would refuse to.
 				className={`flex items-center gap-1 min-w-0 text-[10px] font-bold transition-colors hover:bg-white/10 ${
-					compact ? 'px-1 py-1' : 'pl-1.5 pr-1.5 py-0.5'
+					compact ? 'px-2 py-1' : 'pl-2 pr-2 py-0.5'
 				}`}
 				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
 				title={`${active.name} - click to ${playing ? 'pause' : 'play'}`}
@@ -86,14 +86,18 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 			</button>
 
 			{/* The divider is what makes the pill read as two controls rather than
-			    one wide button, so a click lands where the user meant. */}
+			    one wide button, so a click lands where the user meant. Both halves
+			    carry the same padding on both sides, so each glyph sits clear of the
+			    line instead of crowding it - two icons a few pixels either side of a
+			    rule read as one cramped graphic rather than as two buttons, which
+			    defeats the point of drawing the divider at all. */}
 			<div className="w-px shrink-0" style={{ backgroundColor: theme.colors.border }} aria-hidden />
 
 			<button
 				type="button"
 				data-testid="now-playing-restore"
 				onClick={restore}
-				className="px-1 transition-colors hover:bg-white/10"
+				className="px-2 transition-colors hover:bg-white/10"
 				style={{ color: theme.colors.textDim }}
 				title="Show the media player"
 				aria-label="Show the media player"

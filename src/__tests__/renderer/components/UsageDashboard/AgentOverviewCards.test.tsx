@@ -10,6 +10,7 @@
  * - Empty / terminal-only session arrays render nothing
  * - Staggered card-enter animation delays are applied
  * - The fuzzy agent filter narrows cards live and clears from the ESC pill
+ * - The group dropdown narrows the grid, and only offers groups that hold agents
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -763,5 +764,113 @@ describe('AgentOverviewCards', () => {
 		expect(cards[1].style.animationDelay).toBe('60ms');
 		expect(cards[2].style.animationDelay).toBe('120ms');
 		cards.forEach((c) => expect(c.className).toContain('card-enter'));
+	});
+
+	describe('group filter dropdown', () => {
+		const GROUPS = [
+			{ id: 'g-acme', name: 'Acme Corp', emoji: '\u{1F3E2}' },
+			{ id: 'g-internal', name: 'Internal' },
+		];
+		const GROUPED_SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' }),
+			buildSession({ id: 's2', name: 'Beta', groupId: 'g-acme' }),
+			buildSession({ id: 's3', name: 'Gamma', groupId: 'g-internal' }),
+			buildSession({ id: 's4', name: 'Delta' }),
+		];
+
+		const renderWithGroups = (
+			sessions: Session[] = GROUPED_SESSIONS,
+			groups: Array<{ id: string; name: string; emoji?: string }> = GROUPS
+		) =>
+			render(
+				<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} groups={groups} />
+			);
+
+		/** Open the dropdown and pick an option by its visible label. */
+		const pickGroup = (label: string) => {
+			fireEvent.click(screen.getByLabelText('Filter agents by group'));
+			fireEvent.click(screen.getByRole('option', { name: label }));
+		};
+
+		it('renders the dropdown ahead of the keyword filter', () => {
+			renderWithGroups();
+
+			const trigger = screen.getByLabelText('Filter agents by group');
+			const search = screen.getByTestId('agent-overview-filter-input');
+			// Node.compareDocumentPosition: 4 = trigger precedes search.
+			expect(trigger.compareDocumentPosition(search) & 4).toBeTruthy();
+		});
+
+		it('shows every agent until a group is picked', () => {
+			renderWithGroups();
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+		});
+
+		it('narrows the grid to the picked group', () => {
+			renderWithGroups();
+
+			pickGroup('\u{1F3E2} Acme Corp');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Gamma')).not.toBeInTheDocument();
+		});
+
+		it('offers an Ungrouped option that shows only unfiled agents', () => {
+			renderWithGroups();
+
+			pickGroup('Ungrouped');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Delta')).toBeInTheDocument();
+		});
+
+		it('omits groups that hold no agents', () => {
+			// An option whose every selection yields an empty grid is a dead end.
+			renderWithGroups([buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' })]);
+
+			fireEvent.click(screen.getByLabelText('Filter agents by group'));
+
+			expect(screen.queryByRole('option', { name: 'Internal' })).not.toBeInTheDocument();
+			expect(screen.getByRole('option', { name: '\u{1F3E2} Acme Corp' })).toBeInTheDocument();
+		});
+
+		it('treats an agent whose group was deleted as ungrouped', () => {
+			// A dangling groupId must not make an agent unreachable from every
+			// option - the Left Bar and the group rollup both do the same.
+			renderWithGroups(
+				[
+					// A populated real group so the dropdown has something to offer.
+					buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' }),
+					buildSession({ id: 's9', name: 'Orphan', groupId: 'g-gone' }),
+				],
+				GROUPS
+			);
+
+			pickGroup('Ungrouped');
+
+			expect(screen.getByText('Orphan')).toBeInTheDocument();
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+		});
+
+		it('does not render the dropdown when no groups are configured', () => {
+			// With nothing to pick between, the control could only ever no-op.
+			renderWithGroups([buildSession({ id: 's1', name: 'Alpha' })], []);
+
+			expect(screen.queryByLabelText('Filter agents by group')).not.toBeInTheDocument();
+		});
+
+		it('composes with the keyword filter', () => {
+			renderWithGroups();
+
+			pickGroup('\u{1F3E2} Acme Corp');
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value: 'Alpha' },
+			});
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
 	});
 });

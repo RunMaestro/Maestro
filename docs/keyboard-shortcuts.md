@@ -87,6 +87,25 @@ Tips and gotchas:
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
 | Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
 
+`Cmd+E` toggles edit and preview on a markdown File Preview and in the Memories
+viewer (`Cmd+Shift+M`), where the pane opens on the rendered document.
+
+## Group Chat
+
+A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
+
+| Action                       | macOS                          | Windows/Linux                    |
+| ---------------------------- | ------------------------------ | -------------------------------- |
+| Cycle Participants / History | `Cmd+Shift+[` or `Cmd+Shift+]` | `Ctrl+Shift+[` or `Ctrl+Shift+]` |
+| Go to Participants Tab       | `Cmd+Shift+F`                  | `Ctrl+Shift+F`                   |
+| Go to History Tab            | `Cmd+Shift+H`                  | `Ctrl+Shift+H`                   |
+| Move Through History Entries | `Up` / `Down`                  | `Up` / `Down`                    |
+| Jump to the Selected Entry   | `Enter`                        | `Enter`                          |
+| Filter History               | `Cmd+F`                        | `Ctrl+F`                         |
+
+Cycling to History gives the list keyboard focus, so `Up` / `Down` walk the entries
+right away and the list scrolls to keep the selected entry on screen.
+
 ## AI Tab Shortcuts
 
 These shortcuts work in AI Terminal mode and affect the current tab:
@@ -134,6 +153,10 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
 | Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
 | Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+
+In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
+Right Bar instead, switching between the Participants and History panels. The Right
+Bar opens if it was closed.
 
 ### Tab Switcher
 
@@ -205,13 +228,19 @@ A freshly tiled pane takes the keyboard, and the caret lands in whatever that pa
 | Page Up/Down             | `Alt+Up/Down Arrow` while in output               |
 | Jump to Top/Bottom       | `Cmd+Up/Down Arrow` while in output               |
 
-## Font Size
+## Font Zoom
 
-| Action             | macOS         | Windows/Linux  |
-| ------------------ | ------------- | -------------- |
-| Increase Font Size | `Cmd+=`       | `Ctrl+=`       |
-| Decrease Font Size | `Cmd+-`       | `Ctrl+-`       |
-| Reset Font Size    | `Cmd+Shift+0` | `Ctrl+Shift+0` |
+| Action     | macOS         | Windows/Linux  |
+| ---------- | ------------- | -------------- |
+| Zoom In    | `Cmd+=`       | `Ctrl+=`       |
+| Zoom Out   | `Cmd+-`       | `Ctrl+-`       |
+| Reset Zoom | `Cmd+Shift+0` | `Ctrl+Shift+0` |
+
+Zoom is a multiplier over every surface at once, so the sizes you set for the
+interface, AI chat, terminal, file preview, and file editor keep their relative
+proportions as you scale. Reset returns the zoom to 100% and leaves those
+per-surface sizes exactly as you set them - to restore the sizes themselves, use
+**Factory Reset Fonts** at the top of Settings -> Display.
 
 ## Command Terminal
 
@@ -283,6 +312,7 @@ In AI mode, use `@` to reference files in your prompts:
 | Select Agent                     | `Enter` while in sidebar           | `Enter` while in sidebar           |
 | Filter Sessions (in Left Panel)  | `Cmd+F`                            | `Ctrl+F`                           |
 | Navigate Files                   | `Up/Down Arrow` while in file tree | `Up/Down Arrow` while in file tree |
+| Preview Fonts (Settings)         | `Up/Down Arrow` on a font picker   | `Up/Down Arrow` on a font picker   |
 | Extend File Selection            | `Shift+Up/Down Arrow` in file tree | `Shift+Up/Down Arrow` in file tree |
 | Multi-select Files               | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
 | Filter Files (in Files tab)      | `Cmd+F`                            | `Ctrl+F`                           |
@@ -293,6 +323,8 @@ In AI mode, use `@` to reference files in your prompts:
 | Search System Logs               | `Cmd+F`                            | `Ctrl+F`                           |
 | Search Director's Notes          | `Cmd+F`                            | `Ctrl+F`                           |
 | Open File Preview                | `Enter` on selected file           | `Enter` on selected file           |
+| Navigate Queued Messages         | `Up/Down Arrow` in Execution Queue | `Up/Down Arrow` in Execution Queue |
+| Queued Message Actions           | `Enter` in Execution Queue         | `Enter` in Execution Queue         |
 | Close Preview/Filter/Modal       | `Esc`                              | `Esc`                              |
 
 ### Searching Message History
@@ -330,7 +362,7 @@ the full walkthrough.
 | Close                               | `Esc`           | `Esc`           |
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
-`Cmd+=` / `Cmd+-` in [Font Size](#font-size), which resizes the whole interface.
+`Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom), which scales the whole interface.
 They apply only where the zoom moves type (markdown, code, and text views), and
 they never fire while you are typing, so the find bar and the markdown editor
 keep those keys. The same steps are available from the zoom pill that rests in
@@ -357,27 +389,93 @@ The field list is focused on open, so these work without clicking first.
 
 ## Memories Viewer
 
-Click a row in the file list first - these act on the focused row. See
+The file list is focused when the viewer opens, so these work right away. See
 [Memories](./memories) for the full walkthrough.
 
-| Action                       | Key                  |
-| ---------------------------- | -------------------- |
-| Previous / next memory       | `Up/Down Arrow`      |
-| Delete the selected memory   | `Backspace` or `Del` |
-| Clear the filter, then close | `Esc`                |
+| Action                     | macOS                | Windows/Linux        |
+| -------------------------- | -------------------- | -------------------- |
+| Previous / next memory     | `Up/Down Arrow`      | `Up/Down Arrow`      |
+| Delete the selected memory | `Backspace` or `Del` | `Backspace` or `Del` |
+| Jump to the filter box     | `/` or `Cmd+F`       | `/` or `Ctrl+F`      |
+| Toggle Preview / Edit      | `Cmd+E`              | `Ctrl+E`             |
+| Step back out              | `Esc`                | `Esc`                |
 
-The filter box in the stats bar matches both filenames and the text inside each
-memory, so `Esc` clears it before it closes the viewer.
+`/` only jumps to the filter when you are not already typing, so a slash typed
+into a memory stays a slash. `Cmd+F` works from anywhere, including the editor.
+
+`Esc` climbs back out one rung at a time rather than closing straight away:
+from the filter box it returns you to the list **keeping your query**, so you
+can filter and then arrow through the hits; pressing it again clears the
+filter, and once more closes the viewer.
+
+## Git Log
+
+Open it with `Cmd+Shift+G` (`Ctrl+Shift+G`). The viewer has two views, List and
+Graph, and remembers which one you left it on.
+
+| Action                         | macOS                      | Windows/Linux        |
+| ------------------------------ | -------------------------- | -------------------- |
+| Previous / next view           | `Cmd+Shift+[` / `]`        | `Ctrl+Shift+[` / `]` |
+| Previous / next commit         | `Up/Down Arrow` or `j`/`k` | same                 |
+| Jump a page of commits         | `PageUp` / `PageDown`      | same                 |
+| Newest / oldest commit         | `Home` / `End`             | same                 |
+| Previous / next branch (Graph) | `Left/Right Arrow`         | same                 |
+| Close the viewer               | `Esc`                      | `Esc`                |
+
+In Graph view each axis answers one question, and both read off what is drawn.
+`Up`/`Down` follow the branch line the selected commit sits on, skipping commits
+drawn beside it on other branches, and stop at that branch's newest and oldest
+commit. `Left`/`Right` are the only keys that cross branches: they move to the
+line drawn immediately left or right, landing at the height you were already at,
+so the selection slides sideways instead of jumping to another branch's tip.
+`Home`/`End` and the page keys also stay on the current branch. Clicking a commit
+message selects it, the same as clicking its dot. The graph is built from every
+branch, so all of this reaches commits the List view does not hold.
+
+## Agent Sessions Browser
+
+Opened with `Cmd+Shift+L`. The list view walks sessions; the detail view adds a
+one-key resume.
+
+| Action                           | macOS             | Windows/Linux      |
+| -------------------------------- | ----------------- | ------------------ |
+| Previous / next session (list)   | `Up/Down`         | `Up/Down`          |
+| Open the selected session (list) | `Enter`           | `Enter`            |
+| Search sessions (list)           | `Cmd+F`           | `Ctrl+F`           |
+| Resume the open session (detail) | `Cmd+R` / `Enter` | `Ctrl+R` / `Enter` |
+| Back to the list / close         | `Esc`             | `Esc`              |
+
+`Cmd+R` is off while you are renaming a session, so it cannot discard a name
+you are half-way through typing.
 
 ## Document Graph
 
-| Action                        | Key          |
-| ----------------------------- | ------------ |
-| Navigate to connected nodes   | `Arrow Keys` |
-| Re-center on node (document)  | `Enter`      |
-| Open URL (external link)      | `Enter`      |
-| Open document in File Preview | `O`          |
-| Close the graph               | `Esc`        |
+| Action                            | Key          |
+| --------------------------------- | ------------ |
+| Navigate to connected nodes       | `Arrow Keys` |
+| Preview document in-graph         | `Enter`      |
+| Open URL (external link)          | `Enter`      |
+| Re-center the graph on a node     | `Space`      |
+| Open document in File Preview     | `O`          |
+| Focus the search box              | `Cmd+F`      |
+| Cycle layout                      | `L`          |
+| Widen neighbor depth              | `D`          |
+| Cycle preview length              | `P`          |
+| Fit the whole graph on screen     | `F`          |
+| Increase / decrease node spacing  | `+` / `-`    |
+| Close the preview, then the graph | `Esc`        |
+
+`P` walks the node preview length through Off, 50, 100, 200, 350, and 500
+characters. At **Off** each document is drawn as a filename pill with no body
+box, which is the densest way to read the shape of a large graph.
+
+`L` walks the six layouts: **Mind Map** (tree columns), **Radial** (concentric
+rings), **Hierarchical** (top-down rows), **Force** (physics simulation),
+**Lobes** (documents grouped by which other documents they link to), and
+**Timeline** (one column per day, oldest on the left, captioned with the date).
+
+`F` re-frames the whole graph in the window. The graph also fits itself when it
+opens and whenever the layout or preview length changes.
 
 ## Customizing Shortcuts
 
@@ -441,6 +539,11 @@ Maestro tracks your keyboard shortcut usage and rewards you for becoming a power
 - Each shortcut displays a checkmark once you've used it
 - A progress bar shows how many shortcuts you've mastered out of the total
 - When you reach a new level, you'll see a celebration with confetti
+
+Only shortcuts that have a chord bound count toward mastery. Actions listed as
+**Unassigned**, and any shortcut whose keys you clear in **Settings** -> **Shortcuts**,
+sit outside the total, so 100% stays reachable. Give an unassigned action a chord and it
+joins the count.
 
 ![Keyboard Shortcuts Modal](./screenshots/shortcuts-modal.png)
 

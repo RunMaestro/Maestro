@@ -169,6 +169,8 @@ function SettingsModal({ theme, onClose }: Props) {
 - `initialFocusRef` - element to auto-focus on mount
 - `layerOptions` - pass-through to `useModalLayer`
 
+**A modal body must never focus its own input.** `<Modal>` always claims focus on mount, inside a `requestAnimationFrame`: it focuses `initialFocusRef` when one is passed and its own overlay container when one is not. That frame lands AFTER the body's own effects, so a child that calls `inputRef.current.focus()` itself is silently handed back to a `div` one frame later and the surface swallows every keystroke - the failure looks like a dead text box, not a focus bug. Pass `initialFocusRef` and let Modal do it. A body effect stays correct for things focus does not undo, such as putting the caret at the end of a textarea (`QueuedItemEditModal`).
+
 `<ModalFooter>` provides a standard cancel/confirm button pair with optional `destructive` styling (red confirm button).
 
 ### Modal Sizing (max footprint)
@@ -208,15 +210,29 @@ Both render `<ModalSubtitle theme={theme} subtitle={name} />` directly, exported
 
 Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
 
+```tsx
+<Modal
+	theme={theme}
+	title="About Maestro"
+	priority={MODAL_PRIORITIES.ABOUT}
+	onClose={onClose}
+	resizeKey="about" // stable, unique; enables the resize handles
+	defaultSize={{ width: 560, height: 480 }} // size before any resize
+	minSize={{ width: 460, height: 420 }} // floor for this modal's layout
+>
+```
+
 **Resetting a size.** Double-clicking any resize handle forgets that one modal's remembered size and snaps it back to its declared `defaultSize`. Pass the hook's `onResetSize`/`canReset` through to `ResizeHandles` to enable it - `<Modal>` already does, and every bespoke shell that renders `ResizeHandles` directly should too, so the gesture is uniform. `canReset` only gates the tooltip wording (the handles are invisible until hover, so the native `title` is the gesture's only discoverability), and `resetModalSize` skips the settings write when nothing was stored, so an idle double-click is free. Settings -> Display -> Modal Layout still offers the reset-every-modal escape hatch (`resetModalSizes`).
 
 The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
 - `useResizableModal` (`src/renderer/hooks/ui/useResizableModal.ts`) owns the drag. Like `useResizablePanel` it writes to the DOM during the drag and commits React state once on mouseup. Deltas are doubled because the card is centered: growing the width by W moves the right edge by only W/2, so doubling keeps the grip under the pointer.
 - Sizes persist in one `modalSizes` map in `uiStore`, keyed by `resizeKey`, written through to settings and hydrated by `loadAllSettings` on startup.
-- Minimums default to `MODAL_MIN_WIDTH` (360) / `MODAL_MIN_HEIGHT` (300), never exceeding the modal's declared `width`. Pass higher values when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
+- `defaultSize` is the size before any drag: its width falls back to the `width` prop and its height to 320, so a modal that opts in without declaring one opens far shorter than its old `maxHeight` let it grow. Declare both.
+- Minimums default to `DEFAULT_MODAL_MIN_SIZE` (320 x 240) in `src/renderer/utils/modalSizing.ts`. Pass a higher `minSize` when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
 - Sizes are clamped to `MODAL_MAX_VIEWPORT_RATIO` (90%) of the viewport both at drag time and at read time, so a modal sized on a large display still opens sanely on a laptop.
-- `ModalResizeGrip` renders the bottom-right grip; double-clicking it forgets the remembered size and returns the modal to its declared default.
+- `ResizeHandles` renders all eight edges and corners; double-clicking any of them forgets the remembered size and returns the modal to its declared default.
+- The frame is a flex column with a fixed header and footer, so **the body must be told to fill it**: a scroll container still carrying `max-h-[400px]` (or any fixed height) leaves dead space below the list no matter how far the user drags. Pass `contentClassName="p-6 flex-1 min-h-0 flex flex-col"` and give the scrolling child `flex-1 min-h-0 overflow-y-auto` instead of a height cap. `ShortcutsHelpModal` is the reference caller.
 
 `resizeKey` must be stable across renders - it is the persistence key, not a label.
 
@@ -427,6 +443,12 @@ The `ESC` pill is that exit. Use `<EscCloseButton>` (`src/renderer/components/ui
 
 Tests: query the pill by role, not by index. It is a real `<button>` now, so `getAllByRole('button')[n]` in a modal test counts it - scope list assertions to the rows themselves (e.g. `[data-action-label]`).
 
+### Arrow-Key Navigation Inside a Modal Belongs on the Element, Not `window`
+
+A `useEventListener('keydown', ...)` on `window` never sees a key pressed inside a `<Modal>`: the overlay stops keydown before it reaches the window, and whatever held focus when the surface opened (a composer textarea, a tab strip) can swallow the key first. Put the handler on the scrolling container or the card itself with `onKeyDown`, give it `tabIndex={-1}` plus `outline-none`, and make sure something focuses it - `initialFocusRef` for a `<Modal>`, a mount effect for a card. `ExecutionQueueBrowser` handles rows on its card and menu items on the action list for exactly this reason.
+
+Two rules go with it. **Let a focused control keep its own keys**: bail out when the event target is inside an `input`, `textarea`, or `[contenteditable]`, and leave `Enter` to a focused `<button>`, or the list steals the key from the control the user is actually on. And **take focus back when a child surface closes** (`useFocusOnClose`), because the focused element was just unmounted, focus falls to `<body>`, and the next arrow key silently does nothing - which reads as the keyboard dying halfway through.
+
 ### Segmented Toolbars (`<SegmentedControl>`)
 
 A horizontal row of mutually exclusive options rendered as one joined pill bar - the "Sort by: [Name][Created][Queries]" control above a grid or chart. Use `<SegmentedControl>` (`src/renderer/components/ui/SegmentedControl.tsx`), not a hand-rolled `.map()` over buttons with `borderLeft` seams.
@@ -531,9 +553,32 @@ onEscapeRef.current = () => {
 
 Losing the whole pane while trying to reset a filter is the bug this prevents. The clear button is the always-available path either way.
 
+**The box does not collapse, and a crowded row is not the reason to make it.** A `collapsible` variant that shrank to its magnifier until focused was tried and removed: hiding the primary control of a pane to buy horizontal space trades a layout problem for a discoverability one, and the neighbour it had to hide to fit (the Memory Viewer's unlinked chip) was a control too. When a toolbar cannot fit on one line, move what is NOT a control off that line instead - the Memory Viewer sends its corpus stats to a footer, which leaves the whole row for things the user can actually press.
+
+### A Surface That Reads and Edits Markdown
+
+Any pane whose content is a markdown document rides the **File Preview stack**, not a bare `<textarea>`:
+
+- **Reading** - `<Markdown preset="document">` inside a scroll container, with `<style>{generateProseStyles({ theme, scopeSelector })}</style>` so the document typography is scoped to that pane instead of leaking heading and table rules onto the chrome around it.
+- **Editing** - `<MarkdownEditor>` from `components/FilePreview/markdownEditor`, which brings CodeMirror syntax colouring, the wrap-aware line-number gutter, and an imperative handle (`focus`, `scrollToLine`, `setSearchMatches`, scroll-percent sync).
+- **Switching** - `Cmd/Ctrl+E`, read from the user's LIVE `toggleMarkdownMode` binding via `eventMatchesShortcutKeys`, never from a literal `e`. One chord flips a file preview and a memory alike; two spellings of one idea is how a keyboard stops being predictable.
+
+**Open in Preview.** A markdown pane is opened to read far more often than to write, so the rendered document is the default state and editing is one keystroke away rather than the state the user has to leave.
+
+Four details that are easy to miss:
+
+- **A modal layer must bind the chord itself.** A pane registered through `useModalLayer` blocks lower layers, so the app-level `toggleMarkdownMode` handler never runs while it is up.
+- **Hand the caret over on the switch.** Entering Edit must focus the editor (`requestAnimationFrame(() => editorRef.current?.focus())`); without it a writable surface appears while every keystroke still goes wherever focus already was, which reads as the editor being broken. Leaving Edit hands focus back to the list.
+- **Key the editor on the filename.** Undo history belongs to one document. Carried across a file switch, an undo pastes the previous file's text into this one.
+- **Put the border on a wrapper.** CM6 measures its viewport against its own host element, so a border on that host is counted twice once the content scrolls.
+
+**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect. Build those ranges with the same `splitOnMatches()` the rendered preview highlights with (`utils/highlightMatches`) so the two modes cannot disagree about what counts as a hit, and pass `-1` for the active index when the query is a FILTER rather than a find bar - there is no cursor into the results, so every hit gets the same wash.
+
+`MemoryViewer` is the reference implementation.
+
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 
-The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus - clicking a row is enough, since rows are real `<button>`s and the handler sits on the list container:
+The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys once a row has focus. Rows are real `<button>`s and the handler sits on the list container, so clicking one is enough - or pass `autoFocusList` and the surface opens with the list already focused:
 
 - **Up / Down** walk the **visible** rows. The order comes from `visibleOrder`, which skips collapsed categories: stepping into a collapsed group would move the selection somewhere the user cannot see. The ends do not wrap, and a selection the current filter hides means the keys enter the list from whichever end they point at.
 - **Backspace / Delete** raise `onDeleteItem(selectedId)`. The list only reports the intent; the consumer owns the confirmation. Both keys are ignored unless the event came from a row, so Backspace on the "+ New" button in the same container cannot delete anything.
@@ -541,6 +586,8 @@ The shared list pane (`components/shared/DualPaneFileEditor.tsx`) handles keys o
 Two focus rules the component exists to enforce:
 
 **Selection is chased, not assumed.** `onSelect` may be async or may refuse (unsaved changes), so arrow nav records the requested id and only moves DOM focus once `selectedId` actually lands on it.
+
+**`autoFocusList` claims focus once, and only if nothing else has it.** The list loads async, so it cannot fire on mount - it waits for the first selection, which means a fast user may already be typing in the filter box by then. Focus must stay where they put it, so the effect checks `document.activeElement` first (the same rule the layer stack uses when restoring focus) and gives up if anything outside the list holds it. Only turn it on for a surface whose primary job is walking the list; on an editor-first surface it steals the caret from the textarea.
 
 **After a consumer-driven delete, bump `listFocusToken`.** The row that had focus was just unmounted, so focus falls to `<body>` and the next Backspace does nothing - which reads as the keyboard dying halfway through a cleanup pass. Only the consumer knows when its own async delete settled, hence the token.
 
@@ -555,6 +602,8 @@ This matters for any resizable modal that draws a chart: a hard-coded SVG width 
 ### Horizontally Scrolling Strips (`useHorizontalScroll`)
 
 `useHorizontalScroll(ref, resetKey?)` (`hooks/ui/useHorizontalScroll.ts`) returns `{ canScrollLeft, canScrollRight, scrollByPage, scrollIntoView }` for a row that overflows sideways. Reach for it whenever a set that keeps growing has to stay one row tall: the New Agent Wizard's provider strip is the first consumer, because a wrapping grid pushed the Continue button below the fold once the provider count passed eight.
+
+**A strip is for the sets that do not fit, not for every set.** The same wizard drops back to a centered wrapping block whenever the tiles fit in two rows - see [Two Shapes for One Tile Set](#two-shapes-for-one-tile-set-agentgridlayout) below. Four tiles pinned to the left edge of a wide scrolling row read as a layout that forgot to reflow, and the affordances the hook exists to provide (fades, arrows) have nothing to point at.
 
 Two things a bare `overflow-x-auto` gets wrong, and this hook fixes:
 
@@ -589,6 +638,38 @@ useEffect(() => {
 `scrollIntoView(child, edgePaddingPx?)` scrolls the minimum that reveals the child, and only for the edge it is actually past. Pass the width of whatever floats over the strip's ends as `edgePaddingPx` - share one constant with the fade's own `width` so the two cannot drift. It measures from `getBoundingClientRect()` rather than `offsetLeft`, which is relative to the nearest positioned ancestor (the wrapper, not the strip) and would silently drift by the wrapper's padding. An item wider than the viewport overflows both edges at once; the left edge wins, since a visible leading edge beats a visible trailing one.
 
 It no-ops without `ResizeObserver`, so jsdom component tests render without a polyfill (and both flags read `false`, since jsdom reports zero for every measurement).
+
+### Two Shapes for One Tile Set (`agentGridLayout`)
+
+The New Agent Wizard draws the same provider tiles two ways, and which one it
+picks is derived from the count rather than authored:
+`resolveAgentGridLayout(tileCount, containerWidth)` in
+`components/Wizard/screens/AgentSelectionScreen/utils/agentGridLayout.ts`.
+
+- **More tiles than fit in two rows -> the scrolling strip.** A third row pushes
+  the Continue button below the fold, which is the whole reason the strip exists.
+- **Two rows or fewer -> a centered wrapping block.** This is the everyday case
+  once the user filters to the providers they actually have. A handful of tiles
+  pinned to the left edge of a wide scrolling row reads as a layout that forgot
+  to reflow.
+
+Two rules that are easy to get wrong:
+
+- **Balance the rows, do not fill them.** Five tiles across a four-wide row draws
+  4 + 1, which looks like a mistake; `ceil(n / 2)` columns draws 3 + 2, which
+  reads as an arrangement. The block then caps its own `maxWidth` at that many
+  tiles, which is what forces the break - `flex-wrap` alone would fill the row.
+- **Measure the OUTER wrapper, never the block itself.** The block's width is an
+  output of the layout, so measuring it feeds the cap back in and it shrinks a
+  step on every pass. `useElementWidth` on the full-width parent is the input.
+
+The column count is also what up/down arrow movement steps by, so the component
+reports it upward (`onColumnsChange`) rather than letting the keyboard handler
+assume a shape. A handler moving by an assumed row width jumps the focus ring to
+a tile that is not above or below the one the user is on, and the same width cap
+that keeps the block from spreading wider than the strip is what keeps the two
+in agreement. Fall back to a fixed column count until the first measurement
+lands, since `useElementWidth` reports 0 on the first frame and in jsdom.
 
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
@@ -684,6 +765,8 @@ An inline arrow function is a new identity on every render, so React detaches th
 **No `behavior: 'smooth'` on a long list.** The animation to a distant index runs long enough for the user's next wheel gesture to arrive mid-flight, and the two fight over the scroll offset.
 
 The same identity trap applies to a non-virtualized list, minus the loop - the scroll just fires more often than the user changed anything. Use `useScrollIntoView` (`hooks/ui/useScrollIntoView.ts`) there, which keys on the value rather than on render count.
+
+**Smooth or instant is decided by how the user moves through the list**, not by taste. `useScrollIntoView(isOpen, selectedIndex, itemCount, behavior)` defaults to `'smooth'`, which is right for a short dropdown stepped one item at a time (the slash-command, tab-completion, and @-mention popovers in `InputArea`). Pass `'auto'` for a list the user HOLDS an arrow key on: key repeat fires faster than a smooth scroll animates, so each repeat cancels the animation in flight and the list lurches and stalls instead of stepping. An instant scroll per keypress is what reads as smooth under key repeat. `GroupChatHistoryPanel` is the first `'auto'` caller, and it pairs the hook with `scroll-p-2` on the scroll container so `block: 'nearest'` leaves a sliver of the next entry visible at the edges - without the padding the selection pins flat against the boundary and a held arrow looks like the list stopped moving.
 
 Testing it needs the virtualizer mocked: jsdom has no layout engine, so the real one measures a zero-height scroll element, yields zero items, and every assertion about row scrolling passes vacuously. `FileSearchModal.render.test.tsx` mocks `useVirtualizer` to emit a fixed window of rows, stubs `Element.prototype.scrollIntoView` (jsdom does not implement it), and asserts it is never called. Lead with a test that the rows exist, or the suite proves nothing.
 
@@ -962,6 +1045,8 @@ Do NOT reach for it to add a global shortcut. Those belong in `constants/shortcu
 ### Keyboard Mastery Gamification
 
 Shortcut usage is tracked for a gamification system (`keyboardMasteryStats`). The `recordShortcutUsage` function in settings increments counters and can trigger level-up celebrations.
+
+The percentage is `countUsedBoundShortcuts(bound, used) / bound.length`, where `bound` comes from `collectBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`. Every surface that shows a mastery figure (the help modal's bar, the Usage Dashboard ring and its Unused Shortcuts list, the leaderboard payload, the store's level-up check) runs its maps through that one helper, so they cannot disagree about the total. Unbound shortcuts are excluded from BOTH ends: they still appear in the help modal's list marked `Unassigned` (the user should know the action exists and can bind it), but they carry no progress circle, never appear as "unused", and never sit in the denominator. See [RENDERER-SERVICES.md -> keyboardMastery.ts](RENDERER-SERVICES.md#keyboardmasteryts-87-lines).
 
 ---
 
@@ -1358,12 +1443,21 @@ weight.
 
 ### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
 
-"4 providers available locally of 11 supported", plus the toggle that brings the
-other 7 back. Most of the providers Maestro supports are not installed on any
-given machine, so listing all of them buries the two or three a user can pick
-behind a wall of dimmed rows. Both provider pickers - the wizard's tile strip
-and the New Agent modal's list - hide the rest by default and show this one bar,
-so the count and the toggle cannot disagree about what is being filtered.
+"4 providers available locally of 11 supported", plus the toggle that switches
+between the two lists. Most of the providers Maestro supports are not installed
+on any given machine, so listing all of them buries the two or three a user can
+pick behind a wall of dimmed rows. Both provider pickers - the wizard's tile
+strip and the New Agent modal's list - show this one bar, so the count and the
+toggle cannot disagree about what is being filtered.
+
+**Which way the toggle starts is per-picker, and deliberately not the same.**
+The New Agent modal opens FILTERED, because it is the everyday path and its user
+already knows what they have installed. The wizard opens on ALL supported
+providers, because it is a first-run screen: someone whose provider is installed
+but undetected (a custom path, an SSH host detection could not probe) would
+otherwise open the wizard, not see it, and conclude Maestro does not support it.
+The filtering RULES below are shared regardless, so the two can only differ in
+where they start, never in what "available" means.
 
 The filtering rules themselves live in `src/renderer/utils/providerAvailability.ts`
 (`filterToAvailableProviders`, `providerLocationLabel`) rather than in either
@@ -1620,6 +1714,31 @@ every edit and does exactly that. Wrap it in `useStableCallback()`
 (`hooks/utils/useStableCallback.ts`) and keep the component memo's dependencies
 off the content (depend on `file.path`, not `file`). `useAutoRunMarkdown` does
 the wrapping internally, so its callers cannot get this wrong.
+
+#### Preview/edit scroll sync rides the same `data-source-line` tags
+
+`rehypeSourceLine` stamps EVERY block, not just task checkboxes, and the second
+consumer is `lineSync.ts` (`components/FilePreview/lineSync.ts`):
+`domGetTopLineByAttr()` reads the tags to find the source line at the fold so
+the preview -> edit toggle lands where the reader was, and
+`domScrollToLineByAttr()` walks them back the other way.
+
+**A component override in `createMarkdownComponents()` must forward its props.**
+`p`, `li`, and `blockquote` were written as
+`React.createElement('p', null, children)`, which silently eats
+`data-source-line` along with everything else. Headings forwarded theirs, so the
+tags did not disappear - they thinned out to HEADINGS ONLY, and the walk could
+no longer tell "the top of the document" from "the first heading". Destructure
+`node` out (it is react-markdown's mdast node and React warns if it reaches the
+DOM) and spread the rest.
+
+**"Above the first tagged block" is line 1, not the first block's line.** The
+container's own leading padding puts even block one below the fold at
+`scrollTop` 0, so a `blocks[0]` fallback answers with the first block for a
+document scrolled to the very top. `domScrollToLineByAttr()` is the mirror
+image: for a line at or above the first block it writes a hard
+`scrollTop = 0` rather than aligning block one with the scroller edge, which
+would scroll that same padding away and land a few pixels short.
 
 #### Alert callouts
 
@@ -2035,6 +2154,25 @@ Two rules for adding a control here:
 - **Ask the store whether the control is on screen, once.** `selectNowPlayingVisible` in `mediaPlaybackStore` answers that for the pill, and both the pill and the header's reserve read it. Two copies of "is it visible" is how a width reserve ends up describing a header nobody is looking at.
 
 Testing this drives `leftSidebarWidth` in `useSettingsStore` directly, the same way the LIVE-pill tests do; jsdom measures nothing, so a real-layout test is not available. Assert the wordmark's ABSENCE at narrow widths, not that `truncate` is gone - the latter passes on a wordmark that still renders clipped.
+
+---
+
+## Right Bar Toolbar Density (`historyPillDensity`)
+
+The History panel's toolbar is the same problem one panel over, and it is worth reading as the counter-example to a static threshold. The row is `[search button][USER][AGENT][AUTO][CUE][help button]`, it neither wraps nor scrolls, and it used to decide its own density from one number: `rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD`.
+
+**A panel width cannot answer "does this fit".** What the pills need also depends on the interface font (the root is a proportional face now, and Inter's capitals average nearer 0.7em where Roboto Mono was a flat 0.6em), on the Cmd+= zoom, and on whether Cue is on - three pills or four. Same 420px panel, several different answers. When the answer came out wrong nothing shrank, because every child was `flex-shrink-0`: the overflow spilled out of both ends of a centred row and clipped the search and help buttons off the edges. A control the user cannot see is a control they do not have.
+
+The fix is to measure, and the shape of it generalizes:
+
+- **The row claims the leftover width** (`flex-1 min-w-0`) so that measuring it reports what is FREE. A `flex-shrink-0` row always measures its own natural width, which says nothing about whether its neighbours still fit - so the ladder is opt-in via `fillWidth`, and the opt-in is also the layout change that makes it meaningful. The Director's Notes copy of the same component sits beside an activity graph that already claims the leftover width, so it leaves the flag off.
+- **Measure a mirror, never the live controls.** A hidden, out-of-flow copy of the labels at the BASE size gives a width that is a property of the font rather than of the rung currently rendered. Feeding the rendered pills back in would make each choice depend on the last one and oscillate.
+- **Everything else is arithmetic, not a second measurement.** Label advance scales linearly with font size and the tracking is in `em`, so one measured width covers every rung. The padding, icon, and gaps are rem-based, so they are computed from the live root font size rather than from pixel literals - a literal is right only at a 16px root, which is the bug in miniature.
+- **Declare a yield order.** `PILL_DENSITIES` gives up the icon first (it repeats what the pill spells out in words, and the glyph plus its gap is over an em per pill), then padding, then two steps of type size. Line height is fixed at every rung, so the pills keep one height and the toolbar does not change shape as the panel is dragged.
+- **Keep a last-resort guarantee.** The row is `overflow-hidden`, so at an interface font the bottom rung cannot absorb, the pills clip and the buttons do not. Pick which one loses; do not leave it to paint order.
+- **Keep the static prediction as the pre-measurement prior.** `useElementWidth` reports 0 until its first observation, so the first paint has nothing to compare. The old `compact` flag is exactly the right guess for that one frame, which is why the prop stayed.
+
+The selection logic is a pure function (`resolvePillDensity` in `src/renderer/components/History/historyPillDensity.ts`) precisely so it can be tested: jsdom has no layout engine, so the component test can only assert the layout contract (the row fills, the mirror exists, the overflow is contained) and the arithmetic has to be exercised separately.
 
 ---
 

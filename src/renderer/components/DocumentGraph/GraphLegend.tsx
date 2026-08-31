@@ -7,7 +7,7 @@
  * - Internal edges: Solid lines connecting markdown documents
  * - External edges: Dashed lines connecting to external domains
  * - Keyboard shortcuts: Arrow keys to navigate, Enter to preview, O to open,
- *   L to cycle the layout, D to widen the neighbor depth
+ *   L to cycle the layout, D to widen the neighbor depth, F to fit the graph
  *
  * The legend is theme-aware and uses the same colors as the actual mind map elements.
  */
@@ -117,6 +117,14 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 	{
 		keys: 'D',
 		description: 'Widen neighbor depth',
+	},
+	{
+		keys: 'P',
+		description: 'Cycle preview length (ends at Off)',
+	},
+	{
+		keys: 'F',
+		description: 'Fit the whole graph on screen',
 	},
 ];
 

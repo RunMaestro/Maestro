@@ -2,10 +2,12 @@ import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 
 // Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
 // wiring rather than re-running the layout transform (covered in tileNewTab.test).
@@ -91,6 +93,13 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		// a tiled group, so it must exist even for tests that only care about a
 		// non-pane shortcut.
 		isPaneShortcut: () => false,
+		// Same reason: a shortcut that moves focus as part of its action calls this
+		// on the way through, so it has to exist even for tests that only assert on
+		// what the action changed. Missing, it throws inside the dispatched
+		// listener - which jsdom turns into an uncaught exception rather than a
+		// failure, so the test still reports pass while the rest of the handler
+		// (the trackShortcut call) silently never runs.
+		setActiveFocus: vi.fn(),
 		sessions: [],
 		activeSessionId: '',
 		activeGroupChatId: null,
@@ -1731,11 +1740,11 @@ describe('useMainKeyboardHandler', () => {
 				expect(useSettingsStore.getState().fontSize).toBe(20);
 			});
 
-			it('should reset font size on Cmd+Shift+0', () => {
+			it('should reset the font zoom on Cmd+Shift+0', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				// Set font size to non-default
-				useSettingsStore.setState({ fontSize: 20 });
+				// The shortcut resets the zoom multiplier, not the stored sizes.
+				useSettingsStore.setState({ fontSize: 20, fontZoom: 1.5 });
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
@@ -1753,8 +1762,8 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Cmd+Shift+0 should reset font size
-				expect(useSettingsStore.getState().fontSize).toBe(14);
+				expect(useSettingsStore.getState().fontZoom).toBe(1);
+				expect(useSettingsStore.getState().fontSize).toBe(20);
 			});
 		});
 
@@ -2236,6 +2245,11 @@ describe('useMainKeyboardHandler', () => {
 					handleCloseCurrentTab: mockHandleCloseCurrentTab,
 					setSessions: mockSetSessions,
 					activeGroupChatId: 'group-1',
+					// The next/prev-tab chord is the one exception: it cycles the right
+					// panel's tabs instead of doing nothing.
+					setRightPanelOpen: vi.fn(),
+					setGroupChatRightTab: vi.fn(),
+					setActiveFocus: vi.fn(),
 				});
 
 				act(() => {
@@ -2869,10 +2883,13 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
-	describe('font size shortcuts', () => {
+	describe('font zoom shortcuts', () => {
+		// Cmd+= / Cmd+- move `fontZoom`, a multiplier over every surface size,
+		// rather than the interface size directly. Each surface now carries its
+		// own size, and pushing the base around would compress those differences
+		// on the way up and lose them at the clamp.
 		beforeEach(() => {
-			// Reset font size to default before each test
-			useSettingsStore.setState({ fontSize: 14 });
+			useSettingsStore.setState({ fontSize: 14, fontZoom: 1, terminalFontSize: 0 });
 		});
 
 		it('should increase font size with Cmd+=', () => {
@@ -2894,7 +2911,10 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
+			// The stored size is untouched, which is what makes the zoom
+			// perfectly reversible.
+			expect(useSettingsStore.getState().fontSize).toBe(14);
 		});
 
 		it('should increase font size with Cmd++', () => {
@@ -2914,7 +2934,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
 		});
 
 		it('should decrease font size with Cmd+-', () => {
@@ -2936,14 +2956,37 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(12);
+			expect(useSettingsStore.getState().fontZoom).toBe(0.9);
 		});
 
-		it('should reset font size to default (14) with Cmd+Shift+0', () => {
+		it('should keep the proportions between surfaces while zooming', () => {
+			// The whole reason zoom is a multiplier: a user who set the terminal
+			// smaller than the interface keeps that relationship.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			useSettingsStore.setState({ fontSize: 16, terminalFontSize: 12, fontZoom: 1 });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: '=', metaKey: true, bubbles: true })
+				);
+			});
+
+			const state = useSettingsStore.getState();
+			expect(state.fontSize).toBe(16);
+			expect(state.terminalFontSize).toBe(12);
+			expect(state.fontZoom).toBeGreaterThan(1);
+		});
+
+		it('should reset the zoom with Cmd+Shift+0, keeping custom surface sizes', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			// Set font size to something other than default
-			useSettingsStore.setState({ fontSize: 20 });
+			// Custom sizes are a Settings preference, not zoom state - wiping
+			// them from a keystroke would be unrecoverable.
+			useSettingsStore.setState({ fontSize: 20, terminalFontSize: 11, fontZoom: 1.5 });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
@@ -2963,13 +3006,15 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
-			expect(useSettingsStore.getState().fontSize).toBe(14);
+			expect(useSettingsStore.getState().fontZoom).toBe(1);
+			expect(useSettingsStore.getState().fontSize).toBe(20);
+			expect(useSettingsStore.getState().terminalFontSize).toBe(11);
 		});
 
-		it('should not exceed maximum font size (24)', () => {
+		it('should not exceed the maximum zoom', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			useSettingsStore.setState({ fontSize: 24 });
+			useSettingsStore.setState({ fontZoom: FONT_ZOOM_MAX });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
@@ -2985,13 +3030,13 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(24);
+			expect(useSettingsStore.getState().fontZoom).toBe(FONT_ZOOM_MAX);
 		});
 
-		it('should not go below minimum font size (10)', () => {
+		it('should not go below the minimum zoom', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			useSettingsStore.setState({ fontSize: 10 });
+			useSettingsStore.setState({ fontZoom: FONT_ZOOM_MIN });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
 				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
@@ -3007,10 +3052,10 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(10);
+			expect(useSettingsStore.getState().fontZoom).toBe(FONT_ZOOM_MIN);
 		});
 
-		it('should work when modal is open (font size is a benign viewing preference)', () => {
+		it('should work when a modal is open (zoom is a benign viewing preference)', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
 			result.current.keyboardHandlerRef.current = createMockContext({
@@ -3029,7 +3074,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(useSettingsStore.getState().fontSize).toBe(16);
+			expect(useSettingsStore.getState().fontZoom).toBe(1.1);
 		});
 
 		it('should not trigger with Alt modifier (avoids conflict with session jump)', () => {
@@ -4355,5 +4400,101 @@ describe('useMainKeyboardHandler - openPromptComposer', () => {
 		press({ activeSession: { id: 'agent-1', inputMode: 'terminal' } });
 
 		expect(useModalStore.getState().isOpen('promptComposer')).toBe(false);
+	});
+});
+
+// ============================================================================
+// Group chat Right Bar: Cmd+Shift+[ / Cmd+Shift+]
+// ============================================================================
+
+/**
+ * A group chat has no AI tabs, so the tab-cycling chord is dead there. It walks
+ * the Right Bar's two panels instead - the only two views a room has.
+ */
+describe('group chat right panel cycling', () => {
+	const pressTabCycle = (shortcutId: 'nextTab' | 'prevTab', overrides: Record<string, unknown>) => {
+		// The store is what the app itself reads back to persist the choice, so it
+		// has to agree with the context object the handler is gated on.
+		useGroupChatStore.setState({
+			activeGroupChatId: (overrides.activeGroupChatId as string | null) ?? null,
+		} as never);
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === shortcutId,
+			activeSessionId: 'agent-1',
+			activeSession: { id: 'agent-1', name: 'Agent', inputMode: 'ai' },
+			...overrides,
+		});
+
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: shortcutId === 'nextTab' ? ']' : '[',
+					metaKey: true,
+					shiftKey: true,
+					bubbles: true,
+					cancelable: true,
+				})
+			);
+		});
+	};
+
+	beforeEach(() => {
+		useGroupChatStore.setState({ groupChatRightTab: 'participants' } as never);
+		useUIStore.setState({ rightPanelOpen: true } as never);
+	});
+
+	it('switches Participants -> History on Cmd+Shift+]', () => {
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
+	});
+
+	it('switches back on Cmd+Shift+[ - two panels, so either direction flips', () => {
+		useGroupChatStore.setState({ groupChatRightTab: 'history' } as never);
+
+		pressTabCycle('prevTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('participants');
+	});
+
+	it('remembers the panel for that chat', () => {
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatRightTab:chat-1', 'history');
+	});
+
+	it('moves focus with the panel, so it answers the arrows straight away', () => {
+		const setActiveFocus = vi.fn();
+
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1', setActiveFocus });
+
+		expect(setActiveFocus).toHaveBeenCalledWith('right');
+	});
+
+	it('opens the Right Bar when it is closed - a hidden switch reads as a dead key', () => {
+		useUIStore.setState({ rightPanelOpen: false } as never);
+
+		pressTabCycle('nextTab', { activeGroupChatId: 'chat-1' });
+
+		expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
+	});
+
+	it('leaves the chord to the agent tabs when no room is open', () => {
+		const navigateToNextUnifiedTab = vi.fn().mockReturnValue(null);
+
+		pressTabCycle('nextTab', {
+			activeGroupChatId: null,
+			setSessions: vi.fn((updater: unknown) =>
+				typeof updater === 'function'
+					? (updater as (p: unknown[]) => unknown)([{ id: 'agent-1' }])
+					: undefined
+			),
+			navigateToNextUnifiedTab,
+		});
+
+		expect(navigateToNextUnifiedTab).toHaveBeenCalled();
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('participants');
 	});
 });

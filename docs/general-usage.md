@@ -129,7 +129,7 @@ widget that stays on top of whatever you are doing:
   file's tab, which re-docks the player into it.
 - **Close** it to get it out of the way. This hides the controls only - the audio
   keeps playing. Bring it back by opening a media file again, or with
-  **Show Floating Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
+  **Open Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
 
 Audio-only files get just the controls, since there is no picture to show.
 
@@ -428,6 +428,8 @@ A queued item carries a **Force Send** button that dispatches that message immed
 ### Execution Queue view
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
+
+The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry.
 
 Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims with an explanation when the item cannot run yet because another tab in that agent is working and Forced Parallel Execution is off - a state you can fix from Settings. It is hidden entirely when there is nothing to force: the item's own tab is already mid-turn, so the item is next in line anyway, or the tab it was queued for is gone. When another tab is working, Send Now confirms first and lists which tabs are busy.
 

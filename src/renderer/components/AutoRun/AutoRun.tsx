@@ -66,6 +66,7 @@ import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
 import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -621,6 +622,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
 	const effectivePreviewBionifyReadingMode = bionifyReadingMode && !hasActivePreviewSearch;
 
+	// Auto Run is a markdown document viewer/editor, so it rides the same two
+	// surfaces the File Preview tab does rather than carrying fonts of its own.
+	const previewTypography = useSurfaceTypography('filePreview');
+	const editorTypography = useSurfaceTypography('fileEditor');
+
 	// Markdown rendering: prose styles, task counts, token count, remark plugins, components
 	const { proseStyles, taskCounts, tokenCount, remarkPlugins, markdownComponents } =
 		useAutoRunMarkdown({
@@ -802,10 +808,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								onPaste={handlePaste}
 								placeholder="Capture notes, images, and tasks in Markdown. (type {{ for variables)"
 								readOnly={isLocked}
-								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none font-mono text-sm ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
+								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
 								style={{
 									borderColor: isLocked ? theme.colors.warning : theme.colors.border,
 									color: theme.colors.textMain,
+									// Editing a markdown document, so it follows the File Editor
+									// surface - the same setting the file-tab editor uses. The
+									// line-number gutter copies these off the live element, so
+									// the two cannot drift apart.
+									fontFamily: editorTypography.fontFamily,
+									fontSize: `${editorTypography.fontSize}px`,
 									backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
 									...(showLineNumbers
 										? { paddingLeft: lineNumberGutterMetrics(localContent).textPaddingLeft }
@@ -848,7 +860,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.textMain,
-								fontSize: '13px',
+								// This IS a file preview - the same markdown the File Preview tab
+								// renders, in a different frame - so it follows that surface's
+								// font and size rather than a hard-coded 13px. Tailwind's
+								// `prose-sm` pins an absolute rem size, so the explicit size
+								// here is what actually wins; everything inside is in `em` and
+								// follows. Without this a proportional face rendered at the old
+								// fixed 13px, which reads far smaller than 13px of monospace.
+								fontFamily: previewTypography.fontFamily,
+								fontSize: `${previewTypography.fontSize}px`,
 							}}
 						>
 							<style>{proseStyles}</style>

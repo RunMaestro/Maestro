@@ -184,7 +184,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 						<button
 							type="button"
 							onClick={handleRetryWithUpstream}
-							className="px-4 py-2 rounded transition-colors"
+							className="px-4 py-1.5 rounded transition-colors text-sm"
 							style={{
 								backgroundColor: theme.colors.accent,
 								color: theme.colors.accentForeground,
@@ -198,7 +198,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 						<button
 							type="button"
 							onClick={handleCancel}
-							className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+							className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							title={`Stop git ${operation}`}
 							data-testid="git-command-cancel"
@@ -210,7 +210,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 					<button
 						type="button"
 						onClick={handleClose}
-						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 						title={
 							status === 'running'

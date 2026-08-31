@@ -19,7 +19,9 @@ import {
 	calculateLayout,
 	buildAdjacencyMap,
 	calculateNodeHeight,
-	NODE_WIDTH,
+	calculateNodeWidth,
+	NODE_PILL_CHAR_WIDTH,
+	NODE_PILL_CHROME_WIDTH,
 	NODE_HEADER_HEIGHT,
 	NODE_SUBHEADER_HEIGHT,
 	DESC_LINE_HEIGHT,
@@ -27,8 +29,10 @@ import {
 	EXTERNAL_NODE_WIDTH,
 	EXTERNAL_NODE_HEIGHT,
 } from './mindMapLayouts';
+import { isPreviewOff } from './previewCharLimit';
 import { logger } from '../../utils/logger';
 import { GraphMiniMap } from './GraphMiniMap';
+import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
 
 // ============================================================================
 // Types
@@ -44,7 +48,8 @@ export interface MindMapNode {
 	width: number;
 	height: number;
 	depth: number;
-	side: 'left' | 'right' | 'center' | 'external';
+	/** Which band placed this node. `orphan` = unreachable from the center. */
+	side: 'left' | 'right' | 'center' | 'external' | 'orphan';
 	nodeType: 'document' | 'external';
 	label: string;
 	filePath?: string;
@@ -59,11 +64,15 @@ export interface MindMapNode {
 	wordCount?: number;
 	size?: string;
 	brokenLinks?: string[];
+	/** True when the layout placed this node in the orphan band. */
+	isOrphan?: boolean;
 	isLargeFile?: boolean;
 	isSelected?: boolean;
 	isFocused?: boolean;
 	connectionCount?: number;
 	neighbors?: Set<string>;
+	/** Last-modified time in epoch ms, 0 or undefined when unknown. */
+	mtime?: number;
 }
 
 /**
@@ -103,6 +112,11 @@ export interface MindMapProps {
 	maxDepth: number;
 	/** Whether to show external link nodes */
 	showExternalLinks: boolean;
+	/**
+	 * Draw documents the center cannot reach, in a band below the graph.
+	 * Only a scope-mode graph can have any - see `BuildOptions.scopeFiles`.
+	 */
+	showOrphans?: boolean;
 	/** Currently selected node ID */
 	selectedNodeId: string | null;
 	/** Callback when a node is selected */
@@ -131,17 +145,55 @@ export interface MindMapProps {
 	containerRef?: React.RefObject<HTMLDivElement>;
 	/** Whether the help/legend drawer is open - slides the minimap clear of it */
 	legendExpanded?: boolean;
+	/**
+	 * Bump this to re-frame the whole graph on screen. It is a token rather than
+	 * a callback because the fit has to happen inside the canvas, which owns the
+	 * transform; the parent only needs to say "now".
+	 */
+	fitToken?: number;
 }
 
 // ============================================================================
 // Rendering Constants (not part of layout algorithms)
 // ============================================================================
+/**
+ * Zoom range. The floor used to be 0.2, which is not far enough out to frame a
+ * graph of any size - the user could not zoom out to see the whole thing no
+ * matter how far they scrolled, which reads as the canvas being broken rather
+ * than as a clamp.
+ */
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 3;
+/** Zoom-to-fit never magnifies past 1:1; a three-node graph should not fill the screen. */
+const FIT_MAX_ZOOM = 1;
+
 /** Node corner radius */
 const NODE_BORDER_RADIUS = 12;
 /** Open icon size */
 const OPEN_ICON_SIZE = 14;
 /** Open icon padding from node edge */
 const OPEN_ICON_PADDING = 8;
+
+/**
+ * Where the open-file icon sits inside a document node, in canvas space.
+ *
+ * Shared by the renderer and the click hit test so the two cannot drift: the
+ * icon is centred in the title band, which is the header strip on a full card
+ * and the whole node once previews are off and the node is a pill.
+ */
+export function openIconRect(
+	node: Pick<MindMapNode, 'x' | 'y' | 'width' | 'height'>,
+	previewCharLimit: number
+): { x: number; y: number; size: number } {
+	const bandHeight = isPreviewOff(previewCharLimit)
+		? node.height
+		: Math.min(node.height, NODE_HEADER_HEIGHT);
+	return {
+		x: node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING,
+		y: node.y - node.height / 2 + (bandHeight - OPEN_ICON_SIZE) / 2,
+		size: OPEN_ICON_SIZE,
+	};
+}
 
 // ============================================================================
 // Utility Functions
@@ -322,6 +374,12 @@ function drawLink(
 // ============================================================================
 
 /**
+ * The graph's historical font stack, and the default when the Document Graph
+ * font setting is unset. Kept so an untouched install renders unchanged.
+ */
+const DEFAULT_GRAPH_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+/**
  * Wrap text to fit within a maximum width, returning lines
  */
 function wrapText(
@@ -370,7 +428,12 @@ function renderDocumentNode(
 	isHovered: boolean,
 	matchesSearch: boolean,
 	searchActive: boolean,
-	previewCharLimit: number = 100
+	previewCharLimit: number = 100,
+	// The Document Graph font setting. Canvas needs a real family string - it
+	// cannot read a CSS variable - so it is threaded in rather than inherited.
+	// The historical stack is the default, so an unset setting renders exactly
+	// as before.
+	fontFamily: string = DEFAULT_GRAPH_FONT
 ): void {
 	const {
 		x,
@@ -383,6 +446,7 @@ function renderDocumentNode(
 		filePath,
 		isSelected,
 		isFocused,
+		isOrphan,
 	} = node;
 	// Use description (frontmatter) or fall back to contentPreview (plaintext)
 	const previewText = description || contentPreview;
@@ -394,6 +458,61 @@ function renderDocumentNode(
 	const nodeLeft = x - width / 2;
 	const nodeTop = y - height / 2;
 
+	// Header fill, shared by the full card and the pill form below.
+	const headerFill =
+		isFocused || isSelected
+			? theme.colors.accent
+			: isHovered
+				? `${theme.colors.accent}CC`
+				: `${theme.colors.accent}99`;
+	const borderStroke =
+		isFocused || isSelected
+			? theme.colors.accent
+			: isOrphan
+				? theme.colors.warning
+				: isHovered
+					? `${theme.colors.accent}80`
+					: theme.colors.border;
+
+	// Previews off: the node is a filename pill. No body box, no folder
+	// sub-header, no preview text - just enough to read the graph's shape.
+	if (isPreviewOff(previewCharLimit)) {
+		const radius = height / 2;
+		ctx.fillStyle = headerFill;
+		roundRect(ctx, nodeLeft, nodeTop, width, height, radius);
+		ctx.fill();
+
+		ctx.strokeStyle = borderStroke;
+		ctx.lineWidth = isFocused || isSelected ? 2 : 1;
+		if (isOrphan && !isFocused && !isSelected) ctx.setLineDash([6, 4]);
+		roundRect(ctx, nodeLeft, nodeTop, width, height, radius);
+		ctx.stroke();
+		ctx.setLineDash([]);
+
+		ctx.fillStyle = '#FFFFFF';
+		ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'middle';
+		const pillTitleWidth = width - NODE_PILL_CHROME_WIDTH;
+		ctx.fillText(
+			truncateText(label, Math.floor(pillTitleWidth / NODE_PILL_CHAR_WIDTH)),
+			nodeLeft + 14,
+			nodeTop + height / 2
+		);
+
+		const pillIcon = openIconRect(node, previewCharLimit);
+		drawOpenIcon(
+			ctx,
+			pillIcon.x,
+			pillIcon.y,
+			pillIcon.size,
+			isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)'
+		);
+
+		ctx.globalAlpha = 1;
+		return;
+	}
+
 	// Draw body background first
 	const bodyColor = theme.colors.bgActivity;
 	ctx.fillStyle = bodyColor;
@@ -401,13 +520,7 @@ function renderDocumentNode(
 	ctx.fill();
 
 	// Draw header background (accent colored)
-	const headerColor =
-		isFocused || isSelected
-			? theme.colors.accent
-			: isHovered
-				? `${theme.colors.accent}CC`
-				: `${theme.colors.accent}99`;
-	ctx.fillStyle = headerColor;
+	ctx.fillStyle = headerFill;
 
 	// Draw header with rounded top corners only
 	ctx.beginPath();
@@ -427,20 +540,20 @@ function renderDocumentNode(
 	ctx.fillStyle = subHeaderColor;
 	ctx.fillRect(nodeLeft, nodeTop + NODE_HEADER_HEIGHT, width, NODE_SUBHEADER_HEIGHT);
 
-	// Draw border around entire node
-	ctx.strokeStyle =
-		isFocused || isSelected
-			? theme.colors.accent
-			: isHovered
-				? `${theme.colors.accent}80`
-				: theme.colors.border;
+	// Draw border around entire node. An orphan gets a dashed warning-colored
+	// border: it sits in its own band already, but the band alone reads as "a
+	// row at the bottom" rather than "these connect to nothing", and the two
+	// must stay distinguishable once the user pans away from the layout.
+	ctx.strokeStyle = borderStroke;
 	ctx.lineWidth = isFocused || isSelected ? 2 : 1;
+	if (isOrphan && !isFocused && !isSelected) ctx.setLineDash([6, 4]);
 	roundRect(ctx, nodeLeft, nodeTop, width, height, NODE_BORDER_RADIUS);
 	ctx.stroke();
+	ctx.setLineDash([]);
 
 	// Title text (in header, white or light colored for contrast)
 	ctx.fillStyle = '#FFFFFF';
-	ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+	ctx.font = `600 12px ${fontFamily}`;
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'middle';
 	const maxTitleWidth = width - OPEN_ICON_SIZE - OPEN_ICON_PADDING * 3 - 12;
@@ -448,9 +561,14 @@ function renderDocumentNode(
 	ctx.fillText(titleText, nodeLeft + 12, nodeTop + NODE_HEADER_HEIGHT / 2);
 
 	// Open file icon (in header, right side)
-	const iconX = nodeLeft + width - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
-	const iconY = nodeTop + (NODE_HEADER_HEIGHT - OPEN_ICON_SIZE) / 2;
-	drawOpenIcon(ctx, iconX, iconY, OPEN_ICON_SIZE, isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)');
+	const headerIcon = openIconRect(node, previewCharLimit);
+	drawOpenIcon(
+		ctx,
+		headerIcon.x,
+		headerIcon.y,
+		headerIcon.size,
+		isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)'
+	);
 
 	// Sub-header: folder icon and path
 	const subHeaderY = nodeTop + NODE_HEADER_HEIGHT;
@@ -467,7 +585,7 @@ function renderDocumentNode(
 		const folderPath = pathParts.length > 0 ? pathParts.join('/') : './';
 
 		ctx.fillStyle = theme.colors.textDim;
-		ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.font = `10px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
 
@@ -483,7 +601,7 @@ function renderDocumentNode(
 	// Preview text (description or content preview, in body, if present)
 	if (previewText) {
 		ctx.fillStyle = theme.colors.textDim;
-		ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.font = `11px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'top';
 
@@ -521,7 +639,8 @@ function renderExternalNode(
 	theme: Theme,
 	isHovered: boolean,
 	matchesSearch: boolean,
-	searchActive: boolean
+	searchActive: boolean,
+	fontFamily: string = DEFAULT_GRAPH_FONT
 ): void {
 	const { x, y, width, height, domain, isSelected, isFocused } = node;
 
@@ -548,7 +667,7 @@ function renderExternalNode(
 
 	// Domain text
 	ctx.fillStyle = theme.colors.textDim;
-	ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+	ctx.font = `11px ${fontFamily}`;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	ctx.fillText(truncateText(domain || '', 18), x, y);
@@ -572,6 +691,7 @@ export function MindMap({
 	height,
 	maxDepth,
 	showExternalLinks,
+	showOrphans = false,
 	selectedNodeId,
 	onNodeSelect,
 	onNodeDoubleClick,
@@ -586,7 +706,12 @@ export function MindMap({
 	onNodePositionChange,
 	containerRef: externalContainerRef,
 	legendExpanded = false,
+	fitToken = 0,
 }: MindMapProps) {
+	// Canvas measures and paints glyphs itself, so it needs a resolved family
+	// string rather than the CSS variable the DOM surfaces inherit.
+	const graphFontFamily = useSurfaceFontFamily('documentGraph');
+
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const internalContainerRef = useRef<HTMLDivElement>(null);
 	// Use external ref if provided, otherwise use internal ref
@@ -627,7 +752,8 @@ export function MindMap({
 			height,
 			showExternalLinks,
 			previewCharLimit,
-			spacingScale
+			spacingScale,
+			showOrphans
 		);
 	}, [
 		layoutType,
@@ -641,6 +767,7 @@ export function MindMap({
 		showExternalLinks,
 		previewCharLimit,
 		spacingScale,
+		showOrphans,
 	]);
 
 	// Set initial focus to center node when center file changes
@@ -738,17 +865,16 @@ export function MindMap({
 		(node: MindMapNode, canvasX: number, canvasY: number): boolean => {
 			if (node.nodeType !== 'document') return false;
 
-			const iconX = node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
-			const iconY = node.y - node.height / 2 + OPEN_ICON_PADDING;
+			const icon = openIconRect(node, previewCharLimit);
 
 			return (
-				canvasX >= iconX &&
-				canvasX <= iconX + OPEN_ICON_SIZE &&
-				canvasY >= iconY &&
-				canvasY <= iconY + OPEN_ICON_SIZE
+				canvasX >= icon.x &&
+				canvasX <= icon.x + icon.size &&
+				canvasY >= icon.y &&
+				canvasY <= icon.y + icon.size
 			);
 		},
-		[]
+		[previewCharLimit]
 	);
 
 	// Recenter the main view on a canvas-space point (used by the minimap).
@@ -783,6 +909,28 @@ export function MindMap({
 		ctx.save();
 		ctx.translate(pan.x, pan.y);
 		ctx.scale(zoom, zoom);
+
+		// Axis captions sit behind everything. Only Timeline emits any - a time
+		// axis with no dates on it is just an arbitrary left-to-right ordering.
+		if (layout.axisLabels && layout.axisLabels.length > 0) {
+			ctx.save();
+			ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			layout.axisLabels.forEach((label) => {
+				if (label.ruleHeight) {
+					ctx.strokeStyle = `${theme.colors.border}80`;
+					ctx.lineWidth = 1;
+					ctx.beginPath();
+					ctx.moveTo(label.x, label.y + 14);
+					ctx.lineTo(label.x, label.y + 14 + label.ruleHeight);
+					ctx.stroke();
+				}
+				ctx.fillStyle = theme.colors.textDim;
+				ctx.fillText(label.text, label.x, label.y);
+			});
+			ctx.restore();
+		}
 
 		// Render links first (behind nodes)
 		const nodeMap = new Map(nodesWithState.map((n) => [n.id, n]));
@@ -844,10 +992,19 @@ export function MindMap({
 					isHovered,
 					matchesSearch,
 					searchActive,
-					previewCharLimit
+					previewCharLimit,
+					graphFontFamily
 				);
 			} else {
-				renderExternalNode(ctx, node, theme, isHovered, matchesSearch, searchActive);
+				renderExternalNode(
+					ctx,
+					node,
+					theme,
+					isHovered,
+					matchesSearch,
+					searchActive,
+					graphFontFamily
+				);
 			}
 		});
 
@@ -886,11 +1043,15 @@ export function MindMap({
 		zoom,
 		nodesWithState,
 		layout.links,
+		layout.axisLabels,
 		selectedNodeId,
 		hoveredNodeId,
 		focusedNodeId,
 		searchQuery,
 		nodeMatchesSearch,
+		// The canvas paints its own glyphs, so a font change has to force a
+		// redraw explicitly - nothing about it is reactive on its own.
+		graphFontFamily,
 	]);
 
 	// Render on changes
@@ -898,20 +1059,47 @@ export function MindMap({
 		render();
 	}, [render]);
 
-	// Center view on mount and when center file changes
+	/**
+	 * Frame the whole graph in the viewport.
+	 *
+	 * Centering on the focus node at whatever zoom happened to be current is
+	 * what made a large graph unreadable: the content is thousands of pixels
+	 * across, so the user lands on one node with the rest off screen and no
+	 * amount of scrolling brings it back into view.
+	 */
+	const fitToView = useCallback(() => {
+		const { minX, maxX, minY, maxY } = layout.bounds;
+		const contentWidth = maxX - minX;
+		const contentHeight = maxY - minY;
+		if (contentWidth <= 0 || contentHeight <= 0 || width <= 0 || height <= 0) return;
+
+		const zoomToFit = Math.min(width / contentWidth, height / contentHeight);
+		const nextZoom = Math.min(FIT_MAX_ZOOM, Math.max(MIN_ZOOM, zoomToFit));
+		const contentCenterX = (minX + maxX) / 2;
+		const contentCenterY = (minY + maxY) / 2;
+
+		setTransform({
+			zoom: nextZoom,
+			panX: width / 2 - contentCenterX * nextZoom,
+			panY: height / 2 - contentCenterY * nextZoom,
+		});
+	}, [layout.bounds, width, height]);
+
+	// Frame the graph on mount, and whenever the thing being drawn changes shape
+	// (new center, new layout algorithm). Not on every `layout` identity: node
+	// drags rebuild it too, and re-framing under a drag fights the user.
 	useEffect(() => {
 		if (layout.nodes.length > 0) {
-			// Center on the center node
-			const centerNode = layout.nodes.find((n) => n.isFocused);
-			if (centerNode) {
-				setTransform((prev) => ({
-					...prev,
-					panX: width / 2 - centerNode.x * prev.zoom,
-					panY: height / 2 - centerNode.y * prev.zoom,
-				}));
-			}
+			fitToView();
 		}
-	}, [centerFilePath, width, height, layout.nodes]);
+	}, [centerFilePath, layoutType, previewCharLimit, width, height]);
+
+	// Explicit re-fit requested by the parent (the `F` key).
+	useEffect(() => {
+		if (fitToken > 0) {
+			fitToView();
+		}
+	}, [fitToken]);
 
 	// Mouse event handlers
 	const handleMouseDown = useCallback(
@@ -1073,7 +1261,7 @@ export function MindMap({
 		setTransform((prev) => {
 			// Calculate new zoom
 			const delta = -e.deltaY * 0.001;
-			const newZoom = Math.min(Math.max(prev.zoom + delta * prev.zoom, 0.2), 3);
+			const newZoom = Math.min(Math.max(prev.zoom + delta * prev.zoom, MIN_ZOOM), MAX_ZOOM);
 
 			// Adjust pan to zoom towards mouse position
 			const zoomRatio = newZoom / prev.zoom;
@@ -1208,14 +1396,10 @@ export function MindMap({
 					e.preventDefault();
 					break;
 
-				case 'p':
-				case 'P':
-					// Open in-graph preview for focused document node
-					if (focusedNode.nodeType === 'document' && onNodePreview) {
-						onNodePreview(focusedNode);
-					}
-					e.preventDefault();
-					break;
+				// `P` is deliberately NOT handled here. It used to be a second
+				// spelling of Enter (open the in-graph preview), which spent a
+				// letter key on a duplicate; it now cycles the preview length in
+				// DocumentGraphView, so this handler must let it bubble.
 			}
 
 			if (nextNode) {
@@ -1349,7 +1533,7 @@ export function convertToMindMapData(
 				id: node.id,
 				x: 0,
 				y: 0,
-				width: NODE_WIDTH,
+				width: calculateNodeWidth(filename, previewCharLimit),
 				height: calculateNodeHeight(previewText, previewCharLimit),
 				depth: 0,
 				side: 'center' as const,
@@ -1363,6 +1547,7 @@ export function convertToMindMapData(
 				size: docData.size,
 				brokenLinks: docData.brokenLinks,
 				isLargeFile: docData.isLargeFile,
+				mtime: docData.mtime,
 				neighbors,
 				connectionCount,
 			};

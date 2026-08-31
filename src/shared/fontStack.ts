@@ -28,6 +28,37 @@ export const MONO_FALLBACK_STACK =
 	'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
 /**
+ * Safe proportional fallback chain, the sans counterpart to
+ * {@link MONO_FALLBACK_STACK}. Leads with each platform's own UI face so the
+ * proportional typography preset looks native rather than imported, and ends in
+ * the `sans-serif` generic so no platform can fall through to serif.
+ */
+export const SANS_FALLBACK_STACK =
+	'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+
+/**
+ * The MAESTRO wordmark's font. Fixed, and deliberately NOT derived from any
+ * setting.
+ *
+ * The wordmark is a brand mark, not text: it is the one string in the app whose
+ * shape is the point. Letting it inherit the interface font meant the logo
+ * changed identity whenever the user changed their reading font, and the boot
+ * splash and the Left Bar header could disagree about what Maestro looks like
+ * depending on how far startup had progressed.
+ *
+ * JetBrains Mono leads because it BUNDLES with the app (see bundledFonts.ts),
+ * so this resolves identically on every machine rather than depending on what
+ * happens to be installed. The rest of the chain is the pre-bundle fallback,
+ * kept so the mark still renders during the first paint of the boot splash,
+ * before the webfont has loaded.
+ *
+ * Kept in sync by hand with `.splash-title` in src/renderer/index.html and
+ * `.md-splash__wordmark` in src/web-desktop/index.html, which paint before any
+ * JavaScript runs and so cannot import this.
+ */
+export const WORDMARK_FONT_STACK = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+
+/**
  * Ensure a CSS font-family value degrades to monospace rather than the browser's
  * serif default. Returns the value unchanged when it already contains a generic
  * family keyword (`monospace` / `sans-serif` / `serif`), so the built-in default
@@ -40,4 +71,22 @@ export function withMonoFallback(fontFamily: string | undefined | null): string 
 	// Already carries a generic family keyword -> it has a real fallback, leave it.
 	if (/\b(monospace|sans-serif|serif)\b/i.test(value)) return value;
 	return `${value}, ${MONO_FALLBACK_STACK}`;
+}
+
+/**
+ * Resolve a per-surface font setting against the interface font.
+ *
+ * Every surface font (terminal, AI chat, file preview, file editor) stores the
+ * empty string to mean "inherit the interface font", so the surface keeps
+ * following the UI when the user never touches it. Resolving that chain in one
+ * place keeps the pickers, the rendered surfaces, and any future surface from
+ * disagreeing about what an empty value means: a surface that re-derives it and
+ * forgets the `.trim()` renders a whitespace-only family, which resolves to
+ * nothing and drops the pane to the browser default.
+ */
+export function resolveSurfaceFont(
+	surfaceFont: string | undefined | null,
+	interfaceFont: string | undefined | null
+): string {
+	return withMonoFallback((surfaceFont ?? '').trim() || interfaceFont);
 }

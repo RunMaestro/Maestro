@@ -168,6 +168,7 @@ import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
+	ParquetFetchProgress,
 	ParquetFileInfo,
 	ParquetQueryRequest,
 	ParquetQueryResult,
@@ -466,6 +467,14 @@ interface MaestroAPI {
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
 		) => () => void;
+		onRemoteOpenDocumentGraph: (
+			callback: (params: {
+				sessionId: string;
+				files?: string[];
+				directory?: string;
+				focusPath?: string;
+			}) => void
+		) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
 		onRemoteNotifyToast: (
 			callback: (params: {
@@ -621,6 +630,26 @@ interface MaestroAPI {
 			callback: (sessionId: string | undefined, responseChannel: string) => void
 		) => () => void;
 		sendRemoteListTerminalTabsResponse: (responseChannel: string, tabs: unknown[]) => void;
+		onRemoteReadTerminalTab: (
+			callback: (
+				sessionId: string,
+				payload: { tabRef?: string; tail?: number },
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteReadTerminalTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			result?: {
+				error?: string;
+				tabId?: string;
+				tabName?: string;
+				cwd?: string;
+				state?: string;
+				content?: string;
+				totalLines?: number;
+			}
+		) => void;
 		onRemoteNewAITabWithPrompt: (
 			callback: (
 				sessionId: string,
@@ -871,6 +900,7 @@ interface MaestroAPI {
 				sessionId: string,
 				description: string,
 				isPublic: boolean,
+				agentSessionId: string | undefined,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -1468,6 +1498,7 @@ interface MaestroAPI {
 			maxRows?: number;
 		}) => Promise<{ path: string; rows: number; truncated: boolean }>;
 		close: (handle: string) => Promise<void>;
+		onFetchProgress: (callback: (progress: ParquetFetchProgress) => void) => () => void;
 	};
 	fs: {
 		homeDir: () => Promise<string>;
@@ -2830,6 +2861,12 @@ interface MaestroAPI {
 				error?: string;
 			}) => void
 		) => () => void;
+		simulateAuthExpiry: (payload: {
+			processSessionId: string;
+			agentId: string;
+			sshRemoteId?: string;
+			fromPipeline?: boolean;
+		}) => Promise<{ success: boolean }>;
 	};
 	// Sync API (custom storage location)
 	sync: {
@@ -4375,6 +4412,15 @@ interface MaestroAPI {
 		) => Promise<{
 			success: boolean;
 			matches?: Array<{ name: string; matchedName: boolean; snippet?: string }>;
+			error?: string;
+		}>;
+		orphans: (
+			projectPath: string,
+			agentId?: string
+		) => Promise<{
+			success: boolean;
+			orphans?: string[];
+			brokenLinks?: { source: string; target: string }[];
 			error?: string;
 		}>;
 		getPath: (

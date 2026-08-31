@@ -193,6 +193,18 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		[selectedPaths]
 	);
 
+	// Drives the context menu's "Open N in Document Graph" entry. Counts only
+	// markdown, because that is all the graph can parse - labelling the action
+	// with the raw selection size would promise to graph files it will drop.
+	const selectedMarkdownCount = useMemo(
+		() =>
+			Array.from(selectedPaths).filter((path) => {
+				const lower = path.toLowerCase();
+				return lower.endsWith('.md') || lower.endsWith('.markdown');
+			}).length,
+		[selectedPaths]
+	);
+
 	// ── Virtualizer ───────────────────────────────────────────────────────────
 
 	const parentRef = useRef<HTMLDivElement>(null);
@@ -375,6 +387,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
+		handleGraphFolder,
+		handleGraphSelection,
 		autoRunStagedDocs,
 		handleStageForAutoRun,
 		handlePreviewFile,
@@ -1049,10 +1063,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					contextMenuPos={contextMenuPos}
 					sshRemoteId={sshRemoteId}
 					onFocusFileInGraph={onFocusFileInGraph}
+					onGraphFolder={handleGraphFolder}
+					onGraphSelection={handleGraphSelection}
 					onOpenBrowserTabAt={onOpenBrowserTabAt}
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
 					selectedMediaCount={selectedMediaCount}
+					selectedMarkdownCount={selectedMarkdownCount}
 					onCopyPath={handleCopyPath}
 					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}

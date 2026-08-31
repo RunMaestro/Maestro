@@ -10,6 +10,7 @@ import {
 	Trash2,
 	FilePlus,
 	FolderPlus,
+	Network,
 	FolderOpen,
 	Files,
 	Download,
@@ -32,6 +33,10 @@ interface FileTreeContextMenuProps {
 	contextMenuPos: { top: number; left: number; ready?: boolean };
 	sshRemoteId: string | undefined;
 	onFocusFileInGraph?: (relativePath: string) => void;
+	/** Graph every markdown file under the right-clicked folder. */
+	onGraphFolder?: () => void;
+	/** Graph exactly the markdown files in the current multi-selection. */
+	onGraphSelection?: () => void;
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
@@ -43,6 +48,8 @@ interface FileTreeContextMenuProps {
 	autoRunStagedCount?: number;
 	/** How many of the selected files are playable audio/video. */
 	selectedMediaCount?: number;
+	/** Markdown files in the current selection - what "Open N in Document Graph" graphs. */
+	selectedMarkdownCount?: number;
 	onCopyPath: () => void;
 	onCopyFileName: () => void;
 	onDownloadFile: () => void;
@@ -72,10 +79,13 @@ export function FileTreeContextMenu({
 	contextMenuPos,
 	sshRemoteId,
 	onFocusFileInGraph,
+	onGraphFolder,
+	onGraphSelection,
 	onOpenBrowserTabAt,
 	isMultiSelectionContext = false,
 	selectedCount = 0,
 	selectedMediaCount = 0,
+	selectedMarkdownCount = 0,
 	autoRunStagedCount = 0,
 	onCopyPath,
 	onCopyFileName,
@@ -204,6 +214,16 @@ export function FileTreeContextMenu({
 								<span>Open {selectedCount} in Default App</span>
 							</button>
 						)}
+						{selectedMarkdownCount > 1 && onGraphSelection && (
+							<button
+								onClick={onGraphSelection}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Open {selectedMarkdownCount} in Document Graph</span>
+							</button>
+						)}
 						{stageForAutoRunButton}
 						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 						<button
@@ -249,6 +269,16 @@ export function FileTreeContextMenu({
 									>
 										<Bot className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 										<span>New Agent Here</span>
+									</button>
+								)}
+								{onGraphFolder && (
+									<button
+										onClick={onGraphFolder}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>Open in Document Graph</span>
 									</button>
 								)}
 								{previewableCount > 0 && (
