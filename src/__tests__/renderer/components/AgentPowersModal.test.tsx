@@ -51,12 +51,45 @@ describe('AgentPowersModal', () => {
 
 		expect(screen.getByText('Create agents')).toBeInTheDocument();
 		expect(screen.getByText('Write an Auto Run doc')).toBeInTheDocument();
+		expect(screen.getByText('Schedule a task')).toBeInTheDocument();
 		expect(screen.getByText('Build a Cue pipeline')).toBeInTheDocument();
+		expect(screen.getByText('Build me a dashboard')).toBeInTheDocument();
+	});
+
+	it('splits the two automation pills by what starts them', () => {
+		// A Scheduled Task is clock-driven and a pipeline hangs off an event, so
+		// two wall-clock prompts would present one feature twice.
+		renderModal();
+
+		const scheduled = screen.getByTestId('agent-powers-example-schedule-a-task').textContent ?? '';
+		const pipeline =
+			screen.getByTestId('agent-powers-example-build-a-cue-pipeline').textContent ?? '';
+
+		expect(scheduled).toMatch(/9am|weekday/i);
+		expect(pipeline).toMatch(/whenever|pull request/i);
+		expect(pipeline).not.toMatch(/\bam\b|every (morning|weekday|day)/i);
 	});
 
 	it('says the list is not exhaustive', () => {
 		renderModal();
 		expect(screen.getByText(/not a fixed list/i)).toBeInTheDocument();
+	});
+
+	it('spends the closing paragraph on capabilities no pill already shows', () => {
+		// The paragraph exists to widen the claim. Repeating a pill's label there
+		// spends the only line of prose left restating the grid above it.
+		renderModal();
+
+		const closing = screen.getByText(/not a fixed list/i).textContent ?? '';
+		for (const shown of [
+			'Create agents',
+			'Write an Auto Run doc',
+			'Schedule a task',
+			'Build a Cue pipeline',
+			'Build me a dashboard',
+		]) {
+			expect(closing.toLowerCase()).not.toContain(shown.toLowerCase());
+		}
 	});
 
 	it('closes on Got it', () => {

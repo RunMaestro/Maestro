@@ -13,7 +13,16 @@
  */
 
 import { useCallback, useRef } from 'react';
-import { Bot, SlidersHorizontal, Users, FileText, Workflow, Sparkles } from 'lucide-react';
+import {
+	Bot,
+	SlidersHorizontal,
+	Users,
+	FileText,
+	CalendarClock,
+	Workflow,
+	LayoutDashboard,
+	Sparkles,
+} from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -47,6 +56,12 @@ export interface AgentPowersModalProps {
  * second finished picking, and then keeps going past them - the claim being
  * made is "any setting", and a pill that stopped at typography would read as a
  * shortcut for the two screens behind it rather than a door onto all of them.
+ *
+ * The two automation examples are split by what STARTS them, because that is
+ * the distinction the app actually makes: a Scheduled Task is clock-driven
+ * (`time.scheduled` / `time.once`), while a pipeline hangs off an event nobody
+ * can predict the timing of. Giving both a wall-clock prompt would present one
+ * feature twice under two names.
  */
 const EXAMPLES: Array<{
 	icon: typeof Users;
@@ -71,10 +86,20 @@ const EXAMPLES: Array<{
 			'Write me an Auto Run document that reviews this repo for TODOs and lists them as tasks.',
 	},
 	{
+		icon: CalendarClock,
+		label: 'Schedule a task',
+		prompt: 'Every weekday at 9am, summarize what changed in this repo overnight.',
+	},
+	{
 		icon: Workflow,
 		label: 'Build a Cue pipeline',
+		prompt: 'Whenever a pull request opens on this repo, have an agent review it and report back.',
+	},
+	{
+		icon: LayoutDashboard,
+		label: 'Build me a dashboard',
 		prompt:
-			'Set up a Cue pipeline that reviews this repo every morning at 9 and opens an agent with what it found.',
+			'Build me an HTML dashboard of this repo: commits per week, top contributors, open TODOs.',
 	},
 ];
 
@@ -176,9 +201,11 @@ export function AgentPowersModal({
 				>
 					<Sparkles className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
 					<p className="text-xs leading-relaxed" style={{ color: theme.colors.textMain }}>
-						This is not a fixed list. Creating agents, opening files, running playbooks, scheduling
-						automation, rearranging the window - if it is in Maestro, it is reachable. Ask for what
-						you want and let the agent find the way there.
+						This is not a fixed list. Agents can also put two providers in a group chat and let them
+						argue it out, spin up a git worktree per branch, open files and terminals beside you,
+						graph how your documents link together, install a playbook from the marketplace, or
+						rearrange the window - if it is in Maestro, it is reachable. Ask for what you want and
+						let the agent find the way there.
 						{onTryExample ? ' Pick an example above to drop it into the composer.' : ''}
 					</p>
 				</div>
