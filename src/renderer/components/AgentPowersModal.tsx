@@ -201,11 +201,12 @@ export function AgentPowersModal({
 				>
 					<Sparkles className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
 					<p className="text-xs leading-relaxed" style={{ color: theme.colors.textMain }}>
-						This is not a fixed list. Agents can also put two providers in a group chat and let them
-						argue it out, spin up a git worktree per branch, open files and terminals beside you,
-						graph how your documents link together, install a playbook from the marketplace, or
-						rearrange the window - if it is in Maestro, it is reachable. Ask for what you want and
-						let the agent find the way there.
+						Maestro is a power tool. If you are a hacker it will feel like home: keyboard shortcuts
+						all the way down, dozens of agents conducted at once, hands never leaving the keys. You
+						do not have to work that way to get the benefit. Every agent running in Maestro is
+						handed the knowledge of how to drive Maestro, down to the advanced parts like Auto Run
+						and Cue pipelines, so ask for what you want in plain language and let the agent find the
+						way there.
 						{onTryExample ? ' Pick an example above to drop it into the composer.' : ''}
 					</p>
 				</div>
