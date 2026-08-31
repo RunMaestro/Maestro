@@ -751,6 +751,19 @@ describe('RealtimeMetricsCard', () => {
 		expect(indicator.textContent).toContain('5s');
 	});
 
+	it('humanizes the thinking elapsed time past a minute', () => {
+		const now = Date.now();
+		const sessions = [
+			buildSession({ state: 'busy', thinkingStartTime: now - (20 * 60 + 4) * 1000 }),
+		];
+
+		render(<RealtimeMetricsCard sessions={sessions} theme={theme} />);
+
+		const indicator = screen.getByTestId('realtime-thinking-elapsed');
+		expect(indicator.textContent).toContain('20m 4s');
+		expect(indicator).toHaveAttribute('aria-label', 'Thinking for 20 minutes, 4 seconds');
+	});
+
 	it('hides the thinking indicator when no session is actively thinking', () => {
 		const sessions = [buildSession({ state: 'idle', contextUsage: 20 })];
 

@@ -327,18 +327,43 @@ export function formatElapsedTime(ms: number): string {
  */
 export function formatElapsedTicker(ms: number): string {
 	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
-	const units =
-		safe >= DURATION_MS.day
-			? DURATION_LADDER_DAYS
-			: safe >= DURATION_MS.hour
-				? DURATION_LADDER_HOURS
-				: (['minute', 'second'] as const);
 	return humanizeDuration(safe, {
-		units,
+		units: elapsedTickerLadder(safe),
 		keepZeroUnits: true,
 		keepLeadingZero: true,
 		maxUnits: 4,
 	});
+}
+
+/**
+ * `formatElapsedTicker` without the padded lead: `"3s"`, `"1m 0s"`, `"20m 4s"`,
+ * `"1h 2m 5s"`.
+ *
+ * For an inline counter sitting inside a sentence or a chip, where a bare
+ * seconds count is the natural reading below a minute but `1203s` is not a
+ * duration anyone can read past it. Same ladder as the ticker, so a chip and
+ * the ticker beside it agree on segments once both are past a minute.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted duration
+ */
+export function formatElapsedTickerCompact(ms: number): string {
+	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+	return humanizeDuration(safe, {
+		units: elapsedTickerLadder(safe),
+		keepZeroUnits: true,
+		maxUnits: 4,
+	});
+}
+
+/**
+ * Ladder for the live tickers: minutes below an hour, hours below a day, then
+ * days - so a short wait never prints a `0d` / `0h` segment it will not reach.
+ */
+function elapsedTickerLadder(ms: number): readonly DurationUnit[] {
+	if (ms >= DURATION_MS.day) return DURATION_LADDER_DAYS;
+	if (ms >= DURATION_MS.hour) return DURATION_LADDER_HOURS;
+	return ['minute', 'second'];
 }
 
 /**

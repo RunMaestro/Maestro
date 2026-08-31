@@ -627,6 +627,7 @@ export {
 	formatActiveTime,
 	formatElapsedTime,
 	formatElapsedTicker,
+	formatElapsedTickerCompact,
 	DURATION_MS,
 	DURATION_LADDER_FULL,
 	DURATION_LADDER_DAYS,

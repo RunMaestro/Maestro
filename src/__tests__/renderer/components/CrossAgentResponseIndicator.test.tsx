@@ -18,7 +18,7 @@ function req(over: Partial<InFlightCrossAgentRequest> = {}): InFlightCrossAgentR
 		targetSessionId: 'target-1',
 		targetAgentName: 'Backend',
 		targetToolType: 'claude-code',
-		startedAt: 1_700_000_000_000,
+		startedAt: Date.now(),
 		...over,
 	};
 }
@@ -125,6 +125,16 @@ describe('CrossAgentResponseIndicator', () => {
 		const chip = screen.getByRole('button', { name: /Backend/ });
 		expect(chip).toBeDisabled();
 		expect(chip.getAttribute('title')).toMatch(/^Backend · \d+s$/);
+	});
+
+	it('humanizes the chip elapsed time past a minute', () => {
+		// Below a minute a bare seconds count reads fine; past it, `1203s` does not.
+		seed(req({ startedAt: Date.now() - (20 * 60 + 4) * 1000 }));
+		renderIndicator();
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		const chip = screen.getByRole('button', { name: /Backend/ });
+		expect(chip.getAttribute('title')).toBe('Backend · 20m 4s');
 	});
 
 	it('renders nothing when the tab id is missing', () => {
