@@ -1,6 +1,26 @@
 import { useEffect } from 'react';
+import { hexToRgb } from '../../../shared/colorContrast';
 import type { ThemeMode } from '../../../shared/theme-types';
 import type { GlossLevel } from '../../../shared/themeGloss';
+
+/**
+ * The light source the gloss rules mix, as an `R G B` triple for `rgb(... / a%)`.
+ *
+ * Derived from the theme's own `textMain` so a theme declares what colour its
+ * light is, rather than the sheen picking up whatever `color` happens to be
+ * inherited at each chrome root. That was the earlier approach and it makes the
+ * gloss non-deterministic: a container that sets a dim text colour glosses
+ * differently from one that does not, so the same level renders at two
+ * strengths in the same window for reasons no one chose.
+ *
+ * Falls back to white when the palette carries a non-hex colour (a custom theme
+ * may use any CSS colour). White is the right failure: gloss is dark-theme only,
+ * and a white light source is what every dark theme's `textMain` approximates.
+ */
+function sheenRgbTriple(textMain: string): string {
+	const rgb = hexToRgb(textMain);
+	return rgb ? `${rgb.r} ${rgb.g} ${rgb.b}` : '255 255 255';
+}
 
 /**
  * Theme colors required for CSS variable management.
@@ -24,6 +44,8 @@ export interface ThemeColors {
 	 *  Track is mostly transparent so this only matters for tall narrow
 	 *  containers where the track is visible. */
 	bgActivity: string;
+	/** Main text color - the light source the surface-gloss rules mix. */
+	textMain: string;
 }
 
 /**
@@ -62,6 +84,8 @@ export interface UseThemeStylesReturn {
  *   --scrollbar-thumb-hover  = themeColors.textDim
  *   --scrollbar-thumb-active = themeColors.accent
  *   --scrollbar-track        = themeColors.bgActivity
+ *   --fx-quiet               = themeColors.textDim
+ *   --sheen-rgb              = themeColors.textMain as "R G B"
  *
  * Scrollbar styling lives in `src/renderer/index.css` and consumes these
  * variables. To add a new themed CSS rule app-wide, set the property here and
@@ -103,7 +127,17 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 		root.setProperty('--scrollbar-track', themeColors.bgActivity);
 		// Quiet/secondary control colour, consumed by the Files toolbar hierarchy.
 		root.setProperty('--fx-quiet', themeColors.textDim);
-	}, [themeColors.accent, themeColors.border, themeColors.textDim, themeColors.bgActivity]);
+		// Light source for the surface-gloss rules. A triple rather than a finished
+		// colour, so the alpha stays in index.css where the levels are defined and
+		// only the hue crosses the bridge.
+		root.setProperty('--sheen-rgb', sheenRgbTriple(themeColors.textMain));
+	}, [
+		themeColors.accent,
+		themeColors.border,
+		themeColors.textDim,
+		themeColors.bgActivity,
+		themeColors.textMain,
+	]);
 
 	// Publish the theme mode and the gloss level as attributes. Kept in one
 	// effect so the pair is always written in the same commit: the gloss rules

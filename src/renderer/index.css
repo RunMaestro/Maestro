@@ -1296,12 +1296,8 @@ svg.wand-profiling-active path:nth-child(8) {
    SURFACE GLOSS
 
    Adds a light source to the app chrome so surfaces read as stacked layers
-   instead of one flat sheet of paint. Composes with the existing inline
-   `backgroundColor` on every chrome root because `box-shadow` and
-   `background-image` are different longhands than `background-color`, so no
-   theme token and no component style object has to change. That is the whole
-   reason this is CSS rather than a palette edit: it works identically on all
-   built-in themes and on a user's custom one, and it changes no colour value.
+   instead of one flat sheet of paint. It changes no theme colour: it only adds
+   highlights and shadows over the paint that is already there.
 
    Intensity comes from the `themeGloss` setting, published onto <html> as
    `data-gloss` by `useThemeStyles`. The vocabulary lives in
@@ -1309,54 +1305,75 @@ svg.wand-profiling-active path:nth-child(8) {
    Settings slider offers a stop that renders the same as the one before it.
 
      off     - shipped behaviour, no rules at all
-     sheen   - inset top highlight + short top-down wash
-     strong  - same, roughly 1.6x, plus a drop edge under each bar
+     sheen   - top highlight + short top-down wash
+     strong  - same, roughly 1.6x, plus a dark edge along the bottom of each bar
      max     - strong + accent glow on the active surface
 
    Light themes are excluded outright: a white highlight on a white surface is
    invisible at best and muddy at worst.
+
+   TWO CHOICES HERE ARE LOAD-BEARING, and both were made after the obvious
+   version turned out to be wrong.
+
+   1. THE BAR SHEEN IS BACKGROUND-IMAGE, NOT BOX-SHADOW. An inline style beats a
+      stylesheet class, and `SessionList` and `RightPanel` both set an inline
+      `boxShadow` for their focus ring. A `box-shadow` sheen therefore vanished
+      from whichever sidebar the user had focused and came back when they moved
+      away, which reads as the gloss flickering rather than as a focus ring.
+      `background-image` has no such collision: every chrome root paints itself
+      with `background-color`, which is a different longhand, so the layers
+      compose and neither side has to know about the other. The 1px highlight is
+      just a gradient with a hard stop. `.chrome-raised` keeps a real
+      `box-shadow` because it needs to cast OUTSIDE its box and nothing sets an
+      inline shadow there.
+
+   2. THE LIGHT SOURCE IS `--sheen-rgb`, NOT `currentColor`. currentColor is
+      whatever text colour happens to be inherited at each root, so a container
+      that sets a dim colour glosses weaker than one that does not, and the same
+      level renders at two strengths in one window for reasons nobody chose. The
+      variable is published from the theme's own `textMain`, so intensity is a
+      property of the level and the hue is a property of the theme. The fallback
+      is white because gloss is dark-theme only.
    ============================================================================ */
 
 html[data-gloss='sheen'] .chrome-sheen {
-	box-shadow: inset 0 1px 0 color-mix(in srgb, currentColor 7%, transparent);
-	background-image: linear-gradient(
-		180deg,
-		color-mix(in srgb, currentColor 5%, transparent),
-		transparent 110px
-	);
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 7%) 0 1px, transparent 1px),
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 5%), transparent 110px);
 }
 
 html[data-gloss='strong'] .chrome-sheen,
 html[data-gloss='max'] .chrome-sheen {
-	box-shadow:
-		inset 0 1px 0 color-mix(in srgb, currentColor 11%, transparent),
-		0 1px 0 rgba(0, 0, 0, 0.45);
-	background-image: linear-gradient(
-		180deg,
-		color-mix(in srgb, currentColor 8%, transparent),
-		color-mix(in srgb, currentColor 2%, transparent) 34px,
-		transparent 130px
-	);
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 11%) 0 1px, transparent 1px),
+		linear-gradient(0deg, rgb(0 0 0 / 45%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			rgb(var(--sheen-rgb, 255 255 255) / 8%),
+			rgb(var(--sheen-rgb, 255 255 255) / 2%) 34px,
+			transparent 130px
+		);
 }
 
 /* Cards and pills sit ON the chrome, so they get the highlight without the
-   wash - a gradient inside a small rounded box reads as a bad texture. */
+   wash - a gradient inside a small rounded box reads as a bad texture - and a
+   real drop shadow, which is the whole point of calling them raised. */
 html[data-gloss='sheen'] .chrome-raised {
 	box-shadow:
-		inset 0 1px 0 color-mix(in srgb, currentColor 6%, transparent),
-		0 2px 10px rgba(0, 0, 0, 0.3);
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 6%),
+		0 2px 10px rgb(0 0 0 / 30%);
 }
 
 html[data-gloss='strong'] .chrome-raised,
 html[data-gloss='max'] .chrome-raised {
 	box-shadow:
-		inset 0 1px 0 color-mix(in srgb, currentColor 9%, transparent),
-		0 3px 14px rgba(0, 0, 0, 0.42);
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 9%),
+		0 3px 14px rgb(0 0 0 / 42%);
 }
 
 html[data-gloss='max'] .chrome-raised-active {
 	box-shadow:
-		inset 0 1px 0 color-mix(in srgb, currentColor 14%, transparent),
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 14%),
 		0 0 0 1px color-mix(in srgb, var(--accent-color) 34%, transparent),
 		0 0 18px color-mix(in srgb, var(--accent-color) 22%, transparent);
 }

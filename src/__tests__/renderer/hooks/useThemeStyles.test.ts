@@ -19,6 +19,7 @@ const DARK_COLORS: ThemeColors = {
 	border: '#44475a',
 	textDim: '#6272a4',
 	bgActivity: '#343746',
+	textMain: '#f8f8f2',
 };
 
 const LIGHT_COLORS: ThemeColors = {
@@ -26,6 +27,7 @@ const LIGHT_COLORS: ThemeColors = {
 	border: '#d0d7de',
 	textDim: '#656d76',
 	bgActivity: '#f6f8fa',
+	textMain: '#1f2328',
 };
 
 function getCssVar(name: string): string {
@@ -42,6 +44,8 @@ describe('useThemeStyles', () => {
 		root.removeProperty('--scrollbar-thumb-hover');
 		root.removeProperty('--scrollbar-thumb-active');
 		root.removeProperty('--scrollbar-track');
+		root.removeProperty('--fx-quiet');
+		root.removeProperty('--sheen-rgb');
 	});
 
 	afterEach(() => {
@@ -53,6 +57,8 @@ describe('useThemeStyles', () => {
 		root.removeProperty('--scrollbar-thumb-hover');
 		root.removeProperty('--scrollbar-thumb-active');
 		root.removeProperty('--scrollbar-track');
+		root.removeProperty('--fx-quiet');
+		root.removeProperty('--sheen-rgb');
 	});
 
 	describe('CSS variable injection', () => {
@@ -127,6 +133,45 @@ describe('useThemeStyles', () => {
 			// Other vars stay at their previous values
 			expect(getCssVar('--scrollbar-thumb')).toBe('#44475a');
 			expect(getCssVar('--scrollbar-thumb-hover')).toBe('#6272a4');
+		});
+	});
+
+	describe('--sheen-rgb (the gloss light source)', () => {
+		it('publishes textMain as an R G B triple, not a hex', () => {
+			// The gloss rules mix it as `rgb(var(--sheen-rgb) / 7%)`, so the alpha
+			// stays in index.css where the levels live and only the hue crosses.
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'sheen' })
+			);
+			expect(getCssVar('--sheen-rgb')).toBe('248 248 242');
+		});
+
+		it('tracks textMain rather than any inherited color', () => {
+			// It replaced `currentColor`, which made the sheen strength depend on
+			// whatever text color each chrome root happened to inherit.
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'sheen' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+			expect(getCssVar('--sheen-rgb')).toBe('248 248 242');
+
+			rerender({ colors: { ...DARK_COLORS, textMain: '#c5c8c6' } });
+
+			expect(getCssVar('--sheen-rgb')).toBe('197 200 198');
+		});
+
+		it('falls back to white when the palette carries a non-hex color', () => {
+			// A custom theme may use any CSS color. White is the right failure:
+			// gloss is dark-theme only and every dark theme's textMain is near it.
+			renderHook(() =>
+				useThemeStyles({
+					themeColors: { ...DARK_COLORS, textMain: 'rgb(200, 200, 200)' },
+					themeMode: 'dark',
+					glossLevel: 'sheen',
+				})
+			);
+			expect(getCssVar('--sheen-rgb')).toBe('255 255 255');
 		});
 	});
 
