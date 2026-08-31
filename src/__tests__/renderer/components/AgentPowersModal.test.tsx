@@ -33,13 +33,17 @@ describe('AgentPowersModal', () => {
 		expect(screen.queryByTestId('agent-powers-modal')).not.toBeInTheDocument();
 	});
 
-	it('leads with the two things the user was just offered', () => {
-		// Fonts and themes are immediately checkable, which is what makes the
-		// broader claim credible.
+	it('leads with the settings the user was just offered, then keeps going', () => {
+		// The font and the theme are immediately checkable, which is what makes
+		// the broader "any setting" claim credible - so the pill names both and
+		// then names a third thing neither wizard step showed.
 		renderModal();
 
-		expect(screen.getByText('Change the fonts')).toBeInTheDocument();
-		expect(screen.getByText('Change the theme')).toBeInTheDocument();
+		expect(screen.getByText('Change any setting')).toBeInTheDocument();
+		const prompt = screen.getByTestId('agent-powers-example-change-any-setting').textContent ?? '';
+		expect(prompt).toMatch(/font/i);
+		expect(prompt).toMatch(/theme/i);
+		expect(prompt).toMatch(/notifications/i);
 	});
 
 	it('shows the range beyond appearance', () => {
@@ -47,6 +51,7 @@ describe('AgentPowersModal', () => {
 
 		expect(screen.getByText('Create agents')).toBeInTheDocument();
 		expect(screen.getByText('Write an Auto Run doc')).toBeInTheDocument();
+		expect(screen.getByText('Build a Cue pipeline')).toBeInTheDocument();
 	});
 
 	it('says the list is not exhaustive', () => {
@@ -68,7 +73,7 @@ describe('AgentPowersModal', () => {
 			const onTryExample = vi.fn();
 			renderModal({ onTryExample });
 
-			fireEvent.click(screen.getByTestId('agent-powers-example-change-the-theme'));
+			fireEvent.click(screen.getByTestId('agent-powers-example-change-any-setting'));
 			expect(onTryExample).toHaveBeenCalledWith(expect.stringContaining('theme'));
 		});
 
@@ -85,7 +90,7 @@ describe('AgentPowersModal', () => {
 			// the idea, they just cannot be handed anywhere.
 			renderModal({ onTryExample: undefined });
 
-			const example = screen.getByTestId('agent-powers-example-change-the-theme');
+			const example = screen.getByTestId('agent-powers-example-change-any-setting');
 			expect(example).toBeDisabled();
 		});
 

@@ -225,6 +225,6 @@ describe('OnboardingSeriesHost', () => {
 		});
 		renderHost({ hasActiveAgent: false });
 
-		expect(screen.getByTestId('agent-powers-example-change-the-theme')).toBeDisabled();
+		expect(screen.getByTestId('agent-powers-example-change-any-setting')).toBeDisabled();
 	});
 });

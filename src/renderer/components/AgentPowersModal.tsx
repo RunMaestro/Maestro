@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useRef } from 'react';
-import { Bot, Palette, Type, Users, FileText, Sparkles } from 'lucide-react';
+import { Bot, SlidersHorizontal, Users, FileText, Workflow, Sparkles } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -39,24 +39,25 @@ export interface AgentPowersModalProps {
 }
 
 /**
- * Examples worth showing, in the order they build confidence: the two things
- * the user was JUST offered (so the claim is immediately checkable), then the
- * ones that show the range.
+ * Examples worth showing, in the order they build confidence: the thing the
+ * user was JUST offered (so the claim is immediately checkable), then the ones
+ * that show the range.
+ *
+ * The first example deliberately names the font and the theme the user has this
+ * second finished picking, and then keeps going past them - the claim being
+ * made is "any setting", and a pill that stopped at typography would read as a
+ * shortcut for the two screens behind it rather than a door onto all of them.
  */
 const EXAMPLES: Array<{
-	icon: typeof Palette;
+	icon: typeof Users;
 	label: string;
 	prompt: string;
 }> = [
 	{
-		icon: Type,
-		label: 'Change the fonts',
-		prompt: 'Set my AI chat font to Inter and my terminal font to JetBrains Mono.',
-	},
-	{
-		icon: Palette,
-		label: 'Change the theme',
-		prompt: 'Switch Maestro to a light theme and tell me which one you picked.',
+		icon: SlidersHorizontal,
+		label: 'Change any setting',
+		prompt:
+			'Set my AI chat font to Inter, switch me to a light theme, and turn on OS notifications.',
 	},
 	{
 		icon: Users,
@@ -68,6 +69,12 @@ const EXAMPLES: Array<{
 		label: 'Write an Auto Run doc',
 		prompt:
 			'Write me an Auto Run document that reviews this repo for TODOs and lists them as tasks.',
+	},
+	{
+		icon: Workflow,
+		label: 'Build a Cue pipeline',
+		prompt:
+			'Set up a Cue pipeline that reviews this repo every morning at 9 and opens an agent with what it found.',
 	},
 ];
 
