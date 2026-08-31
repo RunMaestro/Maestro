@@ -14,7 +14,7 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group, LogEntry, AITab } from '../types';
+import type { Session, Group, LogEntry, AITab, FilePreviewTab, BrowserTab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
@@ -446,6 +446,56 @@ export function updateAiTab(
 			return {
 				...s,
 				aiTabs: s.aiTabs.map((t) => (t.id === tabId ? updater(t) : t)),
+			};
+		})
+	);
+}
+
+/**
+ * Update a specific file preview tab within a session using a mapper function.
+ * The file-tab counterpart to {@link updateAiTab}.
+ *
+ * Operates directly on the store outside of React - safe to call from callbacks.
+ *
+ * @example
+ * updateFileTab(sessionId, tabId, (tab) => ({ ...tab, scrollTop }));
+ */
+export function updateFileTab(
+	sessionId: string,
+	tabId: string,
+	updater: (tab: FilePreviewTab) => FilePreviewTab
+): void {
+	useSessionStore.getState().setSessions((prev: Session[]) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				filePreviewTabs: s.filePreviewTabs.map((t) => (t.id === tabId ? updater(t) : t)),
+			};
+		})
+	);
+}
+
+/**
+ * Update a specific browser tab within a session using a mapper function.
+ * The browser-tab counterpart to {@link updateAiTab}.
+ *
+ * Operates directly on the store outside of React - safe to call from callbacks.
+ *
+ * @example
+ * updateBrowserTab(sessionId, tabId, (tab) => ({ ...tab, isLoading: false }));
+ */
+export function updateBrowserTab(
+	sessionId: string,
+	tabId: string,
+	updater: (tab: BrowserTab) => BrowserTab
+): void {
+	useSessionStore.getState().setSessions((prev: Session[]) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				browserTabs: (s.browserTabs || []).map((t) => (t.id === tabId ? updater(t) : t)),
 			};
 		})
 	);

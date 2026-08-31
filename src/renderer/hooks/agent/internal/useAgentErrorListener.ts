@@ -18,7 +18,7 @@
  */
 
 import { useEffect } from 'react';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { useModalStore } from '../../../stores/modalStore';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -51,7 +51,6 @@ export interface UseAgentErrorListenerDeps {
 export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
-		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const { openModal } = useModalStore.getState();
 
@@ -193,117 +192,113 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 			}
 
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== actualSessionId) return s;
-
-					// If the error is for a tab the user closed mid-thinking, drop the
-					// orphan entry - there's no tab UI to surface the error on, and the
-					// pill should stop showing this thinking item.
-					const isOrphanError =
-						!!tabIdFromSession &&
-						!!s.orphanedThinkingTabs?.some((tab) => tab.id === tabIdFromSession);
-					if (isOrphanError && s.orphanedThinkingTabs) {
-						const updatedOrphans = s.orphanedThinkingTabs.filter(
-							(tab) => tab.id !== tabIdFromSession
-						);
-						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-						const stillThinking = anyAiTabStillBusy || updatedOrphans.length > 0;
-						return {
-							...s,
-							orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,
-							state: stillThinking ? s.state : ('idle' as SessionState),
-							busySource: stillThinking ? s.busySource : undefined,
-							thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
-						};
-					}
-
-					const targetTab = tabIdFromSession
-						? s.aiTabs.find((tab) => tab.id === tabIdFromSession)
-						: getActiveTab(s);
-
-					// For session_not_found, find the most recent user message on the
-					// target tab so the recovery modal can re-send it after grooming.
-					// Without this, the prompt that triggered the dead session is lost.
-					// Limit pauses reuse the same capture: when the prompt that hit the
-					// limit was a direct send (not a queued item the drainer would replay),
-					// stashing it as `recoveryAction.lastUserPrompt` lets Phase 3 re-fire it.
-					const lastUserPrompt =
-						(isSessionNotFound || isLimit) && targetTab
-							? [...targetTab.logs].reverse().find((l) => l.source === 'user')?.text
-							: undefined;
-
-					// Tag the error frame with `renderStyle: 'text-stream'` when the
-					// session is running through maestro-p (interactive TUI) so the
-					// bottom-center pill on the error card reads "TUI" instead of
-					// "API". The same tagger runs on assistant output in
-					// useBatchedSessionUpdates; errors live in their own listener and
-					// need parity here. system-source entries (session_not_found
-					// recovery) stay untagged - they aren't real Claude turns.
-					const isInteractive = s.claudeInteractive?.mode === 'interactive';
-					const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
-					// Limit pauses keep the normal error log (message + agentError), but
-					// also carry the captured prompt so the auto-resume coordinator can
-					// re-fire a direct send. The `canOfferRecovery` session_not_found flow
-					// owns the special "recover raw or compressed" copy; this only adds data.
-					// When auto-retry takes over (willAutoRetry) we instead log a
-					// non-blocking outage marker; the marker renders as a live
-					// RetryStatusCard (driven by retryStore) showing attempt count,
-					// elapsed time, next-retry countdown, and Try now / Stop controls, and
-					// the early return below keeps the session out of the paused/error
-					// state so this stash stays dormant.
-					const stashLimitPrompt = isLimit && !!lastUserPrompt && !!targetTab;
-					const errorLogEntry: LogEntry = {
-						id: generateId(),
-						timestamp: agentError.timestamp,
-						source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
-						text: canOfferRecovery
-							? 'Session not found, however we can recover it raw or compressed.'
-							: agentError.message,
-						agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
-						...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
-						...(isInteractive && !isSessionNotFound && !willAutoRetry
-							? { renderStyle: 'text-stream' as const }
-							: {}),
-						...(canOfferRecovery || stashLimitPrompt
-							? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
-							: {}),
-					};
-					// On a continued outage (attempt > 0) the card already lives in the
-					// transcript - just strip the transient progress log, append nothing.
-					const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
-					const updatedAiTabs = targetTab
-						? s.aiTabs.map((tab) =>
-								tab.id === targetTab.id
-									? {
-											...tab,
-											logs: isRetryContinuation
-												? removeHiddenProgressLog(tab.logs, tab.id)
-												: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
-											agentError: isSessionNotFound ? undefined : agentError,
-											...(isSessionNotFound ? { agentSessionId: null } : {}),
-										}
-									: tab
-							)
-						: s.aiTabs;
-
-					// session_not_found recovers below; auto-retry keeps the session
-					// out of the blocking `error` state (the countdown chip owns the
-					// UI, and the exit listener idles the tab).
-					if (isSessionNotFound || willAutoRetry) {
-						return { ...s, aiTabs: updatedAiTabs };
-					}
-
+			updateSessionWith(actualSessionId, (s) => {
+				// If the error is for a tab the user closed mid-thinking, drop the
+				// orphan entry - there's no tab UI to surface the error on, and the
+				// pill should stop showing this thinking item.
+				const isOrphanError =
+					!!tabIdFromSession &&
+					!!s.orphanedThinkingTabs?.some((tab) => tab.id === tabIdFromSession);
+				if (isOrphanError && s.orphanedThinkingTabs) {
+					const updatedOrphans = s.orphanedThinkingTabs.filter(
+						(tab) => tab.id !== tabIdFromSession
+					);
+					const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+					const stillThinking = anyAiTabStillBusy || updatedOrphans.length > 0;
 					return {
 						...s,
-						agentError,
-						agentErrorTabId: targetTab?.id,
-						agentErrorPaused: true,
-						state: 'error' as SessionState,
-						aiTabs: updatedAiTabs,
+						orphanedThinkingTabs: updatedOrphans.length > 0 ? updatedOrphans : undefined,
+						state: stillThinking ? s.state : ('idle' as SessionState),
+						busySource: stillThinking ? s.busySource : undefined,
+						thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
 					};
-				})
-			);
+				}
+
+				const targetTab = tabIdFromSession
+					? s.aiTabs.find((tab) => tab.id === tabIdFromSession)
+					: getActiveTab(s);
+
+				// For session_not_found, find the most recent user message on the
+				// target tab so the recovery modal can re-send it after grooming.
+				// Without this, the prompt that triggered the dead session is lost.
+				// Limit pauses reuse the same capture: when the prompt that hit the
+				// limit was a direct send (not a queued item the drainer would replay),
+				// stashing it as `recoveryAction.lastUserPrompt` lets Phase 3 re-fire it.
+				const lastUserPrompt =
+					(isSessionNotFound || isLimit) && targetTab
+						? [...targetTab.logs].reverse().find((l) => l.source === 'user')?.text
+						: undefined;
+
+				// Tag the error frame with `renderStyle: 'text-stream'` when the
+				// session is running through maestro-p (interactive TUI) so the
+				// bottom-center pill on the error card reads "TUI" instead of
+				// "API". The same tagger runs on assistant output in
+				// useBatchedSessionUpdates; errors live in their own listener and
+				// need parity here. system-source entries (session_not_found
+				// recovery) stay untagged - they aren't real Claude turns.
+				const isInteractive = s.claudeInteractive?.mode === 'interactive';
+				const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
+				// Limit pauses keep the normal error log (message + agentError), but
+				// also carry the captured prompt so the auto-resume coordinator can
+				// re-fire a direct send. The `canOfferRecovery` session_not_found flow
+				// owns the special "recover raw or compressed" copy; this only adds data.
+				// When auto-retry takes over (willAutoRetry) we instead log a
+				// non-blocking outage marker; the marker renders as a live
+				// RetryStatusCard (driven by retryStore) showing attempt count,
+				// elapsed time, next-retry countdown, and Try now / Stop controls, and
+				// the early return below keeps the session out of the paused/error
+				// state so this stash stays dormant.
+				const stashLimitPrompt = isLimit && !!lastUserPrompt && !!targetTab;
+				const errorLogEntry: LogEntry = {
+					id: generateId(),
+					timestamp: agentError.timestamp,
+					source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
+					text: canOfferRecovery
+						? 'Session not found, however we can recover it raw or compressed.'
+						: agentError.message,
+					agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
+					...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
+					...(isInteractive && !isSessionNotFound && !willAutoRetry
+						? { renderStyle: 'text-stream' as const }
+						: {}),
+					...(canOfferRecovery || stashLimitPrompt
+						? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
+						: {}),
+				};
+				// On a continued outage (attempt > 0) the card already lives in the
+				// transcript - just strip the transient progress log, append nothing.
+				const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
+				const updatedAiTabs = targetTab
+					? s.aiTabs.map((tab) =>
+							tab.id === targetTab.id
+								? {
+										...tab,
+										logs: isRetryContinuation
+											? removeHiddenProgressLog(tab.logs, tab.id)
+											: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
+										agentError: isSessionNotFound ? undefined : agentError,
+										...(isSessionNotFound ? { agentSessionId: null } : {}),
+									}
+								: tab
+						)
+					: s.aiTabs;
+
+				// session_not_found recovers below; auto-retry keeps the session
+				// out of the blocking `error` state (the countdown chip owns the
+				// UI, and the exit listener idles the tab).
+				if (isSessionNotFound || willAutoRetry) {
+					return { ...s, aiTabs: updatedAiTabs };
+				}
+
+				return {
+					...s,
+					agentError,
+					agentErrorTabId: targetTab?.id,
+					agentErrorPaused: true,
+					state: 'error' as SessionState,
+					aiTabs: updatedAiTabs,
+				};
+			});
 
 			// Best-effort: estimate when the provider limit window reopens and stamp
 			// it onto the paused error so the auto-resume coordinator (Phase 3) can
@@ -322,25 +317,21 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					.getLimitResetAt(agentError.agentId)
 					.then((resetAt) => {
 						if (typeof resetAt !== 'number') return;
-						setSessions((prev) =>
-							prev.map((s) => {
-								// Only patch if THIS error is still the active one (a newer
-								// error would carry a different timestamp).
-								if (s.id !== actualSessionId || s.agentError?.timestamp !== agentError.timestamp) {
-									return s;
-								}
-								const patchedError: AgentError = { ...s.agentError, limitResetAt: resetAt };
-								return {
-									...s,
-									agentError: patchedError,
-									aiTabs: s.aiTabs.map((tab) =>
-										tab.agentError?.timestamp === agentError.timestamp
-											? { ...tab, agentError: patchedError }
-											: tab
-									),
-								};
-							})
-						);
+						updateSessionWith(actualSessionId, (s) => {
+							// Only patch if THIS error is still the active one (a newer
+							// error would carry a different timestamp).
+							if (s.agentError?.timestamp !== agentError.timestamp) return s;
+							const patchedError: AgentError = { ...s.agentError, limitResetAt: resetAt };
+							return {
+								...s,
+								agentError: patchedError,
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.agentError?.timestamp === agentError.timestamp
+										? { ...tab, agentError: patchedError }
+										: tab
+								),
+							};
+						});
 					})
 					.catch(() => {
 						// Reset estimate is advisory - swallow so a probe failure never

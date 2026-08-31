@@ -1,4 +1,4 @@
-import type { Session, AITab } from '../../types';
+import type { Session, AITab, LogEntry, ThinkingMode } from '../../types';
 
 /**
  * The session-state patch that focuses an agent's AI tab area.
@@ -52,6 +52,30 @@ export function toggleReadOnlyModeFields(tab: Pick<AITab, 'readOnlyMode'>): {
 } {
 	const nextReadOnly = !tab.readOnlyMode;
 	return { readOnlyMode: nextReadOnly, permissionMode: nextReadOnly ? 'readonly' : 'full' };
+}
+
+/**
+ * Field patch for cycling a tab's thinking-display mode: off -> on -> sticky -> off.
+ *
+ * Turning the mode OFF also drops the tab's stored thinking logs - only thinking
+ * logs are storage-gated (tool logs are always recorded and hidden purely at
+ * render, see the global tool-call visibility setting + TerminalOutput), so this
+ * must never touch anything but `source: 'thinking'` entries. Every entry point
+ * that cycles this mode (quick actions, prompt composer, tab store, keyboard
+ * shortcut) should spread this instead of re-deriving the cycle, so the four
+ * copies that existed before can't drift on the log-clearing behavior.
+ */
+export function cycleShowThinkingFields(tab: Pick<AITab, 'showThinking' | 'logs'>): {
+	showThinking: ThinkingMode;
+	logs: LogEntry[];
+} {
+	const current = tab.showThinking;
+	const newMode: ThinkingMode =
+		!current || current === 'off' ? 'on' : current === 'on' ? 'sticky' : 'off';
+	if (newMode === 'off') {
+		return { showThinking: 'off', logs: tab.logs.filter((l) => l.source !== 'thinking') };
+	}
+	return { showThinking: newMode, logs: tab.logs };
 }
 
 /**

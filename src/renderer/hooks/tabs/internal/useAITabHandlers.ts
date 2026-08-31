@@ -1,10 +1,13 @@
 import { useCallback } from 'react';
-import type { ThinkingMode } from '../../../../shared/types';
 import { useInlineWizardContext } from '../../../contexts/InlineWizardContext';
 import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
-import type { Session } from '../../../types';
+import {
+	selectActiveSession,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
@@ -12,6 +15,7 @@ import {
 	addAiTabToUnifiedHistory,
 	closeTab,
 	createTab,
+	cycleShowThinkingFields,
 	getActiveTab,
 	getInitialRenameValue,
 	getTabDisplayName,
@@ -28,44 +32,34 @@ export function useAITabHandlers(): AITabHandlersReturn {
 	const { endWizard: endInlineWizard } = useInlineWizardContext();
 
 	const handleNewAgentSession = useCallback(() => {
-		const { setSessions } = useSessionStore.getState();
 		const activeSessionId = useSessionStore.getState().activeSessionId;
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 
-		setSessions((prev: Session[]) => {
-			const currentSession = prev.find((s) => s.id === activeSessionId);
-			if (!currentSession) return prev;
-			return prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				const result = createTab(s, {
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				});
-				if (!result) return s;
-				return result.session;
+		updateSessionWith(activeSessionId, (s) => {
+			const result = createTab(s, {
+				saveToHistory: defaultSaveToHistory,
+				showThinking: defaultShowThinking,
 			});
+			return result ? result.session : s;
 		});
 		useModalStore.getState().closeModal('agentSessions');
 	}, []);
 
 	const handleTabSelect = useCallback((tabId: string) => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
-					const restored = restoreOrphanedTab(s, tabId);
-					if (restored) return restored.session;
-				}
-				const result = setActiveTab(s, tabId);
-				return result ? result.session : s;
-			})
-		);
+		const { activeSessionId } = useSessionStore.getState();
+		updateSessionWith(activeSessionId, (s) => {
+			if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
+				const restored = restoreOrphanedTab(s, tabId);
+				if (restored) return restored.session;
+			}
+			const result = setActiveTab(s, tabId);
+			return result ? result.session : s;
+		});
 	}, []);
 
 	const performTabClose = useCallback(
 		(tabId: string) => {
-			const { setSessions, activeSessionId } = useSessionStore.getState();
+			const { activeSessionId } = useSessionStore.getState();
 			const sessionBeforeClose = useSessionStore
 				.getState()
 				.sessions.find((s) => s.id === activeSessionId);
@@ -99,22 +93,19 @@ export function useAITabHandlers(): AITabHandlersReturn {
 			}
 
 			clearLiveDraft(tabId);
-			setSessions((prev: Session[]) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionId) return s;
-					const tab = s.aiTabs.find((t) => t.id === tabId);
-					const isWizardTab = tab && hasActiveWizard(tab);
-					const unifiedIndex = s.unifiedTabOrder.findIndex(
-						(ref) => ref.type === 'ai' && ref.id === tabId
-					);
-					const result = closeTab(s, tabId, false, { skipHistory: isWizardTab });
-					if (!result) return s;
-					if (!isWizardTab && tab) {
-						return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
-					}
-					return result.session;
-				})
-			);
+			updateSessionWith(activeSessionId, (s) => {
+				const tab = s.aiTabs.find((t) => t.id === tabId);
+				const isWizardTab = tab && hasActiveWizard(tab);
+				const unifiedIndex = s.unifiedTabOrder.findIndex(
+					(ref) => ref.type === 'ai' && ref.id === tabId
+				);
+				const result = closeTab(s, tabId, false, { skipHistory: isWizardTab });
+				if (!result) return s;
+				if (!isWizardTab && tab) {
+					return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
+				}
+				return result.session;
+			});
 
 			if (wasWizardTab) {
 				endInlineWizard(tabId).catch((error) =>
@@ -150,23 +141,19 @@ export function useAITabHandlers(): AITabHandlersReturn {
 	);
 
 	const handleNewTab = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { activeSessionId } = useSessionStore.getState();
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				const result = createTab(s, {
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				});
-				if (!result) return s;
-				return result.session;
-			})
-		);
+		updateSessionWith(activeSessionId, (s) => {
+			const result = createTab(s, {
+				saveToHistory: defaultSaveToHistory,
+				showThinking: defaultShowThinking,
+			});
+			return result ? result.session : s;
+		});
 	}, []);
 
 	const performCloseAllTabs = useCallback(() => {
-		const { setSessions, activeSessionId, sessions } = useSessionStore.getState();
+		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
 		activeSession?.aiTabs.forEach((t) => clearLiveDraft(t.id));
 
@@ -174,23 +161,20 @@ export function useAITabHandlers(): AITabHandlersReturn {
 			.filter((t) => hasActiveWizard(t))
 			.map((t) => t.id);
 
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				let updatedSession = s;
-				const tabIds = s.aiTabs.map((t) => t.id);
-				for (const tabId of tabIds) {
-					const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
-					const result = closeTab(updatedSession, tabId, false, {
-						skipHistory: tab ? hasActiveWizard(tab) : false,
-					});
-					if (result) {
-						updatedSession = result.session;
-					}
+		updateSessionWith(activeSessionId, (s) => {
+			let updatedSession = s;
+			const tabIds = s.aiTabs.map((t) => t.id);
+			for (const tabId of tabIds) {
+				const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
+				const result = closeTab(updatedSession, tabId, false, {
+					skipHistory: tab ? hasActiveWizard(tab) : false,
+				});
+				if (result) {
+					updatedSession = result.session;
 				}
-				return updatedSession;
-			})
-		);
+			}
+			return updatedSession;
+		});
 
 		for (const tabId of wizardTabIds) {
 			endInlineWizard(tabId).catch((error) =>
@@ -215,21 +199,12 @@ export function useAITabHandlers(): AITabHandlersReturn {
 	}, [performCloseAllTabs]);
 
 	const handleRequestTabRename = useCallback((tabId: string) => {
-		const { setSessions } = useSessionStore.getState();
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		const tab = session.aiTabs?.find((t) => t.id === tabId);
 		if (tab) {
 			if (tab.isGeneratingName) {
-				setSessions((prev: Session[]) =>
-					prev.map((s) => {
-						if (s.id !== session.id) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, isGeneratingName: false } : t)),
-						};
-					})
-				);
+				updateAiTab(session.id, tabId, (t) => ({ ...t, isGeneratingName: false }));
 			}
 			useModalStore.getState().openModal('renameTab', {
 				tabId,
@@ -239,77 +214,52 @@ export function useAITabHandlers(): AITabHandlersReturn {
 	}, []);
 
 	const handleTabReorder = useCallback((fromIndex: number, toIndex: number) => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId || !s.aiTabs) return s;
-				const tabs = [...s.aiTabs];
-				const [movedTab] = tabs.splice(fromIndex, 1);
-				tabs.splice(toIndex, 0, movedTab);
-				return { ...s, aiTabs: tabs };
-			})
-		);
+		const { activeSessionId } = useSessionStore.getState();
+		updateSessionWith(activeSessionId, (s) => {
+			if (!s.aiTabs) return s;
+			const tabs = [...s.aiTabs];
+			const [movedTab] = tabs.splice(fromIndex, 1);
+			tabs.splice(toIndex, 0, movedTab);
+			return { ...s, aiTabs: tabs };
+		});
 	}, []);
 
 	const handleUpdateTabByClaudeSessionId = useCallback(
 		(agentSessionId: string, updates: { name?: string | null; starred?: boolean }) => {
-			const { setSessions, activeSessionId } = useSessionStore.getState();
-			setSessions((prev: Session[]) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionId) return s;
-					const tabIndex = s.aiTabs.findIndex((tab) => tab.agentSessionId === agentSessionId);
-					if (tabIndex === -1) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.agentSessionId === agentSessionId
-								? {
-										...tab,
-										...(updates.name !== undefined ? { name: updates.name } : {}),
-										...(updates.starred !== undefined ? { starred: updates.starred } : {}),
-									}
-								: tab
-						),
-					};
-				})
-			);
+			const { activeSessionId } = useSessionStore.getState();
+			updateSessionWith(activeSessionId, (s) => {
+				const tabIndex = s.aiTabs.findIndex((tab) => tab.agentSessionId === agentSessionId);
+				if (tabIndex === -1) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.agentSessionId === agentSessionId
+							? {
+									...tab,
+									...(updates.name !== undefined ? { name: updates.name } : {}),
+									...(updates.starred !== undefined ? { starred: updates.starred } : {}),
+								}
+							: tab
+					),
+				};
+			});
 		},
 		[]
 	);
 
 	const handleTabStar = useCallback((tabId: string, starred: boolean) => {
-		const { setSessions } = useSessionStore.getState();
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
 		if (!tabToStar?.agentSessionId) return;
 
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== session.id) return s;
-				const tab = s.aiTabs.find((t) => t.id === tabId);
-				if (tab) {
-					persistTabStarred(s, tab, starred);
-				}
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, starred } : t)),
-				};
-			})
-		);
+		persistTabStarred(session, tabToStar, starred);
+		updateAiTab(session.id, tabId, (t) => ({ ...t, starred }));
 	}, []);
 
 	const handleTabMarkUnread = useCallback((tabId: string) => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: true } : t)),
-				};
-			})
-		);
+		const { activeSessionId } = useSessionStore.getState();
+		updateAiTab(activeSessionId, tabId, (t) => ({ ...t, hasUnread: true }));
 	}, []);
 
 	const handleToggleTabReadOnlyMode = useCallback(() => {
@@ -339,27 +289,10 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		if (!session) return;
 		const currentActiveTab = getActiveTab(session);
 		if (!currentActiveTab) return;
-
-		const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-			if (!current || current === 'off') return 'on';
-			if (current === 'on') return 'sticky';
-			return 'off';
-		};
-
-		updateAiTab(session.id, currentActiveTab.id, (tab) => {
-			const newMode = cycleThinkingMode(tab.showThinking);
-			if (newMode === 'off') {
-				// Only thinking logs are storage-gated. Tool logs are always recorded
-				// and hidden purely at render (see the global tool-call visibility
-				// setting + TerminalOutput), so turning thinking off must never drop them.
-				return {
-					...tab,
-					showThinking: 'off',
-					logs: tab.logs.filter((l) => l.source !== 'thinking'),
-				};
-			}
-			return { ...tab, showThinking: newMode };
-		});
+		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+			...tab,
+			...cycleShowThinkingFields(tab),
+		}));
 	}, []);
 
 	const handleToggleTabEnterToSend = useCallback(() => {

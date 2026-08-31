@@ -17,7 +17,7 @@
  */
 
 import { useEffect } from 'react';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { getActiveTab, getWriteModeTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
@@ -37,7 +37,6 @@ export interface UseAgentDataListenerDeps {
 export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
-		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
 
@@ -103,20 +102,10 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 			// we skip the full prev.map() allocation and store notification entirely
 			// instead of mapping every session just to return `prev` unchanged.
 			if (targetTab && removeHiddenProgressLog(targetTab.logs, targetTabId) !== targetTab.logs) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-						let didChange = false;
-						const updatedTabs = s.aiTabs.map((tab) => {
-							if (tab.id !== targetTabId) return tab;
-							const updatedLogs = removeHiddenProgressLog(tab.logs, targetTabId!);
-							if (updatedLogs === tab.logs) return tab;
-							didChange = true;
-							return { ...tab, logs: updatedLogs };
-						});
-						return didChange ? { ...s, aiTabs: updatedTabs } : s;
-					})
-				);
+				updateAiTab(actualSessionId, targetTabId, (tab) => ({
+					...tab,
+					logs: removeHiddenProgressLog(tab.logs, targetTabId!),
+				}));
 			}
 
 			deps.batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
@@ -127,31 +116,28 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 				const activeAgentError = session.agentError;
 				const errorTabId = session.agentErrorTabId ?? targetTabId;
 
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-						const updatedAiTabs = s.aiTabs.map((tab) =>
-							tab.id === targetTabId || tab.id === errorTabId
-								? {
-										...tab,
-										logs:
-											tab.id === errorTabId
-												? removeMatchingAgentErrorLog(tab.logs, activeAgentError)
-												: tab.logs,
-										agentError: undefined,
-									}
-								: tab
-						);
-						return {
-							...s,
-							agentError: undefined,
-							agentErrorTabId: undefined,
-							agentErrorPaused: false,
-							state: 'busy' as SessionState,
-							aiTabs: updatedAiTabs,
-						};
-					})
-				);
+				updateSessionWith(actualSessionId, (s) => {
+					const updatedAiTabs = s.aiTabs.map((tab) =>
+						tab.id === targetTabId || tab.id === errorTabId
+							? {
+									...tab,
+									logs:
+										tab.id === errorTabId
+											? removeMatchingAgentErrorLog(tab.logs, activeAgentError)
+											: tab.logs,
+									agentError: undefined,
+								}
+							: tab
+					);
+					return {
+						...s,
+						agentError: undefined,
+						agentErrorTabId: undefined,
+						agentErrorPaused: false,
+						state: 'busy' as SessionState,
+						aiTabs: updatedAiTabs,
+					};
+				});
 				window.maestro.agentError.clearError(actualSessionId).catch((err) => {
 					logger.error('Failed to clear agent error on successful data:', undefined, err);
 				});

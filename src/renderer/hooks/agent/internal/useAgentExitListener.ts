@@ -9,7 +9,7 @@
  *  2. Verify the process is actually gone (avoids "ghost" exits).
  *  3. Gather toast + synopsis data BEFORE the state update so the
  *     reducer stays pure.
- *  4. Apply the AI / terminal state transition via `setSessions`.
+ *  4. Apply the AI / terminal state transition via `updateSessionWith`.
  *  5. Fire git-refs refresh, query-stats record, queued-item dispatch,
  *     completion toast, and async synopsis spawn (in that order).
  *
@@ -20,7 +20,7 @@
 
 import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
@@ -73,7 +73,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
-		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getGroups = () => useSessionStore.getState().groups;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
@@ -85,17 +84,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			rightPanelRef: deps.rightPanelRef,
 			getAutorunSynopsisPrompt,
 			updateLastSynopsisTime: (sId, tId, time) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sId) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((tab) =>
-								tab.id !== tId ? tab : { ...tab, lastSynopsisTime: time }
-							),
-						};
-					})
-				);
+				updateAiTab(sId, tId, (tab) => ({ ...tab, lastSynopsisTime: time }));
 			},
 		};
 
@@ -389,300 +378,161 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			}
 
 			// Update state (pure function - no side effects)
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== actualSessionId) return s;
+			updateSessionWith(actualSessionId, (s) => {
+				// If this exit belongs to a tab the user already closed while it was
+				// still thinking, the tab is no longer in s.aiTabs - it lives in
+				// s.orphanedThinkingTabs purely so the thinking pill can keep
+				// surfacing it. Drop it from orphans and recompute session-level
+				// busy state. Nothing else (queue, logs, synopsis, toast) needs to
+				// touch aiTabs because the tab is gone.
+				const orphanIndex =
+					tabIdFromSession && s.orphanedThinkingTabs
+						? s.orphanedThinkingTabs.findIndex((t) => t.id === tabIdFromSession)
+						: -1;
+				if (isFromAi && orphanIndex !== -1 && s.orphanedThinkingTabs) {
+					// Before retiring the orphan, drain any follow-up the user queued on
+					// it: a message queued on a tab keeps sending in the background after
+					// the tab is closed (fire-and-forget). The orphan stays parked - it
+					// carries the agent session id for continuity and is a valid dispatch
+					// target - until its queued work is gone.
+					const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+						s.executionQueue
+					);
+					const otherTabsBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+					const runNextOnOrphan =
+						!!nextItem &&
+						nextItem.tabId === tabIdFromSession &&
+						(nextItem.forceParallel || nextItem.readOnlyMode || !otherTabsBusy);
 
-					// If this exit belongs to a tab the user already closed while it was
-					// still thinking, the tab is no longer in s.aiTabs - it lives in
-					// s.orphanedThinkingTabs purely so the thinking pill can keep
-					// surfacing it. Drop it from orphans and recompute session-level
-					// busy state. Nothing else (queue, logs, synopsis, toast) needs to
-					// touch aiTabs because the tab is gone.
-					const orphanIndex =
-						tabIdFromSession && s.orphanedThinkingTabs
-							? s.orphanedThinkingTabs.findIndex((t) => t.id === tabIdFromSession)
-							: -1;
-					if (isFromAi && orphanIndex !== -1 && s.orphanedThinkingTabs) {
-						// Before retiring the orphan, drain any follow-up the user queued on
-						// it: a message queued on a tab keeps sending in the background after
-						// the tab is closed (fire-and-forget). The orphan stays parked - it
-						// carries the agent session id for continuity and is a valid dispatch
-						// target - until its queued work is gone.
-						const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
-							s.executionQueue
-						);
-						const otherTabsBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-						const runNextOnOrphan =
-							!!nextItem &&
-							nextItem.tabId === tabIdFromSession &&
-							(nextItem.forceParallel || nextItem.readOnlyMode || !otherTabsBusy);
-
-						if (runNextOnOrphan && nextItem) {
-							// Keep the orphan, mark it thinking again, and dequeue the item here
-							// so it is not re-dispatched. processQueuedItem (queuedItemToProcess,
-							// computed above via chooseNextQueuedItem) performs the actual spawn
-							// against this same orphan tab id.
-							const updatedOrphans = s.orphanedThinkingTabs.map((tab, i) => {
-								if (i !== orphanIndex) return tab;
-								const refreshed = {
-									...tab,
-									state: 'busy' as const,
-									thinkingStartTime: Date.now(),
-								};
-								// Record the queued user message on the orphan's own log so a
-								// later restore shows the background conversation. (The streamed
-								// response only routes back to the UI once the tab is restored.)
-								if (nextItem.type === 'message' && nextItem.text) {
-									const logEntry: LogEntry = {
-										id: generateId(),
-										timestamp: Date.now(),
-										source: 'user',
-										text: nextItem.text,
-										images: nextItem.images,
-										...(nextItem.forceParallel && { forceParallel: true }),
-									};
-									refreshed.logs = [...refreshed.logs, logEntry];
-								}
-								return refreshed;
-							});
-							return {
-								...s,
-								orphanedThinkingTabs: updatedOrphans,
-								executionQueue: remainingQueue,
-								state: 'busy' as SessionState,
-								busySource: 'ai',
+					if (runNextOnOrphan && nextItem) {
+						// Keep the orphan, mark it thinking again, and dequeue the item here
+						// so it is not re-dispatched. processQueuedItem (queuedItemToProcess,
+						// computed above via chooseNextQueuedItem) performs the actual spawn
+						// against this same orphan tab id.
+						const updatedOrphans = s.orphanedThinkingTabs.map((tab, i) => {
+							if (i !== orphanIndex) return tab;
+							const refreshed = {
+								...tab,
+								state: 'busy' as const,
 								thinkingStartTime: Date.now(),
-								currentCycleTokens: 0,
-								currentCycleBytes: 0,
 							};
-						}
-
-						// Items queued for this orphan that can't run yet (another tab is
-						// busy): keep the orphan parked so it survives to drain once the
-						// others finish. The idle-recovery path in useQueueProcessing then
-						// dispatches it when the session next goes idle.
-						const orphanHasPendingItems = s.executionQueue.some(
-							(item) => item.tabId === tabIdFromSession
-						);
-						if (orphanHasPendingItems) {
-							const updatedOrphans = s.orphanedThinkingTabs.map((tab, i) =>
-								i === orphanIndex
-									? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-									: tab
-							);
-							const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-							return {
-								...s,
-								orphanedThinkingTabs: updatedOrphans,
-								state: anyAiTabStillBusy ? s.state : ('idle' as SessionState),
-								busySource: anyAiTabStillBusy ? s.busySource : undefined,
-								thinkingStartTime: anyAiTabStillBusy ? s.thinkingStartTime : undefined,
-							};
-						}
-
-						// This orphan has no queued work of its own, so it's done draining -
-						// retire it. But the queue may still hold a runnable item for ANOTHER
-						// tab that the post-reducer dispatch (queuedItemToProcess, decided above
-						// by chooseNextQueuedItem) is about to spawn. We MUST dequeue that exact
-						// item and mark its target busy here, in lockstep with that spawn.
-						// Otherwise it stays queued and re-dispatches when its own process later
-						// exits (the message runs twice), and no tab shows busy while it runs
-						// (an invisible turn whose reply never routes to a tab). Gating on
-						// queuedItemToProcess keeps the reducer and the spawn perfectly in sync.
-						const orphansWithoutExited = s.orphanedThinkingTabs.filter((_, i) => i !== orphanIndex);
-						const { item: nextRunnable, remaining: remainingAfterNext } = takeNextRunnableQueueItem(
-							s.executionQueue
-						);
-						const dispatchesNext =
-							!!queuedItemToProcess &&
-							!!nextRunnable &&
-							queuedItemToProcess.item.id === nextRunnable.id;
-
-						if (dispatchesNext && nextRunnable) {
-							// Resolve against the session WITHOUT the just-retired orphan so the
-							// target is the item's real owner (another aiTab or another
-							// still-draining orphan); we already know it isn't this orphan.
-							const sessionAfterRetire: Session = {
-								...s,
-								orphanedThinkingTabs: orphansWithoutExited,
-							};
-							const target = resolveQueuedItemTarget(sessionAfterRetire, nextRunnable);
-							if (target) {
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((tab) =>
-										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextRunnable, s) : tab
-									),
-									orphanedThinkingTabs:
-										orphansWithoutExited.length > 0
-											? orphansWithoutExited.map((tab) =>
-													tab.id === target.tabId
-														? markTabRunningQueuedItem(tab, nextRunnable, s)
-														: tab
-												)
-											: undefined,
-									executionQueue: remainingAfterNext,
-									state: 'busy' as SessionState,
-									busySource: 'ai',
-									thinkingStartTime: Date.now(),
-									currentCycleTokens: 0,
-									currentCycleBytes: 0,
+							// Record the queued user message on the orphan's own log so a
+							// later restore shows the background conversation. (The streamed
+							// response only routes back to the UI once the tab is restored.)
+							if (nextItem.type === 'message' && nextItem.text) {
+								const logEntry: LogEntry = {
+									id: generateId(),
+									timestamp: Date.now(),
+									source: 'user',
+									text: nextItem.text,
+									images: nextItem.images,
+									...(nextItem.forceParallel && { forceParallel: true }),
 								};
+								refreshed.logs = [...refreshed.logs, logEntry];
 							}
-						}
-
-						// Nothing to dispatch - retire the orphan and recompute thinking state.
-						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-						const stillThinking = anyAiTabStillBusy || orphansWithoutExited.length > 0;
+							return refreshed;
+						});
 						return {
 							...s,
-							orphanedThinkingTabs:
-								orphansWithoutExited.length > 0 ? orphansWithoutExited : undefined,
-							state: stillThinking ? s.state : ('idle' as SessionState),
-							busySource: stillThinking ? s.busySource : undefined,
-							thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
+							orphanedThinkingTabs: updatedOrphans,
+							executionQueue: remainingQueue,
+							state: 'busy' as SessionState,
+							busySource: 'ai',
+							thinkingStartTime: Date.now(),
+							currentCycleTokens: 0,
+							currentCycleBytes: 0,
 						};
 					}
 
-					if (isFromAi) {
-						if (s.state === 'error' && s.agentError) {
-							const updatedAiTabs =
-								s.aiTabs?.length > 0
-									? s.aiTabs.map((tab) => {
-											if (tabIdFromSession) {
-												return tab.id === tabIdFromSession
-													? {
-															...tab,
-															logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-															// Preserve agentSessionId - stale IDs are cleared
-															// by onAgentError when session_not_found is detected.
-															// Blanket-clearing here breaks tab identity for
-															// recoverable errors (rate limits, API errors, etc.)
-														}
-													: tab;
-											} else {
-												return tab.state === 'busy'
-													? {
-															...tab,
-															logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-														}
-													: tab;
-											}
-										})
-									: s.aiTabs;
-
-							return {
-								...s,
-								state: 'error' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-							};
-						}
-
-						// Skip paused items: run the first runnable one, holding the rest
-						// (including any paused items ahead of it) in place.
-						const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
-							s.executionQueue
+					// Items queued for this orphan that can't run yet (another tab is
+					// busy): keep the orphan parked so it survives to drain once the
+					// others finish. The idle-recovery path in useQueueProcessing then
+					// dispatches it when the session next goes idle.
+					const orphanHasPendingItems = s.executionQueue.some(
+						(item) => item.tabId === tabIdFromSession
+					);
+					if (orphanHasPendingItems) {
+						const updatedOrphans = s.orphanedThinkingTabs.map((tab, i) =>
+							i === orphanIndex
+								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
+								: tab
 						);
-						if (nextItem) {
-							// Guard: non-forceParallel, non-readOnly items must wait
-							// until ALL other tabs are idle to prevent write conflicts
-							const otherTabsBusy = s.aiTabs?.some(
-								(tab) => tab.id !== tabIdFromSession && tab.state === 'busy'
-							);
-							// `retryPending` holds the whole queue: the provider just refused
-							// this turn, so dispatching the next item only fails it too - and
-							// the dispatch would cancel the pending retry, losing that prompt.
-							// Mirrors the same condition in chooseNextQueuedItem, which already
-							// kept `queuedItemToProcess` null; this keeps the reducer in step so
-							// no tab is marked busy for a spawn that never happens.
-							if (
-								retryPending ||
-								(!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy)
-							) {
-								// Don't dequeue - mark the exiting tab idle and keep session busy
-								const updatedAiTabs = s.aiTabs.map((tab) =>
-									tabIdFromSession && tab.id === tabIdFromSession
-										? {
-												...tab,
-												logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
-												state: 'idle' as const,
-												thinkingStartTime: undefined,
-											}
-										: tab
-								);
-								const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
-								return {
-									...s,
-									state: anyTabStillBusy ? ('busy' as SessionState) : ('idle' as SessionState),
-									busySource: anyTabStillBusy ? s.busySource : undefined,
-									thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
-									aiTabs: updatedAiTabs,
-								};
-							}
+						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+						return {
+							...s,
+							orphanedThinkingTabs: updatedOrphans,
+							state: anyAiTabStillBusy ? s.state : ('idle' as SessionState),
+							busySource: anyAiTabStillBusy ? s.busySource : undefined,
+							thinkingStartTime: anyAiTabStillBusy ? s.thinkingStartTime : undefined,
+						};
+					}
 
-							const target = resolveQueuedItemTarget(s, nextItem);
+					// This orphan has no queued work of its own, so it's done draining -
+					// retire it. But the queue may still hold a runnable item for ANOTHER
+					// tab that the post-reducer dispatch (queuedItemToProcess, decided above
+					// by chooseNextQueuedItem) is about to spawn. We MUST dequeue that exact
+					// item and mark its target busy here, in lockstep with that spawn.
+					// Otherwise it stays queued and re-dispatches when its own process later
+					// exits (the message runs twice), and no tab shows busy while it runs
+					// (an invisible turn whose reply never routes to a tab). Gating on
+					// queuedItemToProcess keeps the reducer and the spawn perfectly in sync.
+					const orphansWithoutExited = s.orphanedThinkingTabs.filter((_, i) => i !== orphanIndex);
+					const { item: nextRunnable, remaining: remainingAfterNext } = takeNextRunnableQueueItem(
+						s.executionQueue
+					);
+					const dispatchesNext =
+						!!queuedItemToProcess &&
+						!!nextRunnable &&
+						queuedItemToProcess.item.id === nextRunnable.id;
 
-							if (!target) {
-								return {
-									...s,
-									state: 'busy' as SessionState,
-									busySource: 'ai',
-									executionQueue: remainingQueue,
-									thinkingStartTime: Date.now(),
-									currentCycleTokens: 0,
-									currentCycleBytes: 0,
-								};
-							}
-
-							// Route the dequeued item to its target tab. When that tab is an
-							// orphan (the user closed it while this message was still queued),
-							// it lives in orphanedThinkingTabs - keep the send fire-and-forget
-							// and route busy-state + the user log THERE, never onto the
-							// active tab. The aiTabs map then only marks the just-exited tab
-							// idle (its target branch never matches a live aiTab in that case).
-							const updatedAiTabs = s.aiTabs.map((tab) => {
-								if (tab.id === target.tabId) {
-									return markTabRunningQueuedItem(tab, nextItem, s);
-								}
-								if (tabIdFromSession && tab.id === tabIdFromSession) {
-									return {
-										...tab,
-										logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
-										state: 'idle' as const,
-									};
-								}
-								return tab;
-							});
-
-							const updatedOrphans =
-								target.location === 'orphan' && s.orphanedThinkingTabs
-									? s.orphanedThinkingTabs.map((tab) =>
-											tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
-										)
-									: s.orphanedThinkingTabs;
-
+					if (dispatchesNext && nextRunnable) {
+						// Resolve against the session WITHOUT the just-retired orphan so the
+						// target is the item's real owner (another aiTab or another
+						// still-draining orphan); we already know it isn't this orphan.
+						const sessionAfterRetire: Session = {
+							...s,
+							orphanedThinkingTabs: orphansWithoutExited,
+						};
+						const target = resolveQueuedItemTarget(sessionAfterRetire, nextRunnable);
+						if (target) {
 							return {
 								...s,
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextRunnable, s) : tab
+								),
+								orphanedThinkingTabs:
+									orphansWithoutExited.length > 0
+										? orphansWithoutExited.map((tab) =>
+												tab.id === target.tabId
+													? markTabRunningQueuedItem(tab, nextRunnable, s)
+													: tab
+											)
+										: undefined,
+								executionQueue: remainingAfterNext,
 								state: 'busy' as SessionState,
 								busySource: 'ai',
-								aiTabs: updatedAiTabs,
-								...(updatedOrphans !== s.orphanedThinkingTabs && {
-									orphanedThinkingTabs: updatedOrphans,
-								}),
-								executionQueue: remainingQueue,
 								thinkingStartTime: Date.now(),
 								currentCycleTokens: 0,
 								currentCycleBytes: 0,
 							};
 						}
+					}
 
+					// Nothing to dispatch - retire the orphan and recompute thinking state.
+					const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+					const stillThinking = anyAiTabStillBusy || orphansWithoutExited.length > 0;
+					return {
+						...s,
+						orphanedThinkingTabs:
+							orphansWithoutExited.length > 0 ? orphansWithoutExited : undefined,
+						state: stillThinking ? s.state : ('idle' as SessionState),
+						busySource: stillThinking ? s.busySource : undefined,
+						thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
+					};
+				}
+
+				if (isFromAi) {
+					if (s.state === 'error' && s.agentError) {
 						const updatedAiTabs =
 							s.aiTabs?.length > 0
 								? s.aiTabs.map((tab) => {
@@ -693,9 +543,10 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 														logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
 														state: 'idle' as const,
 														thinkingStartTime: undefined,
-														// Preserve agentSessionId for session resume -
-														// stale IDs are cleared by onAgentError when
-														// session_not_found is detected
+														// Preserve agentSessionId - stale IDs are cleared
+														// by onAgentError when session_not_found is detected.
+														// Blanket-clearing here breaks tab identity for
+														// recoverable errors (rate limits, API errors, etc.)
 													}
 												: tab;
 										} else {
@@ -711,58 +562,192 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 									})
 								: s.aiTabs;
 
-						const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
-						const newState =
-							s.state === 'error' && s.agentError
-								? ('error' as SessionState)
-								: anyTabStillBusy
-									? ('busy' as SessionState)
-									: ('idle' as SessionState);
-						const newBusySource = anyTabStillBusy ? s.busySource : undefined;
-
-						logger.info('[onExit] Session state transition:', undefined, {
-							sessionId: s.id.substring(0, 8),
-							tabIdFromSession: tabIdFromSession?.substring(0, 8),
-							previousState: s.state,
-							newState,
-							previousBusySource: s.busySource,
-							newBusySource,
-							anyTabStillBusy,
-							tabStates: updatedAiTabs.map((t) => ({
-								id: t.id.substring(0, 8),
-								state: t.state,
-							})),
-						});
-
 						return {
 							...s,
-							state: newState,
-							busySource: newBusySource,
-							thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
-							pendingAICommandForSynopsis: undefined,
+							state: 'error' as SessionState,
+							busySource: undefined,
+							thinkingStartTime: undefined,
 							aiTabs: updatedAiTabs,
 						};
 					}
 
-					// Terminal exit
-					const exitLog: LogEntry = {
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: `Terminal process exited with code ${code}`,
-					};
+					// Skip paused items: run the first runnable one, holding the rest
+					// (including any paused items ahead of it) in place.
+					const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+						s.executionQueue
+					);
+					if (nextItem) {
+						// Guard: non-forceParallel, non-readOnly items must wait
+						// until ALL other tabs are idle to prevent write conflicts
+						const otherTabsBusy = s.aiTabs?.some(
+							(tab) => tab.id !== tabIdFromSession && tab.state === 'busy'
+						);
+						// `retryPending` holds the whole queue: the provider just refused
+						// this turn, so dispatching the next item only fails it too - and
+						// the dispatch would cancel the pending retry, losing that prompt.
+						// Mirrors the same condition in chooseNextQueuedItem, which already
+						// kept `queuedItemToProcess` null; this keeps the reducer in step so
+						// no tab is marked busy for a spawn that never happens.
+						if (
+							retryPending ||
+							(!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy)
+						) {
+							// Don't dequeue - mark the exiting tab idle and keep session busy
+							const updatedAiTabs = s.aiTabs.map((tab) =>
+								tabIdFromSession && tab.id === tabIdFromSession
+									? {
+											...tab,
+											logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
+											state: 'idle' as const,
+											thinkingStartTime: undefined,
+										}
+									: tab
+							);
+							const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
+							return {
+								...s,
+								state: anyTabStillBusy ? ('busy' as SessionState) : ('idle' as SessionState),
+								busySource: anyTabStillBusy ? s.busySource : undefined,
+								thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
+								aiTabs: updatedAiTabs,
+							};
+						}
 
-					const anyAiTabBusy = s.aiTabs?.some((tab) => tab.state === 'busy') || false;
+						const target = resolveQueuedItemTarget(s, nextItem);
+
+						if (!target) {
+							return {
+								...s,
+								state: 'busy' as SessionState,
+								busySource: 'ai',
+								executionQueue: remainingQueue,
+								thinkingStartTime: Date.now(),
+								currentCycleTokens: 0,
+								currentCycleBytes: 0,
+							};
+						}
+
+						// Route the dequeued item to its target tab. When that tab is an
+						// orphan (the user closed it while this message was still queued),
+						// it lives in orphanedThinkingTabs - keep the send fire-and-forget
+						// and route busy-state + the user log THERE, never onto the
+						// active tab. The aiTabs map then only marks the just-exited tab
+						// idle (its target branch never matches a live aiTab in that case).
+						const updatedAiTabs = s.aiTabs.map((tab) => {
+							if (tab.id === target.tabId) {
+								return markTabRunningQueuedItem(tab, nextItem, s);
+							}
+							if (tabIdFromSession && tab.id === tabIdFromSession) {
+								return {
+									...tab,
+									logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
+									state: 'idle' as const,
+								};
+							}
+							return tab;
+						});
+
+						const updatedOrphans =
+							target.location === 'orphan' && s.orphanedThinkingTabs
+								? s.orphanedThinkingTabs.map((tab) =>
+										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
+									)
+								: s.orphanedThinkingTabs;
+
+						return {
+							...s,
+							state: 'busy' as SessionState,
+							busySource: 'ai',
+							aiTabs: updatedAiTabs,
+							...(updatedOrphans !== s.orphanedThinkingTabs && {
+								orphanedThinkingTabs: updatedOrphans,
+							}),
+							executionQueue: remainingQueue,
+							thinkingStartTime: Date.now(),
+							currentCycleTokens: 0,
+							currentCycleBytes: 0,
+						};
+					}
+
+					const updatedAiTabs =
+						s.aiTabs?.length > 0
+							? s.aiTabs.map((tab) => {
+									if (tabIdFromSession) {
+										return tab.id === tabIdFromSession
+											? {
+													...tab,
+													logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
+													state: 'idle' as const,
+													thinkingStartTime: undefined,
+													// Preserve agentSessionId for session resume -
+													// stale IDs are cleared by onAgentError when
+													// session_not_found is detected
+												}
+											: tab;
+									} else {
+										return tab.state === 'busy'
+											? {
+													...tab,
+													logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
+													state: 'idle' as const,
+													thinkingStartTime: undefined,
+												}
+											: tab;
+									}
+								})
+							: s.aiTabs;
+
+					const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
+					const newState =
+						s.state === 'error' && s.agentError
+							? ('error' as SessionState)
+							: anyTabStillBusy
+								? ('busy' as SessionState)
+								: ('idle' as SessionState);
+					const newBusySource = anyTabStillBusy ? s.busySource : undefined;
+
+					logger.info('[onExit] Session state transition:', undefined, {
+						sessionId: s.id.substring(0, 8),
+						tabIdFromSession: tabIdFromSession?.substring(0, 8),
+						previousState: s.state,
+						newState,
+						previousBusySource: s.busySource,
+						newBusySource,
+						anyTabStillBusy,
+						tabStates: updatedAiTabs.map((t) => ({
+							id: t.id.substring(0, 8),
+							state: t.state,
+						})),
+					});
 
 					return {
 						...s,
-						state: anyAiTabBusy ? s.state : ('idle' as SessionState),
-						busySource: anyAiTabBusy ? s.busySource : undefined,
-						// TODO: Remove shellLogs once terminal tabs migration is complete
-						...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
+						state: newState,
+						busySource: newBusySource,
+						thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
+						pendingAICommandForSynopsis: undefined,
+						aiTabs: updatedAiTabs,
 					};
-				})
-			);
+				}
+
+				// Terminal exit
+				const exitLog: LogEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'system',
+					text: `Terminal process exited with code ${code}`,
+				};
+
+				const anyAiTabBusy = s.aiTabs?.some((tab) => tab.state === 'busy') || false;
+
+				return {
+					...s,
+					state: anyAiTabBusy ? s.state : ('idle' as SessionState),
+					busySource: anyAiTabBusy ? s.busySource : undefined,
+					// TODO: Remove shellLogs once terminal tabs migration is complete
+					...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
+				};
+			});
 
 			// Refresh git branches/tags after terminal command completes
 			if (!isFromAi) {
@@ -771,18 +756,12 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					void (async () => {
 						const result = await refreshGitRefsAfterTerminalExit(currentSession);
 						if (!result) return;
-						setSessions((prev) =>
-							prev.map((s) =>
-								s.id === actualSessionId
-									? {
-											...s,
-											gitBranches: result.gitBranches,
-											gitTags: result.gitTags,
-											gitRefsCacheTime: Date.now(),
-										}
-									: s
-							)
-						);
+						updateSessionWith(actualSessionId, (s) => ({
+							...s,
+							gitBranches: result.gitBranches,
+							gitTags: result.gitTags,
+							gitRefsCacheTime: Date.now(),
+						}));
 					})();
 				}
 			}

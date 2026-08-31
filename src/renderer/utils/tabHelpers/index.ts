@@ -38,6 +38,7 @@ import {
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	cycleShowThinkingFields,
 } from './focusFields';
 import {
 	groupFocusFields,
@@ -56,6 +57,7 @@ export {
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	cycleShowThinkingFields,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
 
