@@ -364,6 +364,13 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// WindowsApps (Microsoft Store style)
 			path.join(localAppData, 'Microsoft', 'WindowsApps', 'claude.exe'),
 		],
+		openclaude: [
+			// npm global installation - `npm install -g @gitlawb/openclaude`
+			// creates the .cmd wrapper. This is the documented install path.
+			...npmGlobal('openclaude'),
+			// Possible standalone installer in future
+			...localBin('openclaude'),
+		],
 		codex: [
 			// npm global installation (primary method for Codex)
 			...npmGlobal('codex'),
@@ -534,6 +541,17 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			path.join(home, 'bin', 'claude'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('claude'),
+		],
+		openclaude: [
+			// User local bin
+			...localBin('openclaude'),
+			// Homebrew paths
+			...homebrew('openclaude'),
+			// npm global with custom prefix
+			...npmGlobal('openclaude'),
+			// Node version managers (nvm, fnm, volta, etc.). OpenClaude requires
+			// Node >= 22, so a version-managed install is the common case.
+			...nodeVersionManagers('openclaude'),
 		],
 		codex: [
 			// User local bin

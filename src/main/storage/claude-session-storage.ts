@@ -286,8 +286,33 @@ async function parseSessionFileRemote(
  * Provides access to Claude Code's local session storage at ~/.claude/projects/
  * Supports both local filesystem access and remote access via SSH.
  */
+/**
+ * Which CLI's transcript tree a {@link ClaudeSessionStorage} reads.
+ *
+ * Claude Code and its forks write the same JSONL transcripts under the same
+ * `<home>/projects/<encoded-path>/<session-id>.jsonl` layout; only the home
+ * directory is rebranded. Parameterizing the two names is what lets a fork be a
+ * subclass instead of a second copy of 1200 lines that drifts.
+ */
+export interface ClaudeStorageBrand {
+	/** Home directory under `~`, including the leading dot (e.g. `.claude`). */
+	homeDirName: string;
+	/** electron-store file holding this CLI's session origins. */
+	originsStoreName: string;
+}
+
+const CLAUDE_BRAND: ClaudeStorageBrand = {
+	homeDirName: '.claude',
+	originsStoreName: 'claude-session-origins',
+};
+
 export class ClaudeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'claude-code';
+
+	/** Which CLI's transcript tree this instance reads. Overridden by forks. */
+	protected get brand(): ClaudeStorageBrand {
+		return CLAUDE_BRAND;
+	}
 
 	private originsStore: Store<ClaudeSessionOriginsData>;
 
@@ -297,29 +322,29 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		this.originsStore =
 			originsStore ||
 			new Store<ClaudeSessionOriginsData>({
-				name: 'claude-session-origins',
+				name: this.brand.originsStoreName,
 				defaults: { origins: {} },
 			});
 	}
 
 	/**
-	 * Get the Claude projects directory path (local).
+	 * Get the projects directory path (local).
 	 *
-	 * `configDir` selects which Anthropic account's transcripts to read: users
-	 * commonly run several accounts by pointing `CLAUDE_CONFIG_DIR` at separate
-	 * homes (`~/.claude`, `~/.claude-gmail`, ...), and each writes its own
-	 * `projects/` tree. Omit it for the default `~/.claude` account.
+	 * `configDir` selects which account's transcripts to read: users commonly run
+	 * several accounts by pointing `CLAUDE_CONFIG_DIR` at separate homes
+	 * (`~/.claude`, `~/.claude-gmail`, ...), and each writes its own `projects/`
+	 * tree. Omit it for the brand's default home.
 	 */
 	private getProjectsDir(configDir?: string): string {
-		return path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
+		return path.join(configDir ?? path.join(os.homedir(), this.brand.homeDirName), 'projects');
 	}
 
 	/**
-	 * Get the Claude projects directory path (remote via SSH)
+	 * Get the projects directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
 	private getRemoteProjectsDir(): string {
-		return '~/.claude/projects';
+		return `~/${this.brand.homeDirName}/projects`;
 	}
 
 	/**

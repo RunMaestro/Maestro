@@ -380,6 +380,7 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
+			`${home}/.openclaude/bin`, // OpenClaude installer default location
 			'/home/linuxbrew/.linuxbrew/bin', // Linuxbrew
 			'/usr/bin',
 			'/bin',

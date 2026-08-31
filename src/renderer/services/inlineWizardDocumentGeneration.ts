@@ -82,8 +82,9 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 		try {
 			const msg = JSON.parse(line);
 
-			// Claude Code stream-json format
-			if (agentType === 'claude-code') {
+			// Claude Code stream-json format. OpenClaude forks Claude Code and emits
+			// the same schema, so it reads through the same branch.
+			if (agentType === 'claude-code' || agentType === 'openclaude') {
 				// content_block_delta contains streaming text
 				if (msg.type === 'content_block_delta' && msg.delta?.text) {
 					textParts.push(msg.delta.text);
@@ -783,7 +784,12 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 	const agentId = agent.id;
 
 	switch (agentId) {
-		case 'claude-code': {
+		// OpenClaude forks Claude Code and accepts these flags verbatim
+		// (`--output-format`, `--include-partial-messages`, and both the
+		// `--allowedTools` and `--allowed-tools` spellings), so it shares the
+		// branch rather than getting a copy that drifts.
+		case 'claude-code':
+		case 'openclaude': {
 			const args = [...(agent.args || [])];
 			if (!args.includes('--include-partial-messages')) {
 				args.push('--include-partial-messages');

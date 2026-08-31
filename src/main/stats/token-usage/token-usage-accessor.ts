@@ -58,6 +58,8 @@ const LOG_CONTEXT = '[TokenUsageAccessor]';
  */
 const COVERAGE_BY_AGENT: Record<string, TokenCoverage> = {
 	'claude-code': 'full',
+	// Fork of Claude Code: same stream-json schema, same usage and cost fields
+	openclaude: 'full',
 	opencode: 'full',
 	'factory-droid': 'full',
 	codex: 'partial',

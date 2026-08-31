@@ -4,20 +4,21 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name            | Status     | Notes                                                                                                                                              |
-| --------------- | --------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                     |
-| `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                          |
-| `opencode`      | OpenCode        | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                   |
-| `factory-droid` | Factory Droid   | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
-| `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
-| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |
-| `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`                                      |
-| `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                        |
-| `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                       |
-| `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                       |
-| `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                             |
-| `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
+| ID              | Name            | Status     | Notes                                                                                                                                               |
+| --------------- | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                      |
+| `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                           |
+| `opencode`      | OpenCode        | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                    |
+| `openclaude`    | OpenClaude      | **Beta**   | Claude Code fork routing to any provider; same `--print --verbose --output-format stream-json` surface, transcripts under `~/.openclaude/projects/` |
+| `factory-droid` | Factory Droid   | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                     |
+| `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                 |
+| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker  |
+| `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`                                       |
+| `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                         |
+| `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                        |
+| `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                        |
+| `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                              |
+| `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                             |
 
 ## Agent Capabilities
 

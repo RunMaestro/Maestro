@@ -18,6 +18,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	'claude-code': 200000, // Claude 3.5 Sonnet/Claude 4 default context
 	codex: 200000, // OpenAI o3/o4-mini context window
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
+	openclaude: 200000, // OpenClaude routes to whatever provider the user configured; Claude's window is the fork's own default
 	'factory-droid': 200000, // Factory Droid (varies by model, defaults to Claude Opus)
 	hermes: 200000, // Conservative fallback until runtime-specific reporting lands
 	pi: 200000, // Conservative fallback until runtime-specific reporting lands

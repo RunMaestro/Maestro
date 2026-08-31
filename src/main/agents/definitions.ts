@@ -653,6 +653,62 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'openclaude',
+		name: 'OpenClaude',
+		binaryName: 'openclaude',
+		// OpenClaude is a fork of Claude Code and keeps its headless CLI surface
+		// flag for flag: `--print --verbose --output-format stream-json` emits the
+		// same `system`/`assistant`/`result` schema, down to `session_id`,
+		// `modelUsage`, `total_cost_usd` and `parent_tool_use_id`. What differs is
+		// where the model comes from: OpenClaude routes to whatever provider the
+		// user configured (`/provider`), so nothing here names an Anthropic model.
+		command: 'openclaude',
+		args: ['--print', '--verbose', '--output-format', 'stream-json'],
+		// No interactiveCommand: `maestro-p` drives the real Claude TUI, which is a
+		// different binary. OpenClaude runs the API/print path only.
+		fullAccessArgs: ['--dangerously-skip-permissions'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--permission-mode', 'plan'],
+		readOnlyCliEnforced: true,
+		// `--add-dir` grants read AND write, so it maps to every grant the user
+		// made. The {{ADDITIONAL_DIRECTORIES}} prompt block carries "write but
+		// never read", which no flag can express.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+		noToolsArgs: ['--tools', ''], // `--tools ""` disables every built-in tool (used by tab naming)
+		modelArgs: (modelId: string) => ['--model', modelId],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model override for the configured provider (e.g. "gpt-4o", "qwen2.5-coder:7b", "claude-sonnet-4-6"). Leave empty to use the provider profile default.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'effort',
+				type: 'select',
+				label: 'Effort',
+				description: 'How much effort the model should put into its response.',
+				// Not `dynamic`: effort discovery scrapes the Claude CLI's own help
+				// text, and OpenClaude's wording is its own. These are the levels its
+				// `--effort` flag documents.
+				options: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--effort', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. OpenClaude can point at any provider, so set this to match the model you configured.',
+				default: 200000,
+			},
+		],
+	},
+	{
 		id: 'factory-droid',
 		name: 'Factory Droid',
 		binaryName: 'droid',

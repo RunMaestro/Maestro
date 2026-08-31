@@ -313,6 +313,31 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'openclaude':
+			// OpenClaude forks Claude Code and routes to any provider, so the mark
+			// keeps Claude's chevron-A and opens the ring around it: one terminal,
+			// many backends.
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M34 8.5a19 19 0 1 0 5.5 5.5"
+						stroke={color}
+						strokeWidth="2.5"
+						strokeLinecap="round"
+					/>
+					<path
+						d="M24 15l-7 18h3.4l1.5-4.2h6.2L29.6 33H33l-7-18h-2zm1 4.6l2.2 6.4h-4.4L25 19.6z"
+						fill={color}
+					/>
+				</svg>
+			);
+
 		default:
 			// Marked so a test can prove a pickable provider draws a real mark rather
 			// than landing here. Asserting "an svg rendered" would not: this fallback

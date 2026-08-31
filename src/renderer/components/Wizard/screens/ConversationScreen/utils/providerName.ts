@@ -7,6 +7,9 @@ export function getConversationProviderName(selectedAgent: ToolType | null): str
 	if (selectedAgent === 'opencode') {
 		return 'OpenCode';
 	}
+	if (selectedAgent === 'openclaude') {
+		return 'OpenClaude';
+	}
 	if (selectedAgent === 'codex') {
 		return 'Codex';
 	}
