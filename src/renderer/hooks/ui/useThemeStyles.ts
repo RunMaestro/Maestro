@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import type { ThemeMode } from '../../../shared/theme-types';
+import type { GlossLevel } from '../../../shared/themeGloss';
 
 /**
  * Theme colors required for CSS variable management.
@@ -30,6 +32,10 @@ export interface ThemeColors {
 export interface UseThemeStylesDeps {
 	/** Theme colors to apply as CSS variables */
 	themeColors: ThemeColors;
+	/** Active theme's mode, published as `<html data-theme-mode>` so CSS can opt out on light themes. */
+	themeMode: ThemeMode;
+	/** Surface gloss level, published as `<html data-gloss>`. */
+	glossLevel: GlossLevel;
 }
 
 /**
@@ -61,6 +67,18 @@ export interface UseThemeStylesReturn {
  * variables. To add a new themed CSS rule app-wide, set the property here and
  * reference it in index.css with a sensible fallback.
  *
+ * It is also the single place that publishes theme-driven ATTRIBUTES on the
+ * same element:
+ *
+ *   data-theme-mode = 'light' | 'dark' | 'vibe'
+ *   data-gloss      = the `themeGloss` setting
+ *
+ * Both are written together on purpose. The gloss rules in index.css opt out
+ * entirely on light themes, so a build that sets one attribute from here and
+ * the other from a stray effect elsewhere can render a light theme with a dark
+ * theme's highlights for a frame, and nothing in a diff shows it. If you need a
+ * new theme-driven attribute, add it here rather than starting a second writer.
+ *
  * This hook also handles the scrollbar fade-on-idle animation by toggling
  * `.scrolling` / `.fading` classes on elements with `.scrollbar-thin`. Those
  * classes drive the bright-on-scroll → fade-to-transparent transition in CSS.
@@ -69,7 +87,7 @@ export interface UseThemeStylesReturn {
  * @returns Empty object (all functionality via side effects)
  */
 export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
-	const { themeColors } = deps;
+	const { themeColors, themeMode, glossLevel } = deps;
 
 	// Set CSS variables for theme colors. App-wide scrollbar styling in
 	// index.css references these via var(--scrollbar-*) so every scrollable
@@ -86,6 +104,16 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 		// Quiet/secondary control colour, consumed by the Files toolbar hierarchy.
 		root.setProperty('--fx-quiet', themeColors.textDim);
 	}, [themeColors.accent, themeColors.border, themeColors.textDim, themeColors.bgActivity]);
+
+	// Publish the theme mode and the gloss level as attributes. Kept in one
+	// effect so the pair is always written in the same commit: the gloss rules
+	// key off both, and updating them out of step paints a light theme with dark
+	// highlights until the second effect catches up.
+	useEffect(() => {
+		const root = document.documentElement;
+		root.dataset.themeMode = themeMode;
+		root.dataset.gloss = glossLevel;
+	}, [themeMode, glossLevel]);
 
 	// Add scroll listeners to highlight scrollbars during active scrolling
 	// Uses passive listener and batched RAF updates to avoid blocking scroll

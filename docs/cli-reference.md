@@ -926,6 +926,15 @@ Switch the active Maestro theme (applies live). Use --list to see options.
 | `-l, --list` | List available themes          | -       |
 | `--json`     | Output as JSON (for scripting) | -       |
 
+## `maestro-cli gloss [level]`
+
+Set the surface gloss level: off, sheen, strong or max (applies live). Omit the level to see the current one.
+
+| Option       | Description                                  | Default |
+| ------------ | -------------------------------------------- | ------- |
+| `-l, --list` | List the gloss levels and what each one does | -       |
+| `--json`     | Output as JSON (for scripting)               | -       |
+
 ## `maestro-cli theme`
 
 Manage the custom theme palette

@@ -451,6 +451,7 @@ function MaestroConsoleInner() {
 		keyboardMasteryStats,
 		recordShortcutUsage,
 		colorBlindMode,
+		themeGloss,
 		defaultStatsTimeRange,
 		documentGraphShowExternalLinks,
 		documentGraphMaxNodes,
@@ -1205,17 +1206,9 @@ function MaestroConsoleInner() {
 	// Theme styles hook - manages CSS variables and scrollbar fade animations
 	useThemeStyles({
 		themeColors: theme.colors,
+		themeMode: theme.mode,
+		glossLevel: themeGloss,
 	});
-
-	// GLOSS DEMO HARNESS (branch gloss-demo only). Publishes the active theme's
-	// mode onto <html> so the chrome-sheen rules can exclude light themes, and
-	// seeds data-gloss so the option can be flipped live from the console.
-	useEffect(() => {
-		const root = document.documentElement;
-		root.dataset.themeMode = theme.mode;
-		if (!root.dataset.gloss) root.dataset.gloss = 'off';
-		if (!root.dataset.rowdesign) root.dataset.rowdesign = 'a';
-	}, [theme.mode]);
 
 	// Get capabilities for the active session's agent type
 	const { hasCapability: hasActiveSessionCapability } = useAgentCapabilities(

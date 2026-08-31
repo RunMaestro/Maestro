@@ -252,7 +252,13 @@ export const SessionItem = memo(function SessionItem({
 	const getContainerClassName = () => {
 		// Worktree items get a dashed left border to visually distinguish from regular agents
 		const borderClass = variant === 'worktree' ? 'border-l-2 border-dashed' : 'border-l-2';
-		const base = `session-row cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
+		// `session-row` switches the row to the two-line grid in index.css: title
+		// on line one at full width, meta and actions on line two. The worktree
+		// variant is deliberately excluded because it renders no meta row at all,
+		// so the grid would put its actions on an otherwise empty second line and
+		// turn a compact child row into a two-line one.
+		const layoutClass = variant === 'worktree' ? '' : 'session-row ';
+		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
 			return `mx-3 px-3 py-2 rounded mb-1 ${base}`;

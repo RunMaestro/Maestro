@@ -46,6 +46,8 @@ import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { isToastWidth } from '../../shared/toastWidth';
+import type { GlossLevel } from '../../shared/themeGloss';
+import { DEFAULT_GLOSS_LEVEL, asGlossLevel } from '../../shared/themeGloss';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
@@ -393,6 +395,7 @@ export interface SettingsStoreState {
 	contextManagementSettings: ContextManagementSettings;
 	keyboardMasteryStats: KeyboardMasteryStats;
 	colorBlindMode: boolean;
+	themeGloss: GlossLevel;
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
 	showTerminalTabsInUnreadFilter: boolean;
@@ -545,6 +548,7 @@ export interface SettingsStoreActions {
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	setWebInterfaceCustomPort: (value: number) => void;
 	setColorBlindMode: (value: boolean) => void;
+	setThemeGloss: (value: GlossLevel) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	setShowTerminalTabsInUnreadFilter: (value: boolean) => void;
@@ -778,6 +782,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
 		keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
 		colorBlindMode: false,
+		themeGloss: DEFAULT_GLOSS_LEVEL,
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
 		showTerminalTabsInUnreadFilter: false,
@@ -1276,6 +1281,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setColorBlindMode: (value) => {
 			set({ colorBlindMode: value });
 			window.maestro.settings.set('colorBlindMode', value);
+		},
+
+		setThemeGloss: (value) => {
+			// Narrow even here. The Settings slider can only produce a valid
+			// level, but this setter is also the landing point for the value the
+			// CLI wrote, and an unrecognized string on <html data-gloss> matches
+			// no rule, so the user sees the control silently do nothing.
+			const level = asGlossLevel(value);
+			set({ themeGloss: level });
+			window.maestro.settings.set('themeGloss', level);
 		},
 
 		setShowStarredInUnreadFilter: (value) => {
@@ -2755,6 +2770,12 @@ export async function loadAllSettings(): Promise<void> {
 				(typeof raw === 'string' && raw !== 'none' && raw !== 'false' && raw !== '');
 		}
 
+		// Narrowed rather than cast: this value can arrive from an older build, a
+		// hand-edited settings file, or `maestro-cli settings set`, and an
+		// unrecognized level would render as permanently-off with no error.
+		if (allSettings['themeGloss'] !== undefined)
+			patch.themeGloss = asGlossLevel(allSettings['themeGloss']);
+
 		if (allSettings['showStarredInUnreadFilter'] !== undefined)
 			patch.showStarredInUnreadFilter = allSettings['showStarredInUnreadFilter'] as boolean;
 
@@ -3288,6 +3309,7 @@ export function getSettingsActions() {
 		acknowledgeKeyboardMasteryLevel: state.acknowledgeKeyboardMasteryLevel,
 		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
 		setColorBlindMode: state.setColorBlindMode,
+		setThemeGloss: state.setThemeGloss,
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,

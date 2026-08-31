@@ -1293,23 +1293,28 @@ svg.wand-profiling-active path:nth-child(8) {
 }
 
 /* ============================================================================
-   GLOSS DEMO HARNESS (temporary; branch gloss-demo only)
+   SURFACE GLOSS
 
    Adds a light source to the app chrome so surfaces read as stacked layers
    instead of one flat sheet of paint. Composes with the existing inline
    `backgroundColor` on every chrome root because `box-shadow` and
    `background-image` are different longhands than `background-color`, so no
-   theme token and no component style object has to change.
+   theme token and no component style object has to change. That is the whole
+   reason this is CSS rather than a palette edit: it works identically on all
+   built-in themes and on a user's custom one, and it changes no colour value.
 
-   Intensity is driven by `html[data-gloss]` so the options can be compared
-   live in one running app:
-     off     - shipped behavior
+   Intensity comes from the `themeGloss` setting, published onto <html> as
+   `data-gloss` by `useThemeStyles`. The vocabulary lives in
+   `src/shared/themeGloss.ts`; every level named there needs rules here, or the
+   Settings slider offers a stop that renders the same as the one before it.
+
+     off     - shipped behaviour, no rules at all
      sheen   - inset top highlight + short top-down wash
      strong  - same, roughly 1.6x, plus a drop edge under each bar
-     max     - strong + accent glow on the active/selected surface (the ceiling)
+     max     - strong + accent glow on the active surface
 
-   Light themes are excluded: a white highlight on a white surface is invisible
-   at best and muddy at worst.
+   Light themes are excluded outright: a white highlight on a white surface is
+   invisible at best and muddy at worst.
    ============================================================================ */
 
 html[data-gloss='sheen'] .chrome-sheen {
@@ -1349,8 +1354,6 @@ html[data-gloss='max'] .chrome-raised {
 		0 3px 14px rgba(0, 0, 0, 0.42);
 }
 
-/* The ceiling. Included so the review has an upper bound to reject, not
-   because it is the recommendation. */
 html[data-gloss='max'] .chrome-raised-active {
 	box-shadow:
 		inset 0 1px 0 color-mix(in srgb, currentColor 14%, transparent),
@@ -1358,7 +1361,8 @@ html[data-gloss='max'] .chrome-raised-active {
 		0 0 18px color-mix(in srgb, var(--accent-color) 22%, transparent);
 }
 
-/* Never on light themes. */
+/* Never on light themes. Placed last so it wins over every level above without
+   needing a level-by-level opt-out. */
 html[data-theme-mode='light'] .chrome-sheen,
 html[data-theme-mode='light'] .chrome-raised,
 html[data-theme-mode='light'] .chrome-raised-active {
@@ -1367,46 +1371,49 @@ html[data-theme-mode='light'] .chrome-raised-active {
 }
 
 /* ============================================================================
-   LEFT BAR ROW REDESIGN (temporary; branch gloss-demo only)
+   LEFT BAR ROW LAYOUT
 
-   The row spends its width on the constant and clips the variable. The agent
-   name is the only thing that differs between rows and the only thing anyone
-   scans for, yet it truncates around fourteen characters; the provider label
-   underneath reads the same string on nine rows out of ten and gets a full
-   uncontested line at almost the same weight.
+   The row used to spend its width on the constant and clip the variable. The
+   agent name is the only thing that differs between rows and the only thing
+   anyone scans for, yet it truncated around fourteen characters, while the
+   provider label underneath reads the same string on nine rows out of ten and
+   got a full uncontested line at almost the same weight.
 
-   Driven by html[data-rowdesign] so the shipped row and the redesign can be
-   compared in one running app:
-     a  - shipped
-     b  - name is allowed to wrap to two lines, provider demoted to a chip
-   ============================================================================ */
-
-/* ---------------------------------------------------------------------------
-   Variant C - Ryan Dawson's correction, and it is the better idea.
-
-   B fought for width by letting the title wrap. C gives the title the ENTIRE
-   row instead: everything else moves down to a second line, so a long name has
-   the full sidebar to itself and never needs a second line at all.
+   The fix gives the title the ENTIRE first line and moves everything else to a
+   second line, so a long name has the full sidebar to itself. It is always two
+   lines, which is what the shipped row already was, and it costs 0.5px of row
+   height.
 
    The mechanism is `display: contents` on the row's left wrapper, which
    dissolves that wrapper as a box and promotes the title and meta rows to
    direct grid children of the row. Without it the title cannot span past the
    wrapper, and the actions cluster cannot be pulled onto the meta line, since
    the two live in different parents.
-   --------------------------------------------------------------------------- */
 
-html[data-rowdesign='c'] .session-row {
+   NOTHING HERE CHANGES LEGIBILITY. An earlier draft also demoted the provider
+   label to 9px at opacity .5 and faded the group chip to .7, and both were
+   wrong for the same measured reason: CSS opacity nests, `.row-meta` already
+   carries `opacity-70`, so the effective alpha was .35 rather than .5. On the
+   shipped palettes that put the label at 1.46:1 on Dracula and 2.34:1 on Olive
+   Nights, against 2.18:1 and 6.13:1 today, and at 9px none of it qualifies as
+   large text, so even the relaxed 3:1 floor is missed on every theme. Moving
+   text costs nothing and buys the actual fix; dimming text costs real
+   legibility and buys an impression. Do not reintroduce a dim here without
+   running the contrast numbers on more than one theme.
+   ============================================================================ */
+
+.session-row {
 	display: grid;
 	grid-template-columns: 1fr auto;
 	align-items: center;
 	column-gap: 0.5rem;
 }
 
-html[data-rowdesign='c'] .row-main {
+.session-row .row-main {
 	display: contents;
 }
 
-html[data-rowdesign='c'] .row-title {
+.session-row .row-title {
 	grid-column: 1 / -1;
 	grid-row: 1;
 	min-width: 0;
@@ -1414,7 +1421,7 @@ html[data-rowdesign='c'] .row-title {
 
 /* Single line, full row width. The ellipsis is now a genuine last resort
    rather than the normal case it was at fourteen characters. */
-html[data-rowdesign='c'] .row-name {
+.session-row .row-name {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -1422,122 +1429,62 @@ html[data-rowdesign='c'] .row-name {
 	flex: 1 1 auto;
 }
 
-html[data-rowdesign='c'] .row-meta {
+.session-row .row-meta {
 	grid-column: 1;
 	grid-row: 2;
 	min-width: 0;
 }
 
-html[data-rowdesign='c'] .row-actions {
+.session-row .row-actions {
 	grid-column: 2;
 	grid-row: 2;
 	margin-left: 0;
 	justify-self: end;
 }
 
-/* The provider label deliberately keeps its SHIPPED weight.
-   An earlier draft demoted it to 9px at opacity .5, which was wrong twice
-   over. CSS opacity nests: `.row-meta` already carries `opacity-70`, so the
-   effective alpha was .70 * .50 = .35, not .50. Measured on the shipped
-   palettes that put the label at 1.46:1 on Dracula and 2.34:1 on Olive
-   Nights, against 2.18:1 and 6.13:1 today. At 9px nothing there qualifies as
-   large text, so the 3:1 floor is the kindest reading and every theme misses
-   it. The layout below is what fixes truncation; dimming the label was taste,
-   it was never measured, and it made the row less legible. Do not reintroduce
-   it without running the contrast numbers on more than one theme. */
-html[data-rowdesign='c'] .row-provider {
-	white-space: nowrap;
-}
-
-/* Width only. The chip sits beside the title and would otherwise hold its
-   natural width, so it is capped and given an ellipsis; that is layout.
-   An `opacity: .7` used to live here as well and it has been removed for the
-   same reason the provider dimming was: measured on the shipped palettes it
-   took the chip from 11.19:1 to 5.98:1 on Olive Nights and from 2.51:1 to
-   1.92:1 on Dracula, and at 9px it is never large text. This variant now
-   changes WHERE things sit and nothing about how legible they are. */
-html[data-rowdesign='c'] .row-group-chip {
+/* Width only, no dimming. The chip sits beside the title and would otherwise
+   hold its natural width, so it is capped and given an ellipsis. */
+.session-row .row-group-chip {
 	max-width: 90px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-html[data-rowdesign='b'] .row-name {
-	/* The variable gets the room. Two lines is enough for every real agent name
-	   without letting one pathological name push the row to five. */
-	display: -webkit-box;
-	-webkit-line-clamp: 3;
-	-webkit-box-orient: vertical;
-	white-space: normal;
-	overflow: hidden;
-	text-overflow: unset;
-	line-height: 1.25;
-}
-
-html[data-rowdesign='b'] .row-provider {
-	/* The constant stops competing: same information, a fraction of the visual
-	   weight. Deliberately NOT uppercased - caps plus letter-spacing is an
-	   emphasis treatment, and the first pass at this made the label MORE
-	   prominent while trying to demote it. It must also never wrap: the
-	   two-line "CLAUDE-/CODE" it produced took more room than the name it was
-	   supposed to yield to. */
-	font-size: 9px;
-	opacity: 0.5;
-	white-space: nowrap;
-}
-
-html[data-rowdesign='b'] .row-provider-icon {
-	opacity: 0.45;
-}
-
-html[data-rowdesign='b'] .row-group-chip {
-	/* The chip sits on the NAME's line and holds width, which is why a
-	   bookmarked row still truncated after the name was allowed to wrap. The
-	   group is recoverable - the same agent appears under its group heading
-	   further down the list, and the full name is on the chip's tooltip - while
-	   the agent name is recoverable from nothing. So the chip yields first. */
-	max-width: 64px;
-	flex-shrink: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	opacity: 0.7;
-}
-
-/* ---------------------------------------------------------------------------
-   Files toolbar hierarchy (rowdesign 'c', same flag as the sidebar row).
+/* ============================================================================
+   FILES TOOLBAR HIERARCHY (dormant; no UI and nothing seeds this attribute)
 
    The same defect the Left Bar had, in another panel: Find, Open, .files and
-   Refresh are rendered from an identical class string, so four buttons plus
-   two icon controls all carry the accent colour, the accent border and the
-   accent fill at equal weight. Six controls shout in unison and the eye has
-   nowhere to land.
+   Refresh are rendered from an identical class string, so four buttons plus two
+   icon controls all carry the accent colour, the accent border and the accent
+   fill at equal weight. Six controls shout in unison and the eye has nowhere to
+   land. Find is the one with a keyboard shortcut and the one used constantly,
+   so it becomes the primary and the rest drop to the panel's own text colour.
 
-   Find is the primary: it is the one with a keyboard shortcut and the one used
-   constantly. It keeps the accent. The other three are utilities and drop to
-   the panel's own text colour with a hairline edge, so they read as available
-   rather than as urgent. Inline styles set the colour, so these need
-   !important to win - the alternative is threading a variant prop through the
-   component, which is not worth it for a comparison build.
-   --------------------------------------------------------------------------- */
+   NOT SHIPPED, and deliberately behind its own attribute rather than the gloss
+   setting, because it is a different decision. Flip it live to review:
 
-html[data-rowdesign='c'] .fx-btn:not(.fx-primary) {
+       document.documentElement.dataset.fxToolbar = 'on'
+
+   Two things must change before this can ship: the `!important` below exists
+   only because `FileExplorerPanel` sets these colours inline, so the inline
+   styles need to become a real variant prop; and the hover rules hard-code
+   white alphas, which are wrong on a light theme.
+   ============================================================================ */
+
+html[data-fx-toolbar='on'] .fx-btn:not(.fx-primary) {
 	color: var(--fx-quiet, #98a0bd) !important;
 	border-color: rgba(255, 255, 255, 0.09) !important;
 	background-color: transparent !important;
 	font-weight: 400 !important;
 }
 
-html[data-rowdesign='c'] .fx-btn:not(.fx-primary):hover {
+html[data-fx-toolbar='on'] .fx-btn:not(.fx-primary):hover {
 	border-color: rgba(255, 255, 255, 0.18) !important;
 	background-color: rgba(255, 255, 255, 0.05) !important;
 }
 
-/* The primary earns a solid fill rather than the same 15% wash as everything
-   else, so "the thing you came here to do" is unambiguous. */
-html[data-rowdesign='c'] .fx-btn.fx-primary {
+html[data-fx-toolbar='on'] .fx-btn.fx-primary {
 	background-color: var(--accent-color) !important;
 	border-color: var(--accent-color) !important;
 	color: #16171f !important;

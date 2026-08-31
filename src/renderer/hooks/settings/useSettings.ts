@@ -31,6 +31,7 @@ import type {
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
+import type { GlossLevel } from '../../../shared/themeGloss';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -260,6 +261,10 @@ export interface UseSettingsReturn {
 	// Accessibility settings
 	colorBlindMode: boolean;
 	setColorBlindMode: (value: boolean) => void;
+
+	// Surface gloss (app-chrome lighting; changes no theme color)
+	themeGloss: GlossLevel;
+	setThemeGloss: (value: GlossLevel) => void;
 
 	// Tab filtering settings
 	showStarredInUnreadFilter: boolean;

@@ -20,6 +20,7 @@ import { mockTheme } from '../../../../helpers/mockTheme';
 const mockSetActiveThemeId = vi.fn();
 const mockSetCustomThemeColors = vi.fn();
 const mockSetCustomThemeBaseId = vi.fn();
+const mockSetThemeGloss = vi.fn();
 
 // Mock useSettings hook
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
@@ -44,6 +45,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setCustomThemeColors: mockSetCustomThemeColors,
 		customThemeBaseId: 'dracula',
 		setCustomThemeBaseId: mockSetCustomThemeBaseId,
+		themeGloss: 'off',
+		setThemeGloss: mockSetThemeGloss,
 	}),
 }));
 
@@ -317,5 +320,46 @@ describe('ThemeTab', () => {
 		});
 
 		expect(screen.getByTestId('custom-theme-builder')).toBeInTheDocument();
+	});
+
+	describe('Surface Gloss', () => {
+		it('renders the gloss slider with every level named, starting at Off', async () => {
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const slider = screen.getByRole('slider', { name: 'Intensity' });
+			expect(slider).toHaveValue('0');
+			// The stop names are what make a 0-3 range legible. Losing them would
+			// leave the user sliding between unlabelled notches.
+			for (const label of ['Off', 'Sheen', 'Strong', 'Max']) {
+				expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+			}
+		});
+
+		it('maps the slider position onto the level name, not the raw index', async () => {
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.change(screen.getByRole('slider', { name: 'Intensity' }), {
+				target: { value: '2' },
+			});
+
+			expect(mockSetThemeGloss).toHaveBeenCalledWith('strong');
+		});
+
+		it('disables the slider on a light theme, where gloss has no effect', async () => {
+			render(<ThemeTab theme={mockLightTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// The CSS opts out on light themes, so an enabled control here would
+			// let the user move a slider that changes nothing on screen.
+			expect(screen.getByRole('slider', { name: 'Intensity' })).toBeDisabled();
+		});
 	});
 });

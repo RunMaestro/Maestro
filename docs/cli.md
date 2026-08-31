@@ -797,6 +797,13 @@ maestro-cli set-theme "Catppuccin Mocha"
 # See every available theme
 maestro-cli set-theme --list
 
+# Set how much light the app chrome catches (Settings -> Themes -> Surface Gloss)
+maestro-cli gloss strong
+
+# See the current level and what each one does
+maestro-cli gloss
+maestro-cli gloss --list
+
 # List Encore (experimental) features and whether each is enabled
 maestro-cli encore list
 
@@ -806,6 +813,8 @@ maestro-cli encore disable maestroCue
 ```
 
 Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`).
+
+Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
 
 ### Custom Theme Palette
 
