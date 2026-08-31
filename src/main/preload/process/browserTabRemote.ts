@@ -82,17 +82,21 @@ export function createBrowserTabRemoteApi() {
 			callback: (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options?: { background?: boolean }
 			) => {
 				try {
-					callback(sessionId, config, responseChannel);
+					callback(sessionId, config, responseChannel, {
+						background: options?.background === true,
+					});
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;
