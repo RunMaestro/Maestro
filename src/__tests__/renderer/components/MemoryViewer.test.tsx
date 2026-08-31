@@ -1,15 +1,40 @@
 /**
- * Tests for MemoryViewer - the filter box and the delete flow.
+ * Tests for MemoryViewer - the filter box, the edit/preview switch, and the
+ * delete flow.
  *
  * These cover the wiring the viewer owns rather than the primitives it composes
- * (`FilterInput` and `DualPaneFileEditor` have their own tests): that the filter
- * narrows the list from a main-process search, that Escape clears the filter
- * before it closes the pane, and that a delete goes through the shared confirm
- * modal and then lands on the NEXT memory rather than back on the index.
+ * (`FilterInput`, `DualPaneFileEditor` and `MarkdownEditor` have their own
+ * tests): that the filter narrows the list from a main-process search, that
+ * Escape clears the filter before it closes the pane, that the pane opens on
+ * the rendered document and Cmd+E flips it, and that a delete goes through the
+ * shared confirm modal and then lands on the NEXT memory rather than back on
+ * the index.
  */
 
+import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
+
+/**
+ * The real edit surface is CodeMirror 6, which needs a layout engine jsdom does
+ * not have. Standing in a plain textarea keeps these tests about the wiring the
+ * viewer owns - which mode is showing, where focus lands - and matches how the
+ * FilePreview suites stub the same module.
+ */
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', () => ({
+	MarkdownEditor: React.forwardRef<
+		{ focus(): void; setSearchMatches(m: unknown[], i: number): void },
+		{ value: string; onChange: (v: string) => void }
+	>(({ value, onChange }, ref) => {
+		const areaRef = React.useRef<HTMLTextAreaElement>(null);
+		React.useImperativeHandle(ref, () => ({
+			focus: () => areaRef.current?.focus(),
+			setSearchMatches: () => {},
+		}));
+		return <textarea ref={areaRef} value={value} onChange={(e) => onChange(e.target.value)} />;
+	}),
+}));
+
 import { MemoryViewer } from '../../../renderer/components/MemoryViewer';
 import { mockTheme } from '../../helpers/mockTheme';
 import { createMockSession } from '../../helpers/mockSession';
@@ -273,51 +298,6 @@ describe('MemoryViewer', () => {
 		await waitFor(() => expect(listRowNames()).toEqual(['user_role.md']));
 	});
 
-	it('yields the unlinked chip to the filter box while it is open', async () => {
-		// The stats bar is one non-wrapping row. The filter box is the widest
-		// thing on it, so it stays collapsed until used and the chip stands down
-		// while it is open rather than letting the row wrap.
-		memoryApi.orphans.mockResolvedValueOnce({
-			success: true,
-			orphans: ['user_role.md'],
-			brokenLinks: [],
-		});
-		renderViewer();
-
-		await screen.findByTestId('memory-orphan-filter');
-
-		const { act } = await import('@testing-library/react');
-		const input = screen.getByLabelText('Filter memories by name or content');
-		await act(async () => {
-			(input as HTMLInputElement).focus();
-		});
-		expect(screen.queryByTestId('memory-orphan-filter')).not.toBeInTheDocument();
-
-		await act(async () => {
-			(input as HTMLInputElement).blur();
-		});
-		expect(screen.getByTestId('memory-orphan-filter')).toBeInTheDocument();
-	});
-
-	it('keeps the filter box open on a live query so the chip stays out of the way', async () => {
-		// Collapsing over a live query would hide why the list is short.
-		memoryApi.orphans.mockResolvedValueOnce({
-			success: true,
-			orphans: ['user_role.md'],
-			brokenLinks: [],
-		});
-		renderViewer();
-
-		await screen.findByTestId('memory-orphan-filter');
-		await typeFilter('macOS');
-
-		const { act } = await import('@testing-library/react');
-		await act(async () => {
-			(screen.getByLabelText('Filter memories by name or content') as HTMLInputElement).blur();
-		});
-		expect(screen.queryByTestId('memory-orphan-filter')).not.toBeInTheDocument();
-	});
-
 	it('survives an orphan lookup that throws', async () => {
 		// The chip is additive, so a failed lookup must degrade to "no chip"
 		// rather than leaving an unhandled rejection behind.
@@ -366,16 +346,15 @@ describe('MemoryViewer', () => {
 	});
 
 	describe('search highlighting', () => {
-		it('marks the query inside the open memory', async () => {
+		it('marks the query inside the rendered memory', async () => {
 			renderViewer();
 			await waitFor(() => expect(listRowNames()).toHaveLength(3));
 
 			await typeFilter('Memory');
 
 			await waitFor(() => {
-				const backdrop = document.querySelector('.dual-pane-highlight-backdrop');
-				expect(backdrop).toBeTruthy();
-				expect(backdrop!.querySelectorAll('mark').length).toBeGreaterThan(0);
+				const preview = screen.getByTestId('memory-preview');
+				expect(preview.querySelectorAll('mark').length).toBeGreaterThan(0);
 			});
 		});
 
@@ -391,28 +370,26 @@ describe('MemoryViewer', () => {
 			});
 		});
 
-		it('paints no highlight layer while the filter is empty', async () => {
+		it('marks nothing while the filter is empty', async () => {
 			renderViewer();
 			await waitFor(() => expect(listRowNames()).toHaveLength(3));
 
-			expect(document.querySelector('.dual-pane-highlight-backdrop')).toBeNull();
+			expect(screen.getByTestId('memory-preview').querySelector('mark')).toBeNull();
 			expect(document.querySelector('[data-item-id="MEMORY.md"] mark')).toBeNull();
 		});
 
-		it('drops the highlight layer again when the filter is cleared', async () => {
-			// The layer only exists to answer a live query; leaving it behind would
-			// keep an invisible copy of the document stacked under the editor.
+		it('drops the marks again when the filter is cleared', async () => {
 			renderViewer();
 			await waitFor(() => expect(listRowNames()).toHaveLength(3));
 
 			await typeFilter('Memory');
 			await waitFor(() =>
-				expect(document.querySelector('.dual-pane-highlight-backdrop')).toBeTruthy()
+				expect(screen.getByTestId('memory-preview').querySelector('mark')).toBeTruthy()
 			);
 
 			await typeFilter('');
 			await waitFor(() =>
-				expect(document.querySelector('.dual-pane-highlight-backdrop')).toBeNull()
+				expect(screen.getByTestId('memory-preview').querySelector('mark')).toBeNull()
 			);
 		});
 	});
@@ -454,10 +431,9 @@ describe('MemoryViewer', () => {
 			await waitFor(() => expect(listRowNames()).toHaveLength(3));
 
 			const { fireEvent } = await import('@testing-library/react');
-			const editor = document.querySelector('textarea');
-			expect(editor).toBeTruthy();
-			editor!.focus();
-			fireEvent.keyDown(editor!, { key: '/' });
+			const editor = await switchToEdit();
+			editor.focus();
+			fireEvent.keyDown(editor, { key: '/' });
 
 			expect(document.activeElement).toBe(editor);
 		});
@@ -467,7 +443,7 @@ describe('MemoryViewer', () => {
 			await waitFor(() => expect(listRowNames()).toHaveLength(3));
 
 			const { fireEvent } = await import('@testing-library/react');
-			const editor = document.querySelector('textarea')!;
+			const editor = await switchToEdit();
 			editor.focus();
 			fireEvent.keyDown(editor, { key: 'f', metaKey: true });
 
@@ -581,9 +557,128 @@ describe('MemoryViewer', () => {
 		expect(mockOpenModal).not.toHaveBeenCalled();
 		expect(await screen.findByText(/MEMORY.md is the index/)).toBeInTheDocument();
 	});
+
+	describe('edit / preview mode', () => {
+		it('opens on the rendered document rather than the editor', async () => {
+			// Reading is the common reason to open this pane, so the writable
+			// surface is one keystroke away rather than the state you start in.
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			expect(screen.getByTestId('memory-preview')).toBeInTheDocument();
+			expect(document.querySelector('textarea')).toBeNull();
+		});
+
+		it('toggles both ways on the Edit/Preview switch', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent, act } = await import('@testing-library/react');
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('memory-view-mode-edit'));
+			});
+			expect(document.querySelector('textarea')).toBeTruthy();
+			expect(screen.queryByTestId('memory-preview')).not.toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('memory-view-mode-preview'));
+			});
+			expect(document.querySelector('textarea')).toBeNull();
+			expect(screen.getByTestId('memory-preview')).toBeInTheDocument();
+		});
+
+		it('flips on Cmd+E and back again', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent, act } = await import('@testing-library/react');
+			await act(async () => {
+				fireEvent.keyDown(window, { key: 'e', metaKey: true });
+			});
+			expect(document.querySelector('textarea')).toBeTruthy();
+
+			await act(async () => {
+				fireEvent.keyDown(window, { key: 'e', metaKey: true });
+			});
+			expect(document.querySelector('textarea')).toBeNull();
+		});
+
+		it('lands the caret in the editor when it opens', async () => {
+			// A writable surface that does not take focus swallows nothing - every
+			// keystroke still goes wherever it was going, which reads as broken.
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const { fireEvent, act } = await import('@testing-library/react');
+			await act(async () => {
+				fireEvent.keyDown(window, { key: 'e', metaKey: true });
+			});
+
+			await waitFor(() => expect(document.activeElement).toBe(document.querySelector('textarea')));
+		});
+
+		it('renders the memory body as markdown, not as raw source', async () => {
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			// MEMORY.md opens first and starts with a `# Memory index` heading.
+			await waitFor(() =>
+				expect(screen.getByTestId('memory-preview').querySelector('h1')).toBeTruthy()
+			);
+		});
+	});
+
+	describe('chrome layout', () => {
+		/** True when `a` comes before `b` in document order. */
+		const before = (a: Element, b: Element) =>
+			Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+		const filterEl = () => screen.getByLabelText('Filter memories by name or content');
+
+		it('puts the corpus stats in a footer, below the controls', async () => {
+			// Reference figures are not controls. Sharing the toolbar's line with
+			// them is what forced that row to wrap in the first place.
+			renderViewer();
+			await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+			const footer = screen.getByTestId('memory-stats-footer');
+			expect(footer).toHaveTextContent('3 files');
+			expect(footer.contains(filterEl())).toBe(false);
+			expect(before(filterEl(), footer)).toBe(true);
+		});
+
+		it('leads the toolbar with the filter, then the unlinked chip, then Graph', async () => {
+			memoryApi.orphans.mockResolvedValueOnce({
+				success: true,
+				orphans: ['user_role.md'],
+				brokenLinks: [],
+			});
+			renderViewer();
+
+			const chip = await screen.findByTestId('memory-orphan-filter');
+			const graph = screen.getByTestId('memory-open-graph');
+
+			expect(before(filterEl(), chip)).toBe(true);
+			expect(before(chip, graph)).toBe(true);
+			// The view switch acts on the pane rather than the list, so it sits
+			// apart from the three that narrow it.
+			expect(before(graph, screen.getByTestId('memory-view-mode'))).toBe(true);
+		});
+	});
 });
 
 /** Types into the filter box and lets the 150ms debounce settle. */
+/** Flip to the source editor and hand back its (stubbed) textarea. */
+async function switchToEdit(): Promise<HTMLTextAreaElement> {
+	const { fireEvent, act } = await import('@testing-library/react');
+	await act(async () => {
+		fireEvent.click(screen.getByTestId('memory-view-mode-edit'));
+	});
+	const editor = document.querySelector('textarea');
+	expect(editor).toBeTruthy();
+	return editor as HTMLTextAreaElement;
+}
+
 async function typeFilter(text: string): Promise<void> {
 	const { fireEvent, act } = await import('@testing-library/react');
 	fireEvent.change(screen.getByLabelText('Filter memories by name or content'), {

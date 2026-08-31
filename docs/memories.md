@@ -18,17 +18,26 @@ The button appears only when the active agent supports per-project memory. **Tod
 
 Claude Code stores memory per project as a directory of small markdown files. The viewer mirrors that one-to-one:
 
+- **Toolbar** - the filter box, the unlinked count, the **Graph** button, and the **Preview / Edit** switch on the right.
 - **Left pane** - list of every `.md` file in the project's memory directory, each row annotated with an estimated token count so you can see at a glance which entries are paying for themselves. `MEMORY.md` is always pinned to the top; everything else is alphabetical.
-- **Right pane** - a markdown editor for the selected file. A live token estimate sits next to the filename in the editor header and updates as you type.
-- **Stats bar** - file count, total bytes on disk, an estimated token cost (~4 bytes/token), first-created and last-edited timestamps, and the filter box (see below).
+- **Right pane** - the selected file, rendered or editable depending on the switch. A live token estimate sits next to the filename in the editor header and updates as you type.
+- **Stats footer** - file count, total bytes on disk, an estimated token cost (~4 bytes/token), and the first-created and last-edited timestamps.
 
 The **Open in Finder** button (bottom right) reveals the underlying directory on disk if you want to inspect or back it up manually.
 
+## Reading and Editing
+
+The right pane opens in **Preview**: the memory rendered as markdown, with headings, tables, task lists, and links the way you would read any other document in Maestro. That is the default because reading is the usual reason to open this panel.
+
+Switch to **Edit** for the source, in the same syntax-coloured editor the File Preview uses - line numbers, soft wrap, and markdown highlighting. Press `Cmd+E` (`Ctrl+E` on Windows/Linux) to flip between them from anywhere in the viewer; it is the same key that toggles edit and preview on a file, so there is one chord to remember. The caret lands in the editor as soon as it appears, and returns to the file list when you switch back.
+
+Your edits survive the flip either way - switching to Preview shows what you have typed, not the last saved version, so it doubles as a way to check your formatting before pressing **Save**.
+
 ## Finding a Memory
 
-The filter box at the right of the stats bar narrows the list as you type. It matches **both the filename and the text inside every memory**, so you can find an entry you only half-remember the contents of - type `worktree` and you get every file that mentions worktrees, whatever it happens to be called.
+The filter box at the left of the toolbar narrows the list as you type. It matches **both the filename and the text inside every memory**, so you can find an entry you only half-remember the contents of - type `worktree` and you get every file that mentions worktrees, whatever it happens to be called.
 
-Hits are highlighted as you type: in the file list the matching part of each filename is marked, and in the editor every occurrence in the open memory gets a wash behind it. The text stays fully editable while highlighted - you are looking at the real document, not a preview of it.
+Hits are highlighted as you type: in the file list the matching part of each filename is marked, and every occurrence in the open memory is marked too, in both Preview and Edit.
 
 The counter beside the box reads `matches/total`. Hovering a result row shows the line that matched. If the file you were reading is not among the matches, the viewer moves you to the top hit - unless you have unsaved edits, in which case it leaves you where you are.
 
@@ -38,12 +47,12 @@ Press `/` or `Cmd+F` (`Ctrl+F` on Windows/Linux) to jump straight to the box fro
 
 ## Graphing Your Memories
 
-The **Graph** button in the header opens the Document Graph over the memory
+The **Graph** button in the toolbar opens the Document Graph over the memory
 directory, showing how the entries link to each other. `MEMORY.md` sits in the
 middle, since it is the index every other entry hangs off.
 
 Memories that link to nothing appear in the **Unlinked** band at the bottom -
-the same set the filter chip below narrows to, seen as a picture instead of a
+the same set the toolbar's chip narrows to, seen as a picture instead of a
 list. The viewer closes when the graph opens; both are full-window views.
 
 ## Unlinked Memories
@@ -52,8 +61,8 @@ Claude reads `MEMORY.md` to decide which entries to load. A memory the index
 does not list, and no other memory links to, is therefore **never recalled** -
 it costs disk and reads as remembered while being, in practice, forgotten.
 
-When any exist, an **N unlinked** button appears beside the filter box. Click it
-to narrow the list to exactly those entries; the row tooltip says
+When any exist, an **N unlinked** button appears in the toolbar, beside the
+filter box. Click it to narrow the list to exactly those entries; the row tooltip says
 `unlinked - nothing points at this`. It composes with the filter box rather than
 replacing it, so "unlinked memories mentioning worktrees" is one question you
 can ask.
@@ -80,6 +89,7 @@ stays there.)
 | Previous / next memory     | `Up/Down Arrow`      |
 | Delete the selected memory | `Backspace` or `Del` |
 | Jump to the filter box     | `/` or `Cmd+F`       |
+| Toggle Preview / Edit      | `Cmd+E`              |
 | Step back out              | `Esc`                |
 
 This is the fast path for an audit pass: filter down to what you suspect is stale, then arrow through the results and press `Backspace` on the ones that should go.
