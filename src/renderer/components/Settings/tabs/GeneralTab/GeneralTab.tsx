@@ -1,6 +1,7 @@
 import { useSettings } from '../../../../hooks';
 import {
 	AutoRunInactivitySection,
+	AutoRunCheckpointsSection,
 	AutoResumeSection,
 	BrowserSection,
 	ConductorProfileSection,
@@ -105,6 +106,13 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setAutoRunInactivityTimeoutMin={settings.setAutoRunInactivityTimeoutMin}
 				autoRunMaxTaskDurationMin={settings.autoRunMaxTaskDurationMin}
 				setAutoRunMaxTaskDurationMin={settings.setAutoRunMaxTaskDurationMin}
+			/>
+			<AutoRunCheckpointsSection
+				theme={theme}
+				autoRunCheckpointsEnabled={settings.autoRunCheckpointsEnabled}
+				setAutoRunCheckpointsEnabled={settings.setAutoRunCheckpointsEnabled}
+				autoRunCheckpointsIncludeIgnored={settings.autoRunCheckpointsIncludeIgnored}
+				setAutoRunCheckpointsIncludeIgnored={settings.setAutoRunCheckpointsIncludeIgnored}
 			/>
 			<AutoResumeSection
 				theme={theme}

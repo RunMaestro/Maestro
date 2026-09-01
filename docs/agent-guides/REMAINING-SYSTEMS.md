@@ -42,7 +42,7 @@ The underlying data comes from `useGitStatusPolling` hook which polls via IPC.
 ### useGitAgentActions (`src/renderer/hooks/git/useGitAgentActions.ts`)
 
 The per-agent git action set (View Git Log, View Git Diff, Git Pull, Git Push,
-Change Branch, Create Pull Request, Configure Worktrees), shared by the three
+Change Branch, Checkpoints, Create Pull Request, Configure Worktrees), shared by the three
 surfaces that offer it: the header branch pill dropdown (`GitPillMenu`), the Left
 Bar right-click menu (`SessionContextMenu`), and the command palette
 (`buildGitWorktreeCommands`). **Do not re-derive these actions anywhere else** -
@@ -55,7 +55,7 @@ if (!git.isGitRepo) return null;
 git.pull(); // opens the streaming runner for THIS session's repo
 ```
 
-Returns `{ isGitRepo, branch, ahead, behind, canCreatePR, canConfigureWorktrees, viewLog, viewDiff, pull, push, switchBranch, createPR, configureWorktrees }`.
+Returns `{ isGitRepo, branch, ahead, behind, canCreatePR, canConfigureWorktrees, viewLog, viewDiff, pull, push, switchBranch, createPR, viewCheckpoints, configureWorktrees }`.
 Every action opens its modal through the modal store directly, so callers need
 no prop drilling and can act on an agent that isn't the active one. Branch and
 ahead/behind come from `useGitBranch()`, falling back to `session.worktreeBranch`.

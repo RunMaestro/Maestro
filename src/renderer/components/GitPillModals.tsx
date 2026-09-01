@@ -1,7 +1,7 @@
 /**
  * GitPillModals - host for the modals launched from the header git pill menu.
  *
- * Mounted once from AppStandaloneModals. It subscribes to just its two modal
+ * Mounted once from AppStandaloneModals. It subscribes to just its own modal
  * IDs (rather than joining the broad useModalActions bundle) so unrelated modal
  * traffic doesn't re-render it, and it keeps the pill's launch path free of
  * prop drilling through MainPanel.
@@ -10,6 +10,7 @@
 import { memo } from 'react';
 import { GitCommandRunnerModal } from './GitCommandRunnerModal';
 import { BranchSwitcherModal } from './BranchSwitcherModal';
+import { CheckpointsModal } from './CheckpointsModal';
 import { useModalStore, selectModalData, selectModalOpen } from '../stores/modalStore';
 import { useGitCommandRunNotifier } from '../hooks/git/useGitCommandRunNotifier';
 import { gitRunKey } from '../stores/gitCommandRunStore';
@@ -24,6 +25,8 @@ export const GitPillModals = memo(function GitPillModals({ theme }: GitPillModal
 	const runnerData = useModalStore(selectModalData('gitCommandRunner'));
 	const switcherOpen = useModalStore(selectModalOpen('branchSwitcher'));
 	const switcherData = useModalStore(selectModalData('branchSwitcher'));
+	const checkpointsOpen = useModalStore(selectModalOpen('checkpoints'));
+	const checkpointsData = useModalStore(selectModalData('checkpoints'));
 	const closeModal = useModalStore((s) => s.closeModal);
 
 	// Runs finish whether or not their console is open, so something outside the
@@ -50,6 +53,14 @@ export const GitPillModals = memo(function GitPillModals({ theme }: GitPillModal
 					theme={theme}
 					data={switcherData}
 					onClose={() => closeModal('branchSwitcher')}
+				/>
+			)}
+
+			{checkpointsOpen && checkpointsData && (
+				<CheckpointsModal
+					theme={theme}
+					data={checkpointsData}
+					onClose={() => closeModal('checkpoints')}
 				/>
 			)}
 		</>

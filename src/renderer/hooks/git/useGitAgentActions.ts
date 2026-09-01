@@ -4,7 +4,9 @@
  * Two surfaces offer the same set: the header branch pill dropdown
  * (`GitPillMenu`) and the Left Bar right-click menu (`SessionContextMenu`).
  * Both call this hook rather than re-deriving the repo path, the SSH remote,
- * and the modal-opening calls, so the two menus can't drift apart.
+ * and the modal-opening calls, so the two menus can't drift apart. The command
+ * palette (`buildGitWorktreeCommands`) is the third surface and rides the same
+ * object, so a new action here lands in all three at once.
  *
  * Every action opens a modal through the modal store directly, which keeps the
  * callers free of prop drilling and lets the Left Bar act on an agent that
@@ -64,6 +66,11 @@ export interface GitAgentActions {
 	 * the row with it; clicking the row re-opens the form on that same attempt.
 	 */
 	prRunning: boolean;
+	/**
+	 * Open the worktree checkpoints browser for this agent: take a snapshot of
+	 * the working tree, or roll it back to an earlier one.
+	 */
+	viewCheckpoints: () => void;
 	/**
 	 * Open the worktree configuration modal for this agent. Activates the agent
 	 * first, because the modal reads the active session.
@@ -216,6 +223,18 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 	// surface shows up on every surface.
 	const prRunning = usePRCreationActive(target?.cwd);
 
+	const viewCheckpoints = useCallback(() => {
+		if (!target) return;
+		// Same shape as viewLog: the path travels explicitly so the Left Bar can
+		// open the checkpoint list for an agent that isn't the active one.
+		useModalStore.getState().openModal('checkpoints', {
+			sessionId: target.sessionId,
+			cwd: target.cwd,
+			sshRemoteId: target.sshRemoteId,
+			branch,
+		});
+	}, [target, branch]);
+
 	const configureWorktrees = useCallback(() => {
 		if (!session) return;
 		// The config modal renders against the active session, so activating is
@@ -242,6 +261,7 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		switchBranch,
 		createPR,
 		prRunning,
+		viewCheckpoints,
 		configureWorktrees,
 		// Worktree children can't own a worktree config of their own.
 		canConfigureWorktrees: Boolean(session?.isGitRepo && !session.parentSessionId),

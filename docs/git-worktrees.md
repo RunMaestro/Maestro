@@ -14,11 +14,45 @@ Every agent whose working directory is a git repository has a git menu, reachabl
 - **Left Bar right-click** - right-click the agent in the agent list.
 - **Command palette** (`Cmd+K` / `Ctrl+K`) - every action is searchable by name.
 
-All three offer the same actions: **View Git Log**, **View Git Diff**, **Git Pull**, **Git Push**, **Change Branch**, and **Create Pull Request**. Pull and Push are badged with how many commits you're behind and ahead. The header menu additionally shows the current branch and origin (each with a copy button, and the origin clickable to open the repo in your browser) and a **Configure Worktrees** entry.
+All three offer the same actions: **View Git Log**, **View Git Diff**, **Git Pull**, **Git Push**, **Change Branch**, **Checkpoints**, and **Create Pull Request**. Pull and Push are badged with how many commits you're behind and ahead. The header menu additionally shows the current branch and origin (each with a copy button, and the origin clickable to open the repo in your browser) and a **Configure Worktrees** entry.
 
 The header pill and the command palette act on the agent you're looking at; the right-click menu acts on the agent you right-clicked, so you can pull or check the log of a background agent without switching to it.
 
 See [Git Actions](./general-usage#git-actions) for the full walkthrough, including the live pull/push output and the fuzzy branch picker.
+
+## Checkpoints
+
+A checkpoint is a snapshot of a working tree you can return to. Take one before letting an agent try something ambitious, and roll back cleanly if it goes wrong.
+
+Open it from the git menu (branch pill, Left Bar right-click, or command palette) -> **Checkpoints**.
+
+### What a checkpoint captures
+
+Staged changes, unstaged edits, and untracked files. Tick **Include ignored files** to capture `.gitignore`'d ones too - your `.env`, local databases, build state. That option is off by default because in most repos the ignored set is build output, and snapshotting it is a real disk cost.
+
+Checkpoints are stored as ordinary git objects under `refs/maestro/checkpoints`, not as copies of your files. They share storage with your existing history, they survive `git gc`, and they stay in sync when you run plain git commands.
+
+### Restoring
+
+Restoring rewrites the working tree to match the checkpoint. It does **not** move your branch or touch your commit history - a checkpoint restores files, it never rewrites commits.
+
+Two things make this safe to reach for:
+
+- Maestro takes a checkpoint of the current state first, so a restore can itself be undone. The confirmation and the toast afterwards both name it.
+- Ignored files are only deleted if the checkpoint you are restoring actually captured them. Restoring a checkpoint that skipped ignored files leaves your `.env` and `node_modules` exactly where they are.
+
+### From the CLI
+
+```bash
+maestro-cli worktree checkpoint create -a my-agent -m "before the refactor"
+maestro-cli worktree checkpoint list -a my-agent
+maestro-cli worktree checkpoint restore <checkpoint-id> -a my-agent
+maestro-cli worktree checkpoint delete <checkpoint-id> -a my-agent
+```
+
+### Auto Run checkpoints
+
+**Settings -> General -> Auto Run Checkpoints** can take a checkpoint at every Auto Run task boundary, so a long playbook can be rewound to any completed step. It is off by default: a snapshot per task is cheap but not free, and the payoff only shows up on a run left unattended for hours.
 
 ## Git Log Viewer
 

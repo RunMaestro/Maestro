@@ -44,6 +44,20 @@ export const AUTOMATION_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'advanced',
 	},
+	autoRunCheckpointsEnabled: {
+		description:
+			"Take a worktree checkpoint at each Auto Run task boundary, so a long playbook can be rewound to any completed step. Off by default: a checkpoint is cheap but not free, and most runs don't need one per task. Checkpoints are ref-backed git snapshots under refs/maestro/checkpoints and are managed from the branch pill's Checkpoints view or `maestro-cli worktree checkpoint`.",
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	autoRunCheckpointsIncludeIgnored: {
+		description:
+			"Include .gitignore'd files (.env, build output) in Auto Run task-boundary checkpoints. Off by default because a repo's ignored set is usually build output, and snapshotting it every task is a real disk cost. Turn it on for a tree whose ignored files are state rather than derivable output. Has no effect unless autoRunCheckpointsEnabled is on.",
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 	autoRunInactivityTimeoutMin: {
 		description:
 			'Minutes of no agent output before the Auto Run watchdog considers a task stalled and force-kills it. Set to 0 to disable the watchdog (unlimited).',
