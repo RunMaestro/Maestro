@@ -19,6 +19,7 @@ import { fuzzyMatch } from '../../utils/search';
 import { gitService } from '../../services/git';
 import { logger } from '../../utils/logger';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import {
 	DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
@@ -337,11 +338,24 @@ export function useFileTreeManagement(
 		[setSessions]
 	);
 
-	// A browser client can restore one active session and then immediately
-	// follow the desktop's live active-session selection. Do not let the first
-	// session's recursive walk continue issuing WebSocket IPC calls after that
-	// switch. Desktop benefits too when a user leaves a large tree mid-load.
+	// WEB-DESKTOP ONLY. A browser client can restore one active session and then
+	// immediately follow the desktop's live active-session selection. Every
+	// readDir in the recursive walk is a message on the ONE WebSocket the whole
+	// bridge shares, so a large tree left walking in the background starves the
+	// interactive calls behind it - the reason this cancel exists at all.
+	//
+	// Electron has no such choke point: readDir runs in main over per-call IPC
+	// and competes with nothing. Cancelling there would only throw away a walk
+	// the user is going to want. A cancelled load never sets `fileTreeStats`, so
+	// the auto-loader restarts it from the top on switch-back, and on a large
+	// repo that is a second scan for no gain. Switching agents is not a request
+	// to stop loading files.
+	//
+	// The manual cancel button stays available on both (SSH-only, in
+	// FileExplorerPanel) - stopping a slow remote walk is the user's call to
+	// make explicitly, not something to infer from them looking elsewhere.
 	useEffect(() => {
+		if (!isWebDesktop()) return;
 		for (const sessionId of loadAbortMapRef.current.keys()) {
 			if (sessionId !== activeSessionId) cancelFileTreeLoad(sessionId);
 		}

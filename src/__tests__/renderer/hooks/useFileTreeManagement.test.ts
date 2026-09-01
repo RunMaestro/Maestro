@@ -25,6 +25,7 @@ import {
 import { gitService } from '../../../renderer/services/git';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 vi.mock('../../../renderer/utils/fileExplorer', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/utils/fileExplorer')>();
@@ -50,6 +51,18 @@ vi.mock('../../../renderer/services/git', () => ({
 		getTags: vi.fn(),
 	},
 }));
+
+// Switching agents cancels an in-flight walk ONLY in the browser build, where
+// every readDir shares one WebSocket. The real `isWebDesktop` memoizes its
+// answer on first call, so drive it through the module mock rather than by
+// poking `window.__MAESTRO_CONFIG__` mid-test.
+vi.mock('../../../renderer/utils/runtimeContext', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/utils/runtimeContext')>();
+	return { ...actual, isWebDesktop: vi.fn(() => false) };
+});
+
+/** Run the enclosing test as the browser build instead of Electron. */
+const asWebDesktop = () => vi.mocked(isWebDesktop).mockReturnValue(true);
 
 // ============================================================================
 // Test Helpers
@@ -93,6 +106,9 @@ describe('useFileTreeManagement', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// clearAllMocks wipes call history but keeps implementations, so a test
+		// that opted into the browser build would leak into the next one.
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		useFileExplorerStore.setState({ fileTreeFilter: '' });
 		// Most tests assume sessions are loaded (safety timeout can fire)
 		useSessionStore.setState({ sessionsLoaded: true });
@@ -564,7 +580,8 @@ describe('useFileTreeManagement', () => {
 		resolveLoad(asResult([]));
 	});
 
-	it('cancels an unfinished tree load when the active session changes', async () => {
+	it('cancels an unfinished tree load when the active session changes (web-desktop)', async () => {
+		asWebDesktop();
 		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
 		let resolveSecond: (value: ReturnType<typeof asResult>) => void = () => {};
 		const firstPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
@@ -615,7 +632,59 @@ describe('useFileTreeManagement', () => {
 		).toEqual([{ name: 'current.txt', type: 'file' }]);
 	});
 
+	it('keeps an unfinished tree load running when the active session changes on desktop', async () => {
+		// Electron issues readDir over per-call IPC with no shared choke point, so
+		// switching agents is not a reason to throw away a walk in progress. The
+		// load must finish and land its tree even though the user is looking at a
+		// different agent - otherwise coming back restarts the whole scan.
+		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
+		const firstPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveFirst = resolve;
+		});
+		vi.mocked(loadFileTree)
+			.mockReturnValueOnce(firstPending)
+			.mockReturnValue(Promise.resolve(asResult([{ name: 'b.txt', type: 'file' }])));
+
+		const firstSession = createMockSession({ id: 'session-a', fileTree: [] });
+		const secondSession = createMockSession({ id: 'session-b', fileTree: [] });
+		const state = createSessionsState([firstSession, secondSession]);
+		const baseDeps = createDeps(state);
+		const { rerender } = renderHook(
+			({ activeSessionId, activeSession }: { activeSessionId: string; activeSession: Session }) =>
+				useFileTreeManagement({ ...baseDeps, activeSessionId, activeSession }),
+			{ initialProps: { activeSessionId: firstSession.id, activeSession: firstSession } }
+		);
+
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(1));
+		const firstSignal = vi.mocked(loadFileTree).mock.calls[0].at(-1) as AbortSignal;
+
+		rerender({ activeSessionId: secondSession.id, activeSession: secondSession });
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(2));
+
+		// The walk it left behind is untouched: still marked loading, not aborted.
+		expect(firstSignal.aborted).toBe(false);
+		expect(
+			state.getSessions().find((session) => session.id === firstSession.id)?.fileTreeLoading
+		).toBe(true);
+
+		await act(async () => {
+			resolveFirst(asResult([{ name: 'a.txt', type: 'file' }]));
+			await firstPending;
+		});
+
+		// And it still lands, so switching back shows a finished tree rather than
+		// starting the scan over.
+		expect(state.getSessions().find((session) => session.id === firstSession.id)).toMatchObject({
+			fileTree: [{ name: 'a.txt', type: 'file' }],
+			fileTreeLoading: false,
+		});
+	});
+
 	it('does not let an old A load clear a newer A load after an A to B to A switch', async () => {
+		// Web-desktop only: the restart this guards against exists because the
+		// switch away cancelled A. On Electron nothing cancels, so there is never
+		// a second A load to be clobbered by the first.
+		asWebDesktop();
 		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
 		let resolveSecond: (value: ReturnType<typeof asResult>) => void = () => {};
 		let resolveThird: (value: ReturnType<typeof asResult>) => void = () => {};
