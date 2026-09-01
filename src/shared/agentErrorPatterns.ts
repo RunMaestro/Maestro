@@ -1552,6 +1552,74 @@ const ANTIGRAVITY_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 };
 
+// ============================================================================
+// Cursor CLI Error Patterns
+// ============================================================================
+
+// Auth messages name what failed and stop there, per the note above CLAUDE:
+// Cursor is signed in from the ReauthModal, which knows whether this agent holds
+// an OAuth login or a CURSOR_API_KEY. Naming a login command here would send an
+// API-key agent through a flow that changes nothing it presents.
+const CURSOR_CLI_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not (?:logged in|authenticated)|authentication failed|please run.*agent login/i,
+			message: 'Not authenticated with Cursor. Sign in again to continue.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid api key|unauthorized|http\s*401|status(?:\s+code)?\s*401/i,
+			message: 'Cursor rejected the credentials. Re-authenticate to continue.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|http\s*429|status(?:\s+code)?\s*429|quota exceeded/i,
+			message: 'Cursor rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context.*(exceeded|too long)|maximum.*tokens|prompt.*too long/i,
+			message: 'Context limit exceeded. Start a new session or compact the conversation.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /connection (failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Network error connecting to Cursor. Check your connection and try again.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /session.*not found|chat.*not found|invalid.*session/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /unknown model|invalid model|model.*not found|couldn'?t set model/i,
+			message: 'The selected model is not available on this Cursor account.',
+			recoverable: true,
+		},
+		{
+			pattern: /panic|fatal error|unhandled exception|segmentation fault/i,
+			message: 'Cursor Agent crashed unexpectedly. Check the logs and try again.',
+			recoverable: true,
+		},
+	],
+};
+
 const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
@@ -1563,6 +1631,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['omp', OMP_ERROR_PATTERNS],
 	['grok', GROK_ERROR_PATTERNS],
 	['antigravity', ANTIGRAVITY_ERROR_PATTERNS],
+	['cursor-cli', CURSOR_CLI_ERROR_PATTERNS],
 ]);
 
 /**

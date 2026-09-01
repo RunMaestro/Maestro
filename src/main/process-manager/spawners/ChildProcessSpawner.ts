@@ -47,6 +47,8 @@ export class ChildProcessSpawner {
 			processes: this.processes,
 			emitter: this.emitter,
 			bufferManager: this.bufferManager,
+			dispatchParsedEvent: (sessionId, managedProcess, event, outputParser) =>
+				this.stdoutHandler.handleParsedEvent(sessionId, managedProcess, event, outputParser),
 		});
 	}
 

@@ -28,6 +28,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'copilot-cli': 'Copilot-CLI',
 	omp: 'Oh My Pi',
 	grok: 'Grok CLI',
+	'cursor-cli': 'Cursor CLI',
 };
 
 /**
@@ -47,7 +48,11 @@ export function getAgentDisplayName(agentId: AgentId | string): string {
  * These agents can still read files but the CLI calls it "plan mode".
  * Other agents (Codex, Factory Droid) have true read-only enforcement.
  */
-const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['claude-code', 'opencode']);
+const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'claude-code',
+	'opencode',
+	'cursor-cli',
+]);
 
 /**
  * Get the UI label for the read-only mode pill based on the agent.
@@ -142,6 +147,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'omp',
 	'grok',
 	'antigravity',
+	'cursor-cli',
 ]);
 
 /**
@@ -184,6 +190,7 @@ export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
 	'claude-code': { description: "Anthropic's AI coding assistant", brandColor: '#D97757' },
 	codex: { description: "OpenAI's AI coding assistant", brandColor: '#10A37F' },
 	'copilot-cli': { description: "GitHub's AI coding assistant", brandColor: '#24292F' },
+	'cursor-cli': { description: "Cursor's agentic coding CLI", brandColor: '#6B7280' },
 	'factory-droid': { description: "Factory's AI coding assistant", brandColor: '#3B82F6' },
 	grok: { description: "xAI's AI coding assistant", brandColor: '#B4B8C0' },
 	hermes: { description: "Nous Research's AI coding assistant", brandColor: '#2323FF' },
@@ -270,6 +277,7 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	// cached by one interactive sign-in, so the bare TUI is the whole flow.
 	antigravity: { binary: 'agy', args: '' },
 	grok: { binary: 'grok', args: 'login' },
+	'cursor-cli': { binary: 'agent', args: 'login' },
 	hermes: null,
 	pi: null,
 	omp: null,

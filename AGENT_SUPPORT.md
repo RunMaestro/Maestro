@@ -1220,3 +1220,47 @@ window drives the context meter.
 - [Antigravity CLI overview](https://antigravity.google/docs/cli/overview)
 - [Headless mode](https://antigravity.google/docs/cli/headless)
 - [Installation & auth](https://antigravity.google/docs/cli/install)
+
+---
+
+### Cursor CLI
+
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). Facts below verified against Cursor CLI `2026.07.16-899851b`, live stream output, and the official CLI reference.
+
+| Item            | Value                                                                                                    |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| Binary          | `agent`; the native Windows installer also provides `cursor-agent.cmd`                                   |
+| Batch Mode      | `-p` / `--print` with `--trust` and `--force`                                                            |
+| JSON Output     | `--output-format stream-json --stream-partial-output` (JSONL init/thinking/assistant/tool/result events) |
+| Resume          | `--resume <chatId>`; verified continuation preserves the session ID                                      |
+| Read-Only       | `--mode plan` (Plan-Mode in UI)                                                                          |
+| Working Dir     | `--workspace <path>`                                                                                     |
+| Additional Dirs | `--add-dir <path>` (repeatable)                                                                          |
+| Images          | Saved image paths are prepended to the prompt, per Cursor's official headless guidance                   |
+| Session Storage | Deferred (`~/.cursor/chats/` SQLite `store.db` not wired)                                                |
+| Context Window  | 200K conservative default; varies by model and parameterized models may advertise larger contexts        |
+| Model Selection | `--model`; dynamic discovery from `agent --list-models` / `agent models`                                 |
+| Tool Events     | `tool_call` started/completed events mapped to Maestro tool execution state, correlated by `call_id`     |
+
+**Implementation files:**
+
+- ✅ Output Parser: `src/main/parsers/cursor-cli-output-parser.ts`
+- ❌ Session Storage: deferred (`supportsSessionStorage: false`)
+
+**Known limitations:**
+
+- **Generic binary name:** PATH detection for bare `agent` can collide with unrelated tools. Direct probing and expanded PATH prefer the official native install directories; a custom path remains available for nonstandard installs.
+- **Group chat moderation:** capability left false until exercised
+
+**Example invocations:**
+
+```bash
+# Batch mode (full access)
+agent --workspace /path/to/project --trust --force --output-format stream-json --stream-partial-output -p "prompt"
+
+# Resume a session
+agent --workspace /path/to/project --trust --force --output-format stream-json --stream-partial-output --resume <session-id> -p "continue"
+
+# Read-only plan mode
+agent --workspace /path/to/project --trust --output-format stream-json --stream-partial-output --mode plan -p "prompt"
+```

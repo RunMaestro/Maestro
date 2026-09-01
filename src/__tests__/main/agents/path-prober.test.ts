@@ -40,6 +40,7 @@ import {
 	probeWindowsPaths,
 	probeUnixPaths,
 	findAllBinaryPaths,
+	validateAgentBinaryIdentity,
 	type BinaryDetectionResult,
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
@@ -49,6 +50,29 @@ import { captureException } from '../../../main/utils/sentry';
 describe('path-prober', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe('validateAgentBinaryIdentity', () => {
+		it('accepts Cursor help and rejects unrelated generic agent binaries', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({
+					stdout: 'Start the Cursor Agent\nCURSOR_API_KEY',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					stdout: 'Generic automation agent',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/cursor-agent')).resolves.toBe(
+				true
+			);
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/unrelated-agent')).resolves.toBe(
+				false
+			);
+		});
 	});
 
 	describe('getExpandedEnv', () => {
@@ -392,6 +416,18 @@ describe('path-prober', () => {
 			expect(result).toBeNull();
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
+		});
+
+		it('should probe the native Cursor CLI agent.cmd shim', async () => {
+			accessMock.mockImplementation(async (candidate) => {
+				const normalizedCandidate = String(candidate).toLowerCase().replaceAll('\\', '/');
+				if (normalizedCandidate.endsWith('cursor-agent/agent.cmd')) return;
+				throw new Error('ENOENT');
+			});
+
+			const result = await probeWindowsPaths('agent');
+
+			expect(result?.toLowerCase()).toMatch(/cursor-agent[\\/]agent\.cmd$/);
 		});
 
 		it.each(['hermes', 'pi'])('should probe known Windows paths for %s', async (binaryName) => {

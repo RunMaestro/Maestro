@@ -11,6 +11,7 @@ import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/a
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
 
 interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -439,8 +440,8 @@ export class StdoutHandler {
 		}
 	}
 
-	/** Parse a single JSON line: detect errors, extract session IDs, and dispatch to the event handler. */
-	private processLine(sessionId: string, managedProcess: ManagedProcess, line: string): void {
+	/** Parse one JSONL record through the complete event pipeline. Also used to flush exit remainders. */
+	processLine(sessionId: string, managedProcess: ManagedProcess, line: string): void {
 		const { outputParser, toolType } = managedProcess;
 
 		// ── Single JSON parse for the entire line ──
@@ -456,6 +457,9 @@ export class StdoutHandler {
 		if (parsed !== null && toolType === 'copilot-cli') {
 			this.emitSessionIdIfNeeded(sessionId, managedProcess, extractCopilotSessionId(parsed));
 		}
+
+		const parsedEvent =
+			parsed !== null && outputParser ? outputParser.parseJsonObject(parsed) : null;
 
 		// ── Error detection from parser ──
 		// `interrupted` means the USER pressed Stop, and `interrupt()` sets it
@@ -482,15 +486,12 @@ export class StdoutHandler {
 				// Losing it means recovery from a *recoverable* error silently opens a
 				// fresh conversation and drops the context the retry was supposed to
 				// continue. ExitHandler does the same for the flushed no-newline case.
-				if (parsed !== null) {
-					const event = outputParser.parseJsonObject(parsed);
-					if (event) {
-						this.emitSessionIdIfNeeded(
-							sessionId,
-							managedProcess,
-							outputParser.extractSessionId(event)
-						);
-					}
+				if (parsedEvent) {
+					this.emitSessionIdIfNeeded(
+						sessionId,
+						managedProcess,
+						outputParser.extractSessionId(parsedEvent)
+					);
 				}
 				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
@@ -548,7 +549,9 @@ export class StdoutHandler {
 		// ── Process parsed data ──
 		if (parsed !== null) {
 			if (outputParser) {
-				this.handleParsedEvent(sessionId, managedProcess, parsed, outputParser);
+				if (parsedEvent) {
+					this.handleParsedEvent(sessionId, managedProcess, parsedEvent, outputParser);
+				}
 			} else {
 				this.handleLegacyMessage(sessionId, managedProcess, parsed);
 			}
@@ -562,16 +565,23 @@ export class StdoutHandler {
 		// Non-JSON lines from JSONL agents are silently suppressed (shell profile noise, MCP startup, etc.)
 	}
 
-	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
-	private handleParsedEvent(
+	/**
+	 * Handle a normalized event: extract usage, tools, and result data.
+	 *
+	 * Public because ExitHandler dispatches the trailing no-newline record through
+	 * it. That record is an ordinary event that merely arrived without its
+	 * delimiter, so it must produce the same usage, session-id and result emissions
+	 * as any other - ExitHandler used to re-implement a subset inline and silently
+	 * dropped the usage of a run whose whole output was that one envelope.
+	 */
+	handleParsedEvent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
-		parsed: unknown,
+		event: ParsedEvent,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
-		const event = outputParser.parseJsonObject(parsed);
-
-		if (!event) return;
+		const interruptedCursor =
+			managedProcess.toolType === 'cursor-cli' && managedProcess.interrupted === true;
 
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
@@ -631,14 +641,17 @@ export class StdoutHandler {
 			const toolType = managedProcess.toolType;
 			if (toolType !== 'copilot-cli') {
 				const requiresReasoningTag =
-					toolType === 'grok' || toolType === 'codex' || toolType === 'opencode';
+					toolType === 'grok' ||
+					toolType === 'codex' ||
+					toolType === 'opencode' ||
+					toolType === 'cursor-cli';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}
 			}
 			// Reasoning content is internal thinking - don't include it in the
 			// final response text. Only message content should be in streamedText.
-			if (!event.isReasoning) {
+			if (!event.isReasoning && !interruptedCursor) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
 			}
 		}
@@ -726,7 +739,7 @@ export class StdoutHandler {
 			const resultText = managedProcess.streamedText || '';
 			if (resultText) {
 				managedProcess.resultEmitted = true;
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 			}
 		}
 
@@ -773,7 +786,8 @@ export class StdoutHandler {
 			managedProcess.toolType !== 'codex' &&
 			outputParser.isResultMessage(event) &&
 			!managedProcess.resultEmitted &&
-			!copilotIntermediate
+			!copilotIntermediate &&
+			!interruptedCursor
 		) {
 			managedProcess.resultEmitted = true;
 			// For most agents, prefer the result event's text. Fall back to
@@ -800,7 +814,7 @@ export class StdoutHandler {
 					hasEventText: !!event.text,
 					hasStreamedText: !!managedProcess.streamedText,
 				});
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 			} else if (sessionId.includes('-synopsis-')) {
 				logger.warn(
 					'[ProcessManager] Synopsis result is empty - no text to emit',

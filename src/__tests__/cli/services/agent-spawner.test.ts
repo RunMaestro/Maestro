@@ -1715,6 +1715,207 @@ Some text with [x] in it that's not a checkbox
 			expect(result.response).toBe('ok');
 		});
 
+		it('spawns Cursor standard mode without --force and sends the raw prompt via stdin', async () => {
+			const prompt = `Hello cursor ${'x'.repeat(20_000)}`;
+			const resultPromise = spawnAgent('cursor-cli', '/project', prompt, undefined, {
+				permissionMode: 'standard',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).not.toContain('--force');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('stream-json');
+			expect(args).toContain('--workspace');
+			expect(args).toContain('/project');
+			expect(args).toContain('-p');
+			expect(args).not.toContain(prompt);
+			expect(mockStdin.end).toHaveBeenCalledWith(prompt);
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"system","subtype":"init","session_id":"cursor-sess-1"}\n' +
+						'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"cursor-sess-1"}\n' +
+						'{"type":"result","subtype":"success","result":"READY","session_id":"cursor-sess-1","usage":{"inputTokens":10,"outputTokens":2,"cacheReadTokens":0,"cacheWriteTokens":0}}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('READY');
+			expect(result.agentSessionId).toBe('cursor-sess-1');
+		});
+
+		it('spawns Cursor full mode with --force for unattended write runs', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'write the files', undefined, {
+				permissionMode: 'full',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).toContain('--force');
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"written","session_id":"cursor-full"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toMatchObject({ success: true, response: 'written' });
+		});
+
+		it('lets explicit Cursor full permission override the legacy read-only flag', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'write the files', undefined, {
+				readOnlyMode: true,
+				permissionMode: 'full',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--force');
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"written","session_id":"cursor-full-legacy-conflict"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toMatchObject({ success: true, response: 'written' });
+		});
+
+		it('should run cursor-cli read-only with --mode plan and without --force', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'look around', undefined, {
+				readOnlyMode: true,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).not.toContain('--force');
+			expect(args.filter((a) => a === '--mode')).toHaveLength(1);
+			expect(args[args.indexOf('--mode') + 1]).toBe('plan');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"ok","session_id":"cursor-sess-2"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('ok');
+		});
+
+		it('should resume cursor-cli with --resume and preserve the returned session id', async () => {
+			const resultPromise = spawnAgent(
+				'cursor-cli',
+				'/project',
+				'continue cursor',
+				'cursor-resume-1'
+			);
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			const resumeIndex = args.indexOf('--resume');
+			expect(resumeIndex).toBeGreaterThanOrEqual(0);
+			expect(args[resumeIndex + 1]).toBe('cursor-resume-1');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"continued","session_id":"cursor-resume-1"}\n'
+				)
+			);
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: 'continued',
+					agentSessionId: 'cursor-resume-1',
+				})
+			);
+		});
+
+		it('should not duplicate Cursor partial output when the result event is absent', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'stream cursor');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"RE"}]},"session_id":"cursor-sess-3","timestamp_ms":1}\n' +
+						'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ADY"}]},"session_id":"cursor-sess-3","timestamp_ms":2}\n' +
+						'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"cursor-sess-3"}\n'
+				)
+			);
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: 'READY',
+					agentSessionId: 'cursor-sess-3',
+				})
+			);
+		});
+
+		it('should fail cursor-cli when a structured is_error result is emitted', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'fail cursor');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"error","is_error":true,"result":"Unexpected Cursor failure","session_id":"cursor-sess-4"}\n'
+				)
+			);
+			mockChild.emit('close', 1);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: false,
+					error: 'Unexpected Cursor failure',
+					agentSessionId: 'cursor-sess-4',
+				})
+			);
+		});
+
+		it('should fail cursor-cli on a non-zero exit even after partial assistant output', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'fail after partial');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial answer"}]},"session_id":"cursor-sess-5","timestamp_ms":1}\n'
+				)
+			);
+			mockStderr.emit('data', Buffer.from('Cursor request failed\n'));
+			mockChild.emit('close', 1);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: false,
+					error: 'Cursor request failed\n',
+					agentSessionId: 'cursor-sess-5',
+				})
+			);
+		});
+
 		it('should resume a grok session via --resume <sessionId> and round-trip the id', async () => {
 			const resultPromise = spawnAgent('grok', '/project', 'follow-up', 'grok-resume-1');
 			await new Promise((resolve) => setTimeout(resolve, 0));

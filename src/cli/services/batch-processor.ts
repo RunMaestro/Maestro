@@ -591,6 +591,7 @@ export async function* runPlaybook(
 						},
 						() =>
 							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+								permissionMode: 'full',
 								customModel: turnSettings.model,
 								customEffort: turnSettings.effort,
 								customArgs: session.customArgs,

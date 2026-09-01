@@ -61,6 +61,7 @@ import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
+import { CursorCliOutputParser } from '../../../../main/parsers/cursor-cli-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import { logger } from '../../../../main/utils/logger';
 import type { AgentOutputParser } from '../../../../main/parsers/agent-output-parser';
@@ -262,7 +263,7 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, payload);
 
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer', proc);
 			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-123');
 			expect(proc.jsonBuffer).toBe('');
 		});
@@ -305,7 +306,7 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, chunkOne.slice(25) + chunkTwo);
 
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer', proc);
 			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-456');
 			expect(proc.jsonBuffer).toBe('');
 		});
@@ -367,7 +368,7 @@ describe('StdoutHandler', () => {
 
 			expect(proc.jsonBufferCorrupted).toBe(false);
 			expect(proc.emittedToolCallIds?.size).toBe(0);
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Recovered');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Recovered', proc);
 			expect(proc.jsonBuffer).toBe('');
 		});
 
@@ -396,7 +397,12 @@ describe('StdoutHandler', () => {
 				sessionId,
 				'Authenticating...'
 			);
-			expect(bufferManager.emitDataBuffered).toHaveBeenNthCalledWith(2, sessionId, 'Final answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenNthCalledWith(
+				2,
+				sessionId,
+				'Final answer',
+				proc
+			);
 			expect(proc.jsonBuffer).toBe('');
 		});
 
@@ -858,7 +864,7 @@ describe('StdoutHandler', () => {
 			});
 
 			expect(proc.resultEmitted).toBe(true);
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'the answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'the answer', proc);
 		});
 
 		it('should extract session_id and emit session-id event', () => {
@@ -1100,7 +1106,8 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(1);
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
 				sessionId,
-				'{"confidence":55,"ready":false,"message":"README.md"}'
+				'{"confidence":55,"ready":false,"message":"README.md"}',
+				proc
 			);
 		});
 	});
@@ -2509,7 +2516,8 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(proc.streamedText).toBe('{"confidence":40,"ready":false,"message":"hi"}');
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
 				sessionId,
-				'{"confidence":40,"ready":false,"message":"hi"}'
+				'{"confidence":40,"ready":false,"message":"hi"}',
+				proc
 			);
 		});
 
@@ -2653,6 +2661,103 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Let me reason');
 			// Reasoning is internal - it must not leak into the final response text.
 			expect(proc.streamedText).toBe('');
+		});
+	});
+
+	describe('Cursor stream routing', () => {
+		it('routes thinking, tool lifecycle, session id, and one final response without duplicates', () => {
+			const parser = new CursorCliOutputParser();
+			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'cursor-cli',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			const toolSpy = vi.fn();
+			const sessionSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+			emitter.on('tool-execution', toolSpy);
+			emitter.on('session-id', sessionSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'system',
+				subtype: 'init',
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'thinking',
+				subtype: 'delta',
+				text: 'reading',
+				session_id: 'cursor-session-1',
+				timestamp_ms: 1,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'tool_call',
+				subtype: 'started',
+				call_id: 'tool-1',
+				tool_call: { readToolCall: { args: { path: 'package.json' } } },
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'tool_call',
+				subtype: 'completed',
+				call_id: 'tool-1',
+				tool_call: {
+					readToolCall: {
+						args: { path: 'package.json' },
+						result: { success: { content: '{"name":"maestro"}' } },
+					},
+				},
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'RE' }] },
+				session_id: 'cursor-session-1',
+				timestamp_ms: 2,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'ADY' }] },
+				session_id: 'cursor-session-1',
+				timestamp_ms: 3,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'READY' }] },
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: 'READY',
+				session_id: 'cursor-session-1',
+				usage: { inputTokens: 10, outputTokens: 2 },
+			});
+
+			expect(thinkingSpy).toHaveBeenCalledOnce();
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'reading');
+			expect(toolSpy).toHaveBeenCalledTimes(2);
+			expect(toolSpy.mock.calls[0][1]).toEqual(
+				expect.objectContaining({
+					toolName: 'read',
+					toolCallId: 'tool-1',
+					state: expect.objectContaining({ status: 'running' }),
+				})
+			);
+			expect(toolSpy.mock.calls[1][1]).toEqual(
+				expect.objectContaining({
+					toolName: 'read',
+					toolCallId: 'tool-1',
+					state: expect.objectContaining({ status: 'completed' }),
+				})
+			);
+			expect(sessionSpy).toHaveBeenCalledOnce();
+			expect(sessionSpy).toHaveBeenCalledWith(sessionId, 'cursor-session-1');
+			expect(proc.streamedText).toBe('READY');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledOnce();
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'READY', proc);
 		});
 	});
 
