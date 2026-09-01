@@ -255,6 +255,14 @@ function SessionListInner(props: SessionListProps) {
 	const showWordmark =
 		leftSidebarWidthState >=
 		WORDMARK_MIN_WIDTH + livePillReserve + headerBadgeWidth + nowPlayingReserve;
+	// The badge is an indicator, and the wordmark is the yield ahead of it: once
+	// the wordmark has been dropped the row is holding the width it was drawn in,
+	// which is more than the badge costs, so the badge stops pushing the LIVE
+	// label out. Charging for it either way is what left a 256px sidebar showing
+	// a bare radio dot while the space the wordmark vacated sat empty. Above the
+	// wordmark threshold the sidebar is already wide enough for both.
+	const showLiveLabel =
+		leftSidebarWidthState >= LIVE_LABEL_MIN_WIDTH + (showWordmark ? headerBadgeWidth : 0);
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -1137,13 +1145,18 @@ function SessionListInner(props: SessionListProps) {
 			>
 				{leftSidebarOpen ? (
 					<>
-						{/* This row neither wraps nor scrolls, so it needs a legitimate
-						    shrink target or any added control (the now-playing pill, a badge)
-						    pushes the hamburger menu off the edge on a narrow sidebar. That
-						    role now belongs to the now-playing pill's filename, which can be
-						    clipped without looking broken. The wordmark is drawn in full or
-						    dropped entirely - see `showWordmark`. */}
-						<div className="flex items-center gap-2 min-w-0">
+						{/* Three zones, left to right: identity, indicators, menu. The
+						    indicator band is the flexible one, so it centers itself in
+						    whatever the other two leave behind and reads as its own group
+						    rather than as a tail on the wordmark.
+
+						    This row neither wraps nor scrolls, so it needs a legitimate
+						    shrink target or any added indicator pushes the hamburger menu
+						    off the edge on a narrow sidebar. That role belongs to the
+						    now-playing pill's filename, which can be clipped without looking
+						    broken. The wordmark is drawn in full or dropped entirely - see
+						    `showWordmark`. */}
+						<div className="flex items-center gap-2 shrink-0">
 							<button
 								type="button"
 								onClick={() => {
@@ -1170,6 +1183,17 @@ function SessionListInner(props: SessionListProps) {
 									MAESTRO
 								</h1>
 							)}
+						</div>
+
+						{/* Indicator band. `flex-1` is what centers it: it takes the space
+						    the identity and menu zones do not, and centers its contents in
+						    that. Anything status-shaped added to the header belongs here,
+						    not beside the wordmark. `min-w-0` so the now-playing filename
+						    stays the row's shrink target. */}
+						<div
+							data-testid="sidebar-header-indicators"
+							className="flex flex-1 items-center justify-center gap-2 min-w-0"
+						>
 							{/* Badge Level Indicator */}
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (
 								<button
@@ -1190,7 +1214,11 @@ function SessionListInner(props: SessionListProps) {
 							    sidebar, the same way the LIVE pill below does. */}
 							<NowPlayingIndicator theme={theme} compact={nowPlayingCompact} />
 							{/* Global LIVE Toggle */}
-							<div className="ml-2 relative z-10" ref={liveOverlayRef} data-tour="remote-control">
+							<div
+								className="relative z-10 shrink-0"
+								ref={liveOverlayRef}
+								data-tour="remote-control"
+							>
 								<button
 									onClick={() => {
 										if (!isLiveMode) {
@@ -1212,8 +1240,7 @@ function SessionListInner(props: SessionListProps) {
 									}
 								>
 									<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
-									{leftSidebarWidthState >= LIVE_LABEL_MIN_WIDTH + headerBadgeWidth &&
-										(isLiveMode ? 'LIVE' : 'OFFLINE')}
+									{showLiveLabel && (isLiveMode ? 'LIVE' : 'OFFLINE')}
 								</button>
 
 								{/* LIVE Overlay with URL and QR Code */}
@@ -1245,7 +1272,7 @@ function SessionListInner(props: SessionListProps) {
 								)}
 							</div>
 						</div>
-						<div className="flex items-center">
+						<div className="flex items-center shrink-0">
 							{/* Hamburger Menu */}
 							<div className="relative z-30" ref={menuRef} data-tour="hamburger-menu">
 								<GhostIconButton
