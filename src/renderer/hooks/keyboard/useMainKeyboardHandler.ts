@@ -13,7 +13,7 @@ import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { stepMediaItem } from '../../utils/mediaItems';
-import { getTabDisplayName } from '../../utils/tabHelpers';
+import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { FONT_ZOOM_DEFAULT, FONT_ZOOM_STEP, clampFontZoom } from '../../../shared/typography';
@@ -1303,11 +1303,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						const tab = activeSession.aiTabs?.find(
 							(t: AITab) => t.id === activeSession.activeTabId
 						);
-						if (tab) {
-							useModalStore.getState().openModal('snoozeTab', {
-								tabId: tab.id,
-								tabLabel: getTabDisplayName(tab, activeSession.agentSessionId),
-							});
+						const target = tab ? resolveSnoozeTarget(activeSession, tab.id) : null;
+						if (target) {
+							useModalStore.getState().openModal('snoozeTab', target);
 							trackShortcut('snoozeTab');
 						}
 					}

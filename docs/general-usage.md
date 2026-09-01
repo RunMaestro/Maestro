@@ -919,9 +919,19 @@ See [Pane Shortcuts](./keyboard-shortcuts#pane-shortcuts-tiled-tabs) for moving 
 
 ### Snoozing Tabs
 
-Snooze hides an AI tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to conversations: park work you can't act on yet without closing it or letting it clutter the tab bar.
+Snooze hides a tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to your workspace: park work you can't act on yet without closing it or letting it clutter the tab bar.
 
-Hover a tab and choose **Snooze Tab**, press `Opt+Cmd+S` / `Alt+Ctrl+S`, or run **Snooze Tab** from Quick Actions (`Cmd+K` / `Ctrl+K`). Snoozing is available on AI tabs only.
+Hover a tab and choose **Snooze Tab**, press `Opt+Cmd+S` / `Alt+Ctrl+S`, or run **Snooze Tab** from Quick Actions (`Cmd+K` / `Ctrl+K`). The shortcut and Quick Actions act on the active AI tab; the hover menu works on every kind of tab, and a tiled group's chip menu offers **Snooze group** to park the whole layout at once.
+
+What comes back differs by what you parked, and the difference is the point:
+
+| What you snooze | What comes back                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **AI tab**      | The conversation verbatim, transcript and provider session intact                                                 |
+| **File tab**    | The file reopened at its path. If the file has since been deleted or moved, you're told instead                   |
+| **Browser tab** | The page reloaded at its URL                                                                                      |
+| **Terminal**    | The tab and its position, at the same working directory. A shell can't be parked, so it comes back as a fresh one |
+| **Tiled group** | The whole layout - split direction, sizes, focused pane - with every pane that still exists                       |
 
 **Choosing when it comes back**
 
@@ -944,9 +954,23 @@ The snooze dialog gives you three ways to pick a time, and always previews the e
 
 - **Calendar** - pick a date from the month grid and set a time of day.
 
+![Snooze Tab dialog](./screenshots/snooze-tab.png)
+
 **Note to self**
 
 Every snooze takes an optional note, and that note becomes the body of the notification when the tab returns. This is what turns snooze into a reminder system: leave yourself the reason you're coming back ("check if the migration finished", "review this before standup") instead of rediscovering it later.
+
+**Prompt on return**
+
+Only a conversation can be given work to do, so this box appears when you snooze an **AI tab**, or a **tiled group** that holds at least one AI pane. It is hidden for a file, browser, or terminal tab, which have no agent to send it to.
+
+The second optional box is addressed to the agent rather than to you. Whatever you type there is sent as a message the instant the tab comes back, so the work is already underway by the time you read the notification: "re-run the failing tests", "check whether the PR merged and summarize what changed", "pick up the refactor from where we stopped".
+
+The note and the prompt are independent. Use either, both, or neither.
+
+<Note>
+The prompt joins the agent's [execution queue](#execution-queue-view) rather than interrupting whatever it is doing. On an idle agent it runs immediately; on a busy one it waits its turn. It also runs if you **Unsnooze** early, because it is written against the tab coming back rather than against the clock.
+</Note>
 
 **What happens while a tab is snoozed**
 
@@ -964,11 +988,11 @@ Wakes are delivered by the running app. If Maestro is closed when a snooze comes
 
 **Managing snoozed tabs**
 
-Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, or run **See All Snoozed Tabs** from Quick Actions. It shows every snoozed tab across all agents, soonest first, with its note and a countdown. Each row offers:
+Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, or run **See All Snoozed Tabs** from Quick Actions. It shows every snoozed tab across all agents, soonest first, with its note, its prompt on return, and a countdown. Each row offers:
 
-- **Unsnooze** - bring the tab back right now
-- **Reschedule** - pick a new time or edit the note
-- **Dismiss** - drop the snooze and the tab, for when you no longer care
+- **Unsnooze** - bring the tab back right now, which also runs its prompt on return if it has one
+- **Reschedule** - pick a new time, or edit the note and the prompt (clearing a box removes it)
+- **Dismiss** - drop the snooze and the tab, for when you no longer care. Nothing is restored, so a prompt on return never runs.
 
 **Snooze history**
 

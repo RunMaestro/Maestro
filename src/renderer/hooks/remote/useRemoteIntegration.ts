@@ -11,8 +11,7 @@ import {
 	getRepairedUnifiedTabOrder,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
-import { generateId } from '../../utils/ids';
-import { planCrossAgentMentions } from '../../services/crossAgentMentions';
+import { buildQueuedMessageItem } from '../../services/queuedPrompt';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
@@ -776,34 +775,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
-					// Busy target: get in line. Append a message item to the authoritative
-					// execution queue (FIFO by insertion/timestamp), matching the shape the
-					// UI creates in useInputProcessing so it is a first-class queue citizen.
-					const isReadOnly =
-						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
-					// Cross-agent @mentions: stamp the intent so processQueuedItem fires the
-					// consult when this item becomes the agent's turn - the same contract a
-					// composer-queued message carries (useInputProcessing). Without the flag
-					// the mention is inert and the target agent is never consulted.
-					const mentionPlan = planCrossAgentMentions(command, sessionId);
-					const queuedItem: QueuedItem = {
-						id: generateId(),
-						timestamp: Date.now(),
-						tabId: resolvedTabId,
-						type: 'message',
+					// Busy target: get in line. The item is built by the shared builder,
+					// so it is byte-identical to one the composer would have queued -
+					// including the `@mention` intent flags (fired at drain time, not
+					// here) and the model/effort capture that keeps a queued turn running
+					// under the settings it was queued with.
+					const queuedItem: QueuedItem = buildQueuedMessageItem({
+						session,
+						tab: targetTab,
 						text: command,
-						...(images && images.length > 0 ? { images: [...images] } : {}),
-						tabName:
-							targetTab.name ||
-							(targetTab.agentSessionId
-								? targetTab.agentSessionId.split('-')[0].toUpperCase()
-								: 'New'),
-						readOnlyMode: isReadOnly,
-						...(mentionPlan && {
-							crossAgentMention: true,
-							crossAgentOnly: mentionPlan.suppressLocal,
-						}),
-					};
+						images,
+					});
 
 					// Position is deterministic from the snapshot we already read: the item
 					// is appended to the tail, so it lands at length+1 (1-based). Computing

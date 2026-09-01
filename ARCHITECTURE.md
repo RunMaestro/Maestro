@@ -1215,6 +1215,7 @@ interface QueuedItem {
 - Users can cancel pending items via queue browser
 - A queued message that `@mentions` another agent (`crossAgentMention: true`) consults that agent when the item is DISPATCHED, not when it was queued (`src/renderer/services/crossAgentMentions.ts`)
 - Tab labels in the indicator and browser are resolved from the LIVE tab via `resolveQueuedItemTabName()`; `QueuedItem.tabName` is only a fallback for a tab that no longer exists
+- Producers other than the composer (the CLI's `dispatch --queue`, a snooze's prompt-on-return) build their item with `buildQueuedMessageItem()` / `enqueuePromptForTab()` (`src/renderer/services/queuedPrompt.ts`) so it is byte-identical to a UI-queued one. Queueing rather than spawning is also what makes a prompt safe to send in the same tick a tab was created in: the target is re-resolved at drain time
 
 ### Session Fields
 

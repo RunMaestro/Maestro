@@ -9,6 +9,7 @@ import type {
 	RightPanelTab,
 	SettingsTab,
 	BatchRunConfig,
+	SnoozeContent,
 	ThinkingMode,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
@@ -560,24 +561,30 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 		[]
 	);
 
-	const handleSnoozeConfirm = useCallback((tabId: string, wakeAt: number, note: string) => {
-		// Capture the session BEFORE snoozing: the tab leaves aiTabs as part of the
-		// snooze, taking its agentSessionId with it.
-		const sessionBefore = selectActiveSession(useSessionStore.getState());
-		const tabBefore = sessionBefore?.aiTabs.find((t) => t.id === tabId);
+	const handleSnoozeConfirm = useCallback(
+		(tabId: string, wakeAt: number, content: SnoozeContent) => {
+			// Capture the session BEFORE snoozing: the parked tabs leave the session
+			// as part of the snooze, taking their agentSessionIds with them. The
+			// stored entry keeps them, which is why the mirror reads the ENTRY rather
+			// than the session - that also covers a parked group, whose transcripts
+			// are one per AI pane.
+			const sessionBefore = selectActiveSession(useSessionStore.getState());
 
-		const entry = useTabStore.getState().snoozeTab(tabId, wakeAt, note);
-		if (!entry) return;
+			const entry = useTabStore.getState().snoozeTab(tabId, wakeAt, content);
+			if (!entry) return;
 
-		// A snooze can outlive the provider's retention of the transcript, so keep
-		// our own copy for its duration - same protection starred sessions get.
-		mirrorSnoozedTranscript(sessionBefore, tabBefore);
+			// A snooze can outlive the provider's retention of the transcript, so keep
+			// our own copy for its duration - same protection starred sessions get.
+			// A no-op for the kinds that have no transcript (file, terminal, browser).
+			mirrorSnoozedTranscript(sessionBefore, entry);
 
-		notifyCenterFlash({
-			message: `Snoozed until ${formatSnoozeTarget(wakeAt)}`,
-			color: 'theme',
-		});
-	}, []);
+			notifyCenterFlash({
+				message: `Snoozed until ${formatSnoozeTarget(wakeAt)}`,
+				color: 'theme',
+			});
+		},
+		[]
+	);
 
 	return (
 		<>
@@ -893,9 +900,10 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<SnoozeTabModal
 					theme={theme}
 					tabLabel={snoozeTabData.tabLabel}
+					canRunWakePrompt={snoozeTabData.canRunWakePrompt}
 					onClose={closeSnoozeTab}
-					onConfirm={(wakeAt, note) => {
-						handleSnoozeConfirm(snoozeTabData.tabId, wakeAt, note);
+					onConfirm={(wakeAt, content) => {
+						handleSnoozeConfirm(snoozeTabData.tabId, wakeAt, content);
 						closeSnoozeTab();
 					}}
 				/>

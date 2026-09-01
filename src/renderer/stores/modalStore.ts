@@ -123,10 +123,22 @@ export interface RenameTabModalData {
 	initialName: string;
 }
 
-/** Snooze tab modal data - which AI tab is being snoozed, and how to label it */
+/**
+ * Snooze tab modal data - what is being snoozed, how to label it, and what the
+ * dialog may offer for it. Openers build this with `resolveSnoozeTarget()`
+ * (utils/snoozeHelpers.ts) rather than assembling it by hand: `tabId` can name
+ * a tab of any kind OR a tiled group, and only that resolver knows which.
+ */
 export interface SnoozeTabModalData {
 	tabId: string;
 	tabLabel: string;
+	/**
+	 * Whether the parked tab can be prompted on return. Only a conversation
+	 * can, so a file, terminal, or browser tab answers false and the dialog
+	 * hides the prompt field rather than collecting one that could never be
+	 * sent. Required rather than optional so a new opener has to answer it.
+	 */
+	canRunWakePrompt: boolean;
 }
 
 /**

@@ -65,7 +65,9 @@ function buildSession(overrides: Partial<Session> = {}): Session {
 
 describe('snoozeTabGroup', () => {
 	it('parks the group and every member, and lets go of the active group', () => {
-		const result = snoozeTabGroup(buildSession(), 'g1', Date.now() + HOUR, 'finish the review');
+		const result = snoozeTabGroup(buildSession(), 'g1', Date.now() + HOUR, {
+			note: 'finish the review',
+		});
 
 		expect(result).not.toBeNull();
 		const { session, entry } = result!;

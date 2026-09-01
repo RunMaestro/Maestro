@@ -29,8 +29,12 @@ import {
 } from '../../utils/snoozeHelpers';
 import { recordSnoozeResolution } from '../../stores/snoozeHistoryStore';
 import { releaseSnoozedTranscript } from '../../utils/snoozeTranscriptMirror';
+import {
+	runSnoozeWakePrompt,
+	runSnoozeWakePromptAfterGroupWake,
+} from '../../services/snoozeWakePrompt';
 import { logger } from '../../utils/logger';
-import type { Session, SnoozedTabEntry } from '../../types';
+import type { Session, SnoozedGroupMember, SnoozedTabEntry } from '../../types';
 
 /** How often to check for due snoozes. */
 const SWEEP_INTERVAL_MS = 15_000;
@@ -46,6 +50,8 @@ interface PendingWake {
 	/** Session and entry as they were at wake time, for releasing the mirror. */
 	session: Session;
 	entry: SnoozedTabEntry;
+	/** Panes a group wake could not bring back, so the wake prompt skips them. */
+	droppedMembers?: SnoozedGroupMember[];
 }
 
 export function useSnoozeScheduler(): void {
@@ -97,6 +103,7 @@ export function useSnoozeScheduler(): void {
 						(result.droppedMembers.length === entry.members.length ? dropped : pending).push({
 							...common,
 							tabId: result.groupId,
+							droppedMembers: result.droppedMembers,
 						});
 						continue;
 					}
@@ -138,6 +145,20 @@ export function useSnoozeScheduler(): void {
 			recordSnoozeResolution(
 				buildSnoozeHistoryRecord(wake.entry, 'woke', wake.session, wake.tabId)
 			);
+
+			// Kick off the work the user scheduled for their return. Queued rather
+			// than spawned, so this is safe here even though React has not
+			// re-rendered around the restore yet.
+			if (wake.droppedMembers) {
+				runSnoozeWakePromptAfterGroupWake(
+					wake.sessionId,
+					wake.entry,
+					wake.tabId,
+					wake.droppedMembers
+				);
+			} else {
+				runSnoozeWakePrompt(wake.sessionId, wake.entry, wake.tabId);
+			}
 
 			notifyToast({
 				color: 'theme',

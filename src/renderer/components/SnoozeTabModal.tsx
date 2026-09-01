@@ -10,13 +10,17 @@
  * resolved moment is always previewed before the user commits, so an ambiguous
  * phrase is caught by the user rather than silently landing on the wrong day.
  *
- * Doubles as the reschedule editor: pass `initialWakeAt`/`initialNote` and it
- * opens pre-filled with a "Reschedule" confirm.
+ * Two optional free-text fields ride along, and they address different readers:
+ * the note is for the USER (it becomes the wake notification), the wake prompt
+ * is for the AGENT (it is sent the instant the tab is back).
+ *
+ * Doubles as the reschedule editor: pass `initialWakeAt`/`initialNote`/
+ * `initialWakePrompt` and it opens pre-filled with a "Reschedule" confirm.
  */
 
 import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
-import { CalendarDays, Clock, BellRing } from 'lucide-react';
-import type { Theme } from '../types';
+import { CalendarDays, Clock, BellRing, Play } from 'lucide-react';
+import type { SnoozeContent, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, CalendarPicker } from './ui';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
@@ -36,9 +40,19 @@ export interface SnoozeTabModalProps {
 	initialWakeAt?: number;
 	/** Existing note when rescheduling. */
 	initialNote?: string;
+	/** Existing wake prompt when rescheduling. */
+	initialWakePrompt?: string;
+	/**
+	 * Whether this snooze can run a prompt on return - true for an AI tab or a
+	 * group holding one, false for a parked file, terminal, or browser tab.
+	 * Those have no conversation to send to, and offering the field there would
+	 * take a prompt that could never run. Defaults to false so a new caller has
+	 * to state that its tab can answer.
+	 */
+	canRunWakePrompt?: boolean;
 	onClose: () => void;
-	/** Commit the snooze. `note` is empty when the user left it blank. */
-	onConfirm: (wakeAt: number, note: string) => void;
+	/** Commit the snooze. Both fields are empty strings when left blank. */
+	onConfirm: (wakeAt: number, content: SnoozeContent) => void;
 }
 
 /** Format a Date as the `HH:MM` value an `<input type="time">` expects. */
@@ -51,6 +65,8 @@ export function SnoozeTabModal({
 	tabLabel,
 	initialWakeAt,
 	initialNote,
+	initialWakePrompt,
+	canRunWakePrompt = false,
 	onClose,
 	onConfirm,
 }: SnoozeTabModalProps) {
@@ -58,6 +74,7 @@ export function SnoozeTabModal({
 
 	const [expression, setExpression] = useState('');
 	const [note, setNote] = useState(initialNote ?? '');
+	const [wakePrompt, setWakePrompt] = useState(initialWakePrompt ?? '');
 	const [calendarDate, setCalendarDate] = useState<Date | null>(() =>
 		initialWakeAt ? new Date(initialWakeAt) : null
 	);
@@ -74,6 +91,12 @@ export function SnoozeTabModal({
 	// note can't be dragged tall enough to push the presets and date picker out
 	// of view inside the modal's own scroll area.
 	const noteResize = useResizableTextarea({ sizeKey: 'snooze-tab-note', maxHeight: 320 });
+	// Its own size key: a prompt is usually longer than a note, and a height
+	// dragged for one is the wrong height for the other.
+	const wakePromptResize = useResizableTextarea({
+		sizeKey: 'snooze-tab-wake-prompt',
+		maxHeight: 320,
+	});
 
 	// `now` is captured per keystroke rather than per render so relative
 	// expressions ("2h") stay pinned while typing instead of drifting.
@@ -124,8 +147,14 @@ export function SnoozeTabModal({
 
 	const handleConfirm = useCallback(() => {
 		if (resolved.at == null) return;
-		onConfirm(resolved.at, note.trim());
-	}, [resolved.at, note, onConfirm]);
+		onConfirm(resolved.at, {
+			note: note.trim(),
+			// Always sent, even when the field is hidden: on a reschedule an empty
+			// string is what CLEARS a prompt the snooze already had, and omitting it
+			// would silently keep one the user just deleted.
+			wakePrompt: canRunWakePrompt ? wakePrompt.trim() : '',
+		});
+	}, [resolved.at, note, wakePrompt, canRunWakePrompt, onConfirm]);
 
 	// Presets that resolve to a future moment. "This evening" drops off after
 	// 6pm rather than sitting there as a button that can't be used.
@@ -296,6 +325,34 @@ export function SnoozeTabModal({
 					/>
 				</div>
 
+				{/* Optional prompt to run on return. The note above is addressed to
+				    the user; this one is addressed to the agent. */}
+				{canRunWakePrompt && (
+					<div>
+						<label
+							className="block text-[11px] uppercase tracking-wide mb-1"
+							style={{ color: theme.colors.textDim }}
+						>
+							Prompt on return <span className="normal-case tracking-normal">(optional)</span>
+						</label>
+						<textarea
+							ref={wakePromptResize.textareaRef}
+							value={wakePrompt}
+							onChange={(e) => setWakePrompt(e.target.value)}
+							rows={2}
+							placeholder="What should the agent do the moment this comes back?"
+							data-testid="snooze-wake-prompt"
+							className="w-full px-2.5 py-1.5 rounded text-sm outline-none resize-y"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								color: theme.colors.textMain,
+								border: `1px solid ${theme.colors.border}`,
+								...wakePromptResize.style,
+							}}
+						/>
+					</div>
+				)}
+
 				{/* Resolution preview / error */}
 				<div
 					className="rounded px-2.5 py-2 text-xs"
@@ -334,6 +391,22 @@ export function SnoozeTabModal({
 						launch.
 					</span>
 				</div>
+
+				{/* Only shown once there is a prompt, because it describes something
+				    that will now actually happen: the agent starts working
+				    unattended, which is a bigger promise than a reminder. */}
+				{canRunWakePrompt && wakePrompt.trim() && (
+					<div
+						className="flex gap-2 text-[11px] leading-relaxed"
+						style={{ color: theme.colors.textDim }}
+					>
+						<Play className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+						<span>
+							Your prompt is sent as soon as the tab is back, so the agent starts without you. It
+							waits its turn if the agent is mid-task, and it also runs if you unsnooze early.
+						</span>
+					</div>
+				)}
 			</div>
 		</Modal>
 	);

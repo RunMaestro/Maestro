@@ -254,6 +254,32 @@ Module-level functions, not a hook: the queue drain runs outside React. The send
 
 **Stop cancels consults - it is an agent-level action, not a tab one.** A mention fans one turn out across several processes: the agent's own tab plus one ephemeral `cross-agent-*` process per target, none of which carry the agent's process id. `useInterruptHandler` therefore calls `window.maestro.crossAgent.cancel(sessionId)` before it signals anything else (non-critical - a failure there must not block the interrupt). Cancellation is addressed by SOURCE AGENT, never by request id: the renderer only learns a request id once `crossAgent.send` resolves, so a Stop pressed inside that window would miss a consult main is already spawning. Main holds the authoritative registry (`cancelCrossAgentRequestsForSource` in `main/cross-agent/cross-agent-router.ts`), which is registered BEFORE the target's binary is resolved and re-checked around the spawn, so a Stop landing in either race still lands. A cancelled consult settles exactly like a timeout - process killed, partial flushed - but stamped `canceled` rather than `error`, because the user stopping a consult is not the target failing to answer. `crossAgentTerminationNote()` is the one place that wording is chosen, so the bubble and the history entry cannot disagree.
 
+### queuedPrompt.ts - send a prompt without a composer
+
+Everything that asks an agent a question without a user typing it - the CLI's `dispatch --queue`, a snooze's wake prompt - builds its queue item here.
+
+- `buildQueuedMessageItem({ session, tab, text, images? })` - the `QueuedItem` a message becomes, exactly as the composer builds it.
+- `enqueuePromptForTab({ sessionId, tabId, text, images? })` - resolve both from the store and append to the tail of `session.executionQueue`. Returns the item, or `null` when the agent is gone or has no AI tab.
+
+**Queue it, do not spawn it.** The queue solves the timing problem for free: `useQueueProcessing` drains an idle agent on its next render and a busy one when its turn finishes, so no caller re-implements "is the agent free?", and nothing has to reach for the spawn config. It also re-resolves the target at DRAIN time through `resolveQueuedItemTarget`, which is what makes this safe to call in the same tick as the store write that created the tab. The alternative - dispatching the `maestro:remoteCommand` event - reads a render-time `sessionsRef`, so a prompt fired before React re-rendered finds a stale session and is dropped.
+
+Three fields are easy to omit and each has a visible cost. `tabName` is the label a queued item falls back to once its tab is closed. `readOnlyMode` is what lets the item bypass the parallel-execution guard. `turnSettings` (from `captureQueuedTurnSettings`) freezes the model and effort at queue time, so a queue that drains after the user switches models still runs - and is labeled - with what was selected when it was queued. The `@mention` flags are STAMPED here and fired by `agentStore.processQueuedItem` at drain time, per the contract above; this module plans, it never consults.
+
+Module-level functions, not a hook: the callers are a 15s sweep timer and an IPC listener, both outside React. `useRemoteIntegration`'s `dispatch --queue` path hand-rolled this item and had already drifted - a `agentSessionId.split('-')[0]` tab label instead of `getTabDisplayName`, and no `turnSettings` capture at all.
+
+### snoozeWakePrompt.ts - run a snooze's prompt when its tab returns
+
+A snooze carries a note AND, optionally, a prompt. They address different readers: the note becomes the wake notification (for the user), the prompt is sent to the agent the instant the tab is back. Either, both, or neither.
+
+- `runSnoozeWakePrompt(sessionId, entry, restoredTabId, isMemberRestored?)` - queue `entry.wakePrompt` into the tab that came back. Returns whether anything was queued.
+- `runSnoozeWakePromptAfterGroupWake(sessionId, entry, restoredTabId, droppedMembers)` - the same, for a group wake that already knows which panes it had to drop.
+
+It fires on BOTH ways a tab returns - the scheduler's wake (`useSnoozeScheduler`) and an early "Unsnooze now" (`tabStore.unsnoozeTab`) - because the user wrote the prompt against the tab COMING BACK, not against the clock. A dismissed snooze restores nothing, so nothing is dispatched there.
+
+The target comes from `resolveWakePromptTabId()` in `utils/snoozeHelpers.ts`, which is not the same as `entry.tab.id`: when an equivalent tab was already open the wake focuses THAT one and the prompt has to follow the tab the user actually lands on. A group resolves to its first surviving AI pane in leaf order - the layout's focused pane is stored as a pane id rather than a tab id, and a group focused on a file pane would otherwise have nowhere to send a prompt the user did ask for. A file, terminal, or browser snooze resolves to `null` and is logged rather than rerouted; the dialog hides the field for those kinds (`canSnoozeRunWakePrompt`), so an entry carrying one at all came from an older build or the CLI.
+
+Everything goes through `queuedPrompt.ts` rather than a spawn, for the tick-safety reason above: the tab is restored in the same `setSessions` call the wake runs in.
+
 ### fileDeletion.ts - delete the previewed file
 
 One confirmation, one delete, behind every surface that offers to remove the file you are looking at: the File Preview toolbar's trash button and the command palette's `File: Delete` entry.
