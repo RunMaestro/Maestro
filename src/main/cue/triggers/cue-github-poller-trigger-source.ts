@@ -8,6 +8,8 @@
 
 import { isCueActive } from '../cue-active-state';
 import { createCueGitHubPoller } from '../cue-github-poller';
+import { guardGitHubEvent } from '../cue-susfactor';
+import { DEFAULT_CUE_SETTINGS } from '../cue-types';
 import { passesFilter } from './cue-trigger-filter';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
 
@@ -47,8 +49,26 @@ export function createCueGitHubPollerTriggerSource(
 					if (!ctx.enabled()) return;
 					if (!passesFilter(ctx.subscription, event, ctx.onLog)) return;
 
-					ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${eventType})`);
-					ctx.emit(event);
+					// SusFactor is the only async gate in this path, and the poller
+					// ignores onEvent's return value, so the emit is deferred into
+					// the promise rather than made to block the poll loop. The
+					// guard never rejects and fails open, so a 0DIN outage degrades
+					// to today's behaviour instead of stalling the subscription.
+					const settings = ctx.registry.get(ctx.session.id)?.config.settings;
+					void guardGitHubEvent({
+						event,
+						sessionId: ctx.session.id,
+						subscriptionId: `${ctx.session.id}:${ctx.subscription.name}`,
+						subscriptionName: ctx.subscription.name,
+						enabled: settings?.susfactor_enabled !== false,
+						threshold:
+							settings?.susfactor_threshold ?? DEFAULT_CUE_SETTINGS.susfactor_threshold ?? 0.95,
+						onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),
+					}).then((allowed) => {
+						if (!allowed) return;
+						ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${eventType})`);
+						ctx.emit(event);
+					});
 				},
 				onReady: (handle) => {
 					pollNowFn = handle.pollNow;

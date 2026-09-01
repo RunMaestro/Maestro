@@ -13,6 +13,7 @@ import {
 	markGitHubItemSeen,
 	hasAnyGitHubSeen,
 	pruneGitHubSeen,
+	pruneSusFactorBlocks,
 	getGitHubItemState,
 	recordGitHubRetrigger,
 } from './cue-db';
@@ -722,6 +723,10 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		() => {
 			if (!isCueDbReady()) return;
 			pruneGitHubSeen(30 * 24 * 60 * 60 * 1000);
+			// Same retention as the seen-set above: both are per-item poll dedup
+			// state, so an item aging out of one must age out of the other or a
+			// rediscovered issue would be re-fired while still silently blocked.
+			pruneSusFactorBlocks(30 * 24 * 60 * 60 * 1000);
 		},
 		24 * 60 * 60 * 1000
 	);
