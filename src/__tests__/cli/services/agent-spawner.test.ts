@@ -126,6 +126,7 @@ import {
 	spawnAgent,
 	AgentResult,
 } from '../../../cli/services/agent-spawner';
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 
 describe('agent-spawner', () => {
 	beforeEach(() => {
@@ -811,6 +812,12 @@ Some text with [x] in it that's not a checkbox
 	});
 
 	describe('spawnAgent', () => {
+		// Agent env defaults are shell-wins by design, so a value exported by the
+		// developer's own shell would otherwise be what the default assertions
+		// below actually measure. Tests that exercise the shell-wins path set the
+		// variable themselves, inside the test body, after this has run.
+		isolateAgentEnv();
+
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
 		});
@@ -1579,26 +1586,18 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
-			const originalValue = process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
+			// `isolateAgentEnv` restores the real value after the test.
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';
 
-			try {
-				const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
-				await new Promise((resolve) => setTimeout(resolve, 0));
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-				const [, , options] = mockSpawn.mock.calls[0];
-				expect(options.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('0');
+			const [, , options] = mockSpawn.mock.calls[0];
+			expect(options.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('0');
 
-				mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-				mockChild.emit('close', 0);
-				await resultPromise;
-			} finally {
-				if (originalValue === undefined) {
-					delete process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
-				} else {
-					process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = originalValue;
-				}
-			}
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
 		});
 	});
 
@@ -1836,6 +1835,10 @@ Some text with [x] in it that's not a checkbox
 	const CODEX_INIT = () => JSON.stringify({ type: 'task_started' }) + '\n';
 
 	describe('spawnAgent: local config overrides', () => {
+		// Same reason as the `spawnAgent` suite above: this one asserts what an
+		// agent's `defaultEnvVars` produce, which the ambient shell can override.
+		isolateAgentEnv();
+
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
 		});
@@ -1924,36 +1927,25 @@ Some text with [x] in it that's not a checkbox
 			// the shell already exports. OpenCode has OPENCODE_CONFIG_CONTENT in
 			// its defaultEnvVars - if the shell sets it, that shell value should
 			// survive to the spawned process.
-			const prev = process.env.OPENCODE_CONFIG_CONTENT;
+			// `isolateAgentEnv` restores the real value after the test.
 			process.env.OPENCODE_CONFIG_CONTENT = 'shell-wins';
 
-			try {
-				const p = spawnAgent('opencode', '/p', 'hi');
-				await driveSpawnToCompletion(p, 0);
+			const p = spawnAgent('opencode', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0);
 
-				const { options } = spawnCall();
-				expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('shell-wins');
-			} finally {
-				if (prev === undefined) delete process.env.OPENCODE_CONFIG_CONTENT;
-				else process.env.OPENCODE_CONFIG_CONTENT = prev;
-			}
+			const { options } = spawnCall();
+			expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('shell-wins');
 		});
 
 		it('agent defaultEnvVars is applied when the shell has not set it', async () => {
 			// Complements the "shell wins" test: when the shell does NOT export
 			// the key, the agent default must still reach the spawned process.
-			const prev = process.env.OPENCODE_CONFIG_CONTENT;
-			delete process.env.OPENCODE_CONFIG_CONTENT;
+			// `isolateAgentEnv` has already cleared the key for this test.
+			const p = spawnAgent('opencode', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0);
 
-			try {
-				const p = spawnAgent('opencode', '/p', 'hi');
-				await driveSpawnToCompletion(p, 0);
-
-				const { options } = spawnCall();
-				expect(options.env.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
-			} finally {
-				if (prev !== undefined) process.env.OPENCODE_CONFIG_CONTENT = prev;
-			}
+			const { options } = spawnCall();
+			expect(options.env.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
 		});
 
 		it('applies customModel via configOptions argBuilder for Claude', async () => {
