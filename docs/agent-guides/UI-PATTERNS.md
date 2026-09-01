@@ -289,6 +289,19 @@ Run it on the committed `value`, not inside `onChange`. An `onChange`/`onInput` 
 3. `closeTopLayer` checks `onBeforeClose` for dirty modals, then calls the top layer's `onEscape` handler from the handler ref map.
 4. The handler ref map (`handlerRefs`) is updated via `updateLayerHandler` without re-sorting the stack - this is a performance optimization.
 
+### Escape as a Ladder, Not a Close Button
+
+A surface with its own transient state - a focused search box, a query, a selected row - should climb OUT of that state one rung per Escape rather than closing on the first press. `DocumentGraphView` is the reference: caret in the search box hands focus back to the graph **with the query intact**, the next press clears the query, and only then does it close. Rung one is what makes "search, then arrow to a hit" work - the highlighted nodes have to survive the key that gets you out of the text box.
+
+**The ladder MUST live in the layer's `onEscape`, never in the input's `onKeyDown`.** `LayerStackProvider` listens at CAPTURE on `window` (step 1 above), so a handler on the input runs after the stack has already closed the surface, and its `stopPropagation` cannot un-run a listener that has already fired. An `onKeyDown` ladder is dead code that looks correct in review: every Escape goes straight to close. Same rule the `<FilterInput>` and `MemoryViewer` notes below state from the consumer's side.
+
+Two mechanical points when the ladder needs render-scope values (the live query, the node list, a `handleNodeSelect`):
+
+- Register a STABLE wrapper with the layer and assign the body to a ref during render (`escapeLadderRef.current = () => {...}`). A `useCallback` that closes over the search query re-registers the layer on every keystroke.
+- Read focus from `document.activeElement === searchInputRef.current` rather than tracking a `isSearchFocused` boolean. The key never reaches the input, so nothing is guaranteed to have updated that flag.
+
+A higher-priority overlay registered by the same surface (the graph's legend drawer) is an implicit rung above all of this - the stack closes the top layer first, so it needs no branch in the ladder.
+
 ### Querying the Stack
 
 Components that need to know whether modals are open (for example, to suppress global shortcuts) use `LayerStackAPI`:

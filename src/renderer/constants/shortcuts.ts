@@ -227,6 +227,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
 	},
+	renameAgentSession: {
+		id: 'renameAgentSession',
+		label: 'Rename Session (in Sessions Browser)',
+		keys: ['Meta', 'e'],
+	},
 	fontSizeIncrease: {
 		id: 'fontSizeIncrease',
 		label: 'Increase Font Size',

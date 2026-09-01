@@ -1526,6 +1526,37 @@ describe('AgentSessionsBrowser', () => {
 			expect(savedWithNewName).toBe(false);
 		});
 
+		it('enters rename on Cmd+E for the selected session', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Enter session name...')).toBeInTheDocument();
+		});
+
 		it('exits rename on Escape without closing the modal', async () => {
 			const onClose = vi.fn();
 			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
@@ -2837,6 +2868,43 @@ describe('AgentSessionsBrowser', () => {
 	// ============================================================================
 
 	describe('rename in detail view', () => {
+		it('enters rename on Cmd+E in the detail view', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Enter session name...')).toBeInTheDocument();
+		});
+
 		it('exits rename on Escape without leaving the detail view', async () => {
 			const session = createMockClaudeSession({ sessionId: 'session-1' });
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({

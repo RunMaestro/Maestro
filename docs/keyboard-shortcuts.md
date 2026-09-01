@@ -370,8 +370,13 @@ one-key resume.
 | Previous / next session (list)   | `Up/Down`         | `Up/Down`          |
 | Open the selected session (list) | `Enter`           | `Enter`            |
 | Search sessions (list)           | `Cmd+F`           | `Ctrl+F`           |
+| Rename the session in focus      | `Cmd+E`           | `Ctrl+E`           |
 | Resume the open session (detail) | `Cmd+R` / `Enter` | `Ctrl+R` / `Enter` |
 | Back to the list / close         | `Esc`             | `Esc`              |
+
+`Cmd+E` renames the highlighted row in the list, or the session you are viewing
+in the detail pane. `Esc` while renaming exits the name field and leaves the
+browser where it was; press it again to go back or close.
 
 `Cmd+R` is off while you are renaming a session, so it cannot discard a name
 you are half-way through typing.
