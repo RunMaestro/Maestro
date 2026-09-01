@@ -26,6 +26,27 @@ describe('Process TabRemote Preload API', () => {
 		api = createTabRemoteApi();
 	});
 
+	it('forwards the optional desktop tab inventory with remote selection events', () => {
+		const callback = vi.fn();
+		const tabs = [
+			{
+				id: 'tab-1',
+				agentSessionId: null,
+				name: 'New tab',
+				starred: false,
+				inputValue: '',
+				createdAt: 1700000000000,
+				state: 'idle' as const,
+			},
+		];
+
+		api.onRemoteSelectTab(callback);
+		const handler = mockOn.mock.calls.find(([channel]) => channel === 'remote:selectTab')?.[1];
+		handler({}, 'session-1', 'tab-1', tabs);
+
+		expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', tabs);
+	});
+
 	describe('sendRemoteNewTabResponse', () => {
 		it('should send response via ipcRenderer.send', () => {
 			api.sendRemoteNewTabResponse('response-channel', { tabId: 'tab-123' });

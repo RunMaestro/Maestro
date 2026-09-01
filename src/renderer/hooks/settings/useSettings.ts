@@ -286,6 +286,8 @@ export interface UseSettingsReturn {
 	isLeaderboardRegistered: boolean;
 
 	// Web Interface settings
+	webInterfaceAutoStart: boolean;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	webInterfaceUseCustomPort: boolean;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	webInterfaceCustomPort: number;

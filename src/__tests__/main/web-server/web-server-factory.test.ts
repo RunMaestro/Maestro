@@ -2358,6 +2358,109 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('tabCallbacks smoke', () => {
+		it('routes command requests only to the window that owns the session', async () => {
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+			};
+			deps.getWindowForSession = vi.fn().mockReturnValue(secondaryWindow as BrowserWindow);
+
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setExecuteCommandCallback.mock.calls[0][0];
+			const resultPromise = callback('session-in-secondary-window', 'hello owner', 'ai', 'tab-1');
+
+			expect(mockWebContents.send).not.toHaveBeenCalledWith(
+				'remote:executeCommand',
+				expect.anything(),
+				expect.anything(),
+				expect.anything(),
+				expect.anything(),
+				expect.anything(),
+				expect.anything(),
+				expect.anything(),
+				expect.anything()
+			);
+			const request = secondaryWebContents.send.mock.calls.find(
+				(call) => call[0] === 'remote:executeCommand'
+			);
+			expect(request).toEqual([
+				'remote:executeCommand',
+				'session-in-secondary-window',
+				'hello owner',
+				'ai',
+				'tab-1',
+				undefined,
+				undefined,
+				undefined,
+				expect.any(String),
+			]);
+
+			const responseChannel = request?.at(-1) as string;
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+			responseListener?.({} as never, { accepted: true });
+
+			await expect(resultPromise).resolves.toBe(true);
+		});
+
+		it('routes tab requests only to the window that owns the session', async () => {
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+			};
+			deps.getWindowForSession = vi.fn().mockReturnValue(secondaryWindow as BrowserWindow);
+
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setNewTabCallback.mock.calls[0][0];
+			const resultPromise = callback('session-in-secondary-window');
+
+			expect(mockWebContents.send).not.toHaveBeenCalledWith(
+				'remote:newTab',
+				expect.anything(),
+				expect.anything(),
+				expect.anything()
+			);
+			expect(secondaryWebContents.send).toHaveBeenCalledWith(
+				'remote:newTab',
+				'session-in-secondary-window',
+				expect.any(String),
+				false
+			);
+
+			const responseChannel = vi
+				.mocked(secondaryWebContents.send)
+				.mock.calls.find((call) => call[0] === 'remote:newTab')?.[2] as string;
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+			responseListener?.({} as never, { tabId: 'new-tab' });
+
+			await expect(resultPromise).resolves.toEqual({ tabId: 'new-tab' });
+
+			const closeCallback = server.setCloseTabCallback.mock.calls[0][0];
+			await expect(closeCallback('session-in-secondary-window', 'new-tab')).resolves.toBe(true);
+			expect(secondaryWebContents.send).toHaveBeenCalledWith(
+				'remote:closeTab',
+				'session-in-secondary-window',
+				'new-tab'
+			);
+			expect(mockWebContents.send).not.toHaveBeenCalledWith(
+				'remote:closeTab',
+				expect.anything(),
+				expect.anything()
+			);
+		});
+
 		it('setNewTabCallback mints a distinct response channel per call, so overlapping requests cannot collide', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer() as any;

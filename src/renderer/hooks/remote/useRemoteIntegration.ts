@@ -3,7 +3,13 @@ import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields, createTab, closeTab, getActiveTab } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	createTab,
+	closeTab,
+	getActiveTab,
+	getRepairedUnifiedTabOrder,
+} from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { generateId } from '../../utils/ids';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
@@ -483,22 +489,59 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote tab selection from web interface
 		// This also switches to the session if not already active
 		const unsubscribeSelectTab = window.maestro.process.onRemoteSelectTab(
-			(sessionId: string, tabId: string) => {
+			(sessionId, tabId, remoteTabs) => {
 				// First, switch to the session if not already active
 				const currentActiveId = activeSessionIdRef.current;
 				if (currentActiveId !== sessionId) {
 					setActiveSessionId(sessionId);
 				}
 
-				// Then update the active tab within the session
+				// The legacy `tabs_changed` web packet carries the complete desktop tab
+				// inventory as its third argument. Reconcile that snapshot here so the
+				// browser adds and removes tabs instead of only following an ID it may not
+				// have. Existing tabs retain renderer-only data such as logs and drafts.
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						// Check if tab exists
-						if (!s.aiTabs.some((t) => t.id === tabId)) {
-							return s;
+
+						let updatedSession = s;
+						if (remoteTabs) {
+							const existingById = new Map(s.aiTabs.map((tab) => [tab.id, tab]));
+							const aiTabs = remoteTabs.map((remoteTab) => {
+								const existing = existingById.get(remoteTab.id);
+								const syncedFields = {
+									id: remoteTab.id,
+									agentSessionId: remoteTab.agentSessionId,
+									name: remoteTab.name,
+									starred: remoteTab.starred,
+									inputValue: remoteTab.inputValue,
+									usageStats: remoteTab.usageStats ?? undefined,
+									createdAt: remoteTab.createdAt,
+									state: remoteTab.state,
+									thinkingStartTime: remoteTab.thinkingStartTime ?? undefined,
+									hasUnread: remoteTab.hasUnread,
+								};
+
+								if (existing) return { ...existing, ...syncedFields };
+								return {
+									...syncedFields,
+									logs: [],
+									stagedImages: [],
+									saveToHistory: defaultSaveToHistory,
+									showThinking: defaultShowThinking,
+								};
+							});
+							updatedSession = { ...s, aiTabs };
+							updatedSession = {
+								...updatedSession,
+								unifiedTabOrder: getRepairedUnifiedTabOrder(updatedSession),
+							};
 						}
-						return { ...s, ...aiTabFocusFields(tabId) };
+
+						if (!updatedSession.aiTabs.some((tab) => tab.id === tabId)) {
+							return updatedSession;
+						}
+						return { ...updatedSession, ...aiTabFocusFields(tabId) };
 					})
 				);
 			}

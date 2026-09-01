@@ -24,7 +24,7 @@ import { logger } from '../utils/logger';
  * sessions array) so streaming log/token updates do not re-render App.
  * Session objects are read via getState() inside effects at event time.
  */
-export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
+export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecycleOwner = true) {
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const cueDiscoverySignature = useSessionStore(selectCueDiscoverySignature);
 	// id → projectRoot so root moves (same id, new cwd) are detected.
@@ -39,7 +39,7 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
 	// Track session additions, removals, and projectRoot moves - always runs
 	// regardless of encore flag
 	useEffect(() => {
-		if (!sessionsLoaded) return;
+		if (!isLifecycleOwner || !sessionsLoaded) return;
 
 		const sessions = useSessionStore.getState().sessions;
 		const currentRoots = new Map(sessions.map((s) => [s.id, s.projectRoot ?? '']));
@@ -104,13 +104,13 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
 		}
 
 		prevSessionRootsRef.current = currentRoots;
-	}, [cueDiscoverySignature, sessionsLoaded]);
+	}, [cueDiscoverySignature, isLifecycleOwner, sessionsLoaded]);
 
 	// Track encore feature toggle. Queues enable/disable calls on a single
 	// chain so rapid ON/OFF/ON toggles always apply in the order the user
 	// triggered them - not in IPC-response order.
 	useEffect(() => {
-		if (!sessionsLoaded) return;
+		if (!isLifecycleOwner || !sessionsLoaded) return;
 
 		const wasEnabled = prevMaestroCueEnabledRef.current;
 		const isEnabled = encoreFeatures.maestroCue;
@@ -164,5 +164,5 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
 				}
 			}
 		});
-	}, [encoreFeatures.maestroCue, sessionsLoaded]);
+	}, [encoreFeatures.maestroCue, isLifecycleOwner, sessionsLoaded]);
 }

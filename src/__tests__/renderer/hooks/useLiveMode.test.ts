@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useLiveMode } from '../../../renderer/hooks/remote/useLiveMode';
 
 describe('useLiveMode', () => {
@@ -11,6 +11,7 @@ describe('useLiveMode', () => {
 	};
 
 	const mockLive = {
+		getDashboardUrl: vi.fn(),
 		startServer: vi.fn(),
 		stopServer: vi.fn(),
 		disableAll: vi.fn(),
@@ -20,6 +21,7 @@ describe('useLiveMode', () => {
 		vi.clearAllMocks();
 
 		mockTunnel.stop.mockResolvedValue(undefined);
+		mockLive.getDashboardUrl.mockResolvedValue(null);
 		mockLive.startServer.mockResolvedValue({ success: true, url: 'http://localhost:3000' });
 		mockLive.stopServer.mockResolvedValue(undefined);
 		mockLive.disableAll.mockResolvedValue(undefined);
@@ -61,6 +63,28 @@ describe('useLiveMode', () => {
 		const { result } = renderHook(() => useLiveMode());
 
 		expect(result.current.webInterfaceUrl).toBeNull();
+	});
+
+	it('restores live mode from the running server when auto-start is enabled', async () => {
+		mockLive.getDashboardUrl.mockResolvedValue('http://localhost:31999/secure');
+
+		const { result } = renderHook(() => useLiveMode(true));
+
+		await waitFor(() => expect(result.current.isLiveMode).toBe(true));
+
+		expect(mockLive.getDashboardUrl).toHaveBeenCalledOnce();
+		expect(mockLive.startServer).not.toHaveBeenCalled();
+		expect(result.current.webInterfaceUrl).toBe('http://localhost:31999/secure');
+	});
+
+	it('starts the server when auto-start is enabled and no server URL is available', async () => {
+		const { result } = renderHook(() => useLiveMode(true));
+
+		await waitFor(() => expect(result.current.isLiveMode).toBe(true));
+
+		expect(mockLive.getDashboardUrl).toHaveBeenCalledOnce();
+		expect(mockLive.startServer).toHaveBeenCalledOnce();
+		expect(result.current.webInterfaceUrl).toBe('http://localhost:3000');
 	});
 
 	// -----------------------------------------------------------------------

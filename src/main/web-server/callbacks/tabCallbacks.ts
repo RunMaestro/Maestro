@@ -7,9 +7,11 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
 
 export function registerTabCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow'>
+	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
 ): void {
-	const { getMainWindow } = deps;
+	const { getMainWindow, getWindowForSession } = deps;
+	const resolveSessionWindow = (sessionId: string) =>
+		getWindowForSession?.(sessionId) ?? getMainWindow();
 
 	// Tab operation callbacks
 	server.setSelectTabCallback(async (sessionId: string, tabId: string) => {
@@ -17,17 +19,17 @@ export function registerTabCallbacks(
 			`[Web→Desktop] Tab select callback invoked: session=${sessionId}, tab=${tabId}`,
 			'WebServer'
 		);
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for selectTab', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for selectTab', 'WebServer');
 			return false;
 		}
 
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for selectTab', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:selectTab', sessionId, tabId);
+		targetWindow.webContents.send('remote:selectTab', sessionId, tabId);
 		return true;
 	});
 
@@ -36,9 +38,9 @@ export function registerTabCallbacks(
 			`[Web→Desktop] New tab callback invoked: session=${sessionId}, background=${background === true}`,
 			'WebServer'
 		);
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for newTab', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!isWebContentsAvailable(targetWindow)) {
+			logger.warn('No owning window is available for newTab', 'WebServer');
 			return null;
 		}
 
@@ -55,13 +57,12 @@ export function registerTabCallbacks(
 			};
 
 			ipcMain.once(responseChannel, handleResponse);
-			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for newTab', 'WebServer');
-				ipcMain.removeListener(responseChannel, handleResponse);
-				resolve(null);
-				return;
-			}
-			mainWindow.webContents.send('remote:newTab', sessionId, responseChannel, background === true);
+			targetWindow.webContents.send(
+				'remote:newTab',
+				sessionId,
+				responseChannel,
+				background === true
+			);
 
 			// Timeout after 5 seconds - clean up the listener to prevent memory leak
 			const timeoutId = setTimeout(() => {
@@ -79,17 +80,17 @@ export function registerTabCallbacks(
 			`[Web→Desktop] Close tab callback invoked: session=${sessionId}, tab=${tabId}`,
 			'WebServer'
 		);
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for closeTab', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for closeTab', 'WebServer');
 			return false;
 		}
 
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for closeTab', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:closeTab', sessionId, tabId);
+		targetWindow.webContents.send('remote:closeTab', sessionId, tabId);
 		return true;
 	});
 
@@ -98,62 +99,62 @@ export function registerTabCallbacks(
 			`[Web→Desktop] Rename tab callback invoked: session=${sessionId}, tab=${tabId}, newName=${newName}`,
 			'WebServer'
 		);
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for renameTab', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for renameTab', 'WebServer');
 			return false;
 		}
 
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for renameTab', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:renameTab', sessionId, tabId, newName);
+		targetWindow.webContents.send('remote:renameTab', sessionId, tabId, newName);
 		return true;
 	});
 
 	server.setStarTabCallback(async (sessionId: string, tabId: string, starred: boolean) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for starTab', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for starTab', 'WebServer');
 			return false;
 		}
 
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for starTab', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:starTab', sessionId, tabId, starred);
+		targetWindow.webContents.send('remote:starTab', sessionId, tabId, starred);
 		return true;
 	});
 
 	server.setReorderTabCallback(async (sessionId: string, fromIndex: number, toIndex: number) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for reorderTab', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for reorderTab', 'WebServer');
 			return false;
 		}
 
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for reorderTab', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:reorderTab', sessionId, fromIndex, toIndex);
+		targetWindow.webContents.send('remote:reorderTab', sessionId, fromIndex, toIndex);
 		return true;
 	});
 
 	server.setToggleBookmarkCallback(async (sessionId: string) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for toggleBookmark', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for toggleBookmark', 'WebServer');
 			return false;
 		}
 
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for toggleBookmark', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:toggleBookmark', sessionId);
+		targetWindow.webContents.send('remote:toggleBookmark', sessionId);
 		return true;
 	});
 
@@ -163,17 +164,17 @@ export function registerTabCallbacks(
 			filePath: string,
 			options: { background: boolean; switchToAgent: boolean }
 		) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for openFileTab', 'WebServer');
+			const targetWindow = resolveSessionWindow(sessionId);
+			if (!targetWindow) {
+				logger.warn('No owning window is available for openFileTab', 'WebServer');
 				return false;
 			}
 
-			if (!isWebContentsAvailable(mainWindow)) {
+			if (!isWebContentsAvailable(targetWindow)) {
 				logger.warn('webContents is not available for openFileTab', 'WebServer');
 				return false;
 			}
-			mainWindow.webContents.send('remote:openFileTab', sessionId, filePath, {
+			targetWindow.webContents.send('remote:openFileTab', sessionId, filePath, {
 				background: options.background,
 				switchToAgent: options.switchToAgent,
 			});
@@ -196,17 +197,17 @@ export function registerTabCallbacks(
 	});
 
 	server.setRefreshFileTreeCallback(async (sessionId: string) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for refreshFileTree', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for refreshFileTree', 'WebServer');
 			return false;
 		}
 
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for refreshFileTree', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:refreshFileTree', sessionId);
+		targetWindow.webContents.send('remote:refreshFileTree', sessionId);
 		return true;
 	});
 

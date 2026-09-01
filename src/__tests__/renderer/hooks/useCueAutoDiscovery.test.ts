@@ -58,6 +58,25 @@ function seedSessions(sessions: Session[], sessionsLoaded = false) {
 }
 
 describe('useCueAutoDiscovery', () => {
+	describe('lifecycle ownership', () => {
+		it('does not run main-process Cue lifecycle work in a browser mirror', async () => {
+			const sessions = [makeSession('s1', '/project/a')];
+			seedSessions(sessions, true);
+
+			const { rerender } = renderHook(({ encore }) => useCueAutoDiscovery(encore, false), {
+				initialProps: { encore: makeEncoreFeatures(false) },
+			});
+
+			rerender({ encore: makeEncoreFeatures(true) });
+			await act(async () => {});
+
+			expect(mockRefreshSession).not.toHaveBeenCalled();
+			expect(mockRemoveSession).not.toHaveBeenCalled();
+			expect(mockEnable).not.toHaveBeenCalled();
+			expect(mockDisable).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('initial scan on app startup', () => {
 		it('should not call refreshSession before sessions are loaded', () => {
 			const sessions = [makeSession('s1', '/project/a')];

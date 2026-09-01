@@ -106,6 +106,7 @@ describe('GitLogViewer', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		window.localStorage.removeItem('maestro:gitLogViewer:viewMode');
 
 		gitLogMock().mockResolvedValue({
 			entries: [createGitLogEntry()],

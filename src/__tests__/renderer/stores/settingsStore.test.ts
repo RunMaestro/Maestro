@@ -138,6 +138,7 @@ function resetStore() {
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
+		webInterfaceAutoStart: false,
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
@@ -265,6 +266,7 @@ describe('settingsStore', () => {
 			expect(state.firstAutoRunCompleted).toBe(false);
 			expect(state.onboardingStats).toEqual(DEFAULT_ONBOARDING_STATS);
 			expect(state.leaderboardRegistration).toBeNull();
+			expect(state.webInterfaceAutoStart).toBe(false);
 			expect(state.webInterfaceUseCustomPort).toBe(false);
 			expect(state.webInterfaceCustomPort).toBe(8080);
 			expect(state.contextManagementSettings).toEqual(DEFAULT_CONTEXT_MANAGEMENT_SETTINGS);
@@ -657,6 +659,12 @@ describe('settingsStore', () => {
 		});
 
 		describe('Web', () => {
+			it('setWebInterfaceAutoStart updates state and persists', () => {
+				useSettingsStore.getState().setWebInterfaceAutoStart(true);
+				expect(useSettingsStore.getState().webInterfaceAutoStart).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('webInterfaceAutoStart', true);
+			});
+
 			it('setWebInterfaceUseCustomPort updates state and persists', () => {
 				useSettingsStore.getState().setWebInterfaceUseCustomPort(true);
 				expect(useSettingsStore.getState().webInterfaceUseCustomPort).toBe(true);

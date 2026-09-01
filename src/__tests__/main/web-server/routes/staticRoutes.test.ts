@@ -230,6 +230,11 @@ describe('StaticRoutes', () => {
 				);
 				expect(firstReply.send).toHaveBeenCalledWith(
 					expect.stringContaining(
+						`<link rel="icon" href="/${securityToken}/icons/icon-192x192.png" />`
+					)
+				);
+				expect(firstReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(
 						`<link rel="apple-touch-icon" href="/${securityToken}/icons/icon-192x192.png" />`
 					)
 				);

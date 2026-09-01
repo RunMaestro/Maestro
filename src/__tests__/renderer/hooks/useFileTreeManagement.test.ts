@@ -564,6 +564,57 @@ describe('useFileTreeManagement', () => {
 		resolveLoad(asResult([]));
 	});
 
+	it('cancels an unfinished tree load when the active session changes', async () => {
+		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
+		let resolveSecond: (value: ReturnType<typeof asResult>) => void = () => {};
+		const firstPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveFirst = resolve;
+		});
+		const secondPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveSecond = resolve;
+		});
+		vi.mocked(loadFileTree).mockReturnValueOnce(firstPending).mockReturnValueOnce(secondPending);
+
+		const firstSession = createMockSession({ id: 'session-a', fileTree: [] });
+		const secondSession = createMockSession({ id: 'session-b', fileTree: [] });
+		const state = createSessionsState([firstSession, secondSession]);
+		const baseDeps = createDeps(state);
+		const { rerender } = renderHook(
+			({ activeSessionId, activeSession }: { activeSessionId: string; activeSession: Session }) =>
+				useFileTreeManagement({ ...baseDeps, activeSessionId, activeSession }),
+			{
+				initialProps: { activeSessionId: firstSession.id, activeSession: firstSession },
+			}
+		);
+
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(1));
+		const firstSignal = vi.mocked(loadFileTree).mock.calls[0].at(-1) as AbortSignal;
+		expect(firstSignal.aborted).toBe(false);
+
+		rerender({ activeSessionId: secondSession.id, activeSession: secondSession });
+
+		await waitFor(() => {
+			expect(firstSignal.aborted).toBe(true);
+			expect(loadFileTree).toHaveBeenCalledTimes(2);
+		});
+		expect(
+			state.getSessions().find((session) => session.id === firstSession.id)?.fileTreeLoading
+		).toBe(false);
+
+		await act(async () => {
+			resolveFirst(asResult([{ name: 'stale.txt', type: 'file' }]));
+			resolveSecond(asResult([{ name: 'current.txt', type: 'file' }]));
+			await Promise.all([firstPending, secondPending]);
+		});
+
+		expect(state.getSessions().find((session) => session.id === firstSession.id)?.fileTree).toEqual(
+			[]
+		);
+		expect(
+			state.getSessions().find((session) => session.id === secondSession.id)?.fileTree
+		).toEqual([{ name: 'current.txt', type: 'file' }]);
+	});
+
 	it('decouples stats from tree display in initial load', async () => {
 		const fullTree: FileNode[] = [{ name: 'file.txt', type: 'file' }];
 

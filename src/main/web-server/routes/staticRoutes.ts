@@ -160,6 +160,7 @@ export class StaticRoutes {
 			// works under the token prefix unchanged.
 			const pwaLinks =
 				`<link rel="manifest" href="/${token}/manifest.json" />` +
+				`<link rel="icon" href="/${token}/icons/icon-192x192.png" />` +
 				`<link rel="apple-touch-icon" href="/${token}/icons/icon-192x192.png" />`;
 
 			html = html.replace('</head>', `${configScript}${pwaLinks}</head>`);
