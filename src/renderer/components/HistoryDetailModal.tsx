@@ -44,7 +44,12 @@ interface HistoryDetailModalProps {
 	entry: HistoryEntry;
 	onClose: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
+	/**
+	 * Restore this entry's provider session as a tab. `sessionName` is the label
+	 * the entry displays; without it the restored tab falls back to the id octet
+	 * even though the modal it was launched from was showing the real name.
+	 */
+	onResumeSession?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onDelete?: (entryId: string) => void;
 	onUpdate?: (entryId: string, updates: { validated?: boolean }) => Promise<boolean>;
 	// Navigation props for prev/next
@@ -147,7 +152,7 @@ export function HistoryDetailModal({
 			if (!onResumeSession || !entry.agentSessionId) return;
 			ke.preventDefault();
 			trackShortcutUsage('historyJumpToSession');
-			onResumeSession(entry.agentSessionId);
+			onResumeSession(entry.agentSessionId, entry.projectPath, entry.sessionName);
 			onClose();
 		}
 	});
@@ -371,7 +376,11 @@ export function HistoryDetailModal({
 									{onResumeSession && (
 										<button
 											onClick={() => {
-												onResumeSession(entry.agentSessionId!);
+												onResumeSession(
+													entry.agentSessionId!,
+													entry.projectPath,
+													entry.sessionName
+												);
 												onClose();
 											}}
 											className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"

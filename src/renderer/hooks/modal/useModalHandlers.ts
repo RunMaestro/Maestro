@@ -162,7 +162,11 @@ export interface ModalHandlersReturn {
 	handleViewGitDiff: () => Promise<void>;
 
 	// Director's Notes session navigation (Tier 3C)
-	handleDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
+	handleDirectorNotesResumeSession: (
+		sourceSessionId: string,
+		agentSessionId: string,
+		sessionName?: string
+	) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +188,11 @@ const selectShortcutsHelpOpen = (s: ReturnType<typeof useModalStore.getState>) =
 export function useModalHandlers(
 	inputRef: React.RefObject<HTMLTextAreaElement | null>,
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>,
-	handleResumeSessionRef?: React.MutableRefObject<((agentSessionId: string) => void) | null>,
+	// Third slot is `sessionName`; the second is `providedMessages` and is
+	// deliberately left to the resume itself to read from disk.
+	handleResumeSessionRef?: React.MutableRefObject<
+		((agentSessionId: string, providedMessages?: undefined, sessionName?: string) => void) | null
+	>,
 	groupChatInputRef?: React.RefObject<HTMLTextAreaElement | null>
 ): ModalHandlersReturn {
 	// --- Reactive subscriptions (for derived state & effects) ---
@@ -1003,21 +1011,27 @@ export function useModalHandlers(
 	// Director's Notes Session Navigation (Tier 3C)
 	// ====================================================================
 
-	const pendingResumeRef = useRef<{ agentSessionId: string; targetSessionId: string } | null>(null);
+	// `sessionName` rides along because the deferred branch resumes on a LATER
+	// tick, by which point the entry that carried the name is gone.
+	const pendingResumeRef = useRef<{
+		agentSessionId: string;
+		targetSessionId: string;
+		sessionName?: string;
+	} | null>(null);
 
 	const handleDirectorNotesResumeSession = useCallback(
-		(sourceSessionId: string, agentSessionId: string) => {
+		(sourceSessionId: string, agentSessionId: string, sessionName?: string) => {
 			// Close the Director's Notes modal
 			getModalActions().setDirectorNotesOpen(false);
 
 			// If already on the right agent, resume directly
 			if (useSessionStore.getState().activeSessionId === sourceSessionId) {
-				handleResumeSessionRef?.current?.(agentSessionId);
+				handleResumeSessionRef?.current?.(agentSessionId, undefined, sessionName);
 				return;
 			}
 
 			// Switch to the target agent and defer resume until activeSessionId updates
-			pendingResumeRef.current = { agentSessionId, targetSessionId: sourceSessionId };
+			pendingResumeRef.current = { agentSessionId, targetSessionId: sourceSessionId, sessionName };
 			useSessionStore.getState().setActiveSessionId(sourceSessionId);
 		},
 		[handleResumeSessionRef]
@@ -1026,9 +1040,9 @@ export function useModalHandlers(
 	// Effect: process pending resume after agent switch completes
 	useEffect(() => {
 		if (pendingResumeRef.current && activeSessionId === pendingResumeRef.current.targetSessionId) {
-			const { agentSessionId } = pendingResumeRef.current;
+			const { agentSessionId, sessionName } = pendingResumeRef.current;
 			pendingResumeRef.current = null;
-			handleResumeSessionRef?.current?.(agentSessionId);
+			handleResumeSessionRef?.current?.(agentSessionId, undefined, sessionName);
 		}
 	}, [activeSessionId, handleResumeSessionRef]);
 

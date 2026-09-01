@@ -26,7 +26,7 @@ interface DirectorNotesModalProps {
 	theme: Theme;
 	onClose: () => void;
 	// Session navigation - jumps to an agent's session tab (closes modal first)
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
+	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
 	onFileClick?: (path: string) => void;

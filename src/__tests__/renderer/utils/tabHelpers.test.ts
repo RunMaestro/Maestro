@@ -73,6 +73,7 @@ import {
 	computeQueuedTabIds,
 	filterUnifiedTabOrderForUnread,
 	groupFocusFields,
+	isSessionIdLabel,
 } from '../../../renderer/utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
@@ -6153,6 +6154,31 @@ describe('tabHelpers', () => {
 			expect(resolveTabPermissionMode(afterOn)).toBe('readonly');
 			const afterOff = toggleReadOnlyModeFields(afterOn);
 			expect(resolveTabPermissionMode(afterOff)).toBe('full');
+		});
+	});
+	// A recorded display name is not proof of a name: an unnamed tab records the
+	// very label the strip drew for it. Restoring that as `tab.name` looks
+	// identical and silently opts the tab out of ever being auto-named.
+	describe('isSessionIdLabel', () => {
+		it('recognizes every shape getTabDisplayName falls back to', () => {
+			expect(isSessionIdLabel('8535E0E3', '8535e0e3-90ca-43c7-98ae-c42a09cf23ad')).toBe(true);
+			expect(isSessionIdLabel('SES_4BCD', 'ses_4bcd1234')).toBe(true);
+			expect(isSessionIdLabel('THR_ABC1', 'thread_abc12345')).toBe(true);
+			expect(isSessionIdLabel('ABCDEFGH', 'abcdefghijkl')).toBe(true);
+		});
+
+		it('leaves a real name alone', () => {
+			expect(isSessionIdLabel('PP Farm Meta Data', '8535e0e3-90ca-43c7-98ae-c42a09cf23ad')).toBe(
+				false
+			);
+			// The octet of a DIFFERENT session is just a name that looks like one.
+			expect(isSessionIdLabel('8535E0E3', 'deadbeef-90ca-43c7-98ae-c42a09cf23ad')).toBe(false);
+		});
+
+		it('is false when either side is missing', () => {
+			expect(isSessionIdLabel(null, 'ses_4bcd1234')).toBe(false);
+			expect(isSessionIdLabel('', 'ses_4bcd1234')).toBe(false);
+			expect(isSessionIdLabel('SES_4BCD', undefined)).toBe(false);
 		});
 	});
 });

@@ -103,7 +103,11 @@ export interface AppStandaloneModalsProps {
 	encoreFeatures: EncoreFeatureFlags;
 
 	// --- Director's Notes ---
-	onDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
+	onDirectorNotesResumeSession: (
+		sourceSessionId: string,
+		agentSessionId: string,
+		sessionName?: string
+	) => void;
 	onFileClick: (node: FileNode, path: string) => void;
 
 	// --- Cue ---

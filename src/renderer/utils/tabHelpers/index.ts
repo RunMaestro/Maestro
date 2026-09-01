@@ -414,7 +414,7 @@ export function getTabDisplayName(tab: AITab, _sessionAgentSessionId?: string | 
 /**
  * Format a session/tab ID into a short display label.
  */
-function formatSessionId(id: string): string {
+export function formatSessionId(id: string): string {
 	// OpenCode format: ses_XXXX... or SES_XXXX...
 	if (id.toLowerCase().startsWith('ses_')) {
 		return `SES_${id.slice(4, 8).toUpperCase()}`;
@@ -429,6 +429,27 @@ function formatSessionId(id: string): string {
 	}
 	// Generic fallback: first 8 chars uppercase
 	return id.slice(0, 8).toUpperCase();
+}
+
+/**
+ * Whether a name is really just the id label {@link getTabDisplayName} falls back
+ * to when a tab has no name at all (`8535E0E3`, `SES_4BCD`, `THR_ABC1`).
+ *
+ * Surfaces that RECORD a tab's display name - the history entry's `sessionName`,
+ * the session-origins store - capture whatever was on screen, so an unnamed tab
+ * records its own fallback. Anything that later restores a name from one of
+ * those records has to ask this first: writing the label back as `tab.name`
+ * turns a placeholder into a CUSTOM name, and a tab with a custom name is never
+ * auto-named again. It renders identically, so the tab looks merely unnamed
+ * while quietly having opted out of ever getting a real name.
+ *
+ * Compares against the formatter rather than matching a hex pattern: only one of
+ * the four id shapes it produces is 8 hex characters, so a regex silently lets
+ * the OpenCode and Codex labels through.
+ */
+export function isSessionIdLabel(name: string | null | undefined, agentSessionId?: string | null) {
+	if (!name || !agentSessionId) return false;
+	return name === formatSessionId(agentSessionId);
 }
 
 export function getInitialRenameValue(tab: AITab): string {

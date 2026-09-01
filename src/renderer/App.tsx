@@ -901,7 +901,9 @@ function MaestroConsoleInner() {
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
 	// Ref for handleResumeSession - bridges ordering gap between useModalHandlers and useAgentSessionManagement
-	const handleResumeSessionRef = useRef<((agentSessionId: string) => void) | null>(null);
+	const handleResumeSessionRef = useRef<
+		((agentSessionId: string, providedMessages?: undefined, sessionName?: string) => void) | null
+	>(null);
 
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 	// Note: pauseBatchOnErrorRef and getBatchStateRef moved into useBatchHandlers hook

@@ -306,7 +306,60 @@ describe('runExitSynopsis', () => {
 		);
 	});
 
-	it('skips tab name persistence for UPPERCASE UUID-prefix names (the auto-generated fallback)', async () => {
+	it("skips tab name persistence when the name is this session's own id label", async () => {
+		const deps = makeDeps();
+		deps.spawn.mockResolvedValue({ success: true, response: 'r' });
+		vi.mocked(parseSynopsis).mockReturnValue({
+			shortSummary: 's',
+			fullSynopsis: 'f',
+			nothingToReport: false,
+		} as any);
+
+		await runExitSynopsis(
+			makeSynopsisData({
+				agentSessionId: 'ab12cd34-90ca-43c7-98ae-c42a09cf23ad',
+				tabName: 'AB12CD34',
+			}),
+			deps
+		);
+
+		expect((window as any).maestro.claude.updateSessionName).not.toHaveBeenCalled();
+	});
+
+	// The guard compares against the formatter rather than matching a hex shape,
+	// so it also catches the labels an 8-hex regex never could.
+	it('skips the OpenCode and Codex id labels too', async () => {
+		const deps = makeDeps();
+		deps.spawn.mockResolvedValue({ success: true, response: 'r' });
+		vi.mocked(parseSynopsis).mockReturnValue({
+			shortSummary: 's',
+			fullSynopsis: 'f',
+			nothingToReport: false,
+		} as any);
+
+		await runExitSynopsis(
+			makeSynopsisData({
+				agentSessionId: 'ses_4bcd1234',
+				tabName: 'SES_4BCD',
+				toolType: 'opencode' as any,
+			}),
+			deps
+		);
+		await runExitSynopsis(
+			makeSynopsisData({
+				agentSessionId: 'thread_abc12345',
+				tabName: 'THR_ABC1',
+				toolType: 'codex' as any,
+			}),
+			deps
+		);
+
+		expect((window as any).maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+	});
+
+	it("PERSISTS an id-shaped name that is not THIS session's label", async () => {
+		// A user is free to name a tab "AB12CD34". Against a different session id
+		// that is a real custom name, and the old hex-shape regex threw it away.
 		const deps = makeDeps();
 		deps.spawn.mockResolvedValue({ success: true, response: 'r' });
 		vi.mocked(parseSynopsis).mockReturnValue({
@@ -317,28 +370,10 @@ describe('runExitSynopsis', () => {
 
 		await runExitSynopsis(makeSynopsisData({ tabName: 'AB12CD34' }), deps);
 
-		expect((window as any).maestro.claude.updateSessionName).not.toHaveBeenCalled();
-	});
-
-	it('PERSISTS lowercase 8-hex tab names (real user-typed names, not the fallback)', async () => {
-		// Pins the case-sensitive regex: the fallback is always uppercase
-		// (`agentSessionId.substring(0, 8).toUpperCase()` in useAgentExitListener),
-		// so a lowercase 8-hex tabName can only have come from the user typing it
-		// and must be persisted as a real custom name.
-		const deps = makeDeps();
-		deps.spawn.mockResolvedValue({ success: true, response: 'r' });
-		vi.mocked(parseSynopsis).mockReturnValue({
-			shortSummary: 's',
-			fullSynopsis: 'f',
-			nothingToReport: false,
-		} as any);
-
-		await runExitSynopsis(makeSynopsisData({ tabName: 'ab12cd34' }), deps);
-
 		expect((window as any).maestro.claude.updateSessionName).toHaveBeenCalledWith(
 			'/cwd',
 			'agent-1',
-			'ab12cd34'
+			'AB12CD34'
 		);
 	});
 

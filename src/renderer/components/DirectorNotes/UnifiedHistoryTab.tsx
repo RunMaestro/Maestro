@@ -53,7 +53,7 @@ interface UnifiedHistoryEntry extends HistoryEntry {
 interface UnifiedHistoryTabProps {
 	theme: Theme;
 	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
+	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	fileTree?: FileNode[];
 	onFileClick?: (path: string) => void;
 	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
@@ -442,7 +442,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							return;
 						}
 						trackShortcutUsage('historyJumpToSession');
-						onResumeSession(entry.sourceSessionId, entry.agentSessionId);
+						onResumeSession(entry.sourceSessionId, entry.agentSessionId, entry.sessionName);
 					}
 				: undefined,
 			initialIndex: -1,
@@ -604,7 +604,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					| UnifiedHistoryEntry
 					| undefined;
 				if (entry) {
-					onResumeSession(entry.sourceSessionId, agentSessionId);
+					onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
 				}
 			},
 			[onResumeSession, entries]
@@ -615,7 +615,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			(agentSessionId: string) => {
 				if (!onResumeSession || !detailModalEntry) return;
 				const entry = detailModalEntry as UnifiedHistoryEntry;
-				onResumeSession(entry.sourceSessionId, agentSessionId);
+				onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
 			},
 			[onResumeSession, detailModalEntry]
 		);
