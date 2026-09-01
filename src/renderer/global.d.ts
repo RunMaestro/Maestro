@@ -441,7 +441,13 @@ interface MaestroAPI {
 		) => () => void;
 		onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectSession: (callback: (sessionId: string) => void) => () => void;
-		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
+		onRemoteSelectTab: (
+			callback: (
+				sessionId: string,
+				tabId: string,
+				aiTabs?: import('../main/web-server/types').AITabData[]
+			) => void
+		) => () => void;
 		onRemoteNewTab: (
 			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		) => () => void;
@@ -1142,6 +1148,7 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,
@@ -1176,18 +1183,7 @@ interface MaestroAPI {
 		) => Promise<void>;
 		broadcastTabsChange: (
 			sessionId: string,
-			aiTabs: Array<{
-				id: string;
-				agentSessionId: string | null;
-				name: string | null;
-				starred: boolean;
-				inputValue: string;
-				usageStats?: UsageStats;
-				createdAt: number;
-				state: 'idle' | 'busy';
-				thinkingStartTime?: number | null;
-				hasUnread?: boolean;
-			}>,
+			aiTabs: import('../main/web-server/types').AITabData[],
 			activeTabId: string
 		) => Promise<void>;
 		broadcastSessionState: (

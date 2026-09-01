@@ -72,6 +72,8 @@ export interface MaestroSettings {
 	webAuthToken: string | null;
 	// Persistent web link (reuse token across restarts)
 	persistentWebLink: boolean;
+	// Turn on the full web interface automatically when Maestro starts
+	webInterfaceAutoStart: boolean;
 	// Web interface custom port
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;

@@ -1270,6 +1270,10 @@ export class WebServer {
 		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId);
 	}
 
+	requestNewTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
+		return this.callbackRegistry.newTab(sessionId, background);
+	}
+
 	broadcastThemeChange(theme: Theme): void {
 		this.broadcastService.broadcastThemeChange(theme);
 	}

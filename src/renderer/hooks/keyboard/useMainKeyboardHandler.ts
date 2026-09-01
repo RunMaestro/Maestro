@@ -1194,20 +1194,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Cmd+T: New AI tab (works in any mode including terminal)
 				if (ctx.isTabShortcut(e, 'newTab')) {
 					e.preventDefault();
-					const result = ctx.createTab(activeSession, {
-						saveToHistory: ctx.defaultSaveToHistory,
-						showThinking: ctx.defaultShowThinking,
-					});
-					if (result) {
-						const newSession = { ...result.session, inputMode: 'ai' as const };
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === activeSession!.id ? newSession : s))
-						);
-						// Auto-focus the input so user can start typing immediately
-						ctx.setActiveFocus('main');
-						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
-						trackShortcut('newTab');
-					}
+					ctx.handleNewTab();
+					// Auto-focus the input so user can start typing immediately once the
+					// desktop-owned tab arrives in either renderer.
+					ctx.setActiveFocus('main');
+					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
+					trackShortcut('newTab');
 				}
 				// Alt+N: New file tab (works in any mode)
 				if (ctx.isTabShortcut(e, 'newFileTab')) {

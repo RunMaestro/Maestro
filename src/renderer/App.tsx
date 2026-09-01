@@ -835,7 +835,9 @@ function MaestroConsoleInner() {
 	// See stagedImages/setStagedImages computed from active tab below
 
 	// Global Live Mode - extracted to useLiveMode hook (Tier 3B)
-	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode();
+	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode(
+		settings.settingsLoaded && settings.webInterfaceAutoStart && !isWebDesktop()
+	);
 
 	// Auto Run document management state (from batchStore)
 	// Content is per-session in session.autoRunContent
@@ -937,7 +939,10 @@ function MaestroConsoleInner() {
 	const { initialLoadComplete } = useSessionRestoration();
 
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
-	useCueAutoDiscovery(encoreFeatures);
+	// The Electron renderer owns the one main-process Cue lifecycle. A browser
+	// mirror must not rescan every project root or toggle that shared engine on
+	// mount; doing so floods the WebSocket bridge and starves interactive calls.
+	useCueAutoDiscovery(encoreFeatures, !isWebDesktop());
 
 	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and
@@ -2598,6 +2603,9 @@ function MaestroConsoleInner() {
 		handleSelectTerminalTab,
 		handleCloseTerminalTab,
 		mainPanelRef,
+
+		// AI tab handler for keyboard shortcut (Cmd+T)
+		handleNewTab,
 
 		// File tab handler for keyboard shortcut (Alt+N)
 		handleNewFileTab,

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, ReactNode } from 'react';
-import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks';
+import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks/ui/useLayerStack';
 
 // Create context with null as default (will throw if used outside provider)
 const LayerStackContext = createContext<LayerStackAPI | null>(null);

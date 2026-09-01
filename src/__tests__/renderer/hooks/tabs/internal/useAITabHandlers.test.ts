@@ -10,16 +10,23 @@ const inlineWizardMocks = vi.hoisted(() => ({
 	endWizard: vi.fn(async () => null),
 }));
 
+const runtimeMocks = vi.hoisted(() => ({
+	isWebDesktop: vi.fn(() => false),
+}));
+
 vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 	useInlineWizardContext: () => ({
 		endWizard: inlineWizardMocks.endWizard,
 	}),
 }));
 
+vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
+
 describe('useAITabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
 		inlineWizardMocks.endWizard.mockClear();
+		runtimeMocks.isWebDesktop.mockReturnValue(false);
 	});
 
 	afterEach(() => {
@@ -27,7 +34,11 @@ describe('useAITabHandlers', () => {
 	});
 
 	it('creates a new AI tab with default settings', () => {
-		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' })],
+			inputMode: 'terminal',
+			activeTerminalTabId: 'terminal-1',
+		});
 		useSettingsStore.setState({
 			defaultSaveToHistory: false,
 			defaultShowThinking: 'sticky',
@@ -45,6 +56,25 @@ describe('useAITabHandlers', () => {
 			showThinking: 'sticky',
 		});
 		expect(session.activeTabId).toBe(session.aiTabs[1].id);
+		expect(session.inputMode).toBe('ai');
+		expect(session.activeTerminalTabId).toBeNull();
+	});
+
+	it('requests a desktop-owned tab instead of creating a browser-local tab', () => {
+		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		const requestNewTab = vi.fn().mockResolvedValue({ tabId: 'ai-2' });
+		(
+			window.maestro.web as typeof window.maestro.web & { requestNewTab: typeof requestNewTab }
+		).requestNewTab = requestNewTab;
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleNewTab();
+		});
+
+		expect(requestNewTab).toHaveBeenCalledWith('session-1', false);
+		expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['ai-1']);
 	});
 
 	it('restores an orphaned thinking tab when selected', () => {

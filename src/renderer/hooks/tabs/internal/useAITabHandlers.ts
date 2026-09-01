@@ -3,11 +3,17 @@ import type { ThinkingMode } from '../../../../shared/types';
 import { useInlineWizardContext } from '../../../contexts/InlineWizardContext';
 import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
+import {
+	selectActiveSession,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../stores/sessionStore';
 import type { Session } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 import {
 	addAiTabToUnifiedHistory,
 	closeTab,
@@ -27,26 +33,35 @@ import type { AITabHandlersReturn } from './types';
 export function useAITabHandlers(): AITabHandlersReturn {
 	const { endWizard: endInlineWizard } = useInlineWizardContext();
 
-	const handleNewAgentSession = useCallback(() => {
-		const { setSessions } = useSessionStore.getState();
-		const activeSessionId = useSessionStore.getState().activeSessionId;
+	const createNewAITab = useCallback(() => {
+		const { activeSessionId } = useSessionStore.getState();
+		if (isWebDesktop()) {
+			if (activeSessionId) {
+				void window.maestro.web
+					.requestNewTab(activeSessionId, false)
+					.catch((error) =>
+						logger.error('[useAITabHandlers] Failed to create desktop tab:', undefined, error)
+					);
+			}
+			return;
+		}
+
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 
-		setSessions((prev: Session[]) => {
-			const currentSession = prev.find((s) => s.id === activeSessionId);
-			if (!currentSession) return prev;
-			return prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				const result = createTab(s, {
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				});
-				if (!result) return s;
-				return result.session;
+		if (!activeSessionId) return;
+		updateSessionWith(activeSessionId, (session) => {
+			const result = createTab(session, {
+				saveToHistory: defaultSaveToHistory,
+				showThinking: defaultShowThinking,
 			});
+			return result?.session ?? session;
 		});
-		useModalStore.getState().closeModal('agentSessions');
 	}, []);
+
+	const handleNewAgentSession = useCallback(() => {
+		createNewAITab();
+		useModalStore.getState().closeModal('agentSessions');
+	}, [createNewAITab]);
 
 	const handleTabSelect = useCallback((tabId: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
@@ -149,21 +164,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		[performTabClose]
 	);
 
-	const handleNewTab = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
-		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				const result = createTab(s, {
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				});
-				if (!result) return s;
-				return result.session;
-			})
-		);
-	}, []);
+	const handleNewTab = createNewAITab;
 
 	const performCloseAllTabs = useCallback(() => {
 		const { setSessions, activeSessionId, sessions } = useSessionStore.getState();

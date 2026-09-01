@@ -103,6 +103,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	webAuthEnabled: false,
 	webAuthToken: null,
 	persistentWebLink: false,
+	webInterfaceAutoStart: false,
 	webInterfaceUseCustomPort: false,
 	webInterfaceCustomPort: 8080,
 	sshRemotes: [],

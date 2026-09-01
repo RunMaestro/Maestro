@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRemoteIntegration } from '../../../renderer/hooks';
@@ -59,7 +60,24 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
-	let onRemoteSelectTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
+	let onRemoteSelectTabHandler:
+		| ((
+				sessionId: string,
+				tabId: string,
+				aiTabs?: Array<{
+					id: string;
+					agentSessionId: string | null;
+					name: string | null;
+					starred: boolean;
+					inputValue: string;
+					usageStats?: AITab['usageStats'];
+					createdAt: number;
+					state: 'idle' | 'busy';
+					thinkingStartTime?: number | null;
+					hasUnread?: boolean;
+				}>
+		  ) => void)
+		| undefined;
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
@@ -937,21 +955,106 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
 		});
+
+		it('reconciles the complete desktop tab inventory without discarding local transcripts', () => {
+			const existingLogs = [{ type: 'stdout', content: 'kept transcript' }] as AITab['logs'];
+			const existing = createMockTab({
+				id: 'tab-1',
+				logs: existingLogs,
+				inputValue: 'newer browser draft',
+			});
+			const stale = createMockTab({ id: 'stale-tab' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [existing, stale],
+				activeTabId: existing.id,
+				unifiedTabOrder: [
+					{ type: 'ai', id: existing.id },
+					{ type: 'ai', id: stale.id },
+				],
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-2', [
+					{
+						id: 'tab-1',
+						agentSessionId: 'provider-1',
+						name: 'Renamed on desktop',
+						starred: true,
+						inputValue: 'desktop draft',
+						createdAt: existing.createdAt,
+						state: 'idle',
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: 'New desktop tab',
+						starred: false,
+						inputValue: '',
+						createdAt: 1700000001000,
+						state: 'idle',
+					},
+				]);
+			});
+
+			const updater = vi.mocked(deps.setSessions).mock.calls.at(-1)?.[0];
+			expect(updater).toBeTypeOf('function');
+			const [updated] = (updater as (sessions: Session[]) => Session[])([session]);
+			expect(updated.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+			expect(updated.aiTabs[0]).toMatchObject({
+				name: 'Renamed on desktop',
+				starred: true,
+				inputValue: 'newer browser draft',
+				logs: existingLogs,
+			});
+			expect(updated.aiTabs[1]).toMatchObject({
+				id: 'tab-2',
+				logs: [],
+				stagedImages: [],
+				saveToHistory: true,
+				showThinking: 'off',
+			});
+			expect(updated.activeTabId).toBe('tab-2');
+			expect(updated.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'ai', id: 'tab-2' },
+			]);
+		});
 	});
 
 	describe('remote new tab', () => {
-		it('creates new tab and sends response', () => {
+		it('commits the new tab before responding with its ID', () => {
 			const session = createMockSession({ id: 'session-1' });
-			const deps = createDeps({ sessions: [session] });
-
-			renderHook(() => useRemoteIntegration(deps));
+			const setActiveSessionId = vi.fn();
+			const { result } = renderHook(() => {
+				const [sessions, setSessions] = useState([session]);
+				const sessionsRef = useRef(sessions);
+				sessionsRef.current = sessions;
+				useRemoteIntegration({
+					activeSessionId: session.id,
+					isLiveMode: false,
+					sessionsRef,
+					activeSessionIdRef: { current: session.id },
+					setSessions,
+					setActiveSessionId,
+					defaultSaveToHistory: true,
+					defaultShowThinking: 'off',
+				});
+				return sessions;
+			});
 
 			act(() => {
 				onRemoteNewTabHandler?.('session-1', 'response-channel-1');
 			});
 
-			expect(deps.setSessions).toHaveBeenCalled();
-			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalled();
+			const createdTab = result.current.at(-1)?.aiTabs.at(-1);
+			expect(createdTab).toBeDefined();
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('response-channel-1', {
+				tabId: createdTab?.id,
+			});
 		});
 	});
 

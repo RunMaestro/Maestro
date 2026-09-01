@@ -21,6 +21,7 @@ import {
 	ThinkingModeSection,
 	UpdatesSection,
 	UtilityAgentSection,
+	WebInterfaceSection,
 } from './components';
 import {
 	useForcedParallelWarningState,
@@ -76,6 +77,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 			/>
 			<GitHubCliSection theme={theme} ghPath={settings.ghPath} setGhPath={settings.setGhPath} />
 			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
+			<WebInterfaceSection
+				theme={theme}
+				webInterfaceAutoStart={settings.webInterfaceAutoStart}
+				setWebInterfaceAutoStart={settings.setWebInterfaceAutoStart}
+			/>
 			<InputBehaviorSection
 				theme={theme}
 				enterToSendAI={settings.enterToSendAI}

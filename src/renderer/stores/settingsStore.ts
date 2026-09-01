@@ -398,6 +398,7 @@ export interface SettingsStoreState
 	onboardingStats: OnboardingStats;
 	leaderboardRegistration: LeaderboardRegistration | null;
 	persistentWebLink: boolean;
+	webInterfaceAutoStart: boolean;
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
 	contextManagementSettings: ContextManagementSettings;
@@ -511,6 +512,7 @@ export interface SettingsStoreActions
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
 	setPersistentWebLink: (value: boolean) => Promise<void>;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	setWebInterfaceCustomPort: (value: number) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
@@ -745,6 +747,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
 		persistentWebLink: false,
+		webInterfaceAutoStart: false,
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
@@ -1167,6 +1170,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 					// else: stale - a newer call is in charge, nothing to do
 				}
 			}
+		},
+
+		setWebInterfaceAutoStart: (value) => {
+			set({ webInterfaceAutoStart: value });
+			window.maestro.settings.set('webInterfaceAutoStart', value);
 		},
 
 		setWebInterfaceUseCustomPort: (value) => {
@@ -2251,6 +2259,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['persistentWebLink'] !== undefined)
 			patch.persistentWebLink = allSettings['persistentWebLink'] as boolean;
 
+		if (typeof allSettings['webInterfaceAutoStart'] === 'boolean')
+			patch.webInterfaceAutoStart = allSettings['webInterfaceAutoStart'];
+
 		if (allSettings['webInterfaceUseCustomPort'] !== undefined)
 			patch.webInterfaceUseCustomPort = allSettings['webInterfaceUseCustomPort'] as boolean;
 
@@ -2658,6 +2669,7 @@ export function getSettingsActions() {
 		getOnboardingAnalytics: state.getOnboardingAnalytics,
 		setLeaderboardRegistration: state.setLeaderboardRegistration,
 		setPersistentWebLink: state.setPersistentWebLink,
+		setWebInterfaceAutoStart: state.setWebInterfaceAutoStart,
 		setWebInterfaceUseCustomPort: state.setWebInterfaceUseCustomPort,
 		setWebInterfaceCustomPort: state.setWebInterfaceCustomPort,
 		setContextManagementSettings: state.setContextManagementSettings,
