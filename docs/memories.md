@@ -56,6 +56,13 @@ Memories that link to nothing appear in the **Unlinked** band at the bottom -
 the same set the toolbar's chip narrows to, seen as a picture instead of a
 list. The viewer closes when the graph opens; both are full-window views.
 
+Two of the graph's [layouts](./document-graph#layout) are worth reaching for
+here, both on `L`. **Lobes** groups the memories by which other memories they
+link to, so you can see which subjects have grown into clusters and which
+entries stand alone. **Timeline** lays them out by when each was last written,
+oldest on the left, which is the quickest way to spot advice that has gone
+stale.
+
 **`Esc` brings you back here.** A graph opened this way skips the usual "close
 the Document Graph?" prompt, because there is nothing to lose: you land back in
 the viewer, and `Cmd+G` puts you straight back in the graph. (You can turn that
