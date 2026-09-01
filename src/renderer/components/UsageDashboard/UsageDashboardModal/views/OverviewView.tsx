@@ -1,6 +1,7 @@
 import { getAgentDisplayName } from '../../../../../shared/agentMetadata';
 import { AgentComparisonChart } from '../../AgentComparisonChart';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
+import { DelegationScoreCard } from '../../DelegationScoreCard';
 import { LocationDistributionChart } from '../../LocationDistributionChart';
 import { PercentilesCard } from '../../PercentilesCard';
 import { ProviderTrendsChart } from '../../ProviderTrendsChart';
@@ -10,6 +11,7 @@ import { SummaryCards } from '../../SummaryCards';
 import { YearInPixelsStrip } from '../../YearInPixelsStrip';
 import { DashboardSection } from '../components';
 import { DashboardTabPanel } from './DashboardTabPanel';
+import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { OverviewViewProps } from './types';
 
 export function OverviewView({
@@ -20,10 +22,18 @@ export function OverviewView({
 	sessions,
 	layout,
 	cueSourceTotals,
+	delegationTotals,
+	lifetimeDelegation,
 	focusedSection,
 	setSectionRef,
 	handleSectionKeyDown,
 }: OverviewViewProps) {
+	// The milestone high-water mark is read here rather than threaded down from
+	// the modal: the score card is the only consumer, and the store is already
+	// the source of truth for it.
+	const delegationMilestone = useSettingsStore((s) => s.delegationMilestone);
+	const unlockDelegationMilestone = useSettingsStore((s) => s.unlockDelegationMilestone);
+
 	return (
 		<DashboardTabPanel viewMode="overview">
 			<DashboardSection
@@ -58,6 +68,27 @@ export function OverviewView({
 						theme={theme}
 						columns={layout.summaryCardsCols}
 						sessions={sessions}
+						delegation={delegationTotals}
+						colorBlindMode={colorBlindMode}
+					/>
+				</ChartErrorBoundary>
+			</DashboardSection>
+
+			<DashboardSection
+				sectionId="delegation-score"
+				focusedSection={focusedSection}
+				setSectionRef={setSectionRef}
+				handleSectionKeyDown={handleSectionKeyDown}
+				theme={theme}
+				style={{ animationDelay: '25ms' }}
+			>
+				<ChartErrorBoundary theme={theme} chartName="Delegation Score">
+					<DelegationScoreCard
+						totals={lifetimeDelegation}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						unlockedMilestone={delegationMilestone}
+						onUnlockMilestone={unlockDelegationMilestone}
 					/>
 				</ChartErrorBoundary>
 			</DashboardSection>

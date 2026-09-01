@@ -35,6 +35,7 @@ import {
 	CalendarCheck,
 	PenLine,
 	Coins,
+	Split,
 } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -49,6 +50,9 @@ import {
 import { aggregateUsage } from '../../../shared/usageStats';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { Sparkline } from './Sparkline';
+import { DelegationSplitBar } from './DelegationSplitBar';
+import type { DelegationTotals } from '../../../shared/delegation';
+import { delegationPercent, trackedMs } from '../../../shared/delegation';
 
 type ByDayEntry = StatsAggregation['byDay'][number];
 
@@ -213,6 +217,15 @@ interface SummaryCardsProps {
 	columns?: number;
 	/** Sessions array for accurate agent count (filters terminal sessions) */
 	sessions?: Session[];
+	/**
+	 * Interactive vs autonomous split for the same range, merged across the
+	 * stats DB and the Cue DB. Omit (or pass null) to hide the ratio card - it
+	 * is the one metric here that can't be derived from `data`, since Cue runs
+	 * are not query events and per-source durations are not in the aggregation.
+	 */
+	delegation?: DelegationTotals | null;
+	/** Enable colorblind-friendly colors in the ratio card's split bar. */
+	colorBlindMode?: boolean;
 }
 
 /**
@@ -774,6 +787,8 @@ export const SummaryCards = memo(function SummaryCards({
 	theme,
 	columns = 3,
 	sessions,
+	delegation = null,
+	colorBlindMode = false,
 }: SummaryCardsProps) {
 	// Count agent sessions (exclude terminal-only sessions) for accurate total
 	const agentCount = useMemo(() => {
@@ -998,6 +1013,34 @@ export const SummaryCards = memo(function SummaryCards({
 			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '-',
 		},
 	];
+
+	// Interactive vs autonomous, as a share of TIME rather than of turns: an
+	// Auto Run batch is a few long turns while an afternoon of chat is hundreds
+	// of short ones, so a turn-count ratio reports a heavily delegated range as
+	// barely delegated. Hidden entirely when the split failed to load, rather
+	// than shown as a confident "0 / 100".
+	if (delegation && trackedMs(delegation) > 0) {
+		const delegatedPct = Math.round(delegationPercent(delegation));
+		metrics.push({
+			icon: <Split className="w-4 h-4" />,
+			label: 'Interactive vs Auto',
+			value: `${100 - delegatedPct} / ${delegatedPct}`,
+			extra: (
+				<div className="mt-1.5" data-testid="summary-delegation-ratio">
+					<DelegationSplitBar
+						totals={delegation}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						mergeDelegated
+						height={4}
+					/>
+					<div className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+						{delegatedPct}% ran without you
+					</div>
+				</div>
+			),
+		});
+	}
 
 	return (
 		<div

@@ -1,5 +1,6 @@
 import { ActivityHeatmap } from '../../ActivityHeatmap';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
+import { DelegationTrendChart } from '../../DelegationTrendChart';
 import { DurationTrendsChart } from '../../DurationTrendsChart';
 import { WeekdayComparisonChart } from '../../WeekdayComparisonChart';
 import { DashboardSection } from '../components';
@@ -11,12 +12,30 @@ export function ActivityView({
 	timeRange,
 	theme,
 	colorBlindMode,
+	delegationByDay,
 	focusedSection,
 	setSectionRef,
 	handleSectionKeyDown,
 }: ActivityViewProps) {
 	return (
 		<DashboardTabPanel viewMode="activity">
+			<DashboardSection
+				sectionId="delegation-trend"
+				focusedSection={focusedSection}
+				setSectionRef={setSectionRef}
+				handleSectionKeyDown={handleSectionKeyDown}
+				theme={theme}
+				style={{ minHeight: '280px', animationDelay: '0ms' }}
+			>
+				<ChartErrorBoundary theme={theme} chartName="Interactive vs Delegated">
+					<DelegationTrendChart
+						days={delegationByDay}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+					/>
+				</ChartErrorBoundary>
+			</DashboardSection>
+
 			<DashboardSection
 				sectionId="activity-heatmap"
 				focusedSection={focusedSection}
