@@ -36,6 +36,7 @@ import type {
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { CodexTokenCounts } from '../../shared/codexTokenUsage';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -294,9 +295,7 @@ async function parseSessionFile(
 		let firstUserMessage = '';
 		let userMessageCount = 0;
 		let assistantMessageCount = 0;
-		let totalInputTokens = 0;
-		let totalOutputTokens = 0;
-		let totalCachedTokens = 0;
+		const tokenCounts = new CodexTokenCounts();
 		let firstTimestamp = timestamp;
 		let lastTimestamp = timestamp;
 
@@ -304,23 +303,14 @@ async function parseSessionFile(
 			try {
 				const entry = JSON.parse(lines[i]);
 
-				// Handle turn.completed for usage stats
+				// Handle turn.completed for usage stats (already per-turn)
 				if (entry.type === 'turn.completed' && entry.usage) {
-					totalInputTokens += entry.usage.input_tokens || 0;
-					totalOutputTokens += entry.usage.output_tokens || 0;
-					totalOutputTokens += entry.usage.reasoning_output_tokens || 0;
-					totalCachedTokens += entry.usage.cached_input_tokens || 0;
+					tokenCounts.addTurn(entry.usage);
 				}
 
 				// Handle Codex "event_msg" usage stats
 				if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-					const usage = entry.payload.info?.total_token_usage;
-					if (usage) {
-						totalInputTokens += usage.input_tokens || 0;
-						totalOutputTokens += usage.output_tokens || 0;
-						totalOutputTokens += usage.reasoning_output_tokens || 0;
-						totalCachedTokens += usage.cached_input_tokens || 0;
-					}
+					tokenCounts.addTokenCountEvent(entry.payload.info);
 				}
 
 				// Handle message entries (legacy format)
@@ -438,9 +428,9 @@ async function parseSessionFile(
 			messageCount,
 			sizeBytes: stats.size,
 			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			inputTokens: totalInputTokens,
-			outputTokens: totalOutputTokens,
-			cacheReadTokens: totalCachedTokens,
+			inputTokens: tokenCounts.inputTokens,
+			outputTokens: tokenCounts.outputTokens,
+			cacheReadTokens: tokenCounts.cachedTokens,
 			cacheCreationTokens: 0, // Codex doesn't report cache creation separately
 			durationSeconds,
 		};
@@ -671,9 +661,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			let firstUserMessage = '';
 			let userMessageCount = 0;
 			let assistantMessageCount = 0;
-			let totalInputTokens = 0;
-			let totalOutputTokens = 0;
-			let totalCachedTokens = 0;
+			const tokenCounts = new CodexTokenCounts();
 			let firstTimestamp = timestamp;
 			let lastTimestamp = timestamp;
 
@@ -681,23 +669,14 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				try {
 					const entry = JSON.parse(lines[i]);
 
-					// Handle turn.completed for usage stats
+					// Handle turn.completed for usage stats (already per-turn)
 					if (entry.type === 'turn.completed' && entry.usage) {
-						totalInputTokens += entry.usage.input_tokens || 0;
-						totalOutputTokens += entry.usage.output_tokens || 0;
-						totalOutputTokens += entry.usage.reasoning_output_tokens || 0;
-						totalCachedTokens += entry.usage.cached_input_tokens || 0;
+						tokenCounts.addTurn(entry.usage);
 					}
 
 					// Handle Codex "event_msg" usage stats
 					if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-						const usage = entry.payload.info?.total_token_usage;
-						if (usage) {
-							totalInputTokens += usage.input_tokens || 0;
-							totalOutputTokens += usage.output_tokens || 0;
-							totalOutputTokens += usage.reasoning_output_tokens || 0;
-							totalCachedTokens += usage.cached_input_tokens || 0;
-						}
+						tokenCounts.addTokenCountEvent(entry.payload.info);
 					}
 
 					// Handle message entries (legacy format)
@@ -805,9 +784,9 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				),
 				messageCount,
 				sizeBytes: stats.size,
-				inputTokens: totalInputTokens,
-				outputTokens: totalOutputTokens,
-				cacheReadTokens: totalCachedTokens,
+				inputTokens: tokenCounts.inputTokens,
+				outputTokens: tokenCounts.outputTokens,
+				cacheReadTokens: tokenCounts.cachedTokens,
 				cacheCreationTokens: 0,
 				durationSeconds,
 			};
