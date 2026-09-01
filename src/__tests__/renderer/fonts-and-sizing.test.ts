@@ -18,6 +18,8 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
 import { useSettings } from '../../renderer/hooks';
 import React from 'react';
+import { readFileSync, existsSync } from 'fs';
+import path from 'path';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
 
 // Deep-cloned defaults captured from a fresh store so mutations in tests can't
@@ -35,6 +37,7 @@ const DEFAULT_ONBOARDING_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.onboar
 const DEFAULT_AI_COMMANDS = JSON.parse(JSON.stringify(_INITIAL_STATE.customAICommands));
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../renderer/constants/themes';
+import { MAESTRO_FONT_STACK, MAESTRO_WORDMARK_FONT_STACK } from '../../shared/fontStacks';
 
 // Mock the FontConfigurationPanel's common monospace fonts list
 const COMMON_MONOSPACE_FONTS = [
@@ -81,7 +84,7 @@ describe('Cross-platform Fonts and Sizing', () => {
 			shellArgs: '',
 			shellEnvVars: {},
 			ghPath: '',
-			fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+			fontFamily: MAESTRO_FONT_STACK,
 			fontSize: 14,
 			activeThemeId: 'dracula',
 			customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -164,10 +167,22 @@ describe('Cross-platform Fonts and Sizing', () => {
 
 			// Default font family should include multiple fallbacks
 			const fontFamily = result.current.fontFamily;
-			expect(fontFamily).toContain('Roboto Mono');
-			expect(fontFamily).toContain('Menlo'); // macOS fallback
+			expect(fontFamily).toContain('JetBrains Mono'); // Bundled, so always resolves
 			expect(fontFamily).toContain('Courier New'); // Universal fallback
 			expect(fontFamily).toContain('monospace'); // Generic fallback
+		});
+
+		it('should lead with the bundled family so the default always resolves', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			// JetBrains Mono is the only family in the stack that ships with the app
+			// (src/renderer/public/fonts/). Everything after it is a fallback for a
+			// renderer that somehow fails to load it. If the default ever leads with
+			// a family that is merely *hoped* to be installed - as it did when it
+			// led with Roboto Mono - a machine without that font silently renders
+			// the app in whatever comes next.
+			expect(result.current.fontFamily.trim().startsWith("'JetBrains Mono'")).toBe(true);
 		});
 
 		it('should have generic monospace as the last fallback', async () => {
@@ -178,31 +193,97 @@ describe('Cross-platform Fonts and Sizing', () => {
 			expect(fontFamily.trim().endsWith('monospace')).toBe(true);
 		});
 
-		it('should match Tailwind config font stack', () => {
-			// The Tailwind config should use the same font stack
-			// tailwind.config.mjs: mono: ['"JetBrains Mono"', '"Fira Code"', '"Courier New"', 'monospace']
-			const tailwindFontStack = ['"JetBrains Mono"', '"Fira Code"', '"Courier New"', 'monospace'];
+		// These four surfaces paint at different moments during startup - the splash
+		// before React mounts, the setting default after it - so any disagreement
+		// between them is visible to the user as the app changing font while it
+		// boots. That is not hypothetical: the splash asked for JetBrains Mono while
+		// the setting default asked for Roboto Mono, and a cold start went Courier
+		// New -> JetBrains Mono -> Menlo. They read from disk rather than restating
+		// the stack, because a hard-coded copy here would have agreed with itself
+		// while the shipped files drifted.
+		const readRepoFile = (relative: string) =>
+			readFileSync(path.join(__dirname, '../../..', relative), 'utf-8');
 
-			// Verify universal fallbacks are present
-			expect(tailwindFontStack).toContain('"Courier New"');
-			expect(tailwindFontStack).toContain('monospace');
+		// Each surface quotes its families differently - the Tailwind config nests
+		// double quotes inside single ones ('"JetBrains Mono"'), CSS uses bare
+		// single quotes - so compare the names, not the punctuation.
+		const familyNames = (stack: string) =>
+			stack
+				.split(',')
+				.map((part) => {
+					let name = part.trim();
+					while (/^(['"]).*\1$/s.test(name)) name = name.slice(1, -1).trim();
+					return name;
+				})
+				.filter(Boolean);
+
+		it('should match the Tailwind font-mono stack', () => {
+			const tailwind = readRepoFile('tailwind.config.mjs');
+			const mono = /mono:\s*\[([^\]]+)\]/.exec(tailwind);
+			expect(mono).not.toBeNull();
+
+			expect(familyNames(mono![1])).toEqual(familyNames(MAESTRO_FONT_STACK));
 		});
 
-		it('should have matching CSS base font stack in index.css', () => {
-			// index.css body font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-			// This test documents the expected CSS font stack
-			const cssBaseFonts = ["'JetBrains Mono'", "'Fira Code'", "'Courier New'", 'monospace'];
+		it('should match the base body font stack in index.css', () => {
+			const css = readRepoFile('src/renderer/index.css');
+			const body = /font-family:\s*'JetBrains Mono'[^;]*;/.exec(css);
+			expect(body).not.toBeNull();
 
-			// All fonts in CSS stack should be monospace
-			expect(
-				cssBaseFonts.every(
-					(font) =>
-						font.includes('Mono') ||
-						font.includes('Code') ||
-						font.includes('Courier') ||
-						font === 'monospace'
-				)
-			).toBe(true);
+			expect(familyNames(body![0].replace(/^font-family:\s*|;$/g, ''))).toEqual(
+				familyNames(MAESTRO_FONT_STACK)
+			);
+		});
+
+		it('should match the splash screen font stack in index.html', () => {
+			const html = readRepoFile('src/renderer/index.html');
+
+			// Every font-family in the splash's inline CSS, including the wordmark's.
+			const stacks = [...html.matchAll(/font-family:\s*([^;]+);/g)].map((m) => m[1]);
+			expect(stacks.length).toBeGreaterThan(0);
+
+			for (const stack of stacks) {
+				expect(familyNames(stack)).toEqual(familyNames(MAESTRO_FONT_STACK));
+			}
+		});
+
+		it('should not fetch the app font over the network', () => {
+			const html = readRepoFile('src/renderer/index.html');
+
+			// Comments stripped first: the markup explains at length why the Google
+			// hosts were removed, and naming them in prose is not the same as
+			// fetching from them.
+			const markup = html.replace(/<!--[\s\S]*?-->/g, '');
+
+			// A remote font is served with `font-display: swap`, which is an explicit
+			// instruction to paint a fallback first and reflow - and offline it never
+			// arrives at all. The woff2 files are bundled; keep them that way, and
+			// keep the CSP tight enough that a regression fails loudly.
+			expect(markup).not.toContain('fonts.googleapis.com');
+			expect(markup).not.toContain('fonts.gstatic.com');
+			expect(markup).toContain('./fonts/jetbrains-mono.css');
+		});
+
+		it('should ship the bundled woff2 subsets the stylesheet references', () => {
+			const fontDir = path.join(__dirname, '../../..', 'src/renderer/public/fonts');
+			const sheet = readFileSync(path.join(fontDir, 'jetbrains-mono.css'), 'utf-8');
+
+			const referenced = [...sheet.matchAll(/url\('([^']+\.woff2)'\)/g)].map((m) => m[1]);
+			expect(referenced.length).toBeGreaterThan(0);
+
+			for (const file of referenced) {
+				expect(existsSync(path.join(fontDir, file))).toBe(true);
+			}
+		});
+
+		it('should pin the wordmark to its own stack, not the user setting', () => {
+			// The wordmark is a logo. It carries an explicit family so it cannot
+			// inherit the root element's inline fontFamily, which is the user's
+			// Settings choice - otherwise picking a terminal font redraws the brand.
+			const sessionList = readRepoFile('src/renderer/components/SessionList/SessionList.tsx');
+			expect(sessionList).toContain('MAESTRO_WORDMARK_FONT_STACK');
+
+			expect(familyNames(MAESTRO_WORDMARK_FONT_STACK)[0]).toBe('JetBrains Mono');
 		});
 	});
 
@@ -432,7 +513,7 @@ describe('Cross-platform Fonts and Sizing', () => {
 			expect(COMMON_MONOSPACE_FONTS).toContain('Courier New');
 
 			// It should be in the default font family as a fallback
-			const defaultFontFamily = 'Roboto Mono, Menlo, "Courier New", monospace';
+			const defaultFontFamily = MAESTRO_FONT_STACK;
 			expect(defaultFontFamily).toContain('Courier New');
 		});
 
@@ -440,7 +521,7 @@ describe('Cross-platform Fonts and Sizing', () => {
 			// The generic 'monospace' should always be available on any platform
 			// The browser will substitute an appropriate system font
 
-			const defaultFontFamily = 'Roboto Mono, Menlo, "Courier New", monospace';
+			const defaultFontFamily = MAESTRO_FONT_STACK;
 			expect(defaultFontFamily.endsWith('monospace')).toBe(true);
 		});
 	});

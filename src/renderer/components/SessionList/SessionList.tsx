@@ -8,6 +8,7 @@ import React, {
 	useDeferredValue,
 	useSyncExternalStore,
 } from 'react';
+import { MAESTRO_WORDMARK_FONT_STACK } from '../../../shared/fontStacks';
 import {
 	Wand2,
 	Plus,
@@ -1176,9 +1177,17 @@ function SessionListInner(props: SessionListProps) {
 								/>
 							</button>
 							{showWordmark && (
+								/* The wordmark is a logo, so its family is pinned rather than
+								   inherited. Without the explicit fontFamily it picks up the
+								   root element's inline style in App.tsx, which is the user's
+								   `fontFamily` SETTING - so choosing a terminal font in
+								   Settings silently redrew the brand. */
 								<h1
 									className="font-bold tracking-widest text-lg shrink-0 whitespace-nowrap"
-									style={{ color: theme.colors.textMain }}
+									style={{
+										color: theme.colors.textMain,
+										fontFamily: MAESTRO_WORDMARK_FONT_STACK,
+									}}
 								>
 									MAESTRO
 								</h1>

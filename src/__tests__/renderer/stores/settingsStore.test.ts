@@ -8,6 +8,7 @@ import {
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
+import { MAESTRO_FONT_STACK } from '../../../shared/fontStacks';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import {
 	selectShowNowPlayingIndicator,
@@ -90,7 +91,7 @@ function resetStore() {
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
-		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		fontFamily: MAESTRO_FONT_STACK,
 		fontSize: 14,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -203,7 +204,7 @@ describe('settingsStore', () => {
 			expect(state.shellEnvVars).toEqual({});
 			expect(state.shellEnvVarsDisabled).toEqual({});
 			expect(state.ghPath).toBe('');
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
 			expect(state.fontSize).toBe(14);
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
@@ -1733,7 +1734,7 @@ describe('settingsStore', () => {
 
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
 			expect(state.fontSize).toBe(14);
 		});
 
