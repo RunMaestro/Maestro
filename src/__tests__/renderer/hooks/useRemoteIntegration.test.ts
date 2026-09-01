@@ -992,25 +992,23 @@ describe('useRemoteIntegration', () => {
 				]);
 			});
 
-			const updater = vi.mocked(deps.setSessions).mock.calls.at(-1)?.[0];
-			expect(updater).toBeTypeOf('function');
-			const [updated] = (updater as (sessions: Session[]) => Session[])([session]);
-			expect(updated.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
-			expect(updated.aiTabs[0]).toMatchObject({
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+			expect(updated?.aiTabs[0]).toMatchObject({
 				name: 'Renamed on desktop',
 				starred: true,
 				inputValue: 'newer browser draft',
 				logs: existingLogs,
 			});
-			expect(updated.aiTabs[1]).toMatchObject({
+			expect(updated?.aiTabs[1]).toMatchObject({
 				id: 'tab-2',
 				logs: [],
 				stagedImages: [],
 				saveToHistory: true,
 				showThinking: 'off',
 			});
-			expect(updated.activeTabId).toBe('tab-2');
-			expect(updated.unifiedTabOrder).toEqual([
+			expect(updated?.activeTabId).toBe('tab-2');
+			expect(updated?.unifiedTabOrder).toEqual([
 				{ type: 'ai', id: 'tab-1' },
 				{ type: 'ai', id: 'tab-2' },
 			]);

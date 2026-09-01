@@ -1,4 +1,5 @@
 import type { Session, AITab, LogEntry, ThinkingMode } from '../../types';
+import { nextThinkingMode } from '../../../shared/types';
 
 /**
  * The session-state patch that focuses an agent's AI tab area.
@@ -55,23 +56,28 @@ export function toggleReadOnlyModeFields(tab: Pick<AITab, 'readOnlyMode'>): {
 }
 
 /**
- * Field patch for cycling a tab's thinking-display mode: off -> on -> sticky -> off.
+ * Field patch for cycling a tab's thinking-display mode via {@link nextThinkingMode}.
  *
  * Turning the mode OFF also drops the tab's stored thinking logs - only thinking
  * logs are storage-gated (tool logs are always recorded and hidden purely at
  * render, see the global tool-call visibility setting + TerminalOutput), so this
- * must never touch anything but `source: 'thinking'` entries. Every entry point
- * that cycles this mode (quick actions, prompt composer, tab store, keyboard
- * shortcut) should spread this instead of re-deriving the cycle, so the four
- * copies that existed before can't drift on the log-clearing behavior.
+ * must never touch anything but `source: 'thinking'` entries.
+ *
+ * UI callers that should also clear logs on off: tab overlay
+ * (`useAITabHandlers`), prompt composer, command palette, and the keyboard
+ * shortcut's non-wizard branch. The keyboard wizard branch is separate: it
+ * flips `wizardState.showWizardThinking` and must not go through this helper.
+ *
+ * `tabStore.cycleThinkingMode` and `maestro-cli tab thinking <id> cycle`
+ * already share {@link nextThinkingMode} for the step order, but they still
+ * only write `showThinking` and do not clear thinking logs. That split is
+ * pre-existing; do not assume this helper closed it.
  */
 export function cycleShowThinkingFields(tab: Pick<AITab, 'showThinking' | 'logs'>): {
 	showThinking: ThinkingMode;
 	logs: LogEntry[];
 } {
-	const current = tab.showThinking;
-	const newMode: ThinkingMode =
-		!current || current === 'off' ? 'on' : current === 'on' ? 'sticky' : 'off';
+	const newMode = nextThinkingMode(tab.showThinking);
 	if (newMode === 'off') {
 		return { showThinking: 'off', logs: tab.logs.filter((l) => l.source !== 'thinking') };
 	}
