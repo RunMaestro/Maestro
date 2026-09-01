@@ -95,7 +95,10 @@ export function pillRowWidthPx(
 }
 
 export type PillDensityInput = {
-	/** Width the row has been granted, px. 0 means "not measured yet". */
+	/**
+	 * Width the toolbar has left for the pills, px, measured from the PARENT
+	 * rather than from the pill row. 0 means "not measured yet".
+	 */
 	availableWidth: number;
 	/** Measured width of all labels at the base size, px. 0 means "not measured yet". */
 	labelsWidth: number;
@@ -105,7 +108,7 @@ export type PillDensityInput = {
 	remPx: number;
 	/** The caller's static narrow-panel prediction, used only before measuring. */
 	compact: boolean;
-	/** False when the row does not own the leftover width, so measuring is meaningless. */
+	/** False when the toolbar has no free figure to read, so measuring is meaningless. */
 	enabled: boolean;
 };
 
@@ -114,8 +117,7 @@ export type PillDensityInput = {
  *
  * Falls back to the caller's `compact` prediction while either measurement is
  * still 0, and to the last rung when even that overflows - at which point the
- * row's `overflow-hidden` keeps the pills off the buttons rather than the other
- * way round.
+ * row shrinks and clips a pill rather than pushing a button off the panel.
  */
 export function resolvePillDensity({
 	availableWidth,

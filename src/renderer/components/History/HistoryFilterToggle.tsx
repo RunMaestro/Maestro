@@ -3,7 +3,7 @@ import type { Theme, HistoryEntryType } from '../../types';
 import { getPillColor, getEntryIcon } from './historyConstants';
 import { resolvePillDensity } from './historyPillDensity';
 import { ALL_HISTORY_ENTRY_TYPES } from '../../../shared/history';
-import { useElementWidth } from '../../hooks/ui/useElementWidth';
+import { useElementWidth, useFreeWidthInFlexRow } from '../../hooks/ui/useElementWidth';
 import {
 	RIGHT_PANEL_PILL_FONT_SIZE,
 	RIGHT_PANEL_PILL_LINE_HEIGHT,
@@ -26,16 +26,18 @@ export interface HistoryFilterToggleProps {
 	 */
 	compact?: boolean;
 	/**
-	 * Let the row claim the leftover width of its toolbar and pick its own pill
-	 * density from what it gets.
+	 * Let the row size its pills from the space its toolbar actually has left.
 	 *
-	 * Measuring only answers the question when the row is granted the space that
-	 * is actually free: a `flex-shrink-0` row always measures its own natural
-	 * width, which says nothing about whether its neighbours still fit. So the
-	 * ladder is opt-in, and the opt-in is also the layout change that makes it
-	 * meaningful. A surface that sits beside something else already claiming the
-	 * leftover width (the Director's Notes activity graph) leaves it off and
-	 * renders at full size.
+	 * The row does NOT claim that space - it stays its natural width so the
+	 * controls flanking it sit right beside the pills rather than being pushed
+	 * out to the panel's edges. It only needs to KNOW the figure, which it reads
+	 * from its parent (see `useFreeWidthInFlexRow`). It is still allowed to
+	 * shrink, so a squeeze the ladder has not caught up with clips the pills
+	 * instead of pushing a neighbour off screen.
+	 *
+	 * Opt-in, because a surface that sits beside something already consuming the
+	 * leftover width (the Director's Notes activity graph) has no free figure to
+	 * read and should render at full size.
 	 */
 	fillWidth?: boolean;
 }
@@ -82,9 +84,9 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 }: HistoryFilterToggleProps) {
 	const rowRef = useRef<HTMLDivElement>(null);
 	const mirrorRef = useRef<HTMLDivElement>(null);
-	// Only observed when the row owns the leftover width; otherwise the number
-	// would be the row's own natural width and the comparison would be circular.
-	const availableWidth = useElementWidth(rowRef, fillWidth);
+	// Read from the PARENT, never from the row. The row's own width is the thing
+	// being decided here, so measuring it to choose it would be circular.
+	const availableWidth = useFreeWidthInFlexRow(rowRef, fillWidth);
 	const labelsWidth = useElementWidth(mirrorRef, fillWidth);
 
 	// Read alongside the labels, because the two move together: a change to the
@@ -116,11 +118,16 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 			data-testid="history-filter-toggle"
 			className={
 				fillWidth
-					? // `overflow-hidden` is the guarantee, not the layout: the pills can
-						// never paint over the search and help buttons flanking them, even
-						// at an interface font the bottom rung cannot absorb. Losing the
-						// edge of a pill is survivable; losing a control is not.
-						'relative flex gap-2 flex-1 min-w-0 justify-center overflow-hidden'
+					? // Natural width, so the toolbar's `justify-center` gathers the
+						// pills and the controls flanking them into one centred group
+						// instead of spreading them to the panel's two edges.
+						//
+						// `min-w-0` plus the default flex-shrink is the guarantee behind
+						// that: a squeeze the ladder has not caught up with shrinks THIS
+						// row and clips a pill, rather than pushing the search and help
+						// buttons out past the panel. Losing the edge of a pill is
+						// survivable; losing a control is not.
+						'relative flex gap-2 min-w-0 justify-center overflow-hidden'
 					: 'relative flex gap-2 flex-shrink-0'
 			}
 		>
