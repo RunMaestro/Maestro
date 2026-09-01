@@ -102,6 +102,20 @@ vi.mock('../../../../main/auto-updater', () => ({
 	setAllowPrerelease: vi.fn(),
 }));
 
+// Mock power manager. The real singleton reaches for electron's
+// powerSaveBlocker, which this file's electron mock does not provide.
+vi.mock('../../../../main/power-manager', () => ({
+	powerManager: {
+		setEnabled: vi.fn(),
+		isEnabled: vi.fn(),
+		setKeepDisplayAwake: vi.fn(),
+		isKeepingDisplayAwake: vi.fn(),
+		getStatus: vi.fn(),
+		addBlockReason: vi.fn(),
+		removeBlockReason: vi.fn(),
+	},
+}));
+
 // Mock tunnel manager
 vi.mock('../../../../main/tunnel-manager', () => ({
 	tunnelManager: {
@@ -133,6 +147,7 @@ import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
+import { powerManager } from '../../../../main/power-manager';
 import * as fsSync from 'fs';
 
 describe('system IPC handlers', () => {
@@ -258,6 +273,7 @@ describe('system IPC handlers', () => {
 				// Power management handlers
 				'power:setEnabled',
 				'power:isEnabled',
+				'power:setKeepDisplayAwake',
 				'power:getStatus',
 				'power:addReason',
 				'power:removeReason',
@@ -272,6 +288,47 @@ describe('system IPC handlers', () => {
 
 			// Verify exact count
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	// `preventDisplaySleepEnabled` is the only power preference the main process
+	// has to restore for itself: the renderer's toggle pushes the value down on
+	// change, but nothing replays it after a restart, so without the read at
+	// registration the setting reads as ON in Settings while the blocker is
+	// still running at the weaker `prevent-app-suspension` type.
+	describe('power:setKeepDisplayAwake', () => {
+		it('persists the preference and pushes it to the power manager', async () => {
+			await handlers.get('power:setKeepDisplayAwake')!({} as any, true);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', true);
+		});
+
+		it('persists the off state too', async () => {
+			await handlers.get('power:setKeepDisplayAwake')!({} as any, false);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(false);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', false);
+		});
+
+		it('restores a saved preference at registration', () => {
+			vi.clearAllMocks();
+			mockSettingsStore.get.mockImplementation((key: string) =>
+				key === 'preventDisplaySleepEnabled' ? true : undefined
+			);
+
+			registerSystemHandlers(deps);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+		});
+
+		it('does not touch the power manager when nothing was saved', () => {
+			vi.clearAllMocks();
+			mockSettingsStore.get.mockReturnValue(undefined);
+
+			registerSystemHandlers(deps);
+
+			expect(powerManager.setKeepDisplayAwake).not.toHaveBeenCalled();
 		});
 	});
 

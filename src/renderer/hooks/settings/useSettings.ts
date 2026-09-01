@@ -306,6 +306,8 @@ export interface UseSettingsReturn {
 	// Power management settings
 	preventSleepEnabled: boolean;
 	setPreventSleepEnabled: (value: boolean) => Promise<void>;
+	preventDisplaySleepEnabled: boolean;
+	setPreventDisplaySleepEnabled: (value: boolean) => Promise<void>;
 
 	// Rendering settings
 	disableGpuAcceleration: boolean;

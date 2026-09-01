@@ -420,6 +420,7 @@ export interface SettingsStoreState {
 	statsCollectionEnabled: boolean;
 	defaultStatsTimeRange: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 	preventSleepEnabled: boolean;
+	preventDisplaySleepEnabled: boolean;
 	disableGpuAcceleration: boolean;
 	disableConfetti: boolean;
 	localIgnorePatterns: string[];
@@ -647,6 +648,7 @@ export interface SettingsStoreActions {
 	setLogLevel: (value: string) => Promise<void>;
 	setMaxLogBuffer: (value: number) => Promise<void>;
 	setPreventSleepEnabled: (value: boolean) => Promise<void>;
+	setPreventDisplaySleepEnabled: (value: boolean) => Promise<void>;
 
 	// Standalone active time
 	setTotalActiveTimeMs: (value: number) => void;
@@ -811,6 +813,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
+		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
 		localIgnorePatterns: [...DEFAULT_LOCAL_IGNORE_PATTERNS],
@@ -1776,6 +1779,19 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			} catch (error) {
 				// Rollback on failure so UI stays in sync with actual power state
 				set({ preventSleepEnabled: prev });
+				throw error; // Let Sentry capture
+			}
+		},
+
+		setPreventDisplaySleepEnabled: async (value) => {
+			const prev = get().preventDisplaySleepEnabled;
+			set({ preventDisplaySleepEnabled: value });
+			try {
+				await window.maestro.settings.set('preventDisplaySleepEnabled', value);
+				await window.maestro.power.setKeepDisplayAwake(value);
+			} catch (error) {
+				// Rollback on failure so UI stays in sync with actual power state
+				set({ preventDisplaySleepEnabled: prev });
 				throw error; // Let Sentry capture
 			}
 		},
@@ -2881,6 +2897,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['preventSleepEnabled'] !== undefined)
 			patch.preventSleepEnabled = allSettings['preventSleepEnabled'] as boolean;
 
+		if (allSettings['preventDisplaySleepEnabled'] !== undefined)
+			patch.preventDisplaySleepEnabled = allSettings['preventDisplaySleepEnabled'] as boolean;
+
 		if (allSettings['disableGpuAcceleration'] !== undefined)
 			patch.disableGpuAcceleration = allSettings['disableGpuAcceleration'] as boolean;
 
@@ -3349,6 +3368,7 @@ export function getSettingsActions() {
 		setStatsCollectionEnabled: state.setStatsCollectionEnabled,
 		setDefaultStatsTimeRange: state.setDefaultStatsTimeRange,
 		setPreventSleepEnabled: state.setPreventSleepEnabled,
+		setPreventDisplaySleepEnabled: state.setPreventDisplaySleepEnabled,
 		setDisableGpuAcceleration: state.setDisableGpuAcceleration,
 		setDisableConfetti: state.setDisableConfetti,
 		setLocalIgnorePatterns: state.setLocalIgnorePatterns,

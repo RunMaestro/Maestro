@@ -49,6 +49,7 @@ const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
 const mockSetPreventSleepEnabled = vi.fn();
+const mockSetPreventDisplaySleepEnabled = vi.fn();
 const mockSetDisableGpuAcceleration = vi.fn();
 const mockSetDisableConfetti = vi.fn();
 const mockSetCheckForUpdatesOnStartup = vi.fn();
@@ -94,6 +95,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Power management
 		preventSleepEnabled: false,
 		setPreventSleepEnabled: mockSetPreventSleepEnabled,
+		preventDisplaySleepEnabled: false,
+		setPreventDisplaySleepEnabled: mockSetPreventDisplaySleepEnabled,
 		// Rendering
 		disableGpuAcceleration: false,
 		setDisableGpuAcceleration: mockSetDisableGpuAcceleration,
@@ -1034,6 +1037,66 @@ describe('GeneralTab', () => {
 			expect(
 				screen.queryByText(/limited support on some Linux desktop environments/)
 			).not.toBeInTheDocument();
+		});
+
+		it('should disable the display toggle while sleep prevention is off', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const toggle = screen.getByRole('switch', { name: 'Keep the display awake' });
+			expect(toggle).toBeDisabled();
+
+			fireEvent.click(screen.getByText('Keep the display awake').closest('[role="button"]')!);
+			expect(mockSetPreventDisplaySleepEnabled).not.toHaveBeenCalled();
+		});
+
+		it('should toggle keep display awake when sleep prevention is on', async () => {
+			mockUseSettingsOverrides = { preventSleepEnabled: true };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Keep the display awake' }));
+			expect(mockSetPreventDisplaySleepEnabled).toHaveBeenCalledWith(true);
+		});
+
+		it('should warn about paused macOS maintenance when the option is on', async () => {
+			const { isMacOSPlatform } = await import('../../../../../renderer/utils/platformUtils');
+			vi.mocked(isMacOSPlatform).mockReturnValue(true);
+			mockUseSettingsOverrides = {
+				preventSleepEnabled: true,
+				preventDisplaySleepEnabled: true,
+			};
+
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByText(/housekeeping stays parked/)).toBeInTheDocument();
+
+			vi.mocked(isMacOSPlatform).mockReturnValue(false);
+		});
+
+		it('should not warn about macOS maintenance on other platforms', async () => {
+			mockUseSettingsOverrides = {
+				preventSleepEnabled: true,
+				preventDisplaySleepEnabled: true,
+			};
+
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.queryByText(/housekeeping stays parked/)).not.toBeInTheDocument();
 		});
 	});
 

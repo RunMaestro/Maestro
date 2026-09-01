@@ -96,6 +96,7 @@ describe('useSettings', () => {
 			statsCollectionEnabled: true,
 			defaultStatsTimeRange: 'week',
 			preventSleepEnabled: false,
+			preventDisplaySleepEnabled: false,
 			disableGpuAcceleration: false,
 			disableConfetti: false,
 			sshRemoteIgnorePatterns: ['.git', '*cache*'],

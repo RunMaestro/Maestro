@@ -143,6 +143,7 @@ function resetStore() {
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
+		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
@@ -166,6 +167,7 @@ describe('settingsStore', () => {
 		if (!window.maestro.power) {
 			(window.maestro as any).power = {
 				setEnabled: vi.fn().mockResolvedValue(undefined),
+				setKeepDisplayAwake: vi.fn().mockResolvedValue(undefined),
 			};
 		}
 
@@ -854,6 +856,22 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().preventSleepEnabled).toBe(true);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('preventSleepEnabled', true);
 			expect(window.maestro.power.setEnabled).toHaveBeenCalledWith(true);
+		});
+
+		it('setPreventDisplaySleepEnabled updates state, persists, and calls power.setKeepDisplayAwake', async () => {
+			await useSettingsStore.getState().setPreventDisplaySleepEnabled(true);
+			expect(useSettingsStore.getState().preventDisplaySleepEnabled).toBe(true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', true);
+			expect(window.maestro.power.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+		});
+
+		it('setPreventDisplaySleepEnabled rolls back when the power call fails', async () => {
+			(window.maestro.power.setKeepDisplayAwake as any).mockRejectedValueOnce(new Error('boom'));
+
+			await expect(useSettingsStore.getState().setPreventDisplaySleepEnabled(true)).rejects.toThrow(
+				'boom'
+			);
+			expect(useSettingsStore.getState().preventDisplaySleepEnabled).toBe(false);
 		});
 	});
 

@@ -99,6 +99,11 @@ The AI produces a structured report organized by agent/project with sections for
 
 The synopsis is rendered as rich markdown with full formatting support.
 
+**Grouping:**
+Inside each section the bullets are bucketed under a subheading so you are not re-deriving who did what on every line. An agent that belongs to a Left Bar group is filed under the group (emoji and all), and each bullet keeps a small pill naming which member did it. An agent with no group gets its own subheading, and the pill is dropped because it would only repeat the heading. A section whose bullets all share one owner stays a flat list.
+
+The grouping comes from Maestro's own session and group state, not from the AI, so it always matches what the Left Bar shows. It applies to Rich Mode, Plain Mode, Copy, and Save alike.
+
 **Provider Configuration:**
 Configure which AI provider generates the synopsis in **Settings > Encore Features**. Any installed agent (Claude Code, Codex, OpenCode) can be used. The default lookback window is also configurable there.
 

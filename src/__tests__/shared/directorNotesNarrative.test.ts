@@ -23,6 +23,7 @@ import {
 	narrativeToMarkdown,
 	type DirectorNotesNarrative,
 } from '../../shared/directorNotesNarrative';
+import { buildNarrativeGroupLookup } from '../../shared/directorNotesGrouping';
 
 /**
  * A representative, fully-formed narrative exercising every optional field:
@@ -209,7 +210,11 @@ describe('parseDirectorNotesNarrative', () => {
 
 			const markdown = narrativeToMarkdown(result.narrative);
 			expect(markdown).toContain('## Progress Toward Ideal End State');
-			expect(markdown).toContain('- Ingest pipeline is 3 of 5 milestones in. _(parser-a)_');
+			// The section mixes an attributed and an unattributed bullet, so it
+			// buckets: the agent moves to a subheading and stops repeating on the
+			// bullet itself.
+			expect(markdown).toContain('### parser-a');
+			expect(markdown).toContain('- Ingest pipeline is 3 of 5 milestones in.');
 		});
 	});
 
@@ -401,7 +406,7 @@ describe('parseDirectorNotesNarrative', () => {
 			expect(md).toContain('- Fixed the JSON leak');
 		});
 
-		it('bolds critical items and appends the agent as italic attribution', () => {
+		it('bolds critical items and buckets each agent under its own subheading', () => {
 			const md = narrativeToMarkdown({
 				version: 1,
 				sections: [
@@ -415,8 +420,65 @@ describe('parseDirectorNotesNarrative', () => {
 					},
 				],
 			});
+			expect(md).toContain('### rc');
+			expect(md).toContain('- **Build pipeline broke**');
+			expect(md).toContain('### Maestro');
+			expect(md).toContain('- Routine cleanup');
+			// Under an agent heading the attribution would only repeat the heading.
+			expect(md).not.toContain('_(rc)_');
+		});
+
+		it('keeps the attribution inline when every bullet shares one agent', () => {
+			const md = narrativeToMarkdown({
+				version: 1,
+				sections: [
+					{
+						kind: 'challenges',
+						title: 'Challenges',
+						items: [
+							{ text: 'Build pipeline broke', severity: 'critical', agent: 'rc' },
+							{ text: 'Routine cleanup', agent: 'rc' },
+						],
+					},
+				],
+			});
+			// One bucket means no subheading is worth drawing.
+			expect(md).not.toContain('###');
 			expect(md).toContain('- **Build pipeline broke** _(rc)_');
+			expect(md).toContain('- Routine cleanup _(rc)_');
+		});
+
+		it('buckets by GROUP when a lookup maps the agents into one', () => {
+			const md = narrativeToMarkdown(
+				{
+					version: 1,
+					sections: [
+						{
+							kind: 'challenges',
+							title: 'Challenges',
+							items: [
+								{ text: 'Build pipeline broke', agent: 'rc' },
+								{ text: 'Routine cleanup', agent: 'Maestro' },
+								{ text: 'Voice models stalled', agent: 'acappella' },
+							],
+						},
+					],
+				},
+				{
+					groupLookup: buildNarrativeGroupLookup([
+						{ agent: 'rc', group: 'Maestro Core', emoji: '🎬' },
+						{ agent: 'Maestro', group: 'Maestro Core', emoji: '🎬' },
+					]),
+				}
+			);
+			// Two grouped agents collapse into one bucket; the ungrouped one keeps
+			// its own, and inside a group the pill still names the member.
+			expect(md).toContain('### 🎬 Maestro Core');
+			expect(md).toContain('- Build pipeline broke _(rc)_');
 			expect(md).toContain('- Routine cleanup _(Maestro)_');
+			expect(md).toContain('### acappella');
+			expect(md).toContain('- Voice models stalled');
+			expect(md).not.toContain('_(acappella)_');
 		});
 
 		it('keeps warn/info items plain (no bold)', () => {

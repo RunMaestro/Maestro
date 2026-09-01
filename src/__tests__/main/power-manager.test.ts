@@ -123,6 +123,76 @@ describe('PowerManager', () => {
 		});
 	});
 
+	describe('setKeepDisplayAwake', () => {
+		it('should default to off', async () => {
+			const { powerManager } = PowerManagerModule;
+
+			expect(powerManager.isKeepingDisplayAwake()).toBe(false);
+			expect(powerManager.getStatus().keepDisplayAwake).toBe(false);
+		});
+
+		it('should lift a background reason to prevent-display-sleep', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.setKeepDisplayAwake(true);
+			powerManager.addBlockReason('test:session1');
+
+			expect(mockBlocker.start).toHaveBeenCalledWith('prevent-display-sleep');
+			expect(powerManager.getStatus().blockerType).toBe('prevent-display-sleep');
+		});
+
+		it('should NOT hold a blocker when there are no reasons', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.setKeepDisplayAwake(true);
+
+			expect(mockBlocker.start).not.toHaveBeenCalled();
+			expect(powerManager.getStatus().blocking).toBe(false);
+		});
+
+		it('should restart an active blocker at the stronger type', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.addBlockReason('test:session1');
+			expect(mockBlocker.start).toHaveBeenCalledWith('prevent-app-suspension');
+
+			powerManager.setKeepDisplayAwake(true);
+
+			expect(mockBlocker.stop).toHaveBeenCalled();
+			expect(mockBlocker.start).toHaveBeenLastCalledWith('prevent-display-sleep');
+		});
+
+		it('should drop back to prevent-app-suspension when turned off', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setEnabled(true);
+			powerManager.setKeepDisplayAwake(true);
+			powerManager.addBlockReason('test:session1');
+
+			powerManager.setKeepDisplayAwake(false);
+
+			expect(mockBlocker.start).toHaveBeenLastCalledWith('prevent-app-suspension');
+			expect(powerManager.getStatus().keepDisplayAwake).toBe(false);
+		});
+
+		it('should stay inert while the feature is disabled', async () => {
+			const { powerManager } = PowerManagerModule;
+			const { powerSaveBlocker: mockBlocker } = await import('electron');
+
+			powerManager.setKeepDisplayAwake(true);
+			powerManager.addBlockReason('test:session1');
+
+			expect(mockBlocker.start).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('addBlockReason', () => {
 		it('should NOT start blocker when disabled', async () => {
 			const { powerManager } = PowerManagerModule;

@@ -927,6 +927,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'accessibility',
 	},
+	preventDisplaySleepEnabled: {
+		description:
+			'Also keep the display awake while work is in flight, blocking the screen saver, the screen lock, and idle logout. On macOS this pauses background maintenance. Requires preventSleepEnabled.',
+		type: 'boolean',
+		default: false,
+		category: 'accessibility',
+	},
 	disableGpuAcceleration: {
 		description: 'Disable GPU hardware acceleration. May fix rendering issues on some systems.',
 		type: 'boolean',

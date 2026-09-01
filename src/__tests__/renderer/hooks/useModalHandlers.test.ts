@@ -1957,6 +1957,47 @@ describe('useModalHandlers', () => {
 			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
 		});
 
+		it('leaves the active group chat when jumping to a different agent', () => {
+			const session1 = createMockSession({ id: 'session-1' });
+			const session2 = createMockSession({ id: 'session-2' });
+			useSessionStore.setState({
+				sessions: [session1, session2],
+				activeSessionId: 'session-2',
+			});
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+
+			const resumeRef = { current: vi.fn() };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+		});
+
+		it('leaves the active group chat when the target agent is already active', () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+
+			const resumeRef = { current: vi.fn() };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+		});
+
 		it('does not call resume when ref is null', () => {
 			const session = createMockSession({ id: 'session-1' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
