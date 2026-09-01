@@ -416,7 +416,7 @@ export function getTabDisplayName(tab: AITab, _sessionAgentSessionId?: string | 
 /**
  * Format a session/tab ID into a short display label.
  */
-function formatSessionId(id: string): string {
+export function formatSessionId(id: string): string {
 	// OpenCode format: ses_XXXX... or SES_XXXX...
 	if (id.toLowerCase().startsWith('ses_')) {
 		return `SES_${id.slice(4, 8).toUpperCase()}`;
@@ -431,6 +431,27 @@ function formatSessionId(id: string): string {
 	}
 	// Generic fallback: first 8 chars uppercase
 	return id.slice(0, 8).toUpperCase();
+}
+
+/**
+ * Whether a name is really just the id label {@link getTabDisplayName} falls back
+ * to when a tab has no name at all (`8535E0E3`, `SES_4BCD`, `THR_ABC1`).
+ *
+ * Surfaces that RECORD a tab's display name - the history entry's `sessionName`,
+ * the session-origins store - capture whatever was on screen, so an unnamed tab
+ * records its own fallback. Anything that later restores a name from one of
+ * those records has to ask this first: writing the label back as `tab.name`
+ * turns a placeholder into a CUSTOM name, and a tab with a custom name is never
+ * auto-named again. It renders identically, so the tab looks merely unnamed
+ * while quietly having opted out of ever getting a real name.
+ *
+ * Compares against the formatter rather than matching a hex pattern: only one of
+ * the four id shapes it produces is 8 hex characters, so a regex silently lets
+ * the OpenCode and Codex labels through.
+ */
+export function isSessionIdLabel(name: string | null | undefined, agentSessionId?: string | null) {
+	if (!name || !agentSessionId) return false;
+	return name === formatSessionId(agentSessionId);
 }
 
 export function getInitialRenameValue(tab: AITab): string {
@@ -754,10 +775,14 @@ export function getActiveTab(session: Session): AITab | undefined {
 	}
 
 	const activeTab = session.aiTabs.find((tab) => tab.id === session.activeTabId);
+	if (activeTab) return activeTab;
 
-	// Fallback to first tab if activeTabId doesn't match any tab
-	// (can happen after tab deletion or data corruption)
-	return activeTab ?? session.aiTabs[0];
+	// Fallback when activeTabId doesn't match any tab (tab deletion, data
+	// corruption, or a deliberately blank id). Prefer a tab the strip draws a chip
+	// for: falling onto a hidden consult tab paints a conversation the user never
+	// opened, with nothing in the strip to click back from. Only when every tab is
+	// hidden does the first one still win, so callers keep getting a tab at all.
+	return session.aiTabs.find((tab) => !isAiTabHidden(tab)) ?? session.aiTabs[0];
 }
 
 /**
@@ -1028,6 +1053,18 @@ export function closeTab(
 	// Remove tab from aiTabs
 	let updatedTabs = session.aiTabs.filter((tab) => tab.id !== tabId);
 
+	// AI tabs the strip still draws a chip for. A hidden consult tab is a data
+	// container with no chip, so it can neither keep the agent company nor be
+	// switched to: counting one as a survivor leaves an empty strip with some
+	// unrelated conversation rendered under it and no way back.
+	const visibleUpdatedTabs = updatedTabs.filter((tab) => !isAiTabHidden(tab));
+	// Where the closed tab sat among the tabs the user could see, so "the tab to
+	// the left" means the chip to its left rather than an array slot that counts
+	// hidden tabs nobody was looking at.
+	const visibleTabIndex = session.aiTabs
+		.filter((tab) => !isAiTabHidden(tab) || tab.id === tabId)
+		.findIndex((tab) => tab.id === tabId);
+
 	// Tabs of other kinds that survive this close. Closing the last AI tab only
 	// forces a fresh replacement when the agent would otherwise be left with no
 	// tabs at all, so a brand new agent still always has a chat to type into.
@@ -1043,7 +1080,8 @@ export function closeTab(
 	// Fallback unified tab ref when the closed tab was active - may be terminal or file
 	let fallbackRef: UnifiedTabRef | null = null;
 	let createdFreshTab = false;
-	if (updatedTabs.length === 0 && otherTabCount === 0) {
+	let freshTabId = '';
+	if (visibleUpdatedTabs.length === 0 && otherTabCount === 0) {
 		const freshTab: AITab = {
 			id: generateId(),
 			agentSessionId: null,
@@ -1055,7 +1093,10 @@ export function closeTab(
 			createdAt: Date.now(),
 			state: 'idle',
 		};
-		updatedTabs = [freshTab];
+		// Hidden consult tabs survive alongside the replacement - they are the
+		// user's data, and revealing one later is still their call.
+		updatedTabs = [...updatedTabs, freshTab];
+		freshTabId = freshTab.id;
 		newActiveTabId = freshTab.id;
 		createdFreshTab = true;
 	} else if (session.activeTabId === tabId) {
@@ -1074,11 +1115,12 @@ export function closeTab(
 				const closedTabNavIndex = getNavigableTabs(session, true).findIndex((t) => t.id === tabId);
 				const newNavIndex = Math.max(0, closedTabNavIndex - 1);
 				newActiveTabId = navigableTabs[Math.min(newNavIndex, navigableTabs.length - 1)].id;
-			} else {
-				// No more unread tabs - fall back to selecting by position in full list
-				// Select the tab to the left, or first tab if we were at position 0
-				const newIndex = Math.max(0, tabIndex - 1);
-				newActiveTabId = updatedTabs[newIndex].id;
+			} else if (visibleUpdatedTabs.length > 0) {
+				// No more unread tabs - fall back to selecting by position in the list
+				// the strip draws. Select the tab to the left, or the first tab if we
+				// were at position 0.
+				const newIndex = Math.max(0, visibleTabIndex - 1);
+				newActiveTabId = visibleUpdatedTabs[Math.min(newIndex, visibleUpdatedTabs.length - 1)].id;
 			}
 		} else {
 			// Normal mode: use repaired unifiedTabOrder to find the correct left neighbor.
@@ -1101,17 +1143,20 @@ export function closeTab(
 			if (closedUnifiedIndex !== -1 && remainingUnified.length > 0) {
 				const fallbackIndex = Math.max(0, closedUnifiedIndex - 1);
 				fallbackRef = remainingUnified[Math.min(fallbackIndex, remainingUnified.length - 1)];
-			} else if (updatedTabs.length > 0) {
-				// unifiedTabOrder out of sync - fall back to aiTabs position
-				const newIndex = Math.max(0, tabIndex - 1);
-				newActiveTabId = updatedTabs[newIndex].id;
+			} else if (visibleUpdatedTabs.length > 0) {
+				// unifiedTabOrder out of sync - fall back to aiTabs position, counted
+				// over the tabs that actually have a chip.
+				const newIndex = Math.max(0, visibleTabIndex - 1);
+				newActiveTabId = visibleUpdatedTabs[Math.min(newIndex, visibleUpdatedTabs.length - 1)].id;
 			}
 		}
 	}
 
-	// No AI tab survives, so there is nothing for activeTabId to point at. Covers
-	// every path above, including closing a non-active sole AI tab.
-	if (updatedTabs.length === 0) {
+	// No AI tab the user can see survives, so there is nothing for activeTabId to
+	// point at. Covers every path above, including closing a non-active sole AI
+	// tab. Hidden consult tabs do not count: leaving the id on one renders that
+	// conversation with no chip anywhere in the strip.
+	if (visibleUpdatedTabs.length === 0 && !createdFreshTab) {
 		newActiveTabId = '';
 	}
 
@@ -1129,15 +1174,17 @@ export function closeTab(
 	// If we created a fresh tab, add it to unifiedTabOrder at the end
 	let finalUnifiedTabOrder = updatedUnifiedTabOrder;
 	if (createdFreshTab) {
-		const freshTabRef: UnifiedTabRef = { type: 'ai', id: updatedTabs[0].id };
+		const freshTabRef: UnifiedTabRef = { type: 'ai', id: freshTabId };
 		finalUnifiedTabOrder = [...updatedUnifiedTabOrder, freshTabRef];
 	}
 
-	// With no AI tabs left, activeTabId must stop pointing at the tab we just
-	// removed. A dangling id makes a later switch back to AI mode render an input
-	// area bound to a tab that no longer exists. Non-AI fallbacks otherwise keep
-	// activeTabId so returning to AI mode lands on the same tab as before.
-	const survivingActiveTabId = updatedTabs.length === 0 ? '' : session.activeTabId;
+	// With no visible AI tabs left, activeTabId must stop pointing at the tab we
+	// just removed. A dangling id makes a later switch back to AI mode render an
+	// input area bound to a tab that no longer exists - and with hidden consult
+	// tabs in the session it renders one of those instead, chipless. Non-AI
+	// fallbacks otherwise keep activeTabId so returning to AI mode lands on the
+	// same tab as before.
+	const survivingActiveTabId = visibleUpdatedTabs.length === 0 ? '' : session.activeTabId;
 
 	// Create updated session.
 	// When the fallback is a non-AI tab (terminal or file), we must update the corresponding

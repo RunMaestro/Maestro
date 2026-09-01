@@ -21,6 +21,15 @@ vi.mock('../../../../main/cue/cue-github-poller', () => ({
 
 import { createCueGitHubPollerTriggerSource } from '../../../../main/cue/triggers/cue-github-poller-trigger-source';
 import { createCueSessionRegistry } from '../../../../main/cue/cue-session-registry';
+
+// The SusFactor guard is exercised in cue-susfactor.test.ts; here we only care
+// that the trigger source honours its verdict, so it is stubbed to a value the
+// test controls. Without this the guard would read ODIN_API_TOKEN from the
+// developer's environment and could make a real network call.
+let susFactorAllows = true;
+vi.mock('../../../../main/cue/cue-susfactor', () => ({
+	guardGitHubEvent: vi.fn(async () => susFactorAllows),
+}));
 import type { CueEvent, CueEventType, CueSubscription } from '../../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../../shared/types';
 
@@ -141,7 +150,8 @@ describe('cue-github-poller-trigger-source', () => {
 		source.stop();
 	});
 
-	it('emit fires when the underlying poller reports an event', () => {
+	it('emit fires when the underlying poller reports an event', async () => {
+		susFactorAllows = true;
 		const emit = vi.fn();
 		const source = createCueGitHubPollerTriggerSource({
 			session: makeSession(),
@@ -158,8 +168,35 @@ describe('cue-github-poller-trigger-source', () => {
 		};
 		config.onEvent(makeEvent('github.pull_request'));
 
-		expect(emit).toHaveBeenCalledOnce();
+		// The emit is deferred behind the async SusFactor gate, so it lands on a
+		// later microtask rather than synchronously inside onEvent.
+		await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce());
 
+		source.stop();
+	});
+
+	it('does not emit when SusFactor blocks the item', async () => {
+		susFactorAllows = false;
+		const emit = vi.fn();
+		const source = createCueGitHubPollerTriggerSource({
+			session: makeSession(),
+			subscription: makeSub('github.pull_request'),
+			registry: createCueSessionRegistry(),
+			enabled: () => true,
+			onLog: vi.fn(),
+			emit,
+		})!;
+
+		source.start();
+		const config = mockCreateCueGitHubPoller.mock.calls[0][0] as {
+			onEvent: (event: CueEvent) => void;
+		};
+		config.onEvent(makeEvent('github.pull_request'));
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(emit).not.toHaveBeenCalled();
+
+		susFactorAllows = true;
 		source.stop();
 	});
 

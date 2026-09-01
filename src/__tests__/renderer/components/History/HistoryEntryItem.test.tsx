@@ -366,7 +366,37 @@ describe('HistoryEntryItem', () => {
 		const sessionButton = screen.getByTitle('session-abc-123');
 		fireEvent.click(sessionButton);
 
-		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project');
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project', undefined);
+	});
+
+	// The pill is the only place the closed session's name still exists: the tab
+	// that carried it is gone, and the origins fallback resume falls back to is
+	// Claude-only and only ever written by a synopsis. Dropping it here is what
+	// made a restore come back as the bare id octet.
+	it('hands the entry name to onOpenSessionAsTab so the restored tab keeps it', () => {
+		const onOpenSessionAsTab = vi.fn();
+		const entry = createMockEntry({
+			agentSessionId: 'session-abc-123',
+			sessionName: 'PP Farm Meta Data',
+		});
+		render(
+			<HistoryEntryItem
+				entry={entry}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+				onOpenSessionAsTab={onOpenSessionAsTab}
+			/>
+		);
+
+		fireEvent.click(screen.getByTitle('PP Farm Meta Data'));
+
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+			'session-abc-123',
+			'/test/project',
+			'PP Farm Meta Data'
+		);
 	});
 
 	it('shows elapsed time when present', () => {

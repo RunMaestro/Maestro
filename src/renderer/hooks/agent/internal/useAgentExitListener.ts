@@ -26,6 +26,7 @@ import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import {
+	formatSessionId,
 	getActiveTab,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
@@ -303,9 +304,13 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					}
 
 					const agentSessionId = completedTab?.agentSessionId || currentSession.agentSessionId;
+					// Same label the tab strip draws, via the one formatter. A hand-rolled
+					// `substring(0, 8)` agrees with it on a UUID and disagrees on a Codex
+					// thread id (`THREAD_A` vs the strip's `THR_ABC1`), so the history
+					// entry recorded a placeholder that matched nothing on screen and that
+					// no "is this just the id?" check could recognize.
 					const tabName =
-						completedTab?.name ||
-						(agentSessionId ? agentSessionId.substring(0, 8).toUpperCase() : undefined);
+						completedTab?.name || (agentSessionId ? formatSessionId(agentSessionId) : undefined);
 
 					toastData = {
 						title,

@@ -47,7 +47,7 @@ interface HistoryPanelProps {
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
 	fileTree?: FileNode[];
@@ -504,7 +504,7 @@ export const HistoryPanel = React.memo(
 					return;
 				}
 				trackShortcutUsage('historyJumpToSession');
-				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath);
+				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath, entry.sessionName);
 			},
 			[allFilteredEntries, onOpenSessionAsTab]
 		);
@@ -1001,7 +1001,10 @@ export const HistoryPanel = React.memo(
 						agentId={session.toolType}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}
-						onResumeSession={onResumeSession}
+						// Prefer the open-as-tab path: it carries the entry's projectPath and
+						// sessionName, so a resume from the modal names the tab exactly like a
+						// resume from the row behind it.
+						onResumeSession={onOpenSessionAsTab ?? onResumeSession}
 						onDelete={handleDeleteEntry}
 						onUpdate={async (entryId, updates) => {
 							// Pass sessionId for efficient lookup in per-session storage

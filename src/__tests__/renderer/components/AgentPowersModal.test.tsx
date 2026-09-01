@@ -39,7 +39,7 @@ describe('AgentPowersModal', () => {
 		// then names a third thing neither wizard step showed.
 		renderModal();
 
-		expect(screen.getByText('Change any setting')).toBeInTheDocument();
+		expect(screen.getByText('Change Any Setting')).toBeInTheDocument();
 		const prompt = screen.getByTestId('agent-powers-example-change-any-setting').textContent ?? '';
 		expect(prompt).toMatch(/font/i);
 		expect(prompt).toMatch(/theme/i);
@@ -49,11 +49,11 @@ describe('AgentPowersModal', () => {
 	it('shows the range beyond appearance', () => {
 		renderModal();
 
-		expect(screen.getByText('Create agents')).toBeInTheDocument();
-		expect(screen.getByText('Write an Auto Run doc')).toBeInTheDocument();
-		expect(screen.getByText('Schedule a task')).toBeInTheDocument();
-		expect(screen.getByText('Build a Cue pipeline')).toBeInTheDocument();
-		expect(screen.getByText('Build me a dashboard')).toBeInTheDocument();
+		expect(screen.getByText('Create Agents')).toBeInTheDocument();
+		expect(screen.getByText('Write an Auto Run Doc')).toBeInTheDocument();
+		expect(screen.getByText('Schedule a Task')).toBeInTheDocument();
+		expect(screen.getByText('Build a Cue Pipeline')).toBeInTheDocument();
+		expect(screen.getByText('Build Me a Dashboard')).toBeInTheDocument();
 	});
 
 	it('splits the two automation pills by what starts them', () => {

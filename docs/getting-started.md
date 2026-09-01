@@ -10,6 +10,34 @@ This guide gets you from install to a first productive session with Maestro.
 
 Follow the [Installation](./installation) instructions for your platform, then launch Maestro.
 
+### First run
+
+The first time Maestro opens, it asks three short questions before getting out of the way. Every answer is an ordinary setting you can change later, and **Back** steps you through the series in either direction.
+
+**Choose your typography.** Two presets, previewed side by side on real sample text:
+
+![The first-run typography chooser](./screenshots/onboarding-typography.png)
+
+- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview use a proportional face; the terminal and file editor stay monospace.
+- **Hacker** - monospace everywhere.
+
+Pick either, or **Fine-tune in Settings** to set a font per surface right away. See [Typography](./configuration#typography).
+
+**Pick a theme.** Click any theme to try it on - the whole app changes as you browse, and nothing is saved until you keep it. Dark and light sets are offered separately. See [Themes](./configuration).
+
+**Your Agents Can Drive Maestro.** The closing screen makes a point worth reading, because it is the part people miss: you just set your typography and theme by hand, and you did not have to. Agents running inside Maestro reach the same controls the interface does, so you can ask for what you want in plain language instead of finding the screen.
+
+![The first-run screen explaining that agents can drive Maestro](./screenshots/onboarding-agent-powers.png)
+
+Examples it offers, all of which work:
+
+- "Set my AI chat font to Inter, switch me to a light theme, and turn on OS notifications."
+- "Create a new agent called Scratch pointed at my home directory."
+- "Every weekday at 9am, summarize what changed in this repo overnight."
+- "Whenever a pull request opens on this repo, have an agent review it and report back."
+
+Maestro is a keyboard-first power tool, and it rewards learning the shortcuts. It does not require it.
+
 ## 2. Create an agent
 
 Maestro supports **Claude Code**, **Codex** (OpenAI), and **OpenCode**, plus **Factory Droid**, **Copilot-CLI**, **Hermes**, **Pi**, **Qwen3 Coder**, and **Oh My Pi** in beta. Make sure at least one is installed and authenticated.
