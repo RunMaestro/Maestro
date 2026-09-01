@@ -746,6 +746,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		logger.info('Sleep prevention restored from settings', 'PowerManager');
 	}
 
+	const savedKeepDisplayAwake = settingsStore.get(
+		'preventDisplaySleepEnabled' as keyof MaestroSettings
+	);
+	if (savedKeepDisplayAwake === true) {
+		powerManager.setKeepDisplayAwake(true);
+		logger.info('Display sleep prevention restored from settings', 'PowerManager');
+	}
+
 	// Set whether sleep prevention is enabled
 	ipcMain.handle('power:setEnabled', async (_event, enabled: boolean) => {
 		powerManager.setEnabled(enabled);
@@ -755,6 +763,12 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	// Check if sleep prevention is enabled
 	ipcMain.handle('power:isEnabled', async () => {
 		return powerManager.isEnabled();
+	});
+
+	// Lift blockers to prevent-display-sleep (screen saver / lock / idle logout)
+	ipcMain.handle('power:setKeepDisplayAwake', async (_event, keepAwake: boolean) => {
+		powerManager.setKeepDisplayAwake(keepAwake);
+		settingsStore.set('preventDisplaySleepEnabled' as keyof MaestroSettings, keepAwake);
 	});
 
 	// Get current power management status

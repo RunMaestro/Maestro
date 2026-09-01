@@ -405,6 +405,16 @@ Sleep prevention automatically activates when:
 
 When all activity stops, sleep prevention deactivates automatically.
 
+### Keep the Display Awake
+
+By default Maestro keeps the machine running but lets the screen go dark, so the screen saver, the screen lock, and your normal power settings all behave as usual.
+
+Turn on **Keep the display awake** (in the same **Power** section, off by default) when you want to watch a long run instead: the display stays lit, the screen saver and lock screen never arrive, and you are not logged out for being idle. It only takes effect while sleep prevention is holding the machine awake, so an idle Maestro still lets everything sleep.
+
+<Warning>
+On macOS, a lit display is how the OS decides someone is at the machine, and it parks discretionary background maintenance while that is true. Spotlight indexing, Photos analysis, XProtect scans, Time Machine thinning, and background updates all wait until the run finishes. That is the trade: an uninterrupted, still-signed-in session in exchange for deferred housekeeping.
+</Warning>
+
 ### Platform Support
 
 | Platform    | Support Level                 | Notes                                                                                                       |

@@ -481,6 +481,10 @@ const settingsWatcher = createSettingsWatcher({
 		if (enabled !== powerManager.isEnabled()) {
 			powerManager.setEnabled(enabled);
 		}
+		const keepDisplayAwake = store.get('preventDisplaySleepEnabled') === true;
+		if (keepDisplayAwake !== powerManager.isKeepingDisplayAwake()) {
+			powerManager.setKeepDisplayAwake(keepDisplayAwake);
+		}
 	},
 });
 

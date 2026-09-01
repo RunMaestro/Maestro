@@ -2037,10 +2037,12 @@ interface MaestroAPI {
 	power: {
 		setEnabled: (enabled: boolean) => Promise<void>;
 		isEnabled: () => Promise<boolean>;
+		setKeepDisplayAwake: (keepAwake: boolean) => Promise<void>;
 		getStatus: () => Promise<{
 			enabled: boolean;
 			blocking: boolean;
 			reasons: string[];
+			keepDisplayAwake: boolean;
 			platform: 'darwin' | 'win32' | 'linux';
 		}>;
 		addReason: (reason: string) => Promise<void>;

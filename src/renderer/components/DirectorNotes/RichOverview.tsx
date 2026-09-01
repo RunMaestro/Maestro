@@ -39,6 +39,7 @@ import { logger } from '../../utils/logger';
 import { daysToLookbackHours, bucketCountForLookback } from './lookback';
 import { NarrativeSections } from './NarrativeSections';
 import { richSectionId } from './directorNotesToc';
+import { useNarrativeGroupLookup } from './useNarrativeGroupLookup';
 import { NarrativeParseError } from './NarrativeParseError';
 import {
 	looksLikeStructuredOutput,
@@ -96,6 +97,9 @@ export function RichOverview({
 	chatMath = false,
 }: RichOverviewProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	// Agent -> group mapping for narrative bucketing. Derived from live session
+	// state, never from the model.
+	const groupLookup = useNarrativeGroupLookup();
 	const [richStats, setRichStats] = useState<RichStats | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const requestIdRef = useRef(0);
@@ -297,7 +301,7 @@ export function RichOverview({
 							recovery={narrativeRecovery}
 						/>
 					)}
-					<NarrativeSections theme={theme} narrative={narrative} />
+					<NarrativeSections theme={theme} narrative={narrative} groupLookup={groupLookup} />
 				</>
 			) : narrativeError || looksLikeStructuredOutput(synopsis) ? (
 				// Same invariant as Plain Mode: JSON-shaped output with no narrative

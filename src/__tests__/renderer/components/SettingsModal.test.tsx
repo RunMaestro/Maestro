@@ -269,6 +269,8 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		// Power management settings
 		preventSleepEnabled: false,
 		setPreventSleepEnabled: vi.fn(),
+		preventDisplaySleepEnabled: false,
+		setPreventDisplaySleepEnabled: vi.fn(),
 		// Rendering settings
 		disableGpuAcceleration: false,
 		setDisableGpuAcceleration: vi.fn(),

@@ -8,6 +8,14 @@
  * reflect their optional `severity` (critical = red emphasis) and surface an
  * `agent` tag as a small pill when present.
  *
+ * Within a section the bullets are bucketed by `bucketNarrativeItems`: by the
+ * agent's GROUP when Maestro knows one, by the agent otherwise. A flat
+ * twenty-plus-bullet section makes the reader re-derive ownership on every
+ * line. The agent pill survives only inside a GROUP bucket, where it still
+ * carries information (which member did it); under an agent header it would
+ * just repeat the header. Headers are drawn only when a section has more than
+ * one bucket.
+ *
  * Presentational only: it takes the already-parsed `DirectorNotesNarrative` and
  * the active `theme` via props and reuses `SectionCard` from the shared widget
  * library. It never introduces a sixth status color - severity maps onto the
@@ -22,12 +30,24 @@ import type {
 	NarrativeItem,
 	NarrativeSectionKind,
 } from '../../../shared/directorNotesNarrative';
+import {
+	bucketNarrativeItems,
+	shouldRenderBuckets,
+	type NarrativeBucket,
+	type NarrativeGroupLookup,
+} from '../../../shared/directorNotesGrouping';
 import { SectionCard } from '../widgets';
 import { richSectionId } from './directorNotesToc';
 
 interface NarrativeSectionsProps {
 	theme: Theme;
 	narrative: DirectorNotesNarrative;
+	/**
+	 * Resolves an agent name to its Left Bar group. Omit it and every bullet
+	 * buckets by agent, which is the correct fallback for a caller with no
+	 * session state (tests, the CLI-shaped paths).
+	 */
+	groupLookup?: NarrativeGroupLookup | null;
 }
 
 /** Per-kind icon used in the section header. Accent resolves from the theme. */
@@ -78,10 +98,13 @@ const NarrativeBullet = memo(function NarrativeBullet({
 	item,
 	sectionAccent,
 	theme,
+	showAgentPill = true,
 }: {
 	item: NarrativeItem;
 	sectionAccent: string;
 	theme: Theme;
+	/** False under an agent header, where the pill would repeat the header. */
+	showAgentPill?: boolean;
 }) {
 	const { dotColor, textColor, bold } = severityStyle(item, sectionAccent, theme);
 	return (
@@ -93,7 +116,7 @@ const NarrativeBullet = memo(function NarrativeBullet({
 			/>
 			<div className="flex-1 min-w-0">
 				<span style={{ color: textColor, fontWeight: bold ? 600 : 400 }}>{item.text}</span>
-				{item.agent && (
+				{showAgentPill && item.agent && (
 					<span
 						className="ml-2 inline-block align-middle px-1.5 py-0.5 rounded text-[0.65rem] font-medium whitespace-nowrap"
 						style={{
@@ -110,15 +133,65 @@ const NarrativeBullet = memo(function NarrativeBullet({
 	);
 });
 
+/**
+ * One bucket: a header naming the group (or agent) followed by its bullets.
+ * The header sizes one step below the section title - it is subordinate to the
+ * card heading it sits under, the same rule `HeaderActionButton` follows.
+ */
+const NarrativeBucketBlock = memo(function NarrativeBucketBlock({
+	bucket,
+	sectionAccent,
+	theme,
+}: {
+	bucket: NarrativeBucket;
+	sectionAccent: string;
+	theme: Theme;
+}) {
+	return (
+		<div className="flex flex-col gap-2">
+			<div className="flex items-center gap-2">
+				<span
+					className="text-xs font-semibold uppercase tracking-wide"
+					style={{ color: bucket.isUnattributed ? theme.colors.textDim : theme.colors.textMain }}
+				>
+					{bucket.emoji ? `${bucket.emoji} ` : ''}
+					{bucket.label}
+				</span>
+				<span
+					className="flex-1 h-px"
+					style={{ backgroundColor: theme.colors.border }}
+					aria-hidden="true"
+				/>
+			</div>
+			<ul className="flex flex-col gap-2 pl-1">
+				{bucket.items.map((item, itemIndex) => (
+					<NarrativeBullet
+						key={itemIndex}
+						item={item}
+						sectionAccent={sectionAccent}
+						theme={theme}
+						// Inside a group the pill still names which member did it;
+						// under an agent header it would just repeat the header.
+						showAgentPill={bucket.isGroup}
+					/>
+				))}
+			</ul>
+		</div>
+	);
+});
+
 export const NarrativeSections = memo(function NarrativeSections({
 	theme,
 	narrative,
+	groupLookup,
 }: NarrativeSectionsProps) {
 	return (
 		<div className="flex flex-col gap-4 select-text">
 			{narrative.sections.map((section, sectionIndex) => {
 				const accent = accentForKind(section.kind, theme);
 				const Icon = KIND_ICON[section.kind] ?? ArrowRight;
+				const buckets = bucketNarrativeItems(section.items, groupLookup);
+				const grouped = shouldRenderBuckets(buckets);
 				return (
 					<SectionCard
 						key={`${section.kind}-${sectionIndex}`}
@@ -141,6 +214,17 @@ export const NarrativeSections = memo(function NarrativeSections({
 							<p className="text-sm italic" style={{ color: theme.colors.textDim }}>
 								Nothing to report.
 							</p>
+						) : grouped ? (
+							<div className="flex flex-col gap-4">
+								{buckets.map((bucket, bucketIndex) => (
+									<NarrativeBucketBlock
+										key={`${bucket.label}-${bucketIndex}`}
+										bucket={bucket}
+										sectionAccent={accent}
+										theme={theme}
+									/>
+								))}
+							</div>
 						) : (
 							<ul className="flex flex-col gap-2">
 								{section.items.map((item, itemIndex) => (

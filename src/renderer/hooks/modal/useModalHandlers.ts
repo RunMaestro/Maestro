@@ -1024,6 +1024,12 @@ export function useModalHandlers(
 			// Close the Director's Notes modal
 			getModalActions().setDirectorNotesOpen(false);
 
+			// A group chat outranks the agent view in the main window, so landing
+			// on the right agent is not enough - without this the jump appears to
+			// do nothing because the room is still what's rendered. Also covers the
+			// early-return below, where activeSessionId already points at the target.
+			useGroupChatStore.getState().setActiveGroupChatId(null);
+
 			// If already on the right agent, resume directly
 			if (useSessionStore.getState().activeSessionId === sourceSessionId) {
 				handleResumeSessionRef?.current?.(agentSessionId, undefined, sessionName);

@@ -159,6 +159,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				preventSleepEnabled={settings.preventSleepEnabled}
 				setPreventSleepEnabled={settings.setPreventSleepEnabled}
+				preventDisplaySleepEnabled={settings.preventDisplaySleepEnabled}
+				setPreventDisplaySleepEnabled={settings.setPreventDisplaySleepEnabled}
 			/>
 			<RenderingSection
 				theme={theme}
