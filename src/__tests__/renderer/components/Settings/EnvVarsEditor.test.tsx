@@ -519,6 +519,29 @@ describe('EnvVarsEditor', () => {
 			expect(screen.queryByTitle(/^Enable /)).not.toBeInTheDocument();
 		});
 
+		it('puts the eye button ahead of the key it switches', () => {
+			// The toggle leads the row rather than sitting between the key and the
+			// `=`. Every row's control then starts at the same x, so a column of
+			// them can be scanned down; wedged mid-row it moved with the key
+			// width and split the `KEY = value` phrase it is not part of.
+			render(
+				<EnvVarsEditor
+					envVars={{ MY_VAR: 'hello' }}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{}}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			const toggle = screen.getByTitle(/^Disable MY_VAR/);
+			const keyInput = screen.getByDisplayValue('MY_VAR');
+
+			expect(toggle.compareDocumentPosition(keyInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+				Node.DOCUMENT_POSITION_FOLLOWING
+			);
+		});
+
 		it('moves a variable out of the effective env when switched off', () => {
 			render(
 				<EnvVarsEditor

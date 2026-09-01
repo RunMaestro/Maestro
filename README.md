@@ -87,8 +87,12 @@ On the Agents tab, Escape clears the agent filter first when it holds text, so f
 | Preview document / open link | Enter                          |
 | Recenter graph on node       | Space                          |
 | Cycle preview length         | P                              |
-| Close graph                  | Escape                         |
+| Step back / close graph      | Escape                         |
 | Search documents             | Focus search input, type query |
+
+Escape steps back one level at a time: out of the search box first (your query stays,
+so the matches are still highlighted while you arrow to one), then it clears the query,
+then it closes the graph.
 
 Additional interactions: Drag nodes to reposition, scroll to zoom, use mini-map for overview.
 

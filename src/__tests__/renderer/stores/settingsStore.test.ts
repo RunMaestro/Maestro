@@ -12,6 +12,7 @@ import {
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
+import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import {
 	selectShowNowPlayingIndicator,
@@ -95,7 +96,7 @@ function resetStore() {
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
-		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		fontFamily: MAESTRO_FONT_STACK,
 		fontSize: 14,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -213,7 +214,7 @@ describe('settingsStore', () => {
 			expect(state.shellEnvVars).toEqual({});
 			expect(state.shellEnvVarsDisabled).toEqual({});
 			expect(state.ghPath).toBe('');
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
 			// Every surface font defaults to empty, meaning "inherit the interface
 			// font", so a fresh install pins no surface to a face of its own.
 			expect(state.terminalFontFamily).toBe('');
@@ -1938,7 +1939,7 @@ describe('settingsStore', () => {
 
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
 			expect(state.fontSize).toBe(14);
 		});
 

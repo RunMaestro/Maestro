@@ -88,6 +88,7 @@ vi.mock('../../../../renderer/components/DocumentGraph/graphDataBuilder', () => 
 // Now import the component after mocks are set up
 import {
 	DocumentGraphView,
+	SEARCH_BOX_WIDTH,
 	type DocumentGraphViewProps,
 } from '../../../../renderer/components/DocumentGraph/DocumentGraphView';
 
@@ -1846,6 +1847,21 @@ describe('DocumentGraphView', () => {
 			expect(inputStyles.borderOnInactive).toBe('transparent');
 		});
 
+		it('is wide enough to show its own placeholder', () => {
+			// A box that clips its hint to "Search docume" reads as broken, and
+			// the hint is the only thing naming what the box searches. The width
+			// has to clear the text plus both icon gutters (pl-8 + pr-8 = 64px).
+			// SEARCH_BOX_WIDTH is the value the component actually renders, so
+			// shrinking it back below the hint fails here.
+			const ICON_GUTTERS = 64;
+			// "Search documents..." at text-sm, measured generously.
+			const PLACEHOLDER_WIDTH = 140;
+
+			expect(SEARCH_BOX_WIDTH - ICON_GUTTERS).toBeGreaterThan(PLACEHOLDER_WIDTH);
+			// The old value did not, which is the bug this pins.
+			expect(180 - ICON_GUTTERS).toBeLessThan(PLACEHOLDER_WIDTH);
+		});
+
 		it('search is case insensitive', () => {
 			// The nodeMatchesSearch function converts both query and content to lowercase:
 			// const lowerQuery = query.toLowerCase().trim();
@@ -1932,7 +1948,8 @@ describe('DocumentGraphView', () => {
 		 * - ArrowUp/Down/Left/Right: Navigate to connected nodes in that direction
 		 * - Enter: Open the selected node (document or external link)
 		 * - Tab: Cycle through connected nodes
-		 * - Escape: Close the modal (handled by layer stack)
+		 * - Escape: climbs the escape ladder (search box -> query -> close),
+		 *   handled by the layer stack rather than by the input
 		 */
 
 		describe('getConnectedNodes', () => {
@@ -2207,6 +2224,44 @@ describe('DocumentGraphView', () => {
 				const focusAnimationDuration = 300;
 
 				expect(navigationAnimationDuration).toBeLessThan(focusAnimationDuration);
+			});
+		});
+
+		describe('escape ladder', () => {
+			/**
+			 * One rung per press. The rungs are ordered by what the user is most
+			 * likely to have meant, and the ladder exists so no press ever skips
+			 * straight to closing the graph.
+			 *
+			 * The ladder lives in the layer's `onEscape`, not on the input's
+			 * `onKeyDown`: LayerStackProvider handles Escape at CAPTURE on
+			 * `window`, so a handler on the input runs too late to matter and its
+			 * `stopPropagation` cannot un-run a listener that already fired. An
+			 * `onKeyDown` version of this ladder was in place and dead - every
+			 * Escape went straight to the close confirmation.
+			 */
+			const climb = (searchFocused: boolean, query: string) => {
+				if (searchFocused) return 'blur-to-graph';
+				if (query) return 'clear-query';
+				return 'close';
+			};
+
+			it('hands focus back to the graph when the caret is in the search box', () => {
+				// The user asked for exactly this: Escape out of the box should not
+				// take the whole modal with it.
+				expect(climb(true, '')).toBe('blur-to-graph');
+				expect(climb(true, 'readme')).toBe('blur-to-graph');
+			});
+
+			it('keeps the query on that first press', () => {
+				// "search, then arrow to a hit" only works if the highlighted nodes
+				// survive the key that gets you out of the text box.
+				expect(climb(true, 'readme')).not.toBe('clear-query');
+			});
+
+			it('clears the query on the next press, then closes on the one after', () => {
+				expect(climb(false, 'readme')).toBe('clear-query');
+				expect(climb(false, '')).toBe('close');
 			});
 		});
 

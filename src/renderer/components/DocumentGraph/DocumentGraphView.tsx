@@ -118,6 +118,13 @@ import { useSettingsStore } from '../../stores/settingsStore';
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
 
+/**
+ * Width of the toolbar's search box, in px.
+ *
+ * Wide enough for the full "Search documents..." placeholder at `text-sm` plus
+ * both icon gutters. It was 180, which clipped the hint mid-word.
+ */
+export const SEARCH_BOX_WIDTH = 230;
 /** Default maximum number of nodes to load initially */
 const DEFAULT_MAX_NODES = 200;
 /** Number of additional nodes to load when clicking "Load more" */
@@ -413,9 +420,20 @@ export function DocumentGraphView({
 	const streamingActiveRef = useRef(false);
 
 	/**
-	 * Handle escape - confirm first, unless closing is cheap enough not to.
+	 * Handle escape.
+	 *
+	 * The body lives in `escapeLadderRef`, assigned during render further down
+	 * where the search query, the node list, and `handleNodeSelect` are all in
+	 * scope. Registering this stable wrapper instead keeps the layer
+	 * registration from re-running on every keystroke in the search box.
 	 */
+	const escapeLadderRef = useRef<() => void>(() => {});
 	const handleEscapeRequest = useCallback(() => {
+		escapeLadderRef.current();
+	}, []);
+
+	/** The bottom rung: confirm first, unless closing is cheap enough not to. */
+	const requestClose = useCallback(() => {
 		if (!confirmOnClose) {
 			onCloseRef.current();
 			return;
@@ -1371,34 +1389,49 @@ export function DocumentGraphView({
 	 * First Escape: clear search if there's content
 	 * Second Escape (or first if empty): blur search, return focus to graph, select center node
 	 */
-	const handleSearchKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key === 'Escape') {
-				e.stopPropagation(); // Prevent layer stack from handling
-				if (searchQuery) {
-					// First Escape: clear search query
-					setSearchQuery('');
-				} else {
-					// Second Escape (or first if empty): blur search, select center node, focus graph
-					searchInputRef.current?.blur();
+	/**
+	 * Escape is a LADDER, climbed one rung per press, never skipping to close.
+	 *
+	 *   1. caret in the search box -> hand focus back to the graph, query intact
+	 *   2. search still has text    -> clear it
+	 *   3. otherwise                -> close (confirming per `confirmOnClose`)
+	 *
+	 * Rung 1 is what makes "search, then arrow to a hit" work: the query has to
+	 * survive the key that gets you out of the text box, or the highlighted
+	 * nodes you were about to walk to go dim as you reach for them.
+	 *
+	 * This is assigned during render rather than bound to the input's own
+	 * `onKeyDown`, because the layer stack handles Escape at CAPTURE on
+	 * `window` (see `LayerStackProvider`) - so a handler on the input never
+	 * sees the key, and `stopPropagation` there cannot stop a listener that has
+	 * already run. An `onKeyDown` version of this ladder was in place and dead:
+	 * every Escape went straight to the close confirmation.
+	 */
+	escapeLadderRef.current = () => {
+		if (document.activeElement === searchInputRef.current) {
+			searchInputRef.current?.blur();
 
-					// Select the center node (the focus file) first
-					if (activeFocusFile) {
-						const centerNode = nodes.find((n) => n.filePath === activeFocusFile);
-						if (centerNode) {
-							handleNodeSelect(centerNode);
-						}
-					}
-
-					// Focus the mind map container after state update
-					requestAnimationFrame(() => {
-						mindMapContainerRef.current?.focus();
-					});
+			// Select the center node (the focus file) first, so the arrow keys
+			// have somewhere to start from.
+			if (activeFocusFile) {
+				const centerNode = nodes.find((n) => n.filePath === activeFocusFile);
+				if (centerNode) {
+					handleNodeSelect(centerNode);
 				}
 			}
-		},
-		[searchQuery, activeFocusFile, nodes, handleNodeSelect]
-	);
+
+			// Focus the mind map container after state update
+			requestAnimationFrame(() => {
+				mindMapContainerRef.current?.focus();
+			});
+			return;
+		}
+		if (searchQuery) {
+			setSearchQuery('');
+			return;
+		}
+		requestClose();
+	};
 
 	/**
 	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
@@ -1587,13 +1620,17 @@ export function DocumentGraphView({
 					className="px-6 py-4 border-b flex items-center justify-between flex-shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-3">
-						<Network className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+					{/* The title yields first. This row neither wraps nor scrolls, and
+					    the modal clips at its right edge, so something has to give when
+					    it gets tight - and a truncated heading costs the user nothing
+					    next to a close button pushed out of the window. */}
+					<div className="flex items-center gap-3 min-w-0 shrink">
+						<Network className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="text-lg font-semibold truncate" style={{ color: theme.colors.textMain }}>
 							Document Graph
 						</h2>
 						<span
-							className="text-xs px-2 py-0.5 rounded"
+							className="text-xs px-2 py-0.5 rounded truncate"
 							style={{
 								backgroundColor: `${theme.colors.accent}20`,
 								color: theme.colors.textDim,
@@ -1603,9 +1640,9 @@ export function DocumentGraphView({
 						</span>
 					</div>
 
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-3 shrink-0">
 						{/* Search Input */}
-						<div className="relative">
+						<div className="relative shrink-0">
 							<Search
 								className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
 								style={{ color: theme.colors.textDim }}
@@ -1615,14 +1652,20 @@ export function DocumentGraphView({
 								type="text"
 								value={searchQuery}
 								onChange={(e) => setSearchQuery(e.target.value)}
-								onKeyDown={handleSearchKeyDown}
 								placeholder="Search documents..."
-								className="pl-8 pr-3 py-1.5 rounded text-sm outline-none transition-colors"
+								// `pr-8` keeps a permanent slot for the clear button rather
+								// than adding one when a query appears: a padding that
+								// changes with the value reflows the text under the caret on
+								// the first keystroke.
+								className="pl-8 pr-8 py-1.5 rounded text-sm outline-none transition-colors"
 								style={{
 									backgroundColor: `${theme.colors.accent}10`,
 									color: theme.colors.textMain,
 									border: `1px solid ${searchQuery ? theme.colors.accent : 'transparent'}`,
-									width: 180,
+									// Sized to hold the whole placeholder. A box that clips its
+									// own hint to "Search docume" reads as a broken control,
+									// and the hint is the only thing naming what it searches.
+									width: SEARCH_BOX_WIDTH,
 								}}
 								onFocus={(e) => (e.currentTarget.style.borderColor = theme.colors.accent)}
 								onBlur={(e) =>

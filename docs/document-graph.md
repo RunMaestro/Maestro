@@ -84,9 +84,11 @@ The Document Graph is designed for keyboard-first navigation:
 | Switch scroll to zoom or pan  | `S`                               |
 | Adjust node spacing           | `+` / `-`                         |
 | Focus search                  | `Cmd/Ctrl+F`                      |
-| Close graph or help panel     | `Esc`                             |
+| Step back / close graph       | `Esc`                             |
 
 `L` steps through Mind Map, Radial, Hierarchical, Force, Lobes, and Timeline, in the same order as the layout dropdown. `D` widens the depth one level per press (1 through 5, then All, then back to 1). `P` steps the preview length through Off, 50, 100, 200, 350, and 500 characters. `F` re-frames the whole graph, and `S` switches what the scroll wheel does.
+
+`Esc` steps back out one level at a time rather than closing outright. It closes the help panel first if that is open, then it takes you out of the search box **with your query intact**, which is the point: search, `Esc`, then arrow to a hit while the matches are still highlighted. Press it again to clear the search, and once more to close the graph.
 
 Closing asks for confirmation first, since `Esc` would otherwise discard the layout, depth, and node positions you set up. Turn that prompt off in **Settings → Display → Document Graph**. A graph opened from the [Memories](./memories) viewer never asks either way: `Esc` hands you straight back to that viewer, so there is nothing to lose.
 
