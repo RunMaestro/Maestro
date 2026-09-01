@@ -201,7 +201,7 @@ Use "agent" in user-facing language. Reserve "session" for provider-level conver
 ### Automation
 
 - **Cue** - Event-driven automation system (Maestro Cue), gated as an Encore Feature. Watches for file changes, time intervals, agent completions, GitHub PRs/issues, and pending markdown tasks to trigger automated prompts. Configured via `.maestro/cue.yaml` per project.
-- **Cue Modal** - Dashboard for managing Cue subscriptions and viewing activity (`CueModal.tsx`)
+- **Cue Modal** - Dashboard for managing Cue subscriptions and viewing activity (`CueModal/CueModal.tsx`)
 
 ### Agent States (color-coded)
 
@@ -277,7 +277,7 @@ npm run test:watch    # Run tests in watch mode
 src/
 ├── main/                    # Electron main process (Node.js)
 │   ├── index.ts            # Entry point, IPC handlers
-│   ├── preload.ts          # Secure IPC bridge
+│   ├── preload/            # Secure IPC bridge (one module per namespace)
 │   ├── process-manager.ts  # Process spawning (PTY + child_process)
 │   ├── agent-*.ts          # Agent detection, capabilities, session storage
 │   ├── cue/               # Maestro Cue event-driven automation engine
@@ -315,7 +315,7 @@ src/
 
 | Task                          | Primary Files                                                                                                                                                                                                                                                    |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add IPC handler               | `src/main/index.ts`, `src/main/preload.ts`                                                                                                                                                                                                                       |
+| Add IPC handler               | `src/main/index.ts`, `src/main/preload/` (one module per namespace)                                                                                                                                                                                              |
 | Add UI component              | `src/renderer/components/`                                                                                                                                                                                                                                       |
 | Add web/mobile component      | `src/web/components/`, `src/web/mobile/`                                                                                                                                                                                                                         |
 | Add keyboard shortcut         | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                                                                                                                 |
@@ -339,12 +339,12 @@ src/
 | Add marketplace playbook      | `src/main/ipc/handlers/marketplace.ts` (import from GitHub)                                                                                                                                                                                                      |
 | Playbook import/export        | `src/main/ipc/handlers/playbooks.ts` (ZIP handling with assets)                                                                                                                                                                                                  |
 | Modify wizard flow            | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                                                                                                                                                     |
-| Add tour step                 | `src/renderer/components/Wizard/tour/tourSteps.ts`                                                                                                                                                                                                               |
+| Add tour step                 | `src/renderer/components/Wizard/tour/tourSteps.tsx`                                                                                                                                                                                                              |
 | Modify file linking           | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                                                                                                                                            |
 | Add documentation page        | `docs/*.md`, `docs/docs.json` (navigation)                                                                                                                                                                                                                       |
 | Add documentation screenshot  | `docs/screenshots/` (PNG, kebab-case naming)                                                                                                                                                                                                                     |
 | MCP server integration        | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                                                                                                                                                     |
-| Add stats/analytics feature   | `src/main/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                                                                                                         |
+| Add stats/analytics feature   | `src/main/stats/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                                                                                                   |
 | Add Usage Dashboard chart     | `src/renderer/components/UsageDashboard/`                                                                                                                                                                                                                        |
 | Add Document Graph feature    | `src/renderer/components/DocumentGraph/`, `src/main/ipc/handlers/documentGraph.ts`                                                                                                                                                                               |
 | Add colorblind palette        | `src/renderer/constants/colorblindPalettes.ts`                                                                                                                                                                                                                   |
@@ -360,7 +360,7 @@ src/
 | Modify history activity graph | `src/renderer/components/History/ActivityGraph.tsx`, `src/main/utils/history-bucket-cache.ts` (disk-cached aggregates), `src/main/utils/history-bucket-builder.ts`                                                                                               |
 | Add Cue event type            | `src/main/cue/cue-types.ts`, `src/main/cue/cue-engine.ts`                                                                                                                                                                                                        |
 | Add Cue template variable     | `src/shared/templateVariables.ts`, `src/main/cue/cue-executor.ts`                                                                                                                                                                                                |
-| Modify Cue modal              | `src/renderer/components/CueModal.tsx`                                                                                                                                                                                                                           |
+| Modify Cue modal              | `src/renderer/components/CueModal/`                                                                                                                                                                                                                              |
 | Configure Cue engine          | `src/main/cue/cue-engine.ts`, `src/main/ipc/handlers/cue.ts`                                                                                                                                                                                                     |
 | Add terminal feature          | `src/renderer/components/XTerminal.tsx`, `src/renderer/components/TerminalView.tsx`                                                                                                                                                                              |
 | Modify terminal tabs          | `src/renderer/utils/terminalTabHelpers.ts`, `src/renderer/stores/tabStore.ts`                                                                                                                                                                                    |
