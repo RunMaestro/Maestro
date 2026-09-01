@@ -377,16 +377,20 @@ For commands that need programmatic behavior (not just prompts), handle them in 
 
 Maestro bundles two spec-driven workflow systems. To add a similar bundled command set:
 
+<!-- doc-refs-ignore:start -->
+
 1. **Create prompts directory**: `src/prompts/my-workflow/`
 2. **Add command markdown files**: `my-workflow.command1.md`, `my-workflow.command2.md`
 3. **Create index.ts**: Export command definitions with IDs, slash commands, descriptions, and prompts
 4. **Create metadata.json**: Track source version, commit SHA, and last refreshed date
 5. **Create manager**: `src/main/my-workflow-manager.ts` (handles loading, saving, refreshing)
 6. **Add IPC handlers**: In `src/main/index.ts` for get/set/refresh operations
-7. **Add preload API**: In `src/main/preload.ts` to expose to renderer
+7. **Add preload API**: In a new module under `src/main/preload/` to expose to renderer
 8. **Create UI panel**: Similar to `OpenSpecCommandsPanel.tsx` or `SpecKitCommandsPanel.tsx`
 9. **Add to extraResources**: In `package.json` build config for all platforms
 10. **Create refresh script**: `scripts/refresh-my-workflow.mjs`
+
+<!-- doc-refs-ignore:end -->
 
 Reference the existing Spec-Kit (`src/prompts/speckit/`, `src/main/speckit-manager.ts`) and OpenSpec (`src/prompts/openspec/`, `src/main/openspec-manager.ts`) implementations.
 
@@ -432,7 +436,7 @@ Then add the ID to `ThemeId` type in `src/shared/theme-types.ts` and to the `isV
    });
    ```
 
-2. Expose in `src/main/preload.ts`:
+2. Expose in the matching module under `src/main/preload/`:
 
    ```typescript
    myNamespace: {
@@ -555,7 +559,7 @@ Before implementing, investigate the agent's CLI to determine which capabilities
 
 #### 1. Add Agent Definition
 
-In `src/main/agent-detector.ts`, add to `AGENT_DEFINITIONS`:
+In `src/main/agents/definitions.ts`, add to `AGENT_DEFINITIONS`:
 
 ```typescript
 {
@@ -569,7 +573,7 @@ In `src/main/agent-detector.ts`, add to `AGENT_DEFINITIONS`:
 
 #### 2. Define Capabilities
 
-In `src/main/agent-capabilities.ts` (create if needed):
+In `src/main/agents/capabilities.ts`:
 
 ```typescript
 'my-agent': {
@@ -589,7 +593,7 @@ In `src/main/agent-capabilities.ts` (create if needed):
 
 #### 3. Implement Output Parser
 
-In `src/main/agent-output-parser.ts`, add a parser for the agent's JSON format:
+In `src/main/parsers/agent-output-parser.ts`, add a parser for the agent's JSON format:
 
 ```typescript
 class MyAgentOutputParser implements AgentOutputParser {

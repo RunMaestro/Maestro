@@ -24,6 +24,8 @@ Desktop App (Electron)
 
 The server stack is Fastify with plugins: `@fastify/cors`, `@fastify/websocket`, `@fastify/rate-limit`, `@fastify/static`. See `src/main/web-server/WebServer.ts`.
 
+<!-- doc-refs-ignore -->
+
 > There is no longer a separate mobile React app. The legacy `src/web/mobile/` bundle was retired in Phase 06; its portable hooks were hoisted into `src/renderer`. See the [historical appendix](#appendix-legacy-mobile-retirement-historical) at the end of this guide.
 
 ---
@@ -188,6 +190,8 @@ Wiring the factory into the bridge therefore requires an echo-suppression design
 
 ## Appendix: Legacy Mobile Retirement (historical)
 
+<!-- doc-refs-ignore:start -->
+
 Before Phase 06, the browser interface was a **separate** mobile-optimized React app under `src/web/mobile/` (~39 components) with its own WebSocket/session hooks (`src/web/hooks/useWebSocket.ts`, `useSessions.ts`, ...) and its own Vite bundle (`vite.config.web.mts`, output `dist/web/`). By that point it was already dead: `staticRoutes.ts` served the web-desktop bundle for every SPA route, and the mobile bundle's `index.html` was never served. Its portable hooks had been hoisted into `src/renderer` (Phases 04-05).
 
 Phase 06 retired it in three steps:
@@ -211,6 +215,8 @@ Compiled 2026-07-03 (step 1). Acted on in step 2.
 | `WebServer.ts` `resolveWebAssetsPath()`        | PWA asset path resolution                             | REWORKED (probes web-desktop `manifest.json`; dropped the mobile-app `index.html` + `assets/` requirement) |
 | `staticRoutes.ts` manifest.json / sw.js routes | PWA routes reading `webAssetsPath`                    | KEPT                                                                                                       |
 | `src/__tests__/web/mobile/*` (25 suites)       | Unit tests importing `src/web/mobile/*`               | REMOVED / rewritten                                                                                        |
+
+<!-- doc-refs-ignore:end -->
 
 ### Cross-`src/web` keep dependency
 

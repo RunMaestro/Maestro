@@ -4,6 +4,8 @@
 
 Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-verified counts from scan files.
 
+<!-- doc-refs-ignore -->
+
 > **Note:** This `agent-guides` branch does not include the underlying `SCAN-*.md` evidence files (they live on the companion `docs/codebase-dedup-guides` branch). The tracker below references them by name for cross-reference; counts here were grep-verified as of the "Refreshed" date at the top. To re-verify against current code, grep the patterns described in each finding.
 
 **Status markers (as of 2026-08-27 verification against rc 53a448cf5):**

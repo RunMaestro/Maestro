@@ -520,6 +520,8 @@ prompt is passed positionally on several spawn paths.
 
 ### Step 4: Create Output Parser
 
+<!-- doc-refs-ignore -->
+
 Create `src/main/parsers/your-agent-output-parser.ts`:
 
 ```typescript
@@ -627,6 +629,8 @@ export const YOUR_AGENT_ERROR_PATTERNS = {
 ```
 
 ### Step 7: Implement Session Storage (Optional)
+
+<!-- doc-refs-ignore -->
 
 If your agent stores sessions in browseable files, create `src/main/storage/your-agent-session-storage.ts`:
 
@@ -765,6 +769,8 @@ detectError(line: string): AgentError | null {
 ## Testing Your Agent
 
 ### Unit Tests
+
+<!-- doc-refs-ignore -->
 
 Create `src/__tests__/parsers/your-agent-output-parser.test.ts`:
 

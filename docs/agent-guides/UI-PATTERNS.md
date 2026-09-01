@@ -392,9 +392,28 @@ Run it on the committed `value`, not inside `onChange`. An `onChange`/`onInput` 
 3. `closeTopLayer` checks `onBeforeClose` for dirty modals, then calls the top layer's `onEscape` handler from the handler ref map.
 4. The handler ref map (`handlerRefs`) is updated via `updateLayerHandler` without re-sorting the stack - this is a performance optimization.
 
-### Dismissal Affordance in Search Headers (`EscCloseHint`)
+### Every Modal Needs a Graphical Exit (`<EscCloseButton>`)
 
-Modals with a search header (Tab Switcher, Quick Actions, Agent Sessions) show a keycap-style "ESC" hint next to the input. Do NOT hand-roll that badge - use `<EscCloseHint theme={theme} onClose={...} />` from `src/renderer/components/ui/EscCloseHint.tsx`. On fine pointers it renders the passive ESC hint; on coarse pointers (touch, where no Escape key exists) it renders a real X button wired to `onClose`, so the modal stays closable on phones/tablets.
+**Rule:** a modal, palette, or find bar must always be dismissable with the pointer alone. Escape is not enough: remote desktop sessions swallow it, tablets driving the web interface have no key to send, and a keyboard-only exit reads as "stuck" to the user.
+
+The `ESC` pill is that exit. Use `<EscCloseButton>` (`src/renderer/components/ui/EscCloseButton.tsx`) - do NOT hand-roll the `px-2 py-0.5 rounded text-xs font-bold` pill again. It was previously copy-pasted as an inert `<div>` (three of them with `pointer-events-none`) in nine places, so every one of those surfaces advertised an exit that did nothing on click.
+
+```tsx
+// Header pill, sitting in the search row
+<EscCloseButton theme={theme} onClose={onClose} />
+
+// Adornment pill, absolutely positioned inside a `relative` input wrapper
+<EscCloseButton
+	theme={theme}
+	variant="adornment"
+	label="Close filter (Esc)"
+	onClose={handleFilterEscape}
+/>
+```
+
+`onClose` must do **exactly** what pressing Escape does. When the Escape path lives in a `useModalLayer` / `registerLayer` callback, extract it into a named `useCallback` and pass the same function to both, rather than duplicating the body (see `TerminalOutput`'s `closeOutputSearch` and `QuickActionsModal`'s `handleEscape`).
+
+Tests: query the pill by role, not by index. It is a real `<button>` now, so `getAllByRole('button')[n]` in a modal test counts it - scope list assertions to the rows themselves (e.g. `[data-action-label]`).
 
 ### Fixed-Position UI Inside the Mobile Drawers (portal or it's trapped)
 
@@ -2091,24 +2110,18 @@ App.tsx uses it for edge-swipe drawers on phones, gated on `isNarrowViewport && 
 
 ---
 
-## Exporting Rendered SVG Diagrams (Copy / Save)
+## Right-Click Image Menu (`ImageContextMenuHost`)
 
-Any surface that renders a diagram the user might want to keep should offer the shared right-click menu. Do NOT hand-roll a copy/save affordance.
+Every image anywhere in the app - raster `<img>`, agent-authored inline `<svg>`, Mermaid charts, thumbnails, the lightbox - gets the same three actions on right-click: **Copy Image**, **Save to Project...**, and **Save As...**.
 
-- **Menu:** `<SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />` (`src/renderer/components/SvgContextMenu.tsx`) - "Copy Image" (rasterized PNG) and "Save Image (SVG)".
-- **State:** `useSvgContextMenu()` (`src/renderer/hooks/ui/useSvgContextMenu.ts`) returns `{ svgMenu, dismissSvgMenu, openSvgMenu, openSvgMenuFromContainer }`.
-- **Export logic:** `serializeSvg()`, `svgToPngDataUrl()`, `copySvgToClipboard()`, `downloadSvg()` in `src/renderer/utils/svgExport.ts`.
+**Surfaces wire up nothing.** `<ImageContextMenuHost>` is mounted once in `App.tsx` and owns a single delegated `contextmenu` listener on the document that resolves the image from the click target. Do NOT add an `onContextMenu` to a new image surface, do not call a hook, and do not add a per-surface copy/save button pair. There is no per-surface wiring to forget, which is the entire point: the menu used to hang off individual components, so every new image surface silently shipped without it.
 
-Which opener to use depends on how the SVG got into the DOM:
+- `resolveImageFromEvent(e)` (exported from `ImageContextMenuHost.tsx`) decides what counts. It skips three things: anything inside a `[data-no-image-menu]` subtree, lucide icons (which are `<svg>` but carry the `lucide` class), and anything under 32px rendered (favicons, inline badges).
+- **Opting a surface out:** put `data-no-image-menu` on its container. Use this only when the surface owns its own right-click behavior (e.g. `AnnotatorCanvas`). A menu that already handled the click and called `preventDefault()` is skipped automatically via `defaultPrevented` - that is how `LinkContextMenu` / `FileContextMenu` coexist with this one.
+- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` returns `'image' | 'text' | 'failed'` so the UI can admit when only markup or a URL reached the clipboard rather than claiming a paste-able image. `saveImageToProject()` writes into the project's `DIAGRAMS_DIR` (`.maestro/diagrams/`) and works over SSH; `saveImageElementToDisk()` is the native-dialog path. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
+- `ImageDestinationModal` is the "Save to Project..." destination picker (folder, file name, SVG/PNG format, live path preview). Not to be confused with `FilePreview/ImageSaveModal`, which is the annotator's overwrite-vs-save-as prompt.
 
-| SVG source                                                     | Opener                                                                                      |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| React-rendered `<svg>` (agent-authored inline SVG in markdown) | `openSvgMenu(e.currentTarget, e.clientX, e.clientY)` from the element's own `onContextMenu` |
-| Imperatively injected `<svg>` (Mermaid appends into a div)     | `openSvgMenuFromContainer` on the container's `onContextMenu`                               |
-
-The second case is the one that gets missed: an SVG appended with `appendChild` never passes through React's element tree, so a component map override (like the chat markdown `svg:` renderer) will never see it. Hang the handler off the container instead.
-
-`copySvgToClipboard()` returns `'image' | 'markup' | 'failed'` - flash accordingly. A blanket "Copied to Clipboard" is wrong when rasterization fell back to copying markup as text, and silence is wrong when it failed outright.
+`serializeSvg()` stamps the measured size onto the clone when the source has none. Mermaid sizes charts with CSS (`width="100%"`), and without this the rasterized copy comes out cropped at the browser's 300x150 default.
 
 ---
 

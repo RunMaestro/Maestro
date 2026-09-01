@@ -208,7 +208,7 @@ window.maestro = {
 
 ## Process Manager
 
-The `ProcessManager` class (`src/main/process-manager.ts`) handles two process types:
+The `ProcessManager` class (`src/main/process-manager/ProcessManager.ts`) handles two process types:
 
 ### PTY Processes (via `node-pty`)
 
@@ -392,7 +392,7 @@ Maestro uses 15 custom hooks for state management and functionality.
 
 ### Core Hooks
 
-#### useSettings (`src/renderer/hooks/useSettings.ts`)
+#### useSettings (`src/renderer/hooks/settings/useSettings.ts`)
 
 Manages all application settings with automatic persistence.
 
@@ -409,7 +409,7 @@ Manages all application settings with automatic persistence.
 - Keyboard shortcuts
 - Custom AI commands
 
-#### useSessionManager (`src/renderer/hooks/useSessionManager.ts`)
+#### Agent and group CRUD (`src/renderer/hooks/session/useSessionCrud.ts`, `src/renderer/hooks/session/useGroupManagement.ts`)
 
 Manages agents and groups with CRUD operations.
 
@@ -422,7 +422,7 @@ Manages agents and groups with CRUD operations.
 - `createNewGroup(name, emoji, moveSession, activeSessionId)`
 - Drag and drop handlers
 
-#### useFileTreeManagement (`src/renderer/hooks/useFileTreeManagement.ts`)
+#### useFileTreeManagement (`src/renderer/hooks/git/useFileTreeManagement.ts`)
 
 Manages file tree refresh/filter state and git-related file metadata.
 
@@ -433,7 +433,7 @@ Manages file tree refresh/filter state and git-related file metadata.
 - `cancelFileTreeLoad(sessionId)` - Abort the in-flight tree load (halts further readDir calls; useful over SSH)
 - `filteredFileTree` - Derived tree based on filter string
 
-#### useBatchProcessor (`src/renderer/hooks/useBatchProcessor.ts`)
+#### useBatchProcessor (`src/renderer/hooks/batch/useBatchProcessor.ts`)
 
 Manages Auto Run batch execution logic.
 
@@ -445,7 +445,7 @@ Manages Auto Run batch execution logic.
 
 ### UI Management Hooks
 
-#### useLayerStack (`src/renderer/hooks/useLayerStack.ts`)
+#### useLayerStack (`src/renderer/hooks/ui/useLayerStack.ts`)
 
 Core layer management for modals and overlays.
 
@@ -455,35 +455,35 @@ Core layer management for modals and overlays.
 - `unregisterLayer(id)` - Remove a layer
 - `updateLayerHandler(id, handler)` - Update escape handler
 
-#### useNavigationHistory (`src/renderer/hooks/useNavigationHistory.ts`)
+#### useNavigationHistory (`src/renderer/hooks/session/useNavigationHistory.ts`)
 
 Back/forward navigation through sessions and tabs. See [Navigation History](#navigation-history).
 
 ### Input & Autocomplete Hooks
 
-#### useAtMentionCompletion (`src/renderer/hooks/useAtMentionCompletion.ts`)
+#### useAtMentionCompletion (`src/renderer/hooks/input/useAtMentionCompletion.ts`)
 
 Handles @-mention autocomplete for file references in prompts.
 
-#### useTabCompletion (`src/renderer/hooks/useTabCompletion.ts`)
+#### useTabCompletion (`src/renderer/hooks/input/useTabCompletion.ts`)
 
 Tab completion utilities for terminal-style input.
 
-#### useTemplateAutocomplete (`src/renderer/hooks/useTemplateAutocomplete.ts`)
+#### useTemplateAutocomplete (`src/renderer/hooks/input/useTemplateAutocomplete.ts`)
 
 Template variable autocomplete (e.g., `{{date}}`, `{{time}}`).
 
 ### Feature Hooks
 
-#### useAchievements (`src/renderer/hooks/useAchievements.ts`)
+#### useAchievements (`src/renderer/hooks/batch/useAchievements.ts`)
 
 Achievement/badge system for Auto Run usage. See [Achievement System](#achievement-system).
 
-#### useActivityTracker (`src/renderer/hooks/useActivityTracker.ts`)
+#### useActivityTracker (`src/renderer/hooks/session/useActivityTracker.ts`)
 
 User activity tracking for agent idle detection and status.
 
-#### useMobileLandscape (`src/renderer/hooks/useMobileLandscape.ts`)
+#### useMobileLandscape (`src/renderer/hooks/remote/useMobileLandscape.ts`)
 
 Mobile landscape orientation detection for responsive layouts.
 
@@ -1497,6 +1497,8 @@ groupChatEmitters.emitModeratorUsage(chatId, usage); // Token usage stats
 ---
 
 ## Web/Mobile Interface
+
+<!-- doc-refs-ignore -->
 
 Maestro's mobile and remote-control experience is the **web-desktop build**: the same React renderer (`src/renderer/`) compiled for the browser and served over a WebSocket IPC bridge. There is no longer a separate mobile React app - the legacy `src/web/mobile/` bundle was retired in Phase 06 and its portable touch hooks were hoisted into `src/renderer`. See [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md) for the full guide.
 
