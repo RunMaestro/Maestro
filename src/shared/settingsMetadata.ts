@@ -292,9 +292,10 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'appearance',
 	},
 	fileExplorerIconTheme: {
-		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
+		description:
+			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or default.',
 		type: 'string',
-		default: 'default',
+		default: 'rich',
 		category: 'appearance',
 	},
 	toastWidth: {

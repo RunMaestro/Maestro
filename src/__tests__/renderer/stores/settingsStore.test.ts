@@ -14,6 +14,7 @@ import {
 	useMediaPlaybackStore,
 } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
+import { FILE_EXPLORER_ICON_THEMES } from '../../../renderer/utils/fileExplorerIcons/shared';
 import {
 	DEFAULT_SHORTCUTS,
 	TAB_SHORTCUTS,
@@ -103,7 +104,7 @@ function resetStore() {
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		showHiddenFiles: true,
-		fileExplorerIconTheme: 'default',
+		fileExplorerIconTheme: 'rich',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -214,7 +215,7 @@ describe('settingsStore', () => {
 			expect(state.markdownEditMode).toBe(false);
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.showHiddenFiles).toBe(true);
-			expect(state.fileExplorerIconTheme).toBe('default');
+			expect(state.fileExplorerIconTheme).toBe('rich');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
@@ -1570,15 +1571,15 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
-		it('falls back to default for invalid fileExplorerIconTheme values', async () => {
-			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
+		it('falls back to rich for invalid fileExplorerIconTheme values', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'neon' as any,
 			});
 
 			await loadAllSettings();
 
-			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
 		it('keeps edits made while a reload is in flight', async () => {
@@ -2645,6 +2646,43 @@ describe('settingsStore', () => {
 
 			for (const key of FILE_PREVIEW_TOOLBAR_BUTTON_KEYS) {
 				expect(description).toContain(key);
+			}
+		});
+	});
+	// ========================================================================
+	// 16. File Explorer Icon Theme Metadata Parity
+	// ========================================================================
+
+	// The shipped default lives in three places: the store's initial state, the
+	// invalid-value fallback in loadAllSettings, and SETTINGS_METADATA (which is
+	// what `maestro-cli settings` reports and what a reset writes to disk). The
+	// metadata description had already drifted far enough to advertise two theme
+	// values that never existed.
+	describe('fileExplorerIconTheme metadata parity', () => {
+		it('metadata default is a real icon theme', () => {
+			expect(FILE_EXPLORER_ICON_THEMES).toContain(
+				SETTINGS_METADATA.fileExplorerIconTheme.default as FileExplorerIconTheme
+			);
+		});
+
+		it('metadata default matches the value an invalid setting falls back to', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'neon' as unknown as FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe(
+				SETTINGS_METADATA.fileExplorerIconTheme.default
+			);
+		});
+
+		it('metadata description names every real icon theme', () => {
+			const { description } = SETTINGS_METADATA.fileExplorerIconTheme;
+
+			for (const value of FILE_EXPLORER_ICON_THEMES) {
+				expect(description).toContain(value);
 			}
 		});
 	});

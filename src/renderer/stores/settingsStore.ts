@@ -759,7 +759,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bionifyIntensity: 1,
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
-		fileExplorerIconTheme: 'default',
+		fileExplorerIconTheme: 'rich',
 		toastWidth: 'dynamic',
 		terminalWidth: 100,
 		logLevel: 'info',
@@ -2482,7 +2482,7 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['fileExplorerIconTheme'] !== undefined) {
 			patch.fileExplorerIconTheme = isFileExplorerIconTheme(allSettings['fileExplorerIconTheme'])
 				? allSettings['fileExplorerIconTheme']
-				: 'default';
+				: 'rich';
 		}
 
 		if (allSettings['toastWidth'] !== undefined) {
