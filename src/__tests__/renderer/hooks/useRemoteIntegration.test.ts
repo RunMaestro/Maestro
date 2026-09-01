@@ -49,7 +49,8 @@ describe('useRemoteIntegration', () => {
 	const originalMaestro = { ...window.maestro };
 
 	let onRemoteCommandHandler:
-		Parameters<typeof window.maestro.process.onRemoteCommand>[0] | undefined;
+		| Parameters<typeof window.maestro.process.onRemoteCommand>[0]
+		| undefined;
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
@@ -74,14 +75,18 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		((sessionId: string, tabId: string, newName: string) => void) | undefined;
+		| ((sessionId: string, tabId: string, newName: string) => void)
+		| undefined;
 	let onRemoteStarTabHandler:
-		((sessionId: string, tabId: string, starred: boolean) => void) | undefined;
+		| ((sessionId: string, tabId: string, starred: boolean) => void)
+		| undefined;
 	let onRemoteReorderTabHandler:
-		((sessionId: string, fromIndex: number, toIndex: number) => void) | undefined;
+		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
-		((id: string, expectedRevision: number, responseChannel: string) => void) | undefined;
+		| ((id: string, expectedRevision: number, responseChannel: string) => void)
+		| undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
 		| undefined;
@@ -97,9 +102,11 @@ describe('useRemoteIntegration', () => {
 		  ) => void)
 		| undefined;
 	let onRemoteListQueueHandler:
-		((sessionId: string | undefined, responseChannel: string) => void) | undefined;
+		| ((sessionId: string | undefined, responseChannel: string) => void)
+		| undefined;
 	let onRemoteRemoveQueueItemHandler:
-		((sessionId: string, itemId: string, responseChannel: string) => void) | undefined;
+		| ((sessionId: string, itemId: string, responseChannel: string) => void)
+		| undefined;
 	let onRemoteCreateGistHandler:
 		| ((
 				sessionId: string,
@@ -110,9 +117,11 @@ describe('useRemoteIntegration', () => {
 		  ) => void)
 		| undefined;
 	let onRemoteNotifyToastHandler:
-		Parameters<typeof window.maestro.process.onRemoteNotifyToast>[0] | undefined;
+		| Parameters<typeof window.maestro.process.onRemoteNotifyToast>[0]
+		| undefined;
 	let onRemoteMovementHandler:
-		((params: MovementPayload, responseChannel?: string) => void) | undefined;
+		| ((params: MovementPayload, responseChannel?: string) => void)
+		| undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
