@@ -2136,6 +2136,8 @@ Escape ordering is the host's call. On a layer-stack modal, delegate to `closeIf
 
 The Left Bar header is a single row that neither wraps nor scrolls, and the user can drag the sidebar down to 256px. Every control added to it (the badge pill, the now-playing pill, the LIVE toggle) takes room from a fixed budget, so the row needs a declared yield order rather than whatever CSS happens to shrink first.
 
+**The row is three zones: identity, indicators, menu.** The wand and the wordmark sit in a `shrink-0` zone on the left, the hamburger in a `shrink-0` zone on the right, and every status control goes in the `flex-1 justify-center min-w-0` band between them (`data-testid="sidebar-header-indicators"`). `flex-1` is what centers the band: it takes whatever the two fixed zones leave and centers its contents in that, so the indicators read as their own group rather than as a tail on the wordmark. A new status control belongs in the band, not beside the wordmark.
+
 **The MAESTRO wordmark is drawn in full or not at all.** It used to carry `truncate`, which rendered the brand as "MAE..." on a narrow sidebar. A clipped brand reads as a rendering bug, not as a deliberate space saving, so `SessionList` gates it on a width instead:
 
 ```ts
@@ -2148,10 +2150,20 @@ The wand button stays at every width, so the header never loses its identity or 
 
 **The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. It is therefore `min-w-0` rather than `shrink-0` (a flex item defaults to `min-width: auto` and refuses to go below its content, so both the pill and the button inside it need `min-w-0`), while both transport buttons, both icons, and the divider stay `shrink-0` - they are the entire transport a minimized player has.
 
-Two rules for adding a control here:
+**The wordmark yields ahead of the indicators, so it stops charging them once it is gone.** The LIVE toggle's label threshold adds the badge's reserve only while `showWordmark` is true:
+
+```ts
+const showLiveLabel =
+	leftSidebarWidthState >= LIVE_LABEL_MIN_WIDTH + (showWordmark ? headerBadgeWidth : 0);
+```
+
+Charging for the badge either way is what left a 256px sidebar showing a bare radio dot while the ~110px the wordmark had just vacated sat empty. Above the wordmark threshold the sidebar is already wide enough for both, so the term is only ever a no-op there.
+
+Three rules for adding a control here:
 
 - **Reserve for the form the control is actually in, not its widest form.** The now-playing pill sheds its filename below `NOW_PLAYING_LABEL_MIN_WIDTH`, so `NOW_PLAYING_COMPACT_RESERVE` and `NOW_PLAYING_LABEL_RESERVE` are separate numbers. Reserving the wide figure at every width hides the wordmark to make room for a pill that is no longer that wide.
 - **Ask the store whether the control is on screen, once.** `selectNowPlayingVisible` in `mediaPlaybackStore` answers that for the pill, and both the pill and the header's reserve read it. Two copies of "is it visible" is how a width reserve ends up describing a header nobody is looking at.
+- **Charge a reserve only against what is still drawn.** A control that competes with the wordmark stops competing the moment the wordmark drops out; keeping its cost in a downstream threshold spends room nothing is occupying.
 
 Testing this drives `leftSidebarWidth` in `useSettingsStore` directly, the same way the LIVE-pill tests do; jsdom measures nothing, so a real-layout test is not available. Assert the wordmark's ABSENCE at narrow widths, not that `truncate` is gone - the latter passes on a wordmark that still renders clipped.
 

@@ -7,15 +7,19 @@
  * - Internal edges: Solid lines connecting markdown documents
  * - External edges: Dashed lines connecting to external domains
  * - Keyboard shortcuts: Arrow keys to navigate, Enter to preview, O to open,
- *   L to cycle the layout, D to widen the neighbor depth, F to fit the graph
+ *   L to cycle the layout, D to widen the neighbor depth, F to fit the graph,
+ *   S to switch the scroll wheel between zooming and panning
+ * - Scroll mode toggle: an inline control, since the mode changes what the
+ *   panel's own Mouse Actions section describes
  *
  * The legend is theme-aware and uses the same colors as the actual mind map elements.
  */
 
 import { memo } from 'react';
-import { X, AlertTriangle, ExternalLink } from 'lucide-react';
+import { X, AlertTriangle, ExternalLink, ZoomIn, Move } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { SCROLL_MODE_LABELS, type GraphScrollMode } from './scrollMode';
 
 /**
  * Props for the GraphLegend component
@@ -25,6 +29,10 @@ export interface GraphLegendProps {
 	theme: Theme;
 	/** Whether external links are currently shown in the graph */
 	showExternalLinks: boolean;
+	/** What the scroll wheel currently does on the canvas */
+	scrollMode: GraphScrollMode;
+	/** Switch the scroll wheel between zooming and panning */
+	onScrollModeChange: (mode: GraphScrollMode) => void;
 	/** Callback to close the panel */
 	onClose: () => void;
 }
@@ -125,6 +133,10 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 	{
 		keys: 'F',
 		description: 'Fit the whole graph on screen',
+	},
+	{
+		keys: 'S',
+		description: 'Switch scroll between zoom and pan',
 	},
 ];
 
@@ -265,11 +277,71 @@ const KeyboardBadge = memo(function KeyboardBadge({ keys, theme }: { keys: strin
 });
 
 /**
+ * Inline two-option control for the scroll wheel binding.
+ *
+ * A segmented pair rather than a switch: both destinations are named, so the
+ * panel reads as "the wheel does this, or it could do that" without the user
+ * having to work out which way a switch points. It lives in the Help panel
+ * because that is where the Mouse Actions section describes the wheel, and a
+ * description of a mode is the natural place to change it.
+ */
+const ScrollModeToggle = memo(function ScrollModeToggle({
+	theme,
+	scrollMode,
+	onScrollModeChange,
+}: {
+	theme: Theme;
+	scrollMode: GraphScrollMode;
+	onScrollModeChange: (mode: GraphScrollMode) => void;
+}) {
+	const options: Array<{ mode: GraphScrollMode; Icon: typeof ZoomIn }> = [
+		{ mode: 'zoom', Icon: ZoomIn },
+		{ mode: 'pan', Icon: Move },
+	];
+
+	return (
+		<div
+			className="flex rounded overflow-hidden"
+			style={{ border: `1px solid ${theme.colors.border}` }}
+			role="radiogroup"
+			aria-label="Scroll wheel action"
+		>
+			{options.map(({ mode, Icon }, index) => {
+				const active = scrollMode === mode;
+				return (
+					<button
+						key={mode}
+						type="button"
+						role="radio"
+						aria-checked={active}
+						onClick={() => onScrollModeChange(mode)}
+						className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-xs transition-colors"
+						style={{
+							backgroundColor: active ? `${theme.colors.accent}25` : 'transparent',
+							color: active ? theme.colors.accent : theme.colors.textDim,
+							borderLeft: index > 0 ? `1px solid ${theme.colors.border}` : undefined,
+							fontWeight: active ? 600 : 400,
+						}}
+						title={`Scroll wheel ${SCROLL_MODE_LABELS[mode].wheelAction.toLowerCase()} (S to switch)`}
+						data-testid={`graph-legend-scroll-mode-${mode}`}
+					>
+						<Icon className="w-3 h-3" />
+						{SCROLL_MODE_LABELS[mode].name}
+					</button>
+				);
+			})}
+		</div>
+	);
+});
+
+/**
  * GraphLegend component - Displays as a right-side sliding panel
  */
 export const GraphLegend = memo(function GraphLegend({
 	theme,
 	showExternalLinks,
+	scrollMode,
+	onScrollModeChange,
 	onClose,
 }: GraphLegendProps) {
 	return (
@@ -544,8 +616,22 @@ export const GraphLegend = memo(function GraphLegend({
 						</div>
 						<div className="flex items-center justify-between">
 							<span className="font-medium">Scroll</span>
-							<span style={{ opacity: 0.8 }}>Zoom in/out</span>
+							<span style={{ opacity: 0.8 }}>{SCROLL_MODE_LABELS[scrollMode].wheelAction}</span>
 						</div>
+						<div className="flex items-center justify-between">
+							<span className="font-medium">Shift+Scroll</span>
+							<span style={{ opacity: 0.8 }}>{SCROLL_MODE_LABELS[scrollMode].modifierAction}</span>
+						</div>
+					</div>
+
+					{/* The toggle sits directly under the two lines it rewrites, so
+					    the change it makes is visible in the same glance. */}
+					<div className="mt-2">
+						<ScrollModeToggle
+							theme={theme}
+							scrollMode={scrollMode}
+							onScrollModeChange={onScrollModeChange}
+						/>
 					</div>
 				</div>
 			</div>

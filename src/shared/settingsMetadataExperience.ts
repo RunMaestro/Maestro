@@ -24,6 +24,13 @@ export const EXPERIENCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'document-graph',
 	},
+	documentGraphConfirmClose: {
+		description:
+			'Ask for confirmation before closing the document graph. A graph opened from another surface (such as the Memories viewer) never asks, since closing returns there.',
+		type: 'boolean',
+		default: true,
+		category: 'document-graph',
+	},
 	documentGraphMaxNodes: {
 		description: 'Maximum number of nodes displayed in the document graph. Range: 50-1000.',
 		type: 'number',

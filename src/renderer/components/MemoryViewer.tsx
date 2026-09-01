@@ -35,7 +35,9 @@ import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useCommandKeyShortcut } from '../hooks/keyboard/useCommandKeyShortcut';
 import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
+import { formatMetaKey } from '../utils/shortcutFormatter';
 import { isTextInputTarget } from '../utils/messageScrollNavigation';
 import { useModalStore } from '../stores/modalStore';
 
@@ -580,9 +582,37 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			// Center on MEMORY.md when it exists - it is the index every other
 			// entry hangs off, so it is the hub a reader expects in the middle.
 			focusPath: entries.some((e) => e.name === 'MEMORY.md') ? 'MEMORY.md' : undefined,
+			// Escape out of that graph comes back HERE rather than to an empty
+			// workspace. The viewer closes on the way out (both are full-window
+			// views), so without this the trip is one-way.
+			returnTo: 'memoryViewer',
 		});
 		onClose();
 	}, [directoryPath, entries, onClose]);
+
+	const toggleOrphanFilter = useCallback(() => {
+		// Nothing to narrow to, and the chip that explains the state is not on
+		// screen either - a filter the user cannot see or undo is worse than a
+		// key that does nothing.
+		if (orphans.length === 0) return;
+		setShowOnlyOrphans((v) => !v);
+	}, [orphans.length]);
+
+	/**
+	 * Surface-local chords, claimed for as long as the viewer is up: Cmd/Ctrl+G
+	 * graphs the corpus, Cmd/Ctrl+U toggles the unlinked filter.
+	 *
+	 * These are literal chords rather than lookups in `shortcuts`, because
+	 * neither action exists as a global binding to inherit - unlike Cmd+E, which
+	 * IS the app's toggleMarkdownMode and so reads the user's live key for it.
+	 *
+	 * They shadow the global Fuzzy File Search and Filter Unread Tabs only in
+	 * the sense that both are already unreachable here: this pane registers a
+	 * layer that blocks lower ones, and `useMainKeyboardHandler` bails out
+	 * entirely while any layer is open.
+	 */
+	useCommandKeyShortcut('g', handleOpenGraph, !createModalOpen);
+	useCommandKeyShortcut('u', toggleOrphanFilter, !createModalOpen);
 
 	const handleCreate = useCallback(() => {
 		if (!projectPath) return;
@@ -740,6 +770,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	const estimatedTokens = useMemo(() => Math.ceil(stats.totalBytes / 4), [stats.totalBytes]);
 
 	const agentDisplayName = getAgentDisplayName(agentId);
+	// Never hard-code the glyph: the same tooltip has to read "Ctrl+G" on
+	// Windows and Linux.
+	const metaKey = formatMetaKey();
 
 	return (
 		<div className="flex-1 flex flex-col h-full" style={{ backgroundColor: theme.colors.bgMain }}>
@@ -798,7 +831,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				/>
 				{orphans.length > 0 && (
 					<button
-						onClick={() => setShowOnlyOrphans((v) => !v)}
+						onClick={toggleOrphanFilter}
 						className="flex items-center gap-1.5 px-2 py-1 rounded text-xs whitespace-nowrap shrink-0 transition-colors"
 						style={{
 							backgroundColor: showOnlyOrphans
@@ -808,8 +841,8 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						}}
 						title={
 							showOnlyOrphans
-								? 'Show all memories'
-								: `Show only the ${orphans.length} ${orphans.length === 1 ? 'memory' : 'memories'} nothing links to - Claude never loads these`
+								? `Show all memories (${metaKey}+U)`
+								: `Show only the ${orphans.length} ${orphans.length === 1 ? 'memory' : 'memories'} nothing links to - Claude never loads these (${metaKey}+U)`
 						}
 						data-testid="memory-orphan-filter"
 					>
@@ -823,7 +856,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						onClick={handleOpenGraph}
 						variant="ghost"
 						icon={<Network />}
-						title="Graph how these memories link to each other"
+						title={`Graph how these memories link to each other (${metaKey}+G)`}
 						testId="memory-open-graph"
 					>
 						Graph
@@ -917,39 +950,46 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			    it. Reference figures belong out of the way of the controls, and
 			    a footer is where the eye already goes for a total. */}
 			<div
-				className="px-6 py-2 border-t shrink-0 flex items-center gap-6 text-xs overflow-x-auto"
+				className="px-6 py-2 border-t shrink-0 flex text-xs overflow-x-auto"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				data-testid="memory-stats-footer"
 			>
-				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
-					<FileText className="w-3.5 h-3.5" />
-					{stats.fileCount} {stats.fileCount === 1 ? 'file' : 'files'}
-				</span>
-				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
-					<Database className="w-3.5 h-3.5" />
-					{formatSize(stats.totalBytes)}
-				</span>
-				<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
-					<Zap className="w-3.5 h-3.5" />~{formatNumber(estimatedTokens)} tokens
-				</span>
-				{stats.firstCreatedAt && (
-					<span
-						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
-						title={new Date(stats.firstCreatedAt).toLocaleString()}
-					>
-						<Clock className="w-3.5 h-3.5" />
-						first created {formatRelativeTime(stats.firstCreatedAt)}
+				{/* Centered by AUTO MARGINS on the inner row rather than
+				    `justify-center` on the scroller: once the figures are wider than
+				    the pane, centered justification pushes the first one off the left
+				    edge with no way to scroll back to it, while auto margins collapse
+				    to zero and leave the row scrollable from its start. */}
+				<div className="flex items-center gap-6 mx-auto">
+					<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+						<FileText className="w-3.5 h-3.5" />
+						{stats.fileCount} {stats.fileCount === 1 ? 'file' : 'files'}
 					</span>
-				)}
-				{stats.lastModifiedAt && (
-					<span
-						className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
-						title={new Date(stats.lastModifiedAt).toLocaleString()}
-					>
-						<Clock className="w-3.5 h-3.5" />
-						last edited {formatRelativeTime(stats.lastModifiedAt)}
+					<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+						<Database className="w-3.5 h-3.5" />
+						{formatSize(stats.totalBytes)}
 					</span>
-				)}
+					<span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+						<Zap className="w-3.5 h-3.5" />~{formatNumber(estimatedTokens)} tokens
+					</span>
+					{stats.firstCreatedAt && (
+						<span
+							className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
+							title={new Date(stats.firstCreatedAt).toLocaleString()}
+						>
+							<Clock className="w-3.5 h-3.5" />
+							first created {formatRelativeTime(stats.firstCreatedAt)}
+						</span>
+					)}
+					{stats.lastModifiedAt && (
+						<span
+							className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
+							title={new Date(stats.lastModifiedAt).toLocaleString()}
+						>
+							<Clock className="w-3.5 h-3.5" />
+							last edited {formatRelativeTime(stats.lastModifiedAt)}
+						</span>
+					)}
+				</div>
 			</div>
 
 			{createModalOpen && (

@@ -6,10 +6,22 @@
  */
 
 import React, { useRef, useEffect } from 'react';
-import { Moon, Sun, Sparkles, Check } from 'lucide-react';
+import { Moon, Sun, Sparkles, Check, Lightbulb } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { CustomThemeBuilder } from '../../CustomThemeBuilder';
+import { SettingsSectionHeading } from '../SettingsSectionHeading';
+import { Slider } from '../../widgets';
+import {
+	GLOSS_LEVELS,
+	GLOSS_LEVEL_META,
+	asGlossLevel,
+	glossLevelAtIndex,
+	glossLevelIndex,
+} from '../../../../shared/themeGloss';
 import type { Theme, ThemeId } from '../../../types';
+
+/** Stop names for the gloss slider, in ladder order. Derived so a new level cannot be added without a name. */
+const GLOSS_TICK_LABELS = GLOSS_LEVELS.map((level) => GLOSS_LEVEL_META[level].label);
 
 export interface ThemeTabProps {
 	theme: Theme;
@@ -31,9 +43,19 @@ export function ThemeTab({
 		setCustomThemeColors,
 		customThemeBaseId,
 		setCustomThemeBaseId,
+		themeGloss,
+		setThemeGloss,
 	} = useSettings();
 
 	const themePickerRef = useRef<HTMLDivElement>(null);
+	const isLightTheme = theme.mode === 'light';
+
+	// Narrowed rather than trusted. `GLOSS_LEVEL_META[level]` is a lookup, so an
+	// undefined or unrecognized value throws and takes the ENTIRE Settings modal
+	// down with it, not just this section. The store hydrates asynchronously and
+	// a settings blob written by an older build has no `themeGloss` at all, so
+	// undefined is a state that really occurs rather than a theoretical one.
+	const glossLevel = asGlossLevel(themeGloss);
 
 	// Auto-focus theme picker on mount
 	useEffect(() => {
@@ -90,78 +112,104 @@ export function ThemeTab({
 	};
 
 	return (
-		<div
-			data-setting-id="theme-picker"
-			ref={themePickerRef}
-			className="space-y-6 outline-none"
-			tabIndex={0}
-			onKeyDown={handleThemePickerKeyDown}
-			role="group"
-			aria-label="Theme picker"
-		>
-			{['dark', 'light', 'vibe'].map((mode) => (
-				<div key={mode}>
-					<div
-						className="text-xs font-bold uppercase mb-3 flex items-center gap-2"
-						style={{ color: theme.colors.textDim }}
-					>
-						{mode === 'dark' ? (
-							<Moon className="w-3 h-3" />
-						) : mode === 'light' ? (
-							<Sun className="w-3 h-3" />
-						) : (
-							<Sparkles className="w-3 h-3" />
-						)}
-						{mode} Mode
-					</div>
-					<div className="grid grid-cols-2 gap-3">
-						{groupedThemes[mode]?.map((t: Theme) => (
-							<button
-								key={t.id}
-								data-theme-id={t.id}
-								onClick={() => setActiveThemeId(t.id)}
-								className={`p-3 rounded-lg border text-left transition-all ${activeThemeId === t.id ? 'ring-2' : ''}`}
-								style={
-									{
-										borderColor: theme.colors.border,
-										backgroundColor: t.colors.bgSidebar,
-										'--tw-ring-color': t.colors.accent,
-									} as React.CSSProperties
-								}
-								tabIndex={-1}
-							>
-								<div className="flex justify-between items-center mb-2">
-									<span className="text-sm font-bold" style={{ color: t.colors.textMain }}>
-										{t.name}
-									</span>
-									{activeThemeId === t.id && (
-										<Check className="w-4 h-4" style={{ color: t.colors.accent }} />
-									)}
-								</div>
-								<div className="flex h-3 rounded overflow-hidden">
-									<div className="flex-1" style={{ backgroundColor: t.colors.bgMain }} />
-									<div className="flex-1" style={{ backgroundColor: t.colors.bgActivity }} />
-									<div className="flex-1" style={{ backgroundColor: t.colors.accent }} />
-								</div>
-							</button>
-						))}
-					</div>
-				</div>
-			))}
-
-			{/* Custom Theme Builder */}
-			<div data-theme-id="custom">
-				<CustomThemeBuilder
+		<div className="space-y-5">
+			{/* Surface Gloss. Sits above the picker because it applies to whichever
+			    theme is chosen below, rather than being a property of one of them. */}
+			<div data-setting-id="theme-surface-gloss">
+				<SettingsSectionHeading icon={Lightbulb}>Surface Gloss</SettingsSectionHeading>
+				<p className="text-xs opacity-70 mb-2">
+					Adds a light source to the sidebars, headers, tab bar and composer so panels read as
+					stacked layers instead of one flat sheet. It only adds highlights and shadows, so no theme
+					color changes and text stays exactly as legible as it is now.
+				</p>
+				<Slider
 					theme={theme}
-					customThemeColors={customThemeColors}
-					setCustomThemeColors={setCustomThemeColors}
-					customThemeBaseId={customThemeBaseId}
-					setCustomThemeBaseId={setCustomThemeBaseId}
-					isSelected={activeThemeId === 'custom'}
-					onSelect={() => setActiveThemeId('custom')}
-					onImportError={onThemeImportError}
-					onImportSuccess={onThemeImportSuccess}
+					label="Intensity"
+					value={glossLevelIndex(glossLevel)}
+					onChange={(index) => setThemeGloss(glossLevelAtIndex(index))}
+					tickLabels={GLOSS_TICK_LABELS}
+					disabled={isLightTheme}
 				/>
+				<p className="text-[11px] opacity-55 mt-2">
+					{isLightTheme
+						? 'Gloss is off on light themes: a white highlight on a light surface is invisible at best and muddy at worst.'
+						: GLOSS_LEVEL_META[glossLevel].description}
+				</p>
+			</div>
+
+			<div
+				data-setting-id="theme-picker"
+				ref={themePickerRef}
+				className="space-y-6 outline-none"
+				tabIndex={0}
+				onKeyDown={handleThemePickerKeyDown}
+				role="group"
+				aria-label="Theme picker"
+			>
+				{['dark', 'light', 'vibe'].map((mode) => (
+					<div key={mode}>
+						<div
+							className="text-xs font-bold uppercase mb-3 flex items-center gap-2"
+							style={{ color: theme.colors.textDim }}
+						>
+							{mode === 'dark' ? (
+								<Moon className="w-3 h-3" />
+							) : mode === 'light' ? (
+								<Sun className="w-3 h-3" />
+							) : (
+								<Sparkles className="w-3 h-3" />
+							)}
+							{mode} Mode
+						</div>
+						<div className="grid grid-cols-2 gap-3">
+							{groupedThemes[mode]?.map((t: Theme) => (
+								<button
+									key={t.id}
+									data-theme-id={t.id}
+									onClick={() => setActiveThemeId(t.id)}
+									className={`p-3 rounded-lg border text-left transition-all ${activeThemeId === t.id ? 'ring-2' : ''}`}
+									style={
+										{
+											borderColor: theme.colors.border,
+											backgroundColor: t.colors.bgSidebar,
+											'--tw-ring-color': t.colors.accent,
+										} as React.CSSProperties
+									}
+									tabIndex={-1}
+								>
+									<div className="flex justify-between items-center mb-2">
+										<span className="text-sm font-bold" style={{ color: t.colors.textMain }}>
+											{t.name}
+										</span>
+										{activeThemeId === t.id && (
+											<Check className="w-4 h-4" style={{ color: t.colors.accent }} />
+										)}
+									</div>
+									<div className="flex h-3 rounded overflow-hidden">
+										<div className="flex-1" style={{ backgroundColor: t.colors.bgMain }} />
+										<div className="flex-1" style={{ backgroundColor: t.colors.bgActivity }} />
+										<div className="flex-1" style={{ backgroundColor: t.colors.accent }} />
+									</div>
+								</button>
+							))}
+						</div>
+					</div>
+				))}
+
+				{/* Custom Theme Builder */}
+				<div data-theme-id="custom">
+					<CustomThemeBuilder
+						theme={theme}
+						customThemeColors={customThemeColors}
+						setCustomThemeColors={setCustomThemeColors}
+						customThemeBaseId={customThemeBaseId}
+						setCustomThemeBaseId={setCustomThemeBaseId}
+						isSelected={activeThemeId === 'custom'}
+						onSelect={() => setActiveThemeId('custom')}
+						onImportError={onThemeImportError}
+						onImportSuccess={onThemeImportSuccess}
+					/>
+				</div>
 			</div>
 		</div>
 	);

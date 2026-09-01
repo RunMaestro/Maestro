@@ -975,6 +975,139 @@ describe('mindMapLayouts', () => {
 			expect(first).toEqual(second);
 		});
 
+		it('reports each community as a drawable cluster', () => {
+			// Without hulls this layout is indistinguishable from Force: both
+			// relax nodes with links pulling and charge pushing, so a lobe that
+			// is not DRAWN as a lobe is just a differently-seeded force graph.
+			const { result } = layoutClusters();
+			expect(result.clusters).toBeDefined();
+			expect(result.clusters!.length).toBeGreaterThanOrEqual(2);
+			result.clusters!.forEach((cluster) => {
+				expect(cluster.hull.length).toBeGreaterThanOrEqual(3);
+				expect(cluster.size).toBeGreaterThan(0);
+				expect(cluster.label).toBeTruthy();
+			});
+		});
+
+		it('accounts for every placed document exactly once across the clusters', () => {
+			const { result } = layoutClusters();
+			const total = result.clusters!.reduce((sum, cluster) => sum + cluster.size, 0);
+			expect(total).toBe(result.nodes.length);
+		});
+
+		it('wraps its own nodes inside the hull', () => {
+			// A hull that clips the nodes it is supposed to contain reads as a
+			// rendering bug rather than as a grouping.
+			const { result } = layoutClusters();
+			const inside = (point: { x: number; y: number }, hull: Array<{ x: number; y: number }>) => {
+				let winding = 0;
+				for (let i = 0; i < hull.length; i++) {
+					const a = hull[i];
+					const b = hull[(i + 1) % hull.length];
+					if (a.y <= point.y ? b.y > point.y : b.y <= point.y) {
+						const side = (b.x - a.x) * (point.y - a.y) - (point.x - a.x) * (b.y - a.y);
+						if (a.y <= point.y ? side > 0 : side < 0) winding += a.y <= point.y ? 1 : -1;
+					}
+				}
+				return winding !== 0;
+			};
+
+			result.clusters!.forEach((cluster) => {
+				const members = result.nodes.filter((n) => n.clusterId === cluster.id);
+				expect(members).toHaveLength(cluster.size);
+				members.forEach((node) => {
+					expect(inside({ x: node.x, y: node.y }, cluster.hull)).toBe(true);
+				});
+			});
+		});
+
+		it('stamps the cluster onto its member nodes', () => {
+			// The renderer tints a node's border to match its lobe, so it must be
+			// able to ask the node rather than re-deriving the partition.
+			const { result } = layoutClusters();
+			result.nodes.forEach((node) => {
+				expect(node.clusterId).toBeDefined();
+				expect(node.clusterIndex).toBeDefined();
+			});
+			const byIndex = new Map<number, string>();
+			result.nodes.forEach((node) => {
+				const existing = byIndex.get(node.clusterIndex!);
+				if (existing) expect(existing).toBe(node.clusterId);
+				else byIndex.set(node.clusterIndex!, node.clusterId!);
+			});
+		});
+
+		it('does not overlap two clusters', () => {
+			// Overlapping blobs destroy the only thing this layout communicates.
+			const { result } = layoutClusters();
+			const bounds = (hull: Array<{ x: number; y: number }>) => ({
+				minX: Math.min(...hull.map((p) => p.x)),
+				maxX: Math.max(...hull.map((p) => p.x)),
+				minY: Math.min(...hull.map((p) => p.y)),
+				maxY: Math.max(...hull.map((p) => p.y)),
+			});
+			const clusters = result.clusters!;
+			for (let i = 0; i < clusters.length; i++) {
+				for (let j = i + 1; j < clusters.length; j++) {
+					const a = bounds(clusters[i].hull);
+					const b = bounds(clusters[j].hull);
+					const overlaps = a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+					expect(overlaps).toBe(false);
+				}
+			}
+		});
+
+		it('gathers documents that link to nothing into one pile, not one lobe each', () => {
+			// A corpus of 89 memories produced four real communities and
+			// twenty-four singletons. Given a ring slot each, those scatter into
+			// a halo of loose nodes that drowns out the real groups.
+			const center = createNode('center');
+			const nodes = [center];
+			const links: MindMapLink[] = [];
+			// One real pair, plus six documents linked only to the center.
+			nodes.push(createNode('pairA', { depth: 1 }), createNode('pairB', { depth: 1 }));
+			links.push(createLink('center', 'pairA'), createLink('pairA', 'pairB'));
+			for (let i = 0; i < 6; i++) {
+				const id = `lone${i}`;
+				nodes.push(createNode(id, { depth: 1 }));
+				links.push(createLink('center', id));
+			}
+
+			const result = calculateLobesLayout(
+				nodes,
+				links,
+				buildAdjacencyMap(links),
+				'center.md',
+				3,
+				1200,
+				800,
+				false,
+				100
+			);
+
+			// Far fewer clusters than there are loosely-attached documents.
+			expect(result.clusters!.length).toBeLessThan(6);
+			result.nodes.forEach((node) => {
+				expect(node.x).toBeDefined();
+				expect(node.y).toBeDefined();
+			});
+		});
+
+		it('frames its hulls and captions in the reported bounds', () => {
+			// Zoom-to-fit reads these bounds, so a hull outside them is drawn
+			// half off screen on open.
+			const { result } = layoutClusters();
+			result.clusters!.forEach((cluster) => {
+				cluster.hull.forEach((point) => {
+					expect(point.x).toBeGreaterThanOrEqual(result.bounds.minX);
+					expect(point.x).toBeLessThanOrEqual(result.bounds.maxX);
+					expect(point.y).toBeGreaterThanOrEqual(result.bounds.minY);
+					expect(point.y).toBeLessThanOrEqual(result.bounds.maxY);
+				});
+				expect(cluster.labelY).toBeGreaterThanOrEqual(result.bounds.minY);
+			});
+		});
+
 		it('handles a graph with no links at all', () => {
 			const nodes = [createNode('center'), createNode('lonely')];
 			const result = calculateLobesLayout(

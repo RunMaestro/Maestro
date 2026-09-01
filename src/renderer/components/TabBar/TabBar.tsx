@@ -660,7 +660,7 @@ function TabBarInner({
 	return (
 		<div
 			ref={tabBarRef}
-			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
+			className="chrome-sheen flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
 			data-tour="tab-bar"
 			// Accept a tiled pane's title-bar drag dropped onto the bar background to
 			// promote it back to a standalone tab. Chip reorder is unaffected (it

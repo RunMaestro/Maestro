@@ -586,7 +586,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			<div className="flex min-w-0 gap-3">
 				<div className="flex min-w-0 flex-1 flex-col">
 					<div
-						className="relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50"
+						className="chrome-raised relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50"
 						style={{
 							borderColor: showQueueingBorder ? theme.colors.warning : theme.colors.border,
 							backgroundColor: showQueueingBorder

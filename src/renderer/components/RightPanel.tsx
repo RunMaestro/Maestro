@@ -448,7 +448,7 @@ export const RightPanel = memo(
 				tabIndex={0}
 				data-panel="right"
 				data-open={rightPanelOpen ? 'true' : 'false'}
-				className={`border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'} maestro-side-panel maestro-side-panel--right`}
+				className={`chrome-sheen border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'} maestro-side-panel maestro-side-panel--right`}
 				style={
 					{
 						width: rightPanelOpen ? `${rightPanelWidth}px` : '0',

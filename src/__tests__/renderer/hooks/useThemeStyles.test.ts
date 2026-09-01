@@ -19,6 +19,7 @@ const DARK_COLORS: ThemeColors = {
 	border: '#44475a',
 	textDim: '#6272a4',
 	bgActivity: '#343746',
+	textMain: '#f8f8f2',
 };
 
 const LIGHT_COLORS: ThemeColors = {
@@ -26,6 +27,7 @@ const LIGHT_COLORS: ThemeColors = {
 	border: '#d0d7de',
 	textDim: '#656d76',
 	bgActivity: '#f6f8fa',
+	textMain: '#1f2328',
 };
 
 function getCssVar(name: string): string {
@@ -42,6 +44,8 @@ describe('useThemeStyles', () => {
 		root.removeProperty('--scrollbar-thumb-hover');
 		root.removeProperty('--scrollbar-thumb-active');
 		root.removeProperty('--scrollbar-track');
+		root.removeProperty('--fx-quiet');
+		root.removeProperty('--sheen-rgb');
 	});
 
 	afterEach(() => {
@@ -53,11 +57,15 @@ describe('useThemeStyles', () => {
 		root.removeProperty('--scrollbar-thumb-hover');
 		root.removeProperty('--scrollbar-thumb-active');
 		root.removeProperty('--scrollbar-track');
+		root.removeProperty('--fx-quiet');
+		root.removeProperty('--sheen-rgb');
 	});
 
 	describe('CSS variable injection', () => {
 		it('sets all expected CSS variables from theme colors on mount', () => {
-			renderHook(() => useThemeStyles({ themeColors: DARK_COLORS }));
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
 
 			expect(getCssVar('--accent-color')).toBe('#bd93f9');
 			expect(getCssVar('--highlight-color')).toBe('#bd93f9');
@@ -71,7 +79,9 @@ describe('useThemeStyles', () => {
 			// --highlight-color is a legacy alias kept for backwards compat with
 			// older CSS rules that reference it (e.g. animations in index.css).
 			// Both must point to the same color.
-			renderHook(() => useThemeStyles({ themeColors: DARK_COLORS }));
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
 			expect(getCssVar('--accent-color')).toBe(getCssVar('--highlight-color'));
 		});
 
@@ -79,14 +89,20 @@ describe('useThemeStyles', () => {
 			// Regression: previously the idle thumb was hardcoded
 			// rgba(255,255,255,0.15) which was invisible on light themes. Using
 			// the theme `border` token makes it work on both light and dark.
-			renderHook(() => useThemeStyles({ themeColors: LIGHT_COLORS }));
+			renderHook(() =>
+				useThemeStyles({ themeColors: LIGHT_COLORS, themeMode: 'light', glossLevel: 'off' })
+			);
 			expect(getCssVar('--scrollbar-thumb')).toBe('#d0d7de');
 		});
 
 		it('updates CSS variables when theme colors change', () => {
-			const { rerender } = renderHook(({ colors }) => useThemeStyles({ themeColors: colors }), {
-				initialProps: { colors: DARK_COLORS },
-			});
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{
+					initialProps: { colors: DARK_COLORS },
+				}
+			);
 			expect(getCssVar('--scrollbar-thumb')).toBe('#44475a');
 			expect(getCssVar('--accent-color')).toBe('#bd93f9');
 
@@ -102,9 +118,13 @@ describe('useThemeStyles', () => {
 		it('does not re-set unchanged variables when an unrelated theme field changes', () => {
 			// Sanity: the effect's dependency array lists every consumed field.
 			// If we add a new CSS var, its source field must be in the deps.
-			const { rerender } = renderHook(({ colors }) => useThemeStyles({ themeColors: colors }), {
-				initialProps: { colors: DARK_COLORS },
-			});
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{
+					initialProps: { colors: DARK_COLORS },
+				}
+			);
 
 			rerender({ colors: { ...DARK_COLORS, accent: '#ff0000' } });
 
@@ -116,9 +136,94 @@ describe('useThemeStyles', () => {
 		});
 	});
 
+	describe('--sheen-rgb (the gloss light source)', () => {
+		it('publishes textMain as an R G B triple, not a hex', () => {
+			// The gloss rules mix it as `rgb(var(--sheen-rgb) / 7%)`, so the alpha
+			// stays in index.css where the levels live and only the hue crosses.
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'sheen' })
+			);
+			expect(getCssVar('--sheen-rgb')).toBe('248 248 242');
+		});
+
+		it('tracks textMain rather than any inherited color', () => {
+			// It replaced `currentColor`, which made the sheen strength depend on
+			// whatever text color each chrome root happened to inherit.
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'sheen' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+			expect(getCssVar('--sheen-rgb')).toBe('248 248 242');
+
+			rerender({ colors: { ...DARK_COLORS, textMain: '#c5c8c6' } });
+
+			expect(getCssVar('--sheen-rgb')).toBe('197 200 198');
+		});
+
+		it('falls back to white when the palette carries a non-hex color', () => {
+			// A custom theme may use any CSS color. White is the right failure:
+			// gloss is dark-theme only and every dark theme's textMain is near it.
+			renderHook(() =>
+				useThemeStyles({
+					themeColors: { ...DARK_COLORS, textMain: 'rgb(200, 200, 200)' },
+					themeMode: 'dark',
+					glossLevel: 'sheen',
+				})
+			);
+			expect(getCssVar('--sheen-rgb')).toBe('255 255 255');
+		});
+	});
+
+	describe('theme attributes on <html>', () => {
+		it('publishes the theme mode and the gloss level together', () => {
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'strong' })
+			);
+
+			expect(document.documentElement.dataset.themeMode).toBe('dark');
+			expect(document.documentElement.dataset.gloss).toBe('strong');
+		});
+
+		it('updates both attributes when the theme changes', () => {
+			// They are written in one effect on purpose: the gloss rules in
+			// index.css opt out on light themes, so a build that updated the mode
+			// without the level could paint a light theme with dark highlights.
+			const { rerender } = renderHook(
+				({ colors, mode }: { colors: ThemeColors; mode: 'dark' | 'light' }) =>
+					useThemeStyles({ themeColors: colors, themeMode: mode, glossLevel: 'max' }),
+				{ initialProps: { colors: DARK_COLORS, mode: 'dark' as 'dark' | 'light' } }
+			);
+			expect(document.documentElement.dataset.themeMode).toBe('dark');
+
+			rerender({ colors: LIGHT_COLORS, mode: 'light' });
+
+			expect(document.documentElement.dataset.themeMode).toBe('light');
+			expect(document.documentElement.dataset.gloss).toBe('max');
+		});
+
+		it('writes the level verbatim when gloss is off, rather than omitting the attribute', () => {
+			// `off` is a real level with no rules behind it, not an absent value.
+			// Leaving the attribute unset would leave a stale level on <html>
+			// after the user slid back down to Off.
+			const { rerender } = renderHook(
+				({ level }: { level: 'off' | 'sheen' }) =>
+					useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: level }),
+				{ initialProps: { level: 'sheen' as 'off' | 'sheen' } }
+			);
+			expect(document.documentElement.dataset.gloss).toBe('sheen');
+
+			rerender({ level: 'off' });
+
+			expect(document.documentElement.dataset.gloss).toBe('off');
+		});
+	});
+
 	describe('return value', () => {
 		it('returns an empty object (all functionality is via side effects)', () => {
-			const { result } = renderHook(() => useThemeStyles({ themeColors: DARK_COLORS }));
+			const { result } = renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
 			expect(result.current).toEqual({});
 		});
 	});

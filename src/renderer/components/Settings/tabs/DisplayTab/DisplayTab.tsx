@@ -169,6 +169,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				documentGraphShowExternalLinks={settings.documentGraphShowExternalLinks}
 				setDocumentGraphShowExternalLinks={settings.setDocumentGraphShowExternalLinks}
+				documentGraphConfirmClose={settings.documentGraphConfirmClose}
+				setDocumentGraphConfirmClose={settings.setDocumentGraphConfirmClose}
 				documentGraphMaxNodes={settings.documentGraphMaxNodes}
 				setDocumentGraphMaxNodes={settings.setDocumentGraphMaxNodes}
 			/>

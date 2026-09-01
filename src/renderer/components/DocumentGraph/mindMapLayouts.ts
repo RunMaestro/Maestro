@@ -54,6 +54,11 @@ export interface LayoutResult {
 	 * draws nothing.
 	 */
 	axisLabels?: LayoutAxisLabel[];
+	/**
+	 * Node groupings the layout wants drawn as blobs behind the nodes. Only
+	 * Lobes emits any; every other layout leaves this undefined.
+	 */
+	clusters?: LayoutCluster[];
 }
 
 /** A caption drawn in canvas space, centered horizontally on `x`. */
@@ -63,6 +68,30 @@ export interface LayoutAxisLabel {
 	text: string;
 	/** Draw a faint vertical rule this tall under the caption. */
 	ruleHeight?: number;
+}
+
+/**
+ * One cluster of nodes a layout wants drawn as a group.
+ *
+ * Only Lobes populates this, and without it the layout is indistinguishable
+ * from Force: both relax nodes with links pulling and charge pushing, so a
+ * lobe that is not drawn AS a lobe is just a differently-seeded force graph.
+ * The hull is what carries the finding.
+ */
+export interface LayoutCluster {
+	/** Stable id, used to colour the cluster and its member nodes alike. */
+	id: string;
+	/** Position in the layout's own ordering, largest cluster first. */
+	index: number;
+	/** Convex hull in canvas space, already padded out around the nodes. */
+	hull: Array<{ x: number; y: number }>;
+	/** Caption anchor, above the hull. */
+	labelX: number;
+	labelY: number;
+	/** What to call the group, e.g. "12 documents". */
+	label: string;
+	/** How many nodes are inside. */
+	size: number;
 }
 
 /** Common layout function signature. `spacingScale` is optional and defaults to 1. */
@@ -1353,13 +1382,116 @@ export const calculateForceLayout: LayoutFunction = (
 // Lobes specific constants
 const LOBE_LINK_DISTANCE = 150;
 const LOBE_PILL_LINK_DISTANCE = 78;
-const LOBE_CHARGE_STRENGTH = -220;
-const LOBE_COLLIDE_PADDING = 14;
+/**
+ * Deliberately weaker than Force's -400, and paired with a much stronger pull
+ * to the lobe's own center below. A lobe should read as a dense clump, which
+ * is what tells it apart from Force at a glance - Force spreads its nodes
+ * evenly, and a lobe relaxed with the same constants looks identical to it.
+ */
+const LOBE_CHARGE_STRENGTH = -140;
+const LOBE_COLLIDE_PADDING = 10;
+/**
+ * Pull toward the lobe's own center. Force uses 0.05 because it is arranging
+ * the whole graph; a lobe is a group that should hold together, so this is
+ * several times stronger. It is what keeps a blob compact rather than letting
+ * it sprawl until it touches its neighbours.
+ */
+const LOBE_GRAVITY = 0.32;
 const LOBE_TICK_COUNT = 220;
 /** Gap left between the outer edges of two neighbouring lobes. */
 const LOBE_GAP = 90;
 /** How many label-propagation rounds to run before accepting the partition. */
 const LOBE_PROPAGATION_ROUNDS = 12;
+/** Gap between the outermost nodes of a lobe and its drawn hull. */
+const LOBE_HULL_PADDING = 34;
+/** Gap between the top of a hull and its caption. */
+const LOBE_LABEL_GAP = 22;
+/**
+ * Cluster id for the pile of documents that link to nothing else in view.
+ * A sentinel rather than a real community label, because it is assembled from
+ * many one-node communities and the renderer treats it differently (muted, and
+ * captioned "Ungrouped" rather than by size alone).
+ */
+export const UNGROUPED_LOBE_ID = '__ungrouped__';
+
+/**
+ * Convex hull of a point set, counter-clockwise (Andrew's monotone chain).
+ *
+ * Used to draw a lobe as one shape rather than as a cloud of nodes. Returns
+ * the input for fewer than three points, since a hull of one or two points is
+ * the points themselves and the caller inflates it into a shape either way.
+ */
+function convexHull(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+	if (points.length < 3) return [...points];
+
+	const sorted = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+	const cross = (
+		o: { x: number; y: number },
+		a: { x: number; y: number },
+		b: { x: number; y: number }
+	) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+	const build = (input: Array<{ x: number; y: number }>) => {
+		const half: Array<{ x: number; y: number }> = [];
+		for (const point of input) {
+			while (half.length >= 2 && cross(half[half.length - 2], half[half.length - 1], point) <= 0) {
+				half.pop();
+			}
+			half.push(point);
+		}
+		half.pop();
+		return half;
+	};
+
+	return [...build(sorted), ...build([...sorted].reverse())];
+}
+
+/**
+ * Push a hull outward from its centroid so it clears the nodes it wraps.
+ *
+ * A hull through the node CENTERS cuts every boundary node in half, which
+ * reads as a clipping bug rather than as a group. Offsetting along the
+ * centroid ray is approximate where a hull is very elongated, but the shape is
+ * a background wash - it only has to contain the nodes, not hug them.
+ */
+function inflateHull(
+	hull: Array<{ x: number; y: number }>,
+	padding: number
+): Array<{ x: number; y: number }> {
+	if (hull.length === 0) return hull;
+
+	const centroid = hull.reduce(
+		(sum, point) => ({ x: sum.x + point.x / hull.length, y: sum.y + point.y / hull.length }),
+		{ x: 0, y: 0 }
+	);
+
+	if (hull.length < 3) {
+		// One or two nodes have no area to inflate, so the "hull" is drawn as a
+		// ring of points around them instead. Without this a solo lobe renders
+		// as a line or nothing at all.
+		const radius = padding;
+		const base = hull.length === 1 ? hull[0] : centroid;
+		const spread =
+			hull.length === 2 ? Math.hypot(hull[0].x - hull[1].x, hull[0].y - hull[1].y) / 2 : 0;
+		return Array.from({ length: 12 }, (_, i) => {
+			const angle = (2 * Math.PI * i) / 12;
+			return {
+				x: base.x + (radius + spread) * Math.cos(angle),
+				y: base.y + radius * Math.sin(angle),
+			};
+		});
+	}
+
+	return hull.map((point) => {
+		const dx = point.x - centroid.x;
+		const dy = point.y - centroid.y;
+		const distance = Math.hypot(dx, dy) || 1;
+		return {
+			x: point.x + (dx / distance) * padding,
+			y: point.y + (dy / distance) * padding,
+		};
+	});
+}
 
 /**
  * Partition nodes into communities by label propagation over `adjacency`.
@@ -1496,7 +1628,26 @@ export const calculateLobesLayout: LayoutFunction = (
 		groups.get(label)!.push(node);
 	});
 
+	// Documents that link to nothing else in view are their own community of
+	// one. Given a ring slot each they scatter into a halo of loose nodes that
+	// reads as noise and drowns out the real groups - a corpus of 89 documents
+	// produced four true communities and twenty-four singletons. Gathering them
+	// into ONE lobe is both the honest grouping ("these belong to nothing") and
+	// what makes the real lobes legible.
 	const centerCommunity = communities.get(actualCenterNodeId);
+	const singletons: MindMapNode[] = [];
+	for (const [label, members] of [...groups.entries()]) {
+		// Never fold the center's own community away, even when the center is
+		// the only visible node: it is the anchor the rest of the UI expects at
+		// the middle of the canvas.
+		if (members.length === 1 && label !== centerCommunity) {
+			singletons.push(...members);
+			groups.delete(label);
+		}
+	}
+	if (singletons.length > 0) {
+		groups.set(UNGROUPED_LOBE_ID, singletons);
+	}
 	const lobes = [...groups.entries()]
 		.map(([label, members]) => ({
 			label,
@@ -1507,6 +1658,10 @@ export const calculateLobesLayout: LayoutFunction = (
 			// is pulled out of the ring ordering entirely.
 			if (a.label === centerCommunity) return -1;
 			if (b.label === centerCommunity) return 1;
+			// The ungrouped pile always sorts last, whatever its size. It is the
+			// leftovers, and leading with it would suggest it is the finding.
+			if (a.label === UNGROUPED_LOBE_ID) return 1;
+			if (b.label === UNGROUPED_LOBE_ID) return -1;
 			if (b.members.length !== a.members.length) return b.members.length - a.members.length;
 			return a.label.localeCompare(b.label);
 		});
@@ -1578,8 +1733,8 @@ export const calculateLobesLayout: LayoutFunction = (
 					.strength(1)
 					.iterations(3)
 			)
-			.force('x', forceX<ForceNode>(0).strength(0.08))
-			.force('y', forceY<ForceNode>(0).strength(0.08))
+			.force('x', forceX<ForceNode>(0).strength(LOBE_GRAVITY))
+			.force('y', forceY<ForceNode>(0).strength(LOBE_GRAVITY))
 			.stop()
 			.tick(LOBE_TICK_COUNT);
 
@@ -1606,39 +1761,84 @@ export const calculateLobesLayout: LayoutFunction = (
 	const centralLobe = relaxed.find((lobe) => lobe.label === centerCommunity);
 	const outerLobes = relaxed.filter((lobe) => lobe !== centralLobe);
 
-	// Ring radius: big enough that the outer lobes sit clear of the central one
-	// AND of each other. The second term is the circumference test - the sum of
-	// the blob diameters has to fit around the ring.
+	// Each outer lobe sits at its OWN distance - just far enough that its edge
+	// clears the central lobe's edge. Putting them all on one ring sized for
+	// the biggest lobe pushes every small lobe out to match it, and on a real
+	// corpus that made the layout 70% wider than Force for the same nodes.
 	const centralRadius = centralLobe?.radius ?? Math.max(centerWidth, centerHeight) / 2;
-	const outerMaxRadius = outerLobes.reduce((max, lobe) => Math.max(max, lobe.radius), 0);
-	const circumferenceNeed =
-		outerLobes.reduce((sum, lobe) => sum + lobe.radius * 2 + lobeGap, 0) / (2 * Math.PI);
-	const ringRadius =
-		outerLobes.length === 0
-			? 0
-			: Math.max(centralRadius + outerMaxRadius + lobeGap, circumferenceNeed);
+	const lobeDistance = (lobeRadius: number) => centralRadius + lobeRadius + lobeGap;
+
+	// Angular width a lobe needs at its own distance, so a big lobe close in
+	// claims more of the circle than a small one further out.
+	const angularWidth = (lobeRadius: number) => {
+		const distance = lobeDistance(lobeRadius);
+		const ratio = (lobeRadius + lobeGap / 2) / distance;
+		return ratio >= 1 ? Math.PI : 2 * Math.asin(ratio);
+	};
+
+	// If the lobes cannot all fit around the circle at their natural distances,
+	// push them all out by one factor rather than dropping any - the alternative
+	// is overlapping blobs, which destroys the only thing this layout says.
+	const totalAngle = outerLobes.reduce((sum, lobe) => sum + angularWidth(lobe.radius), 0);
+	const crowding = totalAngle > 2 * Math.PI ? totalAngle / (2 * Math.PI) : 1;
+
+	const clusters: LayoutCluster[] = [];
 
 	const placeLobe = (
 		lobe: {
+			label: string;
 			placed: Array<{ node: MindMapNode; x: number; y: number; width: number; height: number }>;
 		},
 		offsetX: number,
 		offsetY: number
 	) => {
+		// Corners rather than centers: a hull through node centers cuts every
+		// boundary node in half, which reads as a clipping bug.
+		const corners: Array<{ x: number; y: number }> = [];
+
 		lobe.placed.forEach((item) => {
 			const x = offsetX + item.x;
 			const y = offsetY + item.y;
 			const isCenterNode = item.node.id === actualCenterNodeId;
+			const width = isCenterNode ? item.width * CENTER_NODE_SCALE : item.width;
+			const height = isCenterNode ? item.height * CENTER_NODE_SCALE : item.height;
+
+			corners.push(
+				{ x: x - width / 2, y: y - height / 2 },
+				{ x: x + width / 2, y: y - height / 2 },
+				{ x: x + width / 2, y: y + height / 2 },
+				{ x: x - width / 2, y: y + height / 2 }
+			);
+
 			positionedNodes.push({
 				...item.node,
 				x,
 				y,
-				width: isCenterNode ? item.width * CENTER_NODE_SCALE : item.width,
-				height: isCenterNode ? item.height * CENTER_NODE_SCALE : item.height,
+				width,
+				height,
 				depth: visited.get(item.node.id) ?? 1,
 				side: x < centerX - 10 ? 'left' : 'right',
 				isFocused: isCenterNode,
+				// Stamped onto the node so the renderer can tint it to match its
+				// own lobe without re-deriving the partition.
+				clusterId: lobe.label,
+				clusterIndex: clusters.length,
 			});
+		});
+
+		const hull = inflateHull(convexHull(corners), LOBE_HULL_PADDING);
+		const top = hull.reduce((min, point) => Math.min(min, point.y), Infinity);
+		clusters.push({
+			id: lobe.label,
+			index: clusters.length,
+			hull,
+			labelX: offsetX,
+			labelY: top - LOBE_LABEL_GAP,
+			label:
+				lobe.label === UNGROUPED_LOBE_ID
+					? `Ungrouped (${lobe.placed.length})`
+					: `${lobe.placed.length} document${lobe.placed.length === 1 ? '' : 's'}`,
+			size: lobe.placed.length,
 		});
 	};
 
@@ -1660,20 +1860,16 @@ export const calculateLobesLayout: LayoutFunction = (
 		});
 	}
 
-	if (ringRadius > 0) {
-		// Walk the ring proportionally to each blob's own arc so a large lobe is
-		// not crammed into the same slice as a single-node one.
-		const totalArc = outerLobes.reduce((sum, lobe) => sum + lobe.radius * 2 + lobeGap, 0);
+	if (outerLobes.length > 0) {
+		// Walk the circle giving each lobe the angle it actually needs, and place
+		// it at its own distance rather than on a shared ring.
 		let cursor = -Math.PI / 2;
 		outerLobes.forEach((lobe) => {
-			const share = ((lobe.radius * 2 + lobeGap) / totalArc) * 2 * Math.PI;
+			const share = (angularWidth(lobe.radius) / totalAngle) * 2 * Math.PI;
 			const angle = cursor + share / 2;
 			cursor += share;
-			placeLobe(
-				lobe,
-				centerX + ringRadius * Math.cos(angle),
-				centerY + ringRadius * Math.sin(angle)
-			);
+			const distance = lobeDistance(lobe.radius) * crowding;
+			placeLobe(lobe, centerX + distance * Math.cos(angle), centerY + distance * Math.sin(angle));
 		});
 	}
 
@@ -1688,7 +1884,18 @@ export const calculateLobesLayout: LayoutFunction = (
 	// cross-cluster edges that are the whole reason to look at this layout.
 	const usedLinks = filterLinks(allLinks, positionedNodes, false);
 	const bounds = calculateBounds(positionedNodes);
-	return { nodes: positionedNodes, links: usedLinks, bounds };
+	// Widen the bounds so zoom-to-fit frames the hulls and their captions too,
+	// not just the nodes inside them.
+	clusters.forEach((cluster) => {
+		cluster.hull.forEach((point) => {
+			bounds.minX = Math.min(bounds.minX, point.x - CANVAS_PADDING);
+			bounds.maxX = Math.max(bounds.maxX, point.x + CANVAS_PADDING);
+			bounds.minY = Math.min(bounds.minY, point.y - CANVAS_PADDING);
+			bounds.maxY = Math.max(bounds.maxY, point.y + CANVAS_PADDING);
+		});
+		bounds.minY = Math.min(bounds.minY, cluster.labelY - CANVAS_PADDING);
+	});
+	return { nodes: positionedNodes, links: usedLinks, bounds, clusters };
 };
 
 // ============================================================================

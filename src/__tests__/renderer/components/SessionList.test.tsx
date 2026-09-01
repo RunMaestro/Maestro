@@ -605,15 +605,15 @@ describe('SessionList', () => {
 			expect(toggleGlobalLive).toHaveBeenCalled();
 		});
 
-		it('hides OFFLINE text when sidebar width is narrow (< 256px) with autoRunStats badge', () => {
-			// When autoRunStats.currentBadgeLevel > 0, threshold is 295px
-			// When no autoRunStats, threshold is 256px
+		it('still shows OFFLINE text at the minimum width with an autoRunStats badge', () => {
+			// The wordmark is already dropped at 256px, and the room it vacated is
+			// more than the badge costs - so the badge must not push the label out.
 			const autoRunStats = {
 				totalDocuments: 1,
 				currentDocument: 1,
 				completedTasks: 0,
 				totalTasks: 5,
-				currentBadgeLevel: 1, // This raises threshold to 295px
+				currentBadgeLevel: 1,
 			};
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
@@ -625,7 +625,19 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Text should be hidden when below threshold with active badge
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			expect(screen.getByText('OFFLINE')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
+		});
+
+		it('hides OFFLINE text below the label threshold', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 255 });
+			const props = createDefaultProps({
+				isLiveMode: false,
+			});
+			render(<SessionList {...props} />);
+
 			expect(screen.queryByText('OFFLINE')).not.toBeInTheDocument();
 			// But the Radio icon should still be present
 			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
@@ -656,14 +668,13 @@ describe('SessionList', () => {
 			expect(screen.getByText('OFFLINE')).toBeInTheDocument();
 		});
 
-		it('hides LIVE text when sidebar width is narrow with autoRunStats badge', () => {
-			// When autoRunStats.currentBadgeLevel > 0, threshold is 295px
+		it('still shows LIVE text at the minimum width with an autoRunStats badge', () => {
 			const autoRunStats = {
 				totalDocuments: 1,
 				currentDocument: 1,
 				completedTasks: 0,
 				totalTasks: 5,
-				currentBadgeLevel: 1, // This raises threshold to 295px
+				currentBadgeLevel: 1,
 			};
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
@@ -676,7 +687,20 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Text should be hidden when below threshold with active badge
+			expect(screen.getByText('LIVE')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
+		});
+
+		it('hides LIVE text below the label threshold', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 255 });
+			const props = createDefaultProps({
+				isLiveMode: true,
+				webInterfaceUrl: 'http://localhost:3000',
+			});
+			render(<SessionList {...props} />);
+
+			// Text should be hidden when below threshold
 			expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
 			// But the Radio icon should still be present
 			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
@@ -4284,6 +4308,41 @@ describe('SessionList', () => {
 				],
 			} as never);
 		};
+
+		/**
+		 * The header is three zones: identity, indicators, menu. jsdom has no
+		 * layout engine, so these assert the structure that produces the centering
+		 * (a flex-1 band between two shrink-0 zones) rather than pixel positions.
+		 */
+		it('puts every indicator in the centered band, not beside the wordmark', () => {
+			useSettingsStore.setState({
+				leftSidebarWidth: 600,
+				autoRunStats: {
+					totalDocuments: 1,
+					currentDocument: 1,
+					completedTasks: 0,
+					totalTasks: 5,
+					currentBadgeLevel: 1,
+				},
+			});
+			showNowPlayingPill();
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const band = screen.getByTestId('sidebar-header-indicators');
+			// flex-1 between two shrink-0 zones is what centers the band.
+			expect(band.className).toContain('flex-1');
+			expect(band.className).toContain('justify-center');
+
+			// The wordmark is identity, so it stays out of the band.
+			expect(band.contains(screen.getByText('MAESTRO'))).toBe(false);
+			expect(band.contains(screen.getByTitle('Switch agent'))).toBe(false);
+			expect(band.contains(screen.getByTitle('Menu'))).toBe(false);
+
+			// Every indicator lives inside it.
+			expect(band.contains(screen.getByTestId('icon-radio'))).toBe(true);
+			expect(band.contains(screen.getByTestId('now-playing-indicator'))).toBe(true);
+			expect(band.contains(screen.getByTestId('icon-trophy'))).toBe(true);
+		});
 
 		it('shows the wordmark on a wide sidebar', () => {
 			useSettingsStore.setState({ leftSidebarWidth: 600 });

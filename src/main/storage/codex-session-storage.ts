@@ -54,7 +54,11 @@ function getCodexSessionsDir(): string {
 
 const CODEX_SESSIONS_DIR = getCodexSessionsDir();
 
-const CODEX_SESSION_CACHE_VERSION = 3; // Bumped: skip markdown-style system context in firstMessage preview
+// Bumped to 4: Codex's `total_token_usage` is a running session total and was
+// being summed per event, so cached entries hold inflated token counts. Entries
+// are reused whenever `fileMtimeMs` still covers the file, which a parsing fix
+// does not change, so the old numbers would be served until a session is touched.
+const CODEX_SESSION_CACHE_VERSION = 4;
 const CODEX_SESSION_CACHE_FILENAME = 'codex-sessions-cache.json';
 
 /**

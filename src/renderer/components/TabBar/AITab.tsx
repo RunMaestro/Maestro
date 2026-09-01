@@ -487,6 +487,7 @@ export const AITab = memo(function AITab({
 			className={`
         relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer
         transition-all duration-150 select-none shrink-0 outline-none
+        ${isActive ? 'chrome-raised-active' : ''}
         ${isDragging ? 'opacity-50' : ''}
         ${isDragOver ? 'ring-2 ring-inset' : ''}
       `}

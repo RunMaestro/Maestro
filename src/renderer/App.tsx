@@ -475,8 +475,10 @@ function MaestroConsoleInner() {
 		keyboardMasteryStats,
 		recordShortcutUsage,
 		colorBlindMode,
+		themeGloss,
 		defaultStatsTimeRange,
 		documentGraphShowExternalLinks,
+		documentGraphConfirmClose,
 		documentGraphMaxNodes,
 		documentGraphPreviewCharLimit,
 		documentGraphLayoutType,
@@ -1400,6 +1402,8 @@ function MaestroConsoleInner() {
 	// Theme styles hook - manages CSS variables and scrollbar fade animations
 	useThemeStyles({
 		themeColors: theme.colors,
+		themeMode: theme.mode,
+		glossLevel: themeGloss,
 	});
 
 	// Get capabilities for the active session's agent type
@@ -3541,6 +3545,7 @@ function MaestroConsoleInner() {
 						onOpenFileTab={handleOpenFileTab}
 						mainPanelRef={mainPanelRef}
 						documentGraphShowExternalLinks={documentGraphShowExternalLinks}
+						documentGraphConfirmClose={documentGraphConfirmClose}
 						onExternalLinksChange={settings.setDocumentGraphShowExternalLinks}
 						documentGraphMaxNodes={documentGraphMaxNodes}
 						documentGraphPreviewCharLimit={documentGraphPreviewCharLimit}

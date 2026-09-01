@@ -208,6 +208,7 @@ describe('settingsStore', () => {
 			expect(state.customShellPath).toBe('');
 			expect(state.shellArgs).toBe('');
 			expect(state.shellEnvVars).toEqual({});
+			expect(state.shellEnvVarsDisabled).toEqual({});
 			expect(state.ghPath).toBe('');
 			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
 			// Every surface font defaults to empty, meaning "inherit the interface
@@ -349,6 +350,21 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setShellEnvVars(envVars);
 				expect(useSettingsStore.getState().shellEnvVars).toEqual(envVars);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('shellEnvVars', envVars);
+			});
+
+			it('setShellEnvVarsDisabled updates state and persists', () => {
+				const parked = { HTTP_PROXY: 'http://proxy:8080' };
+				useSettingsStore.getState().setShellEnvVarsDisabled(parked);
+				expect(useSettingsStore.getState().shellEnvVarsDisabled).toEqual(parked);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('shellEnvVarsDisabled', parked);
+			});
+
+			it('keeps parked variables out of the effective shell env', () => {
+				// The two records are separate on purpose: a spawner reads only
+				// shellEnvVars, so parking a variable is what stops it shipping.
+				useSettingsStore.getState().setShellEnvVars({ KEEP: 'yes' });
+				useSettingsStore.getState().setShellEnvVarsDisabled({ OFF: 'no' });
+				expect(useSettingsStore.getState().shellEnvVars).toEqual({ KEEP: 'yes' });
 			});
 
 			it('setGhPath updates state and persists', () => {
@@ -1722,6 +1738,21 @@ describe('settingsStore', () => {
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		it('restores both halves of the environment editor', async () => {
+			// A parked variable that did not survive a restart would come back
+			// live, which is the opposite of what switching it off asked for.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shellEnvVars: { KEEP: 'yes' },
+				shellEnvVarsDisabled: { PARKED: 'later' },
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.shellEnvVars).toEqual({ KEEP: 'yes' });
+			expect(state.shellEnvVarsDisabled).toEqual({ PARKED: 'later' });
 		});
 
 		it('loads fileExplorerIconTheme when the persisted value is valid', async () => {

@@ -10,6 +10,8 @@ import type { StateCreator } from 'zustand';
 import type { ThemeId, ThemeColors } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { TYPOGRAPHY_PRESETS, type TypographyPresetId } from '../../shared/typographyPresets';
+import type { GlossLevel } from '../../shared/themeGloss';
+import { DEFAULT_GLOSS_LEVEL, asGlossLevel } from '../../shared/themeGloss';
 import {
 	BASE_FONT_SIZE_DEFAULT,
 	FONT_ZOOM_DEFAULT,
@@ -50,6 +52,7 @@ export interface ThemeState {
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
 	colorBlindMode: boolean;
+	themeGloss: GlossLevel;
 	/**
 	 * Whether the typography chooser has been shown. False on a fresh install
 	 * AND on every install that predates the chooser, which is what makes the
@@ -78,6 +81,7 @@ export interface ThemeActions {
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
 	setColorBlindMode: (value: boolean) => void;
+	setThemeGloss: (value: GlossLevel) => void;
 	setTypographyPromptSeen: (value: boolean) => void;
 	setThemePromptSeen: (value: boolean) => void;
 	setAgentPowersPromptSeen: (value: boolean) => void;
@@ -105,6 +109,7 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 	customThemeBaseId: 'dracula',
 	colorBlindMode: false,
+	themeGloss: DEFAULT_GLOSS_LEVEL,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
 	agentPowersPromptSeen: false,
@@ -208,6 +213,16 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		window.maestro.settings.set('colorBlindMode', value);
 	},
 
+	setThemeGloss: (value) => {
+		// Narrow even here. The Settings slider can only produce a valid
+		// level, but this setter is also the landing point for the value the
+		// CLI wrote, and an unrecognized string on <html data-gloss> matches
+		// no rule, so the user sees the control silently do nothing.
+		const level = asGlossLevel(value);
+		set({ themeGloss: level });
+		window.maestro.settings.set('themeGloss', level);
+	},
+
 	setTypographyPromptSeen: (value) => {
 		set({ typographyPromptSeen: value });
 		window.maestro.settings.set('typographyPromptSeen', value);
@@ -300,4 +315,10 @@ export function hydrateThemeSettings(
 		patch.colorBlindMode =
 			raw === true || (typeof raw === 'string' && raw !== 'none' && raw !== 'false' && raw !== '');
 	}
+
+	// Narrowed rather than cast: this value can arrive from an older build, a
+	// hand-edited settings file, or `maestro-cli settings set`, and an
+	// unrecognized level would render as permanently-off with no error.
+	if (allSettings['themeGloss'] !== undefined)
+		patch.themeGloss = asGlossLevel(allSettings['themeGloss']);
 }

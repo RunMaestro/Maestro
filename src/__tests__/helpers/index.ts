@@ -5,6 +5,7 @@
  * across many test files.
  */
 
+export { isolateAgentEnv, SHELL_OVERRIDABLE_AGENT_ENV_KEYS } from './agentEnvIsolation';
 export { createMockAITab, createMockFileTab } from './mockTab';
 export { createMockSession } from './mockSession';
 export { installLocalStorageMock } from './mockLocalStorage';
