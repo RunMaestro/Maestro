@@ -70,34 +70,34 @@ const EXAMPLES: Array<{
 }> = [
 	{
 		icon: SlidersHorizontal,
-		label: 'Change any setting',
+		label: 'Change Any Setting',
 		prompt:
 			'Set my AI chat font to Inter, switch me to a light theme, and turn on OS notifications.',
 	},
 	{
 		icon: Users,
-		label: 'Create agents',
+		label: 'Create Agents',
 		prompt: 'Create a new agent called Scratch pointed at my home directory.',
 	},
 	{
 		icon: FileText,
-		label: 'Write an Auto Run doc',
+		label: 'Write an Auto Run Doc',
 		prompt:
 			'Write me an Auto Run document that reviews this repo for TODOs and lists them as tasks.',
 	},
 	{
 		icon: CalendarClock,
-		label: 'Schedule a task',
+		label: 'Schedule a Task',
 		prompt: 'Every weekday at 9am, summarize what changed in this repo overnight.',
 	},
 	{
 		icon: Workflow,
-		label: 'Build a Cue pipeline',
+		label: 'Build a Cue Pipeline',
 		prompt: 'Whenever a pull request opens on this repo, have an agent review it and report back.',
 	},
 	{
 		icon: LayoutDashboard,
-		label: 'Build me a dashboard',
+		label: 'Build Me a Dashboard',
 		prompt:
 			'Build me an HTML dashboard of this repo: commits per week, top contributors, open TODOs.',
 	},
@@ -125,7 +125,7 @@ export function AgentPowersModal({
 	return (
 		<Modal
 			theme={theme}
-			title="Your agents can drive Maestro"
+			title="Your Agents Can Drive Maestro"
 			headerIcon={<Bot className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 			priority={MODAL_PRIORITIES.AGENT_POWERS}
 			onClose={onDismiss}
