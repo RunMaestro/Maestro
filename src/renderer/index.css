@@ -1291,3 +1291,219 @@ svg.wand-profiling-active path:nth-child(8) {
 .code-fence .shiki-host pre.shiki .line {
 	color: unset;
 }
+
+/* ============================================================================
+   SURFACE GLOSS
+
+   Adds a light source to the app chrome so surfaces read as stacked layers
+   instead of one flat sheet of paint. It changes no theme colour: it only adds
+   highlights and shadows over the paint that is already there.
+
+   Intensity comes from the `themeGloss` setting, published onto <html> as
+   `data-gloss` by `useThemeStyles`. The vocabulary lives in
+   `src/shared/themeGloss.ts`; every level named there needs rules here, or the
+   Settings slider offers a stop that renders the same as the one before it.
+
+     off     - shipped behaviour, no rules at all
+     sheen   - top highlight + short top-down wash
+     strong  - same, roughly 1.6x, plus a dark edge along the bottom of each bar
+     max     - strong + accent glow on the active surface
+
+   Light themes are excluded outright: a white highlight on a white surface is
+   invisible at best and muddy at worst.
+
+   TWO CHOICES HERE ARE LOAD-BEARING, and both were made after the obvious
+   version turned out to be wrong.
+
+   1. THE BAR SHEEN IS BACKGROUND-IMAGE, NOT BOX-SHADOW. An inline style beats a
+      stylesheet class, and `SessionList` and `RightPanel` both set an inline
+      `boxShadow` for their focus ring. A `box-shadow` sheen therefore vanished
+      from whichever sidebar the user had focused and came back when they moved
+      away, which reads as the gloss flickering rather than as a focus ring.
+      `background-image` has no such collision: every chrome root paints itself
+      with `background-color`, which is a different longhand, so the layers
+      compose and neither side has to know about the other. The 1px highlight is
+      just a gradient with a hard stop. `.chrome-raised` keeps a real
+      `box-shadow` because it needs to cast OUTSIDE its box and nothing sets an
+      inline shadow there.
+
+   2. THE LIGHT SOURCE IS `--sheen-rgb`, NOT `currentColor`. currentColor is
+      whatever text colour happens to be inherited at each root, so a container
+      that sets a dim colour glosses weaker than one that does not, and the same
+      level renders at two strengths in one window for reasons nobody chose. The
+      variable is published from the theme's own `textMain`, so intensity is a
+      property of the level and the hue is a property of the theme. The fallback
+      is white because gloss is dark-theme only.
+   ============================================================================ */
+
+html[data-gloss='sheen'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 7%) 0 1px, transparent 1px),
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 5%), transparent 110px);
+}
+
+html[data-gloss='strong'] .chrome-sheen,
+html[data-gloss='max'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 11%) 0 1px, transparent 1px),
+		linear-gradient(0deg, rgb(0 0 0 / 45%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			rgb(var(--sheen-rgb, 255 255 255) / 8%),
+			rgb(var(--sheen-rgb, 255 255 255) / 2%) 34px,
+			transparent 130px
+		);
+}
+
+/* Cards and pills sit ON the chrome, so they get the highlight without the
+   wash - a gradient inside a small rounded box reads as a bad texture - and a
+   real drop shadow, which is the whole point of calling them raised. */
+html[data-gloss='sheen'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 6%),
+		0 2px 10px rgb(0 0 0 / 30%);
+}
+
+html[data-gloss='strong'] .chrome-raised,
+html[data-gloss='max'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 9%),
+		0 3px 14px rgb(0 0 0 / 42%);
+}
+
+html[data-gloss='max'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 14%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 34%, transparent),
+		0 0 18px color-mix(in srgb, var(--accent-color) 22%, transparent);
+}
+
+/* Never on light themes. Placed last so it wins over every level above without
+   needing a level-by-level opt-out. */
+html[data-theme-mode='light'] .chrome-sheen,
+html[data-theme-mode='light'] .chrome-raised,
+html[data-theme-mode='light'] .chrome-raised-active {
+	box-shadow: none;
+	background-image: none;
+}
+
+/* ============================================================================
+   LEFT BAR ROW LAYOUT
+
+   The row used to spend its width on the constant and clip the variable. The
+   agent name is the only thing that differs between rows and the only thing
+   anyone scans for, yet it truncated around fourteen characters, while the
+   provider label underneath reads the same string on nine rows out of ten and
+   got a full uncontested line at almost the same weight.
+
+   The fix gives the title the ENTIRE first line and moves everything else to a
+   second line, so a long name has the full sidebar to itself. It is always two
+   lines, which is what the shipped row already was, and it costs 0.5px of row
+   height.
+
+   The mechanism is `display: contents` on the row's left wrapper, which
+   dissolves that wrapper as a box and promotes the title and meta rows to
+   direct grid children of the row. Without it the title cannot span past the
+   wrapper, and the actions cluster cannot be pulled onto the meta line, since
+   the two live in different parents.
+
+   NOTHING HERE CHANGES LEGIBILITY. An earlier draft also demoted the provider
+   label to 9px at opacity .5 and faded the group chip to .7, and both were
+   wrong for the same measured reason: CSS opacity nests, `.row-meta` already
+   carries `opacity-70`, so the effective alpha was .35 rather than .5. On the
+   shipped palettes that put the label at 1.46:1 on Dracula and 2.34:1 on Olive
+   Nights, against 2.18:1 and 6.13:1 today, and at 9px none of it qualifies as
+   large text, so even the relaxed 3:1 floor is missed on every theme. Moving
+   text costs nothing and buys the actual fix; dimming text costs real
+   legibility and buys an impression. Do not reintroduce a dim here without
+   running the contrast numbers on more than one theme.
+   ============================================================================ */
+
+.session-row {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	column-gap: 0.5rem;
+}
+
+.session-row .row-main {
+	display: contents;
+}
+
+.session-row .row-title {
+	grid-column: 1 / -1;
+	grid-row: 1;
+	min-width: 0;
+}
+
+/* Single line, full row width. The ellipsis is now a genuine last resort
+   rather than the normal case it was at fourteen characters. */
+.session-row .row-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.session-row .row-meta {
+	grid-column: 1;
+	grid-row: 2;
+	min-width: 0;
+}
+
+.session-row .row-actions {
+	grid-column: 2;
+	grid-row: 2;
+	margin-left: 0;
+	justify-self: end;
+}
+
+/* Width only, no dimming. The chip sits beside the title and would otherwise
+   hold its natural width, so it is capped and given an ellipsis. */
+.session-row .row-group-chip {
+	max-width: 90px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ============================================================================
+   FILES TOOLBAR HIERARCHY (dormant; no UI and nothing seeds this attribute)
+
+   The same defect the Left Bar had, in another panel: Find, Open, .files and
+   Refresh are rendered from an identical class string, so four buttons plus two
+   icon controls all carry the accent colour, the accent border and the accent
+   fill at equal weight. Six controls shout in unison and the eye has nowhere to
+   land. Find is the one with a keyboard shortcut and the one used constantly,
+   so it becomes the primary and the rest drop to the panel's own text colour.
+
+   NOT SHIPPED, and deliberately behind its own attribute rather than the gloss
+   setting, because it is a different decision. Flip it live to review:
+
+       document.documentElement.dataset.fxToolbar = 'on'
+
+   Two things must change before this can ship: the `!important` below exists
+   only because `FileExplorerPanel` sets these colours inline, so the inline
+   styles need to become a real variant prop; and the hover rules hard-code
+   white alphas, which are wrong on a light theme.
+   ============================================================================ */
+
+html[data-fx-toolbar='on'] .fx-btn:not(.fx-primary) {
+	color: var(--fx-quiet, #98a0bd) !important;
+	border-color: rgba(255, 255, 255, 0.09) !important;
+	background-color: transparent !important;
+	font-weight: 400 !important;
+}
+
+html[data-fx-toolbar='on'] .fx-btn:not(.fx-primary):hover {
+	border-color: rgba(255, 255, 255, 0.18) !important;
+	background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-fx-toolbar='on'] .fx-btn.fx-primary {
+	background-color: var(--accent-color) !important;
+	border-color: var(--accent-color) !important;
+	color: #16171f !important;
+	font-weight: 600 !important;
+}

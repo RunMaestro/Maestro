@@ -3262,6 +3262,7 @@ export class WebSocketMessageHandler {
 		'activeThemeId',
 		'customThemeColors',
 		'customThemeBaseId',
+		'themeGloss',
 		'fontSize',
 		'enterToSendAI',
 		'defaultSaveToHistory',

@@ -451,6 +451,7 @@ function MaestroConsoleInner() {
 		keyboardMasteryStats,
 		recordShortcutUsage,
 		colorBlindMode,
+		themeGloss,
 		defaultStatsTimeRange,
 		documentGraphShowExternalLinks,
 		documentGraphConfirmClose,
@@ -1206,6 +1207,8 @@ function MaestroConsoleInner() {
 	// Theme styles hook - manages CSS variables and scrollbar fade animations
 	useThemeStyles({
 		themeColors: theme.colors,
+		themeMode: theme.mode,
+		glossLevel: themeGloss,
 	});
 
 	// Get capabilities for the active session's agent type
@@ -2878,7 +2881,7 @@ function MaestroConsoleInner() {
 				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape or when using native title bar) --- */}
 				{!isMobileLandscape && !useNativeTitleBar && (
 					<div
-						className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
+						className="chrome-sheen fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
 						style={
 							{
 								WebkitAppRegion: 'drag',

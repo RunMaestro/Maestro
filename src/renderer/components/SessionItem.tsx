@@ -252,7 +252,13 @@ export const SessionItem = memo(function SessionItem({
 	const getContainerClassName = () => {
 		// Worktree items get a dashed left border to visually distinguish from regular agents
 		const borderClass = variant === 'worktree' ? 'border-l-2 border-dashed' : 'border-l-2';
-		const base = `cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
+		// `session-row` switches the row to the two-line grid in index.css: title
+		// on line one at full width, meta and actions on line two. The worktree
+		// variant is deliberately excluded because it renders no meta row at all,
+		// so the grid would put its actions on an otherwise empty second line and
+		// turn a compact child row into a two-line one.
+		const layoutClass = variant === 'worktree' ? '' : 'session-row ';
+		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
 			return `mx-3 px-3 py-2 rounded mb-1 ${base}`;
@@ -289,7 +295,7 @@ export const SessionItem = memo(function SessionItem({
 			}}
 		>
 			{/* Left side: Session name and metadata */}
-			<div className="min-w-0 flex-1">
+			<div className="row-main min-w-0 flex-1">
 				{isEditing ? (
 					<input
 						autoFocus
@@ -310,7 +316,7 @@ export const SessionItem = memo(function SessionItem({
 						}}
 					/>
 				) : (
-					<div className="flex items-center gap-1.5" onDoubleClick={onStartRename}>
+					<div className="row-title flex items-center gap-1.5" onDoubleClick={onStartRename}>
 						{/* Worktree expand/collapse chevron for parent agents (rotates 90deg when expanded) */}
 						{isWorktreeParent && onToggleWorktrees && (
 							<button
@@ -358,7 +364,7 @@ export const SessionItem = memo(function SessionItem({
 							</span>
 						)}
 						<span
-							className={`font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
+							className={`row-name font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
 							style={{ color: theme.colors.textMain }}
 						>
 							{session.name}
@@ -400,7 +406,7 @@ export const SessionItem = memo(function SessionItem({
 
 				{/* Session metadata row (hidden for compact worktree variant) */}
 				{variant !== 'worktree' && (
-					<div className="flex items-center gap-2 text-[10px] mt-0.5 opacity-70">
+					<div className="row-meta flex items-center gap-2 text-[10px] mt-0.5 opacity-70">
 						{/* Session Jump Number Badge (Opt+Cmd+NUMBER) */}
 						{jumpNumber && (
 							<div
@@ -413,21 +419,24 @@ export const SessionItem = memo(function SessionItem({
 								{jumpNumber}
 							</div>
 						)}
-						<Activity className="w-3 h-3" /> {session.toolType}
-						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
+						<Activity className="row-provider-icon w-3 h-3" />{' '}
+						<span className="row-provider">
+							{session.toolType}
+							{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
+						</span>
 					</div>
 				)}
 			</div>
 
 			{/* Right side: Indicators and actions */}
-			<div className="flex items-center gap-2 ml-2">
+			<div className="row-actions flex items-center gap-2 ml-2">
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default; the showFullGroupLabelInBookmarks setting swaps in the full group
 				    name, truncated with the complete value available on hover. */}
 				{variant === 'bookmark' && group && showGroupLabelInBookmarks && (
 					<span
-						className={`text-[9px] px-1 py-0.5 rounded${
+						className={`row-group-chip text-[9px] px-1 py-0.5 rounded${
 							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
 						}`}
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
