@@ -10,8 +10,10 @@ import { createPortal } from 'react-dom';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
+import { useIsTopLayer } from '../../../hooks/ui/useIsTopLayer';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
 import { useScalePreference, type ScaleRange } from '../../../hooks/ui/useScalePreference';
+import { useScaleShortcuts } from '../../../hooks/ui/useScaleShortcuts';
 import { EscCloseButton } from '../../ui/EscCloseButton';
 import { ScaleControl } from '../../ui/ScaleControl';
 import { StagedImageTile } from './StagedImageTile';
@@ -49,6 +51,10 @@ export function StagedImagesOrganizerModal({
 	useModalLayer(MODAL_PRIORITIES.STAGED_IMAGES_ORGANIZER, 'Staged Images', onClose);
 	const dnd = useStagedImageDnd(stagedImages.length, onReorder);
 	const thumbnailScale = useScalePreference(THUMBNAIL_SCALE_KEY, THUMBNAIL_SCALE_RANGE);
+	// Zoom from the keyboard, but not while the lightbox or the annotator is
+	// open on top of us - both are opened from this modal and stay above it.
+	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.STAGED_IMAGES_ORGANIZER);
+	useScaleShortcuts(thumbnailScale, { enabled: isTopLayer });
 
 	return createPortal(
 		<div
@@ -85,6 +91,7 @@ export function StagedImagesOrganizerModal({
 							decreaseIcon={ZoomOut}
 							increaseIcon={ZoomIn}
 							subject="thumbnail size"
+							shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
 							testId="staged-images-zoom"
 						/>
 						<EscCloseButton theme={theme} onClose={onClose} />

@@ -92,6 +92,9 @@ export {
 export type { UseFontScaleReturn } from './useFontScale';
 export { useScalePreference, clampScale } from './useScalePreference';
 export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference';
+export { useScaleShortcuts } from './useScaleShortcuts';
+export type { UseScaleShortcutsOptions } from './useScaleShortcuts';
+export { useIsTopLayer } from './useIsTopLayer';
 
 // Persisted view toggle (collapsed banners, folded sections)
 export { usePersistedToggle } from './usePersistedToggle';

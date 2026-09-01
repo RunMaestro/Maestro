@@ -15,8 +15,8 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
-import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
@@ -204,10 +204,7 @@ export function AutoRunExpandedModal({
 	// after the user opens PlayBook Exchange (or the doc selector) and dismisses
 	// it. Without this, focus falls back to the body and Cmd+E starts targeting
 	// the right-panel AutoRun behind us instead of the expanded view.
-	const layerStack = useLayerStack();
-	const layers = layerStack.getLayers();
-	const topLayer = layers[layers.length - 1];
-	const isTopLayer = topLayer?.priority === MODAL_PRIORITIES.AUTORUN_EXPANDED;
+	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.AUTORUN_EXPANDED);
 	useEffect(() => {
 		if (!isTopLayer) return;
 		// Wait a tick so the closing modal has finished tearing down its focus trap.
