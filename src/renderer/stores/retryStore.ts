@@ -34,6 +34,7 @@ import {
 	type ClassifiableError,
 } from '../../shared/retryClassification';
 import { resilienceEnabled } from '../../shared/agentConstants';
+import { parseQuotaLimitDetail, type QuotaLimitDetail } from '../../shared/quotaLimitDetail';
 import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
 import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
@@ -121,6 +122,14 @@ export interface OutageRecord {
 	resolvedAt?: number;
 	/** Latest failing message, for the card subtitle. */
 	lastMessage: string;
+	/**
+	 * Structured quota evidence when the provider sent any (Claude Code's
+	 * `quotaLimits`). Lets the card name WHICH window was exhausted and whether
+	 * anything can be done, rather than showing the provider's one collapsed
+	 * sentence. Undefined for availability outages and for providers/transports
+	 * that forward no quota object.
+	 */
+	quota?: QuotaLimitDetail;
 }
 
 interface DispatchSnapshot {
@@ -364,6 +373,11 @@ export function scheduleRetryForError(
 		status: 'active',
 		resolvedAt: undefined,
 		lastMessage: error.message,
+		// Re-read on every reschedule rather than only on the first failure: a
+		// continued outage can cross from the 5-hour window into the weekly one,
+		// and a card still naming the first window sends the user to wait out a
+		// reset that already happened.
+		quota: parseQuotaLimitDetail(error.parsedJson),
 	});
 
 	const delay = Math.max(0, nextRetryAt - now);

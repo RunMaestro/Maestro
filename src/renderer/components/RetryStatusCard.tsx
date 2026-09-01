@@ -20,6 +20,8 @@ import { AlertTriangle, Check, RefreshCw, X, Zap } from 'lucide-react';
 
 import { useRetryStore, retryNow, cancelRetry } from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
+import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
+import { QuotaLimitEvidence } from './ui/QuotaLimitEvidence';
 import type { Theme } from '../types';
 
 interface RetryStatusCardProps {
@@ -94,8 +96,17 @@ export function RetryStatusCard({
 		);
 	}
 
+	// Name the window that was actually exhausted when the provider told us which
+	// one it was. "5-hour session limit reached" and "Weekly limit reached" are
+	// hours vs days of waiting, and the generic label cannot tell them apart.
+	// `describeQuotaWindow(undefined)` is the safe generic, so a payload without
+	// a window still reads sensibly.
 	const strategyLabel =
-		outage.strategy === 'availability' ? 'Service overloaded' : 'Plan quota exhausted';
+		outage.strategy === 'availability'
+			? 'Service overloaded'
+			: outage.quota
+				? `${describeQuotaWindow(outage.quota)} reached`
+				: 'Plan quota exhausted';
 	// `attempts` is the 0-indexed count of the next resend, so it doubles as the
 	// number of retries already dispatched. Guard the plural.
 	const retryCount = outage.attempts;
@@ -183,6 +194,11 @@ export function RetryStatusCard({
 					auto-retrying
 				</span>
 			</div>
+
+			{/* The evidence behind the verdict: which window, when it reopens, and
+			    whether anything can be done. The heading above already names the
+			    window, so the block only adds the rest. */}
+			<QuotaLimitEvidence detail={outage.quota} theme={theme} hideWindowName />
 
 			<div className="flex items-center gap-6 flex-wrap">
 				<StatBlock label="Retries" value={String(retryCount)} color={theme.colors.textMain} />
