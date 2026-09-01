@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+// Pull in Window.maestro. Test files sit outside tsconfig.json include, so the
+// IDE infers a bare DOM Window unless this module's global augmentation loads.
+import type {} from '../../../renderer/global';
 import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -46,16 +49,7 @@ describe('useRemoteIntegration', () => {
 	const originalMaestro = { ...window.maestro };
 
 	let onRemoteCommandHandler:
-		| ((
-				sessionId: string,
-				command: string,
-				inputMode?: 'ai' | 'terminal',
-				tabId?: string,
-				force?: boolean,
-				images?: string[],
-				background?: boolean
-		  ) => void)
-		| undefined;
+		Parameters<typeof window.maestro.process.onRemoteCommand>[0] | undefined;
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
@@ -116,22 +110,7 @@ describe('useRemoteIntegration', () => {
 		  ) => void)
 		| undefined;
 	let onRemoteNotifyToastHandler:
-		| ((params: {
-				title: string;
-				message: string;
-				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
-				duration?: number;
-				dismissible?: boolean;
-				sessionId?: string;
-				tabId?: string;
-				actionUrl?: string;
-				actionLabel?: string;
-				clickAction?:
-					| { kind: 'jump-session'; sessionId: string; tabId?: string }
-					| { kind: 'open-file'; sessionId: string; path: string }
-					| { kind: 'open-url'; url: string };
-		  }) => void)
-		| undefined;
+		Parameters<typeof window.maestro.process.onRemoteNotifyToast>[0] | undefined;
 	let onRemoteMovementHandler:
 		((params: MovementPayload, responseChannel?: string) => void) | undefined;
 
@@ -387,6 +366,7 @@ describe('useRemoteIntegration', () => {
 
 	const mockAgentSessions = {
 		...window.maestro.agentSessions,
+		read: vi.fn(),
 		updateSessionName: vi.fn().mockResolvedValue(true),
 		setSessionName: vi.fn().mockResolvedValue(undefined),
 	};
@@ -433,7 +413,7 @@ describe('useRemoteIntegration', () => {
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
 		useNotificationStore.setState({ toasts: [] });
-		useMovementStore.setState({ items: [], hidden: false });
+		useMovementStore.setState({ items: [], dismissedItems: [] });
 		useConcertoCreationActivityStore.setState({ tracks: [] });
 		clearConcertoDesignerFramesForTests();
 
@@ -949,7 +929,9 @@ describe('useRemoteIntegration', () => {
 		});
 
 		it('reconciles the complete desktop tab inventory without discarding local transcripts', () => {
-			const existingLogs = [{ type: 'stdout', content: 'kept transcript' }] as AITab['logs'];
+			const existingLogs: AITab['logs'] = [
+				{ id: 'kept-1', timestamp: 1, source: 'stdout', text: 'kept transcript' },
+			];
 			const existing = createMockTab({
 				id: 'tab-1',
 				logs: existingLogs,
