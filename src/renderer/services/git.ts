@@ -13,6 +13,13 @@ import type {
 	GitRunCommandResult,
 	GitStreamingOperation,
 } from '../../shared/gitUtils';
+import type {
+	CheckpointListResult,
+	CheckpointResult,
+	CreateCheckpointOptions,
+	DeleteCheckpointResult,
+	RestoreCheckpointResult,
+} from '../../shared/gitCheckpoints';
 import { createIpcMethod } from './ipcWrapper';
 
 export interface GitStatus {
@@ -98,6 +105,68 @@ export const gitService = {
 			call: () => window.maestro.git.commitAll(cwd, message, sshRemoteId),
 			errorContext: 'Git commitAll',
 			defaultValue: { success: false, committed: false, error: 'git commit failed' },
+		});
+	},
+
+	// --- Worktree checkpoints ---
+	// Snapshot / roll back a working tree. See src/shared/gitCheckpoints.ts for
+	// the model and src/main/git/checkpoints.ts for the git mechanism.
+
+	/**
+	 * Snapshot the working tree. Captures staged, unstaged, and untracked files;
+	 * pass `includeIgnored` to capture .gitignore'd ones too.
+	 */
+	async createCheckpoint(
+		cwd: string,
+		options?: CreateCheckpointOptions,
+		sshRemoteId?: string
+	): Promise<CheckpointResult> {
+		return createIpcMethod({
+			call: () => window.maestro.git.checkpointCreate(cwd, options, sshRemoteId),
+			errorContext: 'Git createCheckpoint',
+			defaultValue: { success: false, error: 'Failed to create checkpoint' },
+		});
+	},
+
+	/** List this working tree's checkpoints, newest first. */
+	async listCheckpoints(
+		cwd: string,
+		options?: { allWorktrees?: boolean },
+		sshRemoteId?: string
+	): Promise<CheckpointListResult> {
+		return createIpcMethod({
+			call: () => window.maestro.git.checkpointList(cwd, options, sshRemoteId),
+			errorContext: 'Git listCheckpoints',
+			defaultValue: { success: false, checkpoints: [], error: 'Failed to list checkpoints' },
+		});
+	},
+
+	/**
+	 * Roll the working tree back to a checkpoint. A safety checkpoint is taken
+	 * first and returned, so the restore itself can be undone.
+	 */
+	async restoreCheckpoint(
+		cwd: string,
+		checkpointId: string,
+		sshRemoteId?: string
+	): Promise<RestoreCheckpointResult> {
+		return createIpcMethod({
+			call: () => window.maestro.git.checkpointRestore(cwd, checkpointId, sshRemoteId),
+			errorContext: 'Git restoreCheckpoint',
+			defaultValue: { success: false, error: 'Failed to restore checkpoint' },
+		});
+	},
+
+	/** Delete a checkpoint. */
+	async deleteCheckpoint(
+		cwd: string,
+		checkpointId: string,
+		sshRemoteId?: string
+	): Promise<DeleteCheckpointResult> {
+		return createIpcMethod({
+			call: () => window.maestro.git.checkpointDelete(cwd, checkpointId, sshRemoteId),
+			errorContext: 'Git deleteCheckpoint',
+			defaultValue: { success: false, error: 'Failed to delete checkpoint' },
 		});
 	},
 

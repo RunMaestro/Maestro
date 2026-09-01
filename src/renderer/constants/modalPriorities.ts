@@ -371,6 +371,13 @@ export const MODAL_PRIORITIES = {
 	 * which is what launches a checkout that can spill into it. */
 	GIT_COMMAND_RUNNER: 215,
 
+	/** Worktree checkpoints browser - same band as the branch switcher, which it
+	 * sits beside in the git pill menu. Below GIT_COMMAND_RUNNER (215) so a
+	 * pull/push console opened over it still takes Escape first, and 206 rather
+	 * than 205 so it and the branch switcher can never be confused for the same
+	 * layer if both are somehow open. */
+	CHECKPOINTS: 206,
+
 	/** Git diff preview overlay */
 	GIT_DIFF: 200,
 

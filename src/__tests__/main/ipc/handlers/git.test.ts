@@ -232,6 +232,10 @@ describe('Git IPC handlers', () => {
 				'git:createGist',
 				'git:graph',
 				'git:switch',
+				'git:checkpointCreate',
+				'git:checkpointList',
+				'git:checkpointRestore',
+				'git:checkpointDelete',
 			];
 
 			expect(handlers.size).toBe(expectedChannels.length);

@@ -530,6 +530,11 @@ export interface UseSettingsReturn {
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
 	autoRunMaxTaskDurationMin: number;
 	setAutoRunMaxTaskDurationMin: (value: number) => void;
+	// Worktree checkpoint at each Auto Run task boundary (off by default)
+	autoRunCheckpointsEnabled: boolean;
+	setAutoRunCheckpointsEnabled: (value: boolean) => void;
+	autoRunCheckpointsIncludeIgnored: boolean;
+	setAutoRunCheckpointsIncludeIgnored: (value: boolean) => void;
 
 	// Built-in AI command bundle visibility
 	speckitEnabled: boolean;

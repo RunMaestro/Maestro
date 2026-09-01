@@ -119,6 +119,16 @@ export function buildGitWorktreeCommands({
 		});
 
 		commands.push({
+			id: 'checkpoints',
+			label: 'Checkpoints',
+			subtext: 'Snapshot this working tree, or roll it back to an earlier one',
+			action: () => {
+				gitActions.viewCheckpoints();
+				setQuickActionOpen(false);
+			},
+		});
+
+		commands.push({
 			id: 'openRepo',
 			label: 'Open Repository in Browser',
 			action: async () => {

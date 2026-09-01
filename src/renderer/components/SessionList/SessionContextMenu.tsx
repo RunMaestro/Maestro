@@ -15,6 +15,7 @@ import {
 	GitBranch,
 	GitPullRequest,
 	History,
+	Camera,
 	Trash2,
 	Edit3,
 	Zap,
@@ -706,6 +707,19 @@ export function SessionContextMenu({
 					>
 						<GitBranch className="w-3.5 h-3.5" />
 						Change Branch
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							gitActions.viewCheckpoints();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-checkpoints"
+					>
+						<Camera className="w-3.5 h-3.5" />
+						Checkpoints
 					</button>
 					{createPR && (
 						<button

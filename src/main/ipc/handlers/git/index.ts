@@ -3,6 +3,7 @@ import { registerReadHandlers } from './read';
 import { registerBranchHandlers } from './branch';
 import { registerStreamingHandlers } from './streaming';
 import { registerWorktreeHandlers } from './worktree';
+import { registerCheckpointHandlers } from './checkpoint';
 import { registerWorktreeWatchHandlers } from './worktreeWatch';
 import { registerGithubHandlers } from './github';
 import { LOG_CONTEXT, GitHandlerDependencies } from './shared';
@@ -18,6 +19,7 @@ export type { GitHandlerDependencies } from './shared';
  * - branch.ts: branch/tag listing, switch, checkout, init, commitAll, getDefaultBranch
  * - streaming.ts: runCommand/cancelCommand (push/pull/fetch with live progress)
  * - worktree.ts: worktree create/checkout/list/remove
+ * - checkpoint.ts: worktree checkpoint create/list/restore/delete
  * - worktreeWatch.ts: worktree directory filesystem watching
  * - github.ts: gh CLI integration (createPR, checkGhCli, createGist)
  *
@@ -28,6 +30,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	registerBranchHandlers();
 	registerStreamingHandlers();
 	registerWorktreeHandlers();
+	registerCheckpointHandlers();
 	registerWorktreeWatchHandlers(deps);
 	registerGithubHandlers();
 

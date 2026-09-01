@@ -114,6 +114,12 @@ import {
 	handleListWorktrees,
 } from './git';
 import {
+	handleCheckpointCreate,
+	handleCheckpointDelete,
+	handleCheckpointList,
+	handleCheckpointRestore,
+} from './checkpoints';
+import {
 	handleGetGroups,
 	handleCreateGroup,
 	handleRenameGroup,
@@ -204,6 +210,34 @@ export class WebSocketMessageHandler {
 		const err = error instanceof Error ? error : new Error(String(error));
 		captureException(err, { extra: { area: 'web-server', handler, ...extra } });
 		this.sendError(client, `${userMessagePrefix}: ${err.message}`);
+	}
+
+	/**
+	 * Run an async checkpoint handler from the synchronous dispatch switch.
+	 *
+	 * The handlers already answer with `success: false` for every failure they
+	 * anticipate, so this only catches the ones they don't. That still matters:
+	 * an uncaught rejection here would leave the CLI blocked on a reply that
+	 * never arrives until its own timeout fires, with nothing said about why.
+	 */
+	private runCheckpointHandler(
+		handler: (
+			ctx: MessageHandlerContext,
+			client: WebClient,
+			message: WebClientMessage
+		) => Promise<void>,
+		client: WebClient,
+		message: WebClientMessage
+	): void {
+		void handler(this.ctx, client, message).catch((error: unknown) => {
+			this.reportHandlerError(
+				client,
+				error,
+				String(message.type),
+				{ sessionId: message.sessionId, requestId: message.requestId },
+				'Checkpoint operation failed'
+			);
+		});
 	}
 
 	/**
@@ -487,6 +521,28 @@ export class WebSocketMessageHandler {
 
 			case 'list_worktrees':
 				handleListWorktrees(this.ctx, client, message);
+				break;
+
+			// Worktree checkpoints. These four are async because they run git
+			// directly in this process rather than delegating to the renderer -
+			// see checkpoints.ts. Each reports its own outcome over the socket,
+			// so the catch here is only for a throw none of them expects; without
+			// it that would be an unhandled rejection AND a CLI command that
+			// waits for a reply that never comes.
+			case 'worktree_checkpoint_create':
+				this.runCheckpointHandler(handleCheckpointCreate, client, message);
+				break;
+
+			case 'worktree_checkpoint_list':
+				this.runCheckpointHandler(handleCheckpointList, client, message);
+				break;
+
+			case 'worktree_checkpoint_restore':
+				this.runCheckpointHandler(handleCheckpointRestore, client, message);
+				break;
+
+			case 'worktree_checkpoint_delete':
+				this.runCheckpointHandler(handleCheckpointDelete, client, message);
 				break;
 
 			case 'get_group_chats':

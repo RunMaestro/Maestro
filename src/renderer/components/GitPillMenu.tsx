@@ -28,6 +28,7 @@ import {
 	GitBranch,
 	GitPullRequest,
 	History,
+	Camera,
 	Settings2,
 } from 'lucide-react';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
@@ -82,6 +83,8 @@ export interface GitPillMenuProps {
 	onPull: () => void;
 	onPush: () => void;
 	onSwitchBranch: () => void;
+	/** Open the worktree checkpoints browser (snapshot / roll back the tree). */
+	onViewCheckpoints: () => void;
 	/** Omitted when the agent has no branch to open a PR from. */
 	onCreatePR?: () => void;
 	/** Omitted for worktree children, which can't own a worktree config. */
@@ -132,6 +135,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 	onPull,
 	onPush,
 	onSwitchBranch,
+	onViewCheckpoints,
 	onCreatePR,
 	onConfigureWorktrees,
 	onClose,
@@ -318,6 +322,15 @@ export const GitPillMenu = memo(function GitPillMenu({
 					icon={<GitBranch className="w-3.5 h-3.5" style={iconStyle} />}
 					label="Change Branch"
 					onClick={onSwitchBranch}
+				/>
+				{/* Sits with the tree-state actions rather than the network ones: a
+				    checkpoint is about this working copy, not about origin. */}
+				<MenuRow
+					theme={theme}
+					testId="git-pill-menu-checkpoints"
+					icon={<Camera className="w-3.5 h-3.5" style={iconStyle} />}
+					label="Checkpoints"
+					onClick={onViewCheckpoints}
 				/>
 				{onCreatePR && (
 					<MenuRow

@@ -722,6 +722,67 @@ Create a new agent in a git worktree branched off an existing parent agent
 | `--focus`              | Select the new worktree agent after creating it (default)                                                          | -       |
 | `--json`               | Output as JSON (for scripting)                                                                                     | -       |
 
+## `maestro-cli worktree checkpoint`
+
+Snapshot and roll back an agent working tree.
+
+A checkpoint captures the working tree - staged changes, unstaged edits, and
+untracked files - as real git objects under `refs/maestro/checkpoints`, not as a
+copy of your files. Restoring rewrites the tree and leaves your branch and
+commit history exactly where they are.
+
+```bash
+# Snapshot before letting an agent try something ambitious
+maestro-cli worktree checkpoint create -a my-agent -m "before the refactor"
+
+# See what you can go back to
+maestro-cli worktree checkpoint list -a my-agent
+
+# Roll back (the pre-restore state is saved first, so this is undoable)
+maestro-cli worktree checkpoint restore 20260901T143000Z-a1b2c3 -a my-agent
+```
+
+## `maestro-cli worktree checkpoint create`
+
+Snapshot the agent's working tree (staged, unstaged, and untracked files)
+
+| Option                     | Description                                                                                                                                  | Default |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Target agent (defaults to the active one)                                                                                                    | -       |
+| `-m, --message <label>`    | Name for this checkpoint (defaults to a timestamp)                                                                                           | -       |
+| `--include-ignored`        | Also capture `.gitignore`'d files (`.env`, build output). Larger snapshot; use it when ignored files are state rather than derivable output. | -       |
+| `--json`                   | Output as JSON (for scripting)                                                                                                               | -       |
+
+## `maestro-cli worktree checkpoint list`
+
+List the agent's checkpoints, newest first
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Target agent (defaults to the active one)                           | -       |
+| `--all-worktrees`          | Include checkpoints taken in other worktrees of the same repository | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+
+## `maestro-cli worktree checkpoint restore <checkpoint-id>`
+
+Roll the working tree back to a checkpoint. Your branch and commit history are
+untouched, and the pre-restore state is saved as a new checkpoint so this can be
+undone.
+
+| Option                     | Description                               | Default |
+| -------------------------- | ----------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Target agent (defaults to the active one) | -       |
+| `--json`                   | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli worktree checkpoint delete <checkpoint-id>`
+
+Delete a checkpoint. Does not change the working tree.
+
+| Option                     | Description                               | Default |
+| -------------------------- | ----------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Target agent (defaults to the active one) | -       |
+| `--json`                   | Output as JSON (for scripting)            | -       |
+
 ## `maestro-cli remove-agent <agent-id>`
 
 Remove an agent from the Maestro desktop app
