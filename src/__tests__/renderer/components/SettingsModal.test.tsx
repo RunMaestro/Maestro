@@ -150,6 +150,8 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setCustomThemeColors: mockSetCustomThemeColors,
 		customThemeBaseId: 'dracula',
 		setCustomThemeBaseId: mockSetCustomThemeBaseId,
+		themeGloss: 'off',
+		setThemeGloss: vi.fn(),
 		// LLM settings
 		llmProvider: 'openrouter',
 		setLlmProvider: mockSetLlmProvider,

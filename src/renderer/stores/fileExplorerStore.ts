@@ -64,7 +64,21 @@ export interface FileExplorerStoreState {
 	 * rooting at the agent's cwd would resolve every scoped path to nothing.
 	 */
 	graphRootPath: string | undefined;
+	/**
+	 * The surface to restore when this graph closes, if it was opened from one
+	 * that had to close itself to make room.
+	 *
+	 * Both the graph and the Memory Viewer are full-window views, so opening
+	 * one from the other is a hand-off rather than a stack - without a record
+	 * of where the user came from, Escape drops them on an empty workspace and
+	 * the trip is one-way. It also makes closing CHEAP, which is why a graph
+	 * carrying a `returnTo` skips the close confirmation.
+	 */
+	graphReturnTo: GraphReturnTarget | undefined;
 }
+
+/** Surfaces a document graph knows how to hand control back to. */
+export type GraphReturnTarget = 'memoryViewer';
 
 export interface FileExplorerStoreActions {
 	// File tree UI
@@ -101,6 +115,8 @@ export interface FileExplorerStoreActions {
 		focusPath?: string;
 		/** Root to resolve against, when the set lives outside the project. */
 		rootPath?: string;
+		/** Surface to reopen when this graph closes. See `graphReturnTo`. */
+		returnTo?: GraphReturnTarget;
 	}) => void;
 	/** Re-open the last document graph. No-op if no previous path exists. */
 	openLastDocumentGraph: () => void;
@@ -142,6 +158,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	graphScopeFiles: undefined,
 	graphScopeDirectory: undefined,
 	graphRootPath: undefined,
+	graphReturnTo: undefined,
 
 	// --- Actions ---
 	setSelectedFileIndex: (v) => set((s) => ({ selectedFileIndex: resolve(v, s.selectedFileIndex) })),
@@ -165,9 +182,10 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphScopeFiles: undefined,
 			graphScopeDirectory: undefined,
 			graphRootPath: undefined,
+			graphReturnTo: undefined,
 		}),
 
-	openGraphScope: ({ files, directory, focusPath, rootPath }) =>
+	openGraphScope: ({ files, directory, focusPath, rootPath, returnTo }) =>
 		set({
 			// The builder auto-centers when this is empty. `lastGraphFocusFilePath`
 			// is deliberately not written here - "re-open the last graph" means the
@@ -176,6 +194,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphScopeFiles: files,
 			graphScopeDirectory: directory,
 			graphRootPath: rootPath,
+			graphReturnTo: returnTo,
 			isGraphViewOpen: true,
 		}),
 
@@ -196,6 +215,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphScopeFiles: undefined,
 			graphScopeDirectory: undefined,
 			graphRootPath: undefined,
+			graphReturnTo: undefined,
 		}),
 
 	setIsGraphViewOpen: (open) => set({ isGraphViewOpen: open }),

@@ -139,4 +139,11 @@ export interface CrossAgentResponseChunk {
 	done: boolean;
 	/** Present only on the terminal failure chunk. */
 	error?: string;
+	/**
+	 * The consult was terminated deliberately (the user pressed Stop in the source
+	 * agent), not because the target failed. Distinct from {@link error} on
+	 * purpose: a stopped consult must not render as "the agent could not respond",
+	 * which blames the target for something the user did.
+	 */
+	canceled?: boolean;
 }

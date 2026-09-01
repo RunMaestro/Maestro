@@ -734,6 +734,27 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 
 `MODEL_PRICING` (exact per-model table) and `DEFAULT_MODEL_PRICING` (unknown-model Sonnet-tier fallback) are also exported. `CLAUDE_PRICING` in `src/main/constants.ts` is now a deprecated re-export of `DEFAULT_MODEL_PRICING`.
 
+**Not Claude-only.** `resolveModelPricing` checks the OpenAI families FIRST (`gpt-5*` and any slug containing `codex`, split by size class into nano / mini / frontier), because a Codex slug contains no Anthropic family word and used to fall straight through to the Sonnet-tier default - pricing GPT tokens at Claude rates. Only the GPT-5 line Codex actually ships is claimed; older OpenAI models still take the default rather than being priced off a family they do not belong to. Codex model slugs are discovered at runtime and version faster than a table can track, so the entries in `MODEL_PRICING` are anchors and the family fallback covers the point releases.
+
+**The two providers disagree about what `input_tokens` means, and that is a pricing input.** Anthropic reports cache reads BESIDE `input_tokens`; OpenAI reports them INSIDE it. `PricingConfig.CACHE_READ_SUBSET_OF_INPUT` carries that on the tier, and `calculateWithPricing` bills only `input - cacheRead` at the input rate when it is set. Without it the cached half of a Codex turn is charged at the full input rate AND again as a cache read, which inverts the whole point of a cache hit. Set it on any provider tier that counts cached tokens inside the input total; leave it off for Anthropic.
+
+---
+
+## Codex Token Accounting (`src/shared/codexTokenUsage.ts` - Shared)
+
+`CodexTokenCounts` is the ONE accumulator for token totals scanned out of a Codex CLI rollout transcript. Feed it events; read `inputTokens` / `outputTokens` / `cachedTokens` / `isEmpty`.
+
+| Method                     | Purpose                                                                |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `addTurn(usage)`           | A per-turn record: `turn.completed.usage`, or `info.last_token_usage`. |
+| `addTokenCountEvent(info)` | A `token_count` event payload's `info`. Picks the right field for you. |
+
+**Codex reports usage in two shapes and only one of them is incremental.** `turn.completed.usage` and `info.last_token_usage` are per-turn; `info.total_token_usage` is the running SESSION TOTAL. Summing the latter across events makes a session with N turns report 1+2+...+N times its real tokens, so cost grows with the SQUARE of the conversation length - on a real corpus that turned 1.3B input tokens into 75B and a ~$350 estimate into ~$250,000, which is how Codex came to outrank Claude on a dashboard driven almost entirely by Claude agents. `addTokenCountEvent` prefers `last_token_usage` and, when only the cumulative total is present, adds the DELTA since the previous event; a total that moves backwards is read as a restarted counter (a resume or a fork) and taken whole rather than clamped to zero.
+
+Reasoning output is folded into `outputTokens` (it bills as output), and `cachedTokens` stays a SUBSET of `inputTokens`, matching how Codex reports it - see `CACHE_READ_SUBSET_OF_INPUT` above. Do NOT hand-roll another sum: the three call sites that did (`main/storage/codex-session-storage.ts` x2, `main/ipc/handlers/agentSessions.ts`) all carried this bug independently.
+
+**A derivation fix needs a cache-version bump.** Both stats caches fingerprint a transcript on its mtime and size, neither of which a parser fix touches, so old numbers would be served forever. `TOKEN_USAGE_CACHE_VERSION` (`main/stats/token-usage/token-usage-cache.ts`) and `GLOBAL_STATS_CACHE_VERSION` (`main/utils/statsCache.ts`) both went to 4 for this.
+
 ---
 
 ## Stats Cache (`src/main/utils/statsCache.ts` - Main)

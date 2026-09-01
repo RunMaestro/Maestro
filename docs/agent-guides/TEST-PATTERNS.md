@@ -319,6 +319,42 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 }));
 ```
 
+### Isolating a Test From the Developer's Shell (`isolateAgentEnv`)
+
+Agent env defaults are **shell-wins by design**: `applyEnvLayers` in
+`src/cli/services/agent-spawner.ts` layers an agent's `defaultEnvVars` /
+`batchModeEnvVars` UNDER `process.env`, so a user who exported a value keeps it.
+That means any assertion about a DEFAULT value is really an assertion about
+whatever the test runner's shell happened to export, and it fails on that
+machine only.
+
+This has already bitten once: Claude Code exports
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=0` into the shells it runs, so the two
+`agent-spawner.test.ts` tests asserting the `'1'` default failed for anyone
+running the suite from a Maestro terminal or an agent shell, passed in CI, and
+blocked the pre-push hook on a phantom failure.
+
+Call `isolateAgentEnv()` in the body of any `describe` that asserts a default
+env value. It registers its own `beforeEach` / `afterEach`, so it belongs at
+collection time, not inside another hook:
+
+```typescript
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+
+describe('spawnAgent', () => {
+	isolateAgentEnv();
+	// ...
+});
+```
+
+A test that deliberately exercises the shell-wins path just sets the variable in
+its own body - that runs after the `beforeEach`, and the `afterEach` restores
+the real value, so no `try`/`finally` dance is needed. Do NOT hand-roll another
+save / delete / restore block; there were three near-identical copies in one
+file and only some of them were applied where they mattered. When an agent
+definition gains a new `defaultEnvVars` key, add it to
+`SHELL_OVERRIDABLE_AGENT_ENV_KEYS`.
+
 ### Mock Factories
 
 #### Mock Session

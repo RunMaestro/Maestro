@@ -4,6 +4,7 @@
  */
 
 import { createIpcMethod } from './ipcWrapper';
+import { resolveLiveAiTurns, type LiveAiTurn } from '../utils/liveTurnReattach';
 import type { ProcessConfig } from '../types';
 
 export type { ProcessConfig } from '../types';
@@ -177,5 +178,27 @@ export async function probeSessionAiProcesses(
 		// Preserve the input when ownership is unknown: treating an IPC failure as
 		// idle can retry a live process id and lose its response.
 		return { anyActive: true, targetTabActive: true, probeFailed: true };
+	}
+}
+
+/**
+ * Every AI turn the MAIN process is running right now, across all agents.
+ *
+ * The whole-table counterpart to {@link probeSessionAiProcesses}, which asks
+ * about one agent: startup reconciliation needs the answer for every restored
+ * agent at once, and one round trip beats one per session.
+ *
+ * Returns `null` when the probe itself fails. Callers reconcile idle state
+ * against this, so an empty array would read as "nothing is running" and is the
+ * wrong shape for "I could not find out" - the two must stay distinguishable.
+ */
+export async function fetchLiveAiTurns(): Promise<LiveAiTurn[] | null> {
+	try {
+		const active = await window.maestro.process.getActiveProcesses({
+			includeChildProcesses: false,
+		});
+		return resolveLiveAiTurns(active);
+	} catch {
+		return null;
 	}
 }

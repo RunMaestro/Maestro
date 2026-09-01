@@ -98,6 +98,7 @@ export {
 } from './settingsFileExplorerSlice';
 import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
 import { sanitizeTextareaHeights } from '../utils/textareaSizing';
+import { normalizeUnlockedMilestone } from '../../shared/delegation';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -345,6 +346,13 @@ export interface SettingsStoreState
 	customShellPath: string;
 	shellArgs: string;
 	shellEnvVars: Record<string, string>;
+	/**
+	 * Variables the user switched OFF in the environment editor. Same shape as
+	 * `shellEnvVars`, but nothing reads it except the editor: parking a variable
+	 * here is what keeps it out of every spawned process while preserving its
+	 * value for later. Never merge this into a spawn env.
+	 */
+	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	mediaPlaybackRate: number;
@@ -387,6 +395,15 @@ export interface SettingsStoreState
 	logViewerSelectedLevels: string[];
 	customAICommands: CustomAICommand[];
 	totalActiveTimeMs: number;
+	/**
+	 * Highest delegation milestone ever unlocked (0 | 25 | 50 | 75 | 100).
+	 *
+	 * A high-water mark, not the live score: the delegation percentage is a
+	 * ratio over retained history and can fall when you do a stretch of
+	 * interactive work, and a bar that un-fills would read as losing something
+	 * you earned. The live number rides a separate marker on the same track.
+	 */
+	delegationMilestone: number;
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
@@ -398,6 +415,7 @@ export interface SettingsStoreState
 	onboardingStats: OnboardingStats;
 	leaderboardRegistration: LeaderboardRegistration | null;
 	persistentWebLink: boolean;
+	webInterfaceAutoStart: boolean;
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
 	contextManagementSettings: ContextManagementSettings;
@@ -408,6 +426,7 @@ export interface SettingsStoreState
 	showBrowserTabsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
 	documentGraphShowExternalLinks: boolean;
+	documentGraphConfirmClose: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
 	documentGraphLayoutType: DocumentGraphLayoutType;
@@ -465,6 +484,7 @@ export interface SettingsStoreActions
 	setCustomShellPath: (value: string) => void;
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
@@ -511,6 +531,7 @@ export interface SettingsStoreActions
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
 	setPersistentWebLink: (value: boolean) => Promise<void>;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	setWebInterfaceCustomPort: (value: number) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
@@ -519,6 +540,7 @@ export interface SettingsStoreActions
 	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
 	setDocumentGraphLayoutType: (value: DocumentGraphLayoutType) => void;
@@ -561,6 +583,9 @@ export interface SettingsStoreActions
 	// Standalone active time
 	setTotalActiveTimeMs: (value: number) => void;
 	addTotalActiveTimeMs: (delta: number) => void;
+
+	// Delegation milestone high-water mark
+	unlockDelegationMilestone: (milestone: number) => void;
 
 	// Usage stats
 	setUsageStats: (value: MaestroUsageStats) => void;
@@ -697,6 +722,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
+		shellEnvVarsDisabled: {},
 		ghPath: '',
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -734,6 +760,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
+		delegationMilestone: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
@@ -745,6 +772,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
 		persistentWebLink: false,
+		webInterfaceAutoStart: false,
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
@@ -755,6 +783,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		showBrowserTabsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
 		documentGraphShowExternalLinks: false,
+		documentGraphConfirmClose: true,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
 		documentGraphLayoutType: 'hierarchical',
@@ -847,6 +876,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setShellEnvVars: (value) => {
 			set({ shellEnvVars: value });
 			window.maestro.settings.set('shellEnvVars', value);
+		},
+
+		setShellEnvVarsDisabled: (value) => {
+			set({ shellEnvVarsDisabled: value });
+			window.maestro.settings.set('shellEnvVarsDisabled', value);
 		},
 
 		setGhPath: (value) => {
@@ -1169,6 +1203,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			}
 		},
 
+		setWebInterfaceAutoStart: (value) => {
+			set({ webInterfaceAutoStart: value });
+			window.maestro.settings.set('webInterfaceAutoStart', value);
+		},
+
 		setWebInterfaceUseCustomPort: (value) => {
 			set({ webInterfaceUseCustomPort: value });
 			window.maestro.settings.set('webInterfaceUseCustomPort', value);
@@ -1211,6 +1250,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setDocumentGraphShowExternalLinks: (value) => {
 			set({ documentGraphShowExternalLinks: value });
 			window.maestro.settings.set('documentGraphShowExternalLinks', value);
+		},
+
+		setDocumentGraphConfirmClose: (value) => {
+			set({ documentGraphConfirmClose: value });
+			window.maestro.settings.set('documentGraphConfirmClose', value);
 		},
 
 		setDocumentGraphMaxNodes: (value) => {
@@ -1434,6 +1478,23 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			const updated = prev + delta;
 			set({ totalActiveTimeMs: updated });
 			window.maestro.settings.set('totalActiveTimeMs', updated);
+		},
+
+		// ============================================================================
+		// Delegation Milestone Actions
+		// ============================================================================
+
+		// Raise the delegation high-water mark. Monotonic on purpose: the caller
+		// passes whatever milestone the CURRENT score has reached, and a score
+		// that has since fallen must not claw back a mark already unlocked. The
+		// value is normalized to a real milestone so nothing can fill the bar to
+		// a mark the track does not have.
+		unlockDelegationMilestone: (milestone) => {
+			const normalized = normalizeUnlockedMilestone(milestone);
+			const prev = get().delegationMilestone;
+			if (normalized <= prev) return;
+			set({ delegationMilestone: normalized });
+			window.maestro.settings.set('delegationMilestone', normalized);
 		},
 
 		// ============================================================================
@@ -1890,6 +1951,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['shellEnvVars'] !== undefined)
 			patch.shellEnvVars = allSettings['shellEnvVars'] as Record<string, string>;
 
+		if (allSettings['shellEnvVarsDisabled'] !== undefined)
+			patch.shellEnvVarsDisabled = allSettings['shellEnvVarsDisabled'] as Record<string, string>;
+
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
 		hydrateThemeSettings(allSettings, patch);
@@ -2088,6 +2152,10 @@ export async function loadAllSettings(): Promise<void> {
 			}
 		}
 
+		if (allSettings['delegationMilestone'] !== undefined) {
+			patch.delegationMilestone = normalizeUnlockedMilestone(allSettings['delegationMilestone']);
+		}
+
 		if (allSettings['autoRunStats'] !== undefined) {
 			// NOTE: a `concurrentAutoRunTimeMigrationApplied` migration used to add
 			// 3 hours to `cumulativeTimeMs` here. It was removed because it grew the
@@ -2251,6 +2319,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['persistentWebLink'] !== undefined)
 			patch.persistentWebLink = allSettings['persistentWebLink'] as boolean;
 
+		if (typeof allSettings['webInterfaceAutoStart'] === 'boolean')
+			patch.webInterfaceAutoStart = allSettings['webInterfaceAutoStart'];
+
 		if (allSettings['webInterfaceUseCustomPort'] !== undefined)
 			patch.webInterfaceUseCustomPort = allSettings['webInterfaceUseCustomPort'] as boolean;
 
@@ -2281,6 +2352,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.documentGraphShowExternalLinks = allSettings[
 				'documentGraphShowExternalLinks'
 			] as boolean;
+
+		if (allSettings['documentGraphConfirmClose'] !== undefined)
+			patch.documentGraphConfirmClose = allSettings['documentGraphConfirmClose'] as boolean;
 
 		if (allSettings['documentGraphMaxNodes'] !== undefined) {
 			const maxNodes = allSettings['documentGraphMaxNodes'] as number;
@@ -2573,6 +2647,7 @@ export function getSettingsActions() {
 		setCustomShellPath: state.setCustomShellPath,
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,
+		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setTerminalFontFamily: state.setTerminalFontFamily,
@@ -2634,6 +2709,7 @@ export function getSettingsActions() {
 		setCustomAICommands: state.setCustomAICommands,
 		setTotalActiveTimeMs: state.setTotalActiveTimeMs,
 		addTotalActiveTimeMs: state.addTotalActiveTimeMs,
+		unlockDelegationMilestone: state.unlockDelegationMilestone,
 		setAutoRunStats: state.setAutoRunStats,
 		recordAutoRunComplete: state.recordAutoRunComplete,
 		updateAutoRunProgress: state.updateAutoRunProgress,
@@ -2658,6 +2734,7 @@ export function getSettingsActions() {
 		getOnboardingAnalytics: state.getOnboardingAnalytics,
 		setLeaderboardRegistration: state.setLeaderboardRegistration,
 		setPersistentWebLink: state.setPersistentWebLink,
+		setWebInterfaceAutoStart: state.setWebInterfaceAutoStart,
 		setWebInterfaceUseCustomPort: state.setWebInterfaceUseCustomPort,
 		setWebInterfaceCustomPort: state.setWebInterfaceCustomPort,
 		setContextManagementSettings: state.setContextManagementSettings,
@@ -2667,7 +2744,9 @@ export function getSettingsActions() {
 		acknowledgeKeyboardMasteryLevel: state.acknowledgeKeyboardMasteryLevel,
 		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
 		setColorBlindMode: state.setColorBlindMode,
+		setThemeGloss: state.setThemeGloss,
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
+		setDocumentGraphConfirmClose: state.setDocumentGraphConfirmClose,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,
 		setDocumentGraphLayoutType: state.setDocumentGraphLayoutType,

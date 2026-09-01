@@ -89,6 +89,7 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		handleEscapeInMain: vi.fn().mockReturnValue(false),
 		isShortcut: () => false,
 		isTabShortcut: () => false,
+		handleNewTab: vi.fn(),
 		// Ctrl+Cmd pane family - reached (and called) whenever the active session has
 		// a tiled group, so it must exist even for tests that only care about a
 		// non-pane shortcut.
@@ -543,7 +544,7 @@ describe('useMainKeyboardHandler', () => {
 		it('should allow tab management shortcuts (Cmd+T) when only overlays are open', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockSetSessions = vi.fn();
+			const mockHandleNewTab = vi.fn();
 			const mockSetActiveFocus = vi.fn();
 			const mockInputRef = { current: { focus: vi.fn() } };
 			const mockActiveSession = {
@@ -561,10 +562,7 @@ describe('useMainKeyboardHandler', () => {
 				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'newTab',
 				activeSessionId: 'test-session',
 				activeSession: mockActiveSession,
-				createTab: vi.fn().mockReturnValue({
-					session: { ...mockActiveSession, aiTabs: [{ id: 'new-tab' }] },
-				}),
-				setSessions: mockSetSessions,
+				handleNewTab: mockHandleNewTab,
 				setActiveFocus: mockSetActiveFocus,
 				inputRef: mockInputRef,
 				defaultSaveToHistory: true,
@@ -582,7 +580,7 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			// Cmd+T should create a new tab even when file preview overlay is open
-			expect(mockSetSessions).toHaveBeenCalled();
+			expect(mockHandleNewTab).toHaveBeenCalledOnce();
 			expect(mockSetActiveFocus).toHaveBeenCalledWith('main');
 		});
 
@@ -1831,13 +1829,11 @@ describe('useMainKeyboardHandler', () => {
 			it('should not execute tab shortcuts when group chat is active', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				const mockCreateTab = vi.fn();
-				const mockSetSessions = vi.fn();
+				const mockHandleNewTab = vi.fn();
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'newTab',
-					createTab: mockCreateTab,
-					setSessions: mockSetSessions,
+					handleNewTab: mockHandleNewTab,
 					activeGroupChatId: 'group-chat-123', // Group chat is active
 				});
 
@@ -1852,7 +1848,7 @@ describe('useMainKeyboardHandler', () => {
 				});
 
 				// Tab shortcuts should be disabled in group chat mode
-				expect(mockCreateTab).not.toHaveBeenCalled();
+				expect(mockHandleNewTab).not.toHaveBeenCalled();
 			});
 		});
 
@@ -1861,17 +1857,13 @@ describe('useMainKeyboardHandler', () => {
 				vi.useFakeTimers();
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				const mockCreateTab = vi.fn().mockReturnValue({
-					session: { id: 'session-1', aiTabs: [], activeTabId: 'new-tab' },
-				});
-				const mockSetSessions = vi.fn();
+				const mockHandleNewTab = vi.fn();
 				const mockSetActiveFocus = vi.fn();
 				const mockFocus = vi.fn();
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'newTab',
-					createTab: mockCreateTab,
-					setSessions: mockSetSessions,
+					handleNewTab: mockHandleNewTab,
 					setActiveFocus: mockSetActiveFocus,
 					inputRef: { current: { focus: mockFocus } },
 					activeSession: {
@@ -1896,20 +1888,7 @@ describe('useMainKeyboardHandler', () => {
 				});
 
 				// Cmd+T should work regardless of inputMode
-				expect(mockCreateTab).toHaveBeenCalled();
-
-				// setSessions should be called with the new session including inputMode: 'ai'
-				expect(mockSetSessions).toHaveBeenCalledTimes(1);
-				const updater = mockSetSessions.mock.calls[0][0];
-				const prev = [
-					{
-						id: 'session-1',
-						aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
-						inputMode: 'terminal',
-					},
-				];
-				const updated = updater(prev);
-				expect(updated[0].inputMode).toBe('ai');
+				expect(mockHandleNewTab).toHaveBeenCalledOnce();
 
 				// setActiveFocus should switch focus to main
 				expect(mockSetActiveFocus).toHaveBeenCalledWith('main');

@@ -574,6 +574,11 @@ const createWebServer = createWebServerFactory({
 	sessionsStore,
 	groupsStore,
 	getMainWindow: () => mainWindow,
+	getWindowForSession: (sessionId: string) => {
+		const ownerId = windowRegistry.getWindowForSession(sessionId);
+		const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+		return owner?.browserWindow ?? mainWindow;
+	},
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {

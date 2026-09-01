@@ -59,22 +59,35 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
-	let onRemoteSelectTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
+	let onRemoteSelectTabHandler:
+		| ((
+				sessionId: string,
+				tabId: string,
+				aiTabs?: Array<{
+					id: string;
+					agentSessionId: string | null;
+					name: string | null;
+					starred: boolean;
+					inputValue: string;
+					usageStats?: AITab['usageStats'];
+					createdAt: number;
+					state: 'idle' | 'busy';
+					thinkingStartTime?: number | null;
+					hasUnread?: boolean;
+				}>
+		  ) => void)
+		| undefined;
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		| ((sessionId: string, tabId: string, newName: string) => void)
-		| undefined;
+		((sessionId: string, tabId: string, newName: string) => void) | undefined;
 	let onRemoteStarTabHandler:
-		| ((sessionId: string, tabId: string, starred: boolean) => void)
-		| undefined;
+		((sessionId: string, tabId: string, starred: boolean) => void) | undefined;
 	let onRemoteReorderTabHandler:
-		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
-		| undefined;
+		((sessionId: string, fromIndex: number, toIndex: number) => void) | undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
-		| ((id: string, expectedRevision: number, responseChannel: string) => void)
-		| undefined;
+		((id: string, expectedRevision: number, responseChannel: string) => void) | undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
 		| undefined;
@@ -90,11 +103,9 @@ describe('useRemoteIntegration', () => {
 		  ) => void)
 		| undefined;
 	let onRemoteListQueueHandler:
-		| ((sessionId: string | undefined, responseChannel: string) => void)
-		| undefined;
+		((sessionId: string | undefined, responseChannel: string) => void) | undefined;
 	let onRemoteRemoveQueueItemHandler:
-		| ((sessionId: string, itemId: string, responseChannel: string) => void)
-		| undefined;
+		((sessionId: string, itemId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCreateGistHandler:
 		| ((
 				sessionId: string,
@@ -122,8 +133,7 @@ describe('useRemoteIntegration', () => {
 		  }) => void)
 		| undefined;
 	let onRemoteMovementHandler:
-		| ((params: MovementPayload, responseChannel?: string) => void)
-		| undefined;
+		((params: MovementPayload, responseChannel?: string) => void) | undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -937,10 +947,78 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
 		});
+
+		it('reconciles the complete desktop tab inventory without discarding local transcripts', () => {
+			const existingLogs = [{ type: 'stdout', content: 'kept transcript' }] as AITab['logs'];
+			const existing = createMockTab({
+				id: 'tab-1',
+				logs: existingLogs,
+				inputValue: 'newer browser draft',
+			});
+			const stale = createMockTab({ id: 'stale-tab' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [existing, stale],
+				activeTabId: existing.id,
+				unifiedTabOrder: [
+					{ type: 'ai', id: existing.id },
+					{ type: 'ai', id: stale.id },
+				],
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-2', [
+					{
+						id: 'tab-1',
+						agentSessionId: 'provider-1',
+						name: 'Renamed on desktop',
+						starred: true,
+						inputValue: 'desktop draft',
+						createdAt: existing.createdAt,
+						state: 'idle',
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: 'New desktop tab',
+						starred: false,
+						inputValue: '',
+						createdAt: 1700000001000,
+						state: 'idle',
+					},
+				]);
+			});
+
+			const updater = vi.mocked(deps.setSessions).mock.calls.at(-1)?.[0];
+			expect(updater).toBeTypeOf('function');
+			const [updated] = (updater as (sessions: Session[]) => Session[])([session]);
+			expect(updated.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+			expect(updated.aiTabs[0]).toMatchObject({
+				name: 'Renamed on desktop',
+				starred: true,
+				inputValue: 'newer browser draft',
+				logs: existingLogs,
+			});
+			expect(updated.aiTabs[1]).toMatchObject({
+				id: 'tab-2',
+				logs: [],
+				stagedImages: [],
+				saveToHistory: true,
+				showThinking: 'off',
+			});
+			expect(updated.activeTabId).toBe('tab-2');
+			expect(updated.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'ai', id: 'tab-2' },
+			]);
+		});
 	});
 
 	describe('remote new tab', () => {
-		it('creates new tab and sends response', () => {
+		it('commits the new tab before responding with its ID', () => {
 			const session = createMockSession({ id: 'session-1' });
 			const originalTabCount = session.aiTabs.length;
 			const deps = createDeps({ sessions: [session] });
@@ -952,8 +1030,12 @@ describe('useRemoteIntegration', () => {
 			});
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			const createdTab = updated?.aiTabs.at(-1);
 			expect(updated?.aiTabs).toHaveLength(originalTabCount + 1);
-			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalled();
+			expect(createdTab).toBeDefined();
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('response-channel-1', {
+				tabId: createdTab?.id,
+			});
 		});
 	});
 

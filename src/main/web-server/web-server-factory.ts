@@ -59,6 +59,8 @@ export interface WebServerFactoryDependencies {
 	groupsStore: GroupsStore;
 	/** Function to get the main window reference */
 	getMainWindow: () => BrowserWindow | null;
+	/** Resolve the Electron window that currently owns a session. */
+	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
 	/**
 	 * Deliver a cadenza payload to the desktop HUD window - the transparent,
 	 * always-on-top overlay that floats cadenza views over other apps (created

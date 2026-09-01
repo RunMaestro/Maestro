@@ -4,6 +4,8 @@
  * Handles interrupting/stopping running AI processes:
  *   - Sends SIGINT to every process this agent still has in flight (AI or terminal mode)
  *   - Cancels pending synopsis before interrupting
+ *   - Cancels every cross-agent (`@mention`) consult this agent fanned out, which
+ *     runs as its own ephemeral process and is otherwise unreachable from here
  *   - Cleans up thinking/tool logs from interrupted tabs
  *   - Processes execution queue after interruption
  *   - Falls back to force-kill if graceful interrupt fails
@@ -140,6 +142,25 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				undefined,
 				synopsisErr
 			);
+		}
+
+		// Cross-agent consults are part of this agent's turn: a `@mention` fans the
+		// turn out across one ephemeral `cross-agent-*` process per consulted target,
+		// none of which carry this agent's process id, so the loop below can never
+		// reach them. Left running they keep streaming answers into a conversation
+		// the user has already stopped. Cancelled by SOURCE agent (main holds the
+		// authoritative list) so a Stop pressed before `crossAgent.send` resolved
+		// still lands. Non-critical: a failure here must not block the interrupt.
+		if (currentMode === 'ai') {
+			try {
+				await window.maestro.crossAgent.cancel(activeSession.id);
+			} catch (crossAgentErr) {
+				logger.warn(
+					'[useInterruptHandler] Failed to cancel cross-agent consults:',
+					undefined,
+					crossAgentErr
+				);
+			}
 		}
 
 		// Every in-flight process for this agent, not just the active tab's. Resolved

@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { isAbsolutePath } from '../../../shared/formatters';
 import type { Theme } from '../../types';
@@ -36,6 +36,42 @@ export interface EnvVarEntry {
 	id: number;
 	key: string;
 	value: string;
+	/**
+	 * `false` means the variable is parked: still listed and editable, but kept
+	 * out of `envVars` so it is never spliced into a spawned process.
+	 */
+	enabled: boolean;
+}
+
+/**
+ * Flatten the active and parked records into one editable list. Parked
+ * variables sort to the bottom on a fresh build because a plain record cannot
+ * remember where they sat; while the editor is open, the local order is what
+ * the user sees, and toggling a row never moves it.
+ */
+function buildEntries(
+	enabledVars: Record<string, string>,
+	disabledVars?: Record<string, string>
+): EnvVarEntry[] {
+	const rows = [
+		...Object.entries(enabledVars).map(([key, value]) => ({ key, value, enabled: true })),
+		...Object.entries(disabledVars ?? {}).map(([key, value]) => ({ key, value, enabled: false })),
+	];
+	return rows.map((row, index) => ({ id: index, ...row }));
+}
+
+/**
+ * Order-insensitive fingerprint of a variable list. The `#` marks a parked row
+ * so that flipping the eye registers as a change against the parent, and so a
+ * flip that merely moves a variable between the two records is NOT read as an
+ * external edit that would rebuild (and reorder) the list under the user.
+ */
+function fingerprint(rows: Array<{ key: string; value: string; enabled: boolean }>): string {
+	return rows
+		.filter((row) => row.key.trim())
+		.map((row) => `${row.enabled ? '' : '#'}${row.key}=${row.value}`)
+		.sort()
+		.join(',');
 }
 
 export interface EnvVarsEditorProps {
@@ -48,6 +84,17 @@ export interface EnvVarsEditorProps {
 	description?: string | null;
 	/** Local account directories previously configured for Claude and Codex. */
 	knownAuthDirs?: KnownAuthDirs;
+	/**
+	 * Parked variables: same shape as `envVars`, but switched off. Pass this
+	 * together with `setDisabledEnvVars` to get the per-row eye toggle; omit
+	 * both and the editor behaves exactly as before (every row is active).
+	 *
+	 * The split is deliberate: a parked variable never appears in `envVars`, so
+	 * every consumer of the effective environment - spawners, SSH wrapping,
+	 * `resolveAgentEnvironment` - keeps reading one record and needs no filter.
+	 */
+	disabledEnvVars?: Record<string, string>;
+	setDisabledEnvVars?: (vars: Record<string, string>) => void;
 }
 
 export function EnvVarsEditor({
@@ -57,16 +104,19 @@ export function EnvVarsEditor({
 	label = 'Environment Variables (optional)',
 	description = 'Environment variables passed to all terminal sessions and AI agent processes.',
 	knownAuthDirs = EMPTY_KNOWN_AUTH_DIRS,
+	disabledEnvVars,
+	setDisabledEnvVars,
 }: EnvVarsEditorProps) {
+	// The toggle needs both halves to round-trip a parked variable; with only
+	// one, switching a row off would drop its value on the floor.
+	const canToggle = Boolean(disabledEnvVars && setDisabledEnvVars);
 	// Convert object to array with stable IDs for editing
-	const [entries, setEntries] = useState<EnvVarEntry[]>(() => {
-		return Object.entries(envVars).map(([key, value], index) => ({
-			id: index,
-			key,
-			value,
-		}));
-	});
-	const [nextId, setNextId] = useState(Object.keys(envVars).length);
+	const [entries, setEntries] = useState<EnvVarEntry[]>(() =>
+		buildEntries(envVars, disabledEnvVars)
+	);
+	const [nextId, setNextId] = useState(
+		Object.keys(envVars).length + Object.keys(disabledEnvVars ?? {}).length
+	);
 	const [validationErrors, setValidationErrors] = useState<Record<number, string>>({});
 
 	// Validate environment variable format
@@ -99,6 +149,7 @@ export function EnvVarsEditor({
 	// Sync entries back to parent when they change (but debounced to avoid focus issues)
 	const commitChanges = (newEntries: EnvVarEntry[]) => {
 		const newEnvVars: Record<string, string> = {};
+		const newDisabledEnvVars: Record<string, string> = {};
 		const errors: Record<number, string> = {};
 
 		// Collect all errors first
@@ -109,41 +160,31 @@ export function EnvVarsEditor({
 			}
 		});
 
-		// Only add valid entries to newEnvVars
+		// Only add valid entries, and only ACTIVE ones reach the effective env
 		newEntries.forEach((entry) => {
 			if (!errors[entry.id] && entry.key.trim()) {
-				newEnvVars[entry.key] = entry.value;
+				if (entry.enabled) {
+					newEnvVars[entry.key] = entry.value;
+				} else {
+					newDisabledEnvVars[entry.key] = entry.value;
+				}
 			}
 		});
 
 		setValidationErrors(errors);
 		setEnvVars(newEnvVars);
+		setDisabledEnvVars?.(newDisabledEnvVars);
 	};
 
 	// Sync from parent when envVars changes externally (e.g., on modal open)
 	useEffect(() => {
-		const parentEntries = Object.entries(envVars);
-		// Only reset if the keys/values actually differ
-		const currentKeys = entries
-			.filter((e) => e.key.trim())
-			.map((e) => `${e.key}=${e.value}`)
-			.sort()
-			.join(',');
-		const parentKeys = parentEntries
-			.map(([k, v]) => `${k}=${v}`)
-			.sort()
-			.join(',');
-		if (currentKeys !== parentKeys) {
-			setEntries(
-				parentEntries.map(([key, value], index) => ({
-					id: index,
-					key,
-					value,
-				}))
-			);
-			setNextId(parentEntries.length);
+		const parentRows = buildEntries(envVars, disabledEnvVars);
+		// Only reset if the keys/values/enabled states actually differ
+		if (fingerprint(entries) !== fingerprint(parentRows)) {
+			setEntries(parentRows);
+			setNextId(parentRows.length);
 		}
-	}, [envVars]);
+	}, [envVars, disabledEnvVars]);
 
 	const updateEntry = (id: number, field: 'key' | 'value', newValue: string) => {
 		setEntries((prev) => {
@@ -152,6 +193,16 @@ export function EnvVarsEditor({
 			);
 			// Commit changes on every update for value field, but for key field
 			// only commit valid keys to avoid issues with empty keys
+			commitChanges(updated);
+			return updated;
+		});
+	};
+
+	const toggleEntry = (id: number) => {
+		setEntries((prev) => {
+			const updated = prev.map((entry) =>
+				entry.id === id ? { ...entry, enabled: !entry.enabled } : entry
+			);
 			commitChanges(updated);
 			return updated;
 		});
@@ -174,7 +225,7 @@ export function EnvVarsEditor({
 			newKey = `VAR_${counter}`;
 			counter++;
 		}
-		setEntries((prev) => [...prev, { id: nextId, key: newKey, value: '' }]);
+		setEntries((prev) => [...prev, { id: nextId, key: newKey, value: '', enabled: true }]);
 		setNextId((prev) => prev + 1);
 	};
 
@@ -191,6 +242,7 @@ export function EnvVarsEditor({
 			<div className="space-y-2">
 				{entries.map((entry) => {
 					const error = validationErrors[entry.id];
+					const off = !entry.enabled;
 					return (
 						<div key={entry.id}>
 							<div className="flex gap-2 items-center">
@@ -203,11 +255,27 @@ export function EnvVarsEditor({
 									style={{
 										borderColor: error ? '#ef4444' : theme.colors.border,
 										color: theme.colors.textMain,
+										opacity: off ? 0.45 : 1,
+										textDecoration: off ? 'line-through' : undefined,
 									}}
 								/>
 								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 									=
 								</span>
+								{canToggle && (
+									<GhostIconButton
+										onClick={() => toggleEntry(entry.id)}
+										padding="p-2"
+										title={
+											off
+												? `Enable ${entry.key || 'variable'} (currently not passed to any process)`
+												: `Disable ${entry.key || 'variable'} (keeps the value, stops passing it to processes)`
+										}
+										color={off ? theme.colors.textDim : theme.colors.accent}
+									>
+										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+									</GhostIconButton>
+								)}
 								<AuthPathValueInput
 									envVarKey={entry.key}
 									value={entry.value}
@@ -215,7 +283,12 @@ export function EnvVarsEditor({
 									onChange={(value) => updateEntry(entry.id, 'value', value)}
 									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									containerClassName="flex-1 min-w-0"
-									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										opacity: off ? 0.45 : 1,
+										textDecoration: off ? 'line-through' : undefined,
+									}}
 								/>
 								<GhostIconButton
 									onClick={() => removeEntry(entry.id)}

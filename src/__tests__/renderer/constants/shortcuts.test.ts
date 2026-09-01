@@ -381,3 +381,26 @@ describe('every registered action has a handler', () => {
 		expect(unhandled, 'registered but never dispatched').toEqual([]);
 	});
 });
+
+describe('App keyboard context wiring', () => {
+	it('supplies every ctx method invoked by useMainKeyboardHandler', () => {
+		const handler = readFileSync(
+			join(RENDERER_ROOT, 'hooks/keyboard/useMainKeyboardHandler.ts'),
+			'utf-8'
+		);
+		const app = readFileSync(join(RENDERER_ROOT, 'App.tsx'), 'utf-8');
+		const start = app.indexOf('keyboardHandlerRef.current = {');
+		const end = app.indexOf('\n\t};', start);
+
+		expect(start, 'keyboardHandlerRef.current assignment missing').toBeGreaterThanOrEqual(0);
+		expect(end, 'keyboardHandlerRef.current assignment is not closed').toBeGreaterThan(start);
+
+		const context = app.slice(start, end);
+		const invoked = new Set(
+			[...handler.matchAll(/\bctx\.([A-Za-z_$][\w$]*)\s*\??\.?\s*\(/g)].map((match) => match[1])
+		);
+		const missing = [...invoked].filter((method) => !new RegExp(`\\b${method}\\b`).test(context));
+
+		expect(missing, 'keyboard handler methods missing from the App context').toEqual([]);
+	});
+});

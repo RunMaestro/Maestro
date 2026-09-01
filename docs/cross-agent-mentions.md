@@ -13,7 +13,7 @@ It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no sha
 - **Second opinion** - "@Reviewer does this migration look safe?" without copy-pasting your thread into another agent.
 - **Cross-project context** - Ask the agent that owns the backend repo a question while you work in the frontend one.
 - **Specialist consult** - Route a security or performance question to the agent that has that codebase loaded.
-- **Quick fan-out** - Mention several agents (or a whole group) in one message and let them answer in parallel.
+- **Quick fan-out** - Mention several agents in one message (or pick a group, which inserts every member) and let them answer in parallel.
 
 ## Mentioning an Agent
 
@@ -41,6 +41,12 @@ The consultation is **non-blocking and isolated**:
 Every consulted reply lands in a tinted bubble topped by an **attribution header**: the answering agent's name, its provider, and its session id. That header is what tells replies apart when several agents answer at once, and it does double duty as a jump control. Click the agent name (or the jump button on the right) to open that agent's consult tab in the Left Bar, where the full exchange is kept, so you can continue the thread in its own context; click the session id to copy it. While a reply is still streaming the header shows a spinner, and a consult that failed tints the header red.
 
 Mention several agents in one message and each runs independently and concurrently, so a fan-out returns as fast as the slowest agent, not the sum of them.
+
+### Stopping a consult
+
+**Stop** ends the whole turn, consults included. A consultation is part of your agent's turn even though it runs as its own background process, so pressing Stop (or `Ctrl+C`) signals your agent _and_ every agent it fanned out to. Each one stops where it is: whatever it had already written is kept in its bubble, followed by a note that it was stopped. That is deliberately worded apart from a failure - a consult you stopped did not fail to answer you.
+
+When your message was addressed **only** to other agents (it starts with `@name`), your own agent never goes busy, so the usual Stop on the thinking pill never appears. In that case the in-flight consultation pill carries the Stop button itself, so there is always exactly one Stop on screen while other agents are working for you.
 
 ### Mentions in a queued message wait their turn
 
@@ -87,11 +93,15 @@ An explicit count always wins over a softer hint, and the hint is read from your
 
 ## Mentioning a Group
 
-Mention a [group](./general-usage) by name (`@Backend-Team`) to consult every agent in it at once. Group mentions expand to each non-terminal member and run as independent consultations. If you mention both a group and an agent that belongs to it, that agent is still consulted only once.
-
-Picking a group from the picker inserts its members' names rather than the group's, so you can see exactly who you are about to ask and drop anyone you did not mean to include before sending. The row shows the member count for the same reason. Typing `@Backend-Team` by hand still works and still expands.
+Pick a [group](./general-usage) from the picker (`@Backend-Team`) to consult every agent in it at once. The row shows the member count, and accepting it inserts **each member's own `@name`**, not the group's name - so you can see exactly who you are about to ask and drop anyone you did not mean to include before sending. Each member then runs as an independent consultation, and an agent named twice (say, once on its own and once through a group it belongs to) is still consulted only once.
 
 Groups sort above individual agents in the picker, so a name that matches both surfaces the group first.
+
+<Warning>
+  A group name is only shorthand **in the picker**. It is not a target, so typing `@Backend-Team` by hand and sending it consults nobody - the token stays plain text like any other unrecognized `@word`, and the picker will not chip it. Pick the group from the list instead and send the member names it inserts.
+
+This is deliberate. When an agent and a group share a name, a hand-typed token cannot tell you which one it resolved to, and the group used to win - so picking the single agent you could see quietly fanned your message out to five.
+</Warning>
 
 ## Cross-Agent Mentions vs Group Chat
 

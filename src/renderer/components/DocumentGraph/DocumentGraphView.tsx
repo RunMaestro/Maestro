@@ -31,6 +31,8 @@ import {
 	Type,
 	ChevronLeft,
 	ChevronRight,
+	ZoomIn,
+	Move,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
@@ -95,6 +97,16 @@ import {
 } from './previewCharLimit';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
+import {
+	DEFAULT_SCROLL_MODE,
+	SCROLL_MODE_LABELS,
+	SCROLL_MODE_STORAGE_KEY,
+	nextScrollMode,
+	scrollModeFromPans,
+	scrollModePans,
+	type GraphScrollMode,
+} from './scrollMode';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
@@ -150,6 +162,16 @@ export interface DocumentGraphViewProps {
 	scopeDirectory?: string;
 	/** Callback when focus file is consumed (cleared after focusing) */
 	onFocusFileConsumed?: () => void;
+	/**
+	 * Ask before closing. Defaults to true.
+	 *
+	 * The prompt exists because a graph is usually WORK: a layout picked, a
+	 * depth widened, nodes dragged into place, all of it thrown away by one
+	 * stray Escape. It is worth nothing when closing is cheap - a graph opened
+	 * from another surface goes straight back to it, and a user who has turned
+	 * the prompt off in Settings has said the trade is not worth it to them.
+	 */
+	confirmOnClose?: boolean;
 	/** Default setting for showing external links (from settings) */
 	defaultShowExternalLinks?: boolean;
 	/** Callback to persist external links toggle changes */
@@ -186,6 +208,7 @@ export function DocumentGraphView({
 	scopeFiles,
 	scopeDirectory,
 	onFocusFileConsumed: _onFocusFileConsumed,
+	confirmOnClose = true,
 	defaultShowExternalLinks = false,
 	onExternalLinksChange,
 	defaultMaxNodes = DEFAULT_MAX_NODES,
@@ -232,6 +255,27 @@ export function DocumentGraphView({
 	// Bumped by `F` to re-frame the whole graph. A token rather than a callback
 	// because the transform lives inside the canvas component.
 	const [fitToken, setFitToken] = useState(0);
+	// What the scroll wheel does. Persisted because it is a working posture
+	// rather than a per-visit choice: a user reading a wide graph in Pan mode
+	// should not have to switch back every time the graph is reopened.
+	const { value: scrollPans, setValue: setScrollPans } = usePersistedToggle(
+		SCROLL_MODE_STORAGE_KEY,
+		scrollModePans(DEFAULT_SCROLL_MODE)
+	);
+	const scrollMode = scrollModeFromPans(scrollPans);
+	// The Help panel's segmented control names a destination while `S` and the
+	// pill flip, so clicking the mode you are already in is a no-op rather than
+	// a toggle that undoes itself. Both go through the same setter, and the flip
+	// goes through `nextScrollMode` for the same reason `L` goes through
+	// `nextMindMapLayout`: one place decides what comes next.
+	const setScrollMode = useCallback(
+		(mode: GraphScrollMode) => setScrollPans(scrollModePans(mode)),
+		[setScrollPans]
+	);
+	const toggleScrollMode = useCallback(
+		() => setScrollMode(nextScrollMode(scrollMode)),
+		[setScrollMode, scrollMode]
+	);
 
 	// Close all other dropdowns when opening one
 	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
@@ -369,11 +413,15 @@ export function DocumentGraphView({
 	const streamingActiveRef = useRef(false);
 
 	/**
-	 * Handle escape - show confirmation modal
+	 * Handle escape - confirm first, unless closing is cheap enough not to.
 	 */
 	const handleEscapeRequest = useCallback(() => {
+		if (!confirmOnClose) {
+			onCloseRef.current();
+			return;
+		}
 		setShowCloseConfirmation(true);
-	}, []);
+	}, [confirmOnClose]);
 
 	/**
 	 * Register with layer stack for Escape handling
@@ -1404,6 +1452,15 @@ export function DocumentGraphView({
 				return;
 			}
 
+			// S swaps what the scroll wheel does. Reachable without leaving the
+			// canvas, because the moment you want it is mid-gesture: the framing
+			// is right and the next scroll just threw it away.
+			if (e.key === 's' || e.key === 'S') {
+				e.preventDefault();
+				toggleScrollMode();
+				return;
+			}
+
 			// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
 			const isIncrease = e.key === '+' || e.key === '=';
 			const isDecrease = e.key === '-' || e.key === '_';
@@ -1424,6 +1481,7 @@ export function DocumentGraphView({
 			layoutType,
 			neighborDepth,
 			previewCharLimit,
+			toggleScrollMode,
 		]
 	);
 	// The graph is a canvas the user pans around in, so its useful default is
@@ -1803,6 +1861,33 @@ export function DocumentGraphView({
 							)}
 						</div>
 
+						{/* Scroll mode indicator. Reads as ACTIVE in Pan, because Zoom
+						    is the shipped default and a permanently-lit pill stops
+						    meaning anything. The label names what the wheel does
+						    right now, not what clicking would change it to. */}
+						<button
+							onClick={toggleScrollMode}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+							style={{
+								backgroundColor:
+									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
+								color: scrollMode === 'pan' ? theme.colors.accent : theme.colors.textDim,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor =
+									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`)
+							}
+							title={`Scroll wheel: ${SCROLL_MODE_LABELS[scrollMode].wheelAction}. Shift+scroll: ${SCROLL_MODE_LABELS[scrollMode].modifierAction}. (S to switch)`}
+							aria-pressed={scrollMode === 'pan'}
+							data-testid="document-graph-scroll-mode-toggle"
+						>
+							{scrollMode === 'pan' ? <Move className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
+							Scroll: {SCROLL_MODE_LABELS[scrollMode].name}
+						</button>
+
 						{/* External Links Toggle */}
 						<button
 							onClick={handleExternalLinksToggle}
@@ -2057,6 +2142,7 @@ export function DocumentGraphView({
 							containerRef={mindMapContainerRef}
 							legendExpanded={legendExpanded}
 							fitToken={fitToken}
+							scrollMode={scrollMode}
 						/>
 					) : (
 						<div
@@ -2074,6 +2160,8 @@ export function DocumentGraphView({
 						<GraphLegend
 							theme={theme}
 							showExternalLinks={includeExternalLinks}
+							scrollMode={scrollMode}
+							onScrollModeChange={setScrollMode}
 							onClose={() => setLegendExpanded(false)}
 						/>
 					)}

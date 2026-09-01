@@ -100,17 +100,18 @@ Proceeding with implementation in the next subtask.
     `usage.output_tokens`, `usage.reasoning_output_tokens` (folded into
     output), `usage.cached_input_tokens` → `cacheReadTokens`.
   - `event_msg` events with `payload.type === 'token_count'`: same
-    fields under `payload.info.total_token_usage`.
+    fields under `payload.info.last_token_usage` (that turn) and
+    `payload.info.total_token_usage` (**cumulative** session running
+    total - never sum it; use `CodexTokenCounts`).
   - **Cost:** **absent** - Codex doesn't emit cost and the storage
     explicitly omits `costUsd` (`codex-session-storage.ts:440`).
   - **`cacheCreationTokens`:** **always 0** - Codex doesn't report
     cache-creation separately (`codex-session-storage.ts:444`).
 - **Aggregation level:** per-event in JSONL (multiple turn events);
-  summed to per-session by `parseSessionContent`. Note `event_msg`
-  carries `total_token_usage` which is **already cumulative** - naive
-  sum of both `turn.completed` and `event_msg` would double-count, but
-  the existing parser does the same so we inherit whatever behavior is
-  already shipped.
+  folded to per-session by `parseSessionContent` via
+  `CodexTokenCounts`. `turn.completed.usage` is per-turn;
+  `event_msg`'s `total_token_usage` is cumulative and must never be
+  summed.
 - **Existing accessor:** `getSessionPath` returns `null`. To resolve
   a `sessionId` we'd need either `findSessionFile` (private, async,
   walks the codex sessions dir) or `listSessions(projectPath)` + filter.
@@ -224,7 +225,10 @@ Per Phase 02 task #2:
 - `'full'` → all 4 token fields populated, cost where the agent supports
   it. Applies to: `claude-code`, `opencode`, `factory-droid`.
 - `'partial'` → some fields are structurally absent. Applies to:
-  - `codex` - `cacheCreationTokens` is always 0, no `costUsd`.
+  - `codex` - `cacheCreationTokens` is always 0, no `costUsd` (cost is
+    rate-table estimated from the GPT-5 tiers in `modelPricing`, where
+    `CACHE_READ_SUBSET_OF_INPUT` accounts for OpenAI counting cached
+    tokens INSIDE `input_tokens`).
   - `copilot-cli` - tokens only after `session.shutdown`; in-flight
     sessions report zero tokens.
 - `'unsupported'` → reserved for future agents not in the dispatch
@@ -232,12 +236,14 @@ Per Phase 02 task #2:
 
 ## Risks / Known Gotchas
 
-- **Codex cumulative-vs-incremental ambiguity.** The existing parser
-  sums both `turn.completed.usage` and
-  `event_msg.payload.info.total_token_usage`. If the latter is
-  cumulative across the session, this double-counts. We inherit the
-  existing behavior; do **not** "fix" it in Phase 02 - that's a Codex
-  parser bug separate from the Cue dashboard work.
+- **Codex cumulative-vs-incremental. FIXED.** `total_token_usage` is
+  the session running total, and the parsers summed it per event, so a
+  session's reported tokens grew with the SQUARE of its turn count (a
+  real corpus reported 75B input tokens against a true 1.3B). Every
+  Codex transcript scan now goes through `CodexTokenCounts`
+  (`src/shared/codexTokenUsage.ts`), which prefers the per-turn
+  `last_token_usage` and falls back to a cumulative delta. Do not
+  reintroduce a hand-rolled sum.
 - **Copilot in-flight zeroes.** A Cue trigger that fires while a
   Copilot session is still running will see tokens = 0. Mark
   `coverage: 'partial'` so the dashboard can render an "in flight"

@@ -28,8 +28,11 @@ import {
 	CHARS_PER_LINE,
 	EXTERNAL_NODE_WIDTH,
 	EXTERNAL_NODE_HEIGHT,
+	UNGROUPED_LOBE_ID,
 } from './mindMapLayouts';
 import { isPreviewOff } from './previewCharLimit';
+import { DEFAULT_SCROLL_MODE, type GraphScrollMode } from './scrollMode';
+import { clusterColor, clusterHullStyle } from './clusterColors';
 import { logger } from '../../utils/logger';
 import { GraphMiniMap } from './GraphMiniMap';
 import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
@@ -73,6 +76,9 @@ export interface MindMapNode {
 	neighbors?: Set<string>;
 	/** Last-modified time in epoch ms, 0 or undefined when unknown. */
 	mtime?: number;
+	/** Which cluster placed this node. Only the Lobes layout sets these. */
+	clusterId?: string;
+	clusterIndex?: number;
 }
 
 /**
@@ -145,6 +151,11 @@ export interface MindMapProps {
 	containerRef?: React.RefObject<HTMLDivElement>;
 	/** Whether the help/legend drawer is open - slides the minimap clear of it */
 	legendExpanded?: boolean;
+	/**
+	 * What the scroll wheel does. `zoom` (the default) zooms toward the cursor
+	 * and pans on Shift; `pan` swaps the two.
+	 */
+	scrollMode?: GraphScrollMode;
 	/**
 	 * Bump this to re-frame the whole graph on screen. It is a token rather than
 	 * a callback because the fit has to happen inside the canvas, which owns the
@@ -447,6 +458,8 @@ function renderDocumentNode(
 		isSelected,
 		isFocused,
 		isOrphan,
+		clusterId,
+		clusterIndex,
 	} = node;
 	// Use description (frontmatter) or fall back to contentPreview (plaintext)
 	const previewText = description || contentPreview;
@@ -465,6 +478,18 @@ function renderDocumentNode(
 			: isHovered
 				? `${theme.colors.accent}CC`
 				: `${theme.colors.accent}99`;
+	// A node in a lobe takes its lobe's colour on the border, so membership is
+	// readable without tracing the hull back - which is exactly what a node
+	// near two hull edges makes hard. Selection, focus, and the orphan warning
+	// all outrank it: those say something about THIS node, and the cluster tint
+	// is only saying which group it is in.
+	// The ungrouped pile is deliberately left untinted: it is not a group, and
+	// giving it a colour of its own would present "these belong to nothing" as
+	// just another finding.
+	const clusterStroke =
+		clusterIndex !== undefined && clusterId !== UNGROUPED_LOBE_ID
+			? clusterColor(theme.colors.accent, clusterIndex)
+			: null;
 	const borderStroke =
 		isFocused || isSelected
 			? theme.colors.accent
@@ -472,7 +497,7 @@ function renderDocumentNode(
 				? theme.colors.warning
 				: isHovered
 					? `${theme.colors.accent}80`
-					: theme.colors.border;
+					: (clusterStroke ?? theme.colors.border);
 
 	// Previews off: the node is a filename pill. No body box, no folder
 	// sub-header, no preview text - just enough to read the graph's shape.
@@ -707,6 +732,7 @@ export function MindMap({
 	containerRef: externalContainerRef,
 	legendExpanded = false,
 	fitToken = 0,
+	scrollMode = DEFAULT_SCROLL_MODE,
 }: MindMapProps) {
 	// Canvas measures and paints glyphs itself, so it needs a resolved family
 	// string rather than the CSS variable the DOM surfaces inherit.
@@ -910,6 +936,50 @@ export function MindMap({
 		ctx.translate(pan.x, pan.y);
 		ctx.scale(zoom, zoom);
 
+		// Cluster hulls sit behind everything. Only Lobes emits any, and without
+		// them that layout is indistinguishable from Force - both relax nodes
+		// with links pulling and charge pushing, so a lobe that is not DRAWN as
+		// a lobe is just a differently-seeded force graph.
+		if (layout.clusters && layout.clusters.length > 0) {
+			ctx.save();
+			layout.clusters.forEach((cluster) => {
+				if (cluster.hull.length < 3) return;
+				const ungrouped = cluster.id === UNGROUPED_LOBE_ID;
+				const { fill, stroke } = clusterHullStyle(theme.colors.accent, cluster.index, ungrouped);
+
+				ctx.beginPath();
+				ctx.moveTo(cluster.hull[0].x, cluster.hull[0].y);
+				// A rounded path through the hull: a lobe is an organic grouping,
+				// and a hard polygon reads as a selection marquee.
+				for (let i = 1; i <= cluster.hull.length; i++) {
+					const current = cluster.hull[i % cluster.hull.length];
+					const next = cluster.hull[(i + 1) % cluster.hull.length];
+					ctx.quadraticCurveTo(
+						current.x,
+						current.y,
+						(current.x + next.x) / 2,
+						(current.y + next.y) / 2
+					);
+				}
+				ctx.closePath();
+
+				ctx.fillStyle = fill;
+				ctx.fill();
+				ctx.strokeStyle = stroke;
+				ctx.lineWidth = 2;
+				if (ungrouped) ctx.setLineDash([8, 6]);
+				ctx.stroke();
+				ctx.setLineDash([]);
+
+				ctx.fillStyle = ungrouped ? theme.colors.textDim : stroke;
+				ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+				ctx.textAlign = 'center';
+				ctx.textBaseline = 'middle';
+				ctx.fillText(cluster.label, cluster.labelX, cluster.labelY);
+			});
+			ctx.restore();
+		}
+
 		// Axis captions sit behind everything. Only Timeline emits any - a time
 		// axis with no dates on it is just an arbitrary left-to-right ordering.
 		if (layout.axisLabels && layout.axisLabels.length > 0) {
@@ -1044,6 +1114,7 @@ export function MindMap({
 		nodesWithState,
 		layout.links,
 		layout.axisLabels,
+		layout.clusters,
 		selectedNodeId,
 		hoveredNodeId,
 		focusedNodeId,
@@ -1232,21 +1303,35 @@ export function MindMap({
 		[screenToCanvas, findNodeAtPoint, onNodeContextMenu]
 	);
 
+	// The live scroll mode, read through a ref so the wheel handler below can
+	// stay a stable callback. Rebuilding it on every mode change would detach
+	// and reattach the listener, and a trackpad's momentum scroll keeps
+	// delivering events across that gap.
+	const scrollModeRef = useRef(scrollMode);
+	scrollModeRef.current = scrollMode;
+
 	// Wheel handler - must be attached manually with passive: false.
 	// Uses functional updater to avoid stale closures and jitter.
-	// Plain scroll zooms toward the cursor; Shift+scroll pans the canvas
-	// (mirrors the Cue pipeline canvas, where Shift activates panning).
+	//
+	// Which gesture zooms and which pans is the user's choice (the `S` key, the
+	// toolbar pill, the Help panel toggle). Shift always reaches the OTHER
+	// action, so both are available in either mode.
 	const handleWheel = useCallback((e: WheelEvent) => {
 		e.preventDefault();
 
 		const rect = canvasRef.current?.getBoundingClientRect();
 		if (!rect) return;
 
-		// Shift+scroll pans instead of zooming. Browsers translate a vertical
-		// mouse wheel into deltaX while Shift is held, and trackpads report
-		// deltaX/deltaY directly, so subtracting both axes covers every device
-		// (the unused axis is ~0).
-		if (e.shiftKey) {
+		// Shift inverts the mode rather than naming an action, which is what
+		// keeps the modifier meaningful in both: in Zoom mode it pans (as it
+		// always has, mirroring the Cue pipeline canvas), and in Pan mode it
+		// zooms, so a user who switched to Pan has not lost access to zoom.
+		const panning = (scrollModeRef.current === 'pan') !== e.shiftKey;
+
+		if (panning) {
+			// Browsers translate a vertical mouse wheel into deltaX while Shift
+			// is held, and trackpads report deltaX/deltaY directly, so
+			// subtracting both axes covers every device (the unused axis is ~0).
 			setTransform((prev) => ({
 				...prev,
 				panX: prev.panX - e.deltaX,

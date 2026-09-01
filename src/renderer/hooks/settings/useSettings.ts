@@ -32,6 +32,7 @@ import type {
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
+import type { GlossLevel } from '../../../shared/themeGloss';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -80,6 +81,9 @@ export interface UseSettingsReturn {
 	setShellArgs: (value: string) => void;
 	shellEnvVars: Record<string, string>;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	/** Variables switched off in the editor: kept for later, never spawned with. */
+	shellEnvVarsDisabled: Record<string, string>;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 
 	// GitHub CLI settings
 	ghPath: string;
@@ -286,6 +290,8 @@ export interface UseSettingsReturn {
 	isLeaderboardRegistered: boolean;
 
 	// Web Interface settings
+	webInterfaceAutoStart: boolean;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	webInterfaceUseCustomPort: boolean;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	webInterfaceCustomPort: number;
@@ -306,6 +312,10 @@ export interface UseSettingsReturn {
 	// Accessibility settings
 	colorBlindMode: boolean;
 	setColorBlindMode: (value: boolean) => void;
+
+	// Surface gloss (app-chrome lighting; changes no theme color)
+	themeGloss: GlossLevel;
+	setThemeGloss: (value: GlossLevel) => void;
 
 	// Tab filtering settings
 	showStarredInUnreadFilter: boolean;
@@ -328,6 +338,8 @@ export interface UseSettingsReturn {
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	documentGraphConfirmClose: boolean;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	documentGraphPreviewCharLimit: number;

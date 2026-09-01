@@ -1,12 +1,16 @@
 import { ipcRenderer } from 'electron';
+import type { AITabData } from '../../web-server/types';
 
 export function createTabRemoteApi() {
 	return {
 		/**
 		 * Subscribe to remote tab selection from web interface
 		 */
-		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string) => callback(sessionId, tabId);
+		onRemoteSelectTab: (
+			callback: (sessionId: string, tabId: string, aiTabs?: AITabData[]) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, aiTabs?: AITabData[]) =>
+				callback(sessionId, tabId, aiTabs);
 			ipcRenderer.on('remote:selectTab', handler);
 			return () => ipcRenderer.removeListener('remote:selectTab', handler);
 		},

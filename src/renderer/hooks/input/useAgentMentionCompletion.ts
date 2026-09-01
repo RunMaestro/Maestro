@@ -23,7 +23,8 @@ export interface AgentMentionSuggestion {
 	 * The `@name ` token this row is identified by (single-at prefix, trailing
 	 * space). For agents it is also what gets inserted; for GROUPS the inserted
 	 * literal is {@link memberMentionValue} instead - the group token only names
-	 * the row and keeps a hand-typed `@group` resolvable.
+	 * the row (it is what the picker filters and sorts on) and never reaches the
+	 * composer.
 	 */
 	value: string;
 	/** Visible name for the row. */
@@ -34,13 +35,19 @@ export interface AgentMentionSuggestion {
 	targetSessionId?: string;
 	/** For groups: the group id. */
 	groupId?: string;
-	/** For groups: the non-terminal member session ids (used by later routing). */
+	/**
+	 * For groups: the non-terminal member session ids. Display only - the picker
+	 * row shows "N agents". Dispatch never reads this: a group is expanded into
+	 * member `@name` tokens at accept time, and only agents are message targets.
+	 */
 	memberSessionIds?: string[];
 	/**
 	 * For groups: the literal accepting the row inserts - every member's own
 	 * `@name` token, space-separated (see `formatGroupMentionExpansion`). A group
 	 * is shorthand for its members, not a target, so the picker expands it the
 	 * same way Group Chat does and the composer never carries a group token.
+	 * Expansion is the ONLY way a group reaches a message - a group name is not
+	 * dispatchable (see {@link resolveMentionedTargetSessionIds}).
 	 */
 	memberMentionValue?: string;
 	/** For agents: the tool type, used to pick the row icon. */
@@ -142,11 +149,16 @@ function suggestionToken(suggestion: AgentMentionSuggestion): string {
 }
 
 /**
- * The lowercased set of mention tokens (agent + group names) currently
- * mentionable from `currentSessionId`. The chip overlay and the rendered
- * transcript plugin pass this to `tokenizeMentions` so a bare `@word` only
- * lights up when it names a real agent/group; a `@word` that matches nothing
- * stays plain text.
+ * The lowercased set of AGENT mention tokens currently mentionable from
+ * `currentSessionId`. The chip overlay and the rendered transcript plugin pass
+ * this to `tokenizeMentions` so a bare `@word` only lights up when it names a
+ * real agent; a `@word` that matches nothing stays plain text.
+ *
+ * Group names are deliberately NOT in here. A group is not a message target
+ * (see {@link resolveMentionedTargetSessionIds}), so chipping `@Squad` would
+ * promise a dispatch that never happens - and worse, it would make a message
+ * LEADING with a group name suppress the local send, addressing the message to
+ * nobody at all.
  */
 export function buildKnownMentionNameSet(
 	sessions: Session[],
@@ -154,16 +166,27 @@ export function buildKnownMentionNameSet(
 	currentSessionId: string | null | undefined
 ): Set<string> {
 	return new Set(
-		buildAgentMentionSuggestions(sessions, groups, currentSessionId).map(suggestionToken)
+		buildAgentMentionSuggestions(sessions, groups, currentSessionId)
+			.filter((item) => item.kind === 'agent')
+			.map(suggestionToken)
 	);
 }
 
 /**
  * Resolve every `@mention` in a message to the target session ids it should
- * dispatch to. Agent mentions map to their `targetSessionId`; group mentions
- * expand to each non-terminal `memberSessionIds` entry. The result is de-duped
- * in first-seen order, so mentioning an agent and a group containing it yields
- * that agent once.
+ * dispatch to. The result is de-duped in first-seen order.
+ *
+ * ONLY AGENTS ARE TARGETS. A group is shorthand the picker expands into its
+ * members' own `@name` tokens at accept time (`memberMentionValue`), so the sent
+ * text names agents and nothing else - which is exactly why a group must not
+ * resolve here too. Routing a hand-typed `@name` to a group is how an agent that
+ * merely SHARES a name with a group had its message fanned out to every member
+ * of that group instead: the user picked the agent they could see, and the
+ * message went to five agents. Since groups are built first, a group would have
+ * won that name every time.
+ *
+ * A group name that survives into the sent text therefore resolves to nothing
+ * and stays plain text, like any other unrecognized `@word`.
  *
  * Used by the cross-agent send path (Phase 03) so a manually typed `@name`
  * resolves identically to one picked from the popover.
@@ -177,9 +200,9 @@ export function resolveMentionedTargetSessionIds(
 	// Fast path: no `@` at all -> nothing to resolve, skip building the roster.
 	if (!message.includes('@')) return [];
 
-	const items = buildAgentMentionSuggestions(sessions, groups, currentSessionId);
 	const byToken = new Map<string, AgentMentionSuggestion>();
-	for (const item of items) {
+	for (const item of buildAgentMentionSuggestions(sessions, groups, currentSessionId)) {
+		if (item.kind !== 'agent') continue; // Groups are not targets - see above.
 		const token = suggestionToken(item);
 		if (!byToken.has(token)) byToken.set(token, item);
 	}
@@ -193,20 +216,12 @@ export function resolveMentionedTargetSessionIds(
 
 	const targetIds: string[] = [];
 	const seen = new Set<string>();
-	const add = (id: string | undefined): void => {
+
+	for (const mention of mentions) {
+		const id = byToken.get(mention.mentionName.toLowerCase())?.targetSessionId;
 		if (id && !seen.has(id)) {
 			seen.add(id);
 			targetIds.push(id);
-		}
-	};
-
-	for (const mention of mentions) {
-		const suggestion = byToken.get(mention.mentionName.toLowerCase());
-		if (!suggestion) continue;
-		if (suggestion.kind === 'group') {
-			for (const id of suggestion.memberSessionIds ?? []) add(id);
-		} else {
-			add(suggestion.targetSessionId);
 		}
 	}
 

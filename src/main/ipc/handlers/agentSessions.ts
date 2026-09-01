@@ -25,6 +25,7 @@ import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
 import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { CodexTokenCounts } from '../../../shared/codexTokenUsage';
 import {
 	loadGlobalStatsCache,
 	saveGlobalStatsCache,
@@ -150,9 +151,7 @@ function parseCodexSessionContent(
 	const lines = content.split('\n').filter((l) => l.trim());
 
 	let messageCount = 0;
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cachedTokens = 0;
+	const tokenCounts = new CodexTokenCounts();
 
 	for (const line of lines) {
 		try {
@@ -166,15 +165,11 @@ function parseCodexSessionContent(
 				}
 			}
 
-			// Extract token usage from event_msg with token_count payload
+			// Extract token usage from event_msg with token_count payload.
+			// `total_token_usage` is cumulative, so it must never be summed - see
+			// CodexTokenCounts.
 			if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-				const usage = entry.payload.info?.total_token_usage;
-				if (usage) {
-					inputTokens += usage.input_tokens || 0;
-					outputTokens += usage.output_tokens || 0;
-					outputTokens += usage.reasoning_output_tokens || 0;
-					cachedTokens += usage.cached_input_tokens || 0;
-				}
+				tokenCounts.addTokenCountEvent(entry.payload.info);
 			}
 		} catch {
 			// Skip malformed lines
@@ -183,11 +178,11 @@ function parseCodexSessionContent(
 
 	return {
 		messages: messageCount,
-		inputTokens,
-		outputTokens,
+		inputTokens: tokenCounts.inputTokens,
+		outputTokens: tokenCounts.outputTokens,
 		cacheReadTokens: 0,
 		cacheCreationTokens: 0,
-		cachedInputTokens: cachedTokens,
+		cachedInputTokens: tokenCounts.cachedTokens,
 		sizeBytes,
 	};
 }

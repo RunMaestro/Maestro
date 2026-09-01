@@ -119,6 +119,7 @@ import {
 } from './commands/tab';
 import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
+import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
 import { setVerbosity } from './output/verbosity';
@@ -1313,6 +1314,18 @@ program
 	.option('-l, --list', 'List available themes')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((nameOrId, options) => setTheme(nameOrId, options));
+
+// Gloss command - how much light the app chrome catches (the themeGloss
+// setting). Mirrors Settings -> Themes -> Surface Gloss. Prints the current
+// level when called with no argument.
+program
+	.command('gloss [level]')
+	.description(
+		'Set the surface gloss level: off, sheen, strong or max (applies live). Omit the level to see the current one.'
+	)
+	.option('-l, --list', 'List the gloss levels and what each one does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((level, options) => gloss(level, options));
 
 // Theme commands - manage the user-configurable "Custom" theme palette
 // (the customThemeColors / customThemeBaseId settings). Mirrors the in-app

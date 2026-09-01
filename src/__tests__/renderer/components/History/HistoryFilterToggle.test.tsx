@@ -259,7 +259,10 @@ describe('HistoryFilterToggle', () => {
 		 * the pills outgrew the space the overflow spilled out of both ends of a
 		 * centred row and took the two buttons with it.
 		 */
-		it('claims the leftover width instead of holding its natural size', () => {
+		it('stays its natural width so the flanking controls sit beside the pills', () => {
+			// `flex-1` would make the row swallow the whole toolbar and strand the
+			// search and help buttons against the two panel edges. The row only
+			// needs to KNOW the free width, not occupy it.
 			const { container } = render(
 				<HistoryFilterToggle
 					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
@@ -269,15 +272,13 @@ describe('HistoryFilterToggle', () => {
 				/>
 			);
 			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
-			expect(row.className).toContain('flex-1');
-			expect(row.className).toContain('min-w-0');
-			// Measuring is only meaningful once the row is granted the free space.
-			expect(row.className).not.toContain('flex-shrink-0');
+			expect(row.className).not.toContain('flex-1');
 		});
 
-		it('never lets the pills paint over the buttons beside them', () => {
-			// The last-resort guarantee: at an interface font the bottom rung
-			// cannot absorb, the pills clip rather than the controls.
+		it('may still shrink, so a squeeze clips a pill instead of a button', () => {
+			// min-w-0 with flex-shrink left at its default. Without min-w-0 a flex
+			// item refuses to go below its content and pushes its neighbours out
+			// instead, which is the original bug.
 			const { container } = render(
 				<HistoryFilterToggle
 					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
@@ -287,6 +288,8 @@ describe('HistoryFilterToggle', () => {
 				/>
 			);
 			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
+			expect(row.className).toContain('min-w-0');
+			expect(row.className).not.toContain('flex-shrink-0');
 			expect(row.className).toContain('overflow-hidden');
 		});
 
@@ -312,9 +315,9 @@ describe('HistoryFilterToggle', () => {
 			expect(mirror.className).toContain('absolute');
 		});
 
-		it('keeps its natural width when the row does not own the leftover space', () => {
+		it('opts out entirely when the toolbar has no free width to read', () => {
 			// Director's Notes puts the pills beside an activity graph that already
-			// claims it; two flex-1 children would just split the row in half.
+			// consumes the leftover space, so there is no free figure to measure.
 			const { container } = render(
 				<HistoryFilterToggle
 					activeFilters={new Set<HistoryEntryType>(['AUTO'])}

@@ -31,7 +31,8 @@ function seed(...requests: InFlightCrossAgentRequest[]): void {
 function renderIndicator(
 	sourceSessionId: string | null = SESSION,
 	sourceTabId: string | null = TAB,
-	onSessionClick?: (sessionId: string, tabId?: string) => void
+	onSessionClick?: (sessionId: string, tabId?: string) => void,
+	onInterrupt?: () => void
 ) {
 	return render(
 		<CrossAgentResponseIndicator
@@ -39,6 +40,7 @@ function renderIndicator(
 			sourceSessionId={sourceSessionId}
 			sourceTabId={sourceTabId}
 			onSessionClick={onSessionClick}
+			onInterrupt={onInterrupt}
 		/>
 	);
 }
@@ -140,6 +142,37 @@ describe('CrossAgentResponseIndicator', () => {
 	it('renders nothing when the tab id is missing', () => {
 		seed(req());
 		const { container } = renderIndicator(SESSION, null);
+		expect(container.firstChild).toBeNull();
+	});
+});
+
+/**
+ * A message that LEADS with a mention is answered only by the consulted agents,
+ * so the source agent never goes busy and the thinking pill - the usual home of
+ * Stop - never appears. Without a Stop here the user has no way at all to end
+ * work other agents are doing on their behalf.
+ */
+describe('CrossAgentResponseIndicator Stop', () => {
+	beforeEach(() => {
+		useCrossAgentInFlightStore.setState({ requests: {} });
+	});
+
+	it('omits Stop when the caller does not supply an interrupt', () => {
+		seed(req());
+		renderIndicator();
+		expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
+	});
+
+	it('offers Stop when the caller supplies an interrupt', () => {
+		seed(req());
+		const onInterrupt = vi.fn();
+		renderIndicator(SESSION, TAB, undefined, onInterrupt);
+		fireEvent.click(screen.getByRole('button', { name: /stop/i }));
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+	});
+
+	it('draws no Stop when nothing is in flight (the pill is absent entirely)', () => {
+		const { container } = renderIndicator(SESSION, TAB, undefined, vi.fn());
 		expect(container.firstChild).toBeNull();
 	});
 });

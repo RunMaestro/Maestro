@@ -1,18 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 const REPO_ROOT = path.join(__dirname, '../../..');
 
 function tsxFiles(): string[] {
-	return execSync("find src/renderer src/web -name '*.tsx'", {
-		cwd: REPO_ROOT,
-		encoding: 'utf8',
-		maxBuffer: 64e6,
-	})
-		.trim()
-		.split('\n');
+	return ['src/renderer', 'src/web'].flatMap((root) =>
+		readdirSync(path.join(REPO_ROOT, root), { recursive: true, encoding: 'utf8' })
+			.filter((file) => file.endsWith('.tsx'))
+			.map((file) => path.join(root, file))
+	);
 }
 
 /**

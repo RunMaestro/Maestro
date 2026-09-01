@@ -20,6 +20,7 @@ import { createSafeSend, SafeSendFn } from '../../utils/safe-send';
 import { getStatsDB } from '../../stats';
 import { isStatsCollectionEnabled } from '../../stats/utils';
 import { flushTelemetry } from '../../cue/cue-telemetry';
+import { getCueRunTotals, getCueRunTotalsByDay } from '../../cue/cue-db';
 import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
 import {
 	QueryEvent,
@@ -29,6 +30,8 @@ import {
 	StatsTimeRange,
 	StatsFilters,
 } from '../../../shared/stats-types';
+import type { DelegationDay, DelegationTotals } from '../../../shared/delegation';
+import { getTimeRangeStart } from '../../stats/utils';
 import type { TokenUsageQuery } from '../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
 
@@ -242,6 +245,72 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			const db = getStatsDB();
 			return db.getAggregatedStats(range);
 		})
+	);
+
+	// Interactive vs autonomous (Auto Run + Cue) split for the delegation
+	// surfaces. This is the ONE place the two stats systems are joined: turn
+	// rows live in the stats DB, Cue runs in the Cue DB, and neither knows the
+	// other exists. Doing the merge here rather than in the renderer means the
+	// Overview ratio card, the delegation score, and the Activity trend chart
+	// cannot disagree about what counts as delegated.
+	//
+	// Ungated on purpose: Cue history is real work whether or not the Cue tab
+	// is currently switched on, and `getCueRunTotals` already resolves to zero
+	// when the Cue DB was never initialized.
+	ipcMain.handle(
+		'stats:get-delegation-totals',
+		withIpcErrorLogging(
+			handlerOpts('getDelegationTotals'),
+			async (range: StatsTimeRange = 'all'): Promise<DelegationTotals> => {
+				const db = getStatsDB();
+				const querySources = db.getQuerySourceTotals(range);
+				const cue = getCueRunTotals(getTimeRangeStart(range));
+				return {
+					interactive: querySources.interactive,
+					autoRun: querySources.autoRun,
+					cue,
+				};
+			}
+		)
+	);
+
+	// The same split bucketed by local-time day, for the Activity trend chart.
+	// Days with no activity in either system are omitted - the renderer
+	// zero-fills so the axis stays calendar-true.
+	ipcMain.handle(
+		'stats:get-delegation-by-day',
+		withIpcErrorLogging(
+			handlerOpts('getDelegationByDay'),
+			async (range: StatsTimeRange = 'all'): Promise<DelegationDay[]> => {
+				const db = getStatsDB();
+				const startTime = getTimeRangeStart(range);
+				const byDate = new Map<string, DelegationDay>();
+				const dayFor = (date: string): DelegationDay => {
+					let day = byDate.get(date);
+					if (!day) {
+						day = {
+							date,
+							interactive: { count: 0, durationMs: 0 },
+							autoRun: { count: 0, durationMs: 0 },
+							cue: { count: 0, durationMs: 0 },
+						};
+						byDate.set(date, day);
+					}
+					return day;
+				};
+
+				for (const row of db.getQuerySourceByDay(range)) {
+					const day = dayFor(row.date);
+					day.interactive = row.interactive;
+					day.autoRun = row.autoRun;
+				}
+				for (const row of getCueRunTotalsByDay(startTime)) {
+					dayFor(row.date).cue = { count: row.count, durationMs: row.durationMs };
+				}
+
+				return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+			}
+		)
 	);
 
 	// Token & cost usage aggregate for the Cost & Tokens dashboard. Reads each

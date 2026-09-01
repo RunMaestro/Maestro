@@ -70,26 +70,25 @@ describe('AgentPowersModal', () => {
 		expect(pipeline).not.toMatch(/\bam\b|every (morning|weekday|day)/i);
 	});
 
-	it('says the list is not exhaustive', () => {
+	it('tells the user they do not have to be a power user', () => {
+		// The grid can read as a list of things you need to learn. The closing
+		// paragraph exists to say the opposite: the keyboard-driven way is real
+		// and it is optional, because plain language reaches the same places.
 		renderModal();
-		expect(screen.getByText(/not a fixed list/i)).toBeInTheDocument();
+
+		const closing = screen.getByText(/power tool/i).textContent ?? '';
+		expect(closing).toMatch(/do not have to/i);
+		expect(closing).toMatch(/plain language/i);
 	});
 
-	it('spends the closing paragraph on capabilities no pill already shows', () => {
-		// The paragraph exists to widen the claim. Repeating a pill's label there
-		// spends the only line of prose left restating the grid above it.
+	it('names the advanced features the agent is taught, as proof of the claim', () => {
+		// "Your agent knows how to drive Maestro" is only worth saying if it names
+		// something the user would not expect it to reach on its own.
 		renderModal();
 
-		const closing = screen.getByText(/not a fixed list/i).textContent ?? '';
-		for (const shown of [
-			'Create agents',
-			'Write an Auto Run doc',
-			'Schedule a task',
-			'Build a Cue pipeline',
-			'Build me a dashboard',
-		]) {
-			expect(closing.toLowerCase()).not.toContain(shown.toLowerCase());
-		}
+		const closing = screen.getByText(/power tool/i).textContent ?? '';
+		expect(closing).toMatch(/Auto Run/);
+		expect(closing).toMatch(/Cue/);
 	});
 
 	it('closes on Got it', () => {

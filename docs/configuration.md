@@ -122,6 +122,7 @@ Configure environment variables once in Settings and they automatically apply to
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Environment** tab
 2. Add your variables in `KEY=VALUE` format using the **Add Variable** button
 3. Variables apply immediately to new agent sessions and terminals
+4. Click the eye button on a row to switch that variable off without deleting it
 
 ![Environment Variables](./screenshots/env-vars.png)
 
@@ -137,6 +138,7 @@ MY_TOOL_PATH=~/tools/custom
 
 ### Important Features
 
+- **Switch a variable off**: The eye button parks a variable - the row stays in the list with its key and value intact and still editable, but the variable is no longer passed to anything Maestro runs. Use it to test without a proxy or an API key instead of deleting the value and retyping it later. Parked variables are stored separately and are never merged into an agent or terminal environment.
 - **Path expansion**: Use `~/` for home directory (e.g., `~/workspace` expands to `/Users/username/workspace`)
 - **Quotes for special characters**: Variables with spaces or special characters should be quoted
 - **Applied to both agents and terminals**: Global vars are available to all agent processes (Claude, OpenCode, etc.) and all terminal sessions

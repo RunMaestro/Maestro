@@ -659,6 +659,14 @@ const mockMaestro = {
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
 		}),
+		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
+		// dashboard renders the "nothing tracked yet" state rather than throwing.
+		getDelegationTotals: vi.fn().mockResolvedValue({
+			interactive: { count: 0, durationMs: 0 },
+			autoRun: { count: 0, durationMs: 0 },
+			cue: { count: 0, durationMs: 0 },
+		}),
+		getDelegationByDay: vi.fn().mockResolvedValue([]),
 		getStats: vi.fn().mockResolvedValue([]),
 		startAutoRun: vi.fn().mockResolvedValue('auto-run-id'),
 		endAutoRun: vi.fn().mockResolvedValue(true),
@@ -701,6 +709,9 @@ const mockMaestro = {
 		// mirroring the preload contract so useCrossAgentDispatch's mount effect
 		// (window.maestro.crossAgent.onChunk) doesn't throw under test.
 		send: vi.fn().mockResolvedValue({ requestId: 'test-cross-agent-request' }),
+		// Stop calls this for every interrupt in AI mode, so it has to exist or
+		// handleInterrupt throws before it ever signals a process.
+		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
 		onChunk: vi.fn().mockReturnValue(() => {}),
 	},
 	leaderboard: {

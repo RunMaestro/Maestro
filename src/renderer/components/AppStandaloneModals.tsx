@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useMemo } from 'react';
-import { useModalActions } from '../stores/modalStore';
+import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
@@ -120,6 +120,7 @@ export interface AppStandaloneModalsProps {
 	onOpenFileTab: (info: FileTabInfo) => void;
 	mainPanelRef: React.RefObject<MainPanelHandle | null>;
 	documentGraphShowExternalLinks: boolean;
+	documentGraphConfirmClose: boolean;
 	onExternalLinksChange: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -195,6 +196,7 @@ function AppStandaloneModalsInner({
 	onOpenFileTab,
 	mainPanelRef,
 	documentGraphShowExternalLinks,
+	documentGraphConfirmClose,
 	onExternalLinksChange,
 	documentGraphMaxNodes,
 	documentGraphPreviewCharLimit,
@@ -272,6 +274,7 @@ function AppStandaloneModalsInner({
 	const graphScopeFiles = useFileExplorerStore((s) => s.graphScopeFiles);
 	const graphScopeDirectory = useFileExplorerStore((s) => s.graphScopeDirectory);
 	const graphRootPath = useFileExplorerStore((s) => s.graphRootPath);
+	const graphReturnTo = useFileExplorerStore((s) => s.graphReturnTo);
 
 	// Self-source tab gist content
 	const tabGistContent = useTabStore((s) => s.tabGistContent);
@@ -541,12 +544,24 @@ function AppStandaloneModalsInner({
 					<DocumentGraphView
 						isOpen={isGraphViewOpen}
 						onClose={() => {
+							// Read the target BEFORE closing - closeGraphView clears it.
+							const returnTo = useFileExplorerStore.getState().graphReturnTo;
 							useFileExplorerStore.getState().closeGraphView();
+							if (returnTo === 'memoryViewer') {
+								// The viewer closed itself to hand the window over, so
+								// closing the graph has to hand it back or the user lands
+								// on an empty workspace.
+								useModalStore.getState().openModal('memoryViewer');
+								return;
+							}
 							// Return focus to file preview if it was open
 							requestAnimationFrame(() => {
 								mainPanelRef.current?.focusFilePreview();
 							});
 						}}
+						// A graph that knows where it came from is one Escape from being
+						// back there, so the "are you sure?" prompt is pure friction.
+						confirmOnClose={documentGraphConfirmClose && !graphReturnTo}
 						theme={theme}
 						rootPath={graphRootPath || activeSession?.projectRoot || activeSession?.cwd || ''}
 						onDocumentOpen={async (filePath) => {

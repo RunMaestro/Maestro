@@ -479,12 +479,18 @@ describe('ThinkingStatusPill', () => {
 			expect(onInterrupt).toHaveBeenCalledTimes(1);
 		});
 
-		it('has correct title attribute', () => {
+		it('names what stops rather than which provider is running', () => {
+			// The pill draws the shared <StopTurnButton>, whose tooltip deliberately
+			// says nothing about a provider: the pill sits above agents of every
+			// provider, and Stop is agent-level - it ends this turn's cross-agent
+			// consults as well as the process that is streaming.
 			const item = createThinkingItem();
 			render(
 				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={() => {}} />
 			);
-			expect(screen.getByTitle('Interrupt Claude (Ctrl+C)')).toBeInTheDocument();
+			const stop = screen.getByTitle('Stop this turn (Ctrl+C)');
+			expect(stop).toBeInTheDocument();
+			expect(stop).not.toHaveAttribute('title', expect.stringContaining('Claude'));
 		});
 	});
 

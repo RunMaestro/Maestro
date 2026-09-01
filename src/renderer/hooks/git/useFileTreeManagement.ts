@@ -19,6 +19,7 @@ import { fuzzyMatch } from '../../utils/search';
 import { gitService } from '../../services/git';
 import { logger } from '../../utils/logger';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import {
 	DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
@@ -316,6 +317,10 @@ export function useFileTreeManagement(
 			if (!controller) return;
 			controller.abort();
 			loadAbortMapRef.current.delete(sessionId);
+			// Invalidate the load even if the pending IPC call resolves normally
+			// after abort. The recursive loader checks the signal between reads, but
+			// sequence invalidation also protects non-cooperative bridge calls.
+			loadSeqMapRef.current.set(sessionId, (loadSeqMapRef.current.get(sessionId) || 0) + 1);
 			// Clear the loading UI immediately so the user sees the cancel take effect
 			// even if the in-flight readDir hasn't resolved yet.
 			setSessions((prev) =>
@@ -332,6 +337,29 @@ export function useFileTreeManagement(
 		},
 		[setSessions]
 	);
+
+	// WEB-DESKTOP ONLY. A browser client can restore one active session and then
+	// immediately follow the desktop's live active-session selection. Every
+	// readDir in the recursive walk is a message on the ONE WebSocket the whole
+	// bridge shares, so a large tree left walking in the background starves the
+	// interactive calls behind it - the reason this cancel exists at all.
+	//
+	// Electron has no such choke point: readDir runs in main over per-call IPC
+	// and competes with nothing. Cancelling there would only throw away a walk
+	// the user is going to want. A cancelled load never sets `fileTreeStats`, so
+	// the auto-loader restarts it from the top on switch-back, and on a large
+	// repo that is a second scan for no gain. Switching agents is not a request
+	// to stop loading files.
+	//
+	// The manual cancel button stays available on both (SSH-only, in
+	// FileExplorerPanel) - stopping a slow remote walk is the user's call to
+	// make explicitly, not something to infer from them looking elsewhere.
+	useEffect(() => {
+		if (!isWebDesktop()) return;
+		for (const sessionId of loadAbortMapRef.current.keys()) {
+			if (sessionId !== activeSessionId) cancelFileTreeLoad(sessionId);
+		}
+	}, [activeSessionId, cancelFileTreeLoad]);
 
 	/** Increment and return the next sequence number for a session. */
 	const nextSeq = useCallback((sessionId: string): number => {
@@ -756,8 +784,13 @@ export function useFileTreeManagement(
 				)
 			);
 
+			// Increment per-session load sequence so every callback below can reject
+			// work from an older load for the same session.
+			const seq = nextSeq(sessionId);
+
 			// Progress callback for streaming updates during SSH load
 			const onProgress = (progress: FileTreeProgress) => {
+				if (isStale(sessionId, seq)) return;
 				setSessions((prev) =>
 					prev.map((s) =>
 						s.id === sessionId
@@ -773,9 +806,6 @@ export function useFileTreeManagement(
 					)
 				);
 			};
-
-			// Increment per-session load sequence so concurrent loads can detect staleness
-			const seq = nextSeq(sessionId);
 
 			// Begin a fresh abort-controlled load (cancels any prior in-flight load).
 			const abortSignal = beginAbortableLoad(sessionId);
@@ -889,17 +919,7 @@ export function useFileTreeManagement(
 			treePromise
 				.then((loadResult) => {
 					// Discard if a newer load started for this session while we were awaiting
-					if (isStale(sessionId, seq)) {
-						// Reset loading state so this session can retry later
-						setSessions((prev) =>
-							prev.map((s) =>
-								s.id === sessionId
-									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
-									: s
-							)
-						);
-						return;
-					}
+					if (isStale(sessionId, seq)) return;
 
 					setSessions((prev) =>
 						prev.map((s) =>
@@ -922,16 +942,7 @@ export function useFileTreeManagement(
 				})
 				.catch((error) => {
 					// Ignore errors from stale loads - a newer load is in progress
-					if (isStale(sessionId, seq)) {
-						setSessions((prev) =>
-							prev.map((s) =>
-								s.id === sessionId
-									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
-									: s
-							)
-						);
-						return;
-					}
+					if (isStale(sessionId, seq)) return;
 
 					// User cancelled - clear loading state but don't surface an error.
 					// cancelFileTreeLoad already cleared loading UI; this just guards against
@@ -969,6 +980,12 @@ export function useFileTreeManagement(
 					);
 
 					signalInitialFileTreeReady();
+				})
+				.finally(() => {
+					const controller = loadAbortMapRef.current.get(sessionId);
+					if (controller?.signal === abortSignal) {
+						loadAbortMapRef.current.delete(sessionId);
+					}
 				});
 		}
 	}, [
@@ -989,6 +1006,11 @@ export function useFileTreeManagement(
 		return () => {
 			retryTimersRef.current.forEach((timerId) => clearTimeout(timerId));
 			retryTimersRef.current.clear();
+			loadAbortMapRef.current.forEach((controller, sessionId) => {
+				loadSeqMapRef.current.set(sessionId, (loadSeqMapRef.current.get(sessionId) || 0) + 1);
+				controller.abort();
+			});
+			loadAbortMapRef.current.clear();
 		};
 	}, []);
 

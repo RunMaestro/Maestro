@@ -441,7 +441,13 @@ interface MaestroAPI {
 		) => () => void;
 		onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectSession: (callback: (sessionId: string) => void) => () => void;
-		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
+		onRemoteSelectTab: (
+			callback: (
+				sessionId: string,
+				tabId: string,
+				aiTabs?: import('../main/web-server/types').AITabData[]
+			) => void
+		) => () => void;
 		onRemoteNewTab: (
 			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		) => () => void;
@@ -1142,6 +1148,7 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,
@@ -1176,18 +1183,7 @@ interface MaestroAPI {
 		) => Promise<void>;
 		broadcastTabsChange: (
 			sessionId: string,
-			aiTabs: Array<{
-				id: string;
-				agentSessionId: string | null;
-				name: string | null;
-				starred: boolean;
-				inputValue: string;
-				usageStats?: UsageStats;
-				createdAt: number;
-				state: 'idle' | 'busy';
-				thinkingStartTime?: number | null;
-				hasUnread?: boolean;
-			}>,
+			aiTabs: import('../main/web-server/types').AITabData[],
 			activeTabId: string
 		) => Promise<void>;
 		broadcastSessionState: (
@@ -2903,6 +2899,8 @@ interface MaestroAPI {
 		send: (
 			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
 		) => Promise<{ requestId: string }>;
+		/** Stop every consult this source agent still has in flight (Stop button). */
+		cancel: (sourceSessionId: string) => Promise<{ canceled: number }>;
 		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
 		onChunk: (
 			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
@@ -3498,6 +3496,15 @@ interface MaestroAPI {
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<StatsAggregation>;
+		// Interactive vs autonomous (Auto Run + Cue) totals, merged across the
+		// stats DB and the Cue DB. Defaults to all retained history.
+		getDelegationTotals: (
+			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<import('../shared/delegation').DelegationTotals>;
+		// The same split bucketed by local-time day; empty days are omitted.
+		getDelegationByDay: (
+			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<import('../shared/delegation').DelegationDay[]>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
 		// Subscribe to stats updates (for real-time dashboard refresh)

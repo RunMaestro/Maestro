@@ -11,6 +11,7 @@ import {
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 import {
 	addAiTabToUnifiedHistory,
 	closeTab,
@@ -31,19 +32,35 @@ import type { AITabHandlersReturn } from './types';
 export function useAITabHandlers(): AITabHandlersReturn {
 	const { endWizard: endInlineWizard } = useInlineWizardContext();
 
-	const handleNewAgentSession = useCallback(() => {
-		const activeSessionId = useSessionStore.getState().activeSessionId;
+	const createNewAITab = useCallback(() => {
+		const { activeSessionId } = useSessionStore.getState();
+		if (isWebDesktop()) {
+			if (activeSessionId) {
+				void window.maestro.web
+					.requestNewTab(activeSessionId, false)
+					.catch((error) =>
+						logger.error('[useAITabHandlers] Failed to create desktop tab:', undefined, error)
+					);
+			}
+			return;
+		}
+
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 
-		updateSessionWith(activeSessionId, (s) => {
-			const result = createTab(s, {
+		if (!activeSessionId) return;
+		updateSessionWith(activeSessionId, (session) => {
+			const result = createTab(session, {
 				saveToHistory: defaultSaveToHistory,
 				showThinking: defaultShowThinking,
 			});
-			return result ? result.session : s;
+			return result?.session ?? session;
 		});
-		useModalStore.getState().closeModal('agentSessions');
 	}, []);
+
+	const handleNewAgentSession = useCallback(() => {
+		createNewAITab();
+		useModalStore.getState().closeModal('agentSessions');
+	}, [createNewAITab]);
 
 	const handleTabSelect = useCallback((tabId: string) => {
 		const { activeSessionId } = useSessionStore.getState();
@@ -140,17 +157,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		[performTabClose]
 	);
 
-	const handleNewTab = useCallback(() => {
-		const { activeSessionId } = useSessionStore.getState();
-		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
-		updateSessionWith(activeSessionId, (s) => {
-			const result = createTab(s, {
-				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking,
-			});
-			return result ? result.session : s;
-		});
-	}, []);
+	const handleNewTab = createNewAITab;
 
 	const performCloseAllTabs = useCallback(() => {
 		const { activeSessionId, sessions } = useSessionStore.getState();
