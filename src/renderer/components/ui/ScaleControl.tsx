@@ -43,6 +43,12 @@ export interface ScaleControlProps {
 	 * (e.g. `preview font size` -> "Increase preview font size").
 	 */
 	subject: string;
+	/**
+	 * Keys the surface has bound to this control (see `useScaleShortcuts`),
+	 * appended to the tooltips: "Increase thumbnail size (+)". A shortcut the
+	 * button never names is one nobody finds.
+	 */
+	shortcutHint?: { decrease?: string; increase?: string; reset?: string };
 	/** Visual treatment. Defaults to `inline`. */
 	variant?: 'inline' | 'floating';
 	/**
@@ -63,6 +69,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 	decreaseIcon: DecreaseIcon,
 	increaseIcon: IncreaseIcon,
 	subject,
+	shortcutHint,
 	variant = 'inline',
 	collapsible = false,
 	collapsedIcon: CollapsedIcon,
@@ -73,6 +80,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 	const floating = variant === 'floating';
 	const collapsed = floating && collapsible && !!CollapsedIcon;
 	const percent = Math.round(scale * 100);
+	const withKey = (label: string, key?: string) => (key ? `${label} (${key})` : label);
 
 	const buttonClass = floating
 		? 'focus-ring flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors'
@@ -131,7 +139,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 					onClick={() => adjustScale(-1)}
 					disabled={!canDecrease}
 					aria-label={`Decrease ${subject}`}
-					title={`Decrease ${subject}`}
+					title={withKey(`Decrease ${subject}`, shortcutHint?.decrease)}
 					className={`${buttonClass} hover:opacity-100`}
 					style={buttonStyle(canDecrease)}
 				>
@@ -142,7 +150,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 						type="button"
 						onClick={resetScale}
 						aria-label={`Reset ${subject}`}
-						title={`Reset ${subject} to 100%`}
+						title={withKey(`Reset ${subject} to 100%`, shortcutHint?.reset)}
 						className="focus-ring px-1 text-[10px] font-medium tabular-nums rounded transition-colors hover:opacity-100"
 						style={{ color: theme.colors.textDim, opacity: 0.8 }}
 					>
@@ -154,7 +162,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 					onClick={() => adjustScale(1)}
 					disabled={!canIncrease}
 					aria-label={`Increase ${subject}`}
-					title={`Increase ${subject}`}
+					title={withKey(`Increase ${subject}`, shortcutHint?.increase)}
 					className={`${buttonClass} hover:opacity-100`}
 					style={buttonStyle(canIncrease)}
 				>

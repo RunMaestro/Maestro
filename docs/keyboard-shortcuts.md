@@ -339,6 +339,24 @@ The field list is focused on open, so these work without clicking first.
 | Leave the filter     | `Enter`               | `Enter`               |
 | Close row detail     | `Esc`                 | `Esc`                 |
 
+## Staged Images Organizer
+
+Opened with the expand button (⤢) beside the staged-image strip, with two or
+more images attached. See
+[Staged Images](./general-usage#the-staged-images-organizer).
+
+| Action              | macOS      | Windows/Linux |
+| ------------------- | ---------- | ------------- |
+| Zoom thumbnails in  | `+` or `=` | `+` or `=`    |
+| Zoom thumbnails out | `-` or `_` | `-` or `_`    |
+| Reset zoom to 100%  | `0`        | `0`           |
+| Close               | `Esc`      | `Esc`         |
+
+The zoom keys are bare, like the ones in [File Preview](#file-preview), so the
+app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
+organizer is open. They stop firing while the lightbox or the annotator is open
+on top of it.
+
 ## Memories Viewer
 
 The file list is focused when the viewer opens, so these work right away. See

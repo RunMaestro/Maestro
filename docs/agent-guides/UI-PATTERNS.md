@@ -1155,7 +1155,37 @@ const fontScale = useFontScale('filePreview.fontScale');
 - The percentage in the middle appears only once zoomed and doubles as the reset.
 - The file preview also binds bare `-` / `+` (and `=` / `_`) to the two steps and `0`
   to the reset, guarded on `canScaleFontForView()` and on `isTextInputTarget(e.target)`
-  so the find bar and the CM6 editor keep their keys.
+  so the find bar and the CM6 editor keep their keys. Any OTHER surface wanting those
+  keys uses `useScaleShortcuts()` (below) rather than a second copy of the branch; the
+  file preview keeps its inline version because it sits inside one guarded key chain
+  whose ordering decides which branch answers a key.
+
+### `useScaleShortcuts()` (`src/renderer/hooks/ui/useScaleShortcuts.ts`)
+
+Bare `+` / `-` / `0` zoom for any surface driven by `useScalePreference`. Pass the
+control and an `enabled` flag:
+
+```tsx
+const thumbnailScale = useScalePreference('stagedImages.thumbnailScale', RANGE);
+const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.STAGED_IMAGES_ORGANIZER);
+useScaleShortcuts(thumbnailScale, { enabled: isTopLayer });
+```
+
+- **Modifier-free on purpose.** An event carrying Cmd / Ctrl / Alt is left alone,
+  because `Cmd+=` / `Cmd+-` is the application's own font zoom and must keep working
+  while a zoomable surface is open.
+- `=` and `_` are the unshifted and shifted twins of `+` and `-`, so the user never
+  has to think about Shift; `0` is the reset.
+- It listens on `window` in the capture phase, not on the surface's node: focus falls
+  to the body when a nested overlay closes, and `stopPropagation` keeps a bare `0` or
+  `-` out of the global shortcut handler. `isTextInputTarget(e.target)` keeps a filter
+  box typing normally.
+- **Gate it with `useIsTopLayer(priority)`** (`src/renderer/hooks/ui/useIsTopLayer.ts`),
+  or a surface underneath an open overlay answers the same keypress. That hook is also
+  the shared answer to "am I the top layer?" - `AutoRunExpandedModal` uses it to reclaim
+  focus.
+- Name the keys in the `ScaleControl` tooltips with `shortcutHint`. A shortcut the
+  button never mentions is one nobody finds.
 
 **Only render it where the zoom moves type.** A control that changes nothing reads
 as broken: Director's Notes hides it in Rich Mode (fixed-size widget chrome), and
