@@ -1734,6 +1734,16 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
+		it('ignores a non-boolean persisted webInterfaceAutoStart value', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				webInterfaceAutoStart: 'false' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().webInterfaceAutoStart).toBe(false);
+		});
+
 		it('falls back to default for invalid fileExplorerIconTheme values', async () => {
 			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({

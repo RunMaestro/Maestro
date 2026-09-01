@@ -3,7 +3,12 @@ import type { ThinkingMode } from '../../../../shared/types';
 import { useInlineWizardContext } from '../../../contexts/InlineWizardContext';
 import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
+import {
+	selectActiveSession,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../stores/sessionStore';
 import type { Session } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
@@ -29,7 +34,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 	const { endWizard: endInlineWizard } = useInlineWizardContext();
 
 	const createNewAITab = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { activeSessionId } = useSessionStore.getState();
 		if (isWebDesktop()) {
 			if (activeSessionId) {
 				void window.maestro.web
@@ -43,18 +48,13 @@ export function useAITabHandlers(): AITabHandlersReturn {
 
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 
-		setSessions((prev: Session[]) => {
-			const currentSession = prev.find((s) => s.id === activeSessionId);
-			if (!currentSession) return prev;
-			return prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				const result = createTab(s, {
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				});
-				if (!result) return s;
-				return result.session;
+		if (!activeSessionId) return;
+		updateSessionWith(activeSessionId, (session) => {
+			const result = createTab(session, {
+				saveToHistory: defaultSaveToHistory,
+				showThinking: defaultShowThinking,
 			});
+			return result?.session ?? session;
 		});
 	}, []);
 

@@ -2358,6 +2358,32 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('tabCallbacks smoke', () => {
+		it('does not focus a destroyed session window', async () => {
+			const show = vi.fn();
+			const focus = vi.fn();
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(true),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+				show,
+				focus,
+			};
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
+
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setSelectSessionCallback.mock.calls[0][0];
+
+			await expect(callback('session-in-secondary-window', undefined, true)).resolves.toBe(false);
+			expect(show).not.toHaveBeenCalled();
+			expect(focus).not.toHaveBeenCalled();
+			expect(secondaryWebContents.send).not.toHaveBeenCalled();
+		});
+
 		it('routes command requests only to the window that owns the session', async () => {
 			const secondaryWebContents = {
 				send: vi.fn(),
@@ -2475,6 +2501,29 @@ describe('web-server/web-server-factory', () => {
 			expect(newTabSends).toHaveLength(2);
 			const [firstChannel, secondChannel] = newTabSends.map((call) => call[2] as string);
 			expect(firstChannel).not.toBe(secondChannel);
+		});
+
+		it('routes document graph requests to the window that owns the session', async () => {
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+			};
+			deps.getWindowForSession = vi.fn().mockReturnValue(secondaryWindow as BrowserWindow);
+
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setOpenDocumentGraphCallback.mock.calls[0][0];
+			const params = {
+				sessionId: 'session-in-secondary-window',
+				files: ['/repo/README.md'],
+			};
+
+			await expect(callback(params)).resolves.toBe(true);
+			expect(secondaryWebContents.send).toHaveBeenCalledWith('remote:openDocumentGraph', params);
+			expect(mockWebContents.send).not.toHaveBeenCalledWith('remote:openDocumentGraph', params);
 		});
 	});
 });

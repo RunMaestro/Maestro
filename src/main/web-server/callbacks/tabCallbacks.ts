@@ -183,16 +183,16 @@ export function registerTabCallbacks(
 	);
 
 	server.setOpenDocumentGraphCallback(async (params) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for openDocumentGraph', 'WebServer');
+		const targetWindow = resolveSessionWindow(params.sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for openDocumentGraph', 'WebServer');
 			return false;
 		}
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for openDocumentGraph', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:openDocumentGraph', params);
+		targetWindow.webContents.send('remote:openDocumentGraph', params);
 		return true;
 	});
 

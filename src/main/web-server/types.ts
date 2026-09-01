@@ -4,6 +4,7 @@
  */
 
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type { UsageStats } from '../../shared/types';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
@@ -55,7 +56,7 @@ export interface AITabData {
 	name: string | null;
 	starred: boolean;
 	inputValue: string;
-	usageStats?: SessionUsageStats | null;
+	usageStats?: UsageStats | null;
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;

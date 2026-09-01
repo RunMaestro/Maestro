@@ -372,5 +372,34 @@ describe('useCueAutoDiscovery', () => {
 			expect(mockEnable).toHaveBeenCalledTimes(2);
 			expect(mockDisable).toHaveBeenCalledTimes(1);
 		});
+
+		it('drops queued lifecycle work after the hook unmounts', async () => {
+			seedSessions([makeSession('s1', '/project/a')], true);
+			let resolveEnable: (() => void) | undefined;
+			mockEnable.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					resolveEnable = resolve;
+				})
+			);
+
+			const { rerender, unmount } = renderHook(({ encore }) => useCueAutoDiscovery(encore), {
+				initialProps: { encore: makeEncoreFeatures(false) },
+			});
+			mockRefreshSession.mockClear();
+
+			rerender({ encore: makeEncoreFeatures(true) });
+			await act(async () => {});
+			expect(mockEnable).toHaveBeenCalledOnce();
+
+			rerender({ encore: makeEncoreFeatures(false) });
+			unmount();
+			await act(async () => {
+				resolveEnable?.();
+			});
+			await act(async () => {});
+
+			expect(mockRefreshSession).not.toHaveBeenCalled();
+			expect(mockDisable).not.toHaveBeenCalled();
+		});
 	});
 });

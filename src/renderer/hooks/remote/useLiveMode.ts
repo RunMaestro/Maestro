@@ -51,7 +51,18 @@ export function useLiveMode(autoStart = false): UseLiveModeReturn {
 				}
 
 				const result = await window.maestro.live.startServer();
-				if (cancelled) return;
+				if (cancelled) {
+					// This effect initiated the server, so disabling auto-start or
+					// unmounting before it finishes must not leave an ownerless process.
+					if (result.success) {
+						try {
+							await window.maestro.live.stopServer();
+						} catch (error) {
+							logger.error('[useLiveMode] Failed to stop cancelled auto-start:', undefined, error);
+						}
+					}
+					return;
+				}
 				if (result.success && result.url) {
 					setIsLiveMode(true);
 					setWebInterfaceUrl(result.url);

@@ -87,6 +87,29 @@ describe('useLiveMode', () => {
 		expect(result.current.webInterfaceUrl).toBe('http://localhost:3000');
 	});
 
+	it('stops a pending auto-start when the setting is disabled before startup completes', async () => {
+		let resolveStart: ((result: { success: true; url: string }) => void) | undefined;
+		mockLive.startServer.mockReturnValue(
+			new Promise((resolve) => {
+				resolveStart = resolve;
+			})
+		);
+
+		const { result, rerender } = renderHook(({ autoStart }) => useLiveMode(autoStart), {
+			initialProps: { autoStart: true },
+		});
+		await waitFor(() => expect(mockLive.startServer).toHaveBeenCalledOnce());
+
+		rerender({ autoStart: false });
+		await act(async () => {
+			resolveStart?.({ success: true, url: 'http://localhost:3000' });
+		});
+
+		expect(mockLive.stopServer).toHaveBeenCalledOnce();
+		expect(result.current.isLiveMode).toBe(false);
+		expect(result.current.webInterfaceUrl).toBeNull();
+	});
+
 	// -----------------------------------------------------------------------
 	// toggleGlobalLive - turning ON
 	// -----------------------------------------------------------------------

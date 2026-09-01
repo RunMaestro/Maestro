@@ -615,6 +615,90 @@ describe('useFileTreeManagement', () => {
 		).toEqual([{ name: 'current.txt', type: 'file' }]);
 	});
 
+	it('does not let an old A load clear a newer A load after an A to B to A switch', async () => {
+		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
+		let resolveSecond: (value: ReturnType<typeof asResult>) => void = () => {};
+		let resolveThird: (value: ReturnType<typeof asResult>) => void = () => {};
+		const firstPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveFirst = resolve;
+		});
+		const secondPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveSecond = resolve;
+		});
+		const thirdPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveThird = resolve;
+		});
+		vi.mocked(loadFileTree)
+			.mockReturnValueOnce(firstPending)
+			.mockReturnValueOnce(secondPending)
+			.mockReturnValueOnce(thirdPending);
+
+		const firstSession = createMockSession({ id: 'session-a', fileTree: [] });
+		const secondSession = createMockSession({ id: 'session-b', fileTree: [] });
+		const state = createSessionsState([firstSession, secondSession]);
+		const baseDeps = createDeps(state);
+		const { rerender } = renderHook(
+			({ activeSessionId, activeSession }: { activeSessionId: string; activeSession: Session }) =>
+				useFileTreeManagement({ ...baseDeps, activeSessionId, activeSession }),
+			{ initialProps: { activeSessionId: firstSession.id, activeSession: firstSession } }
+		);
+
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(1));
+		rerender({ activeSessionId: secondSession.id, activeSession: secondSession });
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(2));
+		rerender({ activeSessionId: firstSession.id, activeSession: firstSession });
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(3));
+
+		await act(async () => {
+			resolveFirst(asResult([{ name: 'stale-a.txt', type: 'file' }]));
+			await firstPending;
+		});
+		expect(
+			state.getSessions().find((session) => session.id === firstSession.id)?.fileTreeLoading
+		).toBe(true);
+
+		await act(async () => {
+			resolveSecond(asResult([{ name: 'stale-b.txt', type: 'file' }]));
+			resolveThird(asResult([{ name: 'current-a.txt', type: 'file' }]));
+			await Promise.all([secondPending, thirdPending]);
+		});
+		expect(state.getSessions().find((session) => session.id === firstSession.id)).toMatchObject({
+			fileTree: [{ name: 'current-a.txt', type: 'file' }],
+			fileTreeLoading: false,
+		});
+	});
+
+	it('ignores load progress and completion after unmount', async () => {
+		let resolveLoad: (value: ReturnType<typeof asResult>) => void = () => {};
+		const pending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveLoad = resolve;
+		});
+		vi.mocked(loadFileTree).mockReturnValue(pending);
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const { unmount } = renderHook(() => useFileTreeManagement(createDeps(state)));
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledOnce());
+		await act(async () => {});
+
+		const onProgress = vi.mocked(loadFileTree).mock.calls[0][4] as
+			| ((progress: {
+					directoriesScanned: number;
+					filesFound: number;
+					currentDirectory: string;
+			  }) => void)
+			| undefined;
+		const writesBeforeUnmount = state.setSessions.mock.calls.length;
+		unmount();
+
+		await act(async () => {
+			onProgress?.({ directoriesScanned: 1, filesFound: 1, currentDirectory: '/stale' });
+			resolveLoad(asResult([{ name: 'stale.txt', type: 'file' }]));
+			await pending;
+		});
+
+		expect(state.setSessions).toHaveBeenCalledTimes(writesBeforeUnmount);
+	});
+
 	it('decouples stats from tree display in initial load', async () => {
 		const fullTree: FileNode[] = [{ name: 'file.txt', type: 'file' }];
 

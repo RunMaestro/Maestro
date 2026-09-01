@@ -34,7 +34,11 @@ describe('useAITabHandlers', () => {
 	});
 
 	it('creates a new AI tab with default settings', () => {
-		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' })],
+			inputMode: 'terminal',
+			activeTerminalTabId: 'terminal-1',
+		});
 		useSettingsStore.setState({
 			defaultSaveToHistory: false,
 			defaultShowThinking: 'sticky',
@@ -52,6 +56,8 @@ describe('useAITabHandlers', () => {
 			showThinking: 'sticky',
 		});
 		expect(session.activeTabId).toBe(session.aiTabs[1].id);
+		expect(session.inputMode).toBe('ai');
+		expect(session.activeTerminalTabId).toBeNull();
 	});
 
 	it('requests a desktop-owned tab instead of creating a browser-local tab', () => {

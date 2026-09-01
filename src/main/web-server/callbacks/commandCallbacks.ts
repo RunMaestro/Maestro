@@ -192,17 +192,16 @@ export function registerCommandCallbacks(
 			return false;
 		}
 
-		// When focus is requested, bring the window to the foreground
-		if (focus) {
-			targetWindow.show();
-			targetWindow.focus();
-		}
-
 		// Forward to renderer - it will handle session selection and broadcasts
 		logger.info(`[Web→Desktop] Sending IPC remote:selectSession to renderer`, 'WebServer');
 		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for selectSession', 'WebServer');
 			return false;
+		}
+		// When focus is requested, bring the verified owning window forward.
+		if (focus) {
+			targetWindow.show();
+			targetWindow.focus();
 		}
 		targetWindow.webContents.send('remote:selectSession', sessionId, tabId);
 		return true;

@@ -514,7 +514,6 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 									agentSessionId: remoteTab.agentSessionId,
 									name: remoteTab.name,
 									starred: remoteTab.starred,
-									inputValue: remoteTab.inputValue,
 									usageStats: remoteTab.usageStats ?? undefined,
 									createdAt: remoteTab.createdAt,
 									state: remoteTab.state,
@@ -522,9 +521,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 									hasUnread: remoteTab.hasUnread,
 								};
 
+								// Desktop snapshots intentionally exclude draft changes from their
+								// change signature. Preserve the browser's current draft for tabs it
+								// already knows so unrelated updates cannot replace newer input.
 								if (existing) return { ...existing, ...syncedFields };
 								return {
 									...syncedFields,
+									inputValue: remoteTab.inputValue,
 									logs: [],
 									stagedImages: [],
 									saveToHistory: defaultSaveToHistory,
@@ -552,23 +555,25 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(sessionId: string, responseChannel: string, background?: boolean) => {
 				let newTabId: string | null = null;
 
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
+				flushSync(() => {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
 
-						// Use createTab helper. `activate: false` appends the tab without
-						// touching any active-* id, so it shows up in the tab bar the way
-						// a browser opens a background tab.
-						const result = createTab(s, {
-							saveToHistory: defaultSaveToHistory,
-							showThinking: defaultShowThinking,
-							activate: !background,
-						});
-						if (!result) return s;
-						newTabId = result.tab.id;
-						return result.session;
-					})
-				);
+							// Use createTab helper. `activate: false` appends the tab without
+							// touching any active-* id, so it shows up in the tab bar the way
+							// a browser opens a background tab.
+							const result = createTab(s, {
+								saveToHistory: defaultSaveToHistory,
+								showThinking: defaultShowThinking,
+								activate: !background,
+							});
+							if (!result) return s;
+							newTabId = result.tab.id;
+							return result.session;
+						})
+					);
+				});
 				// A background create must not pull the Left Bar over either.
 				if (newTabId && !background) {
 					setActiveSessionId(sessionId);
