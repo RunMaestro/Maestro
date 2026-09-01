@@ -110,6 +110,9 @@ describe('GitLogViewer', () => {
 		// Local jsdom ships no working Storage, so the fresh mock doubles as the
 		// per-test reset this line used to do by hand.
 		installLocalStorageMock();
+		// Graph view writes this; without a reset the next test mounts already in
+		// graph mode and the "hint only in graph view" assertion is a false fail.
+		window.localStorage.removeItem('maestro:gitLogViewer:viewMode');
 
 		gitLogMock().mockResolvedValue({
 			entries: [createGitLogEntry()],

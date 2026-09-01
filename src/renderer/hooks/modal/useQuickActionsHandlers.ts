@@ -17,12 +17,13 @@ import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import {
+	cycleShowThinkingFields,
 	moveActiveUnifiedTabToEdge,
 	resolveQueuedItemTarget,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
-import type { Session, ThinkingMode } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import type { Session } from '../../types';
+import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { MainPanelHandle } from '../../components/MainPanel';
@@ -130,17 +131,10 @@ export function useQuickActionsHandlers(
 	const handleQuickActionsToggleReadOnlyMode = useCallback(() => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === s.activeTabId ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
-						),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+				...tab,
+				...toggleReadOnlyModeFields(tab),
+			}));
 		}
 	}, []);
 
@@ -148,51 +142,19 @@ export function useQuickActionsHandlers(
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode !== 'ai' || !activeSession.activeTabId) return;
 		const globalDefault = useSettingsStore.getState().enterToSendAI;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSession.id) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === s.activeTabId
-							? { ...tab, enterToSend: !(tab.enterToSend ?? globalDefault) }
-							: tab
-					),
-				};
-			})
-		);
+		updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+			...tab,
+			enterToSend: !(tab.enterToSend ?? globalDefault),
+		}));
 	}, []);
 
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			// Cycle through: off -> on -> sticky -> off
-			const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-				if (!current || current === 'off') return 'on';
-				if (current === 'on') return 'sticky';
-				return 'off';
-			};
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => {
-							if (tab.id !== s.activeTabId) return tab;
-							const newMode = cycleThinkingMode(tab.showThinking);
-							// When turning OFF, clear thinking logs; tool logs are render-gated.
-							if (newMode === 'off') {
-								return {
-									...tab,
-									showThinking: 'off',
-									logs: tab.logs.filter((l) => l.source !== 'thinking'),
-								};
-							}
-							return { ...tab, showThinking: newMode };
-						}),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+				...tab,
+				...cycleShowThinkingFields(tab),
+			}));
 		}
 	}, []);
 

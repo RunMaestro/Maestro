@@ -92,21 +92,23 @@ selectIsAnySessionBusy; // (state) => boolean
 
 ```typescript
 import {
-	getSessionState,
-	getSessionActions,
+	useSessionStore,
 	updateSessionWith,
 	updateAiTab,
+	updateFileTab,
+	updateBrowserTab,
 } from './stores/sessionStore';
 
-// Read current state (snapshot)
-const { sessions, activeSessionId } = getSessionState();
+// Read current state (snapshot) or call an action - both live on getState()
+const { sessions, activeSessionId, setSessions, setActiveSessionId } = useSessionStore.getState();
 
-// Get stable action references
-const { setSessions, setActiveSessionId } = getSessionActions();
-
-// Patch one agent or one AI tab without walking the sessions array
+// Patch one agent without walking the sessions array yourself
 updateSessionWith(sessionId, (s) => ({ ...s, batchRunnerPrompt: prompt }));
+
+// One single-tab updater per tab type - all three take (sessionId, tabId, updater)
 updateAiTab(sessionId, tabId, (tab) => ({ ...tab, hasUnread: false }));
+updateFileTab(sessionId, tabId, (tab) => ({ ...tab, scrollTop }));
+updateBrowserTab(sessionId, tabId, (tab) => ({ ...tab, isLoading: false }));
 ```
 
 ---

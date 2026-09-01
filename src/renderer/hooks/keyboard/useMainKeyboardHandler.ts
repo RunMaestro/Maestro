@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Session, AITab, ThinkingMode } from '../../types';
+import type { Session, AITab } from '../../types';
 import {
 	aiTabFocusFields,
+	cycleShowThinkingFields,
 	moveActiveUnifiedTabToEdge,
 	toggleReadOnlyModeFields,
 	setActiveTab,
@@ -1410,11 +1411,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 					if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
 						e.preventDefault();
-						const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-							if (!current || current === 'off') return 'on';
-							if (current === 'on') return 'sticky';
-							return 'off';
-						};
 						ctx.setSessions((prev: Session[]) =>
 							prev.map((s: Session) => {
 								if (s.id !== activeSession!.id) return s;
@@ -1434,15 +1430,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 												},
 											};
 										}
-										const newMode = cycleThinkingMode(tab.showThinking);
-										if (newMode === 'off') {
-											return {
-												...tab,
-												showThinking: 'off',
-												logs: tab.logs.filter((l) => l.source !== 'thinking'),
-											};
-										}
-										return { ...tab, showThinking: newMode };
+										return { ...tab, ...cycleShowThinkingFields(tab) };
 									}),
 								};
 							})

@@ -16,10 +16,10 @@
  */
 
 import { useCallback, useEffect, useMemo } from 'react';
-import type { Session, LogEntry, UsageStats } from '../../types';
+import type { LogEntry, UsageStats } from '../../types';
 import type { FlatFileItem } from '../../components/FileSearchModal';
 import type { FileNode } from '../../types/fileTree';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { aiTabFocusFields, focusAiTabInSession } from '../../utils/tabHelpers';
@@ -27,15 +27,6 @@ import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
-
-/** Helper: update a single session by ID using an updater function */
-function updateSession(sessionId: string, updater: (s: Session) => Session): void {
-	useSessionStore
-		.getState()
-		.setSessions((prev: Session[]) =>
-			prev.map((s: Session) => (s.id === sessionId ? updater(s) : s))
-		);
-}
 
 // ============================================================================
 // Dependencies interface
@@ -175,7 +166,7 @@ export function useSessionSwitchCallbacks(
 			// is active silently leaves the user on the browser tab).
 			// Shared with the thinking status pill: reveals a hidden tab, reopens a
 			// closed one, and focuses the right pane when the tab lives in a tiled group.
-			updateSession(sessionId, (s) => focusAiTabInSession(s, tabId));
+			updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 		},
 		[setActiveSessionId]
 	);
@@ -286,7 +277,7 @@ export function useSessionSwitchCallbacks(
 		if (!activeSession) return;
 		// Land on the AI tab, clearing any active file/terminal/browser view that
 		// would otherwise outrank it in the render precedence.
-		updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+		updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
 	}, []);
 
 	// Jump to a specific message from cross-tab search: land on the tab, seed that
@@ -297,7 +288,7 @@ export function useSessionSwitchCallbacks(
 		({ tabId, logId, query, regex }: CrossTabSearchJumpTarget) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
-			updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+			updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
 
 			const ui = useUIStore.getState();
 			const searchKey = outputSearchKeyFor(activeSession.id, tabId);
@@ -316,7 +307,7 @@ export function useSessionSwitchCallbacks(
 		if (!activeSession) return;
 		// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs).
 		// Also reset inputMode to 'ai' and clear activeTerminalTabId in case we're coming from terminal mode.
-		updateSession(activeSession.id, (s) => ({
+		updateSessionWith(activeSession.id, (s) => ({
 			...s,
 			activeFileTabId: tabId,
 			activeTerminalTabId: null,

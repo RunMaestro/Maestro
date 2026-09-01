@@ -9,12 +9,16 @@
  */
 
 import { useCallback } from 'react';
-import type { GroupChat, ThinkingMode } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import type { GroupChat } from '../../types';
+import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useComposerInputStore } from '../../stores/composerInputStore';
-import { getActiveTab, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import {
+	cycleShowThinkingFields,
+	getActiveTab,
+	toggleReadOnlyModeFields,
+} from '../../utils/tabHelpers';
 
 // ============================================================================
 // Dependencies interface
@@ -83,7 +87,6 @@ export function usePromptComposerHandlers(
 	const groupChatReadOnlyMode = useGroupChatStore((s) => s.groupChatReadOnlyMode);
 
 	// --- Store actions (stable via getState) ---
-	const { setSessions } = useSessionStore.getState();
 	const { setGroupChats, setGroupChatStagedImages, setGroupChatReadOnlyMode } =
 		useGroupChatStore.getState();
 
@@ -140,17 +143,10 @@ export function usePromptComposerHandlers(
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSession.id) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === activeTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-					),
-				};
-			})
-		);
+		updateAiTab(activeSession.id, activeTab.id, (tab) => ({
+			...tab,
+			saveToHistory: !tab.saveToHistory,
+		}));
 	}, []);
 
 	const handlePromptToggleTabReadOnlyMode = useCallback(() => {
@@ -161,17 +157,10 @@ export function usePromptComposerHandlers(
 			if (!activeSession) return;
 			const activeTab = getActiveTab(activeSession);
 			if (!activeTab) return;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === activeTab.id ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
-						),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, activeTab.id, (tab) => ({
+				...tab,
+				...toggleReadOnlyModeFields(tab),
+			}));
 		}
 	}, [activeGroupChatId]);
 
@@ -180,33 +169,10 @@ export function usePromptComposerHandlers(
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
-		// Cycle through: off -> on -> sticky -> off
-		const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-			if (!current || current === 'off') return 'on';
-			if (current === 'on') return 'sticky';
-			return 'off';
-		};
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSession.id) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) => {
-						if (tab.id !== activeTab.id) return tab;
-						const newMode = cycleThinkingMode(tab.showThinking);
-						// When turning OFF, clear thinking logs
-						if (newMode === 'off') {
-							return {
-								...tab,
-								showThinking: 'off',
-								logs: tab.logs.filter((log) => log.source !== 'thinking'),
-							};
-						}
-						return { ...tab, showThinking: newMode };
-					}),
-				};
-			})
-		);
+		updateAiTab(activeSession.id, activeTab.id, (tab) => ({
+			...tab,
+			...cycleShowThinkingFields(tab),
+		}));
 	}, []);
 
 	const handlePromptToggleEnterToSend = useCallback(
