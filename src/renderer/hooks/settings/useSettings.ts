@@ -280,6 +280,8 @@ export interface UseSettingsReturn {
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	documentGraphConfirmClose: boolean;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	documentGraphPreviewCharLimit: number;

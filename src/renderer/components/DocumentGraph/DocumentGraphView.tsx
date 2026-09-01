@@ -220,6 +220,16 @@ export interface DocumentGraphViewProps {
 	scopeDirectory?: string;
 	/** Callback when focus file is consumed (cleared after focusing) */
 	onFocusFileConsumed?: () => void;
+	/**
+	 * Ask before closing. Defaults to true.
+	 *
+	 * The prompt exists because a graph is usually WORK: a layout picked, a
+	 * depth widened, nodes dragged into place, all of it thrown away by one
+	 * stray Escape. It is worth nothing when closing is cheap - a graph opened
+	 * from another surface goes straight back to it, and a user who has turned
+	 * the prompt off in Settings has said the trade is not worth it to them.
+	 */
+	confirmOnClose?: boolean;
 	/** Default setting for showing external links (from settings) */
 	defaultShowExternalLinks?: boolean;
 	/** Callback to persist external links toggle changes */
@@ -256,6 +266,7 @@ export function DocumentGraphView({
 	scopeFiles,
 	scopeDirectory,
 	onFocusFileConsumed: _onFocusFileConsumed,
+	confirmOnClose = true,
 	defaultShowExternalLinks = false,
 	onExternalLinksChange,
 	defaultMaxNodes = DEFAULT_MAX_NODES,
@@ -460,11 +471,15 @@ export function DocumentGraphView({
 	const streamingActiveRef = useRef(false);
 
 	/**
-	 * Handle escape - show confirmation modal
+	 * Handle escape - confirm first, unless closing is cheap enough not to.
 	 */
 	const handleEscapeRequest = useCallback(() => {
+		if (!confirmOnClose) {
+			onCloseRef.current();
+			return;
+		}
 		setShowCloseConfirmation(true);
-	}, []);
+	}, [confirmOnClose]);
 
 	/**
 	 * Register with layer stack for Escape handling

@@ -86,6 +86,8 @@ The Document Graph is designed for keyboard-first navigation:
 
 `L` steps through Mind Map, Radial, Hierarchical, and Force, in the same order as the layout dropdown. `D` widens the depth one level per press (1 through 5, then All, then back to 1). `P` steps the preview length through Off, 50, 100, 200, 350, and 500 characters.
 
+Closing asks for confirmation first, since `Esc` would otherwise discard the layout, depth, and node positions you set up. Turn that prompt off in **Settings → Display → Document Graph**. A graph opened from the [Memories](./memories) viewer never asks either way: `Esc` hands you straight back to that viewer, so there is nothing to lose.
+
 ### Mouse Controls
 
 - **Click** a node to select it

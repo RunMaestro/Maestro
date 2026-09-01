@@ -39,6 +39,7 @@ const mockSetFileExplorerIconTheme = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
 const mockSetAutoHideMenuBar = vi.fn();
 const mockSetDocumentGraphShowExternalLinks = vi.fn();
+const mockSetDocumentGraphConfirmClose = vi.fn();
 const mockSetLeftPanelCollapsedPillsPerRow = vi.fn();
 const mockSetDocumentGraphMaxNodes = vi.fn();
 const mockUpdateContextManagementSettings = vi.fn();
@@ -87,6 +88,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setLeftPanelCollapsedPillsPerRow: mockSetLeftPanelCollapsedPillsPerRow,
 		documentGraphShowExternalLinks: true,
 		setDocumentGraphShowExternalLinks: mockSetDocumentGraphShowExternalLinks,
+		documentGraphConfirmClose: true,
+		setDocumentGraphConfirmClose: mockSetDocumentGraphConfirmClose,
 		documentGraphMaxNodes: 200,
 		setDocumentGraphMaxNodes: mockSetDocumentGraphMaxNodes,
 		contextManagementSettings: {
@@ -1331,6 +1334,24 @@ describe('DisplayTab', () => {
 			fireEvent.click(externalLinksSwitch);
 
 			expect(mockSetDocumentGraphShowExternalLinks).toHaveBeenCalledWith(false);
+		});
+
+		it('should turn the close confirmation off when clicked', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Confirm before closing');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+
+			await act(async () => {
+				fireEvent.click(toggle);
+			});
+
+			expect(mockSetDocumentGraphConfirmClose).toHaveBeenCalledWith(false);
 		});
 
 		it('should toggle external links on when clicked (currently off)', async () => {

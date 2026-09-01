@@ -149,6 +149,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		filePreviewToolbarVisibility,
 		setFilePreviewToolbarButtonVisibility,
 		documentGraphShowExternalLinks,
+		documentGraphConfirmClose,
+		setDocumentGraphConfirmClose,
 		setDocumentGraphShowExternalLinks,
 		documentGraphMaxNodes,
 		setDocumentGraphMaxNodes,
@@ -1356,6 +1358,36 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									documentGraphShowExternalLinks ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Confirm on Close */}
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Confirm before closing
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Ask before Escape discards the layout, depth, and node positions you set up. A graph
+								opened from the Memories viewer never asks, since closing returns there.
+							</p>
+						</div>
+						<button
+							onClick={() => setDocumentGraphConfirmClose(!documentGraphConfirmClose)}
+							className="relative w-10 h-5 rounded-full transition-colors shrink-0"
+							style={{
+								backgroundColor: documentGraphConfirmClose
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={documentGraphConfirmClose}
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									documentGraphConfirmClose ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

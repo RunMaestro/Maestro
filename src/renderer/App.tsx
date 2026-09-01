@@ -453,6 +453,7 @@ function MaestroConsoleInner() {
 		colorBlindMode,
 		defaultStatsTimeRange,
 		documentGraphShowExternalLinks,
+		documentGraphConfirmClose,
 		documentGraphMaxNodes,
 		documentGraphPreviewCharLimit,
 		documentGraphLayoutType,
@@ -3278,6 +3279,7 @@ function MaestroConsoleInner() {
 					onOpenFileTab={handleOpenFileTab}
 					mainPanelRef={mainPanelRef}
 					documentGraphShowExternalLinks={documentGraphShowExternalLinks}
+					documentGraphConfirmClose={documentGraphConfirmClose}
 					onExternalLinksChange={settings.setDocumentGraphShowExternalLinks}
 					documentGraphMaxNodes={documentGraphMaxNodes}
 					documentGraphPreviewCharLimit={documentGraphPreviewCharLimit}

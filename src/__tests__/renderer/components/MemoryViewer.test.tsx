@@ -298,6 +298,42 @@ describe('MemoryViewer', () => {
 		await waitFor(() => expect(listRowNames()).toEqual(['user_role.md']));
 	});
 
+	it('toggles the unlinked filter on Cmd+U', async () => {
+		memoryApi.orphans.mockResolvedValueOnce({
+			success: true,
+			orphans: ['user_role.md'],
+			brokenLinks: [],
+		});
+		renderViewer();
+		await screen.findByTestId('memory-orphan-filter');
+
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.keyDown(window, { key: 'u', metaKey: true });
+		});
+		await waitFor(() => expect(listRowNames()).toEqual(['user_role.md']));
+
+		// Untoggles too - a one-way key would strand the user in a filtered list.
+		await act(async () => {
+			fireEvent.keyDown(window, { key: 'u', metaKey: true });
+		});
+		await waitFor(() => expect(listRowNames()).toHaveLength(3));
+	});
+
+	it('ignores Cmd+U when nothing is unlinked', async () => {
+		// The chip that explains and undoes the state is not rendered, so a
+		// filter applied here could not be seen or reversed.
+		renderViewer();
+		await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.keyDown(window, { key: 'u', metaKey: true });
+		});
+
+		expect(listRowNames()).toHaveLength(3);
+	});
+
 	it('survives an orphan lookup that throws', async () => {
 		// The chip is additive, so a failed lookup must degrade to "no chip"
 		// rather than leaving an unhandled rejection behind.
@@ -324,10 +360,37 @@ describe('MemoryViewer', () => {
 			directory: '',
 			rootPath: '/home/.claude/projects/-test-project/memory',
 			focusPath: 'MEMORY.md',
+			returnTo: 'memoryViewer',
 		});
 		// Both are full-window views on the same agent, so the viewer must not
 		// stay mounted behind the graph.
 		expect(onClose).toHaveBeenCalled();
+	});
+
+	it('tells the graph to come back here, making the trip round-trip', async () => {
+		// Without `returnTo`, Escape out of that graph drops the user on an
+		// empty workspace and the only way back is the brain icon.
+		renderViewer();
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.click(await screen.findByTestId('memory-open-graph'));
+		});
+
+		expect(mockOpenGraphScope).toHaveBeenCalledWith(
+			expect.objectContaining({ returnTo: 'memoryViewer' })
+		);
+	});
+
+	it('opens the graph on Cmd+G', async () => {
+		renderViewer();
+		await waitFor(() => expect(listRowNames()).toHaveLength(3));
+
+		const { fireEvent, act } = await import('@testing-library/react');
+		await act(async () => {
+			fireEvent.keyDown(window, { key: 'g', metaKey: true });
+		});
+
+		expect(mockOpenGraphScope).toHaveBeenCalled();
 	});
 
 	it('lets the graph auto-center when there is no MEMORY.md index', async () => {

@@ -85,7 +85,9 @@ Tips and gotchas:
 | Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
 
 `Cmd+E` toggles edit and preview on a markdown File Preview and in the Memories
-viewer (`Cmd+Shift+M`), where the pane opens on the rendered document.
+viewer (`Cmd+Shift+M`), where the pane opens on the rendered document. Inside
+that viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
+filter, in place of their usual meanings.
 
 ## Group Chat
 

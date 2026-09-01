@@ -2210,6 +2210,31 @@ describe('DocumentGraphView', () => {
 			});
 		});
 
+		describe('close confirmation', () => {
+			// The prompt exists because a graph is usually WORK - a layout picked, a
+			// depth widened, nodes dragged - that one stray Escape throws away. It
+			// buys nothing when closing is cheap, so two cases skip it.
+			const wouldConfirm = (confirmOnClose: boolean) => confirmOnClose;
+
+			it('asks by default, since the arrangement is unrecoverable', () => {
+				expect(wouldConfirm(true)).toBe(true);
+			});
+
+			it('closes straight out when the caller opted out', () => {
+				expect(wouldConfirm(false)).toBe(false);
+			});
+
+			it('is opted out for a graph that knows where it came from', () => {
+				// AppStandaloneModals passes `confirmOnClose && !graphReturnTo`: a
+				// graph opened from the Memories viewer returns there on Escape, so
+				// the trip is one keystroke each way and a prompt is pure friction.
+				const effective = (setting: boolean, returnTo?: string) => setting && !returnTo;
+				expect(effective(true, 'memoryViewer')).toBe(false);
+				expect(effective(true, undefined)).toBe(true);
+				expect(effective(false, undefined)).toBe(false);
+			});
+		});
+
 		describe('container shortcuts (L / D / P / F / S / +-)', () => {
 			// L cycles the layout, D widens the neighbor depth, P cycles the preview
 			// length, S swaps the scroll wheel binding. All route through the SAME

@@ -403,6 +403,7 @@ export interface SettingsStoreState {
 	showBrowserTabDomain: boolean;
 	showTabCountBadge: boolean;
 	documentGraphShowExternalLinks: boolean;
+	documentGraphConfirmClose: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
 	documentGraphLayoutType: DocumentGraphLayoutType;
@@ -555,6 +556,7 @@ export interface SettingsStoreActions {
 	setShowBrowserTabDomain: (value: boolean) => void;
 	setShowTabCountBadge: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
 	setDocumentGraphLayoutType: (value: DocumentGraphLayoutType) => void;
@@ -788,6 +790,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showBrowserTabDomain: true,
 		showTabCountBadge: true,
 		documentGraphShowExternalLinks: false,
+		documentGraphConfirmClose: true,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
 		documentGraphLayoutType: 'hierarchical',
@@ -1318,6 +1321,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setDocumentGraphShowExternalLinks: (value) => {
 			set({ documentGraphShowExternalLinks: value });
 			window.maestro.settings.set('documentGraphShowExternalLinks', value);
+		},
+
+		setDocumentGraphConfirmClose: (value) => {
+			set({ documentGraphConfirmClose: value });
+			window.maestro.settings.set('documentGraphConfirmClose', value);
 		},
 
 		setDocumentGraphMaxNodes: (value) => {
@@ -2788,6 +2796,9 @@ export async function loadAllSettings(): Promise<void> {
 				'documentGraphShowExternalLinks'
 			] as boolean;
 
+		if (allSettings['documentGraphConfirmClose'] !== undefined)
+			patch.documentGraphConfirmClose = allSettings['documentGraphConfirmClose'] as boolean;
+
 		if (allSettings['documentGraphMaxNodes'] !== undefined) {
 			const maxNodes = allSettings['documentGraphMaxNodes'] as number;
 			if (typeof maxNodes === 'number' && maxNodes >= 50 && maxNodes <= 1000) {
@@ -3291,6 +3302,7 @@ export function getSettingsActions() {
 		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
 		setColorBlindMode: state.setColorBlindMode,
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
+		setDocumentGraphConfirmClose: state.setDocumentGraphConfirmClose,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,
 		setDocumentGraphLayoutType: state.setDocumentGraphLayoutType,
