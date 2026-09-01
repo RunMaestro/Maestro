@@ -57,7 +57,7 @@ The track has milestones at 25%, 50%, 75%, and 100%:
 Under the track, Maestro names the next milestone and how much more delegated time would reach it. Unlike the other Overview cards, this one covers all retained history rather than the selected time range, so switching the range dropdown does not move it.
 
 <Note>
-Both stats systems prune on a retention window, so the score covers the history still on disk rather than every run since you installed Maestro. Cue counts only runs that finished naturally, matching how Conductor time is credited on the About card.
+The two stats systems keep different amounts of history. Query events (interactive and Auto Run) are never pruned, so they go back to your install. Cue **run rows** are pruned after 7 days, so the score takes its Cue time from the same lifetime counter the About card's **Cue Time** tile shows, which survives that prune. Cue counts only runs that finished naturally, matching how Conductor time is credited.
 </Note>
 
 **Agent Comparison:**
@@ -112,7 +112,7 @@ Maestro records which tab issued each query, but tab *names* live with the tab i
 
 The Activity tab shows your usage patterns over time:
 
-- **Interactive vs Delegated** - stacked bars, one per day, splitting each day into interactive work and delegated work (Auto Run + Cue). Toggle between **Time** and **Queries**; hovering a bar breaks the day out into Interactive, Auto Run, and Cue, with that day's delegated share. On a long range the bars are grouped into equal blocks of days so the chart stays readable, and quiet days are drawn as gaps rather than skipped
+- **Interactive vs Delegated** - stacked bars, one per day, splitting each day into interactive work and delegated work (Auto Run + Cue). Toggle between **Time** and **Queries**; hovering a bar breaks the day out into Interactive, Auto Run, and Cue, with that day's delegated share. On a long range the bars are grouped into equal blocks of days so the chart stays readable, and quiet days are drawn as gaps rather than skipped. Because Cue run rows are pruned after 7 days, ranges longer than a week show Auto Run only for the older days, and the chart says so under the legend
 - Duration trends chart showing how your usage varies
 - Time-based filtering to spot patterns
 - Useful for understanding your productivity cycles

@@ -58,8 +58,8 @@ const TOOLTIP_LABEL = (
 		not count.
 		<br />
 		<br />
-		Move repeat work into an Auto Run document or a Cue trigger and this climbs. The score covers
-		all history still retained by the stats database, so it can move down as well as up.
+		Move repeat work into an Auto Run document or a Cue trigger and this climbs. It counts every
+		turn on record and all the Cue time Maestro has credited, so it moves down as well as up.
 	</span>
 );
 

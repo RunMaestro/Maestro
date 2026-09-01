@@ -20,6 +20,7 @@ import {
 	sumDelegationDays,
 	trackedCount,
 	trackedMs,
+	withLifetimeCueTime,
 	type DelegationTotals,
 } from '../../shared/delegation';
 
@@ -129,5 +130,47 @@ describe('delegatedMsToReach', () => {
 		const t = totals([1, 1000], [1, 9000], [0, 0]);
 		expect(delegatedMsToReach(t, 100)).toBe(Infinity);
 		expect(delegatedMsToReach(totals([0, 0], [1, 9000], [0, 0]), 100)).toBe(0);
+	});
+});
+
+describe('withLifetimeCueTime', () => {
+	// `cue_events` keeps a week; `query_events` is never pruned. Without this the
+	// lifetime score weighs 7 days of Cue against the whole install, and gets
+	// WORSE the longer Maestro has been running - backwards for a score meant to
+	// reward delegating more.
+	it('restores Cue time the retention prune deleted', () => {
+		const t = totals([100, 1_000_000], [5, 500_000], [3, 50_000]);
+		const fixed = withLifetimeCueTime(t, 900_000);
+		expect(fixed.cue.durationMs).toBe(900_000);
+		// Only the duration moves - there is no lifetime run count to restore.
+		expect(fixed.cue.count).toBe(3);
+		expect(fixed.interactive).toEqual(t.interactive);
+		expect(fixed.autoRun).toEqual(t.autoRun);
+	});
+
+	it('keeps the live table when it already holds more', () => {
+		// The accumulator floors each run to whole minutes, so a young install
+		// full of sub-minute Cue runs can legitimately have more on disk.
+		const t = totals([1, 1000], [0, 0], [40, 90_000]);
+		expect(withLifetimeCueTime(t, 60_000)).toBe(t);
+	});
+
+	it('ignores an absent or unusable accumulator', () => {
+		const t = totals([1, 1000], [0, 0], [1, 5000]);
+		expect(withLifetimeCueTime(t, undefined)).toBe(t);
+		expect(withLifetimeCueTime(t, Number.NaN)).toBe(t);
+		expect(withLifetimeCueTime(t, 0)).toBe(t);
+	});
+
+	it('raises the score rather than letting it decay', () => {
+		// Real shape from a live install: 8 months of turns, 7 days of Cue rows.
+		const pruned = totals(
+			[14659, 1186 * 3_600_000],
+			[2524, 327 * 3_600_000],
+			[23761, 51 * 3_600_000]
+		);
+		expect(Math.round(delegationPercent(pruned))).toBe(24);
+		const whole = withLifetimeCueTime(pruned, 203 * 3_600_000);
+		expect(Math.round(delegationPercent(whole))).toBe(31);
 	});
 });

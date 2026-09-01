@@ -30,6 +30,7 @@ export function ActivityView({
 				<ChartErrorBoundary theme={theme} chartName="Interactive vs Delegated">
 					<DelegationTrendChart
 						days={delegationByDay}
+						timeRange={timeRange}
 						theme={theme}
 						colorBlindMode={colorBlindMode}
 					/>

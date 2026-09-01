@@ -19,12 +19,33 @@
  * afternoon of chat is hundreds of short ones, so a count-based share would
  * report a heavily delegated day as barely delegated at all.
  *
- * Both source tables are pruned on their own retention windows, so every total
- * here means "of the history still retained", not "since the day you installed
- * Maestro". Surfaces say so rather than implying a lifetime figure.
+ * THE TWO TABLES DO NOT COVER THE SAME HISTORY, and the asymmetry is severe
+ * enough to invert the number if it is ignored:
+ *
+ *   - `query_events` is never pruned automatically. `clearOldData` exists on
+ *     the IPC surface but nothing calls it, so interactive and Auto Run rows go
+ *     back to the install.
+ *   - `cue_events` is pruned to `CUE_EVENT_RETENTION_DAYS` on every engine
+ *     start (`pruneCueEvents` in cue-recovery-service).
+ *
+ * So a lifetime score built from both tables measures a week of Cue against
+ * years of interactive work, and gets WORSE the longer Maestro is installed -
+ * the interactive side grows forever while the Cue side is capped. That is
+ * exactly backwards for a score meant to reward delegating more. The lifetime
+ * figure therefore takes its Cue half from `autoRunStats.cueTimeMs`, a
+ * persisted accumulator that is never pruned (see `withLifetimeCueTime`);
+ * `cue_events` is only trustworthy for a range inside the retention window.
  *
  * No Electron imports: the CLI and tests bundle this.
  */
+
+/**
+ * How many days of Cue run history survive. Must match `EVENT_PRUNE_AGE_MS` in
+ * `src/main/cue/cue-recovery-service.ts`, which is what actually deletes the
+ * rows. Surfaces read this to tell the user when a range reaches past the data
+ * rather than quietly drawing a Cue slice of zero.
+ */
+export const CUE_EVENT_RETENTION_DAYS = 7;
 
 /**
  * One contributor to the delegation split.
@@ -116,6 +137,40 @@ export function delegationPercentByCount(totals: DelegationTotals): number {
 	const total = trackedCount(totals);
 	if (total <= 0) return 0;
 	return ((totals.autoRun.count + totals.cue.count) / total) * 100;
+}
+
+/**
+ * Swap in the lifetime Cue accumulator for a score that claims to cover all
+ * history.
+ *
+ * `cue_events` only retains `CUE_EVENT_RETENTION_DAYS`, while `query_events` is
+ * never pruned, so the merged totals weigh one week of Cue against the entire
+ * install. `autoRunStats.cueTimeMs` is the same time counted a different way:
+ * the engine credits it live as runs complete and it is persisted in settings,
+ * so it survives the prune. Feeding it here is what stops the score sliding
+ * downward the longer Maestro is installed.
+ *
+ * Takes the LARGER of the two rather than replacing outright, because the
+ * accumulator floors each run to whole minutes and only started being written
+ * when Cue credit was split out - on a young install, or one whose Cue runs are
+ * mostly sub-minute, the live table can legitimately hold more. Either way the
+ * result is a lower bound, never an inflated one.
+ *
+ * Only `durationMs` moves. There is no lifetime Cue run COUNT to restore, and
+ * the count only feeds the range-scoped Queries mode of the trend chart, which
+ * reads the live table anyway.
+ */
+export function withLifetimeCueTime(
+	totals: DelegationTotals,
+	lifetimeCueMs: number | undefined
+): DelegationTotals {
+	if (!Number.isFinite(lifetimeCueMs ?? NaN) || (lifetimeCueMs ?? 0) <= totals.cue.durationMs) {
+		return totals;
+	}
+	return {
+		...totals,
+		cue: { count: totals.cue.count, durationMs: lifetimeCueMs as number },
+	};
 }
 
 /** Sum a per-day series back into a single split. */

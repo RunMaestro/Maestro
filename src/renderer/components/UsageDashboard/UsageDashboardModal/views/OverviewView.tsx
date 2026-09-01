@@ -11,7 +11,9 @@ import { SummaryCards } from '../../SummaryCards';
 import { YearInPixelsStrip } from '../../YearInPixelsStrip';
 import { DashboardSection } from '../components';
 import { DashboardTabPanel } from './DashboardTabPanel';
+import { useMemo } from 'react';
 import { useSettingsStore } from '../../../../stores/settingsStore';
+import { withLifetimeCueTime } from '../../../../../shared/delegation';
 import type { OverviewViewProps } from './types';
 
 export function OverviewView({
@@ -33,6 +35,15 @@ export function OverviewView({
 	// the source of truth for it.
 	const delegationMilestone = useSettingsStore((s) => s.delegationMilestone);
 	const unlockDelegationMilestone = useSettingsStore((s) => s.unlockDelegationMilestone);
+	// `cue_events` is pruned to a week, `query_events` never is, so the merged
+	// lifetime totals weigh 7 days of Cue against the whole install. This is the
+	// same Cue time the About card shows, accumulated in settings and never
+	// pruned - see `withLifetimeCueTime`.
+	const lifetimeCueMs = useSettingsStore((s) => s.autoRunStats.cueTimeMs);
+	const lifetimeTotals = useMemo(
+		() => (lifetimeDelegation ? withLifetimeCueTime(lifetimeDelegation, lifetimeCueMs) : null),
+		[lifetimeDelegation, lifetimeCueMs]
+	);
 
 	return (
 		<DashboardTabPanel viewMode="overview">
@@ -84,7 +95,7 @@ export function OverviewView({
 			>
 				<ChartErrorBoundary theme={theme} chartName="Delegation Score">
 					<DelegationScoreCard
-						totals={lifetimeDelegation}
+						totals={lifetimeTotals}
 						theme={theme}
 						colorBlindMode={colorBlindMode}
 						unlockedMilestone={delegationMilestone}

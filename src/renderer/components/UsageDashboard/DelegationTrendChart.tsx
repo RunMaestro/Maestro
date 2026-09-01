@@ -14,7 +14,9 @@
 
 import { memo, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
+import type { StatsTimeRange } from '../../../shared/stats-types';
 import type { DelegationDay } from '../../../shared/delegation';
+import { CUE_EVENT_RETENTION_DAYS } from '../../../shared/delegation';
 import { formatDurationHuman, formatNumber } from '../../../shared/formatters';
 import { MetricModeToggle, type ChartMetricMode } from './MetricModeToggle';
 import { computeAxisLabelIndices } from './chartUtils';
@@ -31,10 +33,21 @@ import {
 interface DelegationTrendChartProps {
 	/** Per-day split from `stats.getDelegationByDay`. Empty while loading. */
 	days: DelegationDay[];
+	/**
+	 * The dashboard's selected range. Used only to decide whether the Cue slice
+	 * covers the whole window - Cue run history is pruned to a week, so a longer
+	 * range draws real interactive and Auto Run bars beside Cue bars that were
+	 * deleted, which reads as "I stopped using Cue" rather than "that data is
+	 * gone". The chart says so instead.
+	 */
+	timeRange: StatsTimeRange;
 	theme: Theme;
 	colorBlindMode?: boolean;
 	loading?: boolean;
 }
+
+/** Ranges that reach past the Cue retention window. */
+const RANGES_BEYOND_CUE_RETENTION: StatsTimeRange[] = ['month', 'quarter', 'year', 'all'];
 
 /** Only 'count' and 'duration' apply here - there is no per-source token split. */
 type TrendMode = Extract<ChartMetricMode, 'count' | 'duration'>;
@@ -57,6 +70,7 @@ function formatBucketLabel(bucket: DelegationBucket): string {
 
 export const DelegationTrendChart = memo(function DelegationTrendChart({
 	days,
+	timeRange,
 	theme,
 	colorBlindMode = false,
 	loading = false,
@@ -90,6 +104,7 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 
 	const labelIndices = useMemo(() => computeAxisLabelIndices(buckets.length), [buckets.length]);
 	const hoveredBucket = hovered !== null ? buckets[hovered] : null;
+	const cueTruncated = RANGES_BEYOND_CUE_RETENTION.includes(timeRange);
 
 	return (
 		<div
@@ -273,6 +288,17 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 							Interactive
 						</span>
 					</div>
+
+					{cueTruncated && (
+						<div
+							className="mt-2 text-[10px]"
+							style={{ color: theme.colors.textDim }}
+							data-testid="delegation-trend-cue-notice"
+						>
+							Cue runs older than {CUE_EVENT_RETENTION_DAYS} days are pruned, so days before then
+							show Auto Run only. The Delegation Score still counts your full Cue time.
+						</div>
+					)}
 				</div>
 			)}
 		</div>
