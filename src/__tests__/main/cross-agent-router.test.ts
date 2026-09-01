@@ -4,6 +4,7 @@ import {
 	serializeTranscript,
 	buildCrossAgentPrompt,
 	startCrossAgentRequest,
+	cancelCrossAgentRequestsForSource,
 	type CrossAgentTargetSession,
 } from '../../main/cross-agent/cross-agent-router';
 import type {
@@ -409,5 +410,124 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 
 		vi.advanceTimersByTime(HARD_MS * 2);
 		expect(chunks).toHaveLength(1);
+	});
+});
+
+/**
+ * Stop is an AGENT-level action, and a `@mention` fans one turn out across an
+ * ephemeral `cross-agent-*` process per consulted target. None of those carry
+ * the source agent's process id, so cancellation is addressed by SOURCE agent.
+ */
+describe('cancelCrossAgentRequestsForSource', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: 123, success: true });
+	});
+	afterEach(() => {
+		// Leave no live consult behind for the next test to cancel.
+		cancelCrossAgentRequestsForSource('src');
+		vi.useRealTimers();
+		vi.clearAllMocks();
+	});
+
+	it('kills a running consult and settles it as canceled, not as a failure', async () => {
+		const { chunks, dispatch, processManager, emitData } = harness();
+		await dispatch();
+		emitData('half an answer');
+
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].done).toBe(true);
+		expect(chunks[0].canceled).toBe(true);
+		// The user stopping a consult is not the target failing to answer, so the
+		// bubble must not be stamped with an error.
+		expect(chunks[0].error).toBeUndefined();
+		// Whatever the target managed to say before the plug was pulled is kept.
+		expect(chunks[0].chunk).toBe('half an answer');
+	});
+
+	it('leaves consults belonging to another source agent alone', async () => {
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		expect(cancelCrossAgentRequestsForSource('some-other-agent')).toBe(0);
+		expect(processManager.kill).not.toHaveBeenCalled();
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('is a no-op for a consult that already finished', async () => {
+		const { chunks, dispatch, emitData, emitExit } = harness();
+		await dispatch();
+		emitData('the answer');
+		emitExit(0);
+
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(0);
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].canceled).toBeUndefined();
+	});
+
+	it('settles only once when Stop is pressed twice', async () => {
+		const { chunks, dispatch } = harness();
+		await dispatch();
+
+		cancelCrossAgentRequestsForSource('src');
+		cancelCrossAgentRequestsForSource('src');
+
+		expect(chunks).toHaveLength(1);
+	});
+
+	it('emits no late chunk after a cancel, even past both budgets', async () => {
+		const { chunks, dispatch } = harness();
+		await dispatch();
+
+		cancelCrossAgentRequestsForSource('src');
+		vi.advanceTimersByTime(HARD_MS * 2);
+
+		expect(chunks).toHaveLength(1);
+	});
+
+	it('cancels a consult that has not reached the spawn yet', async () => {
+		// Stop can land while the target agent's binary is still being resolved.
+		// The consult is registered before that await precisely so this lands.
+		const { chunks, dispatch } = harness();
+		const pending = dispatch();
+
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		await pending;
+
+		expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].canceled).toBe(true);
+	});
+
+	it('kills a process that finished spawning after the Stop that ended it', async () => {
+		// The other side of the same race: Stop lands once the timers are armed but
+		// while `spawnGroupChatAgent` is still in flight. The terminal path already
+		// killed a process id that did not exist yet, so the one that arrives a
+		// moment later has to be killed on the way out or it outlives its own Stop.
+		const { chunks, dispatch, processManager } = harness();
+		let releaseSpawn: () => void = () => {};
+		vi.mocked(spawnGroupChatAgent).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					releaseSpawn = () => resolve({ pid: 123, success: true } as never);
+				})
+		);
+
+		const pending = dispatch();
+		// Let the binary resolve so the real cancel path is live, then stop.
+		await vi.waitFor(() => expect(spawnGroupChatAgent).toHaveBeenCalled());
+		expect(cancelCrossAgentRequestsForSource('src')).toBe(1);
+		processManager.kill.mockClear();
+
+		releaseSpawn();
+		await pending;
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		// Still exactly one terminal chunk - the late spawn must not produce a second.
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].canceled).toBe(true);
 	});
 });

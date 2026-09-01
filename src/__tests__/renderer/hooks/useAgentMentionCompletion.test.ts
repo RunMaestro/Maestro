@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import {
 	useAgentMentionCompletion,
+	buildKnownMentionNameSet,
 	type AgentMentionSuggestion,
 } from '../../../renderer/hooks/input/useAgentMentionCompletion';
 import type { Session, Group } from '../../../renderer/types';
@@ -168,5 +169,50 @@ describe('useAgentMentionCompletion', () => {
 
 	it('returns empty when there is nothing mentionable', () => {
 		expect(getSuggestions([agent('self', 'Self')], [], 'self')).toEqual([]);
+	});
+});
+
+/**
+ * The roster the chip overlay, the transcript plugin, and the leading-mention
+ * check all read. It is AGENT-only: a group is not a message target, so a
+ * chipped `@Squad` would promise a dispatch that never happens - and a message
+ * LEADING with one would suppress the local send and be addressed to nobody.
+ */
+describe('buildKnownMentionNameSet', () => {
+	const squad: Group[] = [{ id: 'g1', name: 'Squad', emoji: '', collapsed: false }];
+
+	it('carries every mentionable agent name, lowercased', () => {
+		const names = buildKnownMentionNameSet(
+			[agent('a', 'Alpha'), agent('b', 'Review Bot')],
+			[],
+			'current'
+		);
+		expect(names.has('alpha')).toBe(true);
+		// Spaces normalize to hyphens, matching the token the picker inserts.
+		expect(names.has('review-bot')).toBe(true);
+	});
+
+	it('leaves group names out entirely', () => {
+		const names = buildKnownMentionNameSet(
+			[agent('a', 'Alpha', { groupId: 'g1' }), agent('b', 'Beta', { groupId: 'g1' })],
+			squad,
+			'current'
+		);
+		expect(names.has('squad')).toBe(false);
+		expect(names.has('alpha')).toBe(true);
+	});
+
+	it('still knows an agent that shares its name with a group', () => {
+		const names = buildKnownMentionNameSet(
+			[agent('ops', 'Squad'), agent('a', 'Alpha', { groupId: 'g1' })],
+			squad,
+			'current'
+		);
+		expect(names.has('squad')).toBe(true);
+	});
+
+	it('excludes the mentioning agent itself', () => {
+		const names = buildKnownMentionNameSet([agent('self', 'Self')], [], 'self');
+		expect(names.has('self')).toBe(false);
 	});
 });

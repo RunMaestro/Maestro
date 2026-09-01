@@ -76,6 +76,24 @@ describe('accumulateCrossAgentChunk', () => {
 		// The raw accumulation stays clean - the note is presentation, not content.
 		expect(result.accumulated).toBe('partial answer');
 	});
+
+	it('reports a stopped consult as stopped, never as the target failing', () => {
+		const result = accumulateCrossAgentChunk(
+			'partial answer',
+			chunk({ done: true, canceled: true })
+		);
+		expect(result.displayText).toContain('partial answer');
+		expect(result.displayText).toContain('was stopped');
+		// "could not respond" blames the target for a decision the user made.
+		expect(result.displayText).not.toContain('could not respond');
+		expect(result.accumulated).toBe('partial answer');
+	});
+
+	it('shows a standalone stop note when the consult said nothing before Stop', () => {
+		const result = accumulateCrossAgentChunk('', chunk({ done: true, canceled: true }));
+		expect(result.displayText).toContain('Codex');
+		expect(result.displayText).toContain('was stopped');
+	});
 });
 
 describe('buildCrossAgentLogEntry', () => {
@@ -395,6 +413,20 @@ describe('buildConsultHistoryEntry', () => {
 
 	it('leaves the detail undefined when there is nothing to show', () => {
 		expect(entry({ accumulated: '' }).fullResponse).toBeUndefined();
+	});
+
+	it('records a stopped consult as a success with a note, not as a failure', () => {
+		// The user pressing Stop is their own decision; logging it against the
+		// target as a failed consult misattributes it.
+		const e = entry({ accumulated: '', canceled: true });
+		expect(e.success).toBe(true);
+		expect(e.fullResponse).toContain('stopped by the user');
+	});
+
+	it('keeps a stopped consult partial answer alongside the stop note', () => {
+		const e = entry({ accumulated: 'I got as far as', canceled: true });
+		expect(e.fullResponse).toContain('I got as far as');
+		expect(e.fullResponse).toContain('stopped by the user');
 	});
 
 	it('stamps the calling agent so the target remembers who consulted it', () => {

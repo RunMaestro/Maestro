@@ -100,6 +100,18 @@ vi.mock('../../../renderer/components/ThinkingStatusPill', () => ({
 	),
 }));
 
+// Captures the `onInterrupt` prop, which is the whole decision under test: the
+// indicator only carries Stop when the thinking pill is NOT already offering it.
+vi.mock('../../../renderer/components/CrossAgentResponseIndicator', () => ({
+	CrossAgentResponseIndicator: vi.fn(({ onInterrupt }) => (
+		<div
+			data-testid="cross-agent-indicator"
+			data-has-stop={onInterrupt ? 'yes' : 'no'}
+			onClick={onInterrupt}
+		/>
+	)),
+}));
+
 vi.mock('../../../renderer/components/ExecutionQueueIndicator', () => ({
 	ExecutionQueueIndicator: vi.fn(({ onClick }) => (
 		<button data-testid="execution-queue-indicator" onClick={onClick}>
@@ -2604,5 +2616,55 @@ describe('InputArea', () => {
 
 			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
 		});
+	});
+});
+
+/**
+ * Stop is one agent-level action, so exactly one Stop may be on screen. The
+ * thinking pill owns it whenever it renders; the cross-agent pill picks it up
+ * only when the thinking pill is absent, which is what happens to a message
+ * addressed solely to other agents (this agent never goes busy). The two render
+ * conditions have to stay each other's inverse or the user gets two Stops or
+ * none.
+ */
+describe('InputArea cross-agent Stop placement', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], groups: [] });
+	});
+
+	const indicator = () => screen.getByTestId('cross-agent-indicator');
+
+	it('carries Stop when nothing else is offering one', () => {
+		const props = createDefaultProps();
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'yes');
+		expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
+	});
+
+	it('runs the same agent-level interrupt the thinking pill would', () => {
+		const handleInterrupt = vi.fn();
+		const props = createDefaultProps({ handleInterrupt });
+		render(<InputArea {...props} />);
+
+		fireEvent.click(indicator());
+		expect(handleInterrupt).toHaveBeenCalledTimes(1);
+	});
+
+	it('yields Stop to the pill while Auto Run is running', () => {
+		const props = createDefaultProps({ autoRunState: { isRunning: true } as never });
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'no');
+	});
+
+	it('draws no indicator at all outside AI mode', () => {
+		const props = createDefaultProps({
+			session: createMockSession({ inputMode: 'terminal' }),
+		});
+		render(<InputArea {...props} />);
+
+		expect(screen.queryByTestId('cross-agent-indicator')).not.toBeInTheDocument();
 	});
 });

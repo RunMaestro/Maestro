@@ -22,6 +22,7 @@ import {
 	useCrossAgentInFlightStore,
 } from '../stores/crossAgentInFlightStore';
 import { getAgentIcon } from '../constants/agentIcons';
+import { StopTurnButton } from './ui/StopTurnButton';
 import { formatElapsedTickerCompact, truncateText } from '../../shared/formatters';
 
 interface CrossAgentResponseIndicatorProps {
@@ -36,6 +37,14 @@ interface CrossAgentResponseIndicatorProps {
 	 * way every other cross-agent navigation affordance does.
 	 */
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
+	/**
+	 * Stop this agent's turn, consults included. Omitted when the thinking pill
+	 * below is already showing its own Stop (the two run the same agent-level
+	 * interrupt, so both on screen is one control drawn twice). Passed in when it
+	 * is NOT - a message that leads with a mention is answered only by the
+	 * consulted agents, so this agent never goes busy and no other Stop exists.
+	 */
+	onInterrupt?: () => void;
 }
 
 export function CrossAgentResponseIndicator({
@@ -43,6 +52,7 @@ export function CrossAgentResponseIndicator({
 	sourceSessionId,
 	sourceTabId,
 	onSessionClick,
+	onInterrupt,
 }: CrossAgentResponseIndicatorProps): JSX.Element | null {
 	const requests = useCrossAgentInFlightStore((s) => s.requests);
 	const inFlight = useMemo(
@@ -109,6 +119,8 @@ export function CrossAgentResponseIndicator({
 						aria-hidden
 					/>
 				</button>
+
+				{onInterrupt && <StopTurnButton theme={theme} onClick={onInterrupt} />}
 
 				{expanded &&
 					inFlight.map((req) => {

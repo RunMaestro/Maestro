@@ -461,6 +461,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					sourceSessionId={session.id}
 					sourceTabId={getActiveTab(session)?.id}
 					onSessionClick={onSessionClick}
+					// A message that LEADS with a mention is answered only by the consulted
+					// agents, so this agent never goes busy and the thinking pill (the usual
+					// home of Stop) never appears - leaving the user with nothing to press
+					// while other agents work on their behalf. Carry Stop here in exactly
+					// that case, and stay out of the way when the thinking pill is already
+					// offering it: both buttons run the same agent-level interrupt, so two
+					// of them on screen is just a second copy of one control.
+					onInterrupt={
+						thinkingItems.length > 0 || autoRunState?.isRunning ? undefined : handleInterrupt
+					}
 				/>
 			)}
 

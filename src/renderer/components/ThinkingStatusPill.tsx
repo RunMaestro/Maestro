@@ -11,6 +11,7 @@ import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../type
 import { formatTokensCompact } from '../utils/formatters';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
 import { formatElapsedTicker } from '../../shared/duration';
+import { StopTurnButton } from './ui/StopTurnButton';
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -707,21 +708,7 @@ function ThinkingStatusPillInner({
 				{onInterrupt && (
 					<>
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-						<button
-							type="button"
-							onClick={onInterrupt}
-							className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors hover:opacity-80"
-							style={{
-								backgroundColor: theme.colors.error,
-								color: 'white',
-							}}
-							title="Interrupt Claude (Ctrl+C)"
-						>
-							<svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-								<rect x="6" y="6" width="12" height="12" rx="1" />
-							</svg>
-							Stop
-						</button>
+						<StopTurnButton theme={theme} onClick={onInterrupt} />
 					</>
 				)}
 

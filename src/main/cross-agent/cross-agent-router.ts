@@ -95,6 +95,48 @@ const LIVENESS_EVENTS = ['data', 'thinking-chunk', 'tool-execution', 'usage'] as
 const CROSS_AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
 
 /**
+ * A consult that has been started and has not yet emitted its terminal chunk.
+ *
+ * Stop is an AGENT-level action, and a `@mention` fans the agent's turn out
+ * across several processes: its own tab plus one ephemeral `cross-agent-*`
+ * process per consulted target. Interrupting only the tab leaves those consults
+ * running, streaming an answer into a conversation the user already stopped, so
+ * the registry below is what gives Stop a handle on them.
+ *
+ * Keyed by `requestId`, but cancellation is addressed by SOURCE agent: the
+ * renderer's in-flight map is only populated once `crossAgent.send` resolves, so
+ * a Stop pressed in that window would miss a request the main process is already
+ * spawning. Main holds the authoritative list, so it answers "what did this
+ * agent fan out?" without that race.
+ */
+interface ActiveConsult {
+	/** The agent the mention was typed in - what Stop is addressed to. */
+	sourceSessionId: string;
+	/** Terminate this consult and emit its terminal chunk. Idempotent. */
+	cancel: () => void;
+}
+
+const activeConsults = new Map<string, ActiveConsult>();
+
+/**
+ * Stop every consult the given source agent still has in flight.
+ *
+ * Each cancelled consult settles exactly like a timeout does - the process is
+ * killed and whatever the target already said is flushed as the terminal chunk -
+ * except that it is stamped `canceled` rather than `error`, so the source
+ * agent's bubble reports that the user stopped it instead of blaming the target
+ * for failing to answer.
+ *
+ * @returns How many consults were cancelled.
+ */
+export function cancelCrossAgentRequestsForSource(sourceSessionId: string): number {
+	// Snapshot first: `cancel()` deletes from the map it is iterating.
+	const doomed = [...activeConsults.values()].filter((c) => c.sourceSessionId === sourceSessionId);
+	for (const consult of doomed) consult.cancel();
+	return doomed.length;
+}
+
+/**
  * The subset of a target agent's stored session config the router needs to
  * spawn a consultation. Resolved by the caller from the main-process session
  * store (see the `cross-agent` IPC handler).
@@ -276,8 +318,25 @@ export async function startCrossAgentRequest(
 			requestId: request.requestId,
 			targetSessionId: request.targetSessionId,
 		});
+		activeConsults.delete(request.requestId);
 		onChunk(baseChunk({ chunk: '', done: true, error: message }));
 	};
+
+	/**
+	 * Stop can land before the process exists: resolving the target agent's binary
+	 * is async, and the spawn itself is awaited. Register a cancel that only raises
+	 * this flag now (it is swapped for the real terminal path once the listeners
+	 * are attached), and re-check it around the spawn so a consult cancelled in
+	 * that window is never left running.
+	 */
+	let cancelRequested = false;
+	const registration: ActiveConsult = {
+		sourceSessionId: request.sourceSessionId,
+		cancel: () => {
+			cancelRequested = true;
+		},
+	};
+	activeConsults.set(request.requestId, registration);
 
 	if (!target) {
 		emitError(`Target agent not found for session ${request.targetSessionId}`);
@@ -381,6 +440,7 @@ export async function startCrossAgentRequest(
 	};
 
 	const cleanup = (): void => {
+		activeConsults.delete(request.requestId);
 		processManager.off('data', onData);
 		for (const evt of LIVENESS_EVENTS) processManager.off(evt, onLiveness);
 		processManager.off('exit', onExit);
@@ -445,14 +505,18 @@ export async function startCrossAgentRequest(
 	};
 
 	/**
-	 * Terminal path shared by both timers: kill the process, then flush whatever
-	 * the target managed to say before we pulled the plug. Emitting the partial
-	 * keeps a long consult's real work visible instead of replacing it with a bare
-	 * warning. We deliberately do NOT forward `targetAgentSessionId` - matching the
-	 * non-zero-exit policy, a killed run starts fresh next time rather than
-	 * resuming a session we interrupted mid-turn.
+	 * Terminal path shared by both timers and by Stop: kill the process, then
+	 * flush whatever the target managed to say before we pulled the plug. Emitting
+	 * the partial keeps a long consult's real work visible instead of replacing it
+	 * with a bare warning. We deliberately do NOT forward `targetAgentSessionId` -
+	 * matching the non-zero-exit policy, a killed run starts fresh next time rather
+	 * than resuming a session we interrupted mid-turn.
+	 *
+	 * `canceled` splits the two callers apart at the chunk level: a timeout is a
+	 * failure of the target, while Stop is the user's own decision and must not be
+	 * reported as the target failing to answer.
 	 */
-	const settleWithTimeout = (message: string): void => {
+	const settleTerminated = (message: string, canceled = false): void => {
 		if (settled) return;
 		settled = true;
 		cleanup();
@@ -472,7 +536,11 @@ export async function startCrossAgentRequest(
 			targetSessionId: request.targetSessionId,
 			partialChars: partial.length,
 		});
-		onChunk(baseChunk({ chunk: partial, done: true, error: message }));
+		onChunk(
+			canceled
+				? baseChunk({ chunk: partial, done: true, canceled: true })
+				: baseChunk({ chunk: partial, done: true, error: message })
+		);
 	};
 
 	/** (Re)start the silence budget. Called on spawn and on every data event. */
@@ -480,7 +548,7 @@ export async function startCrossAgentRequest(
 		if (settled) return;
 		if (timer.idle) clearTimeout(timer.idle);
 		timer.idle = setTimeout(() => {
-			settleWithTimeout(
+			settleTerminated(
 				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
 			);
 		}, CROSS_AGENT_IDLE_TIMEOUT_MS);
@@ -496,11 +564,20 @@ export async function startCrossAgentRequest(
 	// Safety net: never leave the listeners attached forever. The idle timer covers
 	// a wedged target; the hard ceiling covers one that chatters without finishing.
 	timer.hard = setTimeout(() => {
-		settleWithTimeout(
+		settleTerminated(
 			`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
 		);
 	}, CROSS_AGENT_MAX_DURATION_MS);
 	armIdleTimer();
+
+	// The real Stop path, now that there is something to tear down. A cancel that
+	// arrived while the target's binary was being resolved is settled here instead
+	// of spawning a process only to kill it a moment later.
+	registration.cancel = () => settleTerminated(`${target.name} was stopped by the user.`, true);
+	if (cancelRequested) {
+		registration.cancel();
+		return;
+	}
 
 	try {
 		const spawnResult = await spawnGroupChatAgent({
@@ -536,6 +613,18 @@ export async function startCrossAgentRequest(
 				settled = true;
 				cleanup();
 				emitError(`${target.name} could not be started.`);
+			}
+			return;
+		}
+		// Stop can land between `registration.cancel` going live and the spawn
+		// resolving. `settleTerminated` already killed a process id that did not
+		// exist yet, so the one we just created has to be killed here or it survives
+		// the Stop that was meant to end it.
+		if (settled) {
+			try {
+				processManager.kill(sessionId);
+			} catch {
+				// Already gone - nothing to kill.
 			}
 			return;
 		}

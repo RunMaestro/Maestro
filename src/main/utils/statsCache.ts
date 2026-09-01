@@ -187,8 +187,13 @@ export interface GlobalStatsCache {
 	version: number;
 }
 
-/** Current global stats cache version. Bump to force cache invalidation. */
-export const GLOBAL_STATS_CACHE_VERSION = 3;
+/**
+ * Current global stats cache version. Bump to force cache invalidation, including
+ * when only the DERIVATION changes - entries are fingerprinted on a transcript's
+ * mtime, so a parsing fix (v4: Codex's cumulative `total_token_usage` was being
+ * summed) is invisible to the fingerprint and would keep serving old numbers.
+ */
+export const GLOBAL_STATS_CACHE_VERSION = 4;
 
 /**
  * Get the cache file path for global stats.
