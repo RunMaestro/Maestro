@@ -98,6 +98,7 @@ export {
 } from './settingsFileExplorerSlice';
 import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
 import { sanitizeTextareaHeights } from '../utils/textareaSizing';
+import { normalizeUnlockedMilestone } from '../../shared/delegation';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -387,6 +388,15 @@ export interface SettingsStoreState
 	logViewerSelectedLevels: string[];
 	customAICommands: CustomAICommand[];
 	totalActiveTimeMs: number;
+	/**
+	 * Highest delegation milestone ever unlocked (0 | 25 | 50 | 75 | 100).
+	 *
+	 * A high-water mark, not the live score: the delegation percentage is a
+	 * ratio over retained history and can fall when you do a stretch of
+	 * interactive work, and a bar that un-fills would read as losing something
+	 * you earned. The live number rides a separate marker on the same track.
+	 */
+	delegationMilestone: number;
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
@@ -564,6 +574,9 @@ export interface SettingsStoreActions
 	setTotalActiveTimeMs: (value: number) => void;
 	addTotalActiveTimeMs: (delta: number) => void;
 
+	// Delegation milestone high-water mark
+	unlockDelegationMilestone: (milestone: number) => void;
+
 	// Usage stats
 	setUsageStats: (value: MaestroUsageStats) => void;
 	updateUsageStats: (currentValues: Partial<MaestroUsageStats>) => void;
@@ -736,6 +749,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
+		delegationMilestone: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
@@ -1445,6 +1459,23 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		},
 
 		// ============================================================================
+		// Delegation Milestone Actions
+		// ============================================================================
+
+		// Raise the delegation high-water mark. Monotonic on purpose: the caller
+		// passes whatever milestone the CURRENT score has reached, and a score
+		// that has since fallen must not claw back a mark already unlocked. The
+		// value is normalized to a real milestone so nothing can fill the bar to
+		// a mark the track does not have.
+		unlockDelegationMilestone: (milestone) => {
+			const normalized = normalizeUnlockedMilestone(milestone);
+			const prev = get().delegationMilestone;
+			if (normalized <= prev) return;
+			set({ delegationMilestone: normalized });
+			window.maestro.settings.set('delegationMilestone', normalized);
+		},
+
+		// ============================================================================
 		// Usage Stats Actions
 		// ============================================================================
 
@@ -2096,6 +2127,10 @@ export async function loadAllSettings(): Promise<void> {
 			}
 		}
 
+		if (allSettings['delegationMilestone'] !== undefined) {
+			patch.delegationMilestone = normalizeUnlockedMilestone(allSettings['delegationMilestone']);
+		}
+
 		if (allSettings['autoRunStats'] !== undefined) {
 			// NOTE: a `concurrentAutoRunTimeMigrationApplied` migration used to add
 			// 3 hours to `cumulativeTimeMs` here. It was removed because it grew the
@@ -2645,6 +2680,7 @@ export function getSettingsActions() {
 		setCustomAICommands: state.setCustomAICommands,
 		setTotalActiveTimeMs: state.setTotalActiveTimeMs,
 		addTotalActiveTimeMs: state.addTotalActiveTimeMs,
+		unlockDelegationMilestone: state.unlockDelegationMilestone,
 		setAutoRunStats: state.setAutoRunStats,
 		recordAutoRunComplete: state.recordAutoRunComplete,
 		updateAutoRunProgress: state.updateAutoRunProgress,

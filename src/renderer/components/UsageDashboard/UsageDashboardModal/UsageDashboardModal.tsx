@@ -99,12 +99,22 @@ export function UsageDashboardModal({
 	useQuotaTabDiscovery(isOpen, usageStatsTabEnabled);
 
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
-	const { data, cueSourceTotals, loading, error, showNewDataIndicator, databaseSize, fetchStats } =
-		useUsageDashboardData({
-			isOpen,
-			timeRange,
-			cueTabEnabled,
-		});
+	const {
+		data,
+		cueSourceTotals,
+		delegationTotals,
+		lifetimeDelegation,
+		delegationByDay,
+		loading,
+		error,
+		showNewDataIndicator,
+		databaseSize,
+		fetchStats,
+	} = useUsageDashboardData({
+		isOpen,
+		timeRange,
+		cueTabEnabled,
+	});
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
 	// Groups come straight from the store rather than a prop: the dashboard is
@@ -301,6 +311,8 @@ export function UsageDashboardModal({
 						sessions={sessions}
 						layout={layout}
 						cueSourceTotals={cueSourceTotals}
+						delegationTotals={delegationTotals}
+						lifetimeDelegation={lifetimeDelegation}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
@@ -357,6 +369,7 @@ export function UsageDashboardModal({
 						timeRange={timeRange}
 						theme={theme}
 						colorBlindMode={colorBlindMode}
+						delegationByDay={delegationByDay}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}

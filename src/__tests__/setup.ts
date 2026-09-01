@@ -659,6 +659,14 @@ const mockMaestro = {
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
 		}),
+		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
+		// dashboard renders the "nothing tracked yet" state rather than throwing.
+		getDelegationTotals: vi.fn().mockResolvedValue({
+			interactive: { count: 0, durationMs: 0 },
+			autoRun: { count: 0, durationMs: 0 },
+			cue: { count: 0, durationMs: 0 },
+		}),
+		getDelegationByDay: vi.fn().mockResolvedValue([]),
 		getStats: vi.fn().mockResolvedValue([]),
 		startAutoRun: vi.fn().mockResolvedValue('auto-run-id'),
 		endAutoRun: vi.fn().mockResolvedValue(true),

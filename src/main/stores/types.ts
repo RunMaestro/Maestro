@@ -92,6 +92,9 @@ export interface MaestroSettings {
 	wakatimeDetailedTracking: boolean;
 	// Standalone hands-on time tracker (migrated from globalStats.totalActiveTimeMs)
 	totalActiveTimeMs: number;
+	// Highest delegation milestone ever unlocked (0 | 25 | 50 | 75 | 100).
+	// A high-water mark, not the live score - see src/shared/delegation.ts.
+	delegationMilestone: number;
 	// Last prompt edited in Settings → Maestro Prompts (restored on reopen)
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas

@@ -115,6 +115,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	wakatimeApiKey: '',
 	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
+	delegationMilestone: 0,
 	lastSelectedPromptId: null,
 	modalSizes: {},
 	concertoStageFloating: false,

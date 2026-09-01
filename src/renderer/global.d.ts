@@ -3496,6 +3496,15 @@ interface MaestroAPI {
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<StatsAggregation>;
+		// Interactive vs autonomous (Auto Run + Cue) totals, merged across the
+		// stats DB and the Cue DB. Defaults to all retained history.
+		getDelegationTotals: (
+			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<import('../shared/delegation').DelegationTotals>;
+		// The same split bucketed by local-time day; empty days are omitted.
+		getDelegationByDay: (
+			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<import('../shared/delegation').DelegationDay[]>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
 		// Subscribe to stats updates (for real-time dashboard refresh)

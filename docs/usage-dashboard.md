@@ -43,7 +43,22 @@ The Overview tab gives you a high-level summary of your AI usage:
 - **Total Time** - Cumulative time spent waiting for AI responses
 - **Avg Duration** - Average response time per query
 - **Top Agent** - Your most-used AI agent
-- **Interactive %** - Percentage of queries from interactive (non-Auto Run) sessions
+- **Interactive vs Auto** - How the selected range's AI time divides between work you waited on and work that ran without you, with a split bar underneath
+
+**Delegation Score:**
+
+One number for how much of your AI work runs without you. Auto Run documents and Maestro Cue pipelines count as delegated; a turn you typed and waited on does not. It is a share of **time**, not of turns, because an Auto Run batch is a handful of long turns while an afternoon of chat is hundreds of short ones.
+
+The track has milestones at 25%, 50%, 75%, and 100%:
+
+- The **fill** runs to the highest milestone you have ever unlocked, and stays there. A stretch of hands-on work cannot take back a milestone you earned.
+- The **marker** is your live score, which moves in both directions.
+
+Under the track, Maestro names the next milestone and how much more delegated time would reach it. Unlike the other Overview cards, this one covers all retained history rather than the selected time range, so switching the range dropdown does not move it.
+
+<Note>
+The two stats systems keep different amounts of history. Query events (interactive and Auto Run) are never pruned, so they go back to your install. Cue **run rows** are pruned after 7 days, so the score takes its Cue time from the same lifetime counter the About card's **Cue Time** tile shows, which survives that prune. Cue counts only runs that finished naturally, matching how Conductor time is credited.
+</Note>
 
 **Agent Comparison:**
 A horizontal bar chart showing usage distribution across your AI agents. See at a glance which agents you use most, with query counts and time spent per agent.
@@ -97,6 +112,7 @@ Maestro records which tab issued each query, but tab *names* live with the tab i
 
 The Activity tab shows your usage patterns over time:
 
+- **Interactive vs Delegated** - stacked bars, one per day, splitting each day into interactive work and delegated work (Auto Run + Cue). Toggle between **Time** and **Queries**; hovering a bar breaks the day out into Interactive, Auto Run, and Cue, with that day's delegated share. On a long range the bars are grouped into equal blocks of days so the chart stays readable, and quiet days are drawn as gaps rather than skipped. Because Cue run rows are pruned after 7 days, ranges longer than a week show Auto Run only for the older days, and the chart says so under the legend
 - Duration trends chart showing how your usage varies
 - Time-based filtering to spot patterns
 - Useful for understanding your productivity cycles
