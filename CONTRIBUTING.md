@@ -444,7 +444,9 @@ Then add the ID to `ThemeId` type in `src/shared/theme-types.ts` and to the `isV
 
 ## Encore Features (Feature Gating)
 
-Encore Features is Maestro's system for optional, user-toggled features. It serves as a precursor to a full plugin marketplace - features that are powerful but not essential for every user can be shipped as Encore Features, disabled by default.
+Encore Features is Maestro's system for optional, user-toggled features - powerful but not essential for every user, and disabled by default.
+
+They ship as **built-in (first-party) plugins**, listed in the same catalog as community plugins under the Settings tab labelled **Plugins**. The gating idea is unchanged and the flags below are still how a feature is turned on and off; what changed is that the tile, its description, and its settings body are declared in the plugin registry rather than hand-written into the settings modal. See [[CLAUDE-PLUGINS.md]] for the plugin system itself.
 
 ### When to Use Encore Features
 
@@ -469,7 +471,10 @@ export interface EncoreFeatureFlags {
 }
 ```
 
-The flags live in `useSettings.ts` and persist via `window.maestro.settings`. The Encore Features panel in Settings (`SettingsModal.tsx`) provides toggle UI for each feature.
+The flags persist via `window.maestro.settings`, with defaults in `src/renderer/stores/settingsStore.ts`. The **Plugins** tab (`Settings/tabs/EncoreTab`, which renders the Extensions marketplace) draws one tile per feature from `FIRST_PARTY_PLUGIN_DEFINITIONS` in `src/shared/plugins/first-party.ts`; each tile's detail pane owns that feature's own settings, keyed by its Encore flag.
+
+> [!NOTE]
+> The tab's internal id is still `encore` (deep links and the persisted last-tab depend on it) even though it is labelled **Plugins** in the UI.
 
 ### Adding a New Encore Feature
 
@@ -482,7 +487,7 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    }
    ```
 
-2. **Set the default** in `useSettings.ts` - always default to `false`:
+2. **Set the default** in `DEFAULT_ENCORE_FEATURES` (`src/renderer/stores/settingsStore.ts`) - always default to `false`:
 
    ```typescript
    const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
@@ -491,7 +496,9 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    };
    ```
 
-3. **Add toggle UI** in `SettingsModal.tsx` under the Encore Features tab. Follow the existing Director's Notes pattern - a clickable section with a toggle switch and feature-specific settings that only render when enabled.
+3. **Register the tile** by adding a `FirstPartyPluginDefinition` to `src/shared/plugins/first-party.ts` and listing it in `FIRST_PARTY_PLUGIN_DEFINITIONS`. Set `encoreFlag` to the flag from step 1 - that is what binds the tile's enable/disable control to your feature. Give it a `name`, `description`, `category`, and `releaseDate`; these are what the user reads in the catalog, so write the description for them rather than for the codebase. Declare any `permissions` and `backgroundServices` the feature actually uses.
+
+   If the feature needs its own options, render them into the tile's **Settings** sub-tab: add a section component under `Settings/tabs/EncoreTab/components/` and wire it into the `settingsBodies` map keyed by your Encore flag. Do not add a separate list entry to the settings modal - the marketplace tile is the only surface.
 
 4. **Gate all access points** - the feature must be invisible when disabled:
    - **Keyboard shortcuts** (`useMainKeyboardHandler.ts`): Guard with `ctx.encoreFeatures?.myFeature`
@@ -499,13 +506,29 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    - **SessionList hamburger menu**: Make the setter optional and conditionally render the menu item
    - **Quick Actions** (`QuickActionsModal.tsx`): Pass `undefined` for the handler when disabled
 
-5. **Update tests** in `SettingsModal.test.tsx` - add toggle and settings tests within the Encore Features describe block.
+5. **Update tests** - add a `src/__tests__/shared/plugins/<feature>-first-party*.test.ts` covering the definition (flag binding, declared permissions, background services), following the existing per-feature files there. Add rendering tests alongside the other marketplace tests if the feature contributes a settings body.
+
+6. **Document it** - add a row to the table in [docs/encore-features.md](docs/encore-features.md), and give the feature its own page if it has more than a paragraph of behavior worth explaining.
 
 ### Existing Encore Features
 
-| Feature          | Flag            | Description                                   |
-| ---------------- | --------------- | --------------------------------------------- |
-| Director's Notes | `directorNotes` | AI-generated synopsis of work across sessions |
+Nine features ship this way. `FIRST_PARTY_PLUGIN_DEFINITIONS` in `src/shared/plugins/first-party.ts` is the source of truth for the list, its display order, and each entry's description.
+
+| Feature          | Flag             | Description                                                                     |
+| ---------------- | ---------------- | ------------------------------------------------------------------------------- |
+| Usage & Stats    | `usageStats`     | Records query and Auto Run activity, and unlocks the Usage Dashboard            |
+| Director's Notes | `directorNotes`  | AI-generated synopsis of work across sessions                                   |
+| Maestro Cue      | `maestroCue`     | Event-driven automation on timers, file changes, and completions                |
+| Concerto         | `concerto`       | Agents answer with interactive views, plus always-on-top Cadenza HUD cards      |
+| Maestro Symphony | `symphony`       | Contribute to open source through curated repositories                          |
+| Groups+          | `groupsPlus`     | Group folders, icons, and label colors                                          |
+| Pianola          | `pianola`        | Autonomous manager agent that answers or escalates other agents' prompts        |
+| Coworking        | `coworking`      | Per-agent MCP server exposing terminal scrollback and browser tabs              |
+| OpenCode Server  | `opencodeServer` | Runs local OpenCode via a shared `opencode serve` process rather than per-spawn |
+
+<!-- Keep this table in sync with FIRST_PARTY_PLUGIN_DEFINITIONS and docs/encore-features.md. -->
+
+`plugins` is a flag in the same object but is not a feature tile: it turns on loading of **community** plugins. Built-in features work with it off.
 
 ## Adding a New AI Agent
 

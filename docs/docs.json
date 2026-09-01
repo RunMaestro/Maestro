@@ -104,7 +104,7 @@
 			},
 			{
 				"group": "Providers & CLI",
-				"pages": ["provider-notes", "multi-claude", "cli"]
+				"pages": ["provider-notes", "multi-claude", "cli", "cli-reference"]
 			},
 			{
 				"group": "Integrations",

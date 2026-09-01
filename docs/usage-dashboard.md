@@ -30,7 +30,17 @@ The Usage Dashboard only tracks activity from within Maestro. It does not includ
 
 ## Dashboard Tabs
 
-The dashboard is organized into tabs, each providing different insights into your usage. The core tabs are described below; additional tabs (Tokens, Cue, Shortcuts, and the per-provider usage tabs) appear when the matching Encore Feature is enabled.
+The dashboard is organized into tabs, each providing different insights into your usage.
+
+**Overview**, **Agent Overview**, **Agents**, **Groups**, **Tokens**, **Activity**, **Auto Run**, and **Shortcuts** are always present. Three more appear only when there is something for them to show:
+
+| Tab                 | Appears when                                                    |
+| ------------------- | --------------------------------------------------------------- |
+| **Cue**             | [Maestro Cue](./maestro-cue) is enabled alongside Usage & Stats |
+| **Anthropic Usage** | at least one Claude account has reported plan quota details     |
+| **OpenAI Usage**    | at least one Codex account has reported plan quota details      |
+
+The per-provider quota tabs read what the provider reports about your plan window, so an account authenticated with an API key rather than a plan login never produces one.
 
 ### Overview
 
@@ -83,6 +93,34 @@ A GitHub-style heatmap showing your activity patterns throughout the week. Each 
 **Duration Trends:**
 A line chart showing how your query durations vary over time. Useful for spotting performance trends or changes in workload.
 
+### Agent Overview
+
+A compact card per active agent, sized for scanning the whole fleet in one screen rather than studying any one of them. Each card carries the agent name, a live status dot, its query count, and a 7-day activity sparkline. Worktree agents render with a dashed accent border, a **WT** badge, and their checked-out branch, so a parent and its worktrees are distinguishable at a glance. Internal terminal sessions are left out.
+
+A fuzzy filter above the grid narrows the cards live as you type, matching on the agent name (with or without its leading emoji) and on a worktree's branch name.
+
+<Tip>
+Agent Overview and **Agents** answer different questions. Agent Overview is the wide, shallow view - who is busy right now. Agents is the deep one, with per-agent stats, sorting, and a drill-down into individual tabs.
+</Tip>
+
+### Groups
+
+One tile per Left Bar group, rolling every member agent's activity into a single set of numbers. Bundle a client's agents into a group and this tab answers what that client cost.
+
+![The Groups tab, with one tile per Left Bar group](./screenshots/usage-dashboard-groups.png)
+
+Each tile shows the group's emoji and name, the providers its members run on, an **AUTO** badge for the delegated share, the member count, and four measures: **Queries**, **Time**, **Tokens**, and **Cost**, over a sparkline of the selected range.
+
+- **Filter groups** narrows the tiles by name.
+- **Sort by** orders them by Name, Queries, Time, Cost, or Agents.
+- Clicking a tile opens a per-group detail view: a sortable table of the member agents, showing the same measures the group total was summed from, so a row and the header always reconcile. Clicking a row opens that agent's own detail view on top.
+
+Agents filed under no group are collected into a synthetic **Ungrouped** tile, drawn with a dashed border, rather than being dropped - so the tiles still add up to the totals the rest of the dashboard reports. Empty groups are omitted.
+
+<Note>
+Cost and tokens only exist for turns recorded after the stats database began storing them, so a long-lived install shows older activity with query and time figures but no spend.
+</Note>
+
 ### Agents
 
 The Agents tab shows one card per agent, so you can scan your whole fleet at once. Each card carries the agent name, a live status dot, its age, and three stats: **Queries**, **Tabs**, and **Auto %** (the share of that agent's queries that came from Auto Run or Cue), plus a 7-day activity sparkline. Worktree agents render with a dashed border, a **WT** badge, and their checked-out branch.
@@ -107,6 +145,27 @@ The detail view is resizable: drag any edge or corner to resize it, and double-c
 <Note>
 Maestro records which tab issued each query, but tab *names* live with the tab itself. A tab that is open, snoozed, or was closed during this app session is shown by name; older closed tabs can only be identified by a short ID (e.g. `DEADBEEF`). This is why **Open** is the default view - a long-running agent accumulates many retired tabs that can no longer be named.
 </Note>
+
+### Tokens
+
+Token and cost consumption, broken down by agent, model, provider account, and time.
+
+This tab has a different data source from the rest of the dashboard. Where the other tabs read Maestro's own record of what it ran, Tokens reads each agent's on-disk transcripts, which is where the provider writes the token counts it actually billed.
+
+Two things it is careful about:
+
+- **Estimated versus reported cost.** Only some agents report a real cost figure. Everything else is priced from a built-in rate table, and those numbers are marked with a `~` and explained in a footnote, so an estimate is never presented as authoritative.
+- **Multiple provider accounts.** Running several Claude accounts from separate `CLAUDE_CONFIG_DIR` homes is common, and the **Accounts** breakdown reports each one's spend separately rather than blending or dropping them.
+
+Every chart on the dashboard also gains a **Tokens** metric mode, so charts that would otherwise plot query counts or time can plot token consumption over the same range.
+
+### Shortcuts
+
+How much of the keyboard you actually use, from two sources: which shortcuts you have ever fired, and how often shortcuts fired per day.
+
+The mastery figure counts only shortcuts that have a key bound to them. An action with no chord assigned cannot be fired, so it is excluded from both the total and the "unused" list - listing one would send you off to press a chord that does not exist. The same numbers drive the mastery bar in the keyboard shortcuts help modal, so the two can never disagree.
+
+The **Unused Shortcuts** list is the useful half: bound chords you have never pressed, which is the shortest path to getting faster.
 
 ### Activity
 
