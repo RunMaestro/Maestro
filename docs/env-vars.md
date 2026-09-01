@@ -126,6 +126,18 @@ This feature solves all of these issues by providing a single, unified source of
 10. Agent inherits all global env vars
 ```
 
+#### Parked (Disabled) Variables
+
+A variable switched off with the eye button in Settings → Environment is moved out of
+`shellEnvVars` and into a second record, `shellEnvVarsDisabled`. Both have the same shape,
+but nothing except the editor ever reads the disabled one - it exists so the key and value
+survive for later without appearing in any spawn.
+
+That split is deliberate. Every consumer of the effective environment (both spawners, the
+SSH wrapper, `resolveAgentEnvironment()`) keeps reading a single record and needs no filter:
+if a variable is in `shellEnvVars`, it is live. **Never merge `shellEnvVarsDisabled` into a
+spawn environment.**
+
 ---
 
 ## Precedence Rules

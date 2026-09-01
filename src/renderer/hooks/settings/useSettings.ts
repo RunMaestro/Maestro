@@ -76,6 +76,9 @@ export interface UseSettingsReturn {
 	setShellArgs: (value: string) => void;
 	shellEnvVars: Record<string, string>;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	/** Variables switched off in the editor: kept for later, never spawned with. */
+	shellEnvVarsDisabled: Record<string, string>;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 
 	// GitHub CLI settings
 	ghPath: string;

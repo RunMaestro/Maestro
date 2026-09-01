@@ -404,4 +404,113 @@ describe('EnvVarsEditor', () => {
 
 		expect(screen.getByText('=')).toBeInTheDocument();
 	});
+
+	describe('disable toggle', () => {
+		let mockSetDisabled: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			mockSetDisabled = vi.fn();
+		});
+
+		it('shows no eye button when the disabled record is not supplied', () => {
+			render(
+				<EnvVarsEditor
+					envVars={{ MY_VAR: 'hello' }}
+					setEnvVars={mockSetEnvVars}
+					theme={mockTheme}
+				/>
+			);
+
+			expect(screen.queryByTitle(/^Disable /)).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/^Enable /)).not.toBeInTheDocument();
+		});
+
+		it('moves a variable out of the effective env when switched off', () => {
+			render(
+				<EnvVarsEditor
+					envVars={{ MY_VAR: 'hello', KEEP: 'yes' }}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{}}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(/^Disable MY_VAR/));
+
+			// The value survives - it just moves to the parked record, which is
+			// what lets the user look it up and turn it back on later.
+			expect(mockSetEnvVars).toHaveBeenLastCalledWith({ KEEP: 'yes' });
+			expect(mockSetDisabled).toHaveBeenLastCalledWith({ MY_VAR: 'hello' });
+		});
+
+		it('renders parked variables and puts one back on the effective env', () => {
+			render(
+				<EnvVarsEditor
+					envVars={{ KEEP: 'yes' }}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{ PARKED: 'later' }}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			expect(screen.getByDisplayValue('PARKED')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('later')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle(/^Enable PARKED/));
+
+			expect(mockSetEnvVars).toHaveBeenLastCalledWith({ KEEP: 'yes', PARKED: 'later' });
+			expect(mockSetDisabled).toHaveBeenLastCalledWith({});
+		});
+
+		it('keeps a parked variable editable', () => {
+			render(
+				<EnvVarsEditor
+					envVars={{}}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{ PARKED: 'old' }}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			fireEvent.change(screen.getByDisplayValue('old'), { target: { value: 'new' } });
+
+			expect(mockSetDisabled).toHaveBeenLastCalledWith({ PARKED: 'new' });
+			expect(mockSetEnvVars).toHaveBeenLastCalledWith({});
+		});
+
+		it('does not reorder rows when a variable is toggled', () => {
+			// The parent re-renders with the variable moved between records; the
+			// fingerprint has to treat that as "already applied" or the sync
+			// effect rebuilds the list and the row jumps to the bottom.
+			const { rerender } = render(
+				<EnvVarsEditor
+					envVars={{ FIRST: 'a', SECOND: 'b' }}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{}}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(/^Disable FIRST/));
+
+			rerender(
+				<EnvVarsEditor
+					envVars={{ SECOND: 'b' }}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{ FIRST: 'a' }}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			const keyInputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
+			expect(keyInputs[0]).toHaveValue('FIRST');
+			expect(keyInputs[1]).toHaveValue('SECOND');
+			expect(screen.getByTitle(/^Enable FIRST/)).toBeInTheDocument();
+		});
+	});
 });

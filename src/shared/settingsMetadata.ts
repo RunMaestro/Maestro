@@ -599,6 +599,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: {},
 		category: 'shell',
 	},
+	shellEnvVarsDisabled: {
+		description:
+			'Parked environment variables the user switched off in Settings. Same shape as shellEnvVars, but never injected into any process - the editor keeps them here so a variable can be turned back on without retyping it.',
+		type: 'object',
+		default: {},
+		category: 'shell',
+	},
 	ghPath: {
 		description: 'Custom path to the GitHub CLI (gh) binary.',
 		type: 'string',

@@ -1106,7 +1106,17 @@ export const ENVIRONMENT_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Environment',
 		label: 'Global Environment Variables',
 		description: 'Variables that apply to all terminal sessions and AI agents',
-		keywords: ['env', 'environment', 'variable', 'api key', 'proxy', 'path', 'global'],
+		keywords: [
+			'env',
+			'environment',
+			'variable',
+			'api key',
+			'proxy',
+			'path',
+			'global',
+			'disable',
+			'toggle',
+		],
 	},
 ];
 

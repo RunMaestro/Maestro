@@ -336,6 +336,13 @@ export interface SettingsStoreState {
 	customShellPath: string;
 	shellArgs: string;
 	shellEnvVars: Record<string, string>;
+	/**
+	 * Variables the user switched OFF in the environment editor. Same shape as
+	 * `shellEnvVars`, but nothing reads it except the editor: parking a variable
+	 * here is what keeps it out of every spawned process while preserving its
+	 * value for later. Never merge this into a spawn env.
+	 */
+	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
 	fontFamily: string;
 	fontSize: number;
@@ -495,6 +502,7 @@ export interface SettingsStoreActions {
 	setCustomShellPath: (value: string) => void;
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
 	setFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
@@ -726,6 +734,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
+		shellEnvVarsDisabled: {},
 		ghPath: '',
 		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
 		fontSize: 14,
@@ -919,6 +928,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShellEnvVars: (value) => {
 			set({ shellEnvVars: value });
 			window.maestro.settings.set('shellEnvVars', value);
+		},
+
+		setShellEnvVarsDisabled: (value) => {
+			set({ shellEnvVarsDisabled: value });
+			window.maestro.settings.set('shellEnvVarsDisabled', value);
 		},
 
 		setGhPath: (value) => {
@@ -2378,6 +2392,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['shellEnvVars'] !== undefined)
 			patch.shellEnvVars = allSettings['shellEnvVars'] as Record<string, string>;
 
+		if (allSettings['shellEnvVarsDisabled'] !== undefined)
+			patch.shellEnvVarsDisabled = allSettings['shellEnvVarsDisabled'] as Record<string, string>;
+
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
 		if (allSettings['fontFamily'] !== undefined)
@@ -3247,6 +3264,7 @@ export function getSettingsActions() {
 		setCustomShellPath: state.setCustomShellPath,
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,
+		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setFontSize: state.setFontSize,
