@@ -179,6 +179,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Auto Run: start, stop, resume, skip, abort   | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...               |
 | Settings, theme, Encore features             | `settings`, `theme`, `set-theme`, `encore`                        |
 | Toasts and center flashes                    | `notify toast`, `notify flash`                                    |
+| Save a pasted chat image (right-click)       | `image save` (`image list` to find it)                            |
 | Cue subscriptions and scheduled tasks        | `cue trigger`, `cue schedule`, `cue pipeline`                     |
 
 ## Open gaps

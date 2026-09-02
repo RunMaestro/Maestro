@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react';
 import type { Session, FilePreviewTab } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 
 interface UseFilePreviewHandlersParams {
 	activeSession: Session | null;
@@ -147,16 +148,8 @@ export function useFilePreviewHandlers({
 
 					// A file just landed at a new on-disk location (untitled save, or
 					// redirect after a move/delete). The Files panel won't show it until
-					// its next refresh, so nudge the tree to pick it up now. Reuse the
-					// existing CustomEvent the remote/CLI path already dispatches, so we
-					// avoid prop-drilling refreshFileTree into this deeply-nested hook.
-					if (sessionId) {
-						window.dispatchEvent(
-							new CustomEvent('maestro:refreshFileTree', {
-								detail: { sessionId },
-							})
-						);
-					}
+					// its next refresh, so nudge the tree to pick it up now.
+					requestFileTreeRefresh(sessionId);
 				} else {
 					onFileTabEditContentChange?.(activeFileTabId, undefined, content);
 				}

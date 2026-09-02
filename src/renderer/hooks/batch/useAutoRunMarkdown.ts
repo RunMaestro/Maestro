@@ -12,7 +12,11 @@ import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../../components/Markdown/remarkAlert';
 import { remarkMaestroMarkers } from '../../components/Markdown/remarkMaestroMarkers';
-import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
+import {
+	remarkFileLinks,
+	buildFileTreeIndices,
+	mergeFileTreeIndices,
+} from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import { MermaidRenderer } from '../../components/MermaidRenderer';
 import { AttachmentImage } from '../../components/AutoRun/AttachmentImage';
@@ -34,6 +38,18 @@ export interface UseAutoRunMarkdownParams {
 		children?: unknown[];
 	}>;
 	onSelectDocument: (filename: string) => void;
+	/**
+	 * The agent's project file tree (the Files panel's tree, rooted at
+	 * `projectRoot`). An Auto Run document lives inside the project but its own
+	 * folder tree only covers the playbooks directory, so without this a
+	 * `[[Notes/Thing]]` pointing anywhere else in the project stays inert text
+	 * here while the same link works in a file-preview tab.
+	 */
+	projectFileTree?: FileNode[];
+	/** Absolute path the project file tree is rooted at. */
+	projectRoot?: string;
+	/** Opens a project file (path relative to `projectRoot`, or absolute). */
+	onOpenProjectFile?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	// Search state
 	searchOpen: boolean;
 	searchQuery: string;
@@ -70,6 +86,9 @@ export function useAutoRunMarkdown({
 	sshRemoteId,
 	documentTree,
 	onSelectDocument,
+	projectFileTree,
+	projectRoot,
+	onOpenProjectFile,
 	searchOpen,
 	searchQuery,
 	totalMatches,
@@ -133,25 +152,54 @@ export function useAutoRunMarkdown({
 		return convert(documentTree);
 	}, [documentTree]);
 
-	// 5. Handle file link clicks - navigate to the document
-	const handleFileClick = useCallback(
-		(filePath: string) => {
-			// filePath from remarkFileLinks will be like "Note.md" or "Subfolder/Note.md"
-			// onSelectDocument expects the path without extension for simple files,
-			// or the full relative path for nested files
-			const pathWithoutExt = filePath.replace(/\.md$/, '');
-			onSelectDocument(pathWithoutExt);
-		},
-		[onSelectDocument]
-	);
-
-	// 6. Memoize file tree indices to avoid O(n) traversal on every render
-	const fileTreeIndices = useMemo(() => {
+	// 5. Memoize file tree indices to avoid O(n) traversal on every render.
+	// Two roots feed link resolution here: the Auto Run folder (a hit switches
+	// the panel to that playbook) and the agent's project (a hit opens a file
+	// preview tab, matching every other markdown surface).
+	const autoRunIndices = useMemo(() => {
 		if (fileTree.length > 0) {
 			return buildFileTreeIndices(fileTree);
 		}
 		return null;
 	}, [fileTree]);
+
+	const projectIndices = useMemo(() => {
+		if (projectFileTree && projectFileTree.length > 0) {
+			return buildFileTreeIndices(projectFileTree);
+		}
+		return null;
+	}, [projectFileTree]);
+
+	// Auto Run first so a basename living in both trees still resolves to the
+	// playbook - findClosestMatch's proximity tiebreak walks candidates in order.
+	const fileTreeIndices = useMemo(() => {
+		if (!autoRunIndices) return projectIndices;
+		if (!projectIndices) return autoRunIndices;
+		return mergeFileTreeIndices(autoRunIndices, projectIndices);
+	}, [autoRunIndices, projectIndices]);
+
+	// 6. Handle file link clicks. The resolved path tells us which tree it came
+	// from: anything the Auto Run folder owns switches the selected document,
+	// everything else is a project file and opens where the user reads files.
+	const handleFileClick = useCallback(
+		(filePath: string, options?: { openInNewTab?: boolean }) => {
+			if (!autoRunIndices || autoRunIndices.allPaths.has(filePath)) {
+				// filePath from remarkFileLinks will be like "Note.md" or "Subfolder/Note.md"
+				// onSelectDocument expects the path without extension for simple files,
+				// or the full relative path for nested files
+				const pathWithoutExt = filePath.replace(/\.md$/, '');
+				onSelectDocument(pathWithoutExt);
+				return;
+			}
+			if (onOpenProjectFile) {
+				onOpenProjectFile(filePath, options);
+				return;
+			}
+			const pathWithoutExt = filePath.replace(/\.md$/, '');
+			onSelectDocument(pathWithoutExt);
+		},
+		[autoRunIndices, onSelectDocument, onOpenProjectFile]
+	);
 
 	// 7. Resolve homeDir for tilde path expansion
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -172,12 +220,17 @@ export function useAutoRunMarkdown({
 			// so a gate or halt that will block the run has to be visible from it.
 			remarkMaestroMarkers,
 		];
-		if (fileTree.length > 0 || homeDir) {
-			// cwd is empty since we're at the root of the Auto Run folder
-			plugins.push([remarkFileLinks, { indices: fileTreeIndices || undefined, cwd: '', homeDir }]);
+		if (fileTreeIndices || homeDir || projectRoot) {
+			// cwd is empty since we're at the root of the Auto Run folder. Keeping it
+			// empty is also what makes a bare `[[Note]]` prefer the playbook over a
+			// deeper project path with the same basename.
+			plugins.push([
+				remarkFileLinks,
+				{ indices: fileTreeIndices || undefined, cwd: '', projectRoot, homeDir },
+			]);
 		}
 		return plugins;
-	}, [fileTree, fileTreeIndices, homeDir]);
+	}, [fileTreeIndices, projectRoot, homeDir]);
 
 	// 9. Task toggling, pinned to one identity. A toggle handler naturally closes
 	// over the document content, so it is reborn on every edit - and rebuilding

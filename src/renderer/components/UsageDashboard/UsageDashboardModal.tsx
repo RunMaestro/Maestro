@@ -1400,6 +1400,7 @@ export function UsageDashboardModal({
 										<ChartErrorBoundary theme={theme} chartName="Agent Statistics">
 											<SessionStats
 												sessions={sessions}
+												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 											/>

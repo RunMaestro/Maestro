@@ -231,6 +231,34 @@ Open a Maestro modal or dashboard (use --list to see every surface)
 | `--list`          | List every openable surface, its tabs, and its shortcut | -       |
 | `--json`          | Output as JSON (for scripting)                          | -       |
 
+## `maestro-cli image`
+
+List and save images pasted into a Maestro chat
+
+## `maestro-cli image list`
+
+List images pasted into an agent's conversation, newest first
+
+| Option               | Description                               | Default |
+| -------------------- | ----------------------------------------- | ------- |
+| `-a, --agent <id>`   | Only this agent (defaults to every agent) | -       |
+| `-t, --tab <tab-id>` | Only this AI tab                          | -       |
+| `--limit <n>`        | Maximum images to show (default: 20)      | -       |
+| `--json`             | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli image save [target]`
+
+Save a pasted image to disk (target: index, handle, or "latest")
+
+| Option                | Description                                                       | Default |
+| --------------------- | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Only this agent (defaults to every agent)                         | -       |
+| `-t, --tab <tab-id>`  | Only this AI tab                                                  | -       |
+| `-o, --output <path>` | File or directory to write (default: a generated name in the cwd) | -       |
+| `--all`               | Save every image in scope instead of just the newest              | -       |
+| `--force`             | Overwrite an existing file named by --output                      | -       |
+| `--json`              | Output as JSON (for scripting)                                    | -       |
+
 ## `maestro-cli close-browser <tab-id>`
 
 Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)

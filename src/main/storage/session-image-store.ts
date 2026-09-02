@@ -40,9 +40,13 @@ export const IMAGE_REF_PREFIX = 'maestro-image://store/';
 // keeps `resolveToFilePath` from touching anything but our own files.
 const REF_BASENAME_RE = /^[0-9a-f]{64}\.(png|jpe?g|gif|webp|bmp|svg)$/;
 
-// mediaType (e.g. 'image/png') -> file extension. Mirrors the split('/')[1]
-// convention already used by process-manager/utils/imageUtils.ts.
-function extFromMediaType(mediaType: string): string {
+/**
+ * mediaType (e.g. 'image/png') -> file extension. Mirrors the split('/')[1]
+ * convention already used by process-manager/utils/imageUtils.ts. Exported so
+ * the CLI's `image save` names a file after the bytes it actually wrote rather
+ * than re-deriving the mapping.
+ */
+export function extFromMediaType(mediaType: string): string {
 	const sub = mediaType.split('/')[1]?.toLowerCase() ?? 'png';
 	if (sub === 'svg+xml') return 'svg';
 	if (sub === 'jpeg') return 'jpeg';

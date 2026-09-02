@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import {
-	aiTabFocusFields,
-	getInitialRenameValue,
-	moveActiveUnifiedTabToEdge,
-	setActiveTab,
-} from '../../utils/tabHelpers';
+import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
+import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore, selectMediaPlayerTargetId } from '../../stores/mediaPlaybackStore';
 import { stepMediaItem } from '../../utils/mediaItems';
@@ -40,9 +36,7 @@ function stepMediaFromShortcut(direction: 1 | -1): void {
 }
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
-import { useUIStore } from '../../stores/uiStore';
-import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -879,59 +873,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
 			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
-				// Open the edit modal on the newest queued message.
+				// Open the edit modal on the newest queued message. The picking rules
+				// and the "nothing to edit" reporting live in the service so this and
+				// the palette's "Edit Last Queued Message" entry cannot disagree.
 				e.preventDefault();
-				// Read the session at KEYPRESS time instead of trusting the snapshot
-				// `ctx` captured during the last render. The pencil on a queued row
-				// reads live props, so a stale snapshot here is the one way this
-				// shortcut can disagree with the queue the user is looking at and
-				// claim nothing is queued while a card sits on screen. Reuse the
-				// store's own selector so the fallback matches the rest of the app.
-				const session = selectActiveSession(useSessionStore.getState()) ?? undefined;
-				const queue = session?.executionQueue ?? [];
-				// Commands are the only thing skipped - they carry no editable prompt
-				// text. Nothing else is filtered OUT: the queue the user sees is not
-				// filtered by tab membership, so a filter here could only reject an
-				// item Maestro is actively displaying.
-				const editable = queue.filter((item) => item.type !== 'command');
-				// An item whose tab is gone has no transcript to open the modal in, so
-				// prefer items we can actually show. This RANKS rather than filters:
-				// falling back to the full list keeps a missing tab from turning into
-				// "nothing is queued".
-				const renderable = editable.filter((item) =>
-					session?.aiTabs?.some((tab) => tab.id === item.tabId)
-				);
-				const pool = renderable.length > 0 ? renderable : editable;
-				// Prefer the tab on screen, else this agent's newest queued message on
-				// any tab - the queue is agent-level and the status bar already
-				// advertises it across tabs ("1 item queued - <tab name> - Click to view").
-				const target =
-					[...pool].reverse().find((item) => item.tabId === session?.activeTabId) ??
-					pool[pool.length - 1];
-				if (!session) {
-					notifyCenterFlash({ message: 'No agent selected', color: 'yellow' });
-				} else if (!target) {
-					// Say WHICH empty this is. "No queued message" on a screen showing a
-					// queued message is the least useful thing this can report.
-					notifyCenterFlash({
-						message: queue.length > 0 ? 'Only commands are queued' : 'Nothing queued to edit',
-						color: 'yellow',
-					});
-				} else {
-					// The modal renders inside its OWN tab's transcript, so land there
-					// first - whether the message belongs to another AI tab, or a
-					// file/terminal/browser view is currently covering this one.
-					// setActiveTab returns the session unchanged when we are already in
-					// the right place, which is the check for whether to write at all;
-					// the patch itself is applied against fresh state so this cannot
-					// clobber a concurrent update with the snapshot read above.
-					const switched = setActiveTab(session, target.tabId);
-					if (switched && switched.session !== session) {
-						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(target.tabId) }));
-					}
-					useUIStore.getState().setEditingQueuedItemId(target.id);
-					trackShortcut('editLastQueuedMessage');
-				}
+				if (requestEditLastQueuedMessage()) trackShortcut('editLastQueuedMessage');
 			} else if (ctx.isShortcut(e, 'jumpToTerminal')) {
 				e.preventDefault();
 				if (ctx.activeSession && !ctx.activeGroupChatId) {

@@ -14,7 +14,9 @@
 import React, { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
+import type { StatsAggregation } from '../../../shared/stats-types';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { isWorktreeAgent, resolveAgentDisplayName } from './chartUtils';
 
 interface SessionStatsProps {
@@ -24,6 +26,12 @@ interface SessionStatsProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
+	/**
+	 * Aggregated stats for the dashboard's selected range. Only used to report
+	 * how many agents actually ran something in that range - omit it and the
+	 * Total Agents card simply drops the "N active" line.
+	 */
+	data?: StatsAggregation;
 }
 
 interface StatCardProps {
@@ -87,6 +95,7 @@ export const SessionStats = memo(function SessionStats({
 	sessions,
 	theme,
 	colorBlindMode = false,
+	data,
 }: SessionStatsProps) {
 	// Filter out terminal-only sessions for meaningful stats
 	const agentSessions = useMemo(
@@ -163,6 +172,22 @@ export const SessionStats = memo(function SessionStats({
 		};
 	}, [agentSessions]);
 
+	// Agents that recorded work inside the dashboard's selected range. This
+	// moves with the range picker, unlike every other number on this card.
+	const activeAgentCount = useMemo(
+		() => (data ? countActiveAgents(agentSessions, data.bySessionByDay) : null),
+		[agentSessions, data]
+	);
+
+	// The Total Agents card carries at most two footnotes on one line, so they
+	// share it rather than each claiming a row the 4-card grid has no room for.
+	const totalAgentsSubValue = useMemo(() => {
+		const parts: string[] = [];
+		if (activeAgentCount !== null) parts.push(`${activeAgentCount} active`);
+		if (stats.bookmarked > 0) parts.push(`${stats.bookmarked} bookmarked`);
+		return parts.length > 0 ? parts.join(' \u00b7 ') : undefined;
+	}, [activeAgentCount, stats.bookmarked]);
+
 	// Sort agents by count (descending) and resolve display names from sessions
 	// so the breakdown surfaces user-assigned names (e.g. "Backend API") when a
 	// provider has a single registered session, falling back to the prettified
@@ -215,7 +240,7 @@ export const SessionStats = memo(function SessionStats({
 					value={stats.total}
 					icon={<Monitor className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 					theme={theme}
-					subValue={stats.bookmarked > 0 ? `${stats.bookmarked} bookmarked` : undefined}
+					subValue={totalAgentsSubValue}
 				/>
 				<StatCard
 					label="Git Repositories"

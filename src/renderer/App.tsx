@@ -3150,7 +3150,6 @@ function MaestroConsoleInner() {
 					onBrowserTabSelect={handleSelectBrowserTab}
 					onNamedSessionSelect={handleNamedSessionSelect}
 					filteredFileTree={filteredFileTree}
-					fileExplorerExpanded={activeSession?.fileExplorerExpanded}
 					onCloseFileSearch={handleCloseFileSearch}
 					onFileSearchSelect={handleFileSearchSelect}
 					onClosePromptComposer={handleClosePromptComposer}

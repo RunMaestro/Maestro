@@ -247,7 +247,6 @@ export interface AppUtilityModalsProps {
 	// FileSearchModal
 	fuzzyFileSearchOpen: boolean;
 	filteredFileTree: FileNode[];
-	fileExplorerExpanded?: string[];
 	onCloseFileSearch: () => void;
 	onFileSearchSelect: (file: FlatFileItem) => void;
 
@@ -474,7 +473,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// FileSearchModal
 	fuzzyFileSearchOpen,
 	filteredFileTree,
-	fileExplorerExpanded,
 	onCloseFileSearch,
 	onFileSearchSelect,
 	// PromptComposerModal
@@ -799,7 +797,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<FileSearchModal
 					theme={theme}
 					fileTree={filteredFileTree}
-					expandedFolders={fileExplorerExpanded}
 					shortcut={shortcuts.fuzzyFileSearch}
 					onFileSelect={onFileSearchSelect}
 					onClose={onCloseFileSearch}

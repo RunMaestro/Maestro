@@ -18,6 +18,7 @@ import type { Root, Text, Link, Image } from 'mdast';
 import type { FileNode } from '../types/fileTree';
 import {
 	buildFileTreeIndices,
+	mergeFileTreeIndices,
 	findClosestMatch as findClosestMatchCore,
 	toRelativePath as toRelativePathCore,
 	validatePathReference as validatePathReferenceCore,
@@ -35,7 +36,7 @@ import {
 
 // Re-export the shared core so existing callers don't need to learn a new
 // import path. New code should import from `./fileLinks/matcher` directly.
-export { buildFileTreeIndices };
+export { buildFileTreeIndices, mergeFileTreeIndices };
 export type { FileTreeIndices };
 
 export interface RemarkFileLinksOptions {

@@ -5,6 +5,7 @@ import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { aiTabFocusFields, createTab, closeTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
@@ -707,11 +708,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Handle remote refresh file tree from web/CLI interface
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteRefreshFileTree((sessionId: string) => {
-			window.dispatchEvent(
-				new CustomEvent('maestro:refreshFileTree', {
-					detail: { sessionId },
-				})
-			);
+			requestFileTreeRefresh(sessionId);
 		});
 		return () => {
 			unsubscribe();

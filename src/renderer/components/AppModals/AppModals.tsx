@@ -328,7 +328,6 @@ export interface AppModalsProps {
 		starred?: boolean
 	) => void;
 	filteredFileTree: FileNode[];
-	fileExplorerExpanded?: string[];
 	onCloseFileSearch: () => void;
 	onFileSearchSelect: (file: FlatFileItem) => void;
 	onClosePromptComposer: () => void;
@@ -801,7 +800,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onBrowserTabSelect,
 		onNamedSessionSelect,
 		filteredFileTree,
-		fileExplorerExpanded,
 		onCloseFileSearch,
 		onFileSearchSelect,
 		onClosePromptComposer,
@@ -1160,7 +1158,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				colorBlindMode={colorBlindMode}
 				fuzzyFileSearchOpen={fuzzyFileSearchOpen}
 				filteredFileTree={filteredFileTree}
-				fileExplorerExpanded={fileExplorerExpanded}
 				onCloseFileSearch={onCloseFileSearch}
 				onFileSearchSelect={onFileSearchSelect}
 				promptComposerOpen={promptComposerOpen}
