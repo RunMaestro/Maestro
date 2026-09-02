@@ -385,6 +385,20 @@ describe('InputArea', () => {
 			expect(screen.getByTitle('Send message')).toBeInTheDocument();
 		});
 
+		// index.css keys the phone edge-swipe gesture inset off `.maestro-composer`.
+		// Without it the Send button ends 16px from the screen edge and spends its
+		// right 8px under the invisible 24px swipe strip, which answers a tap with
+		// nothing at all. jsdom has no layout engine, so the anchor class is the
+		// part that can be asserted; losing it silently re-buries the button.
+		it('anchors the edge-swipe gesture inset on the composer root', () => {
+			const props = createDefaultProps();
+			const { container } = render(<InputArea {...props} />);
+
+			const composer = container.querySelector('.maestro-composer');
+			expect(composer).not.toBeNull();
+			expect(composer).toContainElement(screen.getByTitle('Send message'));
+		});
+
 		it('renders Enter to send toggle', () => {
 			const props = createDefaultProps();
 			render(<InputArea {...props} />);

@@ -1651,12 +1651,25 @@ html[data-runtime='web-desktop'][data-bp='xs']
  * padding shrinks to 0.5rem, so those controls sit inside the outer 24px, and a
  * full-height strip (which paints above the z-20 header) would swallow their
  * taps. Edge swipes start in the body, which is the whole point.
+ *
+ * The header is not the only row that reaches the screen edge, so treat the
+ * strip width as a GESTURE INSET (`--maestro-edge-swipe-width`) that app chrome
+ * below the header must stay clear of, the same way a native app keeps its
+ * controls out of the OS back-gesture area. Anything that lands inside it is
+ * simply dead: the strip paints above the main panel's `isolate` stacking
+ * context, so a control underneath cannot win the touch back with a z-index,
+ * and the strip answers a tap with nothing at all - no press state, no click.
+ * See `.maestro-composer` below for the first consumer.
  */
+:root {
+	--maestro-edge-swipe-width: 24px;
+}
+
 .maestro-edge-swipe-zone {
 	position: fixed;
 	top: 4rem;
 	bottom: 0;
-	width: 24px;
+	width: var(--maestro-edge-swipe-width);
 	z-index: 35;
 	touch-action: pan-y;
 }
@@ -1706,6 +1719,27 @@ html[data-runtime='web-desktop'] a {
 html[data-runtime='web-desktop'] body,
 html[data-runtime='web-desktop'] .maestro-app-shell {
 	overscroll-behavior-y: contain;
+}
+
+/*
+ * Never let the page itself be wider than the screen.
+ *
+ * At xs/sm the Right Bar becomes an off-canvas drawer parked OUTSIDE the
+ * viewport (`position: fixed; right: 0` plus `transform: translateX(100%)`, so
+ * a 320px box sits from the right edge to right + 320). Desktop Chromium
+ * ignores that when sizing the document, but mobile Chromium counts off-screen
+ * chrome toward the page width, which is the classic off-canvas-menu bug: the
+ * layout ends up wider than the screen, the right side reads as cut off, and
+ * the whole page can slide sideways under a touch - so a tap aimed at a control
+ * near the right edge (the Send button) lands somewhere else entirely.
+ *
+ * iOS never showed this because the rubber-band fix further down already pins
+ * `body` with `overflow: hidden`. Android had no equivalent. Clamping the root
+ * is the standard remedy and is inert wherever the page already fits.
+ */
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body {
+	overflow-x: hidden;
 }
 
 /*
@@ -1784,6 +1818,31 @@ html[data-runtime='web-desktop'][data-bp='sm'] select {
 html[data-runtime='web-desktop'][data-bp='xs'] .maestro-input-text-overlay,
 html[data-runtime='web-desktop'][data-bp='sm'] .maestro-input-text-overlay {
 	font-size: 16px !important;
+}
+
+/*
+ * Keep the composer clear of the edge-swipe gesture inset.
+ *
+ * The composer's own padding is 1rem, so on a phone its outermost controls -
+ * the Send button and the notification bell, both 34px wide - end 16px from the
+ * screen edge and spend their right 8px underneath the 24px edge-swipe strip.
+ * The strip is invisible, sits above the main panel's `isolate` stacking
+ * context, and answers a touch with nothing, so a tap that lands there reads as
+ * the Send button being dead rather than as a mis-aim: no press state, no
+ * message sent, nothing to retry differently. The textarea loses its left 7px
+ * the same way.
+ *
+ * Widen the composer's horizontal padding past the inset so every control it
+ * owns is reachable. Only the two drawer breakpoints need it - the strips do
+ * not exist on a wider viewport or in the native app - and the 4px beyond the
+ * inset keeps a control's rounded corner off the boundary rather than exactly
+ * on it. Derived from `--maestro-edge-swipe-width` so widening the strip cannot
+ * silently re-bury the button.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .maestro-composer,
+html[data-runtime='web-desktop'][data-bp='sm'] .maestro-composer {
+	padding-left: calc(var(--maestro-edge-swipe-width) + 4px);
+	padding-right: calc(var(--maestro-edge-swipe-width) + 4px);
 }
 
 /*
