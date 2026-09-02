@@ -481,8 +481,12 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 *
 	 * Capabilities verified against captured output from grok v0.2.93
 	 * (streaming-json fixtures). Notable: the streaming-json stdout stream
-	 * carries NO tool events and NO token usage/cost; the session ID arrives
-	 * only on the final "end" event.
+	 * carries NO token usage/cost; the session ID arrives only on the final
+	 * "end" event.
+	 *
+	 * 0.2.93 also emitted no tool events, but grok 1.x does
+	 * (`tool_call` / `tool_call_update`) and the parser reads them - see the
+	 * TOOL EVENTS note in grok-output-parser.ts.
 	 */
 	grok: {
 		supportsResume: true, // Verified: -r/--resume <sessionId>; resume turn preserved the same sessionId in the end event

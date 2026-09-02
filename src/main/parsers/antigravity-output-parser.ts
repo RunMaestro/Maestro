@@ -92,6 +92,35 @@ interface AntigravityStreamMessage {
 
 const STREAM_EVENTS = ['init', 'step_update', 'result'];
 
+/**
+ * Map a step's lifecycle word onto the status vocabulary the tool badge reads.
+ *
+ * The raw `state` string used to be handed to `toolState` directly, which meant
+ * the renderer asked `'DONE'.status` and got undefined: every Antigravity badge
+ * rendered with no status, so none of them ever left the running state (issue
+ * #1485). `toolState` is an OBJECT with a `status` field - see
+ * `getToolStatus()` in StdoutHandler and the merge in
+ * useAgentToolExecutionListener.
+ *
+ * A settled step with an error is `failed`, not `completed`: they are different
+ * badges, and reporting a failed tool as completed is how a turn looks like it
+ * did work it never did. Anything unrecognized stays `running`, since a badge
+ * wrongly settled can never be corrected by a later update.
+ */
+function toolStatusFromStepState(
+	state: string | undefined,
+	errorMessage: string | undefined
+): 'running' | 'completed' | 'failed' {
+	const value = typeof state === 'string' ? state.trim().toUpperCase() : '';
+	if (value === 'DONE' || value === 'COMPLETED' || value === 'FINISHED') {
+		return errorMessage ? 'failed' : 'completed';
+	}
+	if (value === 'FAILED' || value === 'ERROR' || value === 'CANCELLED' || value === 'CANCELED') {
+		return 'failed';
+	}
+	return 'running';
+}
+
 /** Narrow an unknown payload to an Antigravity stream-json envelope. */
 function isAntigravityStreamMessage(data: unknown): data is AntigravityStreamMessage {
 	if (typeof data !== 'object' || data === null) {
@@ -182,13 +211,31 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		// Tool steps: surface the tool name and its lifecycle state so the UI can
 		// render an in-progress / settled tool card.
 		if (step.step_type === 'tool' || step.tool_name || step.tool_info) {
+			const toolInfo = step.tool_info;
+			const errorMessage = toolInfo?.error?.message || toolInfo?.error?.type;
 			return {
 				type: 'tool_use',
 				sessionId,
-				toolName: step.tool_info?.name || step.tool_name || 'tool',
+				toolName: toolInfo?.name || step.tool_name || 'tool',
 				// step_index is stable for the life of a step, so it doubles as the call id.
 				toolCallId: typeof step.step_index === 'number' ? String(step.step_index) : undefined,
-				toolState: step.state,
+				toolState: {
+					status: toolStatusFromStepState(step.state, errorMessage),
+					// The parameters and output were being dropped on the floor: the
+					// badge is what shows the user WHICH command ran and what it
+					// printed, and a badge with neither is a name and a spinner.
+					...(toolInfo?.parameters !== undefined ? { input: toolInfo.parameters } : {}),
+					// A failing step's message goes in `output` rather than a field of
+					// its own: `LogEntry.metadata.toolState` is {status,input,output},
+					// so an `error` key would round-trip through the merge and render
+					// nowhere - the badge would say failed and show nothing. A step
+					// that produced real output keeps it.
+					...(typeof toolInfo?.output === 'string'
+						? { output: toolInfo.output }
+						: errorMessage
+							? { output: errorMessage }
+							: {}),
+				},
 				usage,
 				raw,
 			};

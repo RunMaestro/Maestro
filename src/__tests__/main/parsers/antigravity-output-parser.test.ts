@@ -87,10 +87,66 @@ describe('AntigravityOutputParser', () => {
 				type: 'tool_use',
 				toolName: 'run_command',
 				toolCallId: '3',
-				toolState: 'DONE',
+				// toolState is an OBJECT the badge reads `status` off, never the raw
+				// lifecycle word: handing over 'DONE' left every badge status-less,
+				// input-less and output-less (issue #1485).
+				toolState: { status: 'completed', input: { cmd: 'ls' }, output: 'a\nb' },
 				sessionId: 'conv-1',
 			})
 		);
+	});
+
+	it('reports an ACTIVE tool step as running with its input and no output yet', () => {
+		const parser = new AntigravityOutputParser();
+
+		const event = parser.parseJsonObject({
+			event: 'step_update',
+			step_update: {
+				conversation_id: 'conv-1',
+				step_index: 4,
+				state: 'ACTIVE',
+				step_type: 'tool',
+				tool_info: { name: 'run_command', parameters: { cmd: 'pwd' } },
+			},
+		});
+
+		expect(event?.toolState).toEqual({ status: 'running', input: { cmd: 'pwd' } });
+	});
+
+	it('reports a settled tool step carrying an error as failed, not completed', () => {
+		// A failed tool reported as completed makes a turn look like it did work
+		// it never did.
+		const parser = new AntigravityOutputParser();
+
+		const event = parser.parseJsonObject({
+			event: 'step_update',
+			step_update: {
+				conversation_id: 'conv-1',
+				step_index: 5,
+				state: 'DONE',
+				step_type: 'tool',
+				tool_info: { name: 'read_file', error: { type: 'ENOENT', message: 'no such file' } },
+			},
+		});
+
+		expect(event?.toolState).toEqual({ status: 'failed', output: 'no such file' });
+	});
+
+	it('leaves an unrecognized lifecycle word running rather than settling the badge', () => {
+		const parser = new AntigravityOutputParser();
+
+		const event = parser.parseJsonObject({
+			event: 'step_update',
+			step_update: {
+				conversation_id: 'conv-1',
+				step_index: 6,
+				state: 'PENDING_APPROVAL',
+				step_type: 'tool',
+				tool_name: 'run_command',
+			},
+		});
+
+		expect((event?.toolState as { status?: string }).status).toBe('running');
 	});
 
 	it('treats bookkeeping steps as non-user-facing system events', () => {
