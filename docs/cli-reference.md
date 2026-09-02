@@ -293,7 +293,7 @@ Print conversation history for a desktop tab
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)
 
 | Option             | Description                                                                     | Default |
 | ------------------ | ------------------------------------------------------------------------------- | ------- |

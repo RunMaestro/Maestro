@@ -496,10 +496,17 @@ session
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
 
-// Open file command - open a file in the Maestro desktop app
+// Open file command - open a file in the Maestro desktop app.
+//
+// Also the verb that PLAYS media: the renderer's open path recognizes a
+// playable local audio or video file and hands it to the floating player
+// instead of making a tab, so there is no separate `play` command and nothing
+// should be shelling out to the OS player.
 program
 	.command('open-file <file-path>')
-	.description('Open a file as a preview tab in the Maestro desktop app')
+	.description(
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)'
+	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
 		'--background',
