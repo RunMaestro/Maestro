@@ -62,6 +62,14 @@ beforeEach(() => {
 	git('init', '--initial-branch=main', '.');
 	git('config', 'user.email', 'test@example.com');
 	git('config', 'user.name', 'Test');
+	// Git for Windows defaults `core.autocrlf` to true, which rewrites LF to CRLF
+	// on checkout - so a restore correctly round-tripping content through git
+	// would still fail a byte-exact assertion, on Windows only. Pinning it here
+	// keeps these tests asserting what they mean to (the content came back)
+	// rather than the platform's line-ending policy. Note this is a property of
+	// the TEST fixture, not of checkpoints: a checkpoint normalizes line endings
+	// exactly as an ordinary commit does, which is the behaviour we want.
+	git('config', 'core.autocrlf', 'false');
 	// Deliberately NOT set as a global: an environment with no committer identity
 	// is exactly the case createCheckpoint's explicit GIT_AUTHOR_* env covers.
 	write('tracked.txt', 'original\n');
