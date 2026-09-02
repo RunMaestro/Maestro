@@ -4,16 +4,14 @@ description: Coordinate multiple AI agents in a single conversation with a moder
 icon: comments
 ---
 
-<Note>
-  Group Chat is currently in **Beta**. The feature is functional but under active development.
-</Note>
+Group Chat lets you coordinate multiple AI agents in a single conversation. You appoint one agent as the **moderator** and hand it your question; it orchestrates the discussion from there, routing to the right agents, following up when an answer is thin, and synthesizing what comes back.
 
-Group Chat lets you coordinate multiple AI agents in a single conversation. A moderator AI orchestrates the discussion, routing questions to the right agents and synthesizing their responses.
+The point of a Group Chat is that you are **delegating the moderating**. In an ordinary chat you can [`@mention`](./cross-agent-mentions) other agents too, but each mention is a single-turn consult and you are the one who keeps the conversation going. A moderator acts as your fiduciary in that job, wrangling the agents to work together across as many turns as the question needs.
 
 ![Group chat](./screenshots/group-chat.png)
 
 <Tip>
-  Just need a quick one-off answer from another agent? [Cross-Agent Mentions](./cross-agent-mentions) let you `@mention` an agent inline from any chat - no moderator, no shared room. Reach for Group Chat when agents need to deliberate together over multiple rounds.
+  Just need a quick one-off answer from another agent? [Cross-Agent Mentions](./cross-agent-mentions) let you `@mention` an agent inline from any chat. That answer arrives once and stops there: no moderator, no shared room, and no second round unless you type it. Reach for Group Chat when the agents need to deliberate together over several turns.
 </Tip>
 
 ## When to Use Group Chat
@@ -47,7 +45,9 @@ The moderator is an AI that controls the conversation flow:
 - **Follow-up**: If agent responses are incomplete, keeps asking until satisfied
 - **Synthesis**: Combines multiple agent perspectives into a final answer
 
-The moderator won't return to you until your question is properly answered - it will keep going back to agents as many times as needed.
+The moderator won't return to you until your question is properly answered - it will keep going back to agents as many times as needed. That is the capability you are buying, and it is the one thing a [Cross-Agent Mention](./cross-agent-mentions) cannot do: a mention is answered in a single turn, so every round after the first is yours to drive.
+
+Participants do not see each other's replies automatically. The moderator decides who hears what, quoting an earlier agent's answer forward when a later one needs it, which is why a Group Chat produces a coordinated result rather than several agents talking past each other.
 
 ## Example Conversation
 

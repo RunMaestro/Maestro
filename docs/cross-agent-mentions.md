@@ -6,7 +6,7 @@ icon: at
 
 Cross-Agent Mentions let you pull another agent into your current conversation without leaving it. Type `@` in any AI input, pick an agent, and Maestro forwards the relevant slice of your chat to that agent, runs it in the background, and streams its answer back inline - stamped with who replied.
 
-It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are.
+It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are. Each mention buys you exactly one answer, and you stay the moderator: if the reply needs a follow-up, you write it. When you want an agent to run that back and forth for you instead, open a [Group Chat](./group-chat).
 
 ## When to Use It
 
@@ -105,13 +105,18 @@ This is deliberate. When an agent and a group share a name, a hand-typed token c
 
 ## Cross-Agent Mentions vs Group Chat
 
-Both let agents talk to each other, but they solve different problems:
+Both let you reach other agents, but the difference is not the syntax. It is **who moderates**.
 
-|                      | Cross-Agent Mentions                               | [Group Chat](./group-chat)            |
-| -------------------- | -------------------------------------------------- | ------------------------------------- |
-| **Where it happens** | Inline, in your existing chat                      | A dedicated group conversation        |
-| **Coordination**     | None - a direct one-off consult                    | A moderator AI routes and synthesizes |
-| **Best for**         | Quick questions and fan-out                        | Multi-round discussions and synthesis |
-| **The other agent**  | Answers in its own consult tab, resumed per thread | Is a persistent participant           |
+A mention is a **single-turn consult**. The agent you mention answers your question once and stops. It does not reply to another agent, ask a follow-up, or carry the thread forward on its own. If the answer opens a new question, you write the next message. You are the moderator, and every round of the discussion costs you a turn at the keyboard. Mentions will never produce a multi-turn collaboration between agents, by design.
 
-Reach for a mention when you just need an answer; open Group Chat when you need agents to deliberate together over several rounds.
+A [Group Chat](./group-chat) **delegates the moderating to an agent**. You appoint a moderator, hand it the question, and it keeps working without you: routing to the right agents, reading what comes back, pushing again when an answer is thin, and going around as many rounds as the question needs before it returns to you with a synthesis. That is the whole reason to open one.
+
+|                        | Cross-Agent Mentions                                | [Group Chat](./group-chat)                           |
+| ---------------------- | --------------------------------------------------- | ---------------------------------------------------- |
+| **Who moderates**      | You                                                 | An agent you appoint                                 |
+| **Rounds per message** | Exactly one                                         | As many as the moderator decides it needs            |
+| **Where it happens**   | Inline, in your existing chat                       | A dedicated group conversation                       |
+| **The other agents**   | Answer in their own consult tab, resumed per thread | Persistent participants the moderator can re-consult |
+| **Best for**           | A quick answer or a parallel fan-out                | Work that takes several rounds of back and forth     |
+
+Reach for a mention when you just need an answer. Open a Group Chat when you want someone other than you to keep the agents working together.

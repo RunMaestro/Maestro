@@ -301,6 +301,59 @@ describe('GroupChatModal', () => {
 				{ timeout: 3000 }
 			);
 		});
+
+		it('should not label Group Chat itself as Beta', async () => {
+			// Group Chat graduated out of Beta. The per-provider "(Beta)" suffix in
+			// the moderator dropdown is a different thing and stays; what must not
+			// come back is a feature-level badge on the modal header.
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			expect(screen.queryByText(/^Beta$/)).not.toBeInTheDocument();
+		});
+
+		it('should keep the standard header title and close control in create mode', async () => {
+			// The create header used to be a bespoke `customHeader` carrying the
+			// Beta badge. Dropping it hands the header back to <Modal>, which owns
+			// the title and the graphical exit - both must survive the swap.
+			const onClose = vi.fn();
+
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={onClose}
+					onCreate={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			expect(screen.getByRole('heading', { name: 'New Group Chat' })).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /close modal/i }));
+			expect(onClose).toHaveBeenCalled();
+		});
 	});
 
 	describe('edit mode', () => {
