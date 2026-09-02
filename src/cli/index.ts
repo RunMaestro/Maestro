@@ -44,6 +44,12 @@ import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
 import { createWorktree } from './commands/create-worktree';
+import {
+	worktreeCheckpointCreate,
+	worktreeCheckpointDelete,
+	worktreeCheckpointList,
+	worktreeCheckpointRestore,
+} from './commands/worktree-checkpoint';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
@@ -948,6 +954,53 @@ program
 	.option('--focus', 'Select the new worktree agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createWorktree);
+
+// Worktree command group - operations on an agent's working tree.
+// Today this is checkpoints: snapshot the tree before letting an agent try
+// something ambitious, and roll back cleanly if it goes wrong. Checkpoints are
+// ref-backed git objects, not copies of the tree - see
+// src/shared/gitCheckpoints.ts.
+const worktree = program.command('worktree').description("Operate on an agent's git working tree");
+
+const checkpoint = worktree
+	.command('checkpoint')
+	.description('Snapshot and roll back an agent working tree');
+
+checkpoint
+	.command('create')
+	.description("Snapshot the agent's working tree (staged, unstaged, and untracked files)")
+	.option('-a, --agent <id-or-name>', 'Target agent (defaults to the active one)')
+	.option('-m, --message <label>', 'Name for this checkpoint (defaults to a timestamp)')
+	.option(
+		'--include-ignored',
+		"Also capture .gitignore'd files (.env, build output). Larger snapshot; use it when ignored files are state rather than derivable output."
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(worktreeCheckpointCreate);
+
+checkpoint
+	.command('list')
+	.description("List the agent's checkpoints, newest first")
+	.option('-a, --agent <id-or-name>', 'Target agent (defaults to the active one)')
+	.option('--all-worktrees', 'Include checkpoints taken in other worktrees of the same repository')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(worktreeCheckpointList);
+
+checkpoint
+	.command('restore <checkpoint-id>')
+	.description(
+		'Roll the working tree back to a checkpoint. Your branch and commit history are untouched, and the pre-restore state is saved as a new checkpoint so this can be undone.'
+	)
+	.option('-a, --agent <id-or-name>', 'Target agent (defaults to the active one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(worktreeCheckpointRestore);
+
+checkpoint
+	.command('delete <checkpoint-id>')
+	.description('Delete a checkpoint. Does not change the working tree.')
+	.option('-a, --agent <id-or-name>', 'Target agent (defaults to the active one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(worktreeCheckpointDelete);
 
 // Remove agent command - remove an agent from the Maestro desktop app
 program

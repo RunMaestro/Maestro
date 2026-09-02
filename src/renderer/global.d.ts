@@ -161,6 +161,13 @@ type GroupChatData = {
 	archived?: boolean;
 };
 
+import type {
+	CheckpointListResult,
+	CheckpointResult,
+	CreateCheckpointOptions,
+	DeleteCheckpointResult,
+	RestoreCheckpointResult,
+} from '../shared/gitCheckpoints';
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
@@ -1397,6 +1404,31 @@ interface MaestroAPI {
 			createIfMissing: boolean,
 			sshRemoteId?: string
 		) => Promise<GitWorktreeCheckoutResult>;
+		// Worktree checkpoints - see src/shared/gitCheckpoints.ts
+		checkpointCreate: (
+			cwd: string,
+			options?: CreateCheckpointOptions,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<CheckpointResult>;
+		checkpointList: (
+			cwd: string,
+			options?: { allWorktrees?: boolean },
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<CheckpointListResult>;
+		checkpointRestore: (
+			cwd: string,
+			checkpointId: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<RestoreCheckpointResult>;
+		checkpointDelete: (
+			cwd: string,
+			checkpointId: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<DeleteCheckpointResult>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,

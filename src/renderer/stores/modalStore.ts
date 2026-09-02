@@ -311,6 +311,21 @@ export interface BranchSwitcherModalData {
 	currentBranch?: string;
 }
 
+/**
+ * Worktree checkpoints data - which agent's working tree the list snapshots.
+ *
+ * Only the target travels. The modal reads the checkpoint list from git itself
+ * on open, because a snapshot taken through the CLI (or by an Auto Run task
+ * boundary) while the modal sat closed has to show up when it reopens.
+ */
+export interface CheckpointsModalData {
+	sessionId: string;
+	cwd: string;
+	sshRemoteId?: string;
+	/** Current branch, shown in the header so the target tree is unambiguous. */
+	branch?: string;
+}
+
 /** Tour modal data */
 export interface TourModalData {
 	fromWizard: boolean;
@@ -393,6 +408,7 @@ export type ModalId =
 	| 'gitLog'
 	| 'gitCommandRunner'
 	| 'branchSwitcher'
+	| 'checkpoints'
 	// Wizard & Tour
 	| 'wizardResume'
 	| 'tour'
@@ -471,6 +487,7 @@ export interface ModalDataMap {
 	gitLog: GitLogModalData;
 	gitCommandRunner: GitCommandRunnerData;
 	branchSwitcher: BranchSwitcherModalData;
+	checkpoints: CheckpointsModalData;
 	tour: TourModalData;
 	standingOvation: StandingOvationData;
 	firstRunCelebration: FirstRunCelebrationData;
@@ -1076,6 +1093,8 @@ export function getModalActions() {
 		// Branch switcher (fuzzy branch picker)
 		openBranchSwitcher: (data: BranchSwitcherModalData) => openModal('branchSwitcher', data),
 		closeBranchSwitcher: () => closeModal('branchSwitcher'),
+		openCheckpoints: (data: CheckpointsModalData) => openModal('checkpoints', data),
+		closeCheckpoints: () => closeModal('checkpoints'),
 
 		// Tour Overlay
 		setTourOpen: (open: boolean) =>

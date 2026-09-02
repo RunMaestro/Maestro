@@ -10,6 +10,7 @@ import type {
 	AgentError,
 } from '../../../types';
 import { gitService } from '../../../services/git';
+import { maybeCheckpointAfterTask } from './autoRunCheckpoint';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useBatchStore } from '../../../stores/batchStore';
@@ -925,6 +926,23 @@ export function useBatchRunner({
 							docTasksCompleted += tasksCompletedThisRun;
 							totalCompletedTasks += tasksCompletedThisRun;
 							loopTasksCompleted += tasksCompletedThisRun;
+
+							// Task-boundary checkpoint, when the user has asked for one
+							// (off by default). Awaited so the snapshot describes the tree
+							// as the task left it rather than racing the next task's edits,
+							// and deliberately not guarded by `success`: a task that failed
+							// halfway is exactly the state worth being able to return to.
+							// Never throws - see autoRunCheckpoint.ts.
+							if (tasksCompletedThisRun > 0) {
+								await maybeCheckpointAfterTask({
+									cwd: effectiveCwd,
+									sshRemoteId,
+									sessionName: session.name,
+									documentName: docEntry.filename,
+									taskNumber: totalCompletedTasks,
+									taskSummary: shortSummary || undefined,
+								});
+							}
 
 							// Record this task in stats database (if stats tracking is active)
 							if (statsAutoRunId && tasksCompletedThisRun > 0) {

@@ -236,6 +236,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			onPull={runAction(gitActions.pull)}
 			onPush={runAction(gitActions.push)}
 			onSwitchBranch={runAction(gitActions.switchBranch)}
+			onViewCheckpoints={runAction(gitActions.viewCheckpoints)}
 			onCreatePR={gitActions.canCreatePR ? runAction(gitActions.createPR) : undefined}
 			// Worktree children can't own a worktree config, so the row is hidden
 			// for them - matching what the old hover card did.

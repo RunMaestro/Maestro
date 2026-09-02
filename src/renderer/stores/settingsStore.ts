@@ -456,6 +456,8 @@ export interface SettingsStoreState
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
+	autoRunCheckpointsEnabled: boolean;
+	autoRunCheckpointsIncludeIgnored: boolean;
 	autoRunInactivityTimeoutMin: number;
 	autoRunMaxTaskDurationMin: number;
 	speckitEnabled: boolean;
@@ -568,6 +570,8 @@ export interface SettingsStoreActions
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
+	setAutoRunCheckpointsEnabled: (value: boolean) => void;
+	setAutoRunCheckpointsIncludeIgnored: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
 	setAutoRunMaxTaskDurationMin: (value: number) => void;
 	setSpeckitEnabled: (value: boolean) => void;
@@ -814,6 +818,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
+		// Off by default. A checkpoint per task is cheap but not free, and the
+		// value only shows up on a long unattended run - so it is opt-in rather
+		// than something every user pays for silently.
+		autoRunCheckpointsEnabled: false,
+		autoRunCheckpointsIncludeIgnored: false,
 		autoRunInactivityTimeoutMin: 240,
 		autoRunMaxTaskDurationMin: DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN,
 		speckitEnabled: true,
@@ -1413,6 +1422,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setBmadEnabled: (value) => {
 			set({ bmadEnabled: value });
 			window.maestro.settings.set('bmadEnabled', value);
+		},
+
+		setAutoRunCheckpointsEnabled: (value) => {
+			set({ autoRunCheckpointsEnabled: value });
+			window.maestro.settings.set('autoRunCheckpointsEnabled', value);
+		},
+
+		setAutoRunCheckpointsIncludeIgnored: (value) => {
+			set({ autoRunCheckpointsIncludeIgnored: value });
+			window.maestro.settings.set('autoRunCheckpointsIncludeIgnored', value);
 		},
 
 		setAutoRunInactivityTimeoutMin: (value) => {
@@ -2528,6 +2547,14 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['dotfilesToggleHidden'] !== undefined)
 			patch.dotfilesToggleHidden = allSettings['dotfilesToggleHidden'] as boolean;
 
+		if (allSettings['autoRunCheckpointsEnabled'] !== undefined)
+			patch.autoRunCheckpointsEnabled = allSettings['autoRunCheckpointsEnabled'] as boolean;
+
+		if (allSettings['autoRunCheckpointsIncludeIgnored'] !== undefined)
+			patch.autoRunCheckpointsIncludeIgnored = allSettings[
+				'autoRunCheckpointsIncludeIgnored'
+			] as boolean;
+
 		if (allSettings['autoRunInactivityTimeoutMin'] !== undefined)
 			patch.autoRunInactivityTimeoutMin = allSettings['autoRunInactivityTimeoutMin'] as number;
 
@@ -2815,6 +2842,8 @@ export function getSettingsActions() {
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
+		setAutoRunCheckpointsEnabled: state.setAutoRunCheckpointsEnabled,
+		setAutoRunCheckpointsIncludeIgnored: state.setAutoRunCheckpointsIncludeIgnored,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
 		setAutoRunMaxTaskDurationMin: state.setAutoRunMaxTaskDurationMin,
 		setLastSelectedPromptId: state.setLastSelectedPromptId,
