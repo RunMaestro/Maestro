@@ -345,10 +345,19 @@ export class CallbackRegistry {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		force?: boolean,
-		images?: string[]
+		images?: string[],
+		background?: boolean
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force, images);
+		return this.callbacks.executeCommand(
+			sessionId,
+			command,
+			inputMode,
+			tabId,
+			force,
+			images,
+			background
+		);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {
@@ -485,9 +494,9 @@ export class CallbackRegistry {
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
 	}
 
-	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
+	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
 		if (!this.callbacks.refreshAutoRunDocs) return false;
-		return this.callbacks.refreshAutoRunDocs(sessionId);
+		return this.callbacks.refreshAutoRunDocs(sessionId, background);
 	}
 
 	async configureAutoRun(

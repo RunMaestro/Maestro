@@ -53,6 +53,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Hello world',
 					inputMode: 'ai',
+					background: false,
 				},
 				'command_result'
 			);
@@ -176,6 +177,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Follow up',
 					inputMode: 'ai',
+					background: false,
 					tabId: 'tab-xyz',
 				},
 				'command_result'
@@ -240,6 +242,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Concurrent message',
 					inputMode: 'ai',
+					background: false,
 					force: true,
 				},
 				'command_result'
@@ -257,6 +260,84 @@ describe('dispatch command', () => {
 			expect(output.code).toBe('FORCE_NOT_ALLOWED');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('placement (--background / --focus)', () => {
+		const captureSend = () => {
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-1',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+			return mockSendCommand;
+		};
+
+		it('selects the target agent when neither flag is passed', async () => {
+			// The additive rule: an unflagged dispatch behaves exactly as it did
+			// before the flag existed. This is the assertion most likely to catch a
+			// `!== false` slip, which would silently stop every existing caller from
+			// focusing.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const send = captureSend();
+
+			await dispatch('agent-abc', 'Hi', {});
+
+			expect(send.mock.calls[0][0]).toMatchObject({ background: false });
+		});
+
+		it('leaves the view alone with --background', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const send = captureSend();
+
+			await dispatch('agent-abc', 'Hi', { background: true });
+
+			expect(send.mock.calls[0][0]).toMatchObject({ background: true });
+		});
+
+		it('lets --focus win when both are passed', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const send = captureSend();
+
+			await dispatch('agent-abc', 'Hi', { background: true, focus: true });
+
+			expect(send.mock.calls[0][0]).toMatchObject({ background: false });
+		});
+
+		it('keeps --background on an existing tab too', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const send = captureSend();
+
+			await dispatch('agent-abc', 'Hi', { tab: 'tab-xyz', background: true });
+
+			expect(send.mock.calls[0][0]).toMatchObject({
+				background: true,
+				tabId: 'tab-xyz',
+			});
+		});
+
+		it('resolves --new-tab separately, and it stays background by default', async () => {
+			// One command name, two verbs. `dispatch --new-tab` shipped background;
+			// `dispatch` did not. Reading them off one key would change one of them.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const send = vi.fn().mockResolvedValue({
+				type: 'new_ai_tab_with_prompt_result',
+				success: true,
+				tabId: 'tab-new-1',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: send } as never)
+			);
+
+			await dispatch('agent-abc', 'Hi', { newTab: true });
+
+			expect(send.mock.calls[0][0]).toMatchObject({
+				type: 'new_ai_tab_with_prompt',
+				background: true,
+			});
 		});
 	});
 

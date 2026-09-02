@@ -85,9 +85,10 @@ Tips and gotchas:
 | Refresh Files, Git, History    | `Opt+Cmd+R`   | `Alt+Ctrl+R`   |
 | Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
 
-`Cmd+E` toggles edit and preview on a markdown File Preview and in the Memories
-viewer (`Cmd+Shift+M`), where the pane opens on the rendered document. Inside
-that viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
+`Cmd+E` toggles edit and preview on a markdown File Preview, in the Memories
+viewer (`Cmd+Shift+M`), where the pane opens on the rendered document, and on
+the Maestro Prompts tab in Settings, where it opens on the source. Inside the
+Memories viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
 filter, in place of their usual meanings.
 
 `Opt+Cmd+R` reloads the file tree, git status, worktree list, and history for
@@ -382,6 +383,31 @@ into a memory stays a slash. `Cmd+F` works from anywhere, including the editor.
 from the filter box it returns you to the list **keeping your query**, so you
 can filter and then arrow through the hits; pressing it again clears the
 filter, and once more closes the viewer.
+
+## Maestro Prompts (Settings)
+
+Settings -> Maestro Prompts edits the system prompts Maestro sends to agents.
+The prompt list is focused when the tab opens, so these work right away.
+
+| Action                 | macOS           | Windows/Linux   |
+| ---------------------- | --------------- | --------------- |
+| Previous / next prompt | `Up/Down Arrow` | `Up/Down Arrow` |
+| Jump to the filter box | `/`             | `/`             |
+| Toggle Preview / Edit  | `Cmd+E`         | `Ctrl+E`        |
+| Step back out          | `Esc`           | `Esc`           |
+
+The filter searches each prompt's name, description, and body, so you can find
+a prompt by a phrase you remember from inside it. `/` only jumps to the filter
+when you are not already typing, so a slash typed into a prompt stays a slash.
+`Cmd+F` is not rebound here: it stays on the Settings search box.
+
+Preview renders the prompt as markdown **with its template variables resolved**
+against the active agent, so it shows what the agent actually receives.
+
+`Esc` climbs back out one rung at a time: it dismisses the template-variable
+popup, then returns you from the filter box to the list **keeping your query**,
+then clears the filter, then closes the help panel or the expanded editor, and
+only then closes Settings.
 
 ## Agent Sessions Browser
 

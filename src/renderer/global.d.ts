@@ -340,7 +340,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
@@ -488,7 +489,9 @@ interface MaestroAPI {
 			success: boolean,
 			tabId?: string
 		) => void;
-		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
+		onRemoteRefreshAutoRunDocs: (
+			callback: (sessionId: string, background?: boolean) => void
+		) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (
 				sessionId: string,

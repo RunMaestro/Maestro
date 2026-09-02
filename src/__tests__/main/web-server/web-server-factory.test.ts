@@ -785,6 +785,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -805,6 +806,7 @@ describe('web-server/web-server-factory', () => {
 				'follow up',
 				'ai',
 				'tab-7',
+				undefined,
 				undefined,
 				undefined
 			);
@@ -827,6 +829,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				undefined,
 				true,
+				undefined,
 				undefined
 			);
 		});
@@ -856,7 +859,38 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				undefined,
 				undefined,
-				images
+				images,
+				undefined
+			);
+		});
+
+		it('forwards background placement so a dispatch can stay out of the way', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const result = await callback(
+				'session-1',
+				'quiet work',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				true
+			);
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:executeCommand',
+				'session-1',
+				'quiet work',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				true
 			);
 		});
 

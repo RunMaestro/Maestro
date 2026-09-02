@@ -364,7 +364,8 @@ export function createProcessApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -375,7 +376,8 @@ export function createProcessApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
@@ -384,9 +386,10 @@ export function createProcessApi() {
 					tabId,
 					force,
 					imageCount: images?.length ?? 0,
+					background,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId, force, images);
+					callback(sessionId, command, inputMode, tabId, force, images, background);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -931,8 +934,11 @@ export function createProcessApi() {
 		/**
 		 * Subscribe to remote refresh auto-run docs from web interface
 		 */
-		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+		onRemoteRefreshAutoRunDocs: (
+			callback: (sessionId: string, background?: boolean) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, background?: boolean) =>
+				callback(sessionId, background);
 			ipcRenderer.on('remote:refreshAutoRunDocs', handler);
 			return () => ipcRenderer.removeListener('remote:refreshAutoRunDocs', handler);
 		},

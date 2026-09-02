@@ -469,9 +469,16 @@ Handles @-mention autocomplete for file references in prompts.
 
 Tab completion utilities for terminal-style input.
 
-#### useTemplateAutocomplete (`src/renderer/hooks/useTemplateAutocomplete.ts`)
+#### useTemplateAutocompleteEngine (`src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`)
 
-Template variable autocomplete (e.g., `{{date}}`, `{{time}}`).
+Template variable autocomplete (e.g., `{{date}}`, `{{time}}`), minus the text surface. Owns when the popup opens, what the query is, which key does what, and what text replaces what.
+
+Two editors offer this popup and share nothing at the DOM level, so each supplies a small `TemplateAutocompleteTarget` binding over the one state machine:
+
+- `useTemplateAutocomplete` (`hooks/input/useTemplateAutocomplete.ts`) - plain `<textarea>` (Auto Run, the command panels, the prompt composers). Locates the caret with a mirror div, since a textarea exposes no per-character boxes.
+- `useEditorTemplateAutocomplete` (`hooks/input/useEditorTemplateAutocomplete.ts`) - the CodeMirror `MarkdownEditor` (Maestro Prompts). Reads the caret from the view and claims Up/Down/Enter/Escape by returning `true` from the editor's `onKeyDown`.
+
+Do not hand-roll a second `{{` detector for a new editor; write a target for it (three methods, all about caret positions).
 
 ### Feature Hooks
 

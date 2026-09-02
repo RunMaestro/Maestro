@@ -12,9 +12,13 @@ export interface DispatchOptions {
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
 	force?: boolean;
-	/** Explicitly ask for background placement of a `--new-tab` tab (the default). */
+	/**
+	 * Ask for background placement: the active agent and the active tab both stay
+	 * where the user left them. Already the default with `--new-tab`; on the plain
+	 * `send_command` path it suppresses the agent switch the desktop does today.
+	 */
 	background?: boolean;
-	/** Switch to the new tab after creating it. Only meaningful with --new-tab. */
+	/** Move the view to the target after dispatching. */
 	focus?: boolean;
 }
 
@@ -118,6 +122,10 @@ export async function runDispatch(
 					sessionId: agentId,
 					command: message,
 					inputMode: 'ai',
+					// Writing to an existing tab selects the target agent today. The
+					// verb keeps that default, but an agent handing work to another
+					// agent can now say so and leave the human where they were.
+					background: resolveBackgroundFlag(options, 'dispatch'),
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(options.force ? { force: true } : {}),
 				},

@@ -336,27 +336,46 @@ describe('Process Preload API', () => {
 	});
 
 	describe('onRemoteCommand', () => {
-		it('should register listener and invoke callback with all parameters including tabId, force, and images', () => {
-			const callback = vi.fn();
-			let registeredHandler: (
-				event: unknown,
-				sessionId: string,
-				command: string,
-				inputMode?: 'ai' | 'terminal',
-				tabId?: string,
-				force?: boolean,
-				images?: string[]
-			) => void;
+		type RemoteCommandHandler = (
+			event: unknown,
+			sessionId: string,
+			command: string,
+			inputMode?: 'ai' | 'terminal',
+			tabId?: string,
+			force?: boolean,
+			images?: string[],
+			background?: boolean
+		) => void;
 
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+		/** The shape `onRemoteCommand` hands its subscriber, minus the IPC event. */
+		type RemoteCommandCallback = (
+			sessionId: string,
+			command: string,
+			inputMode?: 'ai' | 'terminal',
+			tabId?: string,
+			force?: boolean,
+			images?: string[],
+			background?: boolean
+		) => void;
+
+		/** Register a callback and hand back the IPC handler the preload installed. */
+		function register(callback: RemoteCommandCallback): RemoteCommandHandler {
+			let registeredHandler: RemoteCommandHandler | undefined;
+			mockOn.mockImplementation((channel: string, handler: RemoteCommandHandler) => {
 				if (channel === 'remote:executeCommand') {
 					registeredHandler = handler;
 				}
 			});
-
 			api.onRemoteCommand(callback);
+			return registeredHandler!;
+		}
+
+		it('should register listener and invoke callback with all parameters including tabId, force, images, and background', () => {
+			const callback = vi.fn();
+			const handler = register(callback);
 			const images = ['data:image/png;base64,abc'];
-			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7', true, images);
+
+			handler({}, 'session-123', 'test command', 'ai', 'tab-7', true, images, true);
 
 			expect(callback).toHaveBeenCalledWith(
 				'session-123',
@@ -364,30 +383,37 @@ describe('Process Preload API', () => {
 				'ai',
 				'tab-7',
 				true,
-				images
+				images,
+				true
 			);
 		});
 
-		it('forwards undefined tabId/force/images when the IPC sender omits them (legacy callers)', () => {
+		it('forwards undefined tabId/force/images/background when the IPC sender omits them (legacy callers)', () => {
 			const callback = vi.fn();
-			let registeredHandler: (
-				event: unknown,
-				sessionId: string,
-				command: string,
-				inputMode?: 'ai' | 'terminal',
-				tabId?: string,
-				force?: boolean,
-				images?: string[]
-			) => void;
+			const handler = register(callback);
 
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:executeCommand') {
-					registeredHandler = handler;
-				}
-			});
+			handler({}, 'session-123', 'test command', 'ai');
 
-			api.onRemoteCommand(callback);
-			registeredHandler!({}, 'session-123', 'test command', 'ai');
+			// `background` arrives undefined rather than `false`, and that
+			// distinction is the whole contract: the renderer opts in on a literal
+			// `true` only, so an absent field has to stay absent all the way
+			// through instead of being defaulted here into a decision.
+			expect(callback).toHaveBeenCalledWith(
+				'session-123',
+				'test command',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				undefined
+			);
+		});
+
+		it('passes background through without coercing it', () => {
+			const callback = vi.fn();
+			const handler = register(callback);
+
+			handler({}, 'session-123', 'test command', 'ai', undefined, undefined, undefined, false);
 
 			expect(callback).toHaveBeenCalledWith(
 				'session-123',
@@ -395,7 +421,8 @@ describe('Process Preload API', () => {
 				'ai',
 				undefined,
 				undefined,
-				undefined
+				undefined,
+				false
 			);
 		});
 	});

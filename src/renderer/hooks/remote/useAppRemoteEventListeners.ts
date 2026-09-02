@@ -67,7 +67,7 @@ export interface UseAppRemoteEventListenersDeps {
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
 	/** Refresh the Auto Run document list for the active session */
-	handleAutoRunRefresh: () => void;
+	handleAutoRunRefresh: (options?: { silent?: boolean }) => void;
 	/** Start a batch (Auto Run) for a session */
 	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
 	/** Stop a batch run directly (no confirmation dialog) */
@@ -482,11 +482,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote refresh auto-run docs events from CLI/web interface
 	useEventListener('maestro:refreshAutoRunDocs', (e: Event) => {
-		const { sessionId } = (e as CustomEvent).detail;
+		const { sessionId, background } = (e as CustomEvent).detail as {
+			sessionId: string;
+			background?: boolean;
+		};
 		const currentActiveId = useSessionStore.getState().activeSessionId;
 		if (sessionId === currentActiveId) {
-			// Already the active session - refresh immediately
-			handleAutoRunRefresh();
+			// Already the active session - refresh immediately. A background caller
+			// still gets the refresh; what it opts out of is the flash, which is a
+			// confirmation of an action the user took and not of one an agent took.
+			handleAutoRunRefresh(background === true ? { silent: true } : undefined);
+		} else if (background === true) {
+			// Nothing on screen is showing this agent's Auto Run list, so there is
+			// nothing to re-read into: the loader effect reads the folder fresh when
+			// the user switches to it. Doing nothing here IS the refresh, and it is
+			// the only reading of `--background` that leaves the view alone - the
+			// switch below is how the non-background path gets the target refreshed
+			// at all.
 		} else {
 			// Switch to the target session - the autoRunFolderPath useEffect
 			// will trigger handleAutoRunRefresh for the newly active session

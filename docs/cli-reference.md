@@ -144,8 +144,8 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | Option           | Description                                                                                                                                          | Default |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `--new-tab`      | Create a fresh AI tab and dispatch the prompt into it                                                                                                | -       |
-| `--background`   | Leave the new tab in the background (default; with --new-tab)                                                                                        | -       |
-| `--focus`        | Switch to the new tab after creating it (with --new-tab)                                                                                             | -       |
+| `--background`   | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                           | -       |
+| `--focus`        | Move the view to the target after dispatching                                                                                                        | -       |
 | `-t, --tab <id>` | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                             | -       |
 | `-f, --force`    | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy) | -       |
 
@@ -307,21 +307,24 @@ Read a Maestro terminal tab's output
 
 ## `maestro-cli refresh-files`
 
-Refresh the file tree in the Maestro desktop app
+Refresh the file tree in the Maestro desktop app (never moves the view)
 
-| Option             | Description                             | Default |
-| ------------------ | --------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active) | -       |
-| `--json`           | Output as JSON (for scripting)          | -       |
+| Option             | Description                                                               | Default |
+| ------------------ | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to active)                                   | -       |
+| `--background`     | Accepted and ignored: this refresh never moves the view or shows a notice | -       |
+| `--json`           | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli refresh-auto-run`
 
 Refresh Auto Run documents in the Maestro desktop app
 
-| Option             | Description                             | Default |
-| ------------------ | --------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active) | -       |
-| `--json`           | Output as JSON (for scripting)          | -       |
+| Option             | Description                                           | Default |
+| ------------------ | ----------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to active)               | -       |
+| `--background`     | Refresh without switching to the target agent         | -       |
+| `--focus`          | Switch to the target agent while refreshing (default) | -       |
+| `--json`           | Output as JSON (for scripting)                        | -       |
 
 ## `maestro-cli auto-run <docs>`
 

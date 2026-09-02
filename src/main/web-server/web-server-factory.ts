@@ -601,7 +601,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
@@ -637,7 +638,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					inputMode,
 					tabId,
 					force,
-					images
+					images,
+					background
 				);
 				return true;
 			}
@@ -1341,7 +1343,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
-		server.setRefreshAutoRunDocsCallback(async (sessionId: string) => {
+		server.setRefreshAutoRunDocsCallback(async (sessionId: string, background?: boolean) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for refreshAutoRunDocs', 'WebServer');
@@ -1352,7 +1354,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				logger.warn('webContents is not available for refreshAutoRunDocs', 'WebServer');
 				return false;
 			}
-			mainWindow.webContents.send('remote:refreshAutoRunDocs', sessionId);
+			mainWindow.webContents.send('remote:refreshAutoRunDocs', sessionId, background);
 			return true;
 		});
 

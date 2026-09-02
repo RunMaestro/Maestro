@@ -14,8 +14,9 @@ Commander tree by `npm run gen:cli-reference`.
 ## Focus belongs to the human (`--background` / `--focus`)
 
 An agent may create a surface. It may not decide the human should be looking at
-it. Every verb that can move the Maestro view now carries a `background` bit so
-a caller that wants to stay out of the way has a way to say so.
+it. Every verb that can move the Maestro view or raise a notice carries a
+`background` bit so a caller that wants to stay out of the way has a way to say
+so, and the bundled system prompt tells agents to pass it by DEFAULT.
 
 `background: true` means exactly two things, everywhere: the active **agent**
 does not change, and the active **tab** inside any agent does not change. The
@@ -25,29 +26,74 @@ must never pass as background placement.
 
 ### The flag is ADDITIVE. No verb's default changed.
 
-The defect was that an agent which wanted to be polite had no way to ask, on
-seven of nine verbs. It was **not** that the verbs focus. Every verb behaves
-exactly as it did before when the flag is absent, so no existing script,
-playbook, Cue prompt, or muscle-memory invocation changes.
+The defect was that an agent which wanted to be polite had no way to ask. It was
+**not** that the verbs focus. Every verb behaves exactly as it did before when
+the flag is absent, so no existing script, playbook, Cue prompt, or
+muscle-memory invocation changes - what changed is the guidance, which now says
+to pass the flag rather than leaving each agent to guess.
 
-| Verb                                | Message                              | Default (unchanged)               |
-| ----------------------------------- | ------------------------------------ | --------------------------------- |
-| `open-file`                         | `open_file_tab`                      | focuses                           |
-| `open-terminal`                     | `open_terminal_tab`                  | focuses                           |
-| `open-browser`                      | `open_browser_tab`                   | focuses                           |
-| `tab new`                           | `new_tab` / `new_ai_tab_with_prompt` | focuses                           |
-| `dispatch --new-tab`                | `new_ai_tab_with_prompt`             | **background** (as it always was) |
-| `create-agent`                      | `create_session`                     | selects the new agent             |
-| `create-worktree`                   | `create_worktree_session`            | selects the new agent             |
-| `switch-mode`                       | `switch_mode`                        | switches                          |
-| `focus-agent`, `send --tab`, `open` | `select_session`, `open_modal`       | **always foreground, no flag**    |
+That split matters: flipping the CLI defaults would silently rewrite behaviour
+for every caller that has already shipped, including the web and mobile clients,
+which send the same messages and legitimately DO want to focus. Flipping the
+guidance changes only what new calls ask for.
 
-`focus-agent`, `send --tab` and `open` exist TO move the view - the caller named
-that intent - so they are deliberately absent from the table and must stay that
-way.
+| Verb                                              | Message                                               | Default (unchanged)                     |
+| ------------------------------------------------- | ----------------------------------------------------- | --------------------------------------- |
+| `open-file`                                       | `open_file_tab`                                       | focuses                                 |
+| `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                 |
+| `open-browser`                                    | `open_browser_tab`                                    | focuses                                 |
+| `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                 |
+| `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)       |
+| `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                |
+| `create-agent`                                    | `create_session`                                      | selects the new agent                   |
+| `create-worktree`                                 | `create_worktree_session` + `send_command`            | selects the new agent                   |
+| `switch-mode`                                     | `switch_mode`                                         | switches                                |
+| `refresh-auto-run`                                | `refresh_auto_run_docs`                               | selects the target agent, flashes       |
+| `refresh-files`                                   | `refresh_file_tree`                                   | **already quiet**; flag accepted, no-op |
+| `focus-agent`, `send --tab`, `open`, `open-graph` | `select_session`, `open_modal`, `open_document_graph` | **always foreground, no flag**          |
+
+`focus-agent`, `send --tab`, `open` and `open-graph` exist TO move the view - the
+caller named that intent, and the graph is a full-window overlay whose only
+effect IS being looked at, so a background one would do nothing. They are
+deliberately absent from the table and must stay that way.
 
 `--focus` ships on every verb even where it currently just names the default,
 because a future default flip needs the escape hatch to already exist.
+
+### Two verbs of one command name: `dispatch`
+
+`dispatch --new-tab` is background by default and `dispatch` (writing to an
+existing tab) is not. Both are correct - one creates a surface the caller will
+address by id, the other writes into a conversation - and they are why the table
+is keyed by **verb** rather than by message. `send_command` is also what
+`create-worktree` uses to deliver its optional `--message`, and that call carries
+the placement the CALLER resolved for `create-worktree` rather than re-resolving
+as `dispatch`. Without that, `create-worktree --background --message "..."`
+created the agent quietly and was then yanked onto it one message later, which
+reads as the flag not working.
+
+### Verbs that accept the flag and ignore it
+
+`refresh-files` renders no notice and moves no selection: the Files panel it
+refreshes is only drawn for the agent already on screen. It still accepts
+`--background`, and `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts` is where
+that is recorded.
+
+This is not a placeholder. The guidance agents are given is "pass `--background`
+unless the user asked to be taken there", and commander **rejects an unknown
+option** - so one verb that refused the flag would turn a polite habit into a
+failed command, and the rule would have to be taught as a lookup table instead of
+a sentence. A verb belongs on that list only while it is genuinely quiet; the
+moment one grows a notice or a selection change it moves into
+`CLI_BACKGROUND_DEFAULTS` and the flag starts meaning something, with no change
+to anything already calling it.
+
+### Placement is not error suppression
+
+A failed command still raises its toast with `background: true` set. The flag
+says where a surface goes, not whether the user gets to hear that something
+broke - `openTerminalTab`'s "Failed to start terminal" and `configureAutoRun`'s
+"Worktree Error" toasts are deliberately ungated.
 
 ### The contract lives in one module
 

@@ -474,9 +474,13 @@ Four details that are easy to miss:
 - **Key the editor on the filename.** Undo history belongs to one document. Carried across a file switch, an undo pastes the previous file's text into this one.
 - **Put the border on a wrapper.** CM6 measures its viewport against its own host element, so a border on that host is counted twice once the content scrolls.
 
-**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect. Build those ranges with the same `splitOnMatches()` the rendered preview highlights with (`utils/highlightMatches`) so the two modes cannot disagree about what counts as a hit, and pass `-1` for the active index when the query is a FILTER rather than a find bar - there is no cursor into the results, so every hit gets the same wash.
+**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect, building the ranges with `searchMatchRanges(text, query)` from `utils/highlightMatches` - it runs the same `splitOnMatches()` the rendered preview highlights with, so the two modes cannot disagree about what counts as a hit. Pass `-1` for the active index when the query is a FILTER rather than a find bar: there is no cursor into the results, so every hit gets the same wash.
 
-`MemoryViewer` is the reference implementation.
+**A read-only pane needs both halves of the switch.** `<MarkdownEditor readOnly>` pushes `EditorState.readOnly` (refuses edits) AND `EditorView.editable.of(false)` (drops the caret and the `contenteditable` attribute). Setting only the first leaves a pane that still looks like a text box and silently swallows typing. Reach for it whenever the document is a reference rather than a draft - the Maestro Prompts tab renders the bundled default that way.
+
+**A host-owned popup claims keys by returning `true` from `onKeyDown`.** That handler is installed at `Prec.highest`, so it sees the key before CodeMirror's own keymap; returning anything else leaves the key to the editor. Without the precedence the arrow keys would have already moved the caret by the time a popup was offered them, which is what makes a `{{`-autocomplete over CM6 possible at all (see `useEditorTemplateAutocomplete`). Returning nothing is the safe default and matches the pre-existing behaviour.
+
+`MemoryViewer` is the reference implementation. Settings -> Maestro Prompts (`MaestroPromptsTab`) is the second rider and shows the variations: it opens on `edit` rather than `preview` (a prompt is opened here to be changed), and its Preview resolves `{{TEMPLATE}}` variables against the active agent first, because what matters about a prompt is what the agent finally receives.
 
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 
