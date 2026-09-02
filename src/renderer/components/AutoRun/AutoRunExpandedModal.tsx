@@ -22,6 +22,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
+import type { FileNode } from '../../types/fileTree';
 import { ConfirmModal } from '../ConfirmModal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -41,6 +42,10 @@ interface AutoRunExpandedModalProps {
 		path: string;
 		children?: unknown[];
 	}>;
+	// Project context for markdown file links (see AutoRunProps).
+	projectFileTree?: FileNode[];
+	projectRoot?: string;
+	onOpenProjectFile?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	content: string;
 	onContentChange: (content: string) => void;
 	contentVersion?: number;

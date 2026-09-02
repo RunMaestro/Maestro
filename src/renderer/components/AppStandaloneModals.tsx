@@ -43,6 +43,8 @@ import type { MainPanelHandle } from './MainPanel';
 import type { FileNode } from '../types/fileTree';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { resolveFileReference } from '../utils/fileLinks/resolve';
+import { getBasename } from '../../shared/formatters';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -423,9 +425,18 @@ function AppStandaloneModalsInner({
 						onClose={() => setDirectorNotesOpen(false)}
 						onResumeSession={onDirectorNotesResumeSession}
 						fileTree={activeSession?.fileTree}
-						onFileClick={(path: string) =>
-							onFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
-						}
+						cwd={activeSession?.cwd}
+						projectRoot={activeSession?.projectRoot || activeSession?.cwd}
+						onFileClick={(path: string) => {
+							// remarkFileLinks hands back a project-relative path for anything
+							// it matched in the tree, so join it onto the root before the
+							// reader sees it - a bare `Notes/Thing.md` opens nothing.
+							const fullPath = resolveFileReference(
+								activeSession?.projectRoot || activeSession?.cwd || '',
+								path
+							);
+							onFileClick({ name: getBasename(fullPath), type: 'file' }, fullPath);
+						}}
 					/>
 				</Suspense>
 			)}

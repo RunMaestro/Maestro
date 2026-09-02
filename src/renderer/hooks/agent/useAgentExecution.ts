@@ -14,7 +14,7 @@ import {
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
-import { usageStatsToTurnFields } from '../../services/turnUsageLedger';
+import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import {
 	FALLBACK_CONTEXT_WINDOW,

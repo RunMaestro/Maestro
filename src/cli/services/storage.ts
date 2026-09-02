@@ -18,7 +18,7 @@ import {
 } from '../../shared/history';
 
 // Get the Maestro config directory path
-function getConfigDir(): string {
+export function getConfigDir(): string {
 	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
 	if (process.env.MAESTRO_USER_DATA) {
 		return path.resolve(process.env.MAESTRO_USER_DATA);

@@ -45,7 +45,7 @@ import {
 	type RunExitSynopsisDeps,
 } from './helpers/exitSynopsis';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
-import { drainTurnUsage, turnUsageStatsFields } from '../../../services/turnUsageLedger';
+import { drainTurnUsage, turnUsageStatsFields } from '../../../../shared/turnUsageLedger';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';

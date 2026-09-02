@@ -286,9 +286,26 @@ One confirmation, one delete, behind every surface that offers to remove the fil
 
 **Key export:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })` - opens the shared `confirm` modal (destructive, titled "Delete File") and, only on confirm, runs `window.maestro.fs.delete` - the same IPC the Files panel context menu uses, so SSH remotes are honored. `sessionId` defaults to the active session, which is what both surfaces are scoped to.
 
-After a successful delete it force-closes every file preview tab in that session pointing at the path, then dispatches the `maestro:refreshFileTree` CustomEvent so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
+After a successful delete it force-closes every file preview tab in that session pointing at the path, then calls `requestFileTreeRefresh(sessionId)` (`src/renderer/utils/fileTreeRefresh.ts`) so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
 
 Do NOT add a second delete path. A new surface should call `requestFileDeletion` so the confirmation copy and the tab cleanup cannot drift.
+
+---
+
+### editQueuedMessage.ts - edit the newest queued message
+
+One picker, one landing, one "nothing to edit" message, behind both surfaces that offer it: the `editLastQueuedMessage` shortcut and the command palette's `Edit Last Queued Message` entry.
+
+**Key export:** `requestEditLastQueuedMessage(): boolean` - returns whether a modal was opened, which is what the keyboard path uses to decide if the shortcut counts as used.
+
+Four rules the two surfaces must not disagree on:
+
+- **Everything is read from the stores at call time**, never from a render snapshot. The pencil on a queued row reads live props, so a stale snapshot is the one way this can claim nothing is queued while a card sits on screen.
+- **Only `type === 'command'` items are skipped** (they carry no editable prompt text). Nothing else is filtered out: the queue the user sees is not filtered by tab membership, so a filter here could only reject an item Maestro is actively displaying.
+- **A missing tab RANKS, it does not filter.** Items whose tab still exists are preferred, but falling back to the full list keeps a closed tab from turning into "nothing is queued".
+- **Say WHICH empty it is.** `Nothing queued to edit` and `Only commands are queued` are different states, and the second one renders on a screen that is visibly showing queued cards.
+
+The modal renders inside its own tab's transcript, so the service lands there first with `setActiveTab` + `aiTabFocusFields` before setting `uiStore.editingQueuedItemId`. It writes through `updateSessionWith` against fresh state, so the snapshot it read cannot clobber a concurrent update.
 
 ---
 

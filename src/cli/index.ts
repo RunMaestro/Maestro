@@ -17,6 +17,7 @@ import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
 import { openBrowser, closeBrowser } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
@@ -545,6 +546,38 @@ program
 	.option('--list', 'List every openable surface, its tabs, and its shortcut')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);
+
+// Image commands - reach the screenshots a user pasted into the chat.
+//
+// The agent can see a pasted image but has no path to it, so saving one used to
+// be a right-click only the human could perform. `image list` names them and
+// `image save` writes the bytes to disk.
+const image = program
+	.command('image')
+	.description('List and save images pasted into a Maestro chat');
+
+image
+	.command('list')
+	.description("List images pasted into an agent's conversation, newest first")
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option('--limit <n>', 'Maximum images to show (default: 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageList);
+
+image
+	.command('save [target]')
+	.description('Save a pasted image to disk (target: index, handle, or "latest")')
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option(
+		'-o, --output <path>',
+		'File or directory to write (default: a generated name in the cwd)'
+	)
+	.option('--all', 'Save every image in scope instead of just the newest')
+	.option('--force', 'Overwrite an existing file named by --output')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageSave);
 
 // Close browser command - close a browser tab opened via open-browser
 program

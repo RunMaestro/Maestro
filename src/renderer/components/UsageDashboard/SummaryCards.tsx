@@ -49,6 +49,7 @@ import {
 } from '../../../shared/formatters';
 import { aggregateUsage } from '../../../shared/usageStats';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
+import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { Sparkline } from './Sparkline';
 import { DelegationSplitBar } from './DelegationSplitBar';
 import type { DelegationTotals } from '../../../shared/delegation';
@@ -834,12 +835,25 @@ export const SummaryCards = memo(function SummaryCards({
 		return { busy, idle, error };
 	}, [sessions]);
 
+	// How many agents actually did something inside the selected range. This is
+	// a different question from the status dots beside it: those are live state
+	// right now, this one moves with the range picker.
+	const activeAgentCount = useMemo(() => {
+		if (!sessions) return null;
+		return countActiveAgents(
+			sessions.filter((s) => s.toolType !== 'terminal'),
+			data.bySessionByDay
+		);
+	}, [sessions, data.bySessionByDay]);
+
 	const statusBreakdown = statusCounts ? (
 		<div
 			className="flex items-center gap-2 mt-1.5 text-[10px]"
 			style={{ color: theme.colors.textDim }}
 			data-testid="agent-status-breakdown"
-			aria-label={`${statusCounts.busy} busy, ${statusCounts.idle} idle, ${statusCounts.error} errors`}
+			aria-label={`${statusCounts.busy} busy, ${statusCounts.idle} idle, ${statusCounts.error} errors${
+				activeAgentCount !== null ? `, ${activeAgentCount} active in range` : ''
+			}`}
 		>
 			<span className="flex items-center gap-1" title={`${statusCounts.busy} busy`}>
 				<span
@@ -865,6 +879,20 @@ export const SummaryCards = memo(function SummaryCards({
 				/>
 				{statusCounts.error}
 			</span>
+			{activeAgentCount !== null && (
+				<>
+					<span style={{ opacity: 0.4 }} aria-hidden="true">
+						|
+					</span>
+					<span
+						className="tabular-nums"
+						title={`${activeAgentCount} of ${agentCount} agents ran a query in this time range`}
+						data-testid="agent-active-count"
+					>
+						{formatNumber(activeAgentCount)} active
+					</span>
+				</>
+			)}
 		</div>
 	) : null;
 

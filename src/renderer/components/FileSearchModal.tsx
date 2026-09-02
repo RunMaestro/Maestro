@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, File, FileImage, FileText, FolderOpen, FileQuestion } from 'lucide-react';
+import {
+	Search,
+	File,
+	FileAudio,
+	FileCode,
+	FileImage,
+	FileJson,
+	FileText,
+	FileVideo,
+	FolderOpen,
+	FileQuestion,
+} from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Theme, Shortcut } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -10,7 +21,16 @@ import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { isAbsolutePath, getBasename } from '../../shared/formatters';
+import { isAbsolutePath, getBasename, formatNumber } from '../../shared/formatters';
+import {
+	FILE_CATEGORIES,
+	FILE_CATEGORY_LABELS,
+	getFileCategory,
+	isPreviewableFile,
+	type FileCategory,
+	type FileCategoryFilter,
+} from '../../shared/fileCategories';
+import { getMediaKind } from '../../shared/mediaTypes';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { EscCloseButton } from './ui/EscCloseButton';
 
@@ -25,158 +45,43 @@ export interface FlatFileItem {
 interface FileSearchModalProps {
 	theme: Theme;
 	fileTree: FileNode[];
-	expandedFolders?: string[];
 	shortcut?: Shortcut;
 	onFileSelect: (item: FlatFileItem) => void;
 	onClose: () => void;
 }
 
-// Extensions for files that can be previewed as text/code
-const TEXT_EXTENSIONS = new Set([
-	// Code files
-	'js',
-	'jsx',
-	'ts',
-	'tsx',
-	'mjs',
-	'cjs',
-	'mts',
-	'cts',
-	'py',
-	'rb',
-	'php',
-	'java',
-	'c',
-	'cpp',
-	'cc',
-	'h',
-	'hpp',
-	'cs',
-	'go',
-	'rs',
-	'swift',
-	'kt',
-	'scala',
-	'clj',
-	'ex',
-	'exs',
-	'lua',
-	'r',
-	'pl',
-	'pm',
-	'sh',
-	'bash',
-	'zsh',
-	'fish',
-	'ps1',
-	'sql',
-	'graphql',
-	'gql',
-	// Web files
-	'html',
-	'htm',
-	'css',
-	'scss',
-	'sass',
-	'less',
-	'vue',
-	'svelte',
-	// Config/data files
-	'json',
-	'yaml',
-	'yml',
-	'toml',
-	'xml',
-	'ini',
-	'cfg',
-	'conf',
-	'env',
-	'properties',
-	'plist',
-	// Documentation
-	'md',
-	'mdx',
-	'markdown',
-	'rst',
-	'txt',
-	'text',
-	'log',
-	'csv',
-	'tsv',
-	// Other
-	'dockerfile',
-	'makefile',
-	'cmake',
-	'gradle',
-	'gemfile',
-	'gitignore',
-	'gitattributes',
-	'editorconfig',
-	'prettierrc',
-	'eslintrc',
-	'babelrc',
-	'npmrc',
-	'nvmrc',
-]);
-
-// Extensions for image files
-const IMAGE_EXTENSIONS = new Set([
-	'png',
-	'jpg',
-	'jpeg',
-	'gif',
-	'webp',
-	'svg',
-	'ico',
-	'bmp',
-	'tiff',
-	'tif',
-]);
-
-// Extensions for files that open externally but are still useful to list
-const EXTERNAL_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']);
-
 /**
- * Check if a file can be previewed or opened
+ * Icon for a file, chosen from its category so the list reads as buckets
+ * rather than as one undifferentiated file glyph.
  */
-function isPreviewableFile(filename: string): boolean {
-	const ext = filename.split('.').pop()?.toLowerCase() || '';
-	const nameLower = filename.toLowerCase();
-
-	// Special filenames without extensions
-	if (
-		['makefile', 'dockerfile', 'gemfile', 'rakefile', 'procfile', 'brewfile'].includes(nameLower)
-	) {
-		return true;
+function getFileIcon(filename: string): typeof File {
+	const category = getFileCategory(filename);
+	if (category === 'media') {
+		const kind = getMediaKind(filename);
+		if (kind === 'audio') return FileAudio;
+		if (kind === 'video') return FileVideo;
+		return FileImage;
 	}
-
-	// Dotfiles that are typically text (like .gitignore, .env, .bashrc)
-	if (filename.startsWith('.') && !filename.includes('.', 1)) {
-		return true;
-	}
-
-	return TEXT_EXTENSIONS.has(ext) || IMAGE_EXTENSIONS.has(ext) || EXTERNAL_EXTENSIONS.has(ext);
+	if (category === 'code') return FileCode;
+	if (category === 'docs') return FileText;
+	if (category === 'data') return FileJson;
+	return File;
 }
 
 /**
- * Get the appropriate icon for a file
- */
-function getFileIconType(filename: string): 'image' | 'text' | 'file' {
-	const ext = filename.split('.').pop()?.toLowerCase() || '';
-	if (IMAGE_EXTENSIONS.has(ext)) return 'image';
-	if (TEXT_EXTENSIONS.has(ext)) return 'text';
-	return 'file';
-}
-
-/**
- * Recursively flatten the file tree, filtering to only previewable files.
- * When expandedSet is provided, only recurses into expanded folders (matching file explorer visibility).
+ * Recursively flatten the whole file tree down to previewable files.
+ *
+ * The search always spans the entire tree. It used to offer a second
+ * "Visible Files" scope that mirrored which folders were expanded in the file
+ * explorer, which meant the same query returned different results depending on
+ * state the user could not see from inside this modal. Extension-based
+ * category pills replaced it: they narrow the list by something the query
+ * itself can be reasoned about.
  */
 export function flattenPreviewableFiles(
 	nodes: FileNode[],
 	currentPath = '',
-	depth = 0,
-	expandedSet?: Set<string>
+	depth = 0
 ): FlatFileItem[] {
 	const result: FlatFileItem[] = [];
 
@@ -184,9 +89,7 @@ export function flattenPreviewableFiles(
 		const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
 
 		if (node.type === 'folder' && node.children) {
-			// When expandedSet is provided, only recurse into expanded folders
-			if (expandedSet && !expandedSet.has(fullPath)) continue;
-			result.push(...flattenPreviewableFiles(node.children, fullPath, depth + 1, expandedSet));
+			result.push(...flattenPreviewableFiles(node.children, fullPath, depth + 1));
 		} else if (node.type === 'file' && isPreviewableFile(node.name)) {
 			// Only add files that can be previewed/opened
 			result.push({
@@ -200,8 +103,6 @@ export function flattenPreviewableFiles(
 
 	return result;
 }
-
-type ViewMode = 'visible' | 'all';
 
 /**
  * Result of probing an absolute filesystem path typed into the search box.
@@ -223,14 +124,13 @@ const ROW_HEIGHT = 44; // Height of each file row in pixels
 export function FileSearchModal({
 	theme,
 	fileTree,
-	expandedFolders,
 	shortcut,
 	onFileSelect,
 	onClose,
 }: FileSearchModalProps) {
 	const [search, setSearch] = useState('');
 	const [selectedIndex, setSelectedIndex] = useState(0);
-	const [viewMode, setViewMode] = useState<ViewMode>('visible');
+	const [category, setCategory] = useState<FileCategoryFilter>('all');
 	const inputRef = useRef<HTMLInputElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const onCloseRef = useRef(onClose);
@@ -240,8 +140,8 @@ export function FileSearchModal({
 		setSelectedIndex(0);
 	}, []);
 
-	const handleViewModeChange = useCallback((mode: ViewMode) => {
-		setViewMode(mode);
+	const handleCategoryChange = useCallback((next: FileCategoryFilter) => {
+		setCategory(next);
 		setSelectedIndex(0);
 	}, []);
 
@@ -302,22 +202,41 @@ export function FileSearchModal({
 		return flattenPreviewableFiles(fileTree);
 	}, [fileTree]);
 
-	// Flatten only files visible in the file explorer (in expanded folders)
-	const visibleFiles = useMemo(() => {
-		if (!expandedFolders) return allFiles;
-		const expandedSet = new Set(expandedFolders);
-		return flattenPreviewableFiles(fileTree, '', 0, expandedSet);
-	}, [fileTree, expandedFolders, allFiles]);
+	// Bucket every file once per tree rather than re-classifying on each
+	// keystroke. Both the pill counts and the active list read this.
+	const filesByCategory = useMemo(() => {
+		const buckets = {} as Record<FileCategory, FlatFileItem[]>;
+		for (const key of FILE_CATEGORIES) buckets[key] = [];
+		for (const file of allFiles) {
+			const bucket = getFileCategory(file.name);
+			if (bucket) buckets[bucket].push(file);
+		}
+		return buckets;
+	}, [allFiles]);
 
-	// Count files by visibility for tab badges
-	const fileCounts = useMemo(() => {
-		return { visible: visibleFiles.length, all: allFiles.length };
-	}, [visibleFiles, allFiles]);
+	// Counts for the pill badges, including the unfiltered total.
+	const categoryCounts = useMemo(() => {
+		const counts = { all: allFiles.length } as Record<FileCategoryFilter, number>;
+		for (const key of FILE_CATEGORIES) counts[key] = filesByCategory[key].length;
+		return counts;
+	}, [allFiles, filesByCategory]);
 
-	// Filter files based on view mode and search query
+	// Categories worth drawing a pill for. A bucket with nothing in it is a
+	// dead end, so it is dropped rather than shown as a zero the user can click.
+	const visibleCategories = useMemo<FileCategoryFilter[]>(() => {
+		return ['all', ...FILE_CATEGORIES.filter((key) => categoryCounts[key] > 0)];
+	}, [categoryCounts]);
+
+	// The selected pill can empty out when the tree reloads. Fall back to All
+	// rather than leaving the user staring at a list filtered by a pill that is
+	// no longer on screen.
+	useEffect(() => {
+		if (category !== 'all' && categoryCounts[category] === 0) setCategory('all');
+	}, [category, categoryCounts]);
+
+	// Filter files based on category and search query
 	const filteredFiles = useMemo(() => {
-		// First filter by view mode (expanded folder visibility)
-		const files = viewMode === 'visible' ? visibleFiles : allFiles;
+		const files = category === 'all' ? allFiles : filesByCategory[category];
 
 		if (!search.trim()) {
 			// No search - show files sorted alphabetically by path
@@ -338,7 +257,7 @@ export function FileSearchModal({
 			.filter((r) => r.matches)
 			.sort((a, b) => b.score - a.score)
 			.map((r) => r.file);
-	}, [allFiles, visibleFiles, search, viewMode]);
+	}, [allFiles, filesByCategory, search, category]);
 
 	// Virtualizer for efficient rendering
 	const virtualizer = useVirtualizer({
@@ -348,9 +267,17 @@ export function FileSearchModal({
 		overscan: 10,
 	});
 
-	const toggleViewMode = useCallback(() => {
-		handleViewModeChange(viewMode === 'visible' ? 'all' : 'visible');
-	}, [handleViewModeChange, viewMode]);
+	// Tab walks the pills forward, Shift+Tab back, both wrapping. Keeps the
+	// caret in the search box, so the filter is reachable without a mouse.
+	const stepCategory = useCallback(
+		(delta: number) => {
+			if (visibleCategories.length < 2) return;
+			const current = Math.max(0, visibleCategories.indexOf(category));
+			const next = (current + delta + visibleCategories.length * 2) % visibleCategories.length;
+			handleCategoryChange(visibleCategories[next]);
+		},
+		[category, handleCategoryChange, visibleCategories]
+	);
 
 	// Scroll the selection into view. This is the ONLY thing allowed to move this
 	// list on its own, and it fires only when `selectedIndex` actually changes -
@@ -401,7 +328,7 @@ export function FileSearchModal({
 		(e: React.KeyboardEvent) => {
 			if (e.key === 'Tab') {
 				e.preventDefault();
-				toggleViewMode();
+				stepCategory(e.shiftKey ? -1 : 1);
 			} else if (e.key === 'ArrowDown') {
 				e.preventDefault();
 				setSelectedIndex((prev) => Math.min(prev + 1, filteredFiles.length - 1));
@@ -434,7 +361,7 @@ export function FileSearchModal({
 			selectedIndex,
 			firstVisibleIndex,
 			handleItemSelect,
-			toggleViewMode,
+			stepCategory,
 			isAbsoluteQuery,
 			handleAbsoluteOpen,
 		]
@@ -502,39 +429,39 @@ export function FileSearchModal({
 					</div>
 				</div>
 
-				{/* Mode Toggle Pills - hidden in absolute-path mode (no list to scope) */}
+				{/* Category filter pills - hidden in absolute-path mode (no list to scope) */}
 				{!isAbsoluteQuery && (
 					<div
-						className="px-4 py-2 flex items-center gap-2 border-b"
+						className="px-4 py-2 flex items-center gap-2 border-b flex-wrap"
 						style={{ borderColor: theme.colors.border }}
 					>
-						<button
-							onClick={() => handleViewModeChange('visible')}
-							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
-							style={{
-								backgroundColor: viewMode === 'visible' ? theme.colors.accent : theme.colors.bgMain,
-								color:
-									viewMode === 'visible' ? theme.colors.accentForeground : theme.colors.textDim,
-							}}
-						>
-							Visible Files ({fileCounts.visible})
-						</button>
-						<button
-							onClick={() => handleViewModeChange('all')}
-							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
-							style={{
-								backgroundColor: viewMode === 'all' ? theme.colors.accent : theme.colors.bgMain,
-								color: viewMode === 'all' ? theme.colors.accentForeground : theme.colors.textDim,
-							}}
-						>
-							All Files ({fileCounts.all})
-						</button>
-						<span
-							className="text-[10px] opacity-50 ml-auto"
-							style={{ color: theme.colors.textDim }}
-						>
-							Tab to switch
-						</span>
+						{visibleCategories.map((key) => {
+							const isActive = key === category;
+							return (
+								<button
+									key={key}
+									type="button"
+									aria-pressed={isActive}
+									data-testid={`file-search-category-${key}`}
+									onClick={() => handleCategoryChange(key)}
+									className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+									style={{
+										backgroundColor: isActive ? theme.colors.accent : theme.colors.bgMain,
+										color: isActive ? theme.colors.accentForeground : theme.colors.textDim,
+									}}
+								>
+									{FILE_CATEGORY_LABELS[key]} ({formatNumber(categoryCounts[key])})
+								</button>
+							);
+						})}
+						{visibleCategories.length > 1 && (
+							<span
+								className="text-[10px] opacity-50 ml-auto"
+								style={{ color: theme.colors.textDim }}
+							>
+								Tab to switch
+							</span>
+						)}
 					</div>
 				)}
 
@@ -549,9 +476,7 @@ export function FileSearchModal({
 						)}
 						{absDisplay.status === 'file' &&
 							(() => {
-								const iconType = getFileIconType(absDisplay.name);
-								const Icon =
-									iconType === 'image' ? FileImage : iconType === 'text' ? FileText : File;
+								const Icon = getFileIcon(absDisplay.name);
 								return (
 									<button
 										onClick={handleAbsoluteOpen}
@@ -643,31 +568,19 @@ export function FileSearchModal({
 											<div className="flex-shrink-0 w-5 h-5" />
 										)}
 
-										{/* File Icon based on type */}
+										{/* File icon, chosen from the file's category */}
 										{(() => {
-											const iconType = getFileIconType(file.name);
-											const iconColor = isSelected
-												? theme.colors.accentForeground
-												: theme.colors.textDim;
-											if (iconType === 'image') {
-												return (
-													<FileImage
-														className="w-4 h-4 flex-shrink-0"
-														style={{ color: iconColor }}
-													/>
-												);
-											} else if (iconType === 'text') {
-												return (
-													<FileText
-														className="w-4 h-4 flex-shrink-0"
-														style={{ color: iconColor }}
-													/>
-												);
-											} else {
-												return (
-													<File className="w-4 h-4 flex-shrink-0" style={{ color: iconColor }} />
-												);
-											}
+											const Icon = getFileIcon(file.name);
+											return (
+												<Icon
+													className="w-4 h-4 flex-shrink-0"
+													style={{
+														color: isSelected
+															? theme.colors.accentForeground
+															: theme.colors.textDim,
+													}}
+												/>
+											);
 										})()}
 
 										{/* File Info */}

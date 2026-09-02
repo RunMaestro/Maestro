@@ -29,6 +29,8 @@ interface DirectorNotesModalProps {
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
+	cwd?: string;
+	projectRoot?: string;
 	onFileClick?: (path: string) => void;
 }
 
@@ -45,6 +47,8 @@ export function DirectorNotesModal({
 	onClose,
 	onResumeSession,
 	fileTree,
+	cwd,
+	projectRoot,
 	onFileClick,
 }: DirectorNotesModalProps) {
 	const { directorNotesSettings, shortcuts } = useSettings();
@@ -290,6 +294,8 @@ export function DirectorNotesModal({
 								theme={theme}
 								onResumeSession={onResumeSession}
 								fileTree={fileTree}
+								cwd={cwd}
+								projectRoot={projectRoot}
 								onFileClick={onFileClick}
 								lookbackHours={lookbackHours}
 								onLookbackChange={setLookbackHours}

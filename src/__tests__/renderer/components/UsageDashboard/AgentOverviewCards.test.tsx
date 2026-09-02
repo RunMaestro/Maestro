@@ -873,4 +873,80 @@ describe('AgentOverviewCards', () => {
 			expect(screen.getByText('Alpha')).toBeInTheDocument();
 		});
 	});
+	describe('active-only toggle', () => {
+		const SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha' }),
+			buildSession({ id: 's2', name: 'Beta', toolType: 'codex' }),
+		];
+		// Only Alpha recorded a query in the range.
+		const DATA = buildData({
+			byAgent: { 'claude-code': { count: 9, duration: 0 }, codex: { count: 4, duration: 0 } },
+			bySessionByDay: { s1: [{ date: '2026-09-01', count: 9, duration: 1000 }] },
+		});
+
+		const toggle = () => screen.getByTestId('agent-overview-active-only');
+
+		it('is off by default and shows every agent', () => {
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'false');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+		});
+
+		it('drops agents with no queries in the range when switched on', () => {
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+
+			fireEvent.click(toggle());
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'true');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+		});
+
+		it('does not count the provider-total fallback as activity', () => {
+			// Beta is the only codex agent, so its CARD borrows the provider total.
+			// That must not promote it to "active" - it ran nothing itself.
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+			fireEvent.click(toggle());
+
+			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+		});
+
+		it('keeps the toolbar and explains itself when it empties the grid', () => {
+			// Emptying the grid must never hide the control that emptied it.
+			render(<AgentOverviewCards sessions={SESSIONS} data={buildData()} theme={theme} />);
+
+			fireEvent.click(toggle());
+
+			expect(toggle()).toBeInTheDocument();
+			expect(screen.getByTestId('agent-overview-group-empty')).toHaveTextContent(
+				'No agents ran a query in this time range.'
+			);
+		});
+
+		it('composes with the keyword filter', () => {
+			render(
+				<AgentOverviewCards
+					sessions={[...SESSIONS, buildSession({ id: 's3', name: 'Alpine' })]}
+					data={{
+						...DATA,
+						bySessionByDay: {
+							...DATA.bySessionByDay,
+							s3: [{ date: '2026-09-01', count: 2, duration: 100 }],
+						},
+					}}
+					theme={theme}
+				/>
+			);
+
+			fireEvent.click(toggle());
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value: 'Alph' },
+			});
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
+	});
 });

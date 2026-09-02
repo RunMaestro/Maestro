@@ -400,6 +400,55 @@ JSON shape:
 
 Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`.
 
+### Pasted Images (`image list` / `image save`)
+
+An image pasted into a Maestro chat reaches the agent as pixels in its context: the agent can see the screenshot, but it has no path to the file, so "save that to the repo" used to be a right-click only you could perform. These two verbs give the agent the same reach.
+
+```bash
+# What has been pasted, newest first
+maestro-cli image list --limit 5
+maestro-cli image list -a <agent-id> -t <tab-id> --json
+
+# The most recent image, into the current working directory
+maestro-cli image save
+
+# By index (from `image list`) or by handle, to an exact path
+maestro-cli image save 3 -o docs/screenshots/dashboard.png
+maestro-cli image save 9ca2e320 -o assets/
+
+# Every image in one conversation, into a folder
+maestro-cli image save --all -t <tab-id> -o screenshots/
+```
+
+`image list` prints one image per line: index, handle, age, agent, tab, and the first line of the message it came in on.
+
+```
+  1  9ca2e320  2m ago        Maestro  Discord Message Bus  why wasn't this picked up by our Cue pipeline?
+  2  f8d010b2  9h ago        Kensho   Fibonacci Ingest     notes from a verbal session, see the image
+```
+
+| Flag                  | Command | Description                                                       |
+| --------------------- | ------- | ----------------------------------------------------------------- |
+| `-a, --agent <id>`    | both    | Only this agent (defaults to every agent)                         |
+| `-t, --tab <tab-id>`  | both    | Only this AI tab                                                  |
+| `--limit <n>`         | `list`  | Maximum images to show (default: 20)                              |
+| `-o, --output <path>` | `save`  | File or directory to write (default: a generated name in the cwd) |
+| `--all`               | `save`  | Save every image in scope instead of just the newest              |
+| `--force`             | `save`  | Overwrite an existing file named by `--output`                    |
+| `--json`              | both    | Output as JSON (for scripting)                                    |
+
+Details worth knowing:
+
+- **Scope it with `-a` / `-t`.** With neither, the scope is every agent, so "the newest image" is whatever was pasted most recently anywhere in the fleet. An agent saving its own conversation's screenshot should pass its own agent id.
+- **The target is an index, a handle, or `latest`** (the default). A handle is the leading hex of the image's content hash, which is stable, so it keeps addressing the same picture as newer images push the indexes down.
+- **The extension follows the bytes, not the name you asked for.** Saving a JPEG as `shot.png` writes `shot.jpg`, because an extension that lies about the encoding is a file every downstream decoder rejects. The path actually written is what the command prints.
+- **Nothing is overwritten by accident.** A generated name that collides gets a `-2`, `-3` suffix; an explicit `--output` that already exists fails until you pass `--force`.
+- **With `--all`, `--output` is always a folder** and is created if it does not exist, even when the scope happens to hold a single image.
+- **The Files panel refreshes itself.** After writing, `image save` nudges the tree for whichever agents own the written paths, so the image appears without waiting for the panel's timed refresh (`--json` reports them as `refreshedAgents`). The nudge is best-effort: the bytes are already on disk, so a closed desktop is not a failed save.
+- **Reads come from disk, not the running app**, so these work with the desktop closed. The cost is the renderer's two-second persistence debounce: an image pasted this instant may not be on disk yet, and `image save` says so rather than guessing.
+
+Error codes: `AGENT_NOT_FOUND`, `NO_IMAGES`, `IMAGE_NOT_FOUND`, `AMBIGUOUS_IMAGE`, `IMAGE_MISSING`, `FILE_EXISTS`, `WRITE_FAILED`, `INVALID_USAGE`.
+
 ### Creating, Updating, and Removing Agents
 
 Create, mutate, or delete agents directly from the command line. Requires the Maestro desktop app to be running.

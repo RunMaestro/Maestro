@@ -18,9 +18,15 @@
  * Module-level rather than a store: nothing renders from it, it is written on
  * a streaming hot path, and a subscription would re-render the app on every
  * usage chunk.
+ *
+ * Shared rather than renderer-only because group chat turns are spawned and
+ * exited entirely in the MAIN process (see `group-chat-turn-metrics`), so both
+ * processes need this same accumulation. Each process gets its own module
+ * instance and therefore its own map - they track different sessions and never
+ * need to agree on an entry.
  */
 
-import type { UsageStats } from '../../shared/types';
+import type { UsageStats } from './types';
 
 /** Accumulated deltas for one in-flight turn. */
 export interface TurnUsage {

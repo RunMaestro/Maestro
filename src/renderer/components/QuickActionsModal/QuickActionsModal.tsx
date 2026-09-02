@@ -485,6 +485,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildMediaPlayerCommands({
 			canOpenMediaPlayer,
 			openMediaPlayer,
+			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({
@@ -504,6 +505,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
 			setQuickActionOpen,
 		}),
 		...buildNavigationCommands({
@@ -542,6 +544,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newTabShortcut: tabShortcuts?.newTab,
 			newFileTabShortcut: tabShortcuts?.newFileTab,
 			newBrowserTabShortcut: tabShortcuts?.newBrowserTab,
+			newTerminalTabShortcut: shortcuts.toggleMode,
 		}),
 		...buildSessionManagementCommands({
 			activeSession,
@@ -634,8 +637,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onClearActiveTerminal,
 			setQuickActionOpen,
 			shortcuts: {
-				toggleMode: shortcuts.toggleMode,
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
+				showSnoozeList: shortcuts.showSnoozeList,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
@@ -701,6 +704,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				agentSessions: shortcuts.agentSessions,
 				openMemoryViewer: shortcuts.openMemoryViewer,
 				executionQueue: shortcuts.executionQueue,
+				editLastQueuedMessage: shortcuts.editLastQueuedMessage,
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
@@ -748,6 +752,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				help: shortcuts.help,
 				systemLogs: shortcuts.systemLogs,
 				processMonitor: shortcuts.processMonitor,
+				openThemeSettings: shortcuts.openThemeSettings,
+				openLeaderboard: shortcuts.openLeaderboard,
 			},
 		}),
 		...buildGitWorktreeCommands({
@@ -761,6 +767,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				viewGitDiff: shortcuts.viewGitDiff,
 				viewGitLog: shortcuts.viewGitLog,
+				refreshGitFileState: shortcuts.refreshGitFileState,
 			},
 			gitService,
 			notifyToast,

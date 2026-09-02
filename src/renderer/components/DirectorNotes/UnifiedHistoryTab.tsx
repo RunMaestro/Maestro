@@ -55,6 +55,8 @@ interface UnifiedHistoryTabProps {
 	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	fileTree?: FileNode[];
+	cwd?: string;
+	projectRoot?: string;
 	onFileClick?: (path: string) => void;
 	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
 	lookbackHours: number | null;
@@ -63,7 +65,16 @@ interface UnifiedHistoryTabProps {
 
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
 	function UnifiedHistoryTab(
-		{ theme, onResumeSession, fileTree, onFileClick, lookbackHours, onLookbackChange },
+		{
+			theme,
+			onResumeSession,
+			fileTree,
+			cwd,
+			projectRoot,
+			onFileClick,
+			lookbackHours,
+			onLookbackChange,
+		},
 		ref
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
@@ -845,6 +856,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
 						}}
 						fileTree={fileTree}
+						cwd={cwd}
+						projectRoot={projectRoot}
 						onFileClick={onFileClick}
 					/>
 				)}

@@ -22,6 +22,7 @@ interface BuildGitWorktreeCommandsArgs {
 	shortcuts: {
 		viewGitDiff?: QuickAction['shortcut'];
 		viewGitLog?: QuickAction['shortcut'];
+		refreshGitFileState?: QuickAction['shortcut'];
 	};
 	gitService: {
 		getRemoteBrowserUrl: (cwd: string) => Promise<string | null>;
@@ -208,6 +209,7 @@ export function buildGitWorktreeCommands({
 			id: 'refreshGitFileState',
 			label: 'Refresh Files, Git, History',
 			subtext: 'Reload file tree, git status, and history',
+			shortcut: shortcuts.refreshGitFileState,
 			action: async () => {
 				await onRefreshGitFileState();
 				setQuickActionOpen(false);

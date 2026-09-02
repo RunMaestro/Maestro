@@ -5,6 +5,7 @@ interface BuildMediaPlayerCommandsArgs {
 	canOpenMediaPlayer: boolean;
 	/** Open the player on its target item (loaded item, else most recent). */
 	openMediaPlayer: () => void;
+	openMediaPlayerShortcut?: QuickAction['shortcut'];
 	setQuickActionOpen: (open: boolean) => void;
 }
 
@@ -21,12 +22,14 @@ interface BuildMediaPlayerCommandsArgs {
 export function buildMediaPlayerCommands({
 	canOpenMediaPlayer,
 	openMediaPlayer,
+	openMediaPlayerShortcut,
 	setQuickActionOpen,
 }: BuildMediaPlayerCommandsArgs): QuickAction[] {
 	return [
 		{
 			id: 'open-media-player',
 			label: 'Open Media Player',
+			shortcut: openMediaPlayerShortcut,
 			// Listed even when there is nothing to play. Hiding a command is how a
 			// user concludes a feature does not exist; a subtext that says why it
 			// will not do anything is strictly more useful than an empty palette.

@@ -1,6 +1,7 @@
 import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
+import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
@@ -54,6 +55,7 @@ interface BuildFeatureCommandsArgs {
 		agentSessions?: QuickAction['shortcut'];
 		openMemoryViewer?: QuickAction['shortcut'];
 		executionQueue?: QuickAction['shortcut'];
+		editLastQueuedMessage?: QuickAction['shortcut'];
 		openSymphony?: QuickAction['shortcut'];
 		directorNotes?: QuickAction['shortcut'];
 		openCue?: QuickAction['shortcut'];
@@ -190,6 +192,31 @@ export function buildFeatureCommands({
 			action: () => {
 				onOpenQueueBrowser();
 				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeSession) {
+		// Listed even with an empty queue, and deliberately not hidden: a command a
+		// user goes hunting for by name has to be findable, and the service says
+		// which empty it hit ("Nothing queued to edit" vs "Only commands are
+		// queued") rather than the palette guessing here.
+		const editableQueuedCount = (activeSession.executionQueue ?? []).filter(
+			(item) => item.type !== 'command'
+		).length;
+		commands.push({
+			id: 'editLastQueuedMessage',
+			label: 'Edit Last Queued Message',
+			subtext:
+				editableQueuedCount > 0
+					? `Edit the newest of ${editableQueuedCount} queued message${
+							editableQueuedCount === 1 ? '' : 's'
+						}`
+					: 'Nothing is queued on this agent',
+			shortcut: shortcuts.editLastQueuedMessage,
+			action: () => {
+				setQuickActionOpen(false);
+				requestEditLastQueuedMessage();
 			},
 		});
 	}
