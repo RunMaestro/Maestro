@@ -2342,6 +2342,7 @@ function MaestroConsoleInner() {
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
+		handleQuickActionsRefreshGitFileState,
 		logsEndRef,
 		inputRef,
 		terminalOutputRef,

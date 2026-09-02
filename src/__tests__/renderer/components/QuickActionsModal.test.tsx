@@ -1519,6 +1519,23 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Reload file tree, git status, and history')).toBeInTheDocument();
 		});
 
+		it('displays the Refresh Files shortcut when one is bound', () => {
+			const props = createDefaultProps({
+				onRefreshGitFileState: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					refreshGitFileState: {
+						id: 'refreshGitFileState',
+						keys: ['Alt', 'Cmd', 'R'],
+						enabled: true,
+					},
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText(formatShortcutKeys(['Alt', 'Cmd', 'R']))).toBeInTheDocument();
+		});
+
 		it('handles Refresh Files action', async () => {
 			const onRefreshGitFileState = vi.fn().mockResolvedValue(undefined);
 			const props = createDefaultProps({ onRefreshGitFileState });

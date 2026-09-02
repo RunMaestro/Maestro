@@ -788,6 +788,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setUsageDashboardOpen(true);
 				trackShortcut('usageDashboard');
+			} else if (ctx.isShortcut(e, 'refreshGitFileState')) {
+				e.preventDefault();
+				// Same handler the Cmd+K entry runs, so the chord and the palette
+				// cannot drift on what "refresh" reloads or what it flashes.
+				void ctx.handleQuickActionsRefreshGitFileState?.();
+				trackShortcut('refreshGitFileState');
 			} else if (ctx.isShortcut(e, 'executionQueue')) {
 				e.preventDefault();
 				ctx.handleOpenQueueBrowser();
