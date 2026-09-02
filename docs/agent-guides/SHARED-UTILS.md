@@ -259,6 +259,34 @@ span so a platform that DID fire a hide/show pair can't subtract the same sleep 
 
 ---
 
+## Group Chat Activity (`src/shared/groupChatActivity.ts` - Both)
+
+`computeGroupChatActivity(entries)` rolls a group chat's history log up into working time,
+tokens, and cost. Both the Group Chat Info overlay and the HTML export call it, so an
+export can't disagree with the app about how much work a chat did.
+
+**Never present the span between the first and last message as effort.** A group chat is a
+room, not a task: a chat used twice a week reports hundreds of hours without anyone doing
+anything. Working time is the UNION of the busy intervals, so participants running in
+PARALLEL collapse into one interval rather than summing - three agents working the same ten
+minutes is ten minutes of chat time, not thirty.
+
+Each entry covers `[timestamp - elapsedTimeMs, timestamp]` because a history entry is
+stamped when a turn ENDS. Entries recorded before per-turn timing existed carry no
+`elapsedTimeMs` and degenerate to points, which is what `GROUP_CHAT_ACTIVITY_STITCH_MS`
+(5 minutes) is for: turns closer together than the stitch are one block of work, an
+overnight gap ends it. Without it an older chat reports `0m`, which is a worse lie than the
+elapsed span it replaced.
+
+`turnsWithTokens` / `turnsWithCost` are the coverage counts. Render a dash rather than a
+zero when they are 0 - a chat whose turns reported no usage is UNKNOWN, not free.
+
+The producing half lives in `src/main/group-chat/group-chat-turn-metrics.ts`: group chat
+turns are batch processes spawned and reaped in the MAIN process, so they never reach the
+renderer's per-turn stats row and nothing else can measure them.
+
+---
+
 ## Emoji Utilities (`src/shared/emojiUtils.ts` - Both)
 
 | Function                           | Signature                    | Purpose                                         |

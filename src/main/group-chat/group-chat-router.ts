@@ -19,6 +19,7 @@ import {
 	getGroupChatDir,
 } from './group-chat-storage';
 import { appendToLog, readLog, saveImage } from './group-chat-log';
+import { finishGroupChatTurn } from './group-chat-turn-metrics';
 import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
@@ -141,13 +142,23 @@ const pendingSynthesisRounds = new Set<string>();
  * add + emit + failure-handling pattern shared by the moderator, participant, and
  * error history-record sites. History logging is best-effort: a failure here is
  * reported but never thrown, so it can't break the message flow.
+ *
+ * The entry also closes out the turn's measurement here rather than at each
+ * call site: this is the one place every finished turn passes through, and the
+ * duration and token totals a chat reports are only as complete as the entries
+ * that carry them. Values already on the entry win, so a caller that measured
+ * something itself is never overwritten.
  */
 async function recordGroupChatHistory(
 	groupChatId: string,
 	entry: Omit<GroupChatHistoryEntry, 'id'>
 ): Promise<void> {
 	try {
-		const historyEntry = await addGroupChatHistoryEntry(groupChatId, entry);
+		const measured = finishGroupChatTurn(groupChatId, entry.participantName);
+		const historyEntry = await addGroupChatHistoryEntry(groupChatId, {
+			...measured,
+			...entry,
+		});
 		groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
 		logger.debug(
 			`[GroupChatRouter] Added ${entry.type} history entry for ${entry.participantName}: ${entry.summary.substring(0, 50)}...`

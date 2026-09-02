@@ -6,6 +6,7 @@
 import type { ProcessManager } from '../process-manager';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies, type UsageStats } from './types';
 import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
+import { recordGroupChatTurnUsage } from '../group-chat/group-chat-turn-metrics';
 
 /**
  * Sets up the usage listener for token/cost statistics.
@@ -42,6 +43,14 @@ export function setupUsageListener(
 	processManager.on('usage', (sessionId: string, usageStats: UsageStats) => {
 		// Fast path: skip regex for non-group-chat sessions (performance optimization)
 		const isGroupChatSession = sessionId.startsWith(GROUP_CHAT_PREFIX);
+
+		// Fold the event into this turn's ledger. The participant/moderator stats
+		// below are a CONTEXT snapshot (how full the window is right now), which
+		// is a different fact from how many tokens the turn burned - only the
+		// ledger can answer the second one, and the chat's totals need it.
+		if (isGroupChatSession) {
+			recordGroupChatTurnUsage(sessionId, usageStats);
+		}
 
 		// Handle group chat participant usage - update participant stats
 		const participantUsageInfo = isGroupChatSession

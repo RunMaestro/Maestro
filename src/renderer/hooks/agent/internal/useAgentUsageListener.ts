@@ -13,7 +13,7 @@ import { parseSessionId } from '../../../utils/sessionIdParser';
 import { estimateContextUsage, estimateAccumulatedGrowth } from '../../../utils/contextUsage';
 import { getContextWindowForAgent } from '../../../../shared/agentConstants';
 import { useAgentStore } from '../../../stores/agentStore';
-import { recordTurnUsage } from '../../../services/turnUsageLedger';
+import { recordTurnUsage } from '../../../../shared/turnUsageLedger';
 import type { BatchedUpdater } from './types';
 
 /**
