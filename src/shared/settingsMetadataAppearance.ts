@@ -220,6 +220,20 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'appearance',
 	},
+	showAgentTaskListBar: {
+		description:
+			"Dock the agent's current checklist (TodoWrite / update_plan) in a collapsible bar above the composer.",
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	autoExpandAgentTaskListBar: {
+		description:
+			'Open the docked agent task list to its full checklist whenever the agent writes a new one, instead of the one-line summary. Requires showAgentTaskListBar.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	showWorktreePill: {
 		description: 'Show the WORKTREE badge next to worktree child agents in the left panel.',
 		type: 'boolean',
