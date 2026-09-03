@@ -254,7 +254,7 @@ function wrapText(
 	// If we hit maxLines and there's more text, add ellipsis to last line
 	if (lines.length === maxLines && currentLine && !lines.includes(currentLine)) {
 		const lastLine = lines[maxLines - 1];
-		lines[maxLines - 1] = truncateText(lastLine, lastLine.length - 3) + '...';
+		lines[maxLines - 1] = lastLine.slice(0, Math.max(0, lastLine.length - 3)) + '...';
 	}
 
 	return lines;
@@ -346,7 +346,7 @@ export function renderDocumentNode(
 		ctx.setLineDash([]);
 
 		ctx.fillStyle = '#FFFFFF';
-		ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+		ctx.font = `600 12px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
 		const pillTitleWidth = width - NODE_PILL_CHROME_WIDTH;
