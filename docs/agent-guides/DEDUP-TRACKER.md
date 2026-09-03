@@ -47,7 +47,8 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **KEEP:** Nothing (all are unused)
 - **REMOVE:** `AgentSessionsModal.tsx`, `GitWorktreeSection.tsx`, `GroupChatParticipants.tsx`, `MergeProgressModal.tsx`, `ShortcutEditor.tsx`, `SummarizeProgressModal.tsx`, `ThemePicker.tsx`
 - **2026-08-26:** Six of the seven files are gone. `AgentSessionsModal.tsx` is still on disk; no production file imports that component (the modal store still has an `agentSessions` slot). Re-grep before deleting: the store surface may still be wired.
-- **Estimated savings:** ~7 files deleted entirely
+- **2026-09-03:** `AgentSessionsModal.tsx` removed on branch `refactor/remove-dead-components`. The `agentSessions` modal store slot is unaffected - it still backs `AgentSessionsBrowser.tsx`, which is what actually renders when that modal state is open; `AgentSessionsModal.tsx` had been fully superseded and orphaned. Same pass also found and removed three more zero-production-reference components not on this original list: `QRCode.tsx`, `RetryCountdownBanner.tsx` (superseded by `RetryStatusCard.tsx`), and `ScrollArea.tsx` (never adopted; codebase uses plain Tailwind `overflow-auto`). All 4 removals verified via full-repo grep (no dynamic imports, no barrel re-exports, no string references) plus tsc/ESLint/full test suite passing unchanged.
+- **Estimated savings:** ~7 files deleted entirely (all 7 now confirmed gone), plus 3 additional dead components found beyond the original scan
 
 ### 2. Dead Store Selectors (53 exports across 9 store files)
 
