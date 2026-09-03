@@ -178,7 +178,9 @@ describe('ThemeTab', () => {
 		});
 
 		// Find the theme picker container
-		const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+		const themePickerContainer = screen
+			.getByText('dark Mode')
+			.closest('[data-setting-id="theme-picker"]');
 
 		// Fire Tab keydown on the theme picker container
 		fireEvent.keyDown(themePickerContainer!, { key: 'Tab' });
@@ -194,7 +196,9 @@ describe('ThemeTab', () => {
 			await vi.advanceTimersByTimeAsync(100);
 		});
 
-		const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+		const themePickerContainer = screen
+			.getByText('dark Mode')
+			.closest('[data-setting-id="theme-picker"]');
 
 		// Fire Shift+Tab keydown
 		fireEvent.keyDown(themePickerContainer!, { key: 'Tab', shiftKey: true });

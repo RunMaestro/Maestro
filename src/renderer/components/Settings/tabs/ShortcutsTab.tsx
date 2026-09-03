@@ -7,12 +7,14 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { Keyboard, MessageSquare } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
 import { shortcutKeysEqual, findReservedShortcutCombo } from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
+import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import type { Theme, Shortcut } from '../../../types';
 
 export interface ShortcutsTabProps {
@@ -269,16 +271,11 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 				</kbd>{' '}
 				from the main interface to view the full list of keyboard shortcuts.
 			</p>
-			<div className="space-y-4 flex-1 overflow-y-auto pr-2 scrollbar-thin">
+			<div className="space-y-5 flex-1 overflow-y-auto pr-2 scrollbar-thin">
 				{/* General Shortcuts Section */}
 				{generalShortcuts.length > 0 && (
 					<div>
-						<h3
-							className="text-xs font-bold uppercase mb-2 px-1"
-							style={{ color: theme.colors.textDim }}
-						>
-							General
-						</h3>
+						<SettingsSectionHeading icon={Keyboard}>General</SettingsSectionHeading>
 						<div className="space-y-2">{generalShortcuts.map(renderShortcutItem)}</div>
 					</div>
 				)}
@@ -286,12 +283,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 				{/* AI Tab Shortcuts Section */}
 				{tabShortcutsFiltered.length > 0 && (
 					<div>
-						<h3
-							className="text-xs font-bold uppercase mb-2 px-1"
-							style={{ color: theme.colors.textDim }}
-						>
-							AI Tab
-						</h3>
+						<SettingsSectionHeading icon={MessageSquare}>AI Tab</SettingsSectionHeading>
 						<div className="space-y-2">{tabShortcutsFiltered.map(renderShortcutItem)}</div>
 					</div>
 				)}

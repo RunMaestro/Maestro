@@ -58,14 +58,20 @@ export function TypographyResetSection({
 
 	return (
 		<div data-setting-id="display-typography-reset">
-			<SettingsSectionHeading icon={RotateCcw}>Factory Reset Fonts</SettingsSectionHeading>
-			<p className="text-xs opacity-70 mb-2 -mt-1">
-				Set every font and size above at once. Default is proportional to read and monospace to
-				work; Hacker is monospace everywhere.
-				{activePreset
-					? ` You're on ${TYPOGRAPHY_PRESETS[activePreset].label}.`
-					: " You've customized these, so neither preset is active."}
-			</p>
+			<SettingsSectionHeading
+				icon={RotateCcw}
+				description={
+					<>
+						Set every font and size above at once. Default is proportional to read and monospace to
+						work; Hacker is monospace everywhere.
+						{activePreset
+							? ` You're on ${TYPOGRAPHY_PRESETS[activePreset].label}.`
+							: " You've customized these, so neither preset is active."}
+					</>
+				}
+			>
+				Factory Reset Fonts
+			</SettingsSectionHeading>
 			<div className="flex gap-2">
 				{TYPOGRAPHY_PRESET_IDS.map((id) => {
 					const preset = TYPOGRAPHY_PRESETS[id];
