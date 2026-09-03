@@ -78,7 +78,7 @@ export function FontSizeStepper({
 
 	return (
 		<div className="flex items-center gap-2">
-			<span className="text-xs opacity-60 shrink-0">{label}</span>
+			<span className="text-xs opacity-70 shrink-0">{label}</span>
 			<button
 				type="button"
 				onClick={() => step(-1)}

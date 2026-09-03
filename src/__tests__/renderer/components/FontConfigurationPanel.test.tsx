@@ -314,4 +314,26 @@ describe('FontConfigurationPanel', () => {
 			expect(sample).toHaveClass('truncate');
 		});
 	});
+
+	describe('cell spacing', () => {
+		/** The size row is the last element of the panel in compact mode. */
+		function sizeRow() {
+			return screen.getByTestId('size-control').parentElement!;
+		}
+
+		it('leaves no trailing margin below a compact cell', () => {
+			// A compact panel is one cell of the Fonts grid, so margin under its
+			// last element adds to the grid's own row gap and pushes the six cells
+			// further apart than the gap says.
+			renderPanel({ compact: true, sizeControl: <span data-testid="size-control" /> });
+
+			expect(sizeRow()).not.toHaveClass('mb-2');
+		});
+
+		it('keeps the margin in full mode, where the custom-font manager follows', () => {
+			renderPanel({ sizeControl: <span data-testid="size-control" /> });
+
+			expect(sizeRow()).toHaveClass('mb-2');
+		});
+	});
 });
