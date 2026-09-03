@@ -176,6 +176,92 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const snapshots = new Map<string, DispatchSnapshot>();
 
 /**
+ * Dispatch snapshots that must survive an app restart, keyed the same way.
+ *
+ * Re-authenticating means leaving Maestro - often to a terminal, often quitting
+ * on the way back - and the in-memory `snapshots` map dies with the process. So
+ * "Resume Agent" found nothing to replay in exactly the flow it exists for.
+ *
+ * Only auth outages are persisted, and only at the moment one is reported. A
+ * write per dispatch would put every prompt in the app on disk to serve a case
+ * that almost never fires; a write per auth failure is rare and is precisely
+ * when the data is about to be needed.
+ *
+ * The whole `DispatchSnapshot` is stored, not a reconstruction of it.
+ * `ProcessQueuedItemDeps` is plain data (command lists and a profile string) and
+ * `QueuedItem` carries the text, images, and settings codified at send time - so
+ * the replay puts the EXACT message back on the wire. Rebuilding it from the
+ * transcript instead would drop attachments and slash-command expansion and
+ * resend something the user never typed, against a provider they just signed
+ * back into.
+ */
+const PERSISTED_SNAPSHOTS_KEY = 'authReplaySnapshots';
+
+/**
+ * How long a persisted snapshot stays replayable. Long enough to cover a login
+ * that involves a browser, a password manager and a restart; short enough that
+ * a prompt abandoned days ago is never silently resent.
+ */
+const PERSISTED_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface PersistedSnapshot extends DispatchSnapshot {
+	savedAt: number;
+}
+
+/** Mirror of what is on disk, hydrated once on first use. */
+let persistedSnapshots: Record<string, PersistedSnapshot> | null = null;
+
+async function loadPersistedSnapshots(): Promise<Record<string, PersistedSnapshot>> {
+	if (persistedSnapshots) return persistedSnapshots;
+	try {
+		const raw = (await window.maestro.settings.get(PERSISTED_SNAPSHOTS_KEY)) as
+			| Record<string, PersistedSnapshot>
+			| undefined;
+		const cutoff = Date.now() - PERSISTED_SNAPSHOT_TTL_MS;
+		persistedSnapshots = Object.fromEntries(
+			Object.entries(raw ?? {}).filter(([, v]) => (v?.savedAt ?? 0) > cutoff)
+		);
+	} catch {
+		// A settings read failure costs the restart-resume, not the app - and it is
+		// deliberately NOT cached. Caching the empty result would turn one transient
+		// read failure (settings not ready yet, IPC blip) into a permanently dead
+		// restart-resume for the rest of the process, long after the read would
+		// have succeeded.
+		return {};
+	}
+	return persistedSnapshots;
+}
+
+function writePersistedSnapshots(next: Record<string, PersistedSnapshot>): void {
+	persistedSnapshots = next;
+	void window.maestro.settings.set(PERSISTED_SNAPSHOTS_KEY, next);
+}
+
+/**
+ * Persist this tab's dispatch snapshot so it survives a restart during re-auth.
+ * Called when an auth outage is reported - see `useAgentErrorListener`.
+ */
+export async function persistDispatchSnapshotForAuth(
+	sessionId: string,
+	tabId: string
+): Promise<void> {
+	const key = keyFor(sessionId, tabId);
+	const snapshot = snapshots.get(key);
+	if (!snapshot) return;
+	const store = await loadPersistedSnapshots();
+	writePersistedSnapshots({ ...store, [key]: { ...snapshot, savedAt: Date.now() } });
+}
+
+/** Drop a persisted snapshot once it has been replayed or is no longer wanted. */
+async function forgetPersistedSnapshot(key: string): Promise<void> {
+	const store = await loadPersistedSnapshots();
+	if (!(key in store)) return;
+	const next = { ...store };
+	delete next[key];
+	writePersistedSnapshots(next);
+}
+
+/**
  * Resumer for Auto Run batches, registered once by App. Resolves the batch's
  * error-resolution promise with 'resume' so the loop re-reads the doc and
  * re-dispatches the current task. Null until registered (e.g. in tests).
@@ -477,11 +563,78 @@ export function retryNow(sessionId: string, tabId: string): void {
  *   succeeded also has a snapshot, and resending it would put a message the
  *   user never asked for back on the wire.
  */
-export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
-	// Tabs whose snapshot did not survive, reported once after the loop so a
-	// multi-tab resume produces one message rather than one per tab.
-	const missingSnapshots: Array<{ sessionId: string; tabId: string }> = [];
+/**
+ * The tab's most recent user message, read from the transcript. Used only to
+ * TELL the user what is waiting when the in-memory snapshot is gone - never to
+ * rebuild a dispatch, which would drop attachments and codified settings.
+ */
+function lastUserPromptFor(sessionId: string, tabId: string): string | undefined {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tab = session?.aiTabs?.find((t) => t.id === tabId);
+	if (!tab) return undefined;
+	return (
+		[...tab.logs]
+			.reverse()
+			.find((l) => l.source === 'user')
+			?.text?.trim() || undefined
+	);
+}
 
+/** Keep a recalled prompt to one readable line inside a toast. */
+function truncateForToast(text: string, max = 80): string {
+	const collapsed = text.replace(/\s+/g, ' ').trim();
+	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+}
+
+/**
+ * Restart path: the in-memory snapshot is gone, so look for the copy written to
+ * disk when the outage was reported. Async because it reads settings; the
+ * common in-memory case above stays synchronous.
+ */
+async function replayPersistedSnapshot(
+	sessionId: string,
+	tabId: string,
+	key: string
+): Promise<void> {
+	const persisted = (await loadPersistedSnapshots())[key];
+	if (persisted) {
+		// Consume it: a replayed prompt must never be resent twice, and a stale
+		// entry outliving its outage is how the wrong message reaches the wire later.
+		void forgetPersistedSnapshot(key);
+		logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key });
+		void useAgentStore
+			.getState()
+			.processQueuedItem(sessionId, persisted.item, persisted.deps)
+			.catch((error: unknown) => {
+				logger.error('[retry] Replay after re-auth threw', undefined, error);
+			});
+		return;
+	}
+
+	// Neither memory nor disk has it: the outage predates snapshot persistence,
+	// the TTL expired, or the turn never went through noteDispatch. Say so rather
+	// than logging a line and returning - a silent no-op looks exactly like a
+	// resume that worked, and the user walks away believing their prompt is
+	// running again.
+	//
+	// Still NOT reconstructed from the transcript. A log entry has lost the
+	// attachments, the slash-command expansion and the settings codified at send
+	// time, so rebuilding from it resends something the user never typed. The
+	// session_not_found path next door has the same constraint and resolves it
+	// the same way: surface the prompt and let the human press send.
+	logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
+	const lastPrompt = lastUserPromptFor(sessionId, tabId);
+	notifyToast({
+		color: 'yellow',
+		title: 'Nothing to resend',
+		message: lastPrompt
+			? `Your last message is still in the transcript - press send to run it again: "${truncateForToast(lastPrompt)}"`
+			: 'The prompt that failed was lost when the app restarted. Send it again to continue.',
+		...(lastPrompt ? { sessionId, tabId } : {}),
+	});
+}
+
+export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 	for (const tabId of tabIds) {
 		const key = keyFor(sessionId, tabId);
 
@@ -489,18 +642,17 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 		// on the same tab) is superseded: we are dispatching that work right now.
 		removeEntry(key);
 
+		// The in-memory snapshot is the common case (the app never restarted) and
+		// stays SYNCHRONOUS on purpose: callers dispatch in order, and deferring
+		// this to a microtask changes when the turn goes out. Only the restart
+		// case - where memory is empty and the copy has to come off disk - is
+		// async, and it ends in the same dispatch.
 		const snapshot = snapshots.get(key);
 		if (!snapshot) {
-			// Snapshots live in memory only, so an app restart between the failure
-			// and the login leaves nothing to replay - and re-auth is exactly the
-			// flow where people quit the app. The prompt is still in the transcript
-			// and the queue is intact, so nothing is LOST, but "Resume Agent" has
-			// just silently done nothing and the user has no way to tell that apart
-			// from a resume that worked. Say so instead of only logging it.
-			logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
-			missingSnapshots.push({ sessionId, tabId });
+			void replayPersistedSnapshot(sessionId, tabId, key);
 			continue;
 		}
+		void forgetPersistedSnapshot(key);
 
 		logger.info('[retry] Replaying a turn lost to expired credentials', undefined, { key });
 		void useAgentStore
@@ -511,25 +663,6 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 				// it must not abort the replay of the remaining tabs.
 				logger.error('[retry] Replay after re-auth threw', undefined, error);
 			});
-	}
-
-	if (missingSnapshots.length > 0) {
-		// Deliberately a toast rather than a silent log: the user pressed a button
-		// labelled "Resume Agent" and nothing happened. Click-to-jump lands them on
-		// the tab holding the prompt, which is still in the transcript - so the
-		// remedy is one keypress once they can see where to press it.
-		const first = missingSnapshots[0];
-		const more = missingSnapshots.length - 1;
-		notifyToast({
-			color: 'yellow',
-			title: 'Nothing to resend',
-			message:
-				more > 0
-					? `Signed back in, but the prompts for ${missingSnapshots.length} tabs were not held over the restart. They are still in each transcript - press send again.`
-					: 'Signed back in, but the prompt was not held over the restart. It is still in the transcript - press send again.',
-			sessionId: first.sessionId,
-			tabId: first.tabId,
-		});
 	}
 }
 
