@@ -1,6 +1,6 @@
 # CLAUDE-AGENTS.md
 
-Agent support documentation for the Maestro codebase. For the main guide, see [[CLAUDE.md]]. For detailed integration instructions, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
+Agent support documentation for the Maestro codebase. For the main guide, see [[CLAUDE.md]]. For detailed integration instructions, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
 ## Supported Agents
 
@@ -21,7 +21,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Agent Capabilities
 
-Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (24 boolean flags + 1 optional). The table below shows key capabilities; see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for the complete list.
+Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (24 boolean flags + 1 optional). The table below shows key capabilities; see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for the complete list.
 
 | Capability                    | Description                              | UI Feature Controlled      |
 | ----------------------------- | ---------------------------------------- | -------------------------- |
@@ -180,4 +180,4 @@ To add support for a new agent:
 12. (If `supportsSessionStorage`) Create session storage extending `BaseSessionStorage` in `src/main/storage/`
 13. (If the agent has an output parser) Add error patterns to `src/shared/agentErrorPatterns.ts` - required, not optional: `agent-completeness.test.ts` fails CI when a registered parser has no patterns. The bank is shared so the renderer wizard classifies through the same patterns; `src/main/parsers/error-patterns.ts` is the main-process face of it
 
-The `agent-completeness.test.ts` CI test will fail if required steps are missed. See [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for comprehensive integration documentation.
+The `agent-completeness.test.ts` CI test will fail if required steps are missed. See [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for comprehensive integration documentation.
