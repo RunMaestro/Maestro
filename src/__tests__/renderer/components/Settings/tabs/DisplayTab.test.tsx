@@ -744,7 +744,11 @@ describe('DisplayTab', () => {
 		it('shows an unset surface as inheriting the interface size', async () => {
 			await renderTab({ fontSize: 16, chatFontSize: 0 });
 
-			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('Inherit (16px)');
+			// The number stays in the fixed-width value slot and the state moves
+			// to the reserved trailing slot, so the row does not resize as a
+			// surface goes from inheriting to its own size.
+			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('16px');
+			expect(screen.getByTestId('font-size-chat-inheriting')).toBeInTheDocument();
 		});
 
 		it('shows a customized surface as its own size', async () => {
@@ -777,6 +781,21 @@ describe('DisplayTab', () => {
 
 			fireEvent.click(screen.getByTestId('typography-reset-default'));
 			expect(mockResetTypography).toHaveBeenCalledWith('default');
+		});
+
+		it('sits below the pickers it overwrites', async () => {
+			// It used to lead the tab, which opened the Display settings on the one
+			// destructive control and offered a way out before the user had seen
+			// anything to get out of.
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const fonts = document.querySelector('[data-setting-id="display-fonts"]')!;
+			const reset = document.querySelector('[data-setting-id="display-typography-reset"]')!;
+
+			expect(fonts.compareDocumentPosition(reset) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		});
 	});
 

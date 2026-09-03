@@ -92,7 +92,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 	};
 
 	return (
-		<div className="space-y-6">
+		<div className="space-y-5">
 			<ExtensionsView theme={theme} settingsBodies={settingsBodies} />
 		</div>
 	);

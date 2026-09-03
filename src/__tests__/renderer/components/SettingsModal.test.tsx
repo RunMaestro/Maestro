@@ -890,7 +890,8 @@ describe('SettingsModal', () => {
 		it('shows an unset surface as inheriting, with the size it actually renders at', async () => {
 			await renderDisplayTab();
 
-			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('Inherit (14px)');
+			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('14px');
+			expect(screen.getByTestId('font-size-chat-inheriting')).toBeInTheDocument();
 		});
 
 		it('steps an inheriting surface away from the size it currently shows', async () => {
@@ -1405,7 +1406,9 @@ describe('SettingsModal', () => {
 			});
 
 			// Find the theme picker container (the div with tabIndex=0 and onKeyDown handler)
-			const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+			const themePickerContainer = screen
+				.getByText('dark Mode')
+				.closest('[data-setting-id="theme-picker"]');
 
 			// Fire Tab keydown on the theme picker container
 			fireEvent.keyDown(themePickerContainer!, { key: 'Tab' });
@@ -2040,7 +2043,9 @@ describe('SettingsModal', () => {
 			});
 
 			// Find the theme picker container
-			const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+			const themePickerContainer = screen
+				.getByText('dark Mode')
+				.closest('[data-setting-id="theme-picker"]');
 
 			// Fire Shift+Tab keydown
 			fireEvent.keyDown(themePickerContainer!, { key: 'Tab', shiftKey: true });
