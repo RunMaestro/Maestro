@@ -44,6 +44,7 @@ import { JsonlViewer, SYNTAX_EXAMPLES } from '../JsonlViewer';
 import { getEncoder } from '../../utils/tokenCounter';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
+import { isEditingTextTarget } from '../../utils/editableTarget';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../Markdown/remarkAlert';
@@ -1685,8 +1686,16 @@ export const FilePreview = React.memo(
 					container.scrollTop += 40;
 				}
 			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Left: Navigate back in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Left: Navigate back in history.
+				// Skipped while the caret is in a text field: on macOS this chord is
+				// beginning-of-line, so claiming it there walks the breadcrumb out
+				// from under someone who is typing in the find bar or the filename
+				// box. `isEditableText && markdownEditMode` did NOT cover that -
+				// `isEditableText` is a FILE-TYPE property (!isImage && !isBinary &&
+				// !isParquet, :402), decided once per file and nothing to do with
+				// focus - so on any ordinary text file not in edit mode the guard was
+				// false and the shortcut fired regardless of where the caret was.
+				if (isEditingTextTarget(e.target) || (isEditableText && markdownEditMode)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoBack && onNavigateBack) {
@@ -1694,8 +1703,9 @@ export const FilePreview = React.memo(
 					onShortcutUsed?.('filePreviewBack');
 				}
 			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Right: Navigate forward in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Right: Navigate forward in history. Same focus guard as
+				// Cmd+Left above - on macOS this chord is end-of-line.
+				if (isEditingTextTarget(e.target) || (isEditableText && markdownEditMode)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoForward && onNavigateForward) {
