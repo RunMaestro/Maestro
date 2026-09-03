@@ -1623,14 +1623,20 @@ html[data-theme-mode='light'] .chrome-raised-active {
    Dark and vibe themes lighten, light themes darken. The neutral wash is
    deliberate: these are ambient surfaces, and tinting every hover with the
    accent turns the sidebar into a highlight reel.
+
+   `--bg-hover-wash` comes from `useThemeStyles` and is the theme's own
+   `textMain` at a low alpha, which lightens a dark theme and darkens a light
+   one without either rule below having to know which mode is active. The two
+   literals stay as FALLBACKS: they are what paints before the theme effect has
+   run, and what paints for a custom theme whose `textMain` is not a hex colour.
    ============================================================================ */
 
 .row-hover {
-	--row-hover-wash: rgb(255 255 255 / 0.06);
+	--row-hover-wash: var(--bg-hover-wash, rgb(255 255 255 / 0.06));
 }
 
 html[data-theme-mode='light'] .row-hover {
-	--row-hover-wash: rgb(0 0 0 / 0.05);
+	--row-hover-wash: var(--bg-hover-wash, rgb(0 0 0 / 0.05));
 }
 
 .row-hover:hover {

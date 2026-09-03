@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useThemeStyles, type ThemeColors } from '../../../renderer/hooks/ui/useThemeStyles';
+import type { ThemeMode } from '../../../shared/theme-types';
 
 const DARK_COLORS: ThemeColors = {
 	accent: '#bd93f9',
@@ -69,6 +70,10 @@ const THEME_CSS_VARS = [
 	'--success',
 	'--warning',
 	'--error',
+	'--bg-hover',
+	'--bg-hover-wash',
+	'--accent-hover',
+	'--surface-elevated',
 	'--accent-rgb',
 	'--pulse-color',
 	'--glow-color',
@@ -218,6 +223,140 @@ describe('useThemeStyles', () => {
 			expect(getCssVar('--success')).toBe('#1a7f37');
 			expect(getCssVar('--warning')).toBe('#9a6700');
 			expect(getCssVar('--error')).toBe('#cf222e');
+		});
+	});
+
+	describe('the derived slots (--bg-hover, --accent-hover, --surface-elevated)', () => {
+		it('derives all three from the palette when the theme declares none', () => {
+			// Every built-in theme omits these, so the derivation is what the app
+			// actually renders. bgHover blends textMain into bgMain, accentHover
+			// brightens the accent on a dark theme, surfaceElevated lifts bgMain.
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--bg-hover')).toBe('#373843');
+			expect(getCssVar('--accent-hover')).toBe('#d7adff');
+			expect(getCssVar('--surface-elevated')).toBe('#323440');
+		});
+
+		it('flips the accent and surface derivations on a light theme', () => {
+			// A light theme has no "brighter than white" to reach for, so both go
+			// the other way: the accent darkens and the raised surface sinks.
+			renderHook(() =>
+				useThemeStyles({ themeColors: LIGHT_COLORS, themeMode: 'light', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--accent-hover')).toBe('#0055c6');
+			expect(getCssVar('--surface-elevated')).toBe('#f7f7f7');
+		});
+
+		it('darkens rather than lightens the hover on a light theme, with no mode branch', () => {
+			// One ratio serves both modes: textMain is dark on a light theme, so
+			// blending toward it darkens. This is what let the two mode-gated
+			// literals in index.css become one rule.
+			renderHook(() =>
+				useThemeStyles({ themeColors: LIGHT_COLORS, themeMode: 'light', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--bg-hover')).toBe('#eff0f0');
+		});
+
+		it('treats vibe themes as dark for the accent and surface derivations', () => {
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'vibe', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--accent-hover')).toBe('#d7adff');
+			expect(getCssVar('--surface-elevated')).toBe('#323440');
+		});
+
+		it('lets a theme that declares a slot win over the derivation', () => {
+			renderHook(() =>
+				useThemeStyles({
+					themeColors: {
+						...DARK_COLORS,
+						bgHover: '#123456',
+						accentHover: '#abcdef',
+						surfaceElevated: '#fedcba',
+					},
+					themeMode: 'dark',
+					glossLevel: 'off',
+				})
+			);
+
+			expect(getCssVar('--bg-hover')).toBe('#123456');
+			expect(getCssVar('--accent-hover')).toBe('#abcdef');
+			expect(getCssVar('--surface-elevated')).toBe('#fedcba');
+		});
+
+		it('redrives the slots when the mode changes without the palette changing', () => {
+			// themeMode is in the effect's dependency array. Without it a theme
+			// swap that keeps a colour identical would leave the previous mode's
+			// derivation on <html>.
+			const { rerender } = renderHook(
+				({ mode }) =>
+					useThemeStyles({ themeColors: DARK_COLORS, themeMode: mode, glossLevel: 'off' }),
+				{ initialProps: { mode: 'dark' as ThemeMode } }
+			);
+			expect(getCssVar('--accent-hover')).toBe('#d7adff');
+
+			rerender({ mode: 'light' });
+
+			expect(getCssVar('--accent-hover')).toBe('#a97fe5');
+		});
+	});
+
+	describe('--bg-hover-wash (the row-hover overlay form)', () => {
+		it('publishes textMain at the blend alpha so it composites to --bg-hover', () => {
+			// The .row-hover rule paints a background-IMAGE over whatever inline
+			// background-color a selected row already carries, so the wash has to
+			// be translucent. An opaque --bg-hover there would erase the selection
+			// tint for as long as the pointer is over the row.
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--bg-hover-wash')).toBe('rgb(248 248 242 / 0.07)');
+		});
+
+		it('tracks textMain across a theme change', () => {
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+
+			rerender({ colors: LIGHT_COLORS });
+
+			expect(getCssVar('--bg-hover-wash')).toBe('rgb(31 35 40 / 0.07)');
+		});
+
+		it('uses a declared bgHover verbatim, since that is the theme stating the hover', () => {
+			renderHook(() =>
+				useThemeStyles({
+					themeColors: { ...DARK_COLORS, bgHover: 'rgb(255 0 0 / 0.2)' },
+					themeMode: 'dark',
+					glossLevel: 'off',
+				})
+			);
+
+			expect(getCssVar('--bg-hover-wash')).toBe('rgb(255 0 0 / 0.2)');
+		});
+
+		it('clears the property when textMain is not a hex color', () => {
+			// index.css keeps its two literals as fallbacks for exactly this. A
+			// stale wash from the previous theme would be worse than the literal.
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+			expect(getCssVar('--bg-hover-wash')).toBe('rgb(248 248 242 / 0.07)');
+
+			rerender({ colors: { ...DARK_COLORS, textMain: 'oklch(0.9 0.1 300)' } });
+
+			expect(getCssVar('--bg-hover-wash')).toBe('');
 		});
 	});
 

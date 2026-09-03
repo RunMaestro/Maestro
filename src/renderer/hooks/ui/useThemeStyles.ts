@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { hexToRgb } from '../../../shared/colorContrast';
+import { adjustBrightness, blendColors, hexToRgb } from '../../../shared/colorContrast';
 import type { ThemeMode } from '../../../shared/theme-types';
 import type { GlossLevel } from '../../../shared/themeGloss';
 
@@ -58,6 +58,75 @@ function accentMix(accent: string, percent: number): string {
 }
 
 /**
+ * How much `textMain` is mixed into `bgMain` to reach the hover surface.
+ *
+ * One ratio for every mode on purpose: `textMain` is dark on a light theme and
+ * light on a dark one, so blending toward it darkens light themes and lightens
+ * dark ones without a mode branch. That branch is exactly what the two literal
+ * `.row-hover` rules in index.css were, and it is wrong for any theme whose
+ * background is not near-black or near-white.
+ */
+const HOVER_WASH_RATIO = 0.07;
+
+/**
+ * The three derived slots, in the two forms the CSS needs.
+ *
+ * `bgHover` is an opaque SURFACE (what a hover ends up looking like over
+ * `bgMain`). `bgHoverWash` is the same decision as an OVERLAY: the wash is
+ * composited on top of whatever background-color a row already carries inline
+ * for its selected / drag-over state, so it has to be translucent or every
+ * state flattens to one colour under the pointer. The two agree by
+ * construction, since the wash is `textMain` at the ratio the blend uses.
+ *
+ * `bgHoverWash` is null when `textMain` is not a hex colour (a custom theme may
+ * use any CSS colour). The caller then clears the var so the literal fallbacks
+ * in index.css apply, rather than leaving the previous theme's wash behind.
+ */
+interface DerivedThemeSlots {
+	bgHover: string;
+	bgHoverWash: string | null;
+	accentHover: string;
+	surfaceElevated: string;
+}
+
+/**
+ * Fill in the optional palette slots a theme did not declare.
+ *
+ * Every built-in theme omits all three today, so these derivations are what the
+ * app actually renders. A theme that declares a slot wins outright, including
+ * for the hover wash: declaring `bgHover` is declaring what a hover looks like,
+ * and a theme is free to supply an rgba() there if it wants the overlay
+ * behaviour.
+ */
+function deriveThemeSlots(
+	colors: Pick<
+		ThemeColors,
+		'bgMain' | 'textMain' | 'accent' | 'bgHover' | 'accentHover' | 'surfaceElevated'
+	>,
+	mode: ThemeMode
+): DerivedThemeSlots {
+	const isLight = mode === 'light';
+	const textRgb = hexToRgb(colors.textMain);
+
+	const bgHover = colors.bgHover ?? blendColors(colors.bgMain, colors.textMain, HOVER_WASH_RATIO);
+	const bgHoverWash =
+		colors.bgHover ??
+		(textRgb ? `rgb(${textRgb.r} ${textRgb.g} ${textRgb.b} / ${HOVER_WASH_RATIO})` : null);
+
+	// A flat channel offset rather than a blend toward white/black, so the
+	// accent keeps its hue: an accent mixed toward white washes out to pastel,
+	// which reads as a different colour rather than the same control lit up.
+	const accentHover = colors.accentHover ?? adjustBrightness(colors.accent, isLight ? -8 : 10);
+
+	// Light themes have no "brighter than white" to reach for, so an elevated
+	// surface goes the other way and carries its own shadow.
+	const surfaceElevated =
+		colors.surfaceElevated ?? adjustBrightness(colors.bgMain, isLight ? -3 : 4);
+
+	return { bgHover, bgHoverWash, accentHover, surfaceElevated };
+}
+
+/**
  * Theme colors required for CSS variable management.
  *
  * This is a structural subset of `ThemeColors` from `src/shared/theme-types.ts`
@@ -95,6 +164,12 @@ export interface ThemeColors {
 	warning: string;
 	/** Error state color, published as `--error`. */
 	error: string;
+	/** Optional hover surface, published as `--bg-hover`. Derived when unset. */
+	bgHover?: string;
+	/** Optional hover accent, published as `--accent-hover`. Derived when unset. */
+	accentHover?: string;
+	/** Optional raised surface, published as `--surface-elevated`. Derived when unset. */
+	surfaceElevated?: string;
 }
 
 /**
@@ -146,6 +221,10 @@ export interface UseThemeStylesReturn {
  *   --success                = themeColors.success
  *   --warning                = themeColors.warning
  *   --error                  = themeColors.error
+ *   --bg-hover               = themeColors.bgHover, or textMain blended into bgMain
+ *   --bg-hover-wash          = the same decision as a translucent overlay
+ *   --accent-hover           = themeColors.accentHover, or the accent brightened
+ *   --surface-elevated       = themeColors.surfaceElevated, or bgMain lifted
  *   --accent-rgb             = themeColors.accent as "R, G, B"
  *   --pulse-color            = accent at 40% (highlight-pulse ring)
  *   --glow-color             = accent at 15% (card-glow hover halo)
@@ -217,6 +296,19 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 		root.setProperty('--warning', themeColors.warning);
 		root.setProperty('--error', themeColors.error);
 
+		// The three derived slots. Optional on the theme so no theme literal has
+		// to change, which means the derivation is the shipping value everywhere
+		// today and the declared value is the escape hatch.
+		const slots = deriveThemeSlots(themeColors, themeMode);
+		root.setProperty('--bg-hover', slots.bgHover);
+		root.setProperty('--accent-hover', slots.accentHover);
+		root.setProperty('--surface-elevated', slots.surfaceElevated);
+		if (slots.bgHoverWash) {
+			root.setProperty('--bg-hover-wash', slots.bgHoverWash);
+		} else {
+			root.removeProperty('--bg-hover-wash');
+		}
+
 		// Themed glow effects. Their keyframes in index.css used to fall back to a
 		// hard-coded indigo or Dracula purple on every theme, because nothing ever
 		// wrote these vars. The fallbacks stay in place for any stylesheet loaded
@@ -246,6 +338,10 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 		themeColors.success,
 		themeColors.warning,
 		themeColors.error,
+		themeColors.bgHover,
+		themeColors.accentHover,
+		themeColors.surfaceElevated,
+		themeMode,
 	]);
 
 	// Publish the theme mode and the gloss level as attributes. Kept in one

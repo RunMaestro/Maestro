@@ -80,6 +80,26 @@ export interface ThemeColors {
 	error: string;
 
 	/**
+	 * Background for a row or control under the pointer. Optional: when unset
+	 * it is DERIVED from the palette (a slight blend of `textMain` into
+	 * `bgMain`), so a theme only declares it when the derived wash is wrong for
+	 * it. Published as `--bg-hover` by `useThemeStyles`.
+	 */
+	bgHover?: string;
+	/**
+	 * Accent for an accent-filled control under the pointer. Optional: derived
+	 * by brightening `accent` on dark themes and darkening it on light ones.
+	 * Published as `--accent-hover`.
+	 */
+	accentHover?: string;
+	/**
+	 * Surface for something raised above `bgMain` (a popover, a card, a menu).
+	 * Optional: derived by lifting `bgMain` toward white on dark themes and
+	 * toward black on light ones. Published as `--surface-elevated`.
+	 */
+	surfaceElevated?: string;
+
+	/**
 	 * ANSI 16-color palette for terminal emulation.
 	 * Optional - XTerminal uses theme-appropriate defaults if not provided.
 	 */
