@@ -25,6 +25,7 @@ import {
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
+import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { useTabStore } from '../../stores/tabStore';
 import {
@@ -174,7 +175,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote refresh file tree events from CLI/web interface
-	useEventListener('maestro:refreshFileTree', (e: Event) => {
+	useEventListener(FILE_TREE_REFRESH_EVENT, (e: Event) => {
 		const { sessionId } = (e as CustomEvent).detail;
 		refreshFileTree(sessionId);
 	});

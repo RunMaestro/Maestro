@@ -248,6 +248,35 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('refresh files, git, history', () => {
+		it('runs the same refresh handler the palette entry uses', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockRefresh = vi.fn().mockResolvedValue(undefined);
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'refreshGitFileState' && e.altKey && e.metaKey && e.key === 'r',
+				sessions: [{ id: 'test' }],
+				handleQuickActionsRefreshGitFileState: mockRefresh,
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'r',
+				altKey: true,
+				metaKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(mockRefresh).toHaveBeenCalled();
+			expect(preventDefaultSpy).toHaveBeenCalled();
+		});
+	});
+
 	describe('showSessionJumpNumbers state', () => {
 		it('should show badges when Alt+Cmd are pressed together', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());

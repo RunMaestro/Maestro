@@ -11,11 +11,14 @@
  *
  * A fuzzy filter above the grid narrows the cards live as the user types,
  * matching on the agent name (with or without its leading emoji) and on a
- * worktree's branch name.
+ * worktree's branch name. An "Active only" toggle beside it drops every agent
+ * that recorded no work inside the dashboard's selected time range, so a
+ * hundred-agent install can be cut down to what was actually used this month
+ * (or this year, following the range picker).
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Activity, Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { stripLeadingEmojis } from '../../../shared/emojiUtils';
@@ -27,6 +30,7 @@ import { EscCloseButton } from '../ui/EscCloseButton';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { ThemedSelect, type ThemedSelectOption } from '../shared/ThemedSelect';
 import { UNGROUPED_ID, UNGROUPED_NAME, type GroupLike } from '../../../shared/statsGroupRollup';
+import { isAgentActiveInRange } from '../../../shared/statsActiveAgents';
 import { EntityTile } from './EntityTile';
 import {
 	AGENT_OVERVIEW_SORT_OPTIONS,
@@ -226,6 +230,9 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
 	const [filterQuery, setFilterQuery] = useState('');
+	// Narrow the grid to agents that did something inside the selected range.
+	// Off by default: the grid's job is still "every agent I have".
+	const [activeOnly, setActiveOnly] = useState(false);
 	// Which group the grid is narrowed to. ALL_GROUPS_VALUE means no narrowing;
 	// UNGROUPED_ID is the agents filed under no group.
 	const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS_VALUE);
@@ -292,16 +299,18 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		// the Left Bar and the group rollup both treat a dangling pointer - an
 		// agent must never become unreachable from every filter option.
 		const liveGroupIds = new Set(groups.map((g) => g.id));
-		const scoped =
-			groupFilter === ALL_GROUPS_VALUE
-				? sessions
-				: sessions.filter((session) => {
-						const resolved =
-							session.groupId && liveGroupIds.has(session.groupId) ? session.groupId : UNGROUPED_ID;
-						return resolved === groupFilter;
-					});
+		const scoped = sessions.filter((session) => {
+			if (groupFilter !== ALL_GROUPS_VALUE) {
+				const resolved =
+					session.groupId && liveGroupIds.has(session.groupId) ? session.groupId : UNGROUPED_ID;
+				if (resolved !== groupFilter) return false;
+			}
+			// "Active only" is a RANGE question, so it narrows before sorting -
+			// the query-count ranking stays relative to the cards on screen.
+			return !activeOnly || isAgentActiveInRange(session.id, data.bySessionByDay);
+		});
 		return sortAgentOverviewSessions(scoped, data, sortMode);
-	}, [sessions, data, sortMode, groupFilter, groups]);
+	}, [sessions, data, sortMode, groupFilter, groups, activeOnly]);
 
 	// Live fuzzy filter. With the default Name sort we re-rank by match score so
 	// the best hit lands first; an explicit sort (Queries, Tabs, ...) is the
@@ -327,9 +336,10 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		(o) => o.value !== ALL_GROUPS_VALUE && o.value !== UNGROUPED_ID
 	);
 	const isGroupFiltered = groupFilter !== ALL_GROUPS_VALUE;
-	// A group filter that matches nothing must still render the toolbar,
-	// otherwise the tab goes blank with no visible reason and no way back.
-	if (activeSessions.length === 0 && !isGroupFiltered) return null;
+	// A group or active-only filter that matches nothing must still render the
+	// toolbar, otherwise the tab goes blank with no visible reason and no way
+	// back to the control that emptied it.
+	if (activeSessions.length === 0 && !isGroupFiltered && !activeOnly) return null;
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -380,6 +390,23 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 							/>
 						)}
 					</div>
+					<button
+						type="button"
+						role="switch"
+						aria-checked={activeOnly}
+						onClick={() => setActiveOnly((v) => !v)}
+						title="Show only agents that ran a query in the selected time range"
+						className="flex items-center gap-1.5 px-2 py-1 rounded border text-xs whitespace-nowrap transition-colors"
+						style={{
+							borderColor: activeOnly ? theme.colors.accent : theme.colors.border,
+							backgroundColor: activeOnly ? `${theme.colors.accent}20` : 'transparent',
+							color: activeOnly ? theme.colors.accent : theme.colors.textDim,
+						}}
+						data-testid="agent-overview-active-only"
+					>
+						<Activity className="w-3 h-3" aria-hidden="true" />
+						Active only
+					</button>
 					{filterQuery && (
 						<span
 							className="text-xs tabular-nums whitespace-nowrap"
@@ -411,7 +438,11 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					data-testid="agent-overview-group-empty"
 					role="status"
 				>
-					{groupOptions.find((o) => o.value === groupFilter)?.label ?? 'This group'} has no agents.
+					{activeOnly
+						? isGroupFiltered
+							? `No agents in ${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'this group'} ran a query in this time range.`
+							: 'No agents ran a query in this time range.'
+						: `${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'This group'} has no agents.`}
 				</div>
 			) : filteredSessions.length === 0 ? (
 				<div

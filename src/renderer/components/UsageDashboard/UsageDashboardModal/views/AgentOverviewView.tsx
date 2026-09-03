@@ -28,7 +28,12 @@ export function AgentOverviewView({
 				style={{ animationDelay: '0ms' }}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Agent Statistics">
-					<SessionStats sessions={sessions} theme={theme} colorBlindMode={colorBlindMode} />
+					<SessionStats
+						sessions={sessions}
+						data={data}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+					/>
 				</ChartErrorBoundary>
 			</DashboardSection>
 

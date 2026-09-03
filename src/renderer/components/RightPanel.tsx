@@ -125,7 +125,7 @@ interface RightPanelProps {
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
-	onFileClick?: (path: string) => void;
+	onFileClick?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	onOpenMarketplace?: () => void;
 	onLaunchWizard?: () => void;
 
@@ -409,6 +409,14 @@ export const RightPanel = memo(
 			selectedFile: session.autoRunSelectedFile || null,
 			documentList: autoRunDocumentList,
 			documentTree: autoRunDocumentTree,
+			// A playbook links to notes all over the project, not just to its
+			// sibling playbooks - resolve both, and hand project hits to the same
+			// handler the Files panel uses so they open as preview tabs.
+			projectFileTree: session.fileTree as FileNode[] | undefined,
+			// Same root the Files panel tree is loaded from, so the indices and the
+			// absolute-path conversion agree.
+			projectRoot: session.projectRoot || session.cwd,
+			onOpenProjectFile: onFileClick,
 			content: autoRunContent,
 			contentVersion: autoRunContentVersion,
 			onContentChange: onAutoRunContentChange,

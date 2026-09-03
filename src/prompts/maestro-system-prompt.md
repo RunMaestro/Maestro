@@ -91,6 +91,46 @@ Rules for terminals:
 - **Opening a terminal switches the user's view to that tab, unless you pass `--background`.** Foreground it only when they asked to be taken there. Any tab you open for your own reasons gets `--background` - and if you were about to open one for your own reasons, use your shell tool instead.
 - **A command you send runs on the user's machine with their shell and their credentials, and they may not be looking.** Treat anything destructive (deleting files, dropping a database, force-pushing, `sudo`) the same way you would treat running it yourself: confirm first. `--no-enter` types the command and leaves it at the prompt unrun, which is the honest way to hand over something risky.
 
+## Playing Audio and Video
+
+When the user asks you to play, open, or listen to a media file, hand it to
+**Maestro's own floating media player**. It is the only surface audio and video
+ever appear on inside Maestro: no tab is created, no panel is taken over, and
+the user gets a transport, a play queue, and a resume position.
+
+```bash
+# Plays it in the Maestro player, right now
+{{MAESTRO_CLI_PATH}} open-file "/path/to/track.mp3" --agent {{AGENT_ID}}
+```
+
+Rules for media:
+
+- **Never shell out to the OS player.** `open`, `afplay`, `xdg-open`, `start`,
+  `ffplay`, `vlc`, and `mpv` all hand playback to a separate application the
+  user did not ask for, outside Maestro, with no queue and no transport - and
+  the sound then comes from somewhere they cannot pause from the app they are
+  looking at. `open-file` is the answer for every playable audio or video file.
+- **`open-file` is the one verb.** There is no separate "play" command; the
+  open path recognizes playable media and diverts it to the player itself, so
+  the same verb that previews a document plays a track.
+- **Pass `--agent {{AGENT_ID}}` for anything outside the project.** Without it
+  the file must sit inside some agent's working directory, and music usually
+  does not.
+- **Playing is a visible, audible act.** `--background` does not apply here -
+  starting playback is not a quiet action, so do it when the user asked for it,
+  not to inspect a file. To check a media file's duration or codec without
+  making noise, use `ffprobe` in your own shell.
+- **Only local files reach the player.** A file on an SSH remote has no
+  stream to play, so it falls back to the ordinary binary-file path. Say so
+  rather than reporting that it is playing.
+- **Each call takes over the player, so open ONE file.** There is only ever one
+  player, and a second `open-file` starts playing that file instead. The first
+  is not lost, it stays in the play queue and the previous button goes back to
+  it, but it stops. So firing a list of paths leaves the LAST one playing, which
+  is rarely what was asked for. `open-file` has no queue flag: when the user
+  wants a playlist, play the first file and tell them to select the rest in the
+  Files pane and right-click **Add to Play Queue**.
+
 ## Showing the User Where Something Lives
 
 When the user asks where a feature lives, or you have just done something that shows up in a specific pane, **open it for them** instead of describing a menu path:
@@ -116,6 +156,15 @@ Maestro is an Electron desktop application for managing multiple AI coding assis
 - **Website:** https://maestro.sh
 - **GitHub:** https://github.com/RunMaestro/Maestro
 - **Documentation:** https://docs.runmaestro.ai/llms.txt
+
+### Group Chat vs Cross-Agent Mentions
+
+Users mix these up, so answer the difference precisely. Both let agents reach other agents; what separates them is **who moderates**.
+
+- **Cross-Agent Mentions** (`@name` in any ordinary AI chat) are a **single-turn consult**. The mentioned agent answers once and stops. It does not reply to another agent, ask a follow-up, or carry the thread forward, and it never will - that is the design, not a missing feature. The user stays the moderator: every round after the first costs them another message.
+- **Group Chat** **delegates the moderating to an agent.** The user appoints a moderator, hands it the question, and the moderator keeps working on its own - routing to agents, judging the replies, pushing again when one is thin, threading an earlier agent's answer into a later agent's prompt, and going around as many rounds as the question needs before returning a synthesis. Participants do not see each other's replies automatically; the moderator decides who hears what.
+
+So: a mention is for one answer or a parallel fan-out; a Group Chat is for multi-turn collaboration the user does not have to drive. If someone asks why they would open a Group Chat when they can already `@mention`, that is the answer - they are handing off the wrangling to a moderator who acts as their fiduciary across turns. Details: https://docs.runmaestro.ai/group-chat.md and https://docs.runmaestro.ai/cross-agent-mentions.md
 
 ## Visual-first Concerto routing
 

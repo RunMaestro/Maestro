@@ -606,6 +606,23 @@ export function formatTimestamp(
 	}
 }
 
+/**
+ * `20260713-142530` - a filesystem-safe, chronologically sortable stamp for a
+ * generated file name (saved chat images, exports).
+ *
+ * Local time on purpose: the name is read by a human who pasted the image at
+ * that wall-clock moment, and a UTC stamp reads as the wrong hour to everyone
+ * outside UTC.
+ */
+export function fileTimestampSlug(dateOrTimestamp: Date | number = new Date()): string {
+	const date = typeof dateOrTimestamp === 'number' ? new Date(dateOrTimestamp) : dateOrTimestamp;
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return (
+		`${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+		`-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+	);
+}
+
 // ============================================================================
 // Durations
 // ============================================================================

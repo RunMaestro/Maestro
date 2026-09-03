@@ -47,6 +47,8 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
+import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
 
 const LOG_CONTEXT = '[CrossAgentRouter]';
 
@@ -68,24 +70,10 @@ const CROSS_AGENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * The ProcessManager events that prove a consulted agent is still working.
- *
- * This list is the whole point, and getting it wrong silently reintroduces the
- * wall-clock bug the idle/hard split was meant to kill. For a `--print`
- * stream-json run, `StdoutHandler` routes a turn's intermediate activity to
- * `thinking-chunk` / `tool-execution` / `usage`, and only emits `data` when
- * `isResultMessage(event)` is true - i.e. the terminal result, at the very end
- * (see `handleParsedEvent`, plus the exit-time flush in `ExitHandler`). A
- * healthy Claude consult therefore emits ZERO `data` events until it is
- * completely finished.
- *
- * Arming the budget on `data` alone made it a hard N-minute deadline for every
- * claude-code consult: an agent doing real work for longer than the budget was
- * killed at exactly the budget, having never once re-armed the timer. That is
- * precisely the "agent is working fine but the consult dies anyway" failure.
- *
- * Every event here is emitted as `(sessionId, payload)`, so one filter fits all.
+ * Shared with Group Chat's supervision - see `AGENT_LIVENESS_EVENTS` for why
+ * `data` alone is not enough.
  */
-const LIVENESS_EVENTS = ['data', 'thinking-chunk', 'tool-execution', 'usage'] as const;
+const LIVENESS_EVENTS = AGENT_LIVENESS_EVENTS;
 
 /**
  * Absolute ceiling on a single consult, regardless of how chatty it is. A target
@@ -412,13 +400,9 @@ export async function startCrossAgentRequest(
 	// on the terminal chunk so the renderer stores it on the consult tab and
 	// resumes it on the next mention from this source tab.
 	let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
-	// Held on a const object so `cleanup` can close over the (later-assigned)
-	// handles without `let`s that trip prefer-const. `idle` is rearmed on every
-	// data event; `hard` is armed once and never reset.
-	const timer: {
-		idle?: ReturnType<typeof setTimeout>;
-		hard?: ReturnType<typeof setTimeout>;
-	} = {};
+	// Assigned once the consult is actually under way (see below). Held on a const
+	// object so `cleanup` can close over it without a `let` that trips prefer-const.
+	const watch: { dog?: IdleWatchdog } = {};
 
 	const onData = (sid: string, data: string): void => {
 		if (sid !== sessionId) return;
@@ -432,7 +416,7 @@ export async function startCrossAgentRequest(
 	 */
 	const onLiveness = (sid: string): void => {
 		if (sid !== sessionId) return;
-		armIdleTimer();
+		watch.dog?.touch();
 	};
 
 	const onSessionId = (sid: string, agentSessionId: string): void => {
@@ -445,8 +429,7 @@ export async function startCrossAgentRequest(
 		for (const evt of LIVENESS_EVENTS) processManager.off(evt, onLiveness);
 		processManager.off('exit', onExit);
 		processManager.off('session-id', onSessionId);
-		if (timer.idle) clearTimeout(timer.idle);
-		if (timer.hard) clearTimeout(timer.hard);
+		watch.dog?.disarm();
 	};
 
 	const onExit = (sid: string, code: number): void => {
@@ -543,17 +526,6 @@ export async function startCrossAgentRequest(
 		);
 	};
 
-	/** (Re)start the silence budget. Called on spawn and on every data event. */
-	const armIdleTimer = (): void => {
-		if (settled) return;
-		if (timer.idle) clearTimeout(timer.idle);
-		timer.idle = setTimeout(() => {
-			settleTerminated(
-				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
-			);
-		}, CROSS_AGENT_IDLE_TIMEOUT_MS);
-	};
-
 	processManager.on('data', onData);
 	// Re-arm the silence budget on every proof-of-life, not just `data` - a
 	// claude-code consult emits `data` only once, at the very end.
@@ -561,14 +533,20 @@ export async function startCrossAgentRequest(
 	processManager.on('exit', onExit);
 	processManager.on('session-id', onSessionId);
 
-	// Safety net: never leave the listeners attached forever. The idle timer covers
+	// Safety net: never leave the listeners attached forever. The idle budget covers
 	// a wedged target; the hard ceiling covers one that chatters without finishing.
-	timer.hard = setTimeout(() => {
-		settleTerminated(
-			`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
-		);
-	}, CROSS_AGENT_MAX_DURATION_MS);
-	armIdleTimer();
+	watch.dog = createIdleWatchdog({
+		idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
+		maxMs: CROSS_AGENT_MAX_DURATION_MS,
+		onIdle: () =>
+			settleTerminated(
+				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
+			),
+		onMax: () =>
+			settleTerminated(
+				`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
+			),
+	});
 
 	// The real Stop path, now that there is something to tear down. A cancel that
 	// arrived while the target's binary was being resolved is settled here instead

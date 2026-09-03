@@ -341,18 +341,6 @@ export const GroupChatMessages = memo(
 				{messages.length === 0 ? (
 					<div className="flex items-center justify-center h-full px-6">
 						<div className="text-center max-w-md space-y-3">
-							<div className="flex justify-center mb-4">
-								<span
-									className="text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
-								>
-									Beta
-								</span>
-							</div>
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								Messages you send go directly to the{' '}
 								<span style={{ color: theme.colors.warning }}>moderator</span>, who orchestrates the

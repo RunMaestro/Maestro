@@ -22,7 +22,8 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **Playbook Exchange**                                        | https://docs.runmaestro.ai/playbook-exchange.md         |
 | **Local Manifest** (custom/local playbooks)                  | https://docs.runmaestro.ai/local-manifest.md            |
 | **Slash commands** (custom commands, template vars)          | https://docs.runmaestro.ai/slash-commands.md            |
-| **Group Chat** (multi-agent orchestration)                   | https://docs.runmaestro.ai/group-chat.md                |
+| **Group Chat** (delegated moderation, multi-turn)            | https://docs.runmaestro.ai/group-chat.md                |
+| **Cross-Agent Mentions** (`@name`, single-turn consult)      | https://docs.runmaestro.ai/cross-agent-mentions.md      |
 | **Symphony mode** (token-donation contributions)             | https://docs.runmaestro.ai/symphony.md                  |
 | **SpecKit commands** (spec-driven workflow)                  | https://docs.runmaestro.ai/speckit-commands.md          |
 | **OpenSpec commands** (change management workflow)           | https://docs.runmaestro.ai/openspec-commands.md         |
