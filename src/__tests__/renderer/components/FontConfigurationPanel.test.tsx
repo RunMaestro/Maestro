@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FontConfigurationPanel } from '../../../renderer/components/FontConfigurationPanel';
 import { BUNDLED_FONT_NAMES } from '../../../shared/bundledFonts';
+import { DEFAULT_INTERFACE_FONT } from '../../../shared/typographyPresets';
 import { mockTheme } from '../../helpers/mockTheme';
 
 function renderPanel(overrides: Partial<React.ComponentProps<typeof FontConfigurationPanel>> = {}) {
@@ -30,6 +31,27 @@ describe('FontConfigurationPanel', () => {
 		// the dropdown claimed Roboto Mono while the app rendered Berkeley Mono.
 		expect(screen.getByRole('combobox')).toHaveValue('Berkeley Mono');
 		expect(screen.getByRole('group', { name: 'Current' })).toBeInTheDocument();
+	});
+
+	it('labels a stored font stack with its leading family, not the whole chain', () => {
+		// The Default typography preset stores a full CSS stack. It matches no
+		// option group, so it lands in "Current" - and the option's text is what
+		// the closed select displays, which meant the user read
+		// "Inter, -apple-system, BlinkMacSystemFont, ..." as the name of their
+		// font. Display only: the stored value keeps its fallback chain.
+		renderPanel({ fontFamily: DEFAULT_INTERFACE_FONT });
+
+		expect(screen.getByRole('combobox')).toHaveValue(DEFAULT_INTERFACE_FONT);
+		expect(screen.getByRole('option', { name: 'Inter' })).toHaveValue(DEFAULT_INTERFACE_FONT);
+		expect(screen.queryByRole('option', { name: DEFAULT_INTERFACE_FONT })).not.toBeInTheDocument();
+	});
+
+	it('keeps the full stack reachable in the tooltip', () => {
+		// Shortening the label must not lose the fallback chain: the tooltip is
+		// how a user reads what is actually stored.
+		renderPanel({ fontFamily: DEFAULT_INTERFACE_FONT });
+
+		expect(screen.getByRole('combobox')).toHaveAttribute('title', DEFAULT_INTERFACE_FONT);
 	});
 
 	it('does not duplicate a font that is already listed', () => {

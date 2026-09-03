@@ -3,6 +3,7 @@ import { Type } from 'lucide-react';
 import type { Theme } from '../types';
 import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
 import { BUNDLED_FONTS, BUNDLED_FONT_NAMES, isBundledFont } from '../../shared/bundledFonts';
+import { displayFontLabel } from '../../shared/fontStack';
 
 /**
  * Common monospace fonts that are typically available across different systems.
@@ -307,7 +308,14 @@ export function FontConfigurationPanel({
 				))}
 				{unlistedValue && (
 					<optgroup label="Current">
-						<option value={unlistedValue}>{unlistedValue}</option>
+						{/* The typography presets store a full CSS stack, so the raw
+						    value here is "Inter, -apple-system, BlinkMacSystemFont, ..."
+						    and the closed select rendered that whole chain as the name
+						    of the user's font. The option's text IS what the select
+						    displays, so labelling it with the leading family fixes both
+						    at once; the stored value is untouched and the full stack
+						    stays readable in the control's tooltip. */}
+						<option value={unlistedValue}>{displayFontLabel(unlistedValue)}</option>
 					</optgroup>
 				)}
 				{/* Bundled fonts ship inside the app, so they are never annotated
