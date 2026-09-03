@@ -130,7 +130,7 @@ export function IgnorePatternsSection({
 			{/* Content */}
 			<div className="flex-1 min-w-0">
 				{!hideEyebrow && (
-					<p className="text-[10px] uppercase font-bold opacity-50 mb-1">File Indexing</p>
+					<p className="text-2xs uppercase font-bold opacity-50 mb-1">File Indexing</p>
 				)}
 				<p className="font-semibold mb-1">{title}</p>
 				<p className="text-xs opacity-60 mb-3">{description}</p>
@@ -234,7 +234,7 @@ export function IgnorePatternsSection({
 						/>
 						{inputError && (
 							<p
-								className="absolute -bottom-4 left-0 text-[10px]"
+								className="absolute -bottom-4 left-0 text-2xs"
 								style={{ color: theme.colors.error }}
 							>
 								{inputError}

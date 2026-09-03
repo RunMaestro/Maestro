@@ -97,7 +97,7 @@ export function BatonView({ theme, baton }: BatonViewProps) {
 											className={`w-${size} h-${size}${baton.batonActive ? ' baton-sparkle-active' : ''}`}
 											style={{ color: theme.colors.accent }}
 										/>
-										<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+										<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 											{size * 4}px
 										</span>
 									</div>

@@ -284,7 +284,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								New Group Chat
 							</h2>
 							<span
-								className="text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
+								className="text-2xs font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
 								style={{
 									backgroundColor: `${theme.colors.accent}20`,
 									color: theme.colors.accent,

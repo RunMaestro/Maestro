@@ -74,7 +74,7 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 				onClick={requestToggle}
 				// `min-w-0` so the label span below can actually shrink inside it; a
 				// flex item defaults to min-width:auto and would refuse to.
-				className={`flex items-center gap-1 min-w-0 text-[10px] font-bold transition-colors hover:bg-white/10 ${
+				className={`flex items-center gap-1 min-w-0 text-2xs font-bold transition-colors hover:bg-white/10 ${
 					compact ? 'px-1 py-1' : 'pl-1.5 pr-1.5 py-0.5'
 				}`}
 				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}

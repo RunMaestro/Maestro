@@ -178,7 +178,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				{isAiMode && onToggleTabSaveToHistory && (
 					<button
 						onClick={onToggleTabSaveToHistory}
-						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 							tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{
@@ -197,7 +197,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				{isAiMode && onToggleTabReadOnlyMode && hasReadOnlyCapability && (
 					<button
 						onClick={onToggleTabReadOnlyMode}
-						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 							isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{
@@ -216,7 +216,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				{isAiMode && supportsThinking && onToggleTabShowThinking && (
 					<button
 						onClick={onToggleTabShowThinking}
-						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 							tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{
@@ -254,7 +254,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				)}
 				<button
 					onClick={() => setEnterToSend(!enterToSend)}
-					className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+					className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
 					title={formatEnterToSendTooltip(enterToSend)}
 				>
 					<Keyboard className="w-3 h-3" />

@@ -133,7 +133,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 						>
 							Contents
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							{tocEntries.length} headings
 						</span>
 					</div>

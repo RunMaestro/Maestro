@@ -145,7 +145,7 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 						View History
 						{historyCount > 0 && (
 							<span
-								className="text-[10px] px-1.5 py-0.5 rounded"
+								className="text-2xs px-1.5 py-0.5 rounded"
 								style={{ backgroundColor: theme.colors.bgActivity }}
 							>
 								{historyCount}

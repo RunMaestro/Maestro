@@ -1197,7 +1197,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					<p>
 						Catch-up events are marked with a{' '}
 						<span
-							className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold"
+							className="inline-block px-1.5 py-0.5 rounded text-2xs font-bold"
 							style={{ backgroundColor: '#f59e0b20', color: '#f59e0b' }}
 						>
 							catch-up
@@ -1342,7 +1342,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 										style={{ borderColor: theme.colors.border + '50' }}
 									>
 										<kbd
-											className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+											className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
 											style={{
 												backgroundColor: theme.colors.bgActivity,
 												border: `1px solid ${theme.colors.border}`,
@@ -1370,7 +1370,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<span>
 							<strong style={{ color: theme.colors.textMain }}>Tip:</strong> Press{' '}
 							<kbd
-								className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+								className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
 								style={{
 									backgroundColor: theme.colors.bgActivity,
 									border: `1px solid ${theme.colors.border}`,

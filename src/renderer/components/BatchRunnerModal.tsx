@@ -682,7 +682,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						    visible without forcing the modal footer to grow. */}
 						{isAgentBusy && (
 							<div
-								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-semibold whitespace-nowrap"
 								style={{
 									backgroundColor: theme.colors.warning,
 									color: theme.colors.bgMain,
@@ -773,7 +773,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 															{pb.name}
 														</span>
 														<span
-															className="text-[10px] shrink-0"
+															className="text-2xs shrink-0"
 															style={{ color: theme.colors.textDim }}
 														>
 															{pb.documents.length} doc{pb.documents.length !== 1 ? 's' : ''}
@@ -921,14 +921,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						{documents.length > 0 && (
 							<div className="mb-2">
 								<div
-									className="text-[10px] font-bold uppercase mb-1.5"
+									className="text-2xs font-bold uppercase mb-1.5"
 									style={{ color: theme.colors.textDim }}
 								>
 									Fresh context per:
 								</div>
 								{recommendationExplanation && (
 									<p
-										className="text-[10px] mb-1.5"
+										className="text-2xs mb-1.5"
 										style={{
 											color: showRecommendationWarning
 												? theme.colors.warning
@@ -947,7 +947,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									onChange={handleTaskSelectionModeChange}
 									theme={theme}
 								/>
-								<p className="text-[10px] mt-1.5" style={{ color: theme.colors.textDim }}>
+								<p className="text-2xs mt-1.5" style={{ color: theme.colors.textDim }}>
 									{taskSelectionMode === 'task'
 										? 'A new agent session is spawned for each unchecked task, clean context per work in the document.'
 										: 'A new agent session is spawned for each document, processing all tasks together.'}
@@ -965,7 +965,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								</label>
 								{isModified && (
 									<span
-										className="text-[10px] px-2 py-0.5 rounded-full"
+										className="text-2xs px-2 py-0.5 rounded-full"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -986,7 +986,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								Reset
 							</button>
 						</div>
-						<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+						<div className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
 							This prompt is sent to the AI agent for each {queueItemNoun} in the queue.{' '}
 							{isModified && lastModifiedAt && (
 								<span style={{ color: theme.colors.textMain }}>
@@ -1024,7 +1024,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									className="px-3 pb-3 pt-1 border-t"
 									style={{ borderColor: theme.colors.border }}
 								>
-									<p className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+									<p className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
 										Use these variables in your prompt. They will be replaced with actual values at
 										runtime.
 									</p>
@@ -1032,7 +1032,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										{TEMPLATE_VARIABLES.map(({ variable, description }) => (
 											<div key={variable} className="flex items-center gap-2 py-0.5">
 												<code
-													className="text-[10px] font-mono px-1 py-0.5 rounded shrink-0"
+													className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"
 													style={{
 														backgroundColor: theme.colors.bgActivity,
 														color: theme.colors.accent,
@@ -1040,10 +1040,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 												>
 													{variable}
 												</code>
-												<span
-													className="text-[10px] truncate"
-													style={{ color: theme.colors.textDim }}
-												>
+												<span className="text-2xs truncate" style={{ color: theme.colors.textDim }}>
 													{description}
 												</span>
 											</div>
@@ -1141,7 +1138,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							style={{ color: theme.colors.textDim }}
 						>
 							<span
-								className="px-1.5 py-0.5 rounded border text-[10px] font-mono"
+								className="px-1.5 py-0.5 rounded border text-2xs font-mono"
 								style={{
 									borderColor: theme.colors.border,
 									backgroundColor: theme.colors.bgActivity,

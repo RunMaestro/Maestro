@@ -263,7 +263,7 @@ export function DirectorNotesModal({
 							>
 								{showGenerating ? <Spinner size={16} /> : <Icon className="w-4 h-4" />}
 								{tab.label}
-								{showGenerating && <span className="text-[10px] font-normal">generating…</span>}
+								{showGenerating && <span className="text-2xs font-normal">generating…</span>}
 							</button>
 						);
 					})}

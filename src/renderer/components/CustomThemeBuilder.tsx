@@ -62,13 +62,13 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 				<div className="w-12 flex flex-col gap-1 p-1" style={{ backgroundColor: colors.bgSidebar }}>
 					{/* Session items */}
 					<div
-						className="h-4 rounded text-[6px] flex items-center justify-center"
+						className="h-4 rounded text-3xs flex items-center justify-center"
 						style={{ backgroundColor: colors.bgActivity, color: colors.textDim }}
 					>
 						S1
 					</div>
 					<div
-						className="h-4 rounded text-[6px] flex items-center justify-center ring-1"
+						className="h-4 rounded text-3xs flex items-center justify-center ring-1"
 						style={
 							{
 								backgroundColor: colors.accentDim,
@@ -80,7 +80,7 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 						S2
 					</div>
 					<div
-						className="h-4 rounded text-[6px] flex items-center justify-center"
+						className="h-4 rounded text-3xs flex items-center justify-center"
 						style={{ backgroundColor: colors.bgActivity, color: colors.textDim }}
 					>
 						S3
@@ -94,7 +94,7 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 						className="h-5 flex items-center px-2 border-b"
 						style={{ borderColor: colors.border }}
 					>
-						<span className="text-[7px] font-bold" style={{ color: colors.textMain }}>
+						<span className="text-3xs font-bold" style={{ color: colors.textMain }}>
 							AI Terminal
 						</span>
 					</div>
@@ -104,7 +104,7 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 						{/* User message */}
 						<div className="flex justify-end">
 							<div
-								className="rounded px-1.5 py-0.5 text-[6px] max-w-[80%]"
+								className="rounded px-1.5 py-0.5 text-3xs max-w-[80%]"
 								style={{ backgroundColor: colors.accentDim, color: colors.textMain }}
 							>
 								User message
@@ -113,7 +113,7 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 						{/* AI response */}
 						<div className="flex justify-start">
 							<div
-								className="rounded px-1.5 py-0.5 text-[6px] max-w-[80%]"
+								className="rounded px-1.5 py-0.5 text-3xs max-w-[80%]"
 								style={{ backgroundColor: colors.bgActivity, color: colors.textMain }}
 							>
 								AI response here
@@ -122,19 +122,19 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 						{/* Status indicators */}
 						<div className="flex gap-1 mt-1">
 							<span
-								className="text-[5px] px-1 rounded"
+								className="text-3xs px-1 rounded"
 								style={{ backgroundColor: colors.success + '30', color: colors.success }}
 							>
 								ready
 							</span>
 							<span
-								className="text-[5px] px-1 rounded"
+								className="text-3xs px-1 rounded"
 								style={{ backgroundColor: colors.warning + '30', color: colors.warning }}
 							>
 								busy
 							</span>
 							<span
-								className="text-[5px] px-1 rounded"
+								className="text-3xs px-1 rounded"
 								style={{ backgroundColor: colors.error + '30', color: colors.error }}
 							>
 								error
@@ -148,7 +148,7 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 						style={{ borderColor: colors.border }}
 					>
 						<div
-							className="flex-1 h-4 rounded border text-[6px] flex items-center px-1"
+							className="flex-1 h-4 rounded border text-3xs flex items-center px-1"
 							style={{
 								borderColor: colors.border,
 								backgroundColor: colors.bgActivity,
@@ -158,7 +158,7 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 							Type a message...
 						</div>
 						<div
-							className="ml-1 w-4 h-4 rounded flex items-center justify-center text-[6px]"
+							className="ml-1 w-4 h-4 rounded flex items-center justify-center text-3xs"
 							style={{ backgroundColor: colors.accent, color: colors.accentForeground }}
 						>
 							↵
@@ -172,19 +172,19 @@ function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 					style={{ backgroundColor: colors.bgSidebar, borderColor: colors.border }}
 				>
 					<div
-						className="text-[5px] px-1 py-0.5 border-b text-center font-bold"
+						className="text-3xs px-1 py-0.5 border-b text-center font-bold"
 						style={{ borderColor: colors.border, color: colors.accent }}
 					>
 						Files
 					</div>
 					<div className="p-0.5 space-y-0.5">
-						<div className="text-[5px] truncate" style={{ color: colors.textMain }}>
+						<div className="text-3xs truncate" style={{ color: colors.textMain }}>
 							src/
 						</div>
-						<div className="text-[5px] truncate pl-1" style={{ color: colors.textDim }}>
+						<div className="text-3xs truncate pl-1" style={{ color: colors.textDim }}>
 							app.tsx
 						</div>
-						<div className="text-[5px] truncate pl-1" style={{ color: colors.textDim }}>
+						<div className="text-3xs truncate pl-1" style={{ color: colors.textDim }}>
 							index.ts
 						</div>
 					</div>
@@ -230,7 +230,7 @@ function ColorInput({
 				/>
 				{isComplexColor && (
 					<div
-						className="absolute inset-0 rounded pointer-events-none flex items-center justify-center text-[8px] font-bold"
+						className="absolute inset-0 rounded pointer-events-none flex items-center justify-center text-3xs font-bold"
 						style={{ color: theme.colors.textMain }}
 					>
 						α
@@ -241,7 +241,7 @@ function ColorInput({
 				<div className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 					{label}
 				</div>
-				<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+				<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 					{description}
 				</div>
 			</div>
@@ -463,7 +463,7 @@ export function CustomThemeBuilder({
 					{/* Mini Preview */}
 					<div className="py-3">
 						<div
-							className="text-[10px] uppercase font-bold mb-2"
+							className="text-2xs uppercase font-bold mb-2"
 							style={{ color: theme.colors.textDim }}
 						>
 							Preview
@@ -514,10 +514,7 @@ export function CustomThemeBuilder({
 											</div>
 											{t.name}
 											{customThemeBaseId === t.id && (
-												<span
-													className="ml-auto text-[9px]"
-													style={{ color: theme.colors.textDim }}
-												>
+												<span className="ml-auto text-3xs" style={{ color: theme.colors.textDim }}>
 													current base
 												</span>
 											)}
@@ -579,7 +576,7 @@ export function CustomThemeBuilder({
 
 					{/* Color Editors */}
 					<div
-						className="text-[10px] uppercase font-bold mb-2"
+						className="text-2xs uppercase font-bold mb-2"
 						style={{ color: theme.colors.textDim }}
 					>
 						Colors

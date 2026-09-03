@@ -46,7 +46,7 @@ function StatBlock({
 }): React.ReactElement {
 	return (
 		<div className="flex flex-col gap-0.5 min-w-0">
-			<span className="text-[10px] uppercase tracking-wide opacity-70" style={{ color }}>
+			<span className="text-2xs uppercase tracking-wide opacity-70" style={{ color }}>
 				{label}
 			</span>
 			<span className="text-sm font-medium tabular-nums" style={{ color }}>

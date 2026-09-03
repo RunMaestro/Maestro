@@ -599,7 +599,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 												placeholder="sk-..."
 											/>
 										</div>
-										<p className="text-[10px] mt-2 opacity-50">
+										<p className="text-2xs mt-2 opacity-50">
 											Keys are stored locally in ~/.maestro/settings.json
 										</p>
 									</div>
@@ -638,7 +638,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										</div>
 									)}
 
-									<p className="text-[10px] mt-3 opacity-50 text-center">
+									<p className="text-2xs mt-3 opacity-50 text-center">
 										Test sends a simple prompt to verify connectivity and configuration
 									</p>
 								</div>

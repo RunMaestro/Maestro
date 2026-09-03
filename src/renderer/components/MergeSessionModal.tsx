@@ -864,7 +864,7 @@ export function MergeSessionModal({
 																			<span className="text-sm truncate">{item.tabName}</span>
 																			{item.agentSessionId && (
 																				<span
-																					className="text-[10px] px-1 py-0.5 rounded font-mono"
+																					className="text-2xs px-1 py-0.5 rounded font-mono"
 																					style={{
 																						backgroundColor: isTarget
 																							? 'rgba(255,255,255,0.2)'

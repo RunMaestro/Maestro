@@ -593,7 +593,7 @@ export function SendToAgentModal({
 											{/* Quick Select Number */}
 											{index < 9 && !isDisabled && (
 												<div
-													className="text-[10px] opacity-50 shrink-0"
+													className="text-2xs opacity-50 shrink-0"
 													style={{
 														color: isSelected
 															? theme.colors.accentForeground

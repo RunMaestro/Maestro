@@ -478,7 +478,7 @@ export function EditAgentModal({
 						<button
 							type="button"
 							onClick={handleCopySessionId}
-							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase transition-colors hover:opacity-80"
+							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold uppercase transition-colors hover:opacity-80"
 							style={{
 								backgroundColor: copiedId
 									? theme.colors.success + '20'

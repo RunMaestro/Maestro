@@ -213,7 +213,7 @@ export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModa
 							<span className="font-mono text-sm truncate">{branch}</span>
 							{isCurrent && (
 								<span
-									className="ml-auto flex items-center gap-1 text-[10px] uppercase font-bold shrink-0"
+									className="ml-auto flex items-center gap-1 text-2xs uppercase font-bold shrink-0"
 									style={{ color: theme.colors.accent }}
 								>
 									<Check className="w-3 h-3" />

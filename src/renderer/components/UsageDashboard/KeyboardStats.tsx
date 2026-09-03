@@ -258,7 +258,7 @@ function DailyBarChart({ series, theme }: DailyBarChartProps) {
 			</div>
 			{/* X-axis labels */}
 			<div
-				className="flex gap-px mt-2 text-[10px]"
+				className="flex gap-px mt-2 text-2xs"
 				style={{ color: theme.colors.textDim }}
 				aria-hidden="true"
 			>
@@ -502,7 +502,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 									{s.label}
 								</span>
 								<kbd
-									className="px-1.5 py-0.5 rounded border font-mono text-[10px] font-bold flex-shrink-0 ml-auto"
+									className="px-1.5 py-0.5 rounded border font-mono text-2xs font-bold flex-shrink-0 ml-auto"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										borderColor: theme.colors.border,

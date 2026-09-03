@@ -177,7 +177,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 					{branch && (
 						<div className="flex items-center gap-2">
 							<span
-								className="text-[10px] uppercase font-bold w-12 shrink-0"
+								className="text-2xs uppercase font-bold w-12 shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								Branch
@@ -208,7 +208,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 					{remote && (
 						<div className="flex items-center gap-2">
 							<span
-								className="text-[10px] uppercase font-bold w-12 shrink-0"
+								className="text-2xs uppercase font-bold w-12 shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								Origin
@@ -262,7 +262,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 						<GitChangeCounts
 							theme={theme}
 							totals={changes}
-							className="ml-auto flex items-center gap-1.5 text-[10px]"
+							className="ml-auto flex items-center gap-1.5 text-2xs"
 						/>
 					}
 					onClick={onViewDiff}
@@ -278,11 +278,11 @@ export const GitPillMenu = memo(function GitPillMenu({
 						pullRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="ml-auto flex items-center gap-1 text-[10px]"
+								className="ml-auto flex items-center gap-1 text-2xs"
 								testId="git-pill-menu-pull-running"
 							/>
 						) : behind > 0 ? (
-							<span className="ml-auto flex items-center gap-0.5 text-[10px] text-red-500">
+							<span className="ml-auto flex items-center gap-0.5 text-2xs text-red-500">
 								<ArrowDown className="w-3 h-3" />
 								{behind}
 							</span>
@@ -299,11 +299,11 @@ export const GitPillMenu = memo(function GitPillMenu({
 						pushRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="ml-auto flex items-center gap-1 text-[10px]"
+								className="ml-auto flex items-center gap-1 text-2xs"
 								testId="git-pill-menu-push-running"
 							/>
 						) : ahead > 0 ? (
-							<span className="ml-auto flex items-center gap-0.5 text-[10px] text-green-500">
+							<span className="ml-auto flex items-center gap-0.5 text-2xs text-green-500">
 								<ArrowUp className="w-3 h-3" />
 								{ahead}
 							</span>

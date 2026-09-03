@@ -46,7 +46,7 @@ export function WizardConfidenceGauge({
 			title={`Project Understanding Confidence: ${clampedConfidence}%${isReady ? ' - Ready to proceed' : ''}`}
 		>
 			{/* Label */}
-			<span className="text-[10px] uppercase tracking-wide" style={{ color: theme.colors.textDim }}>
+			<span className="text-2xs uppercase tracking-wide" style={{ color: theme.colors.textDim }}>
 				Project Understanding Confidence
 			</span>
 

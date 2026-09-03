@@ -159,7 +159,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					<p className="text-[10px] uppercase font-bold opacity-50 mb-1">Remote Execution</p>
+					<p className="text-2xs uppercase font-bold opacity-50 mb-1">Remote Execution</p>
 					<p className="font-semibold mb-1">SSH Remote Hosts</p>
 					<p className="text-xs opacity-60 mb-3">
 						Configure remote hosts where AI agents can be executed via SSH. This allows running
@@ -215,7 +215,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													</span>
 													{isDefault && (
 														<span
-															className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+															className="px-1.5 py-0.5 rounded text-2xs font-bold uppercase"
 															style={{
 																backgroundColor: theme.colors.accent + '30',
 																color: theme.colors.accent,
@@ -226,7 +226,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													)}
 													{!config.enabled && (
 														<span
-															className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+															className="px-1.5 py-0.5 rounded text-2xs font-bold uppercase"
 															style={{
 																backgroundColor: theme.colors.warning + '30',
 																color: theme.colors.warning,

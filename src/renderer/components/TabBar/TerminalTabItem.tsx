@@ -126,7 +126,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 
 	const ShortcutHint = ({ keys }: { keys: string[] }) => (
 		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			className="ml-auto text-2xs font-mono px-1.5 py-0.5 rounded"
 			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 		>
 			{formatShortcutKeys(keys)}
@@ -356,7 +356,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			{/* Shortcut hint badge */}
 			{shortcutHint !== null && shortcutHint !== undefined && (
 				<span
-					className="w-4 h-4 flex items-center justify-center rounded text-[10px] font-medium shrink-0 opacity-50"
+					className="w-4 h-4 flex items-center justify-center rounded text-2xs font-medium shrink-0 opacity-50"
 					style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 				>
 					{shortcutHint}
@@ -387,7 +387,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			{/* Exit code badge - only when exited with non-zero code */}
 			{tab.state === 'exited' && (tab.exitCode ?? 0) !== 0 && (
 				<span
-					className="px-1 rounded text-[9px] font-semibold shrink-0"
+					className="px-1 rounded text-3xs font-semibold shrink-0"
 					style={{
 						backgroundColor: theme.colors.error + '30',
 						color: theme.colors.error,

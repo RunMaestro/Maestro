@@ -481,7 +481,7 @@ export const AITab = memo(function AITab({
 			{/* Agent error pill - highlights tabs that have an active error for quick triage */}
 			{tab.agentError && (
 				<div
-					className="flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
+					className="flex items-center gap-0.5 px-1 py-0.5 rounded text-3xs font-bold uppercase shrink-0"
 					style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
 					title={`Error: ${tab.agentError.message}`}
 				>
@@ -545,7 +545,7 @@ export const AITab = memo(function AITab({
 			{/* Shortcut hint badge - shows tab number for Cmd+1-9 navigation */}
 			{shortcutHint !== null && shortcutHint !== undefined && (
 				<span
-					className="w-4 h-4 flex items-center justify-center rounded text-[10px] font-medium shrink-0 opacity-50"
+					className="w-4 h-4 flex items-center justify-center rounded text-2xs font-medium shrink-0 opacity-50"
 					style={{
 						backgroundColor: theme.colors.border,
 						color: theme.colors.textMain,

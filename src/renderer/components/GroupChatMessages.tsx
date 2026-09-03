@@ -234,7 +234,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 						<div className="text-center max-w-md space-y-3">
 							<div className="flex justify-center mb-4">
 								<span
-									className="text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
+									className="text-2xs font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
 									style={{
 										backgroundColor: `${theme.colors.accent}20`,
 										color: theme.colors.accent,
@@ -288,7 +288,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 							>
 								{/* Timestamp - outside bubble, like AI Terminal */}
 								<div
-									className={`w-20 shrink-0 text-[10px] pt-2 ${isUser ? 'text-right' : 'text-left'}`}
+									className={`w-20 shrink-0 text-2xs pt-2 ${isUser ? 'text-right' : 'text-left'}`}
 									style={{ color: theme.colors.textDim, opacity: 0.6 }}
 								>
 									{formatTimestamp(msg.timestamp)}

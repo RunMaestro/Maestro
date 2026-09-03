@@ -116,7 +116,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 
 	const ShortcutHint = ({ keys }: { keys: string[] }) => (
 		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			className="ml-auto text-2xs font-mono px-1.5 py-0.5 rounded"
 			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 		>
 			{formatShortcutKeys(keys)}
@@ -334,7 +334,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 		>
 			{shortcutHint !== null && shortcutHint !== undefined && (
 				<span
-					className="w-4 h-4 flex items-center justify-center rounded text-[10px] font-medium shrink-0 opacity-50"
+					className="w-4 h-4 flex items-center justify-center rounded text-2xs font-medium shrink-0 opacity-50"
 					style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 				>
 					{shortcutHint}
@@ -365,7 +365,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 
 			{showBrowserTabDomain && host && host !== label && (
 				<span
-					className="px-1 rounded text-[9px] font-semibold leading-none shrink-0"
+					className="px-1 rounded text-3xs font-semibold leading-none shrink-0"
 					style={{
 						backgroundColor: theme.colors.border,
 						color: theme.colors.textDim,
@@ -442,7 +442,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 									<button
 										type="button"
 										onClick={handleCopyUrlClick}
-										className="text-[11px] truncate min-w-0 flex-1 text-left hover:underline"
+										className="text-xs-plus truncate min-w-0 flex-1 text-left hover:underline"
 										style={{ color: theme.colors.textDim }}
 										title={urlCopied ? 'Copied!' : `${tab.url || 'about:blank'} (click to copy)`}
 									>

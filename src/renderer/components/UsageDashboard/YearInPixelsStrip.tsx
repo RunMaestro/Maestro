@@ -260,7 +260,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 				>
 					{RANGE_TITLES[timeRange]}
 				</h3>
-				<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 					{totalDays} {totalDays === 1 ? 'day' : 'days'}
 				</span>
 			</div>
@@ -307,7 +307,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 					{monthMarkers.map((marker) => (
 						<span
 							key={`${marker.label}-${marker.index}`}
-							className="absolute text-[10px]"
+							className="absolute text-2xs"
 							style={{
 								color: theme.colors.textDim,
 								left: `${(marker.index / totalDays) * 100}%`,

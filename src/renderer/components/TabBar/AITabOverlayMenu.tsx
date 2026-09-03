@@ -115,7 +115,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 
 	const ShortcutHint = ({ keys }: { keys: string[] }) => (
 		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			className="ml-auto text-2xs font-mono px-1.5 py-0.5 rounded"
 			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 		>
 			{formatShortcutKeys(keys)}
@@ -152,7 +152,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					)}
 
 					{/* Session ID display */}
-					<div className="px-3 py-2 text-[10px] font-mono" style={{ color: theme.colors.textDim }}>
+					<div className="px-3 py-2 text-2xs font-mono" style={{ color: theme.colors.textDim }}>
 						{tab.agentSessionId}
 					</div>
 				</div>

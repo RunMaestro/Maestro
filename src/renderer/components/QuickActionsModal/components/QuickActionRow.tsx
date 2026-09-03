@@ -76,7 +76,7 @@ export function QuickActionRow({
 					</span>
 					{action.isInBatch && (
 						<div
-							className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+							className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 							style={{
 								backgroundColor: theme.colors.warning + '30',
 								color: theme.colors.warning,
@@ -96,7 +96,7 @@ export function QuickActionRow({
 						isSelected={isSelected}
 					/>
 				) : (
-					action.subtext && <span className="text-[10px] opacity-50">{action.subtext}</span>
+					action.subtext && <span className="text-2xs opacity-50">{action.subtext}</span>
 				)}
 			</div>
 			{action.shortcut && (

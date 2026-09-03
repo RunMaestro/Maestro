@@ -208,7 +208,7 @@ const AutoRunRow = memo(
 					<button
 						onClick={() => !isStopping && onStop()}
 						disabled={isStopping}
-						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium transition-colors ${
 							isStopping ? 'cursor-not-allowed' : 'hover:opacity-80'
 						}`}
 						style={{
@@ -393,7 +393,7 @@ const AutoRunPill = memo(
 								}}
 								title={`+${concurrentCount} more running`}
 							>
-								<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+								<span className="text-2xs font-bold" style={{ color: theme.colors.warning }}>
 									+{concurrentCount}
 								</span>
 							</div>
@@ -415,7 +415,7 @@ const AutoRunPill = memo(
 								}}
 							>
 								<div
-									className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+									className="px-3 py-1.5 text-2xs uppercase tracking-wide font-semibold"
 									style={{
 										color: theme.colors.textDim,
 										backgroundColor: theme.colors.bgActivity,
@@ -675,7 +675,7 @@ function ThinkingStatusPillInner({
 						}}
 						title={`+${extraCount} more running`}
 					>
-						<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+						<span className="text-2xs font-bold" style={{ color: theme.colors.warning }}>
 							+{extraCount}
 						</span>
 					</div>
@@ -718,7 +718,7 @@ function ThinkingStatusPillInner({
 							}}
 						>
 							<div
-								className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+								className="px-3 py-1.5 text-2xs uppercase tracking-wide font-semibold"
 								style={{
 									color: theme.colors.textDim,
 									backgroundColor: theme.colors.bgActivity,

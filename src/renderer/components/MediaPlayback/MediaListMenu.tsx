@@ -74,7 +74,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 		>
 			<div className="flex items-center gap-2 px-3 py-1">
 				<span
-					className="text-[10px] uppercase tracking-wide flex-1"
+					className="text-2xs uppercase tracking-wide flex-1"
 					style={{ color: theme.colors.textDim }}
 				>
 					{title}
@@ -82,7 +82,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 				{onClear && entries.length > 0 && (
 					<button
 						onClick={onClear}
-						className="text-[10px] uppercase tracking-wide hover:underline"
+						className="text-2xs uppercase tracking-wide hover:underline"
 						style={{ color: theme.colors.textDim }}
 					>
 						Clear
@@ -120,7 +120,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 								{entry.name}
 							</span>
 							<span
-								className="text-[10px] truncate max-w-full"
+								className="text-2xs truncate max-w-full"
 								style={{ color: theme.colors.textDim }}
 							>
 								{entry.sessionName}
@@ -130,12 +130,12 @@ export const MediaListMenu = memo(function MediaListMenu({
 						{/* How long it runs, and how much of it is left if the user is
 						    part way through. Tabular figures so the column lines up. */}
 						<div className="flex flex-col items-end shrink-0 font-mono tabular-nums">
-							<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+							<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 								{formatMediaTime(duration)}
 							</span>
 							{remaining !== null && (
 								<span
-									className="text-[10px] opacity-70"
+									className="text-2xs opacity-70"
 									style={{ color: theme.colors.textDim }}
 									title={`${formatMediaTime(remaining)} left`}
 								>

@@ -135,7 +135,7 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 					onClick={onSummarizeClick}
 					onKeyDown={(e) => e.key === 'Enter' && onSummarizeClick()}
 					tabIndex={0}
-					className="px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors hover:opacity-90"
+					className="px-1.5 py-0.5 text-2xs font-medium rounded transition-colors hover:opacity-90"
 					style={{
 						backgroundColor: buttonBgColor,
 						color: buttonTextColor,
