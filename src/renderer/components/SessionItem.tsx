@@ -17,6 +17,7 @@ import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
+import { getConnectingColor } from '../utils/theme';
 import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
 
@@ -56,7 +57,9 @@ export function getEnhancedStatusColor(
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const error = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
-	const connecting = colorBlindMode ? COLORBLIND_STATUS_COLORS.connecting : '#ff8800';
+	const connecting = colorBlindMode
+		? COLORBLIND_STATUS_COLORS.connecting
+		: getConnectingColor(theme);
 
 	// Agent Resilience: an active outage (auto-retry backing off) is a "stuck,
 	// needs attention" state. Pulsing orange, ranked above batch/agent state so a

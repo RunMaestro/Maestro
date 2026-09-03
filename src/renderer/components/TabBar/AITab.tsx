@@ -7,6 +7,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { getTabKindColor } from './tabBarUtils';
+import { getConnectingColor } from '../../utils/theme';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
@@ -493,7 +494,7 @@ export const AITab = memo(function AITab({
 			{hasActiveOutage && (
 				<div
 					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: '#ff8800' }}
+					style={{ backgroundColor: getConnectingColor(theme) }}
 					title="Stuck - auto-retrying after an outage"
 				/>
 			)}
