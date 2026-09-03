@@ -6,6 +6,7 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -214,6 +215,9 @@ const defaultProps = {
 describe('FilePreview', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// `useFontScale` persists the pane's zoom to localStorage, so a test that
+		// zooms hands its scale to the next test. A fresh mock per test is the reset.
+		installLocalStorageMock();
 		useSettingsStore.setState({ bionifyReadingMode: false });
 		// Reset useClickOutside call counter so each test starts fresh
 		useClickOutsideCallCount = 0;
