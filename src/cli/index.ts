@@ -16,6 +16,7 @@ import { dispatch } from './commands/dispatch';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
 import { openBrowser, closeBrowser } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
@@ -261,8 +262,11 @@ program
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
 	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
-	.option('--background', 'Leave the new tab in the background (default; with --new-tab)')
-	.option('--focus', 'Switch to the new tab after creating it (with --new-tab)')
+	.option(
+		'--background',
+		'Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)'
+	)
+	.option('--focus', 'Move the view to the target after dispatching')
 	.option(
 		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
@@ -349,6 +353,38 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);
 
+// Image commands - reach the screenshots a user pasted into the chat.
+//
+// The agent can see a pasted image but has no path to it, so saving one used to
+// be a right-click only the human could perform. `image list` names them and
+// `image save` writes the bytes to disk.
+const image = program
+	.command('image')
+	.description('List and save images pasted into a Maestro chat');
+
+image
+	.command('list')
+	.description("List images pasted into an agent's conversation, newest first")
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option('--limit <n>', 'Maximum images to show (default: 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageList);
+
+image
+	.command('save [target]')
+	.description('Save a pasted image to disk (target: index, handle, or "latest")')
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option(
+		'-o, --output <path>',
+		'File or directory to write (default: a generated name in the cwd)'
+	)
+	.option('--all', 'Save every image in scope instead of just the newest')
+	.option('--force', 'Overwrite an existing file named by --output')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageSave);
+
 // Close browser command - close a browser tab opened via open-browser
 program
 	.command('close-browser <tab-id>')
@@ -403,8 +439,12 @@ program
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program
 	.command('refresh-files')
-	.description('Refresh the file tree in the Maestro desktop app')
+	.description('Refresh the file tree in the Maestro desktop app (never moves the view)')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--background',
+		'Accepted and ignored: this refresh never moves the view or shows a notice'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshFiles);
 
@@ -413,6 +453,8 @@ program
 	.command('refresh-auto-run')
 	.description('Refresh Auto Run documents in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--background', 'Refresh without switching to the target agent')
+	.option('--focus', 'Switch to the target agent while refreshing (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshAutoRun);
 

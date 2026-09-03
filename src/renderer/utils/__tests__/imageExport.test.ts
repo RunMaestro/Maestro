@@ -22,6 +22,7 @@ import {
 	suggestImageFileName,
 	defaultExtensionFor,
 } from '../imageExport';
+import { FILE_TREE_REFRESH_EVENT } from '../fileTreeRefresh';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -394,6 +395,48 @@ describe('saveImageToProject', () => {
 		await expect(
 			saveImageToProject(makeSvg(), { projectRoot: '/p', fileName: 'd.svg' }, 'svg')
 		).rejects.toThrow(/Failed to write/);
+	});
+
+	it('nudges the Files panel so the new file appears without waiting for a refresh', async () => {
+		const listener = vi.fn();
+		window.addEventListener(FILE_TREE_REFRESH_EVENT, listener);
+
+		await saveImageToProject(
+			makeSvg(),
+			{ projectRoot: '/p', fileName: 'd.svg', sessionId: 'agent-1' },
+			'svg'
+		);
+
+		window.removeEventListener(FILE_TREE_REFRESH_EVENT, listener);
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ sessionId: 'agent-1' });
+	});
+
+	it('does not refresh when no agent owns the save (e.g. the wizard)', async () => {
+		const listener = vi.fn();
+		window.addEventListener(FILE_TREE_REFRESH_EVENT, listener);
+
+		await saveImageToProject(makeSvg(), { projectRoot: '/p', fileName: 'd.svg' }, 'svg');
+
+		window.removeEventListener(FILE_TREE_REFRESH_EVENT, listener);
+		expect(listener).not.toHaveBeenCalled();
+	});
+
+	it('does not refresh when the write failed', async () => {
+		vi.mocked(window.maestro.fs.writeFile).mockResolvedValue({ success: false });
+		const listener = vi.fn();
+		window.addEventListener(FILE_TREE_REFRESH_EVENT, listener);
+
+		await expect(
+			saveImageToProject(
+				makeSvg(),
+				{ projectRoot: '/p', fileName: 'd.svg', sessionId: 'agent-1' },
+				'svg'
+			)
+		).rejects.toThrow(/Failed to write/);
+
+		window.removeEventListener(FILE_TREE_REFRESH_EVENT, listener);
+		expect(listener).not.toHaveBeenCalled();
 	});
 });
 

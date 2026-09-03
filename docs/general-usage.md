@@ -500,7 +500,7 @@ Drag a thumbnail sideways to move it. While a drag is in flight, every thumbnail
 
 With two or more images staged, an expand button (⤢) appears to the left of the strip. It opens the **Staged Images** organizer: the same set of images at a size you can actually tell apart, always numbered, with the same drag-to-reorder.
 
-- **Zoom** with the magnifier buttons in the header to grow or shrink the thumbnails. The size you pick is remembered across sessions; click the percentage to snap back to 100%.
+- **Zoom** with the magnifier buttons in the header, or with the bare `+` and `-` keys (`=` and `_` work too, so you never have to think about Shift). `0` snaps back to 100%, as does clicking the percentage. The size you pick is remembered across sessions.
 - **Annotate** or **remove** any image from its thumbnail, exactly as in the strip.
 - **Esc** or the ESC pill closes it.
 

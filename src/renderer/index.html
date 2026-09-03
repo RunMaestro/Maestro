@@ -16,23 +16,38 @@
 		     violation whenever the renderer boots under Vite. -->
 		<meta
 			http-equiv="Content-Security-Policy"
-			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; media-src 'self' blob: maestro-media:;"
+			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; media-src 'self' blob: maestro-media:;"
 		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Maestro - Agent Orchestration Command Center</title>
 
-		<!-- Preload fonts to prevent FOUT (Flash of Unstyled Text) -->
-		<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<!-- JetBrains Mono, bundled on disk. This used to be a pair of <link>s to
+		     fonts.googleapis.com, which had two problems that both showed up as the
+		     app changing font while it started:
+
+		       1. Google's css2 endpoint serves `font-display: swap`, which is an
+		          explicit instruction to paint the fallback FIRST and reflow when the
+		          woff2 lands. On a cold start the splash rendered in Courier New.
+		       2. The old `rel="preload" as="style"` only fetched the STYLESHEET. The
+		          woff2 URL is not known until that CSS parses, so the font itself was
+		          still discovered late - the preload bought nothing despite the
+		          comment claiming it prevented FOUT.
+
+		     Offline, the font never arrived at all and the splash stayed in Courier
+		     New permanently. A desktop app should not need the network to draw its
+		     own logo. The preload below is `as="font"` on the real file, so the latin
+		     subset is in flight alongside the stylesheet rather than after it;
+		     `crossorigin` is required even same-origin because font fetches are
+		     always CORS-mode. Both `style-src` and `font-src` are back to bare
+		     'self' - do not re-add the Google hosts. -->
 		<link
 			rel="preload"
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-			as="style"
+			href="./fonts/jetbrains-mono-latin.woff2"
+			as="font"
+			type="font/woff2"
+			crossorigin
 		/>
-		<link
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-			rel="stylesheet"
-		/>
+		<link rel="stylesheet" href="./fonts/jetbrains-mono.css" />
 
 		<!-- Critical CSS for splash screen - inline to prevent FOUC -->
 		<style>
@@ -99,6 +114,9 @@
 				object-fit: cover;
 			}
 
+			/* MAESTRO_WORDMARK_FONT_STACK (src/shared/fontStacks.ts). The wordmark is
+			   a logo, so it is pinned here and in SessionList's <h1> and never
+			   follows the user's fontFamily setting. */
 			.splash-title {
 				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 				font-weight: 700;

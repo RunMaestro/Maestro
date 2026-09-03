@@ -2342,6 +2342,7 @@ function MaestroConsoleInner() {
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
+		handleQuickActionsRefreshGitFileState,
 		logsEndRef,
 		inputRef,
 		terminalOutputRef,
@@ -3149,7 +3150,6 @@ function MaestroConsoleInner() {
 					onBrowserTabSelect={handleSelectBrowserTab}
 					onNamedSessionSelect={handleNamedSessionSelect}
 					filteredFileTree={filteredFileTree}
-					fileExplorerExpanded={activeSession?.fileExplorerExpanded}
 					onCloseFileSearch={handleCloseFileSearch}
 					onFileSearchSelect={handleFileSearchSelect}
 					onClosePromptComposer={handleClosePromptComposer}

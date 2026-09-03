@@ -207,7 +207,10 @@ export function SnoozeHistoryModal({ theme, onClose, onJumpToTab }: SnoozeHistor
 						</div>
 
 						{ordered.length >= MAX_SNOOZE_HISTORY && (
-							<div className="text-[11px] text-center mt-3" style={{ color: theme.colors.textDim }}>
+							<div
+								className="text-xs-plus text-center mt-3"
+								style={{ color: theme.colors.textDim }}
+							>
 								Showing the most recent {MAX_SNOOZE_HISTORY}. Older entries are dropped as new ones
 								arrive.
 							</div>

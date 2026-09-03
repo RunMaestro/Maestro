@@ -203,7 +203,9 @@ export interface MessageHandlerCallbacks {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		force?: boolean,
-		images?: string[]
+		images?: string[],
+		/** Deliver without selecting the target agent. Absent means today's behaviour. */
+		background?: boolean
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -258,7 +260,7 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean
 	) => Promise<{ success: boolean; tabId?: string }>;
-	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
+	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
 		config: {
@@ -918,6 +920,10 @@ export class WebSocketMessageHandler {
 		// dispatch concurrent writes to an already-running agent. Used by
 		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
+		// Placement: the renderer selects the target agent "for visual feedback"
+		// today, which is right for a phone tapping send and wrong for an agent
+		// handing work to another agent. Absent means today's behaviour.
+		const background = readBackgroundField(message);
 		// Optional base64 data URLs pasted from the web client. Threaded through
 		// to the renderer so AI tabs can include them in the agent prompt.
 		const images = Array.isArray(message.images)
@@ -996,7 +1002,15 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, effectiveCommand, clientInputMode, requestedTabId, force, images)
+				.executeCommand(
+					sessionId,
+					effectiveCommand,
+					clientInputMode,
+					requestedTabId,
+					force,
+					images,
+					background
+				)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',
@@ -1647,8 +1661,11 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
+		// The renderer switches to the target agent when it is not the active one,
+		// because that is how the folder-path effect gets it to refresh. Background
+		// callers get the refresh without the switch. Absent means today's behaviour.
 		this.callbacks
-			.refreshAutoRunDocs(sessionId)
+			.refreshAutoRunDocs(sessionId, readBackgroundField(message))
 			.then((success) => {
 				this.send(client, {
 					type: 'refresh_auto_run_docs_result',

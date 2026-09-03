@@ -807,7 +807,7 @@ function QueueItemRow({
 						</span>
 						{isPaused && (
 							<span
-								className="text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded"
+								className="text-2xs font-bold tracking-wider px-1.5 py-0.5 rounded"
 								style={{
 									backgroundColor: theme.colors.warning + '33',
 									color: theme.colors.warning,

@@ -507,7 +507,7 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
 
 ## Adding a New AI Agent
 
-Maestro supports multiple AI coding agents. Each agent has different capabilities that determine which UI features are available. For detailed architecture, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
+Maestro supports multiple AI coding agents. Each agent has different capabilities that determine which UI features are available. For detailed architecture, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
 ### Agent Capability Checklist
 
@@ -654,7 +654,7 @@ Based on capabilities, these UI features are automatically enabled/disabled:
 | Copilot-CLI   | ✅ `--resume` / `--continue` | ✅ permission rules         | ✅   | ✅     | ✅ `~/.copilot/session-state/` | ❌ (not exposed by CLI) | 🧪 Beta     |
 | Gemini CLI    | TBD                          | TBD                         | TBD  | TBD    | TBD                            | ✅                      | 📋 Planned  |
 
-For detailed implementation guide, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
+For detailed implementation guide, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
 ## Code Style
 

@@ -119,6 +119,48 @@ describe('FileSearchModal list scrolling', () => {
 		expect(scrollIntoView).not.toHaveBeenCalled();
 	});
 
+	it('shows only category pills that have files behind them', () => {
+		renderModal([
+			{ name: 'App.tsx', type: 'file' as const },
+			{ name: 'README.md', type: 'file' as const },
+		]);
+
+		expect(screen.getByTestId('file-search-category-all')).toHaveTextContent('All (2)');
+		expect(screen.getByTestId('file-search-category-code')).toHaveTextContent('Code (1)');
+		expect(screen.getByTestId('file-search-category-docs')).toHaveTextContent('Docs (1)');
+		// No data or media files in this tree, so no dead-end pills.
+		expect(screen.queryByTestId('file-search-category-data')).toBeNull();
+		expect(screen.queryByTestId('file-search-category-media')).toBeNull();
+		// The visible-files scope is gone entirely.
+		expect(screen.queryByText(/Visible Files/i)).toBeNull();
+	});
+
+	it('narrows the list to the picked category', () => {
+		renderModal([
+			{ name: 'App.tsx', type: 'file' as const },
+			{ name: 'README.md', type: 'file' as const },
+		]);
+
+		fireEvent.click(screen.getByTestId('file-search-category-docs'));
+
+		expect(screen.getByText('README.md')).toBeInTheDocument();
+		expect(screen.queryByText('App.tsx')).toBeNull();
+	});
+
+	it('steps through the pills with Tab and back with Shift+Tab', () => {
+		renderModal([
+			{ name: 'App.tsx', type: 'file' as const },
+			{ name: 'README.md', type: 'file' as const },
+		]);
+		const input = screen.getByPlaceholderText(/search files/i);
+
+		fireEvent.keyDown(input, { key: 'Tab' });
+		expect(screen.getByTestId('file-search-category-code')).toHaveAttribute('aria-pressed', 'true');
+
+		fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
+		expect(screen.getByTestId('file-search-category-all')).toHaveAttribute('aria-pressed', 'true');
+	});
+
 	it('still follows the selection with the arrow keys, via the virtualizer', () => {
 		renderModal();
 		const input = screen.getByPlaceholderText(/search files/i);

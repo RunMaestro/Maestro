@@ -574,7 +574,7 @@ const LogItemComponent = memo(
 				style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
 			>
 				<div
-					className={`w-20 shrink-0 text-[10px] pt-2 ${isReversed ? 'text-right' : 'text-left'}`}
+					className={`w-20 shrink-0 text-2xs pt-2 ${isReversed ? 'text-right' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
 					{(() => {
@@ -721,7 +721,7 @@ const LogItemComponent = memo(
 						>
 							<div className="flex items-center gap-2 mb-1">
 								<span
-									className="text-[10px] px-1.5 py-0.5 rounded"
+									className="text-2xs px-1.5 py-0.5 rounded"
 									style={{
 										backgroundColor: `${theme.colors.accent}30`,
 										color: theme.colors.accent,
@@ -1150,7 +1150,7 @@ const LogItemComponent = memo(
 									});
 									return (
 										<span
-											className="text-[10px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+											className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
 											style={{
 												backgroundColor: `${theme.colors.accent}20`,
 												color: theme.colors.accent,
@@ -1585,6 +1585,10 @@ export const TerminalOutput = memo(
 		const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		// Track if initial scroll restore has been done
 		const hasRestoredScrollRef = useRef(false);
+		// Set when the user scrolls while a restore is still settling. Their input
+		// ends the retry loop - continuing to chase the saved offset would fight
+		// them, which is a worse bug than landing a little high.
+		const userScrolledDuringRestoreRef = useRef(false);
 
 		// Get active tab ID for resetting state on tab switch
 		const activeTabId = session.activeTabId;
@@ -2178,7 +2182,9 @@ export const TerminalOutput = memo(
 					// throttled invocation fires (throttle delay is 16ms > microtask).
 					isProgrammaticScrollRef.current = false;
 				} else {
-					// Genuine user scroll away from bottom - pause auto-scroll
+					// Genuine user scroll away from bottom - pause auto-scroll, and stop
+					// any restore still chasing the saved offset so it cannot fight them.
+					userScrolledDuringRestoreRef.current = true;
 					setAutoScrollPaused(true);
 				}
 			}
@@ -2324,42 +2330,111 @@ export const TerminalOutput = memo(
 			return () => observer.disconnect();
 		}, [autoScrollPaused]);
 
-		// Restore scroll position when component mounts or initialScrollTop changes
-		// Uses requestAnimationFrame to ensure DOM is ready
+		// Restore the scroll position this tab was left at.
+		//
+		// A single frame is not enough. One `requestAnimationFrame` only proves the
+		// DOM is MOUNTED, not that its height has settled: images are still
+		// decoding, web fonts still swapping, code blocks still re-highlighting and
+		// markdown still reflowing. `scrollHeight` is therefore short on that first
+		// frame, `maxScroll` with it, and `Math.min(initialScrollTop, maxScroll)`
+		// silently clamps the restore to LESS than the saved offset. The tab opens
+		// above where the user left it - the further down they were and the heavier
+		// the content, the bigger the jump. That is the whole bug.
+		//
+		// So the guard is latched only once a restore actually LANDS on the offset
+		// that was asked for, and until then we re-attempt as the content grows.
 		useEffect(() => {
-			// Only restore if we have a saved position and haven't restored yet for this mount
-			if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
-				hasRestoredScrollRef.current = true;
-				requestAnimationFrame(() => {
-					// A cross-tab search jump asked for a specific message in this tab.
-					// That beats the position the tab was left at - restoring here would
-					// scroll straight back off the hit.
-					if (jumpInFlightRef.current) return;
-					if (scrollContainerRef.current) {
-						const { scrollHeight, clientHeight } = scrollContainerRef.current;
-						// Clamp to max scrollable area
-						const maxScroll = Math.max(0, scrollHeight - clientHeight);
-						const targetScroll = Math.min(initialScrollTop, maxScroll);
-						// If the saved position is not at the bottom, pause auto-scroll so the
-						// MutationObserver doesn't immediately yank the view back down (uses the
-						// same 50px bottom threshold as handleScrollInner). Flip the refs first
-						// so the observer's live shouldAutoScroll() sees the pause this frame,
-						// before the state update re-renders.
-						if (targetScroll < maxScroll - 50) {
-							autoScrollPausedRef.current = true;
-							isAtBottomRef.current = false;
-							setAutoScrollPaused(true);
-							setIsAtBottom(false);
-						}
-						scrollContainerRef.current.scrollTop = targetScroll;
-					}
-				});
-			}
+			// `>= 0`, not `> 0`: a transcript deliberately scrolled to the absolute
+			// top persists `scrollTop: 0`, and requiring a positive offset made that
+			// one position unrestorable.
+			if (initialScrollTop === undefined || initialScrollTop < 0) return;
+			if (hasRestoredScrollRef.current) return;
+
+			let cancelled = false;
+			let framesWithoutGrowth = 0;
+			let lastScrollHeight = -1;
+			// Stop chasing a target the content never grows tall enough to reach.
+			// Bounded in FRAMES OF QUIET rather than wall-clock so a slow machine
+			// still gets its restore, while a transcript that is genuinely shorter
+			// than the saved offset settles instead of retrying forever.
+			const MAX_QUIET_FRAMES = 30;
+
+			const attempt = () => {
+				if (cancelled) return;
+
+				// A cross-tab search jump asked for a specific message in this tab.
+				// That beats the position the tab was left at - restoring here would
+				// scroll straight back off the hit.
+				if (jumpInFlightRef.current) {
+					hasRestoredScrollRef.current = true;
+					return;
+				}
+				// The user started scrolling while we were still settling. Their
+				// input wins: a restore that keeps yanking the view is worse than
+				// landing slightly high.
+				if (userScrolledDuringRestoreRef.current) {
+					hasRestoredScrollRef.current = true;
+					return;
+				}
+
+				const container = scrollContainerRef.current;
+				if (!container) {
+					requestAnimationFrame(attempt);
+					return;
+				}
+
+				const { scrollHeight, clientHeight } = container;
+				const maxScroll = Math.max(0, scrollHeight - clientHeight);
+				const targetScroll = Math.min(initialScrollTop, maxScroll);
+
+				// If the saved position is not at the bottom, pause auto-scroll so the
+				// MutationObserver doesn't immediately yank the view back down (uses the
+				// same 50px bottom threshold as handleScrollInner). Flip the refs first
+				// so the observer's live shouldAutoScroll() sees the pause this frame,
+				// before the state update re-renders.
+				if (targetScroll < maxScroll - 50) {
+					autoScrollPausedRef.current = true;
+					isAtBottomRef.current = false;
+					setAutoScrollPaused(true);
+					setIsAtBottom(false);
+				}
+
+				// Mark our own write so the scroll handler doesn't read it back as the
+				// user scrolling and abort the very restore that produced it.
+				isProgrammaticScrollRef.current = true;
+				container.scrollTop = targetScroll;
+
+				if (targetScroll >= initialScrollTop) {
+					// Landed on the offset that was asked for. Done.
+					hasRestoredScrollRef.current = true;
+					return;
+				}
+
+				// Short of target because the content has not finished growing.
+				framesWithoutGrowth = scrollHeight > lastScrollHeight ? 0 : framesWithoutGrowth + 1;
+				lastScrollHeight = scrollHeight;
+				if (framesWithoutGrowth >= MAX_QUIET_FRAMES) {
+					// Height has stopped changing and we still cannot reach the offset -
+					// the transcript is simply shorter now. Accept where we are.
+					hasRestoredScrollRef.current = true;
+					return;
+				}
+				requestAnimationFrame(attempt);
+			};
+
+			requestAnimationFrame(attempt);
+			return () => {
+				cancelled = true;
+			};
 		}, [initialScrollTop]);
 
 		// Reset restore flag when session/tab changes (handled by key prop on TerminalOutput)
 		useEffect(() => {
 			hasRestoredScrollRef.current = false;
+			// Must clear with it: this ref is what ends the retry loop, so carrying a
+			// previous tab's user-scroll across a switch would abort the next tab's
+			// restore on its first frame and reintroduce the bug.
+			userScrolledDuringRestoreRef.current = false;
 		}, [session.id, activeTabId]);
 
 		// Cleanup throttle timer on unmount

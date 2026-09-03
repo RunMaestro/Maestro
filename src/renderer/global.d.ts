@@ -155,6 +155,7 @@ type GroupChatData = {
 	imagesDir: string;
 	draftMessage?: string;
 	archived?: boolean;
+	requireIdleParticipants?: boolean;
 };
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
@@ -340,7 +341,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
@@ -488,7 +490,9 @@ interface MaestroAPI {
 			success: boolean,
 			tabId?: string
 		) => void;
-		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
+		onRemoteRefreshAutoRunDocs: (
+			callback: (sessionId: string, background?: boolean) => void
+		) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (
 				sessionId: string,
@@ -2461,7 +2465,8 @@ interface MaestroAPI {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => Promise<GroupChatData>;
 		list: () => Promise<Array<GroupChatData>>;
 		load: (id: string) => Promise<GroupChatData | null>;
@@ -2480,6 +2485,7 @@ interface MaestroAPI {
 					maestroPMode?: 'interactive' | 'dynamic';
 					maestroPPath?: string;
 				};
+				requireIdleParticipants?: boolean;
 			}
 		) => Promise<GroupChatData>;
 		archive: (id: string, archived: boolean) => Promise<GroupChatData>;

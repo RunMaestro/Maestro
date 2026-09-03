@@ -64,6 +64,14 @@ export interface TextareaLineNumbersProps {
 	/** Current textarea value - the gutter re-measures whenever it changes. */
 	value: string;
 	theme: Theme;
+	/**
+	 * Any value that changes the textarea's typography without changing its box.
+	 * A font-size change leaves the border box the same size, so the internal
+	 * ResizeObserver never fires and the numbers keep the row heights of the old
+	 * font until the next keystroke. Pass the font scale (or whatever drives it)
+	 * to re-measure on the spot.
+	 */
+	remeasureKey?: string | number;
 	/** Test id on the gutter element. Defaults to `line-numbers`. */
 	testId?: string;
 }
@@ -72,6 +80,7 @@ export function TextareaLineNumbers({
 	textareaRef,
 	value,
 	theme,
+	remeasureKey,
 	testId = 'line-numbers',
 }: TextareaLineNumbersProps) {
 	const rowsRef = useRef<HTMLDivElement>(null);
@@ -157,7 +166,7 @@ export function TextareaLineNumbers({
 		const observer = new ResizeObserver(measure);
 		observer.observe(textarea);
 		return () => observer.disconnect();
-	}, [textareaRef, lines]);
+	}, [textareaRef, lines, remeasureKey]);
 
 	return (
 		<>

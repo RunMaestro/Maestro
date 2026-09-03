@@ -54,26 +54,37 @@ Commands exit with a standardized code so scripts and CI can branch on the failu
 
 ### Who Moves the View (`--background` / `--focus`)
 
-Focus belongs to whoever is at the keyboard. An agent may create a surface; it should not decide you ought to be looking at it. Every verb that can move the Maestro view therefore accepts `--background`, which means exactly two things: the active agent does not change, and the active tab inside any agent does not change. The surface is still created and still addressable - it lands in the tab bar the way a browser opens a background tab.
+Focus belongs to whoever is at the keyboard. An agent may create a surface; it should not decide you ought to be looking at it. Every verb that can move the Maestro view or raise a notice therefore accepts `--background`, which means exactly two things: the active agent does not change, and the active tab inside any agent does not change. The surface is still created and still addressable - it lands in the tab bar the way a browser opens a background tab.
+
+Maestro's own system prompt tells agents to **pass `--background` by default** and to drop it only when you asked to be shown something. What follows describes what each verb does when the flag is absent, which is unchanged.
 
 `--focus` is the opposite ask, and it ships on every one of these verbs even where it only names the current default. If both are passed, `--focus` wins.
 
 **The flag is additive: no verb's default changed.** An unflagged call behaves exactly as it always has, so existing scripts, playbooks, and Cue prompts are unaffected.
 
-| Command              | Default when neither flag is passed |
-| -------------------- | ----------------------------------- |
-| `open-file`          | switches to the file                |
-| `open-terminal`      | switches to the new terminal        |
-| `open-browser`       | switches to the new browser tab     |
-| `tab new`            | switches to the new tab             |
-| `dispatch --new-tab` | **background** (as it always was)   |
-| `create-agent`       | selects the new agent               |
-| `create-worktree`    | selects the new agent               |
-| `switch-mode`        | switches the mode                   |
+| Command                     | Default when neither flag is passed          |
+| --------------------------- | -------------------------------------------- |
+| `open-file`                 | switches to the file                         |
+| `open-terminal`             | switches to the new terminal                 |
+| `open-browser`              | switches to the new browser tab              |
+| `tab new`                   | switches to the new tab                      |
+| `dispatch --new-tab`        | **background** (as it always was)            |
+| `dispatch` (no `--new-tab`) | selects the target agent                     |
+| `create-agent`              | selects the new agent                        |
+| `create-worktree`           | selects the new agent                        |
+| `switch-mode`               | switches the mode                            |
+| `refresh-auto-run`          | selects the target agent and flashes a count |
+| `refresh-files`             | **already quiet**; flag accepted, no effect  |
 
-`focus-agent`, `send --tab`, and `open` exist _to_ move the view - you named that intent - so they take no placement flag.
+`focus-agent`, `send --tab`, `open`, and `open-graph` exist _to_ move the view - you named that intent - so they take no placement flag. The graph in particular is a full-window overlay whose only effect is being looked at, so a background one would do nothing at all.
 
 `switch-mode` is the one verb here that creates nothing: changing an agent's rendered surface is its entire effect, so there is no background surface to leave behind. `--background` there means "skip it rather than move me", and it only refuses when the target is the agent already on screen. Switching an off-screen agent changes no pixels and goes through normally.
+
+`dispatch` is two verbs wearing one name. With `--new-tab` it creates a tab you will address by the id it prints, so it is background by default. Without it, it writes into an existing conversation and selects that agent, as it always has. `create-worktree --message` uses the same write path, and carries whatever placement you asked `create-worktree` for - so `--background` no longer creates the agent quietly and then yanks you onto it one message later.
+
+`refresh-files` accepts `--background` and ignores it, because it never moved the view or said anything in the first place: the Files panel it refreshes is only drawn for the agent already on screen. That is deliberate rather than an oversight. The advice given to agents is "pass `--background` unless the user asked to be taken there", and an unknown option is a hard error - so one verb that refused the flag would turn a good habit into a failed command.
+
+Errors ignore placement. A command that fails still raises its toast with `--background` set: the flag decides where a surface goes, not whether you get to hear that something broke.
 
 ### Sending Messages to Agents
 
@@ -177,8 +188,8 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 | Flag             | Description                                                                                                                                    |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--new-tab`      | Create a fresh AI tab in the target agent. Mutually exclusive with `-t` and `-f` (a new tab is never busy, so `--force` has nothing to bypass) |
-| `--background`   | Leave the new tab in the background. This is already the default for `--new-tab`; the flag just says so explicitly                             |
-| `--focus`        | Switch to the new tab after creating it (with `--new-tab`)                                                                                     |
+| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                      |
+| `--focus`        | Move the view to the target after dispatching                                                                                                  |
 | `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                 |
 | `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`         |
 
@@ -349,6 +360,55 @@ JSON shape:
 `role` is a coarse classification (`user` | `assistant` | `system` | `tool` | `thinking` | `error` | `unknown`) so conversational consumers can branch on intent; the raw `source` is preserved alongside for callers that need to discriminate further. ISO timestamps are emitted verbatim so a `messages[-1].timestamp` from one call can be fed directly back into `--since` on the next.
 
 Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`.
+
+### Pasted Images (`image list` / `image save`)
+
+An image pasted into a Maestro chat reaches the agent as pixels in its context: the agent can see the screenshot, but it has no path to the file, so "save that to the repo" used to be a right-click only you could perform. These two verbs give the agent the same reach.
+
+```bash
+# What has been pasted, newest first
+maestro-cli image list --limit 5
+maestro-cli image list -a <agent-id> -t <tab-id> --json
+
+# The most recent image, into the current working directory
+maestro-cli image save
+
+# By index (from `image list`) or by handle, to an exact path
+maestro-cli image save 3 -o docs/screenshots/dashboard.png
+maestro-cli image save 9ca2e320 -o assets/
+
+# Every image in one conversation, into a folder
+maestro-cli image save --all -t <tab-id> -o screenshots/
+```
+
+`image list` prints one image per line: index, handle, age, agent, tab, and the first line of the message it came in on.
+
+```
+  1  9ca2e320  2m ago        Maestro  Discord Message Bus  why wasn't this picked up by our Cue pipeline?
+  2  f8d010b2  9h ago        Kensho   Fibonacci Ingest     notes from a verbal session, see the image
+```
+
+| Flag                  | Command | Description                                                       |
+| --------------------- | ------- | ----------------------------------------------------------------- |
+| `-a, --agent <id>`    | both    | Only this agent (defaults to every agent)                         |
+| `-t, --tab <tab-id>`  | both    | Only this AI tab                                                  |
+| `--limit <n>`         | `list`  | Maximum images to show (default: 20)                              |
+| `-o, --output <path>` | `save`  | File or directory to write (default: a generated name in the cwd) |
+| `--all`               | `save`  | Save every image in scope instead of just the newest              |
+| `--force`             | `save`  | Overwrite an existing file named by `--output`                    |
+| `--json`              | both    | Output as JSON (for scripting)                                    |
+
+Details worth knowing:
+
+- **Scope it with `-a` / `-t`.** With neither, the scope is every agent, so "the newest image" is whatever was pasted most recently anywhere in the fleet. An agent saving its own conversation's screenshot should pass its own agent id.
+- **The target is an index, a handle, or `latest`** (the default). A handle is the leading hex of the image's content hash, which is stable, so it keeps addressing the same picture as newer images push the indexes down.
+- **The extension follows the bytes, not the name you asked for.** Saving a JPEG as `shot.png` writes `shot.jpg`, because an extension that lies about the encoding is a file every downstream decoder rejects. The path actually written is what the command prints.
+- **Nothing is overwritten by accident.** A generated name that collides gets a `-2`, `-3` suffix; an explicit `--output` that already exists fails until you pass `--force`.
+- **With `--all`, `--output` is always a folder** and is created if it does not exist, even when the scope happens to hold a single image.
+- **The Files panel refreshes itself.** After writing, `image save` nudges the tree for whichever agents own the written paths, so the image appears without waiting for the panel's timed refresh (`--json` reports them as `refreshedAgents`). The nudge is best-effort: the bytes are already on disk, so a closed desktop is not a failed save.
+- **Reads come from disk, not the running app**, so these work with the desktop closed. The cost is the renderer's two-second persistence debounce: an image pasted this instant may not be on disk yet, and `image save` says so rather than guessing.
+
+Error codes: `AGENT_NOT_FOUND`, `NO_IMAGES`, `IMAGE_NOT_FOUND`, `AMBIGUOUS_IMAGE`, `IMAGE_MISSING`, `FILE_EXISTS`, `WRITE_FAILED`, `INVALID_USAGE`.
 
 ### Creating, Updating, and Removing Agents
 
@@ -1206,16 +1266,25 @@ Each row is `state | active-marker | tabId | agent | name | cwd`, with the start
 Refresh the file tree sidebar after creating multiple files or making significant filesystem changes:
 
 ```bash
-maestro-cli refresh-files [--agent <id>]
+maestro-cli refresh-files [--agent <id>] [--background]
 ```
+
+This one never disturbs you: it renders no notice and moves no selection, since the Files panel it refreshes is only drawn for the agent already on screen. `--background` is accepted and ignored, so an agent that passes it on every command does not get a usage error here.
 
 #### Refresh Auto Run Documents
 
 Refresh the Auto Run document list after creating or modifying auto-run documents:
 
 ```bash
-maestro-cli refresh-auto-run [--agent <id>]
+maestro-cli refresh-auto-run [--agent <id>] [--background | --focus]
 ```
+
+Unflagged, this **switches to the target agent** (that switch is how an off-screen agent gets refreshed at all) and flashes the document count on screen. `--background` gives you neither: an agent already on screen is refreshed silently, and an off-screen one is left alone entirely, since its documents are re-read the moment you switch to it anyway.
+
+| Flag           | Description                                                        |
+| -------------- | ------------------------------------------------------------------ |
+| `--background` | Refresh without switching to the target agent, and without a flash |
+| `--focus`      | Switch to the target agent while refreshing (the default)          |
 
 #### Notifications
 

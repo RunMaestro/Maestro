@@ -282,7 +282,13 @@ export type ExecuteCommandCallback = (
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
 	force?: boolean,
-	images?: string[]
+	images?: string[],
+	/**
+	 * Deliver without selecting the target agent. Absent means today's behaviour
+	 * (the renderer selects it "for visual feedback"), so the web/mobile client and
+	 * every in-app caller keep focusing exactly as they do now.
+	 */
+	background?: boolean
 ) => Promise<boolean>;
 
 /**
@@ -505,7 +511,16 @@ export type ReadTerminalTabCallback = (
 	payload: ReadTerminalTabPayload
 ) => Promise<ReadTerminalTabResult>;
 
-export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+/**
+ * Re-read an agent's Auto Run documents.
+ *
+ * `background` suppresses the agent switch the renderer otherwise performs to
+ * get the target refreshed; the refresh itself happens either way.
+ */
+export type RefreshAutoRunDocsCallback = (
+	sessionId: string,
+	background?: boolean
+) => Promise<boolean>;
 
 /**
  * Updates the Auto Run folder for an existing session. Mirrors what the desktop

@@ -30,7 +30,15 @@ describe('useRemoteIntegration', () => {
 	const originalMaestro = { ...window.maestro };
 
 	let onRemoteCommandHandler:
-		| ((sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void)
+		| ((
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean,
+				images?: string[],
+				background?: boolean
+		  ) => void)
 		| undefined;
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
@@ -458,6 +466,64 @@ describe('useRemoteIntegration', () => {
 			);
 
 			dispatchEventSpy.mockRestore();
+		});
+
+		it('leaves the Left Bar selection alone when the dispatch is background', () => {
+			// An agent handing work to another agent must not yank the human onto
+			// that agent. The command still runs - only the selection is spared.
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'quiet work',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					true
+				);
+			});
+
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ command: 'quiet work' }),
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('still selects the agent for anything that is not a literal true', () => {
+			// The regression this guards: reading the absent field as an opt-in
+			// would stop the web and mobile clients focusing, and they never send it.
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+
+			for (const value of [undefined, false, 'yes', 1, null] as unknown[]) {
+				const deps = createDeps({ sessions: [session] });
+				const { unmount } = renderHook(() => useRemoteIntegration(deps));
+
+				act(() => {
+					onRemoteCommandHandler?.(
+						'session-1',
+						'loud work',
+						'ai',
+						undefined,
+						undefined,
+						undefined,
+						value as boolean | undefined
+					);
+				});
+
+				expect(deps.setActiveSessionId, String(value)).toHaveBeenCalledWith('session-1');
+				unmount();
+			}
 		});
 
 		it('ignores command when session not found', () => {

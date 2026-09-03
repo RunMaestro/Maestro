@@ -92,7 +92,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 							<span className="flex-1 truncate">{suggestion.fullPath}</span>
 							{suggestion.source === 'autorun' && (
 								<span
-									className="text-[9px] px-1 py-0.5 rounded flex-shrink-0"
+									className="text-3xs px-1 py-0.5 rounded flex-shrink-0"
 									style={{
 										backgroundColor: `${theme.colors.accent}30`,
 										color: theme.colors.accent,
@@ -101,7 +101,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 									Auto Run
 								</span>
 							)}
-							<span className="text-[10px] opacity-40 flex-shrink-0">{suggestion.type}</span>
+							<span className="text-2xs opacity-40 flex-shrink-0">{suggestion.type}</span>
 						</button>
 					);
 				})}

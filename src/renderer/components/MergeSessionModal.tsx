@@ -87,17 +87,7 @@ const estimateTokens = estimateTokensFromLogs;
  * Animated token display component that highlights when value changes
  */
 const AnimatedTokenCount = memo(
-	({
-		tokens,
-		accentColor,
-		textColor,
-		prefix = '~',
-	}: {
-		tokens: number;
-		accentColor: string;
-		textColor: string;
-		prefix?: string;
-	}) => {
+	({ tokens, textColor, prefix = '~' }: { tokens: number; textColor: string; prefix?: string }) => {
 		const [animating, setAnimating] = useState(false);
 		const prevTokensRef = useRef(tokens);
 
@@ -117,7 +107,6 @@ const AnimatedTokenCount = memo(
 				style={
 					{
 						color: textColor,
-						'--token-highlight': accentColor,
 						display: 'inline-block',
 					} as React.CSSProperties
 				}
@@ -573,7 +562,6 @@ export function MergeSessionModal({
 			>
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
-					accentColor={theme.colors.accent}
 					onResetSize={resizableModal.onResetSize}
 					canReset={resizableModal.canReset}
 				/>
@@ -862,7 +850,6 @@ export function MergeSessionModal({
 																			color: isTarget
 																				? theme.colors.accentForeground
 																				: theme.colors.textMain,
-																			'--pulse-color': `${theme.colors.accent}40`,
 																		} as React.CSSProperties
 																	}
 																>
@@ -877,7 +864,7 @@ export function MergeSessionModal({
 																			<span className="text-sm truncate">{item.tabName}</span>
 																			{item.agentSessionId && (
 																				<span
-																					className="text-[10px] px-1 py-0.5 rounded font-mono"
+																					className="text-2xs px-1 py-0.5 rounded font-mono"
 																					style={{
 																						backgroundColor: isTarget
 																							? 'rgba(255,255,255,0.2)'
@@ -966,7 +953,6 @@ export function MergeSessionModal({
 									</span>
 									<AnimatedTokenCount
 										tokens={estimatedMergedTokens}
-										accentColor={theme.colors.accent}
 										textColor={theme.colors.textMain}
 									/>
 								</div>

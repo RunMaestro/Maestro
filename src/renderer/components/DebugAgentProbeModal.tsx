@@ -155,7 +155,7 @@ export function DebugAgentProbeModal({ theme, onClose }: DebugAgentProbeModalPro
 										<span className="truncate">{meta.name}</span>
 										{meta.beta && (
 											<span
-												className="text-[9px] uppercase tracking-wide px-1 py-px rounded opacity-70 shrink-0"
+												className="text-3xs uppercase tracking-wide px-1 py-px rounded opacity-70 shrink-0"
 												style={{
 													backgroundColor: theme.colors.bgActivity,
 													color: theme.colors.textDim,
@@ -167,7 +167,7 @@ export function DebugAgentProbeModal({ theme, onClose }: DebugAgentProbeModalPro
 									</div>
 								</div>
 								<div
-									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap shrink-0"
+									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium whitespace-nowrap shrink-0"
 									style={{ backgroundColor: theme.colors.bgActivity, color: visual.color }}
 								>
 									<Icon className={`w-2.5 h-2.5 ${isProbing ? 'animate-spin' : ''}`} />
@@ -176,7 +176,7 @@ export function DebugAgentProbeModal({ theme, onClose }: DebugAgentProbeModalPro
 							</div>
 
 							<div
-								className="text-[11px] opacity-60 break-all select-text leading-snug"
+								className="text-xs-plus opacity-60 break-all select-text leading-snug"
 								style={{ color: theme.colors.textMain }}
 							>
 								{snapshot?.path
@@ -194,7 +194,7 @@ export function DebugAgentProbeModal({ theme, onClose }: DebugAgentProbeModalPro
 
 							{snapshot?.lastError ? (
 								<div
-									className="text-[11px] opacity-70 select-text break-all leading-snug"
+									className="text-xs-plus opacity-70 select-text break-all leading-snug"
 									style={{ color: theme.colors.error }}
 								>
 									{snapshot.lastError}

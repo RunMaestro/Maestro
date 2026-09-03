@@ -562,7 +562,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 										</button>
 									)}
 								</div>
-								<p className="text-[10px] mt-1.5 opacity-50">
+								<p className="text-2xs mt-1.5 opacity-50">
 									Get your API key from wakatime.com/settings/api-key. Keys are stored locally in
 									~/.maestro/settings.json.
 								</p>
@@ -651,7 +651,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									{SYMPHONY_REGISTRY_URL}
 								</span>
 								<span
-									className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+									className="text-2xs px-1.5 py-0.5 rounded flex-shrink-0"
 									style={{
 										color: theme.colors.textDim,
 										backgroundColor: theme.colors.border,
@@ -715,7 +715,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									/>
 									{registryUrlError && (
 										<p
-											className="absolute -bottom-4 left-0 text-[10px]"
+											className="absolute -bottom-4 left-0 text-2xs"
 											style={{ color: theme.colors.error }}
 										>
 											{registryUrlError}
@@ -772,7 +772,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							>
 								Maestro Cue
 								<span
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 									style={{
 										backgroundColor: theme.colors.warning + '30',
 										color: theme.colors.warning,
@@ -817,7 +817,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								Global Cue Settings
 							</div>
 							{cueSettingsLoaded && (
-								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 									{cueSettingsSaveState === 'saving' && 'Saving…'}
 									{cueSettingsSaveState === 'saved' && 'Saved'}
 									{cueSettingsSaveState === 'error' && (
@@ -840,7 +840,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							<>
 								<div>
 									<label
-										className="block text-[11px] font-medium mb-1"
+										className="block text-xs-plus font-medium mb-1"
 										style={{ color: theme.colors.textDim }}
 									>
 										Timeout (minutes)
@@ -862,10 +862,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											color: theme.colors.textMain,
 										}}
 									/>
-									<p
-										className="text-[10px] mt-1 opacity-70"
-										style={{ color: theme.colors.textDim }}
-									>
+									<p className="text-2xs mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
 										Maximum time a triggered run can execute before it&apos;s automatically stopped.
 										Increase if your tasks regularly need more time.
 									</p>
@@ -873,7 +870,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 
 								<div>
 									<label
-										className="block text-[11px] font-medium mb-1"
+										className="block text-xs-plus font-medium mb-1"
 										style={{ color: theme.colors.textDim }}
 									>
 										On Source Failure
@@ -902,10 +899,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											style={{ color: theme.colors.textDim }}
 										/>
 									</div>
-									<p
-										className="text-[10px] mt-1 opacity-70"
-										style={{ color: theme.colors.textDim }}
-									>
+									<p className="text-2xs mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
 										What to do when a pipeline stage times out or errors. &quot;Break&quot; stops
 										the entire chain; &quot;Continue&quot; skips the failed stage and proceeds to
 										the next.
@@ -914,7 +908,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 
 								<div>
 									<label
-										className="block text-[11px] font-medium mb-1"
+										className="block text-xs-plus font-medium mb-1"
 										style={{ color: theme.colors.textDim }}
 									>
 										Max Concurrent Runs
@@ -939,10 +933,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											color: theme.colors.textMain,
 										}}
 									/>
-									<p
-										className="text-[10px] mt-1 opacity-70"
-										style={{ color: theme.colors.textDim }}
-									>
+									<p className="text-2xs mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
 										How many Cue-triggered runs can execute in parallel. Higher values increase
 										throughput but agents may conflict on shared files. Default: 1.
 									</p>
@@ -950,7 +941,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 
 								<div>
 									<label
-										className="block text-[11px] font-medium mb-1"
+										className="block text-xs-plus font-medium mb-1"
 										style={{ color: theme.colors.textDim }}
 									>
 										Event Queue Size
@@ -978,10 +969,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											color: theme.colors.textMain,
 										}}
 									/>
-									<p
-										className="text-[10px] mt-1 opacity-70"
-										style={{ color: theme.colors.textDim }}
-									>
+									<p className="text-2xs mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
 										Events that arrive while the concurrent limit is reached are buffered here. When
 										the queue is full, the oldest event is dropped. Set to 0 to disable buffering.
 										Default: 512.
@@ -1028,7 +1016,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							>
 								Director's Notes
 								<span
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 									style={{
 										backgroundColor: theme.colors.warning + '30',
 										color: theme.colors.warning,
@@ -1252,7 +1240,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								className="w-full"
 							/>
 							<div
-								className="flex justify-between text-[10px] mt-1"
+								className="flex justify-between text-2xs mt-1"
 								style={{ color: theme.colors.textDim }}
 							>
 								<span>1 day</span>

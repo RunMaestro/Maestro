@@ -42,6 +42,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			language,
 			theme,
 			spellCheck = false,
+			readOnly = false,
 			wrap = true,
 			showLineNumbers = true,
 			onLineNumberContextMenu,
@@ -96,6 +97,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
 			});
@@ -196,11 +198,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
 			});
 			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
-		}, [wrap, showLineNumbers, spellCheck, compartments.base]);
+		}, [wrap, showLineNumbers, spellCheck, readOnly, compartments.base]);
 
 		useImperativeHandle(
 			ref,
@@ -263,6 +266,38 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 							? EditorView.scrollIntoView(clampedFrom, { y: 'center' })
 							: undefined,
 					});
+				},
+				getCaret() {
+					const view = viewRef.current;
+					if (!view) return 0;
+					return view.state.selection.main.head;
+				},
+				coordsAtPos(pos: number) {
+					const view = viewRef.current;
+					const host = hostRef.current;
+					if (!view || !host) return null;
+					const docLen = view.state.doc.length;
+					const coords = view.coordsAtPos(Math.max(0, Math.min(pos, docLen)));
+					if (!coords) return null;
+					// Viewport coordinates, rebased onto the host so a popup can be
+					// positioned with plain `absolute` inside it.
+					const hostRect = host.getBoundingClientRect();
+					return {
+						top: coords.bottom - hostRect.top + 4,
+						left: coords.left - hostRect.left,
+					};
+				},
+				replaceRange(from: number, to: number, text: string) {
+					const view = viewRef.current;
+					if (!view) return;
+					const docLen = view.state.doc.length;
+					const clampedFrom = Math.max(0, Math.min(from, docLen));
+					const clampedTo = Math.max(clampedFrom, Math.min(to, docLen));
+					view.dispatch({
+						changes: { from: clampedFrom, to: clampedTo, insert: text },
+						selection: EditorSelection.single(clampedFrom + text.length),
+					});
+					view.contentDOM.focus({ preventScroll: true });
 				},
 				setSearchMatches(matches, currentIndex) {
 					const view = viewRef.current;

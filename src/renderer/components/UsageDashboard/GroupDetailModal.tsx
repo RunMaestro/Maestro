@@ -249,7 +249,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 				</section>
 
 				{!hasUsage && (
-					<p className="text-[11px]" style={{ color: theme.colors.textDim }} role="note">
+					<p className="text-xs-plus" style={{ color: theme.colors.textDim }} role="note">
 						{note}
 					</p>
 				)}
@@ -272,7 +272,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 								height={64}
 							/>
 							<div
-								className="flex justify-between mt-1 text-[10px]"
+								className="flex justify-between mt-1 text-2xs"
 								style={{ color: theme.colors.textDim }}
 							>
 								<span>{rollup.byDay[0]?.date ?? ''}</span>
@@ -412,7 +412,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 													</span>
 													{row.session.worktreeBranch && (
 														<span
-															className="block truncate text-[10px]"
+															className="block truncate text-2xs"
 															style={{ color: theme.colors.textDim }}
 														>
 															{row.session.worktreeBranch}

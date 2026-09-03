@@ -14,6 +14,11 @@ interface BuildNewTabCommandsArgs {
 	newTabShortcut?: QuickAction['shortcut'];
 	newFileTabShortcut?: QuickAction['shortcut'];
 	newBrowserTabShortcut?: QuickAction['shortcut'];
+	/**
+	 * `toggleMode` (Cmd+J). Named for what the key does today - it opens a
+	 * terminal tab - rather than for its historical id.
+	 */
+	newTerminalTabShortcut?: QuickAction['shortcut'];
 }
 
 interface BuildTabCommandsArgs {
@@ -39,8 +44,8 @@ interface BuildTabCommandsArgs {
 	onClearActiveTerminal?: () => void;
 	setQuickActionOpen: (open: boolean) => void;
 	shortcuts: {
-		toggleMode?: QuickAction['shortcut'];
 		toggleMarkdownMode?: QuickAction['shortcut'];
+		showSnoozeList?: QuickAction['shortcut'];
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
 	};
@@ -58,6 +63,7 @@ export function buildNewTabCommands({
 	newTabShortcut,
 	newFileTabShortcut,
 	newBrowserTabShortcut,
+	newTerminalTabShortcut,
 }: BuildNewTabCommandsArgs): QuickAction[] {
 	if (!activeSession) return [];
 	const commands: QuickAction[] = [];
@@ -106,6 +112,7 @@ export function buildNewTabCommands({
 			id: 'newTerminalTab',
 			label: 'New Terminal',
 			subtext: 'Open a new terminal tab in the active agent',
+			shortcut: newTerminalTabShortcut,
 			action: () => {
 				onNewTerminalTab();
 				setQuickActionOpen(false);
@@ -330,6 +337,7 @@ export function buildTabCommands({
 				id: 'snoozeTab',
 				label: 'Snooze Tab',
 				subtext: 'Hide this tab until later, then get a reminder',
+				shortcut: tabShortcuts?.snoozeTab,
 				action: () => {
 					setQuickActionOpen(false);
 					useModalStore.getState().openModal('snoozeTab', {
@@ -345,6 +353,7 @@ export function buildTabCommands({
 		id: 'showSnoozedTabs',
 		label: 'See All Snoozed Tabs',
 		subtext: 'Unsnooze, reschedule, or dismiss snoozed tabs',
+		shortcut: shortcuts.showSnoozeList,
 		action: () => {
 			setQuickActionOpen(false);
 			useModalStore.getState().openModal('snoozedTabs');

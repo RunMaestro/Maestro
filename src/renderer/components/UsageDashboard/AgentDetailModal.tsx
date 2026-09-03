@@ -230,7 +230,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 								height={64}
 							/>
 							<div
-								className="flex justify-between mt-1 text-[10px]"
+								className="flex justify-between mt-1 text-2xs"
 								style={{ color: theme.colors.textDim }}
 							>
 								<span>{aggregates.byDay[0]?.date ?? ''}</span>
@@ -359,7 +359,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 
 				{/* Footer note: when the most recent activity was, formatted relative */}
 				{aggregates.lastActive && (
-					<div className="text-[10px] text-right" style={{ color: theme.colors.textDim }}>
+					<div className="text-2xs text-right" style={{ color: theme.colors.textDim }}>
 						Last active {formatRelativeTime(new Date(aggregates.lastActive).getTime())}
 					</div>
 				)}

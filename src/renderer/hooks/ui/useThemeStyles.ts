@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { hexToRgb } from '../../../shared/colorContrast';
+import { adjustBrightness, blendColors, hexToRgb } from '../../../shared/colorContrast';
 import type { ThemeMode } from '../../../shared/theme-types';
 import type { GlossLevel } from '../../../shared/themeGloss';
 
@@ -20,6 +20,110 @@ import type { GlossLevel } from '../../../shared/themeGloss';
 function sheenRgbTriple(textMain: string): string {
 	const rgb = hexToRgb(textMain);
 	return rgb ? `${rgb.r} ${rgb.g} ${rgb.b}` : '255 255 255';
+}
+
+/**
+ * The accent as a bare `R, G, B` triple for `rgba(var(--accent-rgb), a)`.
+ *
+ * Comma separated on purpose, unlike `--sheen-rgb`: the sheen is consumed by
+ * the modern `rgb(... / a%)` form, while this one is for rules that still take
+ * the legacy `rgba(r, g, b, a)` form. One separator cannot serve both, so the
+ * two vars stay separate rather than one being reformatted at each call site.
+ *
+ * Returns null when the palette carries a non-hex accent (a custom theme may
+ * use any CSS colour). The caller then clears the property so every
+ * `var(--accent-rgb, ...)` falls back to its own literal, which is a colour
+ * someone chose - unlike a guessed triple, and unlike a stale value left over
+ * from the previously active theme.
+ */
+function accentRgbTriple(accent: string): string | null {
+	const rgb = hexToRgb(accent);
+	return rgb ? `${rgb.r}, ${rgb.g}, ${rgb.b}` : null;
+}
+
+/**
+ * The accent thinned to `percent` opacity, for the themed glow effects.
+ *
+ * `color-mix` rather than an rgba() built from `hexToRgb`, so a custom theme
+ * whose accent is any valid CSS colour (`oklch(...)`, a named colour, a
+ * gradient stop function) still tints its glows instead of dropping to the
+ * hard-coded indigo fallback. It is the same technique the max-gloss active
+ * ring already uses in index.css.
+ *
+ * The percentages are chosen to match the alphas each effect's CSS fallback
+ * carried, so wiring the theme in changes the hue and not the intensity.
+ */
+function accentMix(accent: string, percent: number): string {
+	return `color-mix(in srgb, ${accent} ${percent}%, transparent)`;
+}
+
+/**
+ * How much `textMain` is mixed into `bgMain` to reach the hover surface.
+ *
+ * One ratio for every mode on purpose: `textMain` is dark on a light theme and
+ * light on a dark one, so blending toward it darkens light themes and lightens
+ * dark ones without a mode branch. That branch is exactly what the two literal
+ * `.row-hover` rules in index.css were, and it is wrong for any theme whose
+ * background is not near-black or near-white.
+ */
+const HOVER_WASH_RATIO = 0.07;
+
+/**
+ * The three derived slots, in the two forms the CSS needs.
+ *
+ * `bgHover` is an opaque SURFACE (what a hover ends up looking like over
+ * `bgMain`). `bgHoverWash` is the same decision as an OVERLAY: the wash is
+ * composited on top of whatever background-color a row already carries inline
+ * for its selected / drag-over state, so it has to be translucent or every
+ * state flattens to one colour under the pointer. The two agree by
+ * construction, since the wash is `textMain` at the ratio the blend uses.
+ *
+ * `bgHoverWash` is null when `textMain` is not a hex colour (a custom theme may
+ * use any CSS colour). The caller then clears the var so the literal fallbacks
+ * in index.css apply, rather than leaving the previous theme's wash behind.
+ */
+interface DerivedThemeSlots {
+	bgHover: string;
+	bgHoverWash: string | null;
+	accentHover: string;
+	surfaceElevated: string;
+}
+
+/**
+ * Fill in the optional palette slots a theme did not declare.
+ *
+ * Every built-in theme omits all three today, so these derivations are what the
+ * app actually renders. A theme that declares a slot wins outright, including
+ * for the hover wash: declaring `bgHover` is declaring what a hover looks like,
+ * and a theme is free to supply an rgba() there if it wants the overlay
+ * behaviour.
+ */
+function deriveThemeSlots(
+	colors: Pick<
+		ThemeColors,
+		'bgMain' | 'textMain' | 'accent' | 'bgHover' | 'accentHover' | 'surfaceElevated'
+	>,
+	mode: ThemeMode
+): DerivedThemeSlots {
+	const isLight = mode === 'light';
+	const textRgb = hexToRgb(colors.textMain);
+
+	const bgHover = colors.bgHover ?? blendColors(colors.bgMain, colors.textMain, HOVER_WASH_RATIO);
+	const bgHoverWash =
+		colors.bgHover ??
+		(textRgb ? `rgb(${textRgb.r} ${textRgb.g} ${textRgb.b} / ${HOVER_WASH_RATIO})` : null);
+
+	// A flat channel offset rather than a blend toward white/black, so the
+	// accent keeps its hue: an accent mixed toward white washes out to pastel,
+	// which reads as a different colour rather than the same control lit up.
+	const accentHover = colors.accentHover ?? adjustBrightness(colors.accent, isLight ? -8 : 10);
+
+	// Light themes have no "brighter than white" to reach for, so an elevated
+	// surface goes the other way and carries its own shadow.
+	const surfaceElevated =
+		colors.surfaceElevated ?? adjustBrightness(colors.bgMain, isLight ? -3 : 4);
+
+	return { bgHover, bgHoverWash, accentHover, surfaceElevated };
 }
 
 /**
@@ -46,6 +150,26 @@ export interface ThemeColors {
 	bgActivity: string;
 	/** Main text color - the light source the surface-gloss rules mix. */
 	textMain: string;
+	/** Main background color, published as `--bg-main`. */
+	bgMain: string;
+	/** Sidebar background color, published as `--bg-sidebar`. */
+	bgSidebar: string;
+	/** Text color for accent contexts, published as `--accent-text`. */
+	accentText: string;
+	/** Text color for use ON accent backgrounds, published as `--accent-fg`. */
+	accentForeground: string;
+	/** Success state color, published as `--success`. */
+	success: string;
+	/** Warning state color, published as `--warning`. */
+	warning: string;
+	/** Error state color, published as `--error`. */
+	error: string;
+	/** Optional hover surface, published as `--bg-hover`. Derived when unset. */
+	bgHover?: string;
+	/** Optional hover accent, published as `--accent-hover`. Derived when unset. */
+	accentHover?: string;
+	/** Optional raised surface, published as `--surface-elevated`. Derived when unset. */
+	surfaceElevated?: string;
 }
 
 /**
@@ -86,6 +210,31 @@ export interface UseThemeStylesReturn {
  *   --scrollbar-track        = themeColors.bgActivity
  *   --fx-quiet               = themeColors.textDim
  *   --sheen-rgb              = themeColors.textMain as "R G B"
+ *   --bg-main                = themeColors.bgMain
+ *   --bg-sidebar             = themeColors.bgSidebar
+ *   --bg-activity            = themeColors.bgActivity
+ *   --border                 = themeColors.border
+ *   --text-main              = themeColors.textMain
+ *   --text-dim               = themeColors.textDim
+ *   --accent-text            = themeColors.accentText
+ *   --accent-fg              = themeColors.accentForeground
+ *   --success                = themeColors.success
+ *   --warning                = themeColors.warning
+ *   --error                  = themeColors.error
+ *   --bg-hover               = themeColors.bgHover, or textMain blended into bgMain
+ *   --bg-hover-wash          = the same decision as a translucent overlay
+ *   --accent-hover           = themeColors.accentHover, or the accent brightened
+ *   --surface-elevated       = themeColors.surfaceElevated, or bgMain lifted
+ *   --accent-rgb             = themeColors.accent as "R, G, B"
+ *   --pulse-color            = accent at 40% (highlight-pulse ring)
+ *   --glow-color             = accent at 15% (card-glow hover halo)
+ *   --token-highlight        = themeColors.accent (token-update flash)
+ *
+ * The palette block below `--sheen-rgb` publishes the whole theme rather than
+ * only the tokens a rule happens to need today. A CSS rule that wants a theme
+ * colour should be able to reach for it without a matching TypeScript change,
+ * which is what forced every earlier themed effect to be hard-coded to one
+ * theme's hex.
  *
  * Scrollbar styling lives in `src/renderer/index.css` and consumes these
  * variables. To add a new themed CSS rule app-wide, set the property here and
@@ -131,12 +280,68 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 		// colour, so the alpha stays in index.css where the levels are defined and
 		// only the hue crosses the bridge.
 		root.setProperty('--sheen-rgb', sheenRgbTriple(themeColors.textMain));
+
+		// The rest of the palette, one var per token. Purely additive: a rule
+		// that wants a theme colour reads it from here instead of restating a
+		// hex that only matches whichever theme its author had open.
+		root.setProperty('--bg-main', themeColors.bgMain);
+		root.setProperty('--bg-sidebar', themeColors.bgSidebar);
+		root.setProperty('--bg-activity', themeColors.bgActivity);
+		root.setProperty('--border', themeColors.border);
+		root.setProperty('--text-main', themeColors.textMain);
+		root.setProperty('--text-dim', themeColors.textDim);
+		root.setProperty('--accent-text', themeColors.accentText);
+		root.setProperty('--accent-fg', themeColors.accentForeground);
+		root.setProperty('--success', themeColors.success);
+		root.setProperty('--warning', themeColors.warning);
+		root.setProperty('--error', themeColors.error);
+
+		// The three derived slots. Optional on the theme so no theme literal has
+		// to change, which means the derivation is the shipping value everywhere
+		// today and the declared value is the escape hatch.
+		const slots = deriveThemeSlots(themeColors, themeMode);
+		root.setProperty('--bg-hover', slots.bgHover);
+		root.setProperty('--accent-hover', slots.accentHover);
+		root.setProperty('--surface-elevated', slots.surfaceElevated);
+		if (slots.bgHoverWash) {
+			root.setProperty('--bg-hover-wash', slots.bgHoverWash);
+		} else {
+			root.removeProperty('--bg-hover-wash');
+		}
+
+		// Themed glow effects. Their keyframes in index.css used to fall back to a
+		// hard-coded indigo or Dracula purple on every theme, because nothing ever
+		// wrote these vars. The fallbacks stay in place for any stylesheet loaded
+		// before this effect runs.
+		root.setProperty('--pulse-color', accentMix(themeColors.accent, 40));
+		root.setProperty('--glow-color', accentMix(themeColors.accent, 15));
+		// Full strength, so it is the accent itself rather than a 100% mix that
+		// only restates it. The token flash is text colour, not a halo.
+		root.setProperty('--token-highlight', themeColors.accent);
+
+		const accentRgb = accentRgbTriple(themeColors.accent);
+		if (accentRgb) {
+			root.setProperty('--accent-rgb', accentRgb);
+		} else {
+			root.removeProperty('--accent-rgb');
+		}
 	}, [
 		themeColors.accent,
 		themeColors.border,
 		themeColors.textDim,
 		themeColors.bgActivity,
 		themeColors.textMain,
+		themeColors.bgMain,
+		themeColors.bgSidebar,
+		themeColors.accentText,
+		themeColors.accentForeground,
+		themeColors.success,
+		themeColors.warning,
+		themeColors.error,
+		themeColors.bgHover,
+		themeColors.accentHover,
+		themeColors.surfaceElevated,
+		themeMode,
 	]);
 
 	// Publish the theme mode and the gloss level as attributes. Kept in one

@@ -17,6 +17,7 @@ import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
+import { getConnectingColor } from '../utils/theme';
 import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
 
@@ -56,7 +57,9 @@ export function getEnhancedStatusColor(
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const error = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
-	const connecting = colorBlindMode ? COLORBLIND_STATUS_COLORS.connecting : '#ff8800';
+	const connecting = colorBlindMode
+		? COLORBLIND_STATUS_COLORS.connecting
+		: getConnectingColor(theme);
 
 	// Agent Resilience: an active outage (auto-retry backing off) is a "stuck,
 	// needs attention" state. Pulsing orange, ranked above batch/agent state so a
@@ -258,7 +261,7 @@ export const SessionItem = memo(function SessionItem({
 		// so the grid would put its actions on an otherwise empty second line and
 		// turn a compact child row into a two-line one.
 		const layoutClass = variant === 'worktree' ? '' : 'session-row ';
-		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
+		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all row-hover ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
 			return `mx-3 px-3 py-2 rounded mb-1 ${base}`;
@@ -339,7 +342,7 @@ export const SessionItem = memo(function SessionItem({
 						{/* Collapsed worktree child count badge */}
 						{showCollapsedCountBadge && (
 							<span
-								className="text-[9px] px-1.5 py-0.5 rounded-full shrink-0 font-medium"
+								className="text-3xs px-1.5 py-0.5 rounded-full shrink-0 font-medium"
 								style={{
 									backgroundColor: theme.colors.accent + '33',
 									color: theme.colors.accent,
@@ -396,7 +399,7 @@ export const SessionItem = memo(function SessionItem({
 					session.worktreeBranch &&
 					!isEditing && (
 						<div
-							className="text-[10px] mt-0.5 truncate"
+							className="text-2xs mt-0.5 truncate"
 							style={{ color: theme.colors.textDim }}
 							title={session.worktreeBranch}
 						>
@@ -406,11 +409,11 @@ export const SessionItem = memo(function SessionItem({
 
 				{/* Session metadata row (hidden for compact worktree variant) */}
 				{variant !== 'worktree' && (
-					<div className="row-meta flex items-center gap-2 text-[10px] mt-0.5 opacity-70">
+					<div className="row-meta flex items-center gap-2 text-2xs mt-0.5 opacity-70">
 						{/* Session Jump Number Badge (Opt+Cmd+NUMBER) */}
 						{jumpNumber && (
 							<div
-								className="w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold shrink-0"
+								className="w-4 h-4 rounded flex items-center justify-center text-2xs font-bold shrink-0"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.bgMain,
@@ -436,7 +439,7 @@ export const SessionItem = memo(function SessionItem({
 				    name, truncated with the complete value available on hover. */}
 				{variant === 'bookmark' && group && showGroupLabelInBookmarks && (
 					<span
-						className={`row-group-chip text-[9px] px-1 py-0.5 rounded${
+						className={`row-group-chip text-3xs px-1 py-0.5 rounded${
 							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
 						}`}
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
@@ -452,7 +455,7 @@ export const SessionItem = memo(function SessionItem({
 					gitFileCount !== undefined &&
 					gitFileCount > 0 && (
 						<div
-							className="flex items-center gap-0.5 text-[10px]"
+							className="flex items-center gap-0.5 text-2xs"
 							style={{ color: theme.colors.warning }}
 						>
 							<GitBranch className="w-2.5 h-2.5" />
@@ -467,7 +470,7 @@ export const SessionItem = memo(function SessionItem({
 						<>
 							{session.sessionSshRemoteConfig?.enabled && (
 								<div
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold flex items-center"
 									style={{
 										backgroundColor: theme.colors.warning + '30',
 										color: theme.colors.warning,
@@ -479,7 +482,7 @@ export const SessionItem = memo(function SessionItem({
 							)}
 							{showGitLocalBadge && (
 								<div
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 									style={{
 										backgroundColor: theme.colors.accent + '30',
 										color: theme.colors.accent,
@@ -493,7 +496,7 @@ export const SessionItem = memo(function SessionItem({
 					) : session.sessionSshRemoteConfig?.enabled ? (
 						/* Plain directory on remote: always show REMOTE */
 						<div
-							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+							className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 							style={{
 								backgroundColor: theme.colors.warning + '30',
 								color: theme.colors.warning,
@@ -506,7 +509,7 @@ export const SessionItem = memo(function SessionItem({
 						/* Plain local directory: LOCAL pill suppressed in bookmark variant */
 						showGitLocalBadge && (
 							<div
-								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 								style={{
 									backgroundColor: theme.colors.textDim + '20',
 									color: theme.colors.textDim,
@@ -521,7 +524,7 @@ export const SessionItem = memo(function SessionItem({
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
 					<div
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{
 							backgroundColor: theme.colors.warning + '30',
 							color: theme.colors.warning,
@@ -536,7 +539,7 @@ export const SessionItem = memo(function SessionItem({
 				{/* Agent Error Indicator */}
 				{session.agentError && (
 					<div
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
 						title={`Error: ${session.agentError.message}`}
 					>

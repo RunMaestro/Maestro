@@ -217,7 +217,7 @@ export function WindowsWarningModal({
 							<p className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
 								Accessible anytime via{' '}
 								<kbd
-									className="px-1 py-0.5 rounded text-[10px]"
+									className="px-1 py-0.5 rounded text-2xs"
 									style={{ backgroundColor: theme.colors.bgMain }}
 								>
 									Ctrl+K

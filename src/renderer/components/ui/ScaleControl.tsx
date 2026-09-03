@@ -43,8 +43,20 @@ export interface ScaleControlProps {
 	 * (e.g. `preview font size` -> "Increase preview font size").
 	 */
 	subject: string;
+	/**
+	 * Keys the surface has bound to this control (see `useScaleShortcuts`),
+	 * appended to the tooltips: "Increase thumbnail size (+)". A shortcut the
+	 * button never names is one nobody finds.
+	 */
+	shortcutHint?: { decrease?: string; increase?: string; reset?: string };
 	/** Visual treatment. Defaults to `inline`. */
 	variant?: 'inline' | 'floating';
+	/**
+	 * Button size. `sm` is for a dense button row whose own controls are
+	 * `text-xs` - the default squares stand a couple of pixels taller than such
+	 * a row and read heavier than the buttons beside them. Defaults to `md`.
+	 */
+	size?: 'sm' | 'md';
 	/**
 	 * Rest as a circle and expand on hover/focus. `floating` only - the inline
 	 * variant sits in a toolbar where there is nothing to stay out of the way of.
@@ -63,7 +75,9 @@ export const ScaleControl = React.memo(function ScaleControl({
 	decreaseIcon: DecreaseIcon,
 	increaseIcon: IncreaseIcon,
 	subject,
+	shortcutHint,
 	variant = 'inline',
+	size = 'md',
 	collapsible = false,
 	collapsedIcon: CollapsedIcon,
 	className = '',
@@ -73,10 +87,14 @@ export const ScaleControl = React.memo(function ScaleControl({
 	const floating = variant === 'floating';
 	const collapsed = floating && collapsible && !!CollapsedIcon;
 	const percent = Math.round(scale * 100);
+	const withKey = (label: string, key?: string) => (key ? `${label} (${key})` : label);
 
-	const buttonClass = floating
-		? 'focus-ring flex items-center justify-center w-7 h-7 shrink-0 rounded-full transition-colors'
-		: 'focus-ring flex items-center justify-center w-7 h-7 shrink-0 rounded transition-colors';
+	const small = size === 'sm';
+	const boxClass = small ? 'w-6 h-6' : 'w-7 h-7';
+	const iconClass = small ? 'w-3.5 h-3.5' : 'w-4 h-4';
+	const buttonClass = `focus-ring flex items-center justify-center ${boxClass} shrink-0 ${
+		floating ? 'rounded-full' : 'rounded'
+	} transition-colors`;
 
 	const buttonStyle = (enabled: boolean): React.CSSProperties => ({
 		color: theme.colors.textDim,
@@ -115,14 +133,14 @@ export const ScaleControl = React.memo(function ScaleControl({
 					aria-hidden="true"
 					data-testid={testId ? `${testId}-handle` : undefined}
 					title={`Adjust ${subject}`}
-					className="flex items-center justify-center w-7 h-7 shrink-0 overflow-hidden transition-all duration-200 group-hover:w-0 group-hover:opacity-0 group-focus-within:w-0 group-focus-within:opacity-0"
+					className={`flex items-center justify-center ${boxClass} shrink-0 overflow-hidden transition-all duration-200 group-hover:w-0 group-hover:opacity-0 group-focus-within:w-0 group-focus-within:opacity-0`}
 					style={{
 						// A zoom that is no longer 100% tints the resting circle, so the
 						// collapsed state still says the pane is scaled.
 						color: scale === 1 ? theme.colors.textDim : theme.colors.accent,
 					}}
 				>
-					<CollapsedIcon className="w-4 h-4 shrink-0" />
+					<CollapsedIcon className={`${iconClass} shrink-0`} />
 				</span>
 			)}
 			<div className={collapsed ? revealClass : 'contents'}>
@@ -131,19 +149,19 @@ export const ScaleControl = React.memo(function ScaleControl({
 					onClick={() => adjustScale(-1)}
 					disabled={!canDecrease}
 					aria-label={`Decrease ${subject}`}
-					title={`Decrease ${subject}`}
+					title={withKey(`Decrease ${subject}`, shortcutHint?.decrease)}
 					className={`${buttonClass} hover:opacity-100`}
 					style={buttonStyle(canDecrease)}
 				>
-					<DecreaseIcon className="w-4 h-4" />
+					<DecreaseIcon className={iconClass} />
 				</button>
 				{scale !== 1 && (
 					<button
 						type="button"
 						onClick={resetScale}
 						aria-label={`Reset ${subject}`}
-						title={`Reset ${subject} to 100%`}
-						className="focus-ring px-1 text-[10px] font-medium tabular-nums rounded transition-colors hover:opacity-100"
+						title={withKey(`Reset ${subject} to 100%`, shortcutHint?.reset)}
+						className="focus-ring px-1 text-2xs font-medium tabular-nums rounded transition-colors hover:opacity-100"
 						style={{ color: theme.colors.textDim, opacity: 0.8 }}
 					>
 						{percent}%
@@ -154,11 +172,11 @@ export const ScaleControl = React.memo(function ScaleControl({
 					onClick={() => adjustScale(1)}
 					disabled={!canIncrease}
 					aria-label={`Increase ${subject}`}
-					title={`Increase ${subject}`}
+					title={withKey(`Increase ${subject}`, shortcutHint?.increase)}
 					className={`${buttonClass} hover:opacity-100`}
 					style={buttonStyle(canIncrease)}
 				>
-					<IncreaseIcon className="w-4 h-4" />
+					<IncreaseIcon className={iconClass} />
 				</button>
 			</div>
 		</div>

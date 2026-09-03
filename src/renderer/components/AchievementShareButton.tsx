@@ -609,7 +609,7 @@ export function AchievementShareButton({
 	// (Export CSV, Close); default variant keeps the in-card subdued look.
 	const buttonClass =
 		variant === 'header'
-			? 'flex items-center gap-1.5 px-3 py-1.5 rounded text-sm hover:bg-opacity-10 transition-colors'
+			? 'flex items-center gap-1.5 px-3 py-1.5 rounded text-sm row-hover transition-colors'
 			: 'p-1.5 rounded-md transition-colors hover:bg-white/10';
 	const buttonStyle: React.CSSProperties =
 		variant === 'header'

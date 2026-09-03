@@ -28,9 +28,15 @@ export type {
 // @-mention autocomplete
 export { useAtMentionCompletion } from './useAtMentionCompletion';
 
-// Template variable autocomplete
+// Template variable autocomplete: shared state machine plus one binding per
+// text surface (textarea, CodeMirror).
 export { useTemplateAutocomplete } from './useTemplateAutocomplete';
-export type { AutocompleteState } from './useTemplateAutocomplete';
+export { useEditorTemplateAutocomplete } from './useEditorTemplateAutocomplete';
+export { useTemplateAutocompleteEngine } from './useTemplateAutocompleteEngine';
+export type {
+	AutocompleteState,
+	TemplateAutocompleteTarget,
+} from './useTemplateAutocompleteEngine';
 
 // Input keyboard handling (slash commands, tab completion, @ mentions, enter-to-send)
 export { useInputKeyDown } from './useInputKeyDown';

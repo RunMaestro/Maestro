@@ -1681,7 +1681,7 @@ describe('HistoryDetailModal', () => {
 			expect(pills.length).toBe(2);
 			const pillElement = pills.find((el) => el.tagName === 'SPAN');
 			expect(pillElement).toBeDefined();
-			expect(pillElement).toHaveClass('rounded-full', 'text-[10px]', 'font-bold');
+			expect(pillElement).toHaveClass('rounded-full', 'text-2xs', 'font-bold');
 		});
 	});
 

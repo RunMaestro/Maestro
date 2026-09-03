@@ -245,7 +245,7 @@ function GroupChatActivityGraph({
 					}}
 				>
 					<div
-						className="px-3 py-1 text-[10px] font-bold uppercase"
+						className="px-3 py-1 text-2xs font-bold uppercase"
 						style={{ color: theme.colors.textDim }}
 					>
 						Lookback Period
@@ -274,7 +274,7 @@ function GroupChatActivityGraph({
 			{/* Hover tooltip - positioned below the graph */}
 			{hoveredIndex !== null && (
 				<div
-					className="absolute top-full mt-1 px-2 py-1.5 rounded text-[10px] font-mono whitespace-nowrap z-20 pointer-events-none"
+					className="absolute top-full mt-1 px-2 py-1.5 rounded text-2xs font-mono whitespace-nowrap z-20 pointer-events-none"
 					style={{
 						backgroundColor: theme.colors.bgSidebar,
 						border: `1px solid ${theme.colors.border}`,
@@ -390,7 +390,7 @@ function GroupChatActivityGraph({
 				{axisLabels.map(({ label, index }) => (
 					<span
 						key={`${label}-${index}`}
-						className="absolute text-[8px] font-mono"
+						className="absolute text-3xs font-mono"
 						style={{
 							color: theme.colors.textDim,
 							left:
@@ -614,7 +614,7 @@ export function GroupChatHistoryPanel({
 						<button
 							key={type}
 							onClick={() => toggleFilter(type)}
-							className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold uppercase transition-all ${
+							className={`flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-bold uppercase transition-all ${
 								isActive ? 'opacity-100' : 'opacity-40'
 							}`}
 							style={{
@@ -664,7 +664,7 @@ export function GroupChatHistoryPanel({
 						style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 					/>
 					{searchFilter && (
-						<div className="text-[10px] mt-1 text-right" style={{ color: theme.colors.textDim }}>
+						<div className="text-2xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
 							{filteredEntries.length} result{filteredEntries.length !== 1 ? 's' : ''}
 						</div>
 					)}
@@ -736,7 +736,7 @@ export function GroupChatHistoryPanel({
 								<div className="flex items-center justify-between mb-1.5">
 									{/* Participant Name Pill */}
 									<span
-										className="px-2 py-0.5 rounded text-[10px] font-bold"
+										className="px-2 py-0.5 rounded text-2xs font-bold"
 										style={{
 											backgroundColor: participantColor + '25',
 											color: participantColor,
@@ -746,7 +746,7 @@ export function GroupChatHistoryPanel({
 										{entry.participantName}
 									</span>
 									{/* Timestamp */}
-									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 										{formatTime(entry.timestamp)}
 									</span>
 								</div>
@@ -760,7 +760,7 @@ export function GroupChatHistoryPanel({
 								{entry.cost !== undefined && entry.cost > 0 && (
 									<div className="flex items-center gap-2 mt-1.5">
 										<span
-											className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full"
+											className="text-2xs font-mono font-bold px-1.5 py-0.5 rounded-full"
 											style={{
 												backgroundColor: theme.colors.success + '15',
 												color: theme.colors.success,

@@ -17,8 +17,8 @@ export type { FilterInputProps } from './FilterInput';
 export { EmojiPickerField } from './EmojiPickerField';
 export type { EmojiPickerFieldProps } from './EmojiPickerField';
 
-export { ToggleSwitch } from './ToggleSwitch';
-export type { ToggleSwitchProps } from './ToggleSwitch';
+export { ToggleSwitch, ToggleSwitchTrack } from './ToggleSwitch';
+export type { ToggleSwitchProps, ToggleSwitchTrackProps, ToggleSwitchSize } from './ToggleSwitch';
 
 export { CollapsedCommandsNotice } from './CollapsedCommandsNotice';
 export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';

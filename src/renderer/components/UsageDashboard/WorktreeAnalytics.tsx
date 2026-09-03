@@ -192,7 +192,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 					Worktrees
 				</h3>
 				<span
-					className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+					className="px-2 py-0.5 rounded text-2xs font-bold uppercase tracking-wider"
 					style={{
 						backgroundColor: `${theme.colors.accent}20`,
 						color: theme.colors.accent,
@@ -225,7 +225,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 
 			<div className="mb-6" data-testid="worktree-activity-split">
 				<div
-					className="flex items-center justify-between text-[10px] uppercase tracking-wider mb-2"
+					className="flex items-center justify-between text-2xs uppercase tracking-wider mb-2"
 					style={{ color: theme.colors.textDim }}
 				>
 					<span>Query Activity</span>
@@ -262,7 +262,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 						>
 							{parentPct >= 12 && (
 								<span
-									className="text-[10px] font-medium text-white whitespace-nowrap"
+									className="text-2xs font-medium text-white whitespace-nowrap"
 									style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
 								>
 									Parent · {parentQueries}
@@ -283,7 +283,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 						>
 							{worktreePct >= 12 && (
 								<span
-									className="text-[10px] font-medium text-white whitespace-nowrap"
+									className="text-2xs font-medium text-white whitespace-nowrap"
 									style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
 								>
 									Worktree · {worktreeQueries}
@@ -343,7 +343,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 											{branch}
 										</div>
 										<div
-											className="text-[10px] truncate"
+											className="text-2xs truncate"
 											style={{ color: theme.colors.textDim }}
 											title={entry.session.name}
 										>

@@ -12,6 +12,7 @@ import {
 	CLAUDE_SESSION_ORIGINS_DEFAULTS,
 	AGENT_SESSION_ORIGINS_DEFAULTS,
 } from '../../../main/stores/defaults';
+import { MAESTRO_FONT_STACK } from '../../../shared/fontStacks';
 
 describe('stores/defaults', () => {
 	describe('resolveConfiguredShell', () => {
@@ -145,7 +146,11 @@ describe('stores/defaults', () => {
 		});
 
 		it('should have correct default fontFamily', () => {
-			expect(SETTINGS_DEFAULTS.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			// The default must name the family Maestro actually BUNDLES
+			// (src/renderer/public/fonts/), and must match what the splash screen
+			// paints with before React mounts. When it named Roboto Mono instead,
+			// the window visibly changed font the moment React took over.
+			expect(SETTINGS_DEFAULTS.fontFamily).toBe(MAESTRO_FONT_STACK);
 		});
 
 		it('should have empty customFonts by default', () => {

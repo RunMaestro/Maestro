@@ -27,6 +27,9 @@ import { SessionListStatsBar } from './components/SessionListStatsBar';
 import { SessionSearchBar } from './components/SessionSearchBar';
 import { SessionListView } from './components/SessionListView';
 import type { SearchMode } from './types';
+import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
 export function AgentSessionsBrowser({
 	theme,
@@ -122,6 +125,7 @@ export function AgentSessionsBrowser({
 		renameValue,
 		setRenameValue,
 		setRenamingSessionId,
+		beginRename,
 		startRename,
 		submitRename,
 		cancelRename,
@@ -240,6 +244,30 @@ export function AgentSessionsBrowser({
 		{ target: document }
 	);
 
+	/**
+	 * Cmd/Ctrl+E renames the session in focus - the highlighted row in the list,
+	 * or the one being viewed in the detail pane.
+	 *
+	 * Bound here rather than left to the global handler because this browser
+	 * registers as a modal layer that blocks lower layers, so the app-level
+	 * shortcut never reaches its own handler while the browser is up.
+	 */
+	useEventListener(
+		'keydown',
+		(event: Event) => {
+			const e = event as KeyboardEvent;
+			if (renamingSessionId) return;
+			if (!eventMatchesShortcutKeys(e, FIXED_SHORTCUTS.renameAgentSession.keys)) return;
+			const target = viewingSession ?? filteredSessions[selectedIndex];
+			if (!target) return;
+			e.preventDefault();
+			e.stopPropagation();
+			trackShortcutUsage('renameAgentSession');
+			beginRename(target);
+		},
+		{ target: document }
+	);
+
 	const sessionSinceDate =
 		typeof activeSession?.createdAt === 'number' && activeSession.createdAt > 0
 			? new Date(activeSession.createdAt)
@@ -318,9 +346,7 @@ export function AgentSessionsBrowser({
 						onRenameBlur={() => submitRename(viewingSession.sessionId)}
 						onStartRenameNamed={(e) => {
 							e.stopPropagation();
-							setRenamingSessionId(viewingSession.sessionId);
-							setRenameValue(viewingSession.sessionName || '');
-							setTimeout(() => renameInputRef.current?.focus(), 50);
+							beginRename(viewingSession);
 						}}
 						onStartRenameUnnamed={(e) => {
 							e.stopPropagation();

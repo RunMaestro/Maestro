@@ -82,12 +82,18 @@ Tips and gotchas:
 | Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
 | View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Refresh Files, Git, History    | `Opt+Cmd+R`   | `Alt+Ctrl+R`   |
 | Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
 
-`Cmd+E` toggles edit and preview on a markdown File Preview and in the Memories
-viewer (`Cmd+Shift+M`), where the pane opens on the rendered document. Inside
-that viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
+`Cmd+E` toggles edit and preview on a markdown File Preview, in the Memories
+viewer (`Cmd+Shift+M`), where the pane opens on the rendered document, and on
+the Maestro Prompts tab in Settings, where it opens on the source. Inside the
+Memories viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
 filter, in place of their usual meanings.
+
+`Opt+Cmd+R` reloads the file tree, git status, worktree list, and history for
+the active agent in one press. Plain `Cmd+R` is reserved: Maestro blocks it so
+the window can never reload out from under a running agent.
 
 ## Group Chat
 
@@ -339,6 +345,24 @@ The field list is focused on open, so these work without clicking first.
 | Leave the filter     | `Enter`               | `Enter`               |
 | Close row detail     | `Esc`                 | `Esc`                 |
 
+## Staged Images Organizer
+
+Opened with the expand button (⤢) beside the staged-image strip, with two or
+more images attached. See
+[Staged Images](./general-usage#the-staged-images-organizer).
+
+| Action              | macOS      | Windows/Linux |
+| ------------------- | ---------- | ------------- |
+| Zoom thumbnails in  | `+` or `=` | `+` or `=`    |
+| Zoom thumbnails out | `-` or `_` | `-` or `_`    |
+| Reset zoom to 100%  | `0`        | `0`           |
+| Close               | `Esc`      | `Esc`         |
+
+The zoom keys are bare, like the ones in [File Preview](#file-preview), so the
+app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
+organizer is open. They stop firing while the lightbox or the annotator is open
+on top of it.
+
 ## Memories Viewer
 
 The file list is focused when the viewer opens, so these work right away. See
@@ -360,6 +384,31 @@ from the filter box it returns you to the list **keeping your query**, so you
 can filter and then arrow through the hits; pressing it again clears the
 filter, and once more closes the viewer.
 
+## Maestro Prompts (Settings)
+
+Settings -> Maestro Prompts edits the system prompts Maestro sends to agents.
+The prompt list is focused when the tab opens, so these work right away.
+
+| Action                 | macOS           | Windows/Linux   |
+| ---------------------- | --------------- | --------------- |
+| Previous / next prompt | `Up/Down Arrow` | `Up/Down Arrow` |
+| Jump to the filter box | `/`             | `/`             |
+| Toggle Preview / Edit  | `Cmd+E`         | `Ctrl+E`        |
+| Step back out          | `Esc`           | `Esc`           |
+
+The filter searches each prompt's name, description, and body, so you can find
+a prompt by a phrase you remember from inside it. `/` only jumps to the filter
+when you are not already typing, so a slash typed into a prompt stays a slash.
+`Cmd+F` is not rebound here: it stays on the Settings search box.
+
+Preview renders the prompt as markdown **with its template variables resolved**
+against the active agent, so it shows what the agent actually receives.
+
+`Esc` climbs back out one rung at a time: it dismisses the template-variable
+popup, then returns you from the filter box to the list **keeping your query**,
+then clears the filter, then closes the help panel or the expanded editor, and
+only then closes Settings.
+
 ## Agent Sessions Browser
 
 Opened with `Cmd+Shift+L`. The list view walks sessions; the detail view adds a
@@ -370,8 +419,13 @@ one-key resume.
 | Previous / next session (list)   | `Up/Down`         | `Up/Down`          |
 | Open the selected session (list) | `Enter`           | `Enter`            |
 | Search sessions (list)           | `Cmd+F`           | `Ctrl+F`           |
+| Rename the session in focus      | `Cmd+E`           | `Ctrl+E`           |
 | Resume the open session (detail) | `Cmd+R` / `Enter` | `Ctrl+R` / `Enter` |
 | Back to the list / close         | `Esc`             | `Esc`              |
+
+`Cmd+E` renames the highlighted row in the list, or the session you are viewing
+in the detail pane. `Esc` while renaming exits the name field and leaves the
+browser where it was; press it again to go back or close.
 
 `Cmd+R` is off while you are renaming a session, so it cannot discard a name
 you are half-way through typing.

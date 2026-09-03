@@ -230,15 +230,21 @@ textarea::placeholder {
 	}
 }
 
+/* --pulse-color is the LIT colour only. The ring has to fade as it expands, and
+   one custom property cannot hold two alphas, so the later frames say
+   `transparent` outright rather than reading the same var through a
+   zero-alpha fallback that only applied while the var was unset. It was unset
+   app-wide until the theme bridge started publishing it, which is why the two
+   surfaces that set it inline pulsed a ring that never faded. */
 @keyframes highlight-pulse {
 	0% {
 		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0.4));
 	}
 	70% {
-		box-shadow: 0 0 0 6px var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 6px transparent;
 	}
 	100% {
-		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 0 transparent;
 	}
 }
 
@@ -312,6 +318,34 @@ textarea::placeholder {
 	opacity: 0;
 	animation: jump-flash-arrow 3s ease-out;
 	pointer-events: none;
+}
+
+/*
+ * Theme-aware, keyboard-only focus ring.
+ *
+ * Pairs with the CLAUDE.md focus pattern ("outline-none + custom ring"): the
+ * default `:focus` outline is suppressed so mouse clicks stay quiet, while
+ * keyboard `:focus-visible` paints an accent-colored ring. Color resolves from
+ * a local `--focus-ring-color` override (set inline when an element needs a
+ * higher-contrast ring on a filled background) and otherwise falls back to the
+ * app accent (`--accent-color`, kept in sync with the active theme by
+ * useThemeStyles). Use `.focus-ring` for standalone controls and
+ * `.focus-ring-inset` for controls inside an `overflow-hidden` / rounded
+ * container that would clip an outset ring (e.g. a segmented toggle).
+ */
+.focus-ring:focus,
+.focus-ring-inset:focus {
+	outline: none;
+}
+
+.focus-ring:focus-visible {
+	outline: 2px solid var(--focus-ring-color, var(--accent-color, rgba(99, 102, 241, 0.9)));
+	outline-offset: 2px;
+}
+
+.focus-ring-inset:focus-visible {
+	outline: 2px solid var(--focus-ring-color, var(--accent-color, rgba(99, 102, 241, 0.9)));
+	outline-offset: -2px;
 }
 
 @keyframes check-pop {
@@ -1378,6 +1412,105 @@ html[data-gloss='max'] .chrome-raised-active {
 		0 0 18px color-mix(in srgb, var(--accent-color) 22%, transparent);
 }
 
+/* ============================================================================
+   VIBE MODE
+
+   The five vibe themes (Pedurple, Dre Synth, InQuest, Winamp, Maestro's
+   Choice) declare `mode: 'vibe'` in `src/shared/themes.ts`, which
+   `useThemeStyles` publishes as `<html data-theme-mode='vibe'>`. Until now the
+   only mode-keyed CSS was the light-theme opt-out below, so a vibe theme
+   rendered exactly like a plain dark one and the mode was a label with no
+   pixels behind it.
+
+   These rules give it pixels: the same gloss vocabulary, mixed a step brighter
+   and carrying an accent-tinted wash off `--accent-color`, so each vibe theme
+   glosses in its OWN hue rather than in the neutral white every dark theme
+   shares. The active surface gets its accent ring at every level instead of
+   only at `max`, because on a vibe theme the accent IS the identity.
+
+   TWO CHOICES HERE ARE DELIBERATE.
+
+   1. EVERY RULE IS SCOPED TO A GLOSS LEVEL. `off` promises flat surfaces,
+      "exactly as Maestro has always rendered" (`GLOSS_LEVEL_META` in
+      `src/shared/themeGloss.ts`), and a theme mode is not a licence to break
+      that: a user who turned gloss off asked for no highlights, not for no
+      highlights unless they happen to like purple. Vibe amplifies gloss, it
+      does not switch it on.
+
+   2. NO `filter` ON CHROME SURFACES. A saturation filter was the obvious way
+      to make these themes read richer, and it is wrong here: `filter` makes
+      the element a containing block for `position: fixed` descendants, and
+      `.chrome-sheen` is the Left Bar root, whose `SessionContextMenu`,
+      `GroupContextMenu`, `LiveOverlayPanel`, and collapsed-pill tooltips are
+      all fixed and NOT portaled. Every one of them would start measuring from
+      the sidebar instead of the viewport, which reads as right-click menus
+      landing in the wrong place. The accent wash below buys the same warmth
+      through `background-image`, which composes with the chrome's own
+      `background-color` and captures nothing.
+   ============================================================================ */
+
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 9%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--accent-color) 9%, transparent),
+			transparent 96px
+		),
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 6%), transparent 110px);
+}
+
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-sheen,
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 14%) 0 1px, transparent 1px),
+		linear-gradient(0deg, rgb(0 0 0 / 45%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--accent-color) 14%, transparent),
+			transparent 116px
+		),
+		linear-gradient(
+			180deg,
+			rgb(var(--sheen-rgb, 255 255 255) / 10%),
+			rgb(var(--sheen-rgb, 255 255 255) / 3%) 34px,
+			transparent 130px
+		);
+}
+
+/* Raised surfaces pick up a hairline accent ring rather than a wash, for the
+   same reason the neutral rules skip the wash on them: a gradient inside a
+   small rounded box reads as a bad texture. */
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 8%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 12%, transparent),
+		0 2px 12px rgb(0 0 0 / 34%);
+}
+
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-raised,
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 12%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 18%, transparent),
+		0 3px 16px rgb(0 0 0 / 46%);
+}
+
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-raised-active,
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 12%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 30%, transparent),
+		0 0 14px color-mix(in srgb, var(--accent-color) 18%, transparent);
+}
+
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 18%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 46%, transparent),
+		0 0 24px color-mix(in srgb, var(--accent-color) 30%, transparent);
+}
+
 /* Never on light themes. Placed last so it wins over every level above without
    needing a level-by-level opt-out. */
 html[data-theme-mode='light'] .chrome-sheen,
@@ -1466,6 +1599,48 @@ html[data-theme-mode='light'] .chrome-raised-active {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* ============================================================================
+   ROW HOVER WASH
+
+   Replaces the dead `hover:bg-opacity-*` classes that were scattered across the
+   renderer. Tailwind's opacity utility only edits the alpha channel of a
+   `bg-{color}` utility, so an element whose background comes from an INLINE
+   style (every Left Bar agent row, every group header, most icon buttons in the
+   Process Monitor and the Log Viewer) had a hover class that resolved to
+   nothing at all. Those controls had no hover feedback whatsoever.
+
+   The wash is painted with `background-image` rather than `background-color`
+   ON PURPOSE. The rows that need it most are exactly the ones that already
+   carry an inline `backgroundColor` for their active / keyboard-selected /
+   drag-over state, and a hover `background-color` rule loses to that inline
+   declaration (or, with `!important`, erases the selection while the pointer is
+   over it). A gradient is a separate layer: it composites ON TOP of whatever
+   background-color the element sets inline, so a selected row still reads as
+   selected and simply brightens under the cursor.
+
+   Dark and vibe themes lighten, light themes darken. The neutral wash is
+   deliberate: these are ambient surfaces, and tinting every hover with the
+   accent turns the sidebar into a highlight reel.
+
+   `--bg-hover-wash` comes from `useThemeStyles` and is the theme's own
+   `textMain` at a low alpha, which lightens a dark theme and darkens a light
+   one without either rule below having to know which mode is active. The two
+   literals stay as FALLBACKS: they are what paints before the theme effect has
+   run, and what paints for a custom theme whose `textMain` is not a hex colour.
+   ============================================================================ */
+
+.row-hover {
+	--row-hover-wash: var(--bg-hover-wash, rgb(255 255 255 / 0.06));
+}
+
+html[data-theme-mode='light'] .row-hover {
+	--row-hover-wash: var(--bg-hover-wash, rgb(0 0 0 / 0.05));
+}
+
+.row-hover:hover {
+	background-image: linear-gradient(var(--row-hover-wash), var(--row-hover-wash));
 }
 
 /* ============================================================================

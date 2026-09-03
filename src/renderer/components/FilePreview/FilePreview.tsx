@@ -44,6 +44,7 @@ import { JsonlViewer, SYNTAX_EXAMPLES } from '../JsonlViewer';
 import { getEncoder } from '../../utils/tokenCounter';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
+import { isEditingTextTarget } from '../../utils/editableTarget';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../Markdown/remarkAlert';
@@ -1276,17 +1277,62 @@ export const FilePreview = React.memo(
 			const contentEl = contentRef.current;
 			if (!contentEl || !file?.path) return;
 
-			// Only restore if this is a new file and we have a scroll position to restore
+			// Only restore if this is a new file and we have a scroll position to
+			// restore. `>= 0`, not `> 0`: a document deliberately left at the absolute
+			// top persists scrollTop: 0, and requiring a positive offset made that one
+			// position unrestorable.
 			if (
 				initialScrollTop !== undefined &&
-				initialScrollTop > 0 &&
+				initialScrollTop >= 0 &&
 				hasRestoredScrollRef.current !== file.path
 			) {
-				// Use requestAnimationFrame to ensure DOM is ready
-				requestAnimationFrame(() => {
+				// A single frame proves the DOM is mounted, not that it has settled.
+				// Assigning scrollTop once here let the browser silently CLAMP it to
+				// whatever height existed on that frame - images still decoding, web
+				// fonts still swapping, markdown still reflowing - so the document
+				// opened above where it was left, and the latch below meant there was
+				// never a second attempt. Re-attempt until the assignment sticks.
+				const targetPath = file.path;
+				let cancelled = false;
+				let framesWithoutGrowth = 0;
+				let lastScrollHeight = -1;
+				let lastWrite = -1;
+				const MAX_QUIET_FRAMES = 30;
+
+				const attempt = () => {
+					if (cancelled) return;
+					// Something moved the view since our last write - the user scrolling,
+					// or a jump-to-line. They win; stop chasing the saved offset.
+					if (lastWrite >= 0 && contentEl.scrollTop !== lastWrite) {
+						hasRestoredScrollRef.current = targetPath;
+						return;
+					}
+
 					contentEl.scrollTop = initialScrollTop;
-				});
-				hasRestoredScrollRef.current = file.path;
+					lastWrite = contentEl.scrollTop;
+
+					if (contentEl.scrollTop >= initialScrollTop) {
+						// The assignment stuck - the document is tall enough now.
+						hasRestoredScrollRef.current = targetPath;
+						return;
+					}
+
+					const { scrollHeight } = contentEl;
+					framesWithoutGrowth = scrollHeight > lastScrollHeight ? 0 : framesWithoutGrowth + 1;
+					lastScrollHeight = scrollHeight;
+					if (framesWithoutGrowth >= MAX_QUIET_FRAMES) {
+						// Height has stopped changing and the offset is still out of
+						// reach - the document really is shorter now. Accept it.
+						hasRestoredScrollRef.current = targetPath;
+						return;
+					}
+					requestAnimationFrame(attempt);
+				};
+
+				requestAnimationFrame(attempt);
+				return () => {
+					cancelled = true;
+				};
 			} else if (hasRestoredScrollRef.current !== file.path) {
 				// New file without saved scroll position - reset to top
 				hasRestoredScrollRef.current = file.path;
@@ -1640,8 +1686,16 @@ export const FilePreview = React.memo(
 					container.scrollTop += 40;
 				}
 			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Left: Navigate back in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Left: Navigate back in history.
+				// Skipped while the caret is in a text field: on macOS this chord is
+				// beginning-of-line, so claiming it there walks the breadcrumb out
+				// from under someone who is typing in the find bar or the filename
+				// box. `isEditableText && markdownEditMode` did NOT cover that -
+				// `isEditableText` is a FILE-TYPE property (!isImage && !isBinary &&
+				// !isParquet, :402), decided once per file and nothing to do with
+				// focus - so on any ordinary text file not in edit mode the guard was
+				// false and the shortcut fired regardless of where the caret was.
+				if (isEditingTextTarget(e.target) || (isEditableText && markdownEditMode)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoBack && onNavigateBack) {
@@ -1649,8 +1703,9 @@ export const FilePreview = React.memo(
 					onShortcutUsed?.('filePreviewBack');
 				}
 			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Right: Navigate forward in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Right: Navigate forward in history. Same focus guard as
+				// Cmd+Left above - on macOS this chord is end-of-line.
+				if (isEditingTextTarget(e.target) || (isEditableText && markdownEditMode)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoForward && onNavigateForward) {

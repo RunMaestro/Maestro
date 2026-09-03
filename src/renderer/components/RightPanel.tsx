@@ -115,7 +115,7 @@ interface RightPanelProps {
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
-	onFileClick?: (path: string) => void;
+	onFileClick?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	onOpenMarketplace?: () => void;
 	onLaunchWizard?: () => void;
 
@@ -385,6 +385,14 @@ export const RightPanel = memo(
 			selectedFile: session.autoRunSelectedFile || null,
 			documentList: autoRunDocumentList,
 			documentTree: autoRunDocumentTree,
+			// A playbook links to notes all over the project, not just to its
+			// sibling playbooks - resolve both, and hand project hits to the same
+			// handler the Files panel uses so they open as preview tabs.
+			projectFileTree: session.fileTree as FileNode[] | undefined,
+			// Same root the Files panel tree is loaded from, so the indices and the
+			// absolute-path conversion agree.
+			projectRoot: session.projectRoot || session.cwd,
+			onOpenProjectFile: onFileClick,
 			content: autoRunContent,
 			contentVersion: autoRunContentVersion,
 			onContentChange: onAutoRunContentChange,
@@ -617,7 +625,7 @@ export const RightPanel = memo(
 								{currentSessionBatchState.isStopping && (
 									<button
 										onClick={() => setShowKillConfirm(true)}
-										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-90"
+										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-90"
 										style={{
 											backgroundColor: theme.colors.error,
 											color: 'white',
@@ -736,7 +744,7 @@ export const RightPanel = memo(
 						{/* Overall completed count with loop info */}
 						<div className="mt-2 flex items-start justify-between gap-2">
 							<span
-								className="text-[10px] min-w-0 flex-1 truncate"
+								className="text-2xs min-w-0 flex-1 truncate"
 								style={{
 									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
@@ -755,7 +763,7 @@ export const RightPanel = memo(
 									{batchError?.recoverable && onResumeAfterError && (
 										<button
 											onClick={onResumeAfterError}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
 											style={{
 												backgroundColor: theme.colors.accent,
 												color: theme.colors.accentForeground,
@@ -769,7 +777,7 @@ export const RightPanel = memo(
 									{onAbortBatchOnError && (
 										<button
 											onClick={onAbortBatchOnError}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
 											style={{
 												backgroundColor: theme.colors.error,
 												color: 'white',
@@ -786,7 +794,7 @@ export const RightPanel = memo(
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (
 									<span
-										className="text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap"
+										className="text-2xs px-1.5 py-0.5 rounded whitespace-nowrap"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -799,7 +807,7 @@ export const RightPanel = memo(
 								{/* View history link - shown on all tabs except history */}
 								{activeRightTab !== 'history' && (
 									<button
-										className="text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer"
+										className="text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer"
 										style={{
 											color: theme.colors.textDim,
 											textDecoration: 'underline',
@@ -820,14 +828,14 @@ export const RightPanel = memo(
 									className="w-3 h-3 rounded cursor-pointer accent-current"
 									style={{ accentColor: theme.colors.accent }}
 								/>
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 									Follow active task
 								</span>
 							</label>
 							{!errorPaused && !currentSessionBatchState.isStopping && onStopBatchRun && (
 								<button
 									onClick={() => onStopBatchRun(session.id)}
-									className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+									className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
 									style={{
 										backgroundColor: theme.colors.error,
 										color: 'white',

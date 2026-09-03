@@ -66,6 +66,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
 	viewGitDiff: { id: 'viewGitDiff', label: 'View Git Diff', keys: ['Meta', 'Shift', 'd'] },
 	viewGitLog: { id: 'viewGitLog', label: 'View Git Log', keys: ['Meta', 'Shift', 'g'] },
+	refreshGitFileState: {
+		id: 'refreshGitFileState',
+		label: 'Refresh Files, Git, History',
+		keys: ['Alt', 'Meta', 'r'],
+	},
 	agentSessions: {
 		id: 'agentSessions',
 		label: 'View Agent Sessions',
@@ -226,6 +231,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'filePreviewForward',
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
+	},
+	renameAgentSession: {
+		id: 'renameAgentSession',
+		label: 'Rename Session (in Sessions Browser)',
+		keys: ['Meta', 'e'],
 	},
 	fontSizeIncrease: {
 		id: 'fontSizeIncrease',

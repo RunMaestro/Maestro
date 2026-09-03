@@ -89,6 +89,29 @@ Remote agents are identified by the **REMOTE** pill in the participant list. Eac
 - Coordinate changes that span multiple machines
 - Synthesize information from agents with different tool installations
 
+## Agent Availability
+
+An agent brought into a group chat runs as its own process, in that agent's own working directory. If you are already talking to that agent in its own tab, two processes end up editing the same files at once.
+
+**Only work with agents that are free** controls what happens then. It is on by default, and you set it when you create a group chat (or later, through Edit):
+
+| Setting          | Behavior                                                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **On** (default) | The moderator skips any agent that is busy - with your own conversation, an Auto Run, or a CLI run - and posts a note in the chat naming who was skipped. Nothing else about the turn changes; other agents still get their work. |
+| **Off**          | The moderator hands work to an agent even while it is working. Two processes can edit the same files, overwrite each other, and leave both conversations acting on stale state.                                                   |
+
+<Warning>
+  Turn this off only when you know the work cannot collide - separate worktrees, separate projects, or read-only questions. There is no lock behind it; it is your judgment doing the work.
+</Warning>
+
+When an agent is skipped, the chat shows a line like:
+
+```
+⏸️ Skipped @Backend - that agent is busy with their own work right now.
+```
+
+Send another message once the agent is free, and the moderator picks the work back up.
+
 ## Tips for Effective Group Chats
 
 - **Name agents descriptively** - Agent names appear in the chat, so "Frontend-React" is clearer than "Agent1"

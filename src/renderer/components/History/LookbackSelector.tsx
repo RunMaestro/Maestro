@@ -62,7 +62,7 @@ export const LookbackSelector = memo(function LookbackSelector({
 				}}
 			/>
 			<span
-				className="text-[10px] font-bold whitespace-nowrap min-w-[52px] text-right"
+				className="text-2xs font-bold whitespace-nowrap min-w-[52px] text-right"
 				style={{ color: theme.colors.textMain }}
 			>
 				{currentLabel}

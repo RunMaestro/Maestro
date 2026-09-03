@@ -60,8 +60,16 @@ interface GroupChat {
 	logPath: string; // Path to chat.log
 	imagesDir: string; // Path to images/
 	archived?: boolean;
+	requireIdleParticipants?: boolean; // Undefined means ON - read via requiresIdleParticipants()
 }
 ```
+
+**Never test `requireIdleParticipants` directly.** Read it through
+`requiresIdleParticipants(chat)` in `src/shared/group-chat-types.ts`, which
+answers `true` for an undefined field. The default is ON, and chats created
+before the setting existed carry no field at all, so a bare truthiness test opts
+every one of them out of the safe behavior. The router, the create/edit modal,
+and the info overlay all ask the same helper.
 
 ### GroupChatParticipant
 
@@ -169,6 +177,29 @@ The central message routing engine. Key exports:
 | `respawnParticipantWithRecovery()` | Re-spawns a participant with recovery context after session loss                                                                                                                              |
 | `extractMentions()`                | Extracts `@Name` patterns from text, matches against participants                                                                                                                             |
 | `markParticipantResponded()`       | Removes participant from pending set, returns true if last                                                                                                                                    |
+
+**Agent availability gate.** Before delegating (an `@mention` or an `!autorun`
+directive), the router asks whether the target agent is already working. A
+participant runs as its own process in the AGENT'S working directory, so handing
+work to an agent the user is talking to directly puts two writers in one repo.
+When `requiresIdleParticipants(chat)` is true, the busy agent is skipped and
+`reportBusySkips()` posts one system line naming everyone held back - appended to
+the log as well as emitted, because the moderator reads recent log lines as
+context and would otherwise never learn the work was not handed out. Three rules
+the implementation depends on:
+
+- **Liveness comes from `isBusy` on `GroupChatSessionInfo`, computed by the
+  session-lookup callback in `src/main/index.ts` via `isAgentBusy()`
+  (`src/main/utils/agent-busy.ts`).** The persisted session record cannot answer
+  this: `useDebouncedPersistence` rewrites every session and tab to `state: 'idle'`
+  on the way to disk, so a stored record always reads idle.
+- **Unknown is not busy.** A participant with no matching Maestro agent cannot be
+  probed and is never blocked, or a participant whose agent was renamed becomes
+  permanently unreachable.
+- **One report per turn, and it suppresses the generic retry notice.** A fan-out to
+  three busy agents is one line, and the "no participants engaged" fallback stays
+  quiet when a busy skip already explained itself - two notices read as two
+  unrelated failures.
 
 Module-level callbacks set during initialization:
 

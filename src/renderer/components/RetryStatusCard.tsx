@@ -21,6 +21,7 @@ import { AlertTriangle, Check, RefreshCw, X, Zap } from 'lucide-react';
 import { useRetryStore, retryNow, cancelRetry } from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
+import { getConnectingColor } from '../utils/theme';
 import { QuotaLimitEvidence } from './ui/QuotaLimitEvidence';
 import type { Theme } from '../types';
 
@@ -36,9 +37,6 @@ interface RetryStatusCardProps {
 	fallbackText?: string;
 }
 
-/** Constitutional "stuck / backing off" hue - pulsing orange, distinct from thinking-yellow. */
-const OUTAGE_COLOR = '#ff8800';
-
 function StatBlock({
 	label,
 	value,
@@ -50,7 +48,7 @@ function StatBlock({
 }): React.ReactElement {
 	return (
 		<div className="flex flex-col gap-0.5 min-w-0">
-			<span className="text-[10px] uppercase tracking-wide opacity-70" style={{ color }}>
+			<span className="text-2xs uppercase tracking-wide opacity-70" style={{ color }}>
 				{label}
 			</span>
 			<span className="text-sm font-medium tabular-nums" style={{ color }}>
@@ -66,6 +64,10 @@ export function RetryStatusCard({
 	fallbackText,
 }: RetryStatusCardProps): React.ReactElement | null {
 	const outage = useRetryStore((s) => s.outages[outageId]);
+
+	// Constitutional "stuck / backing off" hue - pulsing orange, distinct from
+	// thinking-yellow. Theme-derived so it tracks the palette (see getConnectingColor).
+	const outageColor = getConnectingColor(theme);
 
 	// Tick once a second to drive the live "elapsed" + "next attempt" readouts.
 	const [now, setNow] = useState(() => Date.now());
@@ -168,8 +170,8 @@ export function RetryStatusCard({
 		<div
 			className="flex flex-col gap-3 px-3.5 py-3 rounded-lg border text-sm select-none"
 			style={{
-				borderColor: OUTAGE_COLOR + '55',
-				backgroundColor: OUTAGE_COLOR + '10',
+				borderColor: outageColor + '55',
+				backgroundColor: outageColor + '10',
 				color: theme.colors.textMain,
 			}}
 			role="status"
@@ -179,15 +181,15 @@ export function RetryStatusCard({
 				<span className="relative flex h-2.5 w-2.5 flex-shrink-0">
 					<span
 						className="absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping"
-						style={{ backgroundColor: OUTAGE_COLOR }}
+						style={{ backgroundColor: outageColor }}
 					/>
 					<span
 						className="relative inline-flex h-2.5 w-2.5 rounded-full"
-						style={{ backgroundColor: OUTAGE_COLOR }}
+						style={{ backgroundColor: outageColor }}
 					/>
 				</span>
-				<AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: OUTAGE_COLOR }} />
-				<span className="font-medium" style={{ color: OUTAGE_COLOR }}>
+				<AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: outageColor }} />
+				<span className="font-medium" style={{ color: outageColor }}>
 					{strategyLabel}
 				</span>
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -221,9 +223,9 @@ export function RetryStatusCard({
 					disabled={isFiring}
 					className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
 					style={{
-						backgroundColor: OUTAGE_COLOR + '22',
-						color: OUTAGE_COLOR,
-						border: `1px solid ${OUTAGE_COLOR}40`,
+						backgroundColor: outageColor + '22',
+						color: outageColor,
+						border: `1px solid ${outageColor}40`,
 					}}
 					title="Skip the timer and retry immediately"
 				>

@@ -36,6 +36,7 @@ import type {
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { findReservedShortcutCombo } from '../../shared/shortcutKeys';
+import { MAESTRO_FONT_STACK } from '../../shared/fontStacks';
 import {
 	collectBoundShortcuts,
 	countUsedBoundShortcuts,
@@ -738,7 +739,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
-		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		fontFamily: MAESTRO_FONT_STACK,
 		fontSize: 14,
 		mediaPlaybackRate: 1,
 		activeThemeId: 'dracula',

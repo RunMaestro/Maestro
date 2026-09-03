@@ -286,7 +286,7 @@ export function CrossTabSearchModal({
 									<span className="truncate">{tabResult.tabName}</span>
 									{tabResult.tabId === activeTabId && (
 										<span
-											className="px-1.5 py-0.5 rounded-full text-[10px] leading-none"
+											className="px-1.5 py-0.5 rounded-full text-2xs leading-none"
 											style={{
 												backgroundColor: `${theme.colors.accent}20`,
 												color: theme.colors.accent,
@@ -325,7 +325,7 @@ export function CrossTabSearchModal({
 												borderLeft: `2px solid ${isSelected ? theme.colors.accent : 'transparent'}`,
 											}}
 										>
-											<div className="flex items-center gap-2 text-[10px]">
+											<div className="flex items-center gap-2 text-2xs">
 												<meta.Icon className="w-3 h-3 shrink-0" style={{ color: toneColor }} />
 												<span style={{ color: toneColor }}>{meta.label}</span>
 												<span style={{ color: theme.colors.textDim, opacity: 0.7 }}>
@@ -354,7 +354,7 @@ export function CrossTabSearchModal({
 
 				{/* Footer hints */}
 				<div
-					className="px-4 py-2 border-t flex items-center gap-4 text-[11px]"
+					className="px-4 py-2 border-t flex items-center gap-4 text-xs-plus"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					<span>↑↓ navigate</span>

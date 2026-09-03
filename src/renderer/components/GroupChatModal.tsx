@@ -12,12 +12,13 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Settings, ChevronDown, Check } from 'lucide-react';
+import { X, Settings, ChevronDown, Check, AlertTriangle } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { isBetaAgent } from '../../shared/agentMetadata';
+import { requiresIdleParticipants } from '../../shared/group-chat-types';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { Modal, ModalFooter, FormInput } from './ui';
+import { Modal, ModalFooter, FormInput, ToggleSwitch } from './ui';
 import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent';
@@ -27,7 +28,12 @@ interface GroupChatModalCreateProps {
 	theme: Theme;
 	isOpen: boolean;
 	onClose: () => void;
-	onCreate: (name: string, moderatorAgentId: string, moderatorConfig?: ModeratorConfig) => void;
+	onCreate: (
+		name: string,
+		moderatorAgentId: string,
+		moderatorConfig?: ModeratorConfig,
+		requireIdleParticipants?: boolean
+	) => void;
 	groupChat?: undefined;
 	onSave?: undefined;
 }
@@ -41,7 +47,8 @@ interface GroupChatModalEditProps {
 		id: string,
 		name: string,
 		moderatorAgentId: string,
-		moderatorConfig?: ModeratorConfig
+		moderatorConfig?: ModeratorConfig,
+		requireIdleParticipants?: boolean
 	) => void;
 	groupChat: GroupChat | null;
 	onCreate?: undefined;
@@ -54,6 +61,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const groupChat = mode === 'edit' ? props.groupChat : undefined;
 
 	const [name, setName] = useState('');
+	// Whether the moderator may only hand work to agents that are currently free.
+	// Default ON: a participant runs in the agent's own working directory, so
+	// delegating to an agent mid-turn puts two writers in one repo.
+	const [requireIdle, setRequireIdle] = useState(true);
 	// Track if user has visited/modified the config panel (edit mode only)
 	const [configWasModified, setConfigWasModified] = useState(false);
 	// Auto-detected maestro-p path, shown as helper text in the Claude Token Source selector
@@ -76,6 +87,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 
 		// Pre-populate from existing group chat
 		setName(groupChat.name);
+		setRequireIdle(requiresIdleParticipants(groupChat));
 		ac.setSelectedAgent(groupChat.moderatorAgentId);
 		ac.setCustomPath(groupChat.moderatorConfig?.customPath || '');
 		ac.setCustomArgs(groupChat.moderatorConfig?.customArgs || '');
@@ -131,6 +143,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	useEffect(() => {
 		if (!isOpen) {
 			setName('');
+			setRequireIdle(true);
 			setConfigWasModified(false);
 		}
 	}, [isOpen]);
@@ -181,21 +194,23 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		const moderatorConfig = buildModeratorConfig();
 
 		if (mode === 'create') {
-			props.onCreate(name.trim(), ac.selectedAgent, moderatorConfig);
+			props.onCreate(name.trim(), ac.selectedAgent, moderatorConfig, requireIdle);
 		} else if (groupChat) {
-			props.onSave(groupChat.id, name.trim(), ac.selectedAgent, moderatorConfig);
+			props.onSave(groupChat.id, name.trim(), ac.selectedAgent, moderatorConfig, requireIdle);
 		}
 
 		setName('');
+		setRequireIdle(true);
 		setConfigWasModified(false);
 		onClose();
-	}, [name, ac.selectedAgent, buildModeratorConfig, mode, props, groupChat, onClose]);
+	}, [name, ac.selectedAgent, buildModeratorConfig, mode, props, groupChat, requireIdle, onClose]);
 
 	// Check if anything has changed (edit mode only)
 	const hasChanges = useCallback((): boolean => {
 		if (!groupChat) return false;
 
 		const nameChanged = name.trim() !== groupChat.name;
+		const requireIdleChanged = requireIdle !== requiresIdleParticipants(groupChat);
 		const agentChanged = ac.selectedAgent !== groupChat.moderatorAgentId;
 		const pathChanged = ac.customPath !== (groupChat.moderatorConfig?.customPath || '');
 		const argsChanged = ac.customArgs !== (groupChat.moderatorConfig?.customArgs || '');
@@ -219,6 +234,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 
 		return (
 			nameChanged ||
+			requireIdleChanged ||
 			agentChanged ||
 			pathChanged ||
 			argsChanged ||
@@ -232,6 +248,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	}, [
 		groupChat,
 		name,
+		requireIdle,
 		ac.selectedAgent,
 		ac.customPath,
 		ac.customArgs,
@@ -259,6 +276,59 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const selectedAgentConfig = ac.detectedAgents.find((a) => a.id === ac.selectedAgent);
 	const selectedTile = AGENT_TILES.find((t) => t.id === ac.selectedAgent);
 
+	// Rendered in both modes, but in different slots: the edit form leads with the
+	// chat's identity, while the create form ends with the name field the modal
+	// focuses on open.
+	const availabilitySection = (
+		<div className="mb-6">
+			<label
+				className="block text-xs font-bold opacity-70 uppercase mb-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				Agent Availability
+			</label>
+
+			<div className="flex items-start gap-3">
+				<ToggleSwitch
+					checked={requireIdle}
+					onChange={setRequireIdle}
+					theme={theme}
+					ariaLabel="Only work with agents that are free"
+				/>
+				<div className="flex-1 min-w-0">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Only work with agents that are free
+					</div>
+					<div className="text-xs mt-1 leading-relaxed" style={{ color: theme.colors.textDim }}>
+						An agent brought into this chat runs in its own working directory. When this is on, the
+						moderator skips any agent that is busy with your own conversation, an Auto Run, or a CLI
+						run, and says so in the chat instead of starting a second process there.
+					</div>
+				</div>
+			</div>
+
+			{!requireIdle && (
+				<div
+					className="mt-3 text-xs p-3 rounded flex items-start gap-2"
+					style={{
+						backgroundColor: `${theme.colors.warning}20`,
+						color: theme.colors.warning,
+						border: `1px solid ${theme.colors.warning}40`,
+					}}
+					role="alert"
+				>
+					<AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+					<div className="leading-relaxed">
+						<strong>Agents will be interrupted.</strong> The moderator will hand work to an agent
+						even while you are talking to it, so two processes can edit the same files at once,
+						overwrite each other, and leave both conversations acting on stale state. Leave this off
+						only when you know the work cannot collide.
+					</div>
+				</div>
+			)}
+		</div>
+	);
+
 	const isCreate = mode === 'create';
 	const modalTitle = isCreate ? 'New Group Chat' : 'Edit Group Chat';
 	const modalPriority = isCreate
@@ -284,7 +354,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								New Group Chat
 							</h2>
 							<span
-								className="text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
+								className="text-2xs font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
 								style={{
 									backgroundColor: `${theme.colors.accent}20`,
 									color: theme.colors.accent,
@@ -519,6 +589,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 					)}
 				</div>
 
+				{/* Agent availability (edit mode: above the moderator-change note) */}
+				{!isCreate && availabilitySection}
+
 				{/* Warning about changing moderator (edit mode only) */}
 				{mode === 'edit' && groupChat && ac.selectedAgent !== groupChat.moderatorAgentId && (
 					<div
@@ -534,18 +607,23 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 					</div>
 				)}
 
-				{/* Name Input (create mode: at bottom) */}
+				{/* Name Input (create mode: after the moderator, before the options) */}
 				{isCreate && (
-					<FormInput
-						ref={nameInputRef}
-						theme={theme}
-						label="Chat Name"
-						value={name}
-						onChange={setName}
-						onSubmit={canSubmit ? handleSubmit : undefined}
-						placeholder="e.g., Auth Feature Implementation"
-					/>
+					<div className="mb-6">
+						<FormInput
+							ref={nameInputRef}
+							theme={theme}
+							label="Chat Name"
+							value={name}
+							onChange={setName}
+							onSubmit={canSubmit ? handleSubmit : undefined}
+							placeholder="e.g., Auth Feature Implementation"
+						/>
+					</div>
 				)}
+
+				{/* Agent availability (create mode: last, below the name) */}
+				{isCreate && availabilitySection}
 			</div>
 		</Modal>
 	);

@@ -267,7 +267,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -291,7 +292,8 @@ describe('WebSocketMessageHandler', () => {
 					'terminal',
 					undefined,
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 		});
@@ -356,7 +358,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					'tab-explicit',
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -386,7 +389,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					images
+					images,
+					false
 				);
 			});
 
@@ -424,7 +428,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					images
+					images,
+					false
 				);
 			});
 		});
@@ -447,7 +452,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					true,
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -1767,6 +1773,101 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Placement on send_command and refresh_auto_run_docs', () => {
+		// Both verbs move the view today. `background` is an OPT-IN on both: the
+		// web and mobile clients never send the field and must keep focusing, so
+		// the assertions below that matter most are the absent-field ones.
+		it('leaves send_command focusing when the field is absent', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hello',
+				inputMode: 'ai',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'hello',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false
+				);
+			});
+		});
+
+		it('forwards background placement on send_command', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hello',
+				inputMode: 'ai',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'hello',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					true
+				);
+			});
+		});
+
+		it('reads a non-boolean background as no preference on send_command', async () => {
+			// 'yes' / 1 / null are not an opt-in. Anything looser than a literal
+			// true would stop an existing caller from focusing.
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hello',
+				inputMode: 'ai',
+				background: 'yes',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'hello',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false
+				);
+			});
+		});
+
+		it('leaves refresh_auto_run_docs focusing when the field is absent', async () => {
+			handler.handleMessage(client, {
+				type: 'refresh_auto_run_docs',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1', false);
+			});
+		});
+
+		it('forwards background placement on refresh_auto_run_docs', async () => {
+			handler.handleMessage(client, {
+				type: 'refresh_auto_run_docs',
+				sessionId: 'session-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1', true);
+			});
+		});
+	});
+
 	describe('Refresh File Tree (Web → Desktop)', () => {
 		it('should forward refresh file tree to desktop', async () => {
 			handler.handleMessage(client, {
@@ -1820,7 +1921,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1');
+				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1', false);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);

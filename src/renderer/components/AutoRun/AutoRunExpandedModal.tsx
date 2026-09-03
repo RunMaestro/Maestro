@@ -15,13 +15,14 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
-import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
+import type { FileNode } from '../../types/fileTree';
 import { ConfirmModal } from '../ConfirmModal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -41,6 +42,10 @@ interface AutoRunExpandedModalProps {
 		path: string;
 		children?: unknown[];
 	}>;
+	// Project context for markdown file links (see AutoRunProps).
+	projectFileTree?: FileNode[];
+	projectRoot?: string;
+	onOpenProjectFile?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	content: string;
 	onContentChange: (content: string) => void;
 	contentVersion?: number;
@@ -195,10 +200,7 @@ export function AutoRunExpandedModal({
 	// after the user opens PlayBook Exchange (or the doc selector) and dismisses
 	// it. Without this, focus falls back to the body and Cmd+E starts targeting
 	// the right-panel AutoRun behind us instead of the expanded view.
-	const layerStack = useLayerStack();
-	const layers = layerStack.getLayers();
-	const topLayer = layers[layers.length - 1];
-	const isTopLayer = topLayer?.priority === MODAL_PRIORITIES.AUTORUN_EXPANDED;
+	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.AUTORUN_EXPANDED);
 	useEffect(() => {
 		if (!isTopLayer) return;
 		// Wait a tick so the closing modal has finished tearing down its focus trap.
@@ -375,7 +377,7 @@ export function AutoRunExpandedModal({
 									Save
 									{/* Keyboard shortcut overlay on hover */}
 									<span
-										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-2xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,
 											color: theme.colors.textDim,

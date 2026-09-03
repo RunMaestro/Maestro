@@ -377,7 +377,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 									onFocus={handleShellInteraction}
 									className={`w-full text-left p-3 rounded border transition-all ${
 										defaultShell === shell.id ? 'ring-2' : ''
-									} hover:bg-opacity-10`}
+									} row-hover`}
 									style={
 										{
 											borderColor: theme.colors.border,
@@ -735,7 +735,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 									: 'Reinstall CLI'}
 						</button>
 					</div>
-					<div className="text-[11px] opacity-50">
+					<div className="text-xs-plus opacity-50">
 						Install target: <code>{maestroCliStatus?.installDir || '~/.local/bin'}</code>
 					</div>
 				</div>
@@ -776,7 +776,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							? 'Press Enter to send. Use Shift+Enter for new line.'
 							: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 					</p>
-					<p className="text-[11px] opacity-40 mt-1">
+					<p className="text-xs-plus opacity-40 mt-1">
 						Default for new tabs. Toggling the chip in an AI tab (or running &quot;Toggle Enter to
 						Send&quot; from the command palette) overrides this for that tab only.
 					</p>
@@ -1441,7 +1441,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				/>
 				<div
 					data-setting-id="general-html-double-click"
-					className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-opacity-10"
+					className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer row-hover"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 					onClick={() => setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser)}
 					role="button"
@@ -1748,7 +1748,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 								}
 							}}
 							disabled={!defaultStoragePath && !customSyncPath}
-							className="flex items-center gap-1.5 text-[11px] opacity-60 hover:opacity-100 transition-opacity disabled:opacity-30"
+							className="flex items-center gap-1.5 text-xs-plus opacity-60 hover:opacity-100 transition-opacity disabled:opacity-30"
 							style={{ color: theme.colors.textMain }}
 							title={customSyncPath || defaultStoragePath}
 						>

@@ -143,9 +143,11 @@ helpers below.
 
 ### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
 
-| Function                                     | Signature                               | Purpose                                                                                                                          |
-| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal. |
+| Function                                     | Signature                               | Purpose                                                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `splitOnMatches(text, query)`                | `(string, string) => MatchSegment[]`    | Split `text` into alternating plain/match segments, each carrying its `start` offset. The one matcher the other two are built from, so escaping and match parity cannot drift.                 |
+| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal.                                                               |
+| `searchMatchRanges(text, query)`             | `(string, string) => { from, to }[]`    | The same hits as byte ranges, for `MarkdownEditorHandle.setSearchMatches`. Use it rather than re-deriving offsets, or a pane's rendered half and its source half disagree about what is a hit. |
 
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
@@ -166,6 +168,7 @@ helpers below.
 | `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                                  |
 | `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
 | `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
+| `fileTimestampSlug(dateOrTimestamp?)`  | `(Date \| number?) => string`          | `"20260713-142530"` for a generated file name. Local time, sorts chronologically. |
 | `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
 | `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                                       |
 | `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.                              |
@@ -259,6 +262,34 @@ span so a platform that DID fire a hide/show pair can't subtract the same sleep 
 
 ---
 
+## Group Chat Activity (`src/shared/groupChatActivity.ts` - Both)
+
+`computeGroupChatActivity(entries)` rolls a group chat's history log up into working time,
+tokens, and cost. Both the Group Chat Info overlay and the HTML export call it, so an
+export can't disagree with the app about how much work a chat did.
+
+**Never present the span between the first and last message as effort.** A group chat is a
+room, not a task: a chat used twice a week reports hundreds of hours without anyone doing
+anything. Working time is the UNION of the busy intervals, so participants running in
+PARALLEL collapse into one interval rather than summing - three agents working the same ten
+minutes is ten minutes of chat time, not thirty.
+
+Each entry covers `[timestamp - elapsedTimeMs, timestamp]` because a history entry is
+stamped when a turn ENDS. Entries recorded before per-turn timing existed carry no
+`elapsedTimeMs` and degenerate to points, which is what `GROUP_CHAT_ACTIVITY_STITCH_MS`
+(5 minutes) is for: turns closer together than the stitch are one block of work, an
+overnight gap ends it. Without it an older chat reports `0m`, which is a worse lie than the
+elapsed span it replaced.
+
+`turnsWithTokens` / `turnsWithCost` are the coverage counts. Render a dash rather than a
+zero when they are 0 - a chat whose turns reported no usage is UNKNOWN, not free.
+
+The producing half lives in `src/main/group-chat/group-chat-turn-metrics.ts`: group chat
+turns are batch processes spawned and reaped in the MAIN process, so they never reach the
+renderer's per-turn stats row and nothing else can measure them.
+
+---
+
 ## Emoji Utilities (`src/shared/emojiUtils.ts` - Both)
 
 | Function                           | Signature                    | Purpose                                         |
@@ -287,6 +318,65 @@ span so a platform that DID fire a hide/show pair can't subtract the same sleep 
 | `getImageMimeType(ext)`            | `(string) => string`           | Get MIME type for image extension.                                                                                         |
 
 ---
+
+## File Categories (`src/shared/fileCategories.ts` - Both)
+
+One extension table that answers two questions at once: "can Maestro open this
+file?" and "which bucket is it in?". `isPreviewableFile` is DERIVED from
+`getFileCategory`, so the two cannot disagree - a file that classifies into a
+bucket but refuses to open, or one that opens but is invisible under every
+filter pill, are both impossible by construction. Audio and video are not
+listed here; they resolve through `getMediaKind()` in `mediaTypes.ts`, which is
+the single source of truth for what Chromium can decode.
+
+Powers the Fuzzy File Search category pills (All / Code / Docs / Data / Media).
+Do NOT hand-roll another `TEXT_EXTENSIONS` set - the private copies inside
+`FileSearchModal` are what this replaced. Distinct from the sets in
+`src/renderer/utils/fileExplorerIcons/shared.ts`, which exist to pick an ICON
+and are split much more finely (lockfiles, test folders, config folders); pick
+by question, and do not merge them.
+
+| Function / Constant                 | Signature                                         | Purpose                                                                                    |
+| ----------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `getFileCategory(path)`             | `(string) => FileCategory \| null`                | Bucket a file, or `null` when Maestro cannot open it. `null` != `'other'`.                 |
+| `isPreviewableFile(path)`           | `(string) => boolean`                             | Whether the file is listable/openable. Derived from `getFileCategory`.                     |
+| `matchesFileCategory(path, filter)` | `(string, FileCategoryFilter) => boolean`         | Filter predicate. `'all'` passes everything, including unclassified files.                 |
+| `getFileExtension(path)`            | `(string) => string`                              | Lowercase extension of the basename. `.gitignore` has none; parent-directory dots ignored. |
+| `FILE_CATEGORIES`                   | `readonly ['code','docs','data','media','other']` | Bucket vocabulary, in pill order.                                                          |
+| `FILE_CATEGORY_LABELS`              | `Record<FileCategoryFilter, string>`              | Human labels for the pills.                                                                |
+
+## Markdown File Links (`src/renderer/utils/fileLinks/` - Renderer)
+
+Everything behind a clickable `[[wiki]]`, `path/to/file.md`, `~/note.md`, or
+absolute-path reference in rendered markdown. `matcher.ts` is the pure
+resolution core shared by the Rich tier (`remarkFileLinks`) and the Fast tier
+(`markdownItAdapter`), so the two preview tiers cannot disagree about what a
+reference points at.
+
+A surface can sit over more than ONE root. The Auto Run panel resolves
+`[[Playbook]]` against its playbooks folder and `[[Notes/Thing]]` against the
+agent's project, and those trees have different roots so they cannot be
+concatenated as nodes - union their INDICES with `mergeFileTreeIndices`, whose
+argument order decides which tree wins a shared basename. Resolving against only
+one root is what left every cross-project link in an Auto Run document as inert
+text while the same link worked in a file-preview tab.
+
+`resolve.ts` is the other half: what a click handler does with the path the
+plugin hands back. That path is project-RELATIVE for anything matched in the
+tree and absolute for everything else, and agents quote `src/foo.ts:42`
+constantly, so every consumer needs the same strip-then-join. Do NOT hand-roll
+it - a surface that skips the join hands a bare `Notes/Thing.md` to a reader
+expecting an absolute path and silently opens nothing.
+
+| Function                                       | Signature                                             | Purpose                                                                        |
+| ---------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `buildFileTreeIndices(fileTree)`               | `(FileNode[]) => FileTreeIndices`                     | Index one tree. Memoize per tree; both plugins take prebuilt indices.          |
+| `mergeFileTreeIndices(...sets)`                | `(...(FileTreeIndices \| null)[]) => FileTreeIndices` | Union several roots. Earlier sets win a shared basename; nullish sets skipped. |
+| `findClosestMatch(ref, indices, cwd)`          | `(string, FileTreeIndices, string) => string \| null` | Resolve a `[[wiki]]` reference. Exact path, then basename, then cwd proximity. |
+| `validatePathReference(ref, indices)`          | `(string, FileTreeIndices) => string \| null`         | Stricter: exact path only (with or without `.md`). Used for bare path text.    |
+| `toRelativePath(absPath, projectRoot)`         | `(string, string \| undefined) => string \| null`     | Absolute -> project-relative. `null` when outside the root.                    |
+| `resolveFileReference(projectRoot, reference)` | `(string, string) => string`                          | Path a reader can open. Absolute verbatim, else joined onto the root.          |
+| `stripLineColumnSuffix(path)`                  | `(string) => string`                                  | Drop a trailing `:42` / `:42:7`.                                               |
 
 ## Media Types (`src/shared/mediaTypes.ts` - Both)
 
@@ -630,6 +720,24 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | `getGlobalStatsCachePath()`          | `() => string`                                   | Global stats cache file path.              |
 | `loadGlobalStatsCache()`             | `() => Promise<GlobalStatsCache \| null>`        | Load global cache with version validation. |
 | `saveGlobalStatsCache(cache)`        | `(GlobalStatsCache) => Promise<void>`            | Save global cache.                         |
+
+## Active Agents in Range (`src/shared/statsActiveAgents.ts` - Both)
+
+| Function                                          | Signature                                      | Purpose                                  |
+| ------------------------------------------------- | ---------------------------------------------- | ---------------------------------------- |
+| `isAgentActiveInRange(sessionId, bySessionByDay)` | `(string, BySessionByDay?) => boolean`         | Did this agent record work in the range? |
+| `countActiveAgents(agents, bySessionByDay)`       | `(readonly {id}[], BySessionByDay?) => number` | How many of these agents did.            |
+
+"Active" is a RANGE question, not a live-status one: an agent counts when it recorded at least one
+`query_events` row inside the dashboard's selected range, which covers interactive turns, Auto Run
+tasks, execution-queue drains, and Cue runs alike. The Usage Dashboard's Overview card, the Agent
+Overview `Total Agents` card, and the Agents tab's "Active only" toggle all read it, so they cannot
+disagree about who counts.
+
+Do NOT answer this with `getSessionQueryCount()` from `AgentOverviewCards`: that one falls back to
+the PROVIDER total when a session has no rows of its own and is the only visible session for that
+provider, which would mark an agent that ran nothing as active because a sibling on the same
+provider did.
 
 ---
 

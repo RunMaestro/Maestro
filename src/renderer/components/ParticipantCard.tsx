@@ -162,7 +162,7 @@ export function ParticipantCard({
 				{/* SSH Remote pill - shown when running on SSH remote */}
 				{participant.sshRemoteName && (
 					<span
-						className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full shrink-0 border border-purple-500/30 text-purple-500 bg-purple-500/10"
+						className="flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full shrink-0 border border-purple-500/30 text-purple-500 bg-purple-500/10"
 						title={`SSH Remote: ${participant.sshRemoteName}`}
 					>
 						<Server className="w-2.5 h-2.5 shrink-0" />
@@ -172,7 +172,7 @@ export function ParticipantCard({
 				{/* Session ID pill */}
 				{isPending ? (
 					<span
-						className="text-[10px] px-2 py-0.5 rounded-full shrink-0 italic"
+						className="text-2xs px-2 py-0.5 rounded-full shrink-0 italic"
 						style={{
 							backgroundColor: `${theme.colors.textDim}20`,
 							color: theme.colors.textDim,
@@ -184,7 +184,7 @@ export function ParticipantCard({
 				) : (
 					<button
 						onClick={copySessionId}
-						className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer shrink-0"
+						className="flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer shrink-0"
 						style={{
 							backgroundColor: `${theme.colors.accent}20`,
 							color: theme.colors.accent,
@@ -221,10 +221,10 @@ export function ParticipantCard({
 			<div className="mt-2 flex items-center gap-2">
 				<div className="flex-1">
 					<div className="flex items-center justify-between mb-1">
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Context
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							{contextUsage}%
 						</span>
 					</div>
@@ -244,7 +244,7 @@ export function ParticipantCard({
 				{/* Cost pill (optional) */}
 				{participant.totalCost !== undefined && participant.totalCost > 0 && (
 					<span
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0"
 						style={{
 							backgroundColor: `${theme.colors.success}20`,
 							color: theme.colors.success,
@@ -259,7 +259,7 @@ export function ParticipantCard({
 				{showResetButton && (
 					<button
 						onClick={handleReset}
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
 							color: theme.colors.warning,
@@ -274,7 +274,7 @@ export function ParticipantCard({
 				{/* Reset in progress indicator */}
 				{isResetting && (
 					<span
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 animate-pulse"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 animate-pulse"
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
 							color: theme.colors.warning,
@@ -288,7 +288,7 @@ export function ParticipantCard({
 				{showRemoveButton && !confirmRemove && (
 					<button
 						onClick={() => setConfirmRemove(true)}
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.error}20`,
 							color: theme.colors.error,
@@ -302,7 +302,7 @@ export function ParticipantCard({
 				)}
 				{/* Remove confirmation */}
 				{confirmRemove && !isRemoving && (
-					<span className="flex items-center gap-1 text-[10px] shrink-0">
+					<span className="flex items-center gap-1 text-2xs shrink-0">
 						<button
 							onClick={handleRemove}
 							className="px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
@@ -329,7 +329,7 @@ export function ParticipantCard({
 				{/* Remove in progress indicator */}
 				{isRemoving && (
 					<span
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 animate-pulse"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 animate-pulse"
 						style={{
 							backgroundColor: `${theme.colors.error}20`,
 							color: theme.colors.error,
@@ -342,7 +342,7 @@ export function ParticipantCard({
 				{/* Peek button - always visible */}
 				<button
 					onClick={() => setPeekOpen((v) => !v)}
-					className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+					className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 					style={{
 						backgroundColor: peekOpen ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
 						color: peekOpen ? theme.colors.accent : theme.colors.textDim,
@@ -359,7 +359,7 @@ export function ParticipantCard({
 			{peekOpen && (
 				<pre
 					ref={peekRef}
-					className="mt-2 text-[10px] leading-tight rounded p-2 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono"
+					className="mt-2 text-2xs leading-tight rounded p-2 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono"
 					style={{
 						maxHeight: '200px',
 						backgroundColor: `${theme.colors.bgMain}80`,

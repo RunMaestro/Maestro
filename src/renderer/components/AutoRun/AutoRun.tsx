@@ -59,6 +59,8 @@ import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
 import { TextareaLineNumbers, lineNumberGutterMetrics } from '../ui/TextareaLineNumbers';
+import { FontScaleControl } from '../ui/FontScaleControl';
+import { useFontScale } from '../../hooks/ui/useFontScale';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
@@ -73,6 +75,11 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 
+/** Unzoomed font size of the rendered preview, in px. */
+const PREVIEW_BASE_FONT_SIZE = 13;
+/** Unzoomed font size of the Markdown source editor, in px (Tailwind `text-sm`). */
+const EDIT_BASE_FONT_SIZE = 14;
+
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
 	{
@@ -83,6 +90,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectedFile,
 		documentList,
 		documentTree,
+		projectFileTree,
+		projectRoot,
+		onOpenProjectFile,
 		content,
 		onContentChange,
 		contentVersion = 0, // Used to force-sync on external file changes
@@ -604,6 +614,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		handleAutocompleteKeyDown,
 	});
 
+	// Font zoom. Reading a rendered document and editing its Markdown source are
+	// different jobs at different comfortable sizes, so each mode keeps its own
+	// scale rather than sharing one. Both hooks stay mounted so switching modes
+	// restores the size that mode was left at.
+	const previewFontScale = useFontScale('autoRun.previewFontScale');
+	const editFontScale = useFontScale('autoRun.editFontScale');
+	const activeFontScale = mode === 'edit' ? editFontScale : previewFontScale;
+
 	// Disable Bionify while search is active so search highlights remain visible
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
 	const effectivePreviewBionifyReadingMode = bionifyReadingMode && !hasActivePreviewSearch;
@@ -617,6 +635,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			sshRemoteId,
 			documentTree,
 			onSelectDocument,
+			projectFileTree,
+			projectRoot,
+			onOpenProjectFile,
 			searchOpen,
 			searchQuery,
 			totalMatches,
@@ -767,7 +788,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					) : mode === 'edit' ? (
 						<div className="relative w-full h-full">
 							{showLineNumbers && (
-								<TextareaLineNumbers textareaRef={textareaRef} value={localContent} theme={theme} />
+								<TextareaLineNumbers
+									textareaRef={textareaRef}
+									value={localContent}
+									theme={theme}
+									remeasureKey={editFontScale.fontScale}
+								/>
 							)}
 							<textarea
 								ref={textareaRef}
@@ -789,11 +815,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								onPaste={handlePaste}
 								placeholder="Capture notes, images, and tasks in Markdown. (type {{ for variables)"
 								readOnly={isLocked}
-								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none font-mono text-sm ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
+								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none font-mono ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
 								style={{
 									borderColor: isLocked ? theme.colors.warning : theme.colors.border,
 									color: theme.colors.textMain,
 									backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
+									// `text-sm` in px, scaled. The line height rides the font size so
+									// zooming in doesn't cram taller glyphs into the old 20px rows.
+									fontSize: `${EDIT_BASE_FONT_SIZE * editFontScale.fontScale}px`,
+									lineHeight: 1.45,
 									...(showLineNumbers
 										? { paddingLeft: lineNumberGutterMetrics(localContent).textPaddingLeft }
 										: {}),
@@ -835,7 +865,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.textMain,
-								fontSize: '13px',
+								// The prose styles size everything else in `em`, so scaling the
+								// container carries headings, code, and lists with it.
+								fontSize: `${PREVIEW_BASE_FONT_SIZE * previewFontScale.fontScale}px`,
 							}}
 						>
 							<style>{proseStyles}</style>
@@ -932,6 +964,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							</>
 						)}
 					</button>
+					{/* Font zoom for whichever mode is on screen. Separate scales, so
+					    the reading size and the editing size don't fight each other. */}
+					<FontScaleControl
+						theme={theme}
+						control={activeFontScale}
+						size="sm"
+						target={mode === 'edit' ? 'editor' : 'preview'}
+						className="shrink-0"
+						testId="autorun-font-scale"
+					/>
 				</div>
 			)}
 

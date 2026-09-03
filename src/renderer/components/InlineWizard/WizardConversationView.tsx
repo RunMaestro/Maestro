@@ -89,7 +89,7 @@ function ToolExecutionEntry({
 			style={{ color: theme.colors.textDim }}
 		>
 			<span
-				className="px-1.5 py-0.5 rounded text-[10px] shrink-0"
+				className="px-1.5 py-0.5 rounded text-2xs shrink-0"
 				style={{
 					backgroundColor:
 						status === 'complete' ? `${theme.colors.success}30` : `${theme.colors.accent}30`,
@@ -148,7 +148,7 @@ function ThinkingDisplay({
 						{formatAgentName(agentName)}
 					</span>
 					<span
-						className="text-[10px] px-1.5 py-0.5 rounded"
+						className="text-2xs px-1.5 py-0.5 rounded"
 						style={{
 							backgroundColor: `${theme.colors.accent}30`,
 							color: theme.colors.accent,
@@ -376,13 +376,13 @@ function ErrorDisplay({
 				{/* Technical details (collapsed by default, can be expanded for debugging) */}
 				<details className="mt-3">
 					<summary
-						className="text-[10px] cursor-pointer select-none"
+						className="text-2xs cursor-pointer select-none"
 						style={{ color: theme.colors.textDim }}
 					>
 						Technical details
 					</summary>
 					<pre
-						className="mt-2 text-[10px] p-2 rounded overflow-x-auto whitespace-pre-wrap"
+						className="mt-2 text-2xs p-2 rounded overflow-x-auto whitespace-pre-wrap"
 						style={{
 							backgroundColor: theme.colors.bgActivity,
 							color: theme.colors.textDim,
@@ -531,7 +531,7 @@ export function WizardConversationView({
 						{/* Wizard badge */}
 						<div className="flex justify-center mb-4">
 							<span
-								className="text-[10px] font-semibold tracking-wide uppercase px-3 py-1 rounded-full"
+								className="text-2xs font-semibold tracking-wide uppercase px-3 py-1 rounded-full"
 								style={{
 									backgroundColor: `${theme.colors.accent}20`,
 									color: theme.colors.accent,
@@ -567,7 +567,7 @@ export function WizardConversationView({
 							}}
 						>
 							<p
-								className="text-[10px] font-semibold tracking-wide uppercase mb-3"
+								className="text-2xs font-semibold tracking-wide uppercase mb-3"
 								style={{ color: theme.colors.textDim }}
 							>
 								What You&apos;ll Get
