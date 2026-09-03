@@ -41,4 +41,35 @@ describe('ToggleSwitch', () => {
 		fireEvent.click(screen.getByRole('switch'));
 		expect(onChange).not.toHaveBeenCalled();
 	});
+
+	it('marks itself busy, shows a spinner, and refuses input while busy', () => {
+		const onChange = vi.fn();
+		const { container } = render(
+			<ToggleSwitch checked={false} onChange={onChange} theme={mockTheme} busy />
+		);
+		const toggle = screen.getByRole('switch');
+		expect(toggle).toHaveAttribute('aria-busy', 'true');
+		expect(toggle).toBeDisabled();
+		expect(container.querySelector('.animate-spin')).toBeTruthy();
+
+		fireEvent.click(toggle);
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	it('omits aria-busy when it is not busy', () => {
+		render(<ToggleSwitch checked={false} onChange={vi.fn()} theme={mockTheme} />);
+		expect(screen.getByRole('switch')).not.toHaveAttribute('aria-busy');
+	});
+
+	it('uses the theme accent when checked, or activeColor when one is given', () => {
+		const { rerender } = render(
+			<ToggleSwitch checked={true} onChange={vi.fn()} theme={mockTheme} />
+		);
+		expect(screen.getByRole('switch').style.backgroundColor).toBe('rgb(189, 147, 249)');
+
+		rerender(
+			<ToggleSwitch checked={true} onChange={vi.fn()} theme={mockTheme} activeColor="#22c55e" />
+		);
+		expect(screen.getByRole('switch').style.backgroundColor).toBe('rgb(34, 197, 94)');
+	});
 });

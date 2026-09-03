@@ -3,9 +3,17 @@ import { Copy, ExternalLink } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Theme } from '../../types';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 
 import type { TunnelStatus } from '../../hooks/remote/useLiveOverlay';
 import { openUrl } from '../../utils/openUrl';
+
+/**
+ * "On" in this panel is green rather than the theme accent: the URL, the dot
+ * indicators, and the Local pill are all green, so an accent-colored track would
+ * read as a different kind of state.
+ */
+const LIVE_ON_COLOR = '#22c55e';
 
 interface LiveOverlayPanelProps {
 	theme: Theme;
@@ -165,20 +173,14 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						</div>
 
 						{/* Toggle Switch */}
-						<button
-							type="button"
-							onClick={handleTunnelToggle}
-							disabled={!cloudflaredInstalled || tunnelStatus === 'starting'}
-							aria-busy={tunnelStatus === 'starting'}
-							className={`relative w-10 h-5 rounded-full transition-colors ${
-								tunnelStatus === 'connected'
-									? 'bg-green-500'
-									: tunnelStatus === 'starting'
-										? 'bg-green-500/40 cursor-wait animate-pulse'
-										: cloudflaredInstalled
-											? 'bg-gray-600 hover:bg-gray-500'
-											: 'bg-gray-700 opacity-50 cursor-not-allowed'
-							}`}
+						<ToggleSwitch
+							checked={tunnelStatus === 'connected'}
+							onChange={handleTunnelToggle}
+							theme={theme}
+							activeColor={LIVE_ON_COLOR}
+							disabled={!cloudflaredInstalled}
+							busy={tunnelStatus === 'starting'}
+							ariaLabel="Remote Control"
 							title={
 								!cloudflaredInstalled
 									? 'cloudflared not installed'
@@ -188,18 +190,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 											? 'Disable remote control'
 											: 'Enable remote control'
 							}
-						>
-							<div
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									tunnelStatus === 'connected' ? 'translate-x-5' : 'translate-x-0.5'
-								} ${tunnelStatus === 'starting' ? 'opacity-0' : ''}`}
-							/>
-							{tunnelStatus === 'starting' && (
-								<div className="absolute inset-0 flex items-center justify-center">
-									<div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-								</div>
-							)}
-						</button>
+						/>
 					</div>
 
 					{/* Error Message */}
@@ -246,25 +237,15 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						</div>
 
 						{/* Toggle Switch */}
-						<button
-							type="button"
-							onClick={() => void handlePersistToggle()}
-							disabled={isPersistPending}
-							className={`relative w-10 h-5 rounded-full transition-colors ${
-								persistentWebLink ? 'bg-green-500' : 'bg-gray-600 hover:bg-gray-500'
-							} ${isPersistPending ? 'opacity-50 cursor-wait' : ''}`}
-							role="switch"
-							aria-checked={persistentWebLink}
-							aria-busy={isPersistPending}
-							aria-label="Persistent Web Link"
+						<ToggleSwitch
+							checked={persistentWebLink}
+							onChange={() => void handlePersistToggle()}
+							theme={theme}
+							activeColor={LIVE_ON_COLOR}
+							busy={isPersistPending}
+							ariaLabel="Persistent Web Link"
 							title={persistentWebLink ? 'Disable persistent link' : 'Enable persistent link'}
-						>
-							<div
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									persistentWebLink ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						/>
 					</div>
 				</div>
 
@@ -284,25 +265,19 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						</div>
 
 						{/* Toggle Switch */}
-						<button
-							type="button"
-							onClick={() => {
-								setWebInterfaceUseCustomPort(!webInterfaceUseCustomPort);
+						<ToggleSwitch
+							checked={webInterfaceUseCustomPort}
+							onChange={(next) => {
+								setWebInterfaceUseCustomPort(next);
 								if (isLiveMode) {
 									setTimeout(() => void handleServerRestart(), 100);
 								}
 							}}
-							className={`relative w-10 h-5 rounded-full transition-colors ${
-								webInterfaceUseCustomPort ? 'bg-green-500' : 'bg-gray-600 hover:bg-gray-500'
-							}`}
+							theme={theme}
+							activeColor={LIVE_ON_COLOR}
+							ariaLabel="Custom Port"
 							title={webInterfaceUseCustomPort ? 'Use random port' : 'Use custom port'}
-						>
-							<div
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									webInterfaceUseCustomPort ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						/>
 					</div>
 
 					{/* Port Input (shown when custom port is enabled) */}
