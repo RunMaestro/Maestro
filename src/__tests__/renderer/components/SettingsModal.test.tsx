@@ -890,7 +890,8 @@ describe('SettingsModal', () => {
 		it('shows an unset surface as inheriting, with the size it actually renders at', async () => {
 			await renderDisplayTab();
 
-			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('Inherit (14px)');
+			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('14px');
+			expect(screen.getByTestId('font-size-chat-inheriting')).toBeInTheDocument();
 		});
 
 		it('steps an inheriting surface away from the size it currently shows', async () => {
