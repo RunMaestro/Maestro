@@ -1,6 +1,12 @@
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
-import type { CueCommand, CueEvent, CueNotifyConfig, CueSubscription } from './cue-types';
+import type {
+	CueAutoRunConfig,
+	CueCommand,
+	CueEvent,
+	CueNotifyConfig,
+	CueSubscription,
+} from './cue-types';
 import { recordTriggerFired } from './cue-telemetry';
 
 export interface CueDispatchServiceDeps {
@@ -18,7 +24,8 @@ export interface CueDispatchServiceDeps {
 		command?: CueCommand,
 		chainRootId?: string,
 		parentEventId?: string,
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		autoRun?: CueAutoRunConfig
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	/**
@@ -169,10 +176,26 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			// from the notify config + fallback chain.
 			let prompt: string;
 			let resolvedNotify: CueNotifyConfig | undefined;
+			let resolvedAutoRun: CueAutoRunConfig | undefined;
 			if (sub.action === 'notify') {
 				const message = resolveNotifyMessage(sub);
 				prompt = message;
 				resolvedNotify = { ...(sub.notify ?? {}), message };
+			} else if (sub.action === 'autorun') {
+				// An autorun subscription's work is its document list, not a
+				// prompt. Bail loudly rather than dispatching a run that would
+				// reach the executor with nothing to launch - a scheduled run
+				// fires when nobody is watching, so a silent no-op looks
+				// exactly like a run that never fired at all.
+				if (!sub.auto_run || sub.auto_run.documents.length === 0) {
+					deps.onLog(
+						'error',
+						`[CUE] "${sub.name}" has action='autorun' but no documents - skipping dispatch`
+					);
+					return 0;
+				}
+				resolvedAutoRun = sub.auto_run;
+				prompt = sub.prompt?.trim() || sub.auto_run.documents.join(', ');
 			} else {
 				prompt = promptOverride ?? sub.prompt;
 				if (!prompt) {
@@ -193,7 +216,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				sub.command,
 				chainRootId,
 				parentEventId,
-				resolvedNotify
+				resolvedNotify,
+				resolvedAutoRun
 			);
 			return 1;
 		},
