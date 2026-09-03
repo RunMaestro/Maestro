@@ -22,7 +22,7 @@ interface WorktreePillProps {
 export function WorktreePill({ theme, className, style }: WorktreePillProps) {
 	return (
 		<span
-			className={`text-[9px] font-medium uppercase tracking-wider px-1 py-0.5 rounded shrink-0 ${
+			className={`text-3xs font-medium uppercase tracking-wider px-1 py-0.5 rounded shrink-0 ${
 				className ?? ''
 			}`}
 			style={{

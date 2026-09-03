@@ -151,7 +151,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 						onClick={resetScale}
 						aria-label={`Reset ${subject}`}
 						title={withKey(`Reset ${subject} to 100%`, shortcutHint?.reset)}
-						className="focus-ring px-1 text-[10px] font-medium tabular-nums rounded transition-colors hover:opacity-100"
+						className="focus-ring px-1 text-2xs font-medium tabular-nums rounded transition-colors hover:opacity-100"
 						style={{ color: theme.colors.textDim, opacity: 0.8 }}
 					>
 						{percent}%
