@@ -111,6 +111,15 @@ export function FontsSection({
 					onRemoveCustomFont={fontConfiguration.removeCustomFont}
 					onFontInteraction={fontConfiguration.handleFontInteraction}
 					theme={theme}
+					// The sample reads the very custom properties the app paints
+					// with, rather than re-deriving inheritance here. That is what
+					// makes it honest: a picker sitting on "Same as terminal font"
+					// previews whatever the terminal currently resolves to, and it
+					// cannot drift from the running app the way a second resolver
+					// would. They are published on documentElement, so they reach
+					// this pane through ordinary CSS inheritance.
+					previewFontFamily={`var(${spec.fontVar})`}
+					previewFontSize={`var(${spec.sizeVar})`}
 					inheritOptions={inheritable ? inheritOptionsForSurface(spec) : undefined}
 					sizeControl={
 						<FontSizeStepper
