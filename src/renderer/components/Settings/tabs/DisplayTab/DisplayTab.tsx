@@ -39,6 +39,13 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 	return (
 		<div className="space-y-5">
+			<FontsSection
+				theme={theme}
+				settings={settings as unknown as Record<string, unknown>}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
+			/>
 			<TypographyResetSection
 				theme={theme}
 				fonts={{
@@ -56,13 +63,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					fileEditorFontSize: settings.fileEditorFontSize,
 				}}
 				onReset={settings.resetTypography}
-			/>
-			<FontsSection
-				theme={theme}
-				settings={settings as unknown as Record<string, unknown>}
-				fontConfiguration={fontConfiguration}
-				setSurfaceFontFamily={settings.setSurfaceFontFamily}
-				setSurfaceFontSize={settings.setSurfaceFontSize}
 			/>
 			<FontZoomSection
 				theme={theme}

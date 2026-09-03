@@ -782,6 +782,21 @@ describe('DisplayTab', () => {
 			fireEvent.click(screen.getByTestId('typography-reset-default'));
 			expect(mockResetTypography).toHaveBeenCalledWith('default');
 		});
+
+		it('sits below the pickers it overwrites', async () => {
+			// It used to lead the tab, which opened the Display settings on the one
+			// destructive control and offered a way out before the user had seen
+			// anything to get out of.
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const fonts = document.querySelector('[data-setting-id="display-fonts"]')!;
+			const reset = document.querySelector('[data-setting-id="display-typography-reset"]')!;
+
+			expect(fonts.compareDocumentPosition(reset) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		});
 	});
 
 	// =========================================================================

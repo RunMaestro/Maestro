@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Type } from 'lucide-react';
+import { ListPlus, Type } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from './SectionCard';
@@ -92,12 +92,10 @@ export function FontsSection({
 				className="min-w-0 flex flex-col gap-1"
 				data-testid={`font-surface-${surface}`}
 			>
-				<div className="flex items-baseline justify-between gap-2">
-					<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
-						{spec.label}
-					</span>
-				</div>
-				<p className="text-[11px] leading-snug opacity-60 flex-1">{spec.description}</p>
+				<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+					{spec.label}
+				</span>
+				<p className="text-[11px] leading-snug opacity-55 flex-1">{spec.description}</p>
 				<FontConfigurationPanel
 					compact
 					fontFamily={storedFont}
@@ -139,8 +137,12 @@ export function FontsSection({
 	return (
 		<>
 			<div data-setting-id="display-custom-fonts">
-				<SettingsSectionHeading icon={Type}>Custom Fonts</SettingsSectionHeading>
-				<p className="text-xs opacity-60 mb-2 -mt-1">
+				{/* Not `Type`, which the Fonts heading immediately below already
+				    uses. Two consecutive headings under one icon read as one
+				    section with a stray subheading; this one manages a LIST, so
+				    it takes the list icon. */}
+				<SettingsSectionHeading icon={ListPlus}>Custom Fonts</SettingsSectionHeading>
+				<p className="text-xs opacity-70 mb-2 -mt-1">
 					Names of fonts installed on this machine that aren&apos;t in the lists below. Added once
 					here, then offered in every picker.
 				</p>
@@ -156,7 +158,7 @@ export function FontsSection({
 
 			<div data-setting-id="display-fonts">
 				<SettingsSectionHeading icon={Type}>Fonts</SettingsSectionHeading>
-				<p className="text-xs opacity-60 mb-2 -mt-1">
+				<p className="text-xs opacity-70 mb-2 -mt-1">
 					Interface is the proportional face and Terminal the fixed-width one. Everything else can
 					follow either, or carry a font of its own. Press Up/Down on any picker to preview.
 				</p>

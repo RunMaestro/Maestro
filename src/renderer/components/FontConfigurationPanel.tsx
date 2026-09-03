@@ -296,7 +296,7 @@ export function FontConfigurationPanel({
 			{!compact && (
 				<>
 					<SettingsSectionHeading icon={Type}>{heading}</SettingsSectionHeading>
-					{description && <p className="text-xs opacity-60 mb-2 -mt-1">{description}</p>}
+					{description && <p className="text-xs opacity-70 mb-2 -mt-1">{description}</p>}
 				</>
 			)}
 			{/*
@@ -439,11 +439,20 @@ export function FontConfigurationPanel({
 					{FONT_PREVIEW_PROSE}
 				</p>
 			</div>
-			<div className="flex items-center justify-between gap-3 min-h-[1.5rem] mb-2">
+			{/* The size row is the LAST thing in a compact cell, so a trailing
+			    `mb-2` there is margin below the final element of a grid cell: it
+			    adds to the grid's own row gap and makes the six cells sit
+			    further apart than the gap says. Full mode keeps it, because the
+			    custom-font manager follows and the two need separating. */}
+			<div
+				className={`flex items-center justify-between gap-3 min-h-[1.5rem] ${
+					compact ? '' : 'mb-2'
+				}`}
+			>
 				{/* The hint is one line for the whole group in compact mode, printed
 				    once above the grid rather than repeated under every picker. */}
 				{!compact && (
-					<span className="text-xs opacity-50">
+					<span className="text-xs opacity-70">
 						{fontLoading
 							? 'Loading installed fonts...'
 							: canAnnotateAvailability || !fontsLoaded

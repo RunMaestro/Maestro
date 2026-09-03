@@ -71,6 +71,31 @@ describe('FontsSection', () => {
 		expect(screen.getAllByTestId('custom-font-input')).toHaveLength(1);
 	});
 
+	it('states the custom-font heading once, not again inside its card', () => {
+		// The row used to print its own "Custom fonts" title and a restatement of
+		// the description, directly under the section heading and description
+		// saying the same two things.
+		renderSection();
+
+		expect(screen.getAllByText(/custom fonts/i)).toHaveLength(1);
+		expect(
+			screen.queryByText('Added here, offered in every picker below.')
+		).not.toBeInTheDocument();
+	});
+
+	it('gives the two consecutive headings different icons', () => {
+		// Custom Fonts and Fonts sit one above the other. Under one icon they
+		// read as a single section with a stray subheading.
+		renderSection();
+		// The suite stubs every Lucide icon with an svg whose testid is the icon
+		// name, so that attribute is what identifies which icon was passed.
+		const iconFor = (settingId: string) =>
+			document.querySelector(`[data-setting-id="${settingId}"] svg`)?.getAttribute('data-testid');
+
+		expect(iconFor('display-custom-fonts')).toBeTruthy();
+		expect(iconFor('display-custom-fonts')).not.toBe(iconFor('display-fonts'));
+	});
+
 	it('renders every surface in one grid', () => {
 		// Six surfaces at two across is three even rows, so the roots no longer
 		// need a full-width exception.

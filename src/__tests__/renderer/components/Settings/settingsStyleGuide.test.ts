@@ -15,6 +15,17 @@ import { AA_LARGE_CONTRAST, contrastRatio, transparentize } from '../../../../sh
 
 const SETTINGS_ROOT = resolve(__dirname, '../../../../renderer/components/Settings');
 const GENERAL_TAB = join(SETTINGS_ROOT, 'tabs/GeneralTab');
+const RENDERER_COMPONENTS = resolve(__dirname, '../../../../renderer/components');
+
+/**
+ * Files that render INTO the Settings tree but live outside it, so the dim-scale
+ * rule has to reach them explicitly. Both are font controls the Display tab
+ * mounts, and both are where the off-scale `opacity-60` came from.
+ */
+const SETTINGS_ADJACENT = [
+	join(RENDERER_COMPONENTS, 'FontConfigurationPanel.tsx'),
+	join(RENDERER_COMPONENTS, 'ui/FontSizeStepper.tsx'),
+];
 
 function walkTsx(dir: string, out: string[] = []): string[] {
 	for (const name of readdirSync(dir)) {
@@ -138,6 +149,40 @@ describe('Settings style guide', () => {
 				'Hand-rolled section headings found in GeneralTab. Use ' +
 					'<SettingsSectionHeading icon={Icon}>Label</SettingsSectionHeading> so every heading ' +
 					'shares one spelling:\n' +
+					offenders.join('\n')
+			).toEqual([]);
+		});
+	});
+
+	describe('two dim levels only (CLAUDE-SETTINGS.md rule 4)', () => {
+		// The scale is `opacity-70` for descriptions and `opacity-55` for
+		// micro-notes. `opacity-60` is the value the tree keeps drifting back to,
+		// because it is what a new section gets when someone eyeballs a dim
+		// instead of reading the guide - and at 60 the contrast measurement in
+		// the block below no longer holds. Banning the one wrong value keeps the
+		// guard specific enough to name the fix.
+		it('never uses opacity-60 on text', () => {
+			const offenders: string[] = [];
+
+			for (const file of [...walkTsx(SETTINGS_ROOT), ...SETTINGS_ADJACENT]) {
+				const src = readFileSync(file, 'utf8');
+				for (const { tag, body, line } of parseJsxTags(src)) {
+					const className = classNameOf(body);
+					if (className === null) continue;
+					if (!/(?:^|\s)opacity-60(?:\s|$)/.test(className)) continue;
+					// A dimmed icon is deliberate de-emphasis of a glyph, not text
+					// on the description scale.
+					if (isDecorativeIcon(tag, className)) continue;
+
+					offenders.push(`  ${file.replace(RENDERER_COMPONENTS, 'components')}:${line} <${tag}>`);
+				}
+			}
+
+			expect(
+				offenders,
+				'Off-scale dim found. Settings text has exactly two dim levels: `opacity-70` for a ' +
+					'description (`text-xs`) and `opacity-55` for a micro-note (`text-[11px]`). Pick the ' +
+					'one that matches the role of the line:\n' +
 					offenders.join('\n')
 			).toEqual([]);
 		});
