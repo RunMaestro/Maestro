@@ -355,7 +355,7 @@ export function useFileTreeManagement(
 				effectiveMaxDepth,
 				0,
 				sshContext,
-				undefined,
+				extras?.onProgress,
 				localOptions,
 				maxEntries,
 				extras?.signal
@@ -440,6 +440,12 @@ export function useFileTreeManagement(
 									fileTreeError: undefined,
 									fileTreeTruncated: loadResult.truncated,
 									fileTreeLoadedCap: maxEntriesForRefresh,
+									// A refresh bumps the load sequence, which orphans any
+									// initial load still in flight. That load owns the
+									// spinner, so without this the panel keeps spinning over
+									// a tree that is already on screen and complete.
+									fileTreeLoading: false,
+									fileTreeLoadingProgress: undefined,
 								}
 							: s
 					)

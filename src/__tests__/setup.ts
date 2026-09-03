@@ -281,6 +281,9 @@ const mockMaestro = {
 	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
+		readDirTree: vi
+			.fn()
+			.mockResolvedValue({ tree: [], truncated: false, filesFound: 0, directoriesScanned: 0 }),
 		readFile: vi.fn().mockResolvedValue(''),
 		// Mirrors the preload webUtils bridge: returns the dropped file's absolute
 		// path. Test fixtures set `.path` on their fake File objects.
