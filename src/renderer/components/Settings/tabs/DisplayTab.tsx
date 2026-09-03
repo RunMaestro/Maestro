@@ -33,6 +33,7 @@ import { useSettings } from '../../../hooks';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import type { Theme } from '../../../types';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
+import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { WorktreePill } from '../../ui/WorktreePill';
 import { FontConfigurationPanel } from '../../FontConfigurationPanel';
 import { IgnorePatternsSection } from '../IgnorePatternsSection';
@@ -388,22 +389,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								restart.
 							</p>
 						</div>
-						<button
-							onClick={() => setUseNativeTitleBar(!useNativeTitleBar)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: useNativeTitleBar ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={useNativeTitleBar}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									useNativeTitleBar ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={useNativeTitleBar}
+							onChange={setUseNativeTitleBar}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Auto-Hide Menu Bar */}
@@ -420,22 +410,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								and Linux. Requires restart.
 							</p>
 						</div>
-						<button
-							onClick={() => setAutoHideMenuBar(!autoHideMenuBar)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: autoHideMenuBar ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={autoHideMenuBar}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									autoHideMenuBar ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch checked={autoHideMenuBar} onChange={setAutoHideMenuBar} theme={theme} />
 					</div>
 				</div>
 			</div>
@@ -460,23 +435,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Display the agent name in the main header.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowAgentName(!showAgentName)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showAgentName ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showAgentName}
-							aria-label="Show agent name"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showAgentName ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showAgentName}
+							onChange={setShowAgentName}
+							theme={theme}
+							ariaLabel="Show agent name"
+						/>
 					</div>
 
 					{/* Show session ID pill */}
@@ -493,23 +457,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								main header. Click the pill to copy the full ID.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowSessionIdPill(!showSessionIdPill)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showSessionIdPill ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showSessionIdPill}
-							aria-label="Show session ID pill"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showSessionIdPill ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showSessionIdPill}
+							onChange={setShowSessionIdPill}
+							theme={theme}
+							ariaLabel="Show session ID pill"
+						/>
 					</div>
 
 					{/* Show session cost pill */}
@@ -525,25 +478,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Display the per-session running cost (e.g. &quot;$21.33&quot;) in the main header.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowSessionCostPill(!showSessionCostPill)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showSessionCostPill
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showSessionCostPill}
-							aria-label="Show session cost pill"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showSessionCostPill ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showSessionCostPill}
+							onChange={setShowSessionCostPill}
+							theme={theme}
+							ariaLabel="Show session cost pill"
+						/>
 					</div>
 				</div>
 			</div>
@@ -572,25 +512,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								starred AI tab across all agents.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowStarredSessionsSection(!showStarredSessionsSection)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showStarredSessionsSection
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showStarredSessionsSection}
-							aria-label="Show Starred Sessions section in left side bar"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showStarredSessionsSection ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showStarredSessionsSection}
+							onChange={setShowStarredSessionsSection}
+							theme={theme}
+							ariaLabel="Show Starred Sessions section in left side bar"
+						/>
 					</div>
 
 					{/* Show group member count */}
@@ -607,25 +534,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								bar (e.g. &quot;UNGROUPED AGENTS (24)&quot;).
 							</p>
 						</div>
-						<button
-							onClick={() => setShowLeftPanelGroupMemberCount(!showLeftPanelGroupMemberCount)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showLeftPanelGroupMemberCount
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showLeftPanelGroupMemberCount}
-							aria-label="Show group member count in left side bar"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showLeftPanelGroupMemberCount ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showLeftPanelGroupMemberCount}
+							onChange={setShowLeftPanelGroupMemberCount}
+							theme={theme}
+							ariaLabel="Show group member count in left side bar"
+						/>
 					</div>
 
 					{/* Collapsed pills per row */}
@@ -675,25 +589,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Turn off to simplify the agent rows.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowLeftPanelLocationPills(!showLeftPanelLocationPills)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showLeftPanelLocationPills
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showLeftPanelLocationPills}
-							aria-label="Show location pills in left side bar"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showLeftPanelLocationPills ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showLeftPanelLocationPills}
+							onChange={setShowLeftPanelLocationPills}
+							theme={theme}
+							ariaLabel="Show location pills in left side bar"
+						/>
 					</div>
 
 					{/* Show git change indicator */}
@@ -709,25 +610,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Display the branch icon and dirty file count next to git repository agents.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowLeftPanelGitIndicator(!showLeftPanelGitIndicator)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showLeftPanelGitIndicator
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showLeftPanelGitIndicator}
-							aria-label="Show git change indicator in left side bar"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showLeftPanelGitIndicator ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showLeftPanelGitIndicator}
+							onChange={setShowLeftPanelGitIndicator}
+							theme={theme}
+							ariaLabel="Show git change indicator in left side bar"
+						/>
 					</div>
 
 					{/* Show Cue indicator - hidden entirely when the Cue Encore Feature is off */}
@@ -745,25 +633,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 									subscriptions.
 								</p>
 							</div>
-							<button
-								onClick={() => setShowLeftPanelCueIndicator(!showLeftPanelCueIndicator)}
-								className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-								tabIndex={0}
-								style={{
-									backgroundColor: showLeftPanelCueIndicator
-										? theme.colors.accent
-										: theme.colors.bgActivity,
-								}}
-								role="switch"
-								aria-checked={showLeftPanelCueIndicator}
-								aria-label="Show Cue indicator in left side bar"
-							>
-								<span
-									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-										showLeftPanelCueIndicator ? 'translate-x-5' : 'translate-x-0.5'
-									}`}
-								/>
-							</button>
+							<ToggleSwitch
+								checked={showLeftPanelCueIndicator}
+								onChange={setShowLeftPanelCueIndicator}
+								theme={theme}
+								ariaLabel="Show Cue indicator in left side bar"
+							/>
 						</div>
 					)}
 
@@ -781,27 +656,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								at least one terminal tab with a saved startup command.
 							</p>
 						</div>
-						<button
-							onClick={() =>
-								setShowLeftPanelStartupCommandIndicator(!showLeftPanelStartupCommandIndicator)
-							}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showLeftPanelStartupCommandIndicator
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showLeftPanelStartupCommandIndicator}
-							aria-label="Show terminal startup-command indicator in left side bar"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showLeftPanelStartupCommandIndicator ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showLeftPanelStartupCommandIndicator}
+							onChange={setShowLeftPanelStartupCommandIndicator}
+							theme={theme}
+							ariaLabel="Show terminal startup-command indicator in left side bar"
+						/>
 					</div>
 
 					{/* Show group label on bookmarked agents */}
@@ -818,25 +678,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								bookmarked agents. Turn off to hide the group pill entirely.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowGroupLabelInBookmarks(!showGroupLabelInBookmarks)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showGroupLabelInBookmarks
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showGroupLabelInBookmarks}
-							aria-label="Show group label on bookmarked agents in left side bar"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showGroupLabelInBookmarks ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showGroupLabelInBookmarks}
+							onChange={setShowGroupLabelInBookmarks}
+							theme={theme}
+							ariaLabel="Show group label on bookmarked agents in left side bar"
+						/>
 					</div>
 
 					{/* Show full group label on bookmarked agents (sub-option of the group
@@ -857,26 +704,13 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								agents. Long names are truncated with the full value on hover.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowFullGroupLabelInBookmarks(!showFullGroupLabelInBookmarks)}
+						<ToggleSwitch
+							checked={showFullGroupLabelInBookmarks}
+							onChange={setShowFullGroupLabelInBookmarks}
+							theme={theme}
+							ariaLabel="Show full group label on bookmarked agents in left side bar"
 							disabled={!showGroupLabelInBookmarks}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none disabled:cursor-not-allowed"
-							tabIndex={showGroupLabelInBookmarks ? 0 : -1}
-							style={{
-								backgroundColor: showFullGroupLabelInBookmarks
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showFullGroupLabelInBookmarks}
-							aria-label="Show full group label on bookmarked agents in left side bar"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showFullGroupLabelInBookmarks ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						/>
 					</div>
 
 					{/* Show WORKTREE pill */}
@@ -895,23 +729,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Display the worktree badge next to worktree child agents in the left panel.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowWorktreePill(!showWorktreePill)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showWorktreePill ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showWorktreePill}
-							aria-label="Show worktree pill in left panel agent list"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showWorktreePill ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showWorktreePill}
+							onChange={setShowWorktreePill}
+							theme={theme}
+							ariaLabel="Show worktree pill in left panel agent list"
+						/>
 					</div>
 
 					{/* Show branch name */}
@@ -927,25 +750,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Display the worktree branch name beneath the agent name in the left panel.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowWorktreeBranchName(!showWorktreeBranchName)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showWorktreeBranchName
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showWorktreeBranchName}
-							aria-label="Show branch name in left panel agent list"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showWorktreeBranchName ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showWorktreeBranchName}
+							onChange={setShowWorktreeBranchName}
+							theme={theme}
+							ariaLabel="Show branch name in left panel agent list"
+						/>
 					</div>
 				</div>
 			</div>
@@ -971,25 +781,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								line copies a maestro:// deep link to that line.
 							</p>
 						</div>
-						<button
-							onClick={() => setFileEditShowLineNumbers(!fileEditShowLineNumbers)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: fileEditShowLineNumbers
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={fileEditShowLineNumbers}
-							aria-label="Show line numbers in the editor"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									fileEditShowLineNumbers ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={fileEditShowLineNumbers}
+							onChange={setFileEditShowLineNumbers}
+							theme={theme}
+							ariaLabel="Show line numbers in the editor"
+						/>
 					</div>
 
 					{/* Word wrap default */}
@@ -1006,23 +803,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Toggle live from the editor toolbar.
 							</p>
 						</div>
-						<button
-							onClick={() => setFileEditWordWrap(!fileEditWordWrap)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: fileEditWordWrap ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={fileEditWordWrap}
-							aria-label="Wrap long lines in the editor"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									fileEditWordWrap ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={fileEditWordWrap}
+							onChange={setFileEditWordWrap}
+							theme={theme}
+							ariaLabel="Wrap long lines in the editor"
+						/>
 					</div>
 
 					{/* Toolbar button visibility */}
@@ -1100,24 +886,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								unread messages.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowStarredInUnreadFilter(!showStarredInUnreadFilter)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showStarredInUnreadFilter
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showStarredInUnreadFilter}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showStarredInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showStarredInUnreadFilter}
+							onChange={setShowStarredInUnreadFilter}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Show File Preview Tabs in Unread Filter */}
@@ -1134,24 +907,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								hidden.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowFilePreviewsInUnreadFilter(!showFilePreviewsInUnreadFilter)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showFilePreviewsInUnreadFilter
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showFilePreviewsInUnreadFilter}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showFilePreviewsInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showFilePreviewsInUnreadFilter}
+							onChange={setShowFilePreviewsInUnreadFilter}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Show Terminal Tabs in Unread Filter */}
@@ -1168,24 +928,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								hidden.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowTerminalTabsInUnreadFilter(!showTerminalTabsInUnreadFilter)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showTerminalTabsInUnreadFilter
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showTerminalTabsInUnreadFilter}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showTerminalTabsInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showTerminalTabsInUnreadFilter}
+							onChange={setShowTerminalTabsInUnreadFilter}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Show Browser Tabs in Unread Filter */}
@@ -1202,24 +949,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								hidden.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowBrowserTabsInUnreadFilter(!showBrowserTabsInUnreadFilter)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showBrowserTabsInUnreadFilter
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showBrowserTabsInUnreadFilter}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showBrowserTabsInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showBrowserTabsInUnreadFilter}
+							onChange={setShowBrowserTabsInUnreadFilter}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Treat Command+0 as Last Tab */}
@@ -1237,23 +971,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								{metaKeyName}+9 jumps to the last tab.
 							</p>
 						</div>
-						<button
-							onClick={() => setUseCmd0AsLastTab(!useCmd0AsLastTab)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: useCmd0AsLastTab ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={useCmd0AsLastTab}
-							aria-label={`Treat ${metaKeyName}+0 as the last tab`}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									useCmd0AsLastTab ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={useCmd0AsLastTab}
+							onChange={setUseCmd0AsLastTab}
+							theme={theme}
+							ariaLabel={`Treat ${metaKeyName}+0 as the last tab`}
+						/>
 					</div>
 
 					{/* Show Domain Pill on Browser Tabs */}
@@ -1270,25 +993,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								tabs. Disable to hide it.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowBrowserTabDomain(!showBrowserTabDomain)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showBrowserTabDomain
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showBrowserTabDomain}
-							aria-label="Show domain on browser tabs"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showBrowserTabDomain ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showBrowserTabDomain}
+							onChange={setShowBrowserTabDomain}
+							theme={theme}
+							ariaLabel="Show domain on browser tabs"
+						/>
 					</div>
 
 					{/* Tab Count Badge on the Search Icon */}
@@ -1306,23 +1016,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								opens when you click the icon.
 							</p>
 						</div>
-						<button
-							onClick={() => setShowTabCountBadge(!showTabCountBadge)}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-							tabIndex={0}
-							style={{
-								backgroundColor: showTabCountBadge ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={showTabCountBadge}
-							aria-label="Show tab count on the search icon"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									showTabCountBadge ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showTabCountBadge}
+							onChange={setShowTabCountBadge}
+							theme={theme}
+							ariaLabel="Show tab count on the search icon"
+						/>
 					</div>
 				</div>
 			</div>
@@ -1344,23 +1043,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Display external website links as nodes. Can be toggled in the graph view.
 							</p>
 						</div>
-						<button
-							onClick={() => setDocumentGraphShowExternalLinks(!documentGraphShowExternalLinks)}
-							className="relative w-10 h-5 rounded-full transition-colors"
-							style={{
-								backgroundColor: documentGraphShowExternalLinks
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={documentGraphShowExternalLinks}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									documentGraphShowExternalLinks ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={documentGraphShowExternalLinks}
+							onChange={setDocumentGraphShowExternalLinks}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Confirm on Close */}
@@ -1374,23 +1061,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								opened from the Memories viewer never asks, since closing returns there.
 							</p>
 						</div>
-						<button
-							onClick={() => setDocumentGraphConfirmClose(!documentGraphConfirmClose)}
-							className="relative w-10 h-5 rounded-full transition-colors shrink-0"
-							style={{
-								backgroundColor: documentGraphConfirmClose
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={documentGraphConfirmClose}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									documentGraphConfirmClose ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={documentGraphConfirmClose}
+							onChange={setDocumentGraphConfirmClose}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Max Nodes */}
@@ -1460,30 +1135,13 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Display warning banners when context window usage reaches configurable thresholds
 							</div>
 						</div>
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								updateContextManagementSettings({
-									contextWarningsEnabled: !contextManagementSettings.contextWarningsEnabled,
-								});
-							}}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
-							style={{
-								backgroundColor: contextManagementSettings.contextWarningsEnabled
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={contextManagementSettings.contextWarningsEnabled}
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									contextManagementSettings.contextWarningsEnabled
-										? 'translate-x-5'
-										: 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={contextManagementSettings.contextWarningsEnabled}
+							onChange={(value) =>
+								updateContextManagementSettings({ contextWarningsEnabled: value })
+							}
+							theme={theme}
+						/>
 					</div>
 
 					{/* Threshold Sliders (ghosted when disabled) */}
@@ -1630,25 +1288,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								charts, and file extension badges.
 							</p>
 						</div>
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								setColorBlindMode(!colorBlindMode);
-							}}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
-							style={{
-								backgroundColor: colorBlindMode ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={colorBlindMode}
-							aria-label="Color blind mode"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									colorBlindMode ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={colorBlindMode}
+							onChange={setColorBlindMode}
+							theme={theme}
+							ariaLabel="Color blind mode"
+						/>
 					</div>
 				</div>
 
@@ -1690,25 +1335,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								</button>
 							</div>
 						</div>
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								setBionifyReadingMode(!bionifyReadingMode);
-							}}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
-							style={{
-								backgroundColor: bionifyReadingMode ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={bionifyReadingMode}
-							aria-label="Bionify reading mode"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									bionifyReadingMode ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={bionifyReadingMode}
+							onChange={setBionifyReadingMode}
+							theme={theme}
+							ariaLabel="Bionify reading mode"
+						/>
 					</div>
 
 					<div

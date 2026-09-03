@@ -2,6 +2,89 @@ import React from 'react';
 import { transparentize } from '../../../shared/colorContrast';
 import type { Theme } from '../../types';
 
+export type ToggleSwitchSize = 'sm' | 'md';
+
+/**
+ * Geometry per size. The knob offsets are absolute positions INSIDE the track,
+ * so they only make sense next to the track dimensions they were measured
+ * against - keep each row together rather than splitting sizes across maps.
+ */
+const TOGGLE_SWITCH_GEOMETRY: Record<
+	ToggleSwitchSize,
+	{ track: string; knob: string; knobOn: string; knobOff: string; spinner: string }
+> = {
+	md: {
+		track: 'w-10 h-5',
+		knob: 'w-4 h-4',
+		knobOn: 'translate-x-5',
+		knobOff: 'translate-x-0.5',
+		spinner: 'w-3 h-3',
+	},
+	sm: {
+		track: 'w-8 h-4',
+		knob: 'w-3 h-3',
+		knobOn: 'translate-x-[17px]',
+		knobOff: 'translate-x-0.5',
+		spinner: 'w-2.5 h-2.5',
+	},
+};
+
+export interface ToggleSwitchTrackProps {
+	/** Whether the toggle is on */
+	checked: boolean;
+	/** The current theme */
+	theme: Theme;
+	/** Pill size. Defaults to the full-size toggle used in settings panes. */
+	size?: ToggleSwitchSize;
+	/** Mid-flight: spinner in place of the knob, dimmed track */
+	busy?: boolean;
+	/** Overrides the checked-state track color. Defaults to the theme accent. */
+	activeColor?: string;
+	/** Overrides the unchecked-state track color. Defaults to the activity bg. */
+	inactiveColor?: string;
+}
+
+/**
+ * The pill graphic on its own - track, knob, and the busy spinner - with no
+ * click target and no switch semantics. Reach for this ONLY when the host
+ * already owns both (the Cue header wraps the pill and an Enabled/Disabled
+ * label in one `role="switch"` button, and a nested button would be invalid).
+ * Everywhere else use <ToggleSwitch>.
+ */
+export function ToggleSwitchTrack({
+	checked,
+	theme,
+	size = 'md',
+	busy = false,
+	activeColor,
+	inactiveColor,
+}: ToggleSwitchTrackProps): React.ReactElement {
+	const geometry = TOGGLE_SWITCH_GEOMETRY[size];
+	const onColor = activeColor ?? theme.colors.accent;
+	const offColor = inactiveColor ?? theme.colors.bgActivity;
+	const trackColor = busy ? transparentize(onColor, offColor, 0.4) : checked ? onColor : offColor;
+
+	return (
+		<span
+			className={`relative block ${geometry.track} rounded-full transition-colors`}
+			style={{ backgroundColor: trackColor }}
+		>
+			<span
+				className={`absolute left-0 top-0.5 ${geometry.knob} rounded-full bg-white transition-transform ${
+					checked ? geometry.knobOn : geometry.knobOff
+				} ${busy ? 'opacity-0' : ''}`}
+			/>
+			{busy && (
+				<span className="absolute inset-0 flex items-center justify-center">
+					<span
+						className={`${geometry.spinner} border-2 border-white border-t-transparent rounded-full animate-spin`}
+					/>
+				</span>
+			)}
+		</span>
+	);
+}
+
 export interface ToggleSwitchProps {
 	/** Whether the toggle is on */
 	checked: boolean;
@@ -26,6 +109,8 @@ export interface ToggleSwitchProps {
 	 * LIVE panel is green because everything else in it is).
 	 */
 	activeColor?: string;
+	/** Pill size. Defaults to the full-size toggle used in settings panes. */
+	size?: ToggleSwitchSize;
 }
 
 /**
@@ -41,14 +126,9 @@ export function ToggleSwitch({
 	disabled = false,
 	busy = false,
 	activeColor,
+	size = 'md',
 }: ToggleSwitchProps): React.ReactElement {
 	const isBlocked = disabled || busy;
-	const onColor = activeColor ?? theme.colors.accent;
-	const trackColor = busy
-		? transparentize(onColor, theme.colors.bgActivity, 0.4)
-		: checked
-			? onColor
-			: theme.colors.bgActivity;
 
 	return (
 		<button
@@ -57,14 +137,13 @@ export function ToggleSwitch({
 				e.stopPropagation();
 				if (!isBlocked) onChange(!checked);
 			}}
-			className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
+			className={`focus-ring rounded-full flex-shrink-0 ${
 				busy
 					? 'cursor-wait animate-pulse'
 					: disabled
 						? 'opacity-50 cursor-not-allowed'
 						: 'cursor-pointer'
 			}`}
-			style={{ backgroundColor: trackColor }}
 			role="switch"
 			aria-checked={checked}
 			aria-label={ariaLabel}
@@ -72,16 +151,13 @@ export function ToggleSwitch({
 			title={title}
 			disabled={isBlocked}
 		>
-			<span
-				className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-					checked ? 'translate-x-5' : 'translate-x-0.5'
-				} ${busy ? 'opacity-0' : ''}`}
+			<ToggleSwitchTrack
+				checked={checked}
+				theme={theme}
+				size={size}
+				busy={busy}
+				activeColor={activeColor}
 			/>
-			{busy && (
-				<span className="absolute inset-0 flex items-center justify-center">
-					<span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-				</span>
-			)}
 		</button>
 	);
 }

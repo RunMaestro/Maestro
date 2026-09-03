@@ -4,8 +4,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { ToggleSwitch } from '../../../../renderer/components/ui/ToggleSwitch';
+import { ToggleSwitch, ToggleSwitchTrack } from '../../../../renderer/components/ui/ToggleSwitch';
 import { mockTheme } from '../../../helpers/mockTheme';
+
+/** The pill graphic lives inside the button, so color assertions target it. */
+const trackOf = (toggle: HTMLElement): HTMLElement => toggle.firstElementChild as HTMLElement;
 
 describe('ToggleSwitch', () => {
 	it('renders as a switch with aria-checked reflecting the state', () => {
@@ -65,11 +68,38 @@ describe('ToggleSwitch', () => {
 		const { rerender } = render(
 			<ToggleSwitch checked={true} onChange={vi.fn()} theme={mockTheme} />
 		);
-		expect(screen.getByRole('switch').style.backgroundColor).toBe('rgb(189, 147, 249)');
+		expect(trackOf(screen.getByRole('switch')).style.backgroundColor).toBe('rgb(189, 147, 249)');
 
 		rerender(
 			<ToggleSwitch checked={true} onChange={vi.fn()} theme={mockTheme} activeColor="#22c55e" />
 		);
-		expect(screen.getByRole('switch').style.backgroundColor).toBe('rgb(34, 197, 94)');
+		expect(trackOf(screen.getByRole('switch')).style.backgroundColor).toBe('rgb(34, 197, 94)');
+	});
+
+	it('renders the compact pill when size is sm', () => {
+		const { rerender } = render(
+			<ToggleSwitch checked={false} onChange={vi.fn()} theme={mockTheme} />
+		);
+		expect(trackOf(screen.getByRole('switch')).className).toContain('w-10 h-5');
+
+		rerender(<ToggleSwitch checked={false} onChange={vi.fn()} theme={mockTheme} size="sm" />);
+		expect(trackOf(screen.getByRole('switch')).className).toContain('w-8 h-4');
+	});
+});
+
+describe('ToggleSwitchTrack', () => {
+	it('renders no click target of its own so it can nest inside a host switch', () => {
+		const { container } = render(<ToggleSwitchTrack checked={false} theme={mockTheme} />);
+		expect(container.querySelector('button')).toBeNull();
+		expect(container.querySelector('[role="switch"]')).toBeNull();
+	});
+
+	it('honors inactiveColor for the unchecked track', () => {
+		const { container } = render(
+			<ToggleSwitchTrack checked={false} theme={mockTheme} inactiveColor="#22c55e" />
+		);
+		expect((container.firstElementChild as HTMLElement).style.backgroundColor).toBe(
+			'rgb(34, 197, 94)'
+		);
 	});
 });
