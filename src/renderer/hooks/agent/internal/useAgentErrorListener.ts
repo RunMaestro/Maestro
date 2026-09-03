@@ -34,7 +34,11 @@ import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
-import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
+import {
+	scheduleRetryForError,
+	getRetryEntry,
+	persistDispatchSnapshotForAuth,
+} from '../../../stores/retryStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
@@ -420,6 +424,17 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				// a tenth copy of it - and joining is what puts the agent on the list
 				// of work to resume once the login succeeds.
 				if (agentError.type === 'auth_expired') {
+					// Write this tab's dispatch snapshot to disk before anything else.
+					// Re-authenticating means leaving the app, often quitting it on the
+					// way back, and the snapshot map lives in memory - so without this
+					// "Resume Agent" after a restart has nothing to replay, which is the
+					// one flow it exists for. Fire-and-forget: a failed write costs the
+					// restart-resume, never the outage prompt the user needs right now.
+					const authTabId =
+						tabIdFromSession ?? (erroredSession ? getActiveTab(erroredSession)?.id : undefined);
+					if (authTabId) {
+						void persistDispatchSnapshotForAuth(actualSessionId, authTabId);
+					}
 					const { opened, providerKey } = reportAuthFailure({
 						sessionId: actualSessionId,
 						message: agentError.message,
