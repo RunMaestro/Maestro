@@ -119,7 +119,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 			>
 				{/* Description Header */}
 				<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
-					<div className="text-[11px] leading-relaxed" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs-plus leading-relaxed" style={{ color: theme.colors.textDim }}>
 						Control your agents from your phone or tablet.
 						{tunnelStatus === 'connected' ? (
 							<span className="text-blue-400">
@@ -140,24 +140,21 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 				<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
 					<div className="flex items-center justify-between">
 						<div>
-							<div
-								className="text-[10px] uppercase font-bold"
-								style={{ color: theme.colors.textDim }}
-							>
+							<div className="text-2xs uppercase font-bold" style={{ color: theme.colors.textDim }}>
 								Remote Control
 							</div>
 							<div
-								className="text-[9px] mt-0.5"
+								className="text-3xs mt-0.5"
 								style={{ color: theme.colors.textDim, opacity: 0.7 }}
 							>
 								Uses Cloudflare tunnel for access outside your network
 							</div>
 							{cloudflaredInstalled === false && (
-								<div className="text-[9px] text-yellow-500 mt-1">Install cloudflared to enable</div>
+								<div className="text-3xs text-yellow-500 mt-1">Install cloudflared to enable</div>
 							)}
 							{tunnelStatus === 'starting' && (
 								<div
-									className="flex items-center gap-1.5 text-[9px] text-green-400 mt-1"
+									className="flex items-center gap-1.5 text-3xs text-green-400 mt-1"
 									role="status"
 									aria-live="polite"
 								>
@@ -207,13 +204,13 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 
 					{/* Error Message */}
 					{tunnelStatus === 'error' && tunnelError && (
-						<div className="mt-2 text-[10px] text-red-400">{tunnelError}</div>
+						<div className="mt-2 text-2xs text-red-400">{tunnelError}</div>
 					)}
 
 					{/* Install Instructions (when cloudflared not found) */}
 					{cloudflaredInstalled === false && (
 						<div
-							className="mt-2 p-2 rounded text-[10px]"
+							className="mt-2 p-2 rounded text-2xs"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							<div className="font-medium mb-1">To enable remote control:</div>
@@ -237,14 +234,11 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 				<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
 					<div className="flex items-center justify-between">
 						<div>
-							<div
-								className="text-[10px] uppercase font-bold"
-								style={{ color: theme.colors.textDim }}
-							>
+							<div className="text-2xs uppercase font-bold" style={{ color: theme.colors.textDim }}>
 								Persistent Web Link
 							</div>
 							<div
-								className="text-[9px] mt-0.5"
+								className="text-3xs mt-0.5"
 								style={{ color: theme.colors.textDim, opacity: 0.7 }}
 							>
 								Keep the same access token across restarts
@@ -278,14 +272,11 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 				<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
 					<div className="flex items-center justify-between">
 						<div>
-							<div
-								className="text-[10px] uppercase font-bold"
-								style={{ color: theme.colors.textDim }}
-							>
+							<div className="text-2xs uppercase font-bold" style={{ color: theme.colors.textDim }}>
 								Custom Port
 							</div>
 							<div
-								className="text-[9px] mt-0.5"
+								className="text-3xs mt-0.5"
 								style={{ color: theme.colors.textDim, opacity: 0.7 }}
 							>
 								For static proxy routes
@@ -355,7 +346,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 											(e.target as HTMLInputElement).blur();
 										}
 									}}
-									className="flex-1 px-2 py-1 text-[11px] font-mono rounded border outline-none"
+									className="flex-1 px-2 py-1 text-xs-plus font-mono rounded border outline-none"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										borderColor: theme.colors.border,
@@ -364,10 +355,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 									placeholder="8080"
 								/>
 							</div>
-							<div
-								className="text-[9px] mt-1"
-								style={{ color: theme.colors.textDim, opacity: 0.7 }}
-							>
+							<div className="text-3xs mt-1" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 								{isLiveMode ? 'Press Enter or click away to apply' : 'Port range: 1024-65535'}
 							</div>
 						</div>
@@ -379,7 +367,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 					{/* URL Display */}
 					<div className="flex items-center gap-2 mb-3">
 						<div
-							className={`flex-1 text-[11px] font-mono truncate select-all ${
+							className={`flex-1 text-xs-plus font-mono truncate select-all ${
 								activeUrlTab === 'local' ? 'text-green-400' : 'text-blue-400'
 							}`}
 							title={activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl || ''}
@@ -437,7 +425,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 								style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
 							>
 								<div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mb-3" />
-								<div className="text-white text-[11px] font-medium">Starting tunnel...</div>
+								<div className="text-white text-xs-plus font-medium">Starting tunnel...</div>
 							</div>
 						)}
 
@@ -448,7 +436,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 								style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
 							>
 								<div
-									className="px-4 py-2 rounded-full text-[12px] font-bold"
+									className="px-4 py-2 rounded-full text-xs font-bold"
 									style={{
 										backgroundColor: activeUrlTab === 'local' ? '#22c55e' : '#3b82f6',
 										color: 'white',
@@ -470,7 +458,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 								<button
 									type="button"
 									onClick={() => setActiveUrlTab('local')}
-									className={`px-4 py-1 text-[10px] font-bold uppercase rounded-full transition-all ${
+									className={`px-4 py-1 text-2xs font-bold uppercase rounded-full transition-all ${
 										activeUrlTab === 'local'
 											? 'bg-green-500 text-white shadow-sm'
 											: 'hover:bg-white/10'
@@ -482,7 +470,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 								<button
 									type="button"
 									onClick={() => setActiveUrlTab('remote')}
-									className={`px-4 py-1 text-[10px] font-bold uppercase rounded-full transition-all ${
+									className={`px-4 py-1 text-2xs font-bold uppercase rounded-full transition-all ${
 										activeUrlTab === 'remote'
 											? 'bg-blue-500 text-white shadow-sm'
 											: 'hover:bg-white/10'
@@ -519,7 +507,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							const url = activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl;
 							if (url) openUrl(url);
 						}}
-						className="w-full py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10 border"
+						className="w-full py-1.5 rounded text-2xs font-medium transition-colors hover:bg-white/10 border"
 						style={{
 							color: activeUrlTab === 'local' ? '#4ade80' : '#60a5fa',
 							borderColor:
@@ -534,7 +522,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							void toggleGlobalLive();
 							setLiveOverlayOpen(false);
 						}}
-						className="w-full py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-red-500/20 text-red-400 border border-red-500/30"
+						className="w-full py-1.5 rounded text-2xs font-medium transition-colors hover:bg-red-500/20 text-red-400 border border-red-500/30"
 					>
 						Turn Off Web Interface
 					</button>

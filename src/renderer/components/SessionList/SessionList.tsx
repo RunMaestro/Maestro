@@ -1207,7 +1207,7 @@ function SessionListInner(props: SessionListProps) {
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (
 								<button
 									onClick={() => setAboutModalOpen(true)}
-									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors hover:bg-white/10"
+									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-bold transition-colors hover:bg-white/10"
 									title={`${getBadgeForTime(autoRunStats.cumulativeTimeMs)?.name || 'Apprentice'} - Click to view achievements`}
 									style={{
 										color: autoRunStats.currentBadgeLevel >= 8 ? '#FFD700' : theme.colors.accent,
@@ -1237,7 +1237,7 @@ function SessionListInner(props: SessionListProps) {
 											setLiveOverlayOpen(!liveOverlayOpen);
 										}
 									}}
-									className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
+									className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-bold transition-colors ${
 										isLiveMode
 											? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
 											: 'text-gray-500 hover:bg-white/10'
@@ -1724,7 +1724,7 @@ function SessionListInner(props: SessionListProps) {
 								<div className="mt-4 px-3">
 									<button
 										onClick={createNewGroup}
-										className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+										className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -1797,7 +1797,7 @@ function SessionListInner(props: SessionListProps) {
 											e.stopPropagation();
 											createNewGroup();
 										}}
-										className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+										className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -1872,7 +1872,7 @@ function SessionListInner(props: SessionListProps) {
 							)}
 							<button
 								onClick={createNewGroup}
-								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 								style={{
 									backgroundColor: theme.colors.accent + '20',
 									color: theme.colors.accent,
