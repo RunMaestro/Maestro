@@ -39,6 +39,7 @@ import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById } from './sessionStore';
+import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
 
@@ -476,6 +477,29 @@ export function retryNow(sessionId: string, tabId: string): void {
  *   succeeded also has a snapshot, and resending it would put a message the
  *   user never asked for back on the wire.
  */
+/**
+ * The tab's most recent user message, read from the transcript. Used only to
+ * TELL the user what is waiting when the in-memory snapshot is gone - never to
+ * rebuild a dispatch, which would drop attachments and codified settings.
+ */
+function lastUserPromptFor(sessionId: string, tabId: string): string | undefined {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tab = session?.aiTabs?.find((t) => t.id === tabId);
+	if (!tab) return undefined;
+	return (
+		[...tab.logs]
+			.reverse()
+			.find((l) => l.source === 'user')
+			?.text?.trim() || undefined
+	);
+}
+
+/** Keep a recalled prompt to one readable line inside a toast. */
+function truncateForToast(text: string, max = 80): string {
+	const collapsed = text.replace(/\s+/g, ' ').trim();
+	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+}
+
 export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 	for (const tabId of tabIds) {
 		const key = keyFor(sessionId, tabId);
@@ -487,9 +511,28 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 		const snapshot = snapshots.get(key);
 		if (!snapshot) {
 			// Snapshots live in memory only, so an app restart between the failure
-			// and the login leaves nothing to replay. The prompt is still in the
-			// transcript and the queue is intact - the user just has to press send.
+			// and the login leaves nothing to replay - and re-auth is exactly the
+			// flow where people quit the app. This used to log a line and move on,
+			// so "Resume Agent" reported success and silently did nothing, which is
+			// worse than not offering the button: the user believes their prompt is
+			// running again and it is not.
+			//
+			// It is NOT auto-resent from the transcript. Rebuilding a QueuedItem
+			// from a log entry loses the attachments, the slash-command expansion
+			// and the settings codified at send time, so the replay could put a
+			// DIFFERENT message on the wire than the one that failed. The
+			// session_not_found path next door has the same constraint and resolves
+			// it the same way: surface the prompt and let the human press send.
 			logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
+			const lastPrompt = lastUserPromptFor(sessionId, tabId);
+			notifyToast({
+				color: 'yellow',
+				title: 'Nothing to resend',
+				message: lastPrompt
+					? `Your last message is still in the transcript - press send to run it again: "${truncateForToast(lastPrompt)}"`
+					: 'The prompt that failed was lost when the app restarted. Send it again to continue.',
+				...(lastPrompt ? { sessionId, tabId } : {}),
+			});
 			continue;
 		}
 
