@@ -139,10 +139,15 @@ class BridgeClient {
 			} else if (
 				msg.type === 'tabs_changed' &&
 				typeof msg.sessionId === 'string' &&
-				typeof msg.activeTabId === 'string'
+				typeof msg.activeTabId === 'string' &&
+				// The tab inventory is what marks this as a passive sync rather than a
+				// human selecting a tab, and the listener tells the two apart by its
+				// presence. A `tabs_changed` without one would arrive looking like a
+				// selection and move the view, so drop it instead of routing it.
+				Array.isArray(msg.aiTabs)
 			) {
 				channel = 'remote:selectTab';
-				args = [msg.sessionId, msg.activeTabId, Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined];
+				args = [msg.sessionId, msg.activeTabId, msg.aiTabs];
 			}
 			if (channel) {
 				const set = this.listeners.get(channel);

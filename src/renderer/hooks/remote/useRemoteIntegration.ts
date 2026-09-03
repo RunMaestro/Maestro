@@ -459,19 +459,37 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 
 		// Handle remote tab selection from web interface
-		// This also switches to the session if not already active
+		//
+		// This channel carries TWO different asks and they must not be treated
+		// alike (see `src/shared/focusPlacement.ts` for the rule):
+		//
+		//   - an explicit `select_tab` (no third argument) is a human tapping a
+		//     tab in a remote client, so it moves the view: switch agent, then
+		//     activate the tab.
+		//   - the legacy `tabs_changed` packet (third argument present) is a
+		//     PASSIVE inventory broadcast. The desktop re-broadcasts it whenever
+		//     any agent's tab hash changes, and that hash includes `state` and
+		//     `hasUnread` - so a background agent merely starting a turn or
+		//     picking up an unread emits one. Treating it as a selection is what
+		//     let background activity yank the reader onto whichever of ninety
+		//     agents happened to move (issue #1496).
+		//
+		// A passive sync therefore reconciles data only. It never changes the
+		// active agent, and it only follows the desktop's active tab for the
+		// agent the user is already looking at, where doing so cannot pull them
+		// away from anything.
 		const unsubscribeSelectTab = window.maestro.process.onRemoteSelectTab(
 			(sessionId, tabId, remoteTabs) => {
-				// First, switch to the session if not already active
+				const isInventorySync = remoteTabs !== undefined;
 				const currentActiveId = activeSessionIdRef.current;
-				if (currentActiveId !== sessionId) {
+				if (!isInventorySync && currentActiveId !== sessionId) {
 					setActiveSessionId(sessionId);
 				}
+				const mayFollowTab = !isInventorySync || currentActiveId === sessionId;
 
-				// The legacy `tabs_changed` web packet carries the complete desktop tab
-				// inventory as its third argument. Reconcile that snapshot here so the
-				// browser adds and removes tabs instead of only following an ID it may not
-				// have. Existing tabs retain renderer-only data such as logs and drafts.
+				// Reconcile the snapshot so the browser adds and removes tabs instead of
+				// only following an ID it may not have. Existing tabs retain
+				// renderer-only data such as logs and drafts.
 				updateSessionWith(sessionId, (s) => {
 					let updatedSession = s;
 					if (remoteTabs) {
@@ -510,7 +528,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						};
 					}
 
-					if (!updatedSession.aiTabs.some((tab) => tab.id === tabId)) {
+					if (!mayFollowTab || !updatedSession.aiTabs.some((tab) => tab.id === tabId)) {
 						return updatedSession;
 					}
 					return { ...updatedSession, ...aiTabFocusFields(tabId) };

@@ -1004,6 +1004,59 @@ describe('useRemoteIntegration', () => {
 				{ type: 'ai', id: 'tab-2' },
 			]);
 		});
+
+		// Issue #1496: the `tabs_changed` broadcast fires on any agent's tab hash
+		// change (which includes `state` and `hasUnread`), so a background agent
+		// starting a turn used to drag the reader onto it.
+		it('does not switch agents for a passive tab inventory sync', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-2', [
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: 'Busy background tab',
+						starred: false,
+						inputValue: '',
+						createdAt: 1700000001000,
+						state: 'busy',
+					},
+				]);
+			});
+
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			// The inventory still reconciles - it is only the view that stays put.
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.aiTabs.map((tab) => tab.id)).toEqual(['tab-2']);
+			expect(updated?.activeTabId).toBe('tab-1');
+		});
+
+		it('still follows an explicit tab selection with no inventory attached', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-2');
+			});
+
+			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.activeTabId).toBe('tab-2');
+		});
 	});
 
 	describe('remote new tab', () => {
