@@ -3,7 +3,7 @@ import { Type } from 'lucide-react';
 import type { Theme } from '../types';
 import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
 import { BUNDLED_FONTS, BUNDLED_FONT_NAMES, isBundledFont } from '../../shared/bundledFonts';
-import { displayFontLabel } from '../../shared/fontStack';
+import { displayFontLabel, withMonoFallback, FONT_PREVIEW_PROSE } from '../../shared/fontStack';
 
 /**
  * Common monospace fonts that are typically available across different systems.
@@ -83,6 +83,23 @@ export interface FontConfigurationPanelProps {
 	/** Per-surface size control rendered beside the picker. */
 	sizeControl?: React.ReactNode;
 	/**
+	 * CSS font-family the live sample under the picker is drawn in.
+	 *
+	 * Pass the surface's RESOLVED value - a `var(--maestro-font-*)` reference is
+	 * ideal, since those are the very properties the app paints with, so the
+	 * sample cannot claim a face the surface is not actually using. Needed
+	 * because the selected value alone is not always a face: a surface sitting on
+	 * "Same as interface font" stores an inherit sentinel, and drawing the sample
+	 * in that would render no family at all. Defaults to the selected value with
+	 * the monospace fallback appended.
+	 */
+	previewFontFamily?: string;
+	/**
+	 * CSS font-size for the live sample, e.g. `var(--maestro-size-chat)`. Omitted
+	 * means "inherit", which is right for a picker with no surface behind it.
+	 */
+	previewFontSize?: string;
+	/**
 	 * Drop the section heading and the custom-font manager, leaving just the
 	 * dropdown and its size control.
 	 *
@@ -120,9 +137,16 @@ export function FontConfigurationPanel({
 	description,
 	inheritOptions,
 	sizeControl,
+	previewFontFamily,
+	previewFontSize,
 	compact = false,
 }: FontConfigurationPanelProps) {
 	const [customFontInput, setCustomFontInput] = useState('');
+
+	// The face the sample is drawn in. The caller's resolved value wins because
+	// only it can follow an inherit sentinel back to a real family; without one,
+	// the selected value is already a family and just needs a fallback chain.
+	const previewFace = previewFontFamily ?? withMonoFallback(fontFamily);
 
 	// Memoize normalized font set for O(1) lookup instead of O(n) array search
 	const normalizedFontsSet = useMemo(() => {
@@ -315,15 +339,23 @@ export function FontConfigurationPanel({
 						    displays, so labelling it with the leading family fixes both
 						    at once; the stored value is untouched and the full stack
 						    stays readable in the control's tooltip. */}
-						<option value={unlistedValue}>{displayFontLabel(unlistedValue)}</option>
+						<option value={unlistedValue} style={{ fontFamily: unlistedValue }}>
+							{displayFontLabel(unlistedValue)}
+						</option>
 					</optgroup>
 				)}
+				{/* Every option naming a FACE is drawn in that face: Chromium honors
+				    font-family on an option, so the list itself becomes the preview
+				    and a user can read the difference between two candidates without
+				    selecting either. The inherit entries above deliberately opt out -
+				    they name a relationship, not a font, so drawing one in a face
+				    would assert something the option is not saying. */}
 				{/* Bundled fonts ship inside the app, so they are never annotated
 				    "(Not Found)" - unlike a system font, their presence is a fact
 				    rather than a guess. Listed first for that reason. */}
 				<optgroup label="Bundled with Maestro (always available)">
 					{BUNDLED_FONTS.map((font) => (
-						<option key={font.name} value={font.name}>
+						<option key={font.name} value={font.name} style={{ fontFamily: font.name }}>
 							{font.name}
 							{font.substituteFor ? ` - like ${font.substituteFor}` : ''}
 							{font.note ? ` (${font.note})` : ''}
@@ -334,7 +366,11 @@ export function FontConfigurationPanel({
 					{systemMonospaceFonts.map((font) => {
 						const available = canAnnotateAvailability ? isFontAvailable(font) : true;
 						return (
-							<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>
+							<option
+								key={font}
+								value={font}
+								style={{ fontFamily: font, opacity: available ? 1 : 0.4 }}
+							>
 								{font} {canAnnotateAvailability && !available && '(Not Found)'}
 							</option>
 						);
@@ -344,7 +380,11 @@ export function FontConfigurationPanel({
 					{systemProportionalFonts.map((font) => {
 						const available = canAnnotateAvailability ? isFontAvailable(font) : true;
 						return (
-							<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>
+							<option
+								key={font}
+								value={font}
+								style={{ fontFamily: font, opacity: available ? 1 : 0.4 }}
+							>
 								{font} {canAnnotateAvailability && !available && '(Not Found)'}
 							</option>
 						);
@@ -353,7 +393,7 @@ export function FontConfigurationPanel({
 				{customFonts.length > 0 && (
 					<optgroup label="Custom Fonts">
 						{customFonts.map((font) => (
-							<option key={font} value={font}>
+							<option key={font} value={font} style={{ fontFamily: font }}>
 								{font}
 							</option>
 						))}
@@ -362,13 +402,43 @@ export function FontConfigurationPanel({
 				{installedFonts.length > 0 && (
 					<optgroup label="All Installed Fonts">
 						{installedFonts.map((font) => (
-							<option key={font} value={font}>
+							<option key={font} value={font} style={{ fontFamily: font }}>
 								{font}
 							</option>
 						))}
 					</optgroup>
 				)}
 			</select>
+			{/*
+			 * Live sample, in the face and at the size this surface actually
+			 * renders at. The dropdown answers "which fonts are there"; this
+			 * answers "what does mine look like right now" without making the user
+			 * leave Settings and go find the surface.
+			 *
+			 * Deliberately ONE line, truncated rather than wrapped. In compact mode
+			 * this sits inside a six-cell grid whose rows are already stretched to
+			 * their tallest cell, so a fixed single line lands in slack the cells
+			 * reserve instead of adding a row of height per surface; a sample that
+			 * re-wrapped with the pane width would move that height around as the
+			 * modal is resized.
+			 */}
+			<div
+				className={`rounded border overflow-hidden mb-2 ${compact ? 'px-2 py-1' : 'px-3 py-2'}`}
+				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				data-testid="font-preview"
+			>
+				<p
+					className="truncate leading-snug"
+					style={{
+						color: theme.colors.textMain,
+						fontFamily: previewFace,
+						fontSize: previewFontSize,
+					}}
+					title={FONT_PREVIEW_PROSE}
+				>
+					{FONT_PREVIEW_PROSE}
+				</p>
+			</div>
 			<div className="flex items-center justify-between gap-3 min-h-[1.5rem] mb-2">
 				{/* The hint is one line for the whole group in compact mode, printed
 				    once above the grid rather than repeated under every picker. */}

@@ -145,3 +145,16 @@ export function displayFontLabel(fontFamily: string | undefined | null): string 
 	const unquoted = first.replace(/^(['"])(.*)\1$/, '$2').trim();
 	return unquoted || first;
 }
+
+/**
+ * Sample copy every font preview draws.
+ *
+ * One pair of strings rather than a per-surface literal: the typography chooser
+ * and the Settings pickers both show "what does this face look like", and two
+ * different samples would make the same font read as two different choices
+ * depending on which screen the user happened to be on. The prose line is a
+ * pangram so every letterform is exercised; the code line carries the
+ * punctuation and digits a fixed-width face is actually judged on.
+ */
+export const FONT_PREVIEW_PROSE = 'The quick brown fox jumps over the lazy dog.';
+export const FONT_PREVIEW_CODE = 'const tempo = 120; // adagio -> allegro';

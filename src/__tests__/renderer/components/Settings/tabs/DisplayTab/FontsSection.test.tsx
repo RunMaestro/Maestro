@@ -247,4 +247,29 @@ describe('FontsSection', () => {
 			expect(select).not.toHaveAttribute('title');
 		});
 	});
+
+	describe('live previews', () => {
+		it('draws every sample from the custom properties the app paints with', () => {
+			// Reading the published variables rather than re-resolving inheritance
+			// here is what stops the sample from drifting from the running app: a
+			// surface following the terminal previews whatever the terminal
+			// currently resolves to, with no second resolver to disagree.
+			renderSection();
+
+			for (const surface of TYPOGRAPHY_SURFACES) {
+				const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
+				const sample = within(screen.getByTestId(`font-surface-${surface}`))
+					.getByTestId('font-preview')
+					.querySelector('p');
+
+				expect(sample?.style.fontFamily).toBe(`var(${spec.fontVar})`);
+				expect(sample?.style.fontSize).toBe(`var(${spec.sizeVar})`);
+			}
+		});
+
+		it('gives each surface its own sample rather than one for the section', () => {
+			renderSection();
+			expect(screen.getAllByTestId('font-preview')).toHaveLength(TYPOGRAPHY_SURFACES.length);
+		});
+	});
 });

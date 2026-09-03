@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FontConfigurationPanel } from '../../../renderer/components/FontConfigurationPanel';
 import { BUNDLED_FONT_NAMES } from '../../../shared/bundledFonts';
 import { DEFAULT_INTERFACE_FONT } from '../../../shared/typographyPresets';
+import { FONT_PREVIEW_PROSE, withMonoFallback } from '../../../shared/fontStack';
 import { mockTheme } from '../../helpers/mockTheme';
 
 function renderPanel(overrides: Partial<React.ComponentProps<typeof FontConfigurationPanel>> = {}) {
@@ -41,8 +42,12 @@ describe('FontConfigurationPanel', () => {
 		// font. Display only: the stored value keeps its fallback chain.
 		renderPanel({ fontFamily: DEFAULT_INTERFACE_FONT });
 
+		// Scoped to the Current group: Inter also ships bundled, so the label is
+		// deliberately the same string in two places and a document-wide query
+		// matches both.
+		const current = within(screen.getByRole('group', { name: 'Current' }));
 		expect(screen.getByRole('combobox')).toHaveValue(DEFAULT_INTERFACE_FONT);
-		expect(screen.getByRole('option', { name: 'Inter' })).toHaveValue(DEFAULT_INTERFACE_FONT);
+		expect(current.getByRole('option', { name: 'Inter' })).toHaveValue(DEFAULT_INTERFACE_FONT);
 		expect(screen.queryByRole('option', { name: DEFAULT_INTERFACE_FONT })).not.toBeInTheDocument();
 	});
 
@@ -239,5 +244,74 @@ describe('FontConfigurationPanel', () => {
 	it('renders a size control beside the picker when given one', () => {
 		renderPanel({ sizeControl: <span data-testid="size-slot">size</span> });
 		expect(screen.getByTestId('size-slot')).toBeInTheDocument();
+	});
+
+	describe('font previews', () => {
+		it('draws every option naming a face in that face', () => {
+			// The list IS the preview: reading the difference between two
+			// candidates should not require selecting either one.
+			renderPanel({ customFonts: ['Iosevka'], systemFonts: ['Zapfino'] });
+
+			// One from each group that names a real face: bundled, common
+			// monospace, common proportional, custom, and installed.
+			for (const font of ['Inter', 'Monaco', 'Georgia', 'Iosevka', 'Zapfino']) {
+				expect(screen.getByRole('option', { name: font })).toHaveStyle({ fontFamily: font });
+			}
+		});
+
+		it('draws the Current option in the stored stack rather than the shortened label', () => {
+			renderPanel({ fontFamily: DEFAULT_INTERFACE_FONT });
+
+			const current = within(screen.getByRole('group', { name: 'Current' }));
+			expect(current.getByRole('option', { name: 'Inter' })).toHaveStyle({
+				fontFamily: DEFAULT_INTERFACE_FONT,
+			});
+		});
+
+		it('leaves the inherit entries unstyled, since they name a relationship', () => {
+			renderPanel({
+				fontFamily: '',
+				inheritOptions: [{ value: '', label: 'Same as interface font' }],
+			});
+
+			expect(screen.getByRole('option', { name: 'Same as interface font' }).style.fontFamily).toBe(
+				''
+			);
+		});
+
+		it('shows a live sample in the resolved face and size it was given', () => {
+			// The caller passes the surface's resolved values because the selected
+			// value alone can be an inherit sentinel, which is no face at all.
+			renderPanel({
+				fontFamily: '',
+				inheritOptions: [{ value: '', label: 'Same as interface font' }],
+				previewFontFamily: 'var(--maestro-font-chat)',
+				previewFontSize: 'var(--maestro-size-chat)',
+			});
+
+			const sample = within(screen.getByTestId('font-preview')).getByText(FONT_PREVIEW_PROSE);
+			expect(sample.style.fontFamily).toBe('var(--maestro-font-chat)');
+			expect(sample.style.fontSize).toBe('var(--maestro-size-chat)');
+		});
+
+		it('falls back to the selected font with a safe fallback chain', () => {
+			// Without a resolved value the selected family is already a face, but a
+			// bare name that is not installed drops the sample to the browser's
+			// serif default, which reads as the font being broken.
+			renderPanel({ fontFamily: 'Berkeley Mono' });
+
+			const sample = within(screen.getByTestId('font-preview')).getByText(FONT_PREVIEW_PROSE);
+			expect(sample).toHaveStyle({ fontFamily: withMonoFallback('Berkeley Mono') });
+		});
+
+		it('keeps the sample to a single line', () => {
+			// Compact pickers sit in a six-cell grid; a sample that wrapped would
+			// add a row of height per surface and move it around as the pane
+			// resizes.
+			renderPanel({ compact: true });
+
+			const sample = within(screen.getByTestId('font-preview')).getByText(FONT_PREVIEW_PROSE);
+			expect(sample).toHaveClass('truncate');
+		});
 	});
 });
