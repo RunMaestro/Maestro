@@ -302,7 +302,12 @@ describe('useGroupChatHandlers', () => {
 				await result.current.handleCreateGroupChat('New Chat', 'claude-code');
 			});
 
-			expect(mockGroupChat.create).toHaveBeenCalledWith('New Chat', 'claude-code', undefined);
+			expect(mockGroupChat.create).toHaveBeenCalledWith(
+				'New Chat',
+				'claude-code',
+				undefined,
+				undefined
+			);
 			// After create, handleOpenGroupChat also sets moderatorSessionId from startModerator
 			const storedChat = useGroupChatStore.getState().groupChats.find((c) => c.id === 'gc-new');
 			expect(storedChat).toBeDefined();
@@ -363,7 +368,22 @@ describe('useGroupChatHandlers', () => {
 				await result.current.handleCreateGroupChat('Chat', 'claude-code', config);
 			});
 
-			expect(mockGroupChat.create).toHaveBeenCalledWith('Chat', 'claude-code', config);
+			expect(mockGroupChat.create).toHaveBeenCalledWith('Chat', 'claude-code', config, undefined);
+		});
+
+		it('passes the idle-agent requirement to the IPC create call', async () => {
+			const newChat = { id: 'gc-new', name: 'Chat', participants: [] };
+			mockGroupChat.create.mockResolvedValueOnce(newChat);
+			mockGroupChat.load.mockResolvedValueOnce(newChat);
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockResolvedValueOnce(null);
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleCreateGroupChat('Chat', 'claude-code', undefined, false);
+			});
+
+			expect(mockGroupChat.create).toHaveBeenCalledWith('Chat', 'claude-code', undefined, false);
 		});
 	});
 
@@ -542,6 +562,29 @@ describe('useGroupChatHandlers', () => {
 
 			const modal = useModalStore.getState().modals.get('editGroupChat');
 			expect(modal?.open ?? false).toBe(false);
+		});
+
+		it('forwards the idle-agent requirement in the update payload', async () => {
+			mockGroupChat.update.mockResolvedValueOnce({ id: 'gc-1', name: 'Updated' });
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Old' } as any],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleUpdateGroupChat(
+					'gc-1',
+					'Updated',
+					'claude-code',
+					undefined,
+					false
+				);
+			});
+
+			expect(mockGroupChat.update).toHaveBeenCalledWith(
+				'gc-1',
+				expect.objectContaining({ requireIdleParticipants: false })
+			);
 		});
 	});
 

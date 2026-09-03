@@ -12,6 +12,7 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Theme, BatchRunState, SessionState } from '../../../renderer/types';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 const createMarkdownComponentsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
@@ -359,6 +360,54 @@ describe('AutoRun', () => {
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByTitle('Editing disabled while Auto Run active')).toBeDisabled();
+		});
+	});
+
+	// Reading a rendered document and editing its source are different jobs at
+	// different comfortable sizes, so the two modes keep separate scales.
+	describe('Font Zoom', () => {
+		beforeEach(() => {
+			installLocalStorageMock();
+		});
+
+		it('scales the editor font and persists under the edit key', () => {
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox');
+			expect(parseFloat(textarea.style.fontSize)).toBeCloseTo(14, 5);
+
+			fireEvent.click(screen.getByLabelText('Increase editor font size'));
+
+			expect(parseFloat(screen.getByRole('textbox').style.fontSize)).toBeCloseTo(15.4, 5);
+			expect(window.localStorage.getItem('autoRun.editFontScale')).toBe('1.1');
+		});
+
+		it('scales the preview font and persists under the preview key', () => {
+			const props = createDefaultProps({ mode: 'preview' });
+			const { container } = renderWithProvider(<AutoRun {...props} />);
+
+			const preview = container.querySelector('.prose') as HTMLElement;
+			expect(parseFloat(preview.style.fontSize)).toBeCloseTo(13, 5);
+
+			fireEvent.click(screen.getByLabelText('Increase preview font size'));
+
+			expect(
+				parseFloat((container.querySelector('.prose') as HTMLElement).style.fontSize)
+			).toBeCloseTo(14.3, 5);
+			expect(window.localStorage.getItem('autoRun.previewFontScale')).toBe('1.1');
+		});
+
+		// The whole point of two keys: zooming one mode must leave the other alone.
+		it('keeps the two scales independent', () => {
+			window.localStorage.setItem('autoRun.editFontScale', '1.5');
+			const props = createDefaultProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			// Preview is untouched by the edit-mode zoom, so its reset percentage
+			// (which only appears once zoomed) is absent.
+			expect(screen.queryByLabelText('Reset preview font size')).toBeNull();
+			expect(screen.getByLabelText('Increase preview font size')).toBeInTheDocument();
 		});
 	});
 

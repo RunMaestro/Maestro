@@ -806,6 +806,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	} = useListNavigation({
 		listLength: filtered.length,
 		onSelect: handleSelectByIndex,
+		wrap: true,
 		enableNumberHotkeys: true,
 		firstVisibleIndex,
 		enabled: !renamingSession, // Disable navigation when renaming

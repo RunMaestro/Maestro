@@ -228,9 +228,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							data-testid="bookmark-icon"
 						/>
 					)}
+					{/* min-w-0 (not shrink-0) so the pills inside can give up width when the
+					    header runs out of room. A hard cap truncates a name that had space to
+					    spare; letting flex do the clamping means the text is only ever cut when
+					    something else genuinely needs the pixels. */}
 					<div
 						ref={gitPillRef}
-						className="relative shrink-0 flex items-center gap-2"
+						className="relative min-w-0 flex items-center gap-2"
 						{...gitPillHoverHandlers}
 					>
 						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
@@ -239,7 +243,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						    the branch the same way local agents do. */}
 						{activeSession.sessionSshRemoteConfig?.enabled && sshRemoteName ? (
 							<button
-								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 max-w-[120px] outline-none ${
+								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 min-w-0 outline-none ${
 									activeSession.isGitRepo ? 'cursor-pointer hover:bg-purple-500/20' : ''
 								}`}
 								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch})` : ''}`}
@@ -250,7 +254,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							</button>
 						) : (
 							<button
-								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border cursor-pointer outline-none ${
+								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border min-w-0 cursor-pointer outline-none ${
 									activeSession.isGitRepo
 										? 'border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20'
 										: 'border-blue-500/30 text-blue-500 bg-blue-500/10'
@@ -281,7 +285,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							sshRemoteName &&
 							activeSession.isGitRepo && (
 								<button
-									className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20 cursor-pointer outline-none"
+									className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20 min-w-0 cursor-pointer outline-none"
 									title={gitInfo?.branch || undefined}
 									onClick={handleGitPillClick}
 									aria-haspopup="menu"

@@ -167,6 +167,7 @@ import {
 	createQuitHandler,
 	type QuitHandler,
 } from './app-lifecycle';
+import { isAgentBusy } from './utils/agent-busy';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
 import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
 // Phase 3 refactoring - process listeners
@@ -1653,6 +1654,10 @@ function setupIpcHandlers() {
 				sshRemoteConfig: s.sessionSshRemoteConfig,
 				autoRunFolderPath: s.autoRunFolderPath,
 				worktreeBasePath: s.worktreeConfig?.basePath,
+				// Live liveness, not the persisted state: persistence rewrites every
+				// session and tab to 'idle' on the way to disk, so the stored record
+				// can never say whether this agent is mid-turn.
+				isBusy: isAgentBusy(s, processManager),
 			};
 		});
 	});

@@ -1162,6 +1162,18 @@ const fontScale = useFontScale('filePreview.fontScale');
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+- `size` - `'md'` (default) or `'sm'`, which drops the buttons from `w-7 h-7` to
+  `w-6 h-6` and the icons from `w-4` to `w-3.5`. Use `'sm'` in a dense `text-xs`
+  button row (the Auto Run toolbar), where the default squares stand a couple of
+  pixels taller than the row and read heavier than the buttons beside them.
+- **A pane with a read mode and an edit mode gets two scales, not one.** Auto Run
+  keeps `autoRun.previewFontScale` and `autoRun.editFontScale` and passes whichever
+  matches the current mode; reading rendered prose and editing Markdown source are
+  comfortable at different sizes, and one shared value makes each mode fight the
+  other. Both hooks stay mounted, so switching back restores the size that mode was
+  left at. When the scale drives a `<textarea>`, scale the `lineHeight` with it
+  (Auto Run uses a unitless `1.45`) - a fixed `20px` row crams taller glyphs once
+  zoomed - and pass the scale as `remeasureKey` to `<TextareaLineNumbers>`.
 - `collapsible` (floating only) - rests as a circle the size of that Table of Contents
   button and expands to the full pill on hover or keyboard focus. The buttons are
   CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
@@ -1530,6 +1542,13 @@ which the docked Auto Run panel leaves off because it has no room for a gutter).
 Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
 gutter. That is what the YAML editor had, and it drifted out of alignment the
 moment the file was taller than the box or any line wrapped.
+
+**Pass `remeasureKey` when the textarea's typography can change without its box
+changing.** The component re-measures on its own `ResizeObserver`, and a font-size
+change leaves the border box exactly the same size, so nothing fires and the
+numbers keep the row heights of the OLD font until the next keystroke. Auto Run
+passes its edit-mode font scale; any surface with a font zoom over a numbered
+textarea needs the same.
 
 jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
 renders with natural row heights rather than measured ones. That is deliberate,
