@@ -70,6 +70,9 @@ const THEME_CSS_VARS = [
 	'--warning',
 	'--error',
 	'--accent-rgb',
+	'--pulse-color',
+	'--glow-color',
+	'--token-highlight',
 ];
 
 function clearThemeCssVars(): void {
@@ -255,6 +258,65 @@ describe('useThemeStyles', () => {
 			rerender({ colors: { ...DARK_COLORS, accent: 'rgb(200, 200, 200)' } });
 
 			expect(getCssVar('--accent-rgb')).toBe('');
+		});
+	});
+
+	describe('the themed glow effects', () => {
+		it('publishes the pulse ring, the card glow, and the token flash off the accent', () => {
+			// Their keyframes in index.css carried hard-coded indigo and Dracula
+			// purple fallbacks because nothing ever wrote these vars, so every
+			// theme pulsed and glowed in the same two borrowed colours.
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--pulse-color')).toBe('color-mix(in srgb, #bd93f9 40%, transparent)');
+			expect(getCssVar('--glow-color')).toBe('color-mix(in srgb, #bd93f9 15%, transparent)');
+			expect(getCssVar('--token-highlight')).toBe('#bd93f9');
+		});
+
+		it('keeps the mix percentages at the alphas the CSS fallbacks carried', () => {
+			// 40% and 15% are rgba(99, 102, 241, 0.4) and rgba(189, 147, 249, 0.15)
+			// respectively. Wiring the theme in changes the hue, not the intensity.
+			renderHook(() =>
+				useThemeStyles({ themeColors: LIGHT_COLORS, themeMode: 'light', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--pulse-color')).toContain('40%');
+			expect(getCssVar('--glow-color')).toContain('15%');
+		});
+
+		it('tracks the accent across a theme change', () => {
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+			expect(getCssVar('--token-highlight')).toBe('#bd93f9');
+
+			rerender({ colors: LIGHT_COLORS });
+
+			expect(getCssVar('--pulse-color')).toBe('color-mix(in srgb, #0969da 40%, transparent)');
+			expect(getCssVar('--glow-color')).toBe('color-mix(in srgb, #0969da 15%, transparent)');
+			expect(getCssVar('--token-highlight')).toBe('#0969da');
+		});
+
+		it('tints a non-hex accent instead of dropping to the hard-coded fallback', () => {
+			// color-mix rather than an rgba() built from hexToRgb, so a custom
+			// theme using any valid CSS colour still glows in its own accent.
+			// Contrast with --accent-rgb, which has to clear itself there.
+			renderHook(() =>
+				useThemeStyles({
+					themeColors: { ...DARK_COLORS, accent: 'rgb(200, 200, 200)' },
+					themeMode: 'dark',
+					glossLevel: 'off',
+				})
+			);
+
+			expect(getCssVar('--pulse-color')).toBe(
+				'color-mix(in srgb, rgb(200, 200, 200) 40%, transparent)'
+			);
+			expect(getCssVar('--token-highlight')).toBe('rgb(200, 200, 200)');
 		});
 	});
 

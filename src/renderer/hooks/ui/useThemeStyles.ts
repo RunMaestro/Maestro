@@ -42,6 +42,22 @@ function accentRgbTriple(accent: string): string | null {
 }
 
 /**
+ * The accent thinned to `percent` opacity, for the themed glow effects.
+ *
+ * `color-mix` rather than an rgba() built from `hexToRgb`, so a custom theme
+ * whose accent is any valid CSS colour (`oklch(...)`, a named colour, a
+ * gradient stop function) still tints its glows instead of dropping to the
+ * hard-coded indigo fallback. It is the same technique the max-gloss active
+ * ring already uses in index.css.
+ *
+ * The percentages are chosen to match the alphas each effect's CSS fallback
+ * carried, so wiring the theme in changes the hue and not the intensity.
+ */
+function accentMix(accent: string, percent: number): string {
+	return `color-mix(in srgb, ${accent} ${percent}%, transparent)`;
+}
+
+/**
  * Theme colors required for CSS variable management.
  *
  * This is a structural subset of `ThemeColors` from `src/shared/theme-types.ts`
@@ -131,6 +147,9 @@ export interface UseThemeStylesReturn {
  *   --warning                = themeColors.warning
  *   --error                  = themeColors.error
  *   --accent-rgb             = themeColors.accent as "R, G, B"
+ *   --pulse-color            = accent at 40% (highlight-pulse ring)
+ *   --glow-color             = accent at 15% (card-glow hover halo)
+ *   --token-highlight        = themeColors.accent (token-update flash)
  *
  * The palette block below `--sheen-rgb` publishes the whole theme rather than
  * only the tokens a rule happens to need today. A CSS rule that wants a theme
@@ -197,6 +216,16 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 		root.setProperty('--success', themeColors.success);
 		root.setProperty('--warning', themeColors.warning);
 		root.setProperty('--error', themeColors.error);
+
+		// Themed glow effects. Their keyframes in index.css used to fall back to a
+		// hard-coded indigo or Dracula purple on every theme, because nothing ever
+		// wrote these vars. The fallbacks stay in place for any stylesheet loaded
+		// before this effect runs.
+		root.setProperty('--pulse-color', accentMix(themeColors.accent, 40));
+		root.setProperty('--glow-color', accentMix(themeColors.accent, 15));
+		// Full strength, so it is the accent itself rather than a 100% mix that
+		// only restates it. The token flash is text colour, not a halo.
+		root.setProperty('--token-highlight', themeColors.accent);
 
 		const accentRgb = accentRgbTriple(themeColors.accent);
 		if (accentRgb) {

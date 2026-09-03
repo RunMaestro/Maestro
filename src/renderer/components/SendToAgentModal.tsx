@@ -539,7 +539,6 @@ export function SendToAgentModal({
 															? theme.colors.accent
 															: theme.colors.border,
 													opacity: isDisabled ? 0.5 : 1,
-													'--pulse-color': `${theme.colors.accent}40`,
 												} as React.CSSProperties
 											}
 										>

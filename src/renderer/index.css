@@ -230,15 +230,21 @@ textarea::placeholder {
 	}
 }
 
+/* --pulse-color is the LIT colour only. The ring has to fade as it expands, and
+   one custom property cannot hold two alphas, so the later frames say
+   `transparent` outright rather than reading the same var through a
+   zero-alpha fallback that only applied while the var was unset. It was unset
+   app-wide until the theme bridge started publishing it, which is why the two
+   surfaces that set it inline pulsed a ring that never faded. */
 @keyframes highlight-pulse {
 	0% {
 		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0.4));
 	}
 	70% {
-		box-shadow: 0 0 0 6px var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 6px transparent;
 	}
 	100% {
-		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 0 transparent;
 	}
 }
 
