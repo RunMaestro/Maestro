@@ -744,7 +744,11 @@ describe('DisplayTab', () => {
 		it('shows an unset surface as inheriting the interface size', async () => {
 			await renderTab({ fontSize: 16, chatFontSize: 0 });
 
-			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('Inherit (16px)');
+			// The number stays in the fixed-width value slot and the state moves
+			// to the reserved trailing slot, so the row does not resize as a
+			// surface goes from inheriting to its own size.
+			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('16px');
+			expect(screen.getByTestId('font-size-chat-inheriting')).toBeInTheDocument();
 		});
 
 		it('shows a customized surface as its own size', async () => {
