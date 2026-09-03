@@ -1689,8 +1689,19 @@ export const FilePreview = React.memo(
 					container.scrollTop += 40;
 				}
 			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Left: Navigate back in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Left: walk back through this tab's breadcrumb history.
+				//
+				// Bail whenever the caret is in a text field, NOT merely when the
+				// markdown editor is open. On macOS Cmd+Left is beginning-of-line, so
+				// the find bar (Cmd+F), the fast/plain text editor, and any other input
+				// rendered inside the preview all need it to stay a caret move. The old
+				// guard tested `isEditableText && markdownEditMode`, and `isEditableText`
+				// is a FILE-TYPE property (`!isImage && !isBinary && !isParquet`), not a
+				// focus check - so typing in the find bar and reaching for Cmd+Left
+				// navigated to the previous file instead of jumping to the line start.
+				// Same rule the browser back/forward path already applies in
+				// useMainKeyboardHandler.
+				if (isTextInputTarget(e.target)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoBack && onNavigateBack) {
@@ -1698,8 +1709,9 @@ export const FilePreview = React.memo(
 					onShortcutUsed?.('filePreviewBack');
 				}
 			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Right: Navigate forward in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Right: forward through the breadcrumb. Same caret rule as Cmd+Left
+				// above - end-of-line has to keep working inside any text field.
+				if (isTextInputTarget(e.target)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoForward && onNavigateForward) {
