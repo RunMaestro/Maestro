@@ -1406,7 +1406,9 @@ describe('SettingsModal', () => {
 			});
 
 			// Find the theme picker container (the div with tabIndex=0 and onKeyDown handler)
-			const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+			const themePickerContainer = screen
+				.getByText('dark Mode')
+				.closest('[data-setting-id="theme-picker"]');
 
 			// Fire Tab keydown on the theme picker container
 			fireEvent.keyDown(themePickerContainer!, { key: 'Tab' });
@@ -2041,7 +2043,9 @@ describe('SettingsModal', () => {
 			});
 
 			// Find the theme picker container
-			const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+			const themePickerContainer = screen
+				.getByText('dark Mode')
+				.closest('[data-setting-id="theme-picker"]');
 
 			// Fire Shift+Tab keydown
 			fireEvent.keyDown(themePickerContainer!, { key: 'Tab', shiftKey: true });

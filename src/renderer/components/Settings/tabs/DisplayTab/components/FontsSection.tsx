@@ -141,11 +141,17 @@ export function FontsSection({
 				    uses. Two consecutive headings under one icon read as one
 				    section with a stray subheading; this one manages a LIST, so
 				    it takes the list icon. */}
-				<SettingsSectionHeading icon={ListPlus}>Custom Fonts</SettingsSectionHeading>
-				<p className="text-xs opacity-70 mb-2 -mt-1">
-					Names of fonts installed on this machine that aren&apos;t in the lists below. Added once
-					here, then offered in every picker.
-				</p>
+				<SettingsSectionHeading
+					icon={ListPlus}
+					description={
+						<>
+							Names of fonts installed on this machine that aren&apos;t in the lists below. Added
+							once here, then offered in every picker.
+						</>
+					}
+				>
+					Custom Fonts
+				</SettingsSectionHeading>
 				<SectionCard theme={theme}>
 					<CustomFontsRow
 						theme={theme}
@@ -157,11 +163,12 @@ export function FontsSection({
 			</div>
 
 			<div data-setting-id="display-fonts">
-				<SettingsSectionHeading icon={Type}>Fonts</SettingsSectionHeading>
-				<p className="text-xs opacity-70 mb-2 -mt-1">
-					Interface is the proportional face and Terminal the fixed-width one. Everything else can
-					follow either, or carry a font of its own. Press Up/Down on any picker to preview.
-				</p>
+				<SettingsSectionHeading
+					icon={Type}
+					description="Interface is the proportional face and Terminal the fixed-width one. Everything else can follow either, or carry a font of its own. Press Up/Down on any picker to preview."
+				>
+					Fonts
+				</SettingsSectionHeading>
 				<SectionCard theme={theme}>
 					{/* All six surfaces in one grid: the two roots lead, and the four
 					    that may follow them come after, so reading order matches the

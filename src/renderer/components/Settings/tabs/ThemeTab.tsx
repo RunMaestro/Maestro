@@ -140,7 +140,7 @@ export function ThemeTab({
 			<div
 				data-setting-id="theme-picker"
 				ref={themePickerRef}
-				className="space-y-6 outline-none"
+				className="space-y-5 outline-none"
 				tabIndex={0}
 				onKeyDown={handleThemePickerKeyDown}
 				role="group"
@@ -148,19 +148,11 @@ export function ThemeTab({
 			>
 				{['dark', 'light', 'vibe'].map((mode) => (
 					<div key={mode}>
-						<div
-							className="text-xs font-bold uppercase mb-3 flex items-center gap-2"
-							style={{ color: theme.colors.textDim }}
+						<SettingsSectionHeading
+							icon={mode === 'dark' ? Moon : mode === 'light' ? Sun : Sparkles}
 						>
-							{mode === 'dark' ? (
-								<Moon className="w-3 h-3" />
-							) : mode === 'light' ? (
-								<Sun className="w-3 h-3" />
-							) : (
-								<Sparkles className="w-3 h-3" />
-							)}
 							{mode} Mode
-						</div>
+						</SettingsSectionHeading>
 						<div className="grid grid-cols-2 gap-3">
 							{groupedThemes[mode]?.map((t: Theme) => (
 								<button

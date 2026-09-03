@@ -30,11 +30,17 @@ export function FontZoomSection({ theme, fontZoom, setFontZoom }: FontZoomSectio
 
 	return (
 		<div data-setting-id="display-font-zoom">
-			<SettingsSectionHeading icon={ZoomIn}>Zoom</SettingsSectionHeading>
-			<p className="text-xs opacity-70 mb-2 -mt-1">
-				Scales every surface above by the same amount, so the sizes you set relative to each other
-				stay that way. {zoomIn} / {zoomOut} to adjust, {zoomReset} to reset.
-			</p>
+			<SettingsSectionHeading
+				icon={ZoomIn}
+				description={
+					<>
+						Scales every surface above by the same amount, so the sizes you set relative to each
+						other stay that way. {zoomIn} / {zoomOut} to adjust, {zoomReset} to reset.
+					</>
+				}
+			>
+				Zoom
+			</SettingsSectionHeading>
 			<ToggleButtonGroup
 				options={[
 					{ value: 0.8, label: '80%' },
