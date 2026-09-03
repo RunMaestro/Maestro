@@ -176,6 +176,88 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const snapshots = new Map<string, DispatchSnapshot>();
 
 /**
+ * Dispatch snapshots that must survive an app restart, keyed the same way.
+ *
+ * Re-authenticating means leaving Maestro - often to a terminal, often quitting
+ * on the way back - and the in-memory `snapshots` map dies with the process. So
+ * "Resume Agent" found nothing to replay in exactly the flow it exists for.
+ *
+ * Only auth outages are persisted, and only at the moment one is reported. A
+ * write per dispatch would put every prompt in the app on disk to serve a case
+ * that almost never fires; a write per auth failure is rare and is precisely
+ * when the data is about to be needed.
+ *
+ * The whole `DispatchSnapshot` is stored, not a reconstruction of it.
+ * `ProcessQueuedItemDeps` is plain data (command lists and a profile string) and
+ * `QueuedItem` carries the text, images, and settings codified at send time - so
+ * the replay puts the EXACT message back on the wire. Rebuilding it from the
+ * transcript instead would drop attachments and slash-command expansion and
+ * resend something the user never typed, against a provider they just signed
+ * back into.
+ */
+const PERSISTED_SNAPSHOTS_KEY = 'authReplaySnapshots';
+
+/**
+ * How long a persisted snapshot stays replayable. Long enough to cover a login
+ * that involves a browser, a password manager and a restart; short enough that
+ * a prompt abandoned days ago is never silently resent.
+ */
+const PERSISTED_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface PersistedSnapshot extends DispatchSnapshot {
+	savedAt: number;
+}
+
+/** Mirror of what is on disk, hydrated once on first use. */
+let persistedSnapshots: Record<string, PersistedSnapshot> | null = null;
+
+async function loadPersistedSnapshots(): Promise<Record<string, PersistedSnapshot>> {
+	if (persistedSnapshots) return persistedSnapshots;
+	try {
+		const raw = (await window.maestro.settings.get(PERSISTED_SNAPSHOTS_KEY)) as
+			| Record<string, PersistedSnapshot>
+			| undefined;
+		const cutoff = Date.now() - PERSISTED_SNAPSHOT_TTL_MS;
+		persistedSnapshots = Object.fromEntries(
+			Object.entries(raw ?? {}).filter(([, v]) => (v?.savedAt ?? 0) > cutoff)
+		);
+	} catch {
+		// A settings read failure costs the restart-resume, not the app.
+		persistedSnapshots = {};
+	}
+	return persistedSnapshots;
+}
+
+function writePersistedSnapshots(next: Record<string, PersistedSnapshot>): void {
+	persistedSnapshots = next;
+	void window.maestro.settings.set(PERSISTED_SNAPSHOTS_KEY, next);
+}
+
+/**
+ * Persist this tab's dispatch snapshot so it survives a restart during re-auth.
+ * Called when an auth outage is reported - see `useAgentErrorListener`.
+ */
+export async function persistDispatchSnapshotForAuth(
+	sessionId: string,
+	tabId: string
+): Promise<void> {
+	const key = keyFor(sessionId, tabId);
+	const snapshot = snapshots.get(key);
+	if (!snapshot) return;
+	const store = await loadPersistedSnapshots();
+	writePersistedSnapshots({ ...store, [key]: { ...snapshot, savedAt: Date.now() } });
+}
+
+/** Drop a persisted snapshot once it has been replayed or is no longer wanted. */
+async function forgetPersistedSnapshot(key: string): Promise<void> {
+	const store = await loadPersistedSnapshots();
+	if (!(key in store)) return;
+	const next = { ...store };
+	delete next[key];
+	writePersistedSnapshots(next);
+}
+
+/**
  * Resumer for Auto Run batches, registered once by App. Resolves the batch's
  * error-resolution promise with 'resume' so the loop re-reads the doc and
  * re-dispatches the current task. Null until registered (e.g. in tests).
@@ -501,6 +583,10 @@ function truncateForToast(text: string, max = 80): string {
 }
 
 export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
+	void replayAfterAuthAsync(sessionId, tabIds);
+}
+
+async function replayAfterAuthAsync(sessionId: string, tabIds: string[]): Promise<void> {
 	for (const tabId of tabIds) {
 		const key = keyFor(sessionId, tabId);
 
@@ -508,16 +594,36 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 		// on the same tab) is superseded: we are dispatching that work right now.
 		removeEntry(key);
 
-		const snapshot = snapshots.get(key);
+		// In-memory first (the app never restarted), then the copy written to disk
+		// when the outage was reported. The persisted one is the EXACT QueuedItem
+		// and deps that were dispatched, so a restart during re-auth replays the
+		// real message rather than an approximation of it.
+		let snapshot = snapshots.get(key);
+		let cameFromDisk = false;
 		if (!snapshot) {
-			// Snapshots live in memory only, so an app restart between the failure
-			// and the login leaves nothing to replay - and re-auth is exactly the
-			// flow where people quit the app. This used to log a line and move on,
-			// so "Resume Agent" reported success and silently did nothing, which is
-			// worse than not offering the button: the user believes their prompt is
-			// running again and it is not.
+			const persisted = (await loadPersistedSnapshots())[key];
+			if (persisted) {
+				snapshot = { item: persisted.item, deps: persisted.deps };
+				cameFromDisk = true;
+			}
+		}
+		if (snapshot) {
+			// Consume it either way: a replayed prompt must never be resent twice,
+			// and a stale entry outliving its outage is how the wrong message gets
+			// on the wire later.
+			void forgetPersistedSnapshot(key);
+			if (cameFromDisk) {
+				logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key });
+			}
+		}
+		if (!snapshot) {
+			// Neither memory nor disk has it: the outage predates snapshot
+			// persistence, the TTL expired, or the turn was never dispatched through
+			// noteDispatch. Say so rather than logging a line and returning - a
+			// silent no-op looks exactly like a resume that worked, and the user
+			// walks away believing their prompt is running again.
 			//
-			// It is NOT auto-resent from the transcript. Rebuilding a QueuedItem
+			// Still NOT reconstructed from the transcript. Rebuilding a QueuedItem
 			// from a log entry loses the attachments, the slash-command expansion
 			// and the settings codified at send time, so the replay could put a
 			// DIFFERENT message on the wire than the one that failed. The
