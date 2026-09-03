@@ -222,8 +222,12 @@ async function loadPersistedSnapshots(): Promise<Record<string, PersistedSnapsho
 			Object.entries(raw ?? {}).filter(([, v]) => (v?.savedAt ?? 0) > cutoff)
 		);
 	} catch {
-		// A settings read failure costs the restart-resume, not the app.
-		persistedSnapshots = {};
+		// A settings read failure costs the restart-resume, not the app - and it is
+		// deliberately NOT cached. Caching the empty result would turn one transient
+		// read failure (settings not ready yet, IPC blip) into a permanently dead
+		// restart-resume for the rest of the process, long after the read would
+		// have succeeded.
+		return {};
 	}
 	return persistedSnapshots;
 }
@@ -582,11 +586,55 @@ function truncateForToast(text: string, max = 80): string {
 	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
-export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
-	void replayAfterAuthAsync(sessionId, tabIds);
+/**
+ * Restart path: the in-memory snapshot is gone, so look for the copy written to
+ * disk when the outage was reported. Async because it reads settings; the
+ * common in-memory case above stays synchronous.
+ */
+async function replayPersistedSnapshot(
+	sessionId: string,
+	tabId: string,
+	key: string
+): Promise<void> {
+	const persisted = (await loadPersistedSnapshots())[key];
+	if (persisted) {
+		// Consume it: a replayed prompt must never be resent twice, and a stale
+		// entry outliving its outage is how the wrong message reaches the wire later.
+		void forgetPersistedSnapshot(key);
+		logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key });
+		void useAgentStore
+			.getState()
+			.processQueuedItem(sessionId, persisted.item, persisted.deps)
+			.catch((error: unknown) => {
+				logger.error('[retry] Replay after re-auth threw', undefined, error);
+			});
+		return;
+	}
+
+	// Neither memory nor disk has it: the outage predates snapshot persistence,
+	// the TTL expired, or the turn never went through noteDispatch. Say so rather
+	// than logging a line and returning - a silent no-op looks exactly like a
+	// resume that worked, and the user walks away believing their prompt is
+	// running again.
+	//
+	// Still NOT reconstructed from the transcript. A log entry has lost the
+	// attachments, the slash-command expansion and the settings codified at send
+	// time, so rebuilding from it resends something the user never typed. The
+	// session_not_found path next door has the same constraint and resolves it
+	// the same way: surface the prompt and let the human press send.
+	logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
+	const lastPrompt = lastUserPromptFor(sessionId, tabId);
+	notifyToast({
+		color: 'yellow',
+		title: 'Nothing to resend',
+		message: lastPrompt
+			? `Your last message is still in the transcript - press send to run it again: "${truncateForToast(lastPrompt)}"`
+			: 'The prompt that failed was lost when the app restarted. Send it again to continue.',
+		...(lastPrompt ? { sessionId, tabId } : {}),
+	});
 }
 
-async function replayAfterAuthAsync(sessionId: string, tabIds: string[]): Promise<void> {
+export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 	for (const tabId of tabIds) {
 		const key = keyFor(sessionId, tabId);
 
@@ -594,53 +642,17 @@ async function replayAfterAuthAsync(sessionId: string, tabIds: string[]): Promis
 		// on the same tab) is superseded: we are dispatching that work right now.
 		removeEntry(key);
 
-		// In-memory first (the app never restarted), then the copy written to disk
-		// when the outage was reported. The persisted one is the EXACT QueuedItem
-		// and deps that were dispatched, so a restart during re-auth replays the
-		// real message rather than an approximation of it.
-		let snapshot = snapshots.get(key);
-		let cameFromDisk = false;
+		// The in-memory snapshot is the common case (the app never restarted) and
+		// stays SYNCHRONOUS on purpose: callers dispatch in order, and deferring
+		// this to a microtask changes when the turn goes out. Only the restart
+		// case - where memory is empty and the copy has to come off disk - is
+		// async, and it ends in the same dispatch.
+		const snapshot = snapshots.get(key);
 		if (!snapshot) {
-			const persisted = (await loadPersistedSnapshots())[key];
-			if (persisted) {
-				snapshot = { item: persisted.item, deps: persisted.deps };
-				cameFromDisk = true;
-			}
-		}
-		if (snapshot) {
-			// Consume it either way: a replayed prompt must never be resent twice,
-			// and a stale entry outliving its outage is how the wrong message gets
-			// on the wire later.
-			void forgetPersistedSnapshot(key);
-			if (cameFromDisk) {
-				logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key });
-			}
-		}
-		if (!snapshot) {
-			// Neither memory nor disk has it: the outage predates snapshot
-			// persistence, the TTL expired, or the turn was never dispatched through
-			// noteDispatch. Say so rather than logging a line and returning - a
-			// silent no-op looks exactly like a resume that worked, and the user
-			// walks away believing their prompt is running again.
-			//
-			// Still NOT reconstructed from the transcript. Rebuilding a QueuedItem
-			// from a log entry loses the attachments, the slash-command expansion
-			// and the settings codified at send time, so the replay could put a
-			// DIFFERENT message on the wire than the one that failed. The
-			// session_not_found path next door has the same constraint and resolves
-			// it the same way: surface the prompt and let the human press send.
-			logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
-			const lastPrompt = lastUserPromptFor(sessionId, tabId);
-			notifyToast({
-				color: 'yellow',
-				title: 'Nothing to resend',
-				message: lastPrompt
-					? `Your last message is still in the transcript - press send to run it again: "${truncateForToast(lastPrompt)}"`
-					: 'The prompt that failed was lost when the app restarted. Send it again to continue.',
-				...(lastPrompt ? { sessionId, tabId } : {}),
-			});
+			void replayPersistedSnapshot(sessionId, tabId, key);
 			continue;
 		}
+		void forgetPersistedSnapshot(key);
 
 		logger.info('[retry] Replaying a turn lost to expired credentials', undefined, { key });
 		void useAgentStore
