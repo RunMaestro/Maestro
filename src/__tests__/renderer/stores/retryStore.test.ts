@@ -349,6 +349,65 @@ describe('outage records (transcript status card)', () => {
 		expect(sessionHasActiveOutage('o1')).toBe(true);
 	});
 
+	// The outage card is the surface that has to explain WHICH limit was hit, so
+	// the structured quota payload has to reach the record. See issue #1472.
+	it('carries the provider quota detail onto the outage record', () => {
+		setupSession('oq', 't1');
+		seedSnapshot('oq', 't1');
+		scheduleRetryForError(
+			'oq',
+			't1',
+			err({
+				message: "You've hit your session limit · resets 11:40am (America/Chicago)",
+				parsedJson: {
+					quotaLimits: {
+						status: 'rejected',
+						resetsAt: 1787416800,
+						rateLimitType: 'five_hour',
+						overageStatus: 'rejected',
+						overageDisabledReason: 'out_of_credits',
+					},
+				},
+			})
+		);
+
+		const outage = getOutage(getRetryEntry('oq', 't1')!.outageId)!;
+		expect(outage.quota).toMatchObject({
+			window: 'five_hour',
+			status: 'rejected',
+			overageDisabledReason: 'out_of_credits',
+		});
+	});
+
+	it('leaves quota undefined when the provider sent no quota payload', () => {
+		setupSession('oq2', 't1');
+		seedSnapshot('oq2', 't1');
+		scheduleRetryForError('oq2', 't1', quota());
+
+		expect(getOutage(getRetryEntry('oq2', 't1')!.outageId)!.quota).toBeUndefined();
+	});
+
+	// A long outage can cross out of the 5-hour window and into the weekly one; a
+	// card still naming the first sends the user to wait out a reset that already
+	// happened.
+	it('re-reads the quota detail on a reschedule instead of freezing the first one', () => {
+		setupSession('oq3', 't1');
+		seedSnapshot('oq3', 't1');
+		const withWindow = (rateLimitType: string) =>
+			err({
+				message: "You've hit your session limit",
+				parsedJson: { quotaLimits: { rateLimitType, status: 'rejected' } },
+			});
+
+		scheduleRetryForError('oq3', 't1', withWindow('five_hour'));
+		const outageId = getRetryEntry('oq3', 't1')!.outageId;
+		expect(getOutage(outageId)!.quota?.window).toBe('five_hour');
+
+		vi.setSystemTime(NOW + 60_000);
+		scheduleRetryForError('oq3', 't1', withWindow('seven_day'));
+		expect(getOutage(outageId)!.quota?.window).toBe('seven_day');
+	});
+
 	it('preserves outageId and startedAt across backoff continuations, bumping attempts', () => {
 		setupSession('o2', 't1');
 		seedSnapshot('o2', 't1');
