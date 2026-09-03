@@ -1,6 +1,6 @@
 # CLAUDE-AGENTS.md
 
-Agent support documentation for the Maestro codebase. For the main guide, see [[CLAUDE.md]]. For detailed integration instructions, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
+Agent support documentation for the Maestro codebase. For the main guide, see [[CLAUDE.md]]. For detailed integration instructions, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
 ## Supported Agents
 
@@ -15,7 +15,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Agent Capabilities
 
-Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (23 boolean flags + 1 optional). The table below shows key capabilities; see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for the complete list.
+Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (23 boolean flags + 1 optional). The table below shows key capabilities; see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for the complete list.
 
 | Capability                    | Description                              | UI Feature Controlled      |
 | ----------------------------- | ---------------------------------------- | -------------------------- |
@@ -120,4 +120,4 @@ To add support for a new agent:
 8. (If `supportsSessionStorage`) Create session storage extending `BaseSessionStorage` in `src/main/storage/`
 9. (Optional) Add error patterns to `src/shared/agentErrorPatterns.ts`
 
-The `agent-completeness.test.ts` CI test will fail if required steps are missed. See [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for comprehensive integration documentation.
+The `agent-completeness.test.ts` CI test will fail if required steps are missed. See [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for comprehensive integration documentation.

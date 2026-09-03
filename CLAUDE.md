@@ -19,7 +19,7 @@ This guide has been split into focused sub-documents for progressive disclosure:
 | [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`)                                                             |
 | [[CLAUDE-PLUGINS.md]]                | Plugin system architecture: tiers, sandbox, broker, capabilities, contributions, signing, trust model (read before editing `src/main/plugins/` or `src/shared/plugins/`) |
 | [[CLAUDE-SETTINGS.md]]               | Settings modal style guide: typography, color, dimming, spacing, primitives, registration checklist (read before editing `src/renderer/components/Settings/`)            |
-| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                                                                                         |
+| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) | Detailed agent integration guide                                                                                                                                         |
 
 ---
 
@@ -340,7 +340,7 @@ src/
 | Add Spec-Kit command          | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                                                                                                            |
 | Add OpenSpec command          | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                                                                                                          |
 | Add CLI command               | `src/cli/commands/`, `src/cli/index.ts`                                                                                                                                                                                                                          |
-| Add new agent                 | `src/shared/agentIds.ts`, `src/main/agents/definitions.ts`, `src/main/agents/capabilities.ts`, `src/shared/agentMetadata.ts` - see [AGENT_SUPPORT.md](AGENT_SUPPORT.md)                                                                                          |
+| Add new agent                 | `src/shared/agentIds.ts`, `src/main/agents/definitions.ts`, `src/main/agents/capabilities.ts`, `src/shared/agentMetadata.ts` - see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md)                                                                                          |
 | Add agent output parser       | `src/main/parsers/`, `src/main/parsers/index.ts`                                                                                                                                                                                                                 |
 | Add agent session storage     | `src/main/storage/` (extend `BaseSessionStorage`), `src/main/storage/index.ts`                                                                                                                                                                                   |
 | Add agent error patterns      | `src/shared/agentErrorPatterns.ts`                                                                                                                                                                                                                               |
