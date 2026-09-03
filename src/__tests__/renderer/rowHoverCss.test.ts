@@ -40,9 +40,13 @@ const collectSources = (dir: string, out: string[] = []): string[] => {
 
 describe('row hover CSS', () => {
 	it('defines the wash and its light-mode inversion', () => {
-		expect(blockFor('.row-hover')).toContain('--row-hover-wash: rgb(255 255 255 / 0.06)');
+		// The theme publishes `--bg-hover-wash`, so a theme that names its own
+		// hover wins; the literal stays as the fallback for a theme that does not.
+		expect(blockFor('.row-hover')).toContain(
+			'--row-hover-wash: var(--bg-hover-wash, rgb(255 255 255 / 0.06))'
+		);
 		expect(blockFor("html[data-theme-mode='light'] .row-hover")).toContain(
-			'--row-hover-wash: rgb(0 0 0 / 0.05)'
+			'--row-hover-wash: var(--bg-hover-wash, rgb(0 0 0 / 0.05))'
 		);
 	});
 
