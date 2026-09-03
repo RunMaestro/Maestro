@@ -20,6 +20,13 @@ const DARK_COLORS: ThemeColors = {
 	textDim: '#6272a4',
 	bgActivity: '#343746',
 	textMain: '#f8f8f2',
+	bgMain: '#282a36',
+	bgSidebar: '#21222c',
+	accentText: '#ff79c6',
+	accentForeground: '#282a36',
+	success: '#50fa7b',
+	warning: '#f1fa8c',
+	error: '#ff5555',
 };
 
 const LIGHT_COLORS: ThemeColors = {
@@ -28,7 +35,49 @@ const LIGHT_COLORS: ThemeColors = {
 	textDim: '#656d76',
 	bgActivity: '#f6f8fa',
 	textMain: '#1f2328',
+	bgMain: '#ffffff',
+	bgSidebar: '#f6f8fa',
+	accentText: '#0969da',
+	accentForeground: '#ffffff',
+	success: '#1a7f37',
+	warning: '#9a6700',
+	error: '#cf222e',
 };
+
+/**
+ * Every custom property the hook owns. Cleared around each test so a var left
+ * behind by an earlier case cannot make a later assertion pass on a value this
+ * render never wrote.
+ */
+const THEME_CSS_VARS = [
+	'--accent-color',
+	'--highlight-color',
+	'--scrollbar-thumb',
+	'--scrollbar-thumb-hover',
+	'--scrollbar-thumb-active',
+	'--scrollbar-track',
+	'--fx-quiet',
+	'--sheen-rgb',
+	'--bg-main',
+	'--bg-sidebar',
+	'--bg-activity',
+	'--border',
+	'--text-main',
+	'--text-dim',
+	'--accent-text',
+	'--accent-fg',
+	'--success',
+	'--warning',
+	'--error',
+	'--accent-rgb',
+];
+
+function clearThemeCssVars(): void {
+	const root = document.documentElement.style;
+	for (const name of THEME_CSS_VARS) {
+		root.removeProperty(name);
+	}
+}
 
 function getCssVar(name: string): string {
 	return document.documentElement.style.getPropertyValue(name);
@@ -37,28 +86,12 @@ function getCssVar(name: string): string {
 describe('useThemeStyles', () => {
 	beforeEach(() => {
 		// Clean slate - clear any previously set vars from other tests.
-		const root = document.documentElement.style;
-		root.removeProperty('--accent-color');
-		root.removeProperty('--highlight-color');
-		root.removeProperty('--scrollbar-thumb');
-		root.removeProperty('--scrollbar-thumb-hover');
-		root.removeProperty('--scrollbar-thumb-active');
-		root.removeProperty('--scrollbar-track');
-		root.removeProperty('--fx-quiet');
-		root.removeProperty('--sheen-rgb');
+		clearThemeCssVars();
 	});
 
 	afterEach(() => {
 		// Same cleanup, in case a test errored before the next beforeEach.
-		const root = document.documentElement.style;
-		root.removeProperty('--accent-color');
-		root.removeProperty('--highlight-color');
-		root.removeProperty('--scrollbar-thumb');
-		root.removeProperty('--scrollbar-thumb-hover');
-		root.removeProperty('--scrollbar-thumb-active');
-		root.removeProperty('--scrollbar-track');
-		root.removeProperty('--fx-quiet');
-		root.removeProperty('--sheen-rgb');
+		clearThemeCssVars();
 	});
 
 	describe('CSS variable injection', () => {
@@ -133,6 +166,95 @@ describe('useThemeStyles', () => {
 			// Other vars stay at their previous values
 			expect(getCssVar('--scrollbar-thumb')).toBe('#44475a');
 			expect(getCssVar('--scrollbar-thumb-hover')).toBe('#6272a4');
+		});
+	});
+
+	describe('the full palette bridge', () => {
+		it('publishes every palette token as its own custom property', () => {
+			// The bridge publishes the whole theme rather than only the tokens a
+			// rule needs today, so a new themed CSS rule needs no TypeScript
+			// change. That is what forced earlier themed effects to hard-code one
+			// theme's hex.
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
+
+			expect(getCssVar('--bg-main')).toBe('#282a36');
+			expect(getCssVar('--bg-sidebar')).toBe('#21222c');
+			expect(getCssVar('--bg-activity')).toBe('#343746');
+			expect(getCssVar('--border')).toBe('#44475a');
+			expect(getCssVar('--text-main')).toBe('#f8f8f2');
+			expect(getCssVar('--text-dim')).toBe('#6272a4');
+			expect(getCssVar('--accent-text')).toBe('#ff79c6');
+			expect(getCssVar('--accent-fg')).toBe('#282a36');
+			expect(getCssVar('--success')).toBe('#50fa7b');
+			expect(getCssVar('--warning')).toBe('#f1fa8c');
+			expect(getCssVar('--error')).toBe('#ff5555');
+		});
+
+		it('repoints every palette var when the theme changes', () => {
+			// Each source field is in the effect's dependency array; a missing one
+			// leaves the previous theme's colour on <html> with nothing in a diff
+			// to show it.
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+
+			rerender({ colors: LIGHT_COLORS });
+
+			expect(getCssVar('--bg-main')).toBe('#ffffff');
+			expect(getCssVar('--bg-sidebar')).toBe('#f6f8fa');
+			expect(getCssVar('--bg-activity')).toBe('#f6f8fa');
+			expect(getCssVar('--border')).toBe('#d0d7de');
+			expect(getCssVar('--text-main')).toBe('#1f2328');
+			expect(getCssVar('--text-dim')).toBe('#656d76');
+			expect(getCssVar('--accent-text')).toBe('#0969da');
+			expect(getCssVar('--accent-fg')).toBe('#ffffff');
+			expect(getCssVar('--success')).toBe('#1a7f37');
+			expect(getCssVar('--warning')).toBe('#9a6700');
+			expect(getCssVar('--error')).toBe('#cf222e');
+		});
+	});
+
+	describe('--accent-rgb (the accent as a bare triple)', () => {
+		it('publishes the accent comma separated for the legacy rgba() form', () => {
+			// Comma separated on purpose, unlike --sheen-rgb: this one feeds rules
+			// written as rgba(var(--accent-rgb), a).
+			renderHook(() =>
+				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
+			);
+			expect(getCssVar('--accent-rgb')).toBe('189, 147, 249');
+		});
+
+		it('tracks the accent across a theme change', () => {
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+			expect(getCssVar('--accent-rgb')).toBe('189, 147, 249');
+
+			rerender({ colors: LIGHT_COLORS });
+
+			expect(getCssVar('--accent-rgb')).toBe('9, 105, 218');
+		});
+
+		it('clears the property when the palette carries a non-hex accent', () => {
+			// Clearing lets every var(--accent-rgb, ...) fall back to its own
+			// literal, which is a colour someone chose. Leaving the previous
+			// theme's triple behind would tint the new theme with the old accent.
+			const { rerender } = renderHook(
+				({ colors }) =>
+					useThemeStyles({ themeColors: colors, themeMode: 'dark', glossLevel: 'off' }),
+				{ initialProps: { colors: DARK_COLORS } }
+			);
+			expect(getCssVar('--accent-rgb')).toBe('189, 147, 249');
+
+			rerender({ colors: { ...DARK_COLORS, accent: 'rgb(200, 200, 200)' } });
+
+			expect(getCssVar('--accent-rgb')).toBe('');
 		});
 	});
 
