@@ -38,6 +38,7 @@ import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover
 import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
+import { notifyToast } from './notificationStore';
 import { useSessionStore, selectSessionById } from './sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
@@ -477,6 +478,10 @@ export function retryNow(sessionId: string, tabId: string): void {
  *   user never asked for back on the wire.
  */
 export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
+	// Tabs whose snapshot did not survive, reported once after the loop so a
+	// multi-tab resume produces one message rather than one per tab.
+	const missingSnapshots: Array<{ sessionId: string; tabId: string }> = [];
+
 	for (const tabId of tabIds) {
 		const key = keyFor(sessionId, tabId);
 
@@ -487,9 +492,13 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 		const snapshot = snapshots.get(key);
 		if (!snapshot) {
 			// Snapshots live in memory only, so an app restart between the failure
-			// and the login leaves nothing to replay. The prompt is still in the
-			// transcript and the queue is intact - the user just has to press send.
+			// and the login leaves nothing to replay - and re-auth is exactly the
+			// flow where people quit the app. The prompt is still in the transcript
+			// and the queue is intact, so nothing is LOST, but "Resume Agent" has
+			// just silently done nothing and the user has no way to tell that apart
+			// from a resume that worked. Say so instead of only logging it.
 			logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
+			missingSnapshots.push({ sessionId, tabId });
 			continue;
 		}
 
@@ -502,6 +511,25 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 				// it must not abort the replay of the remaining tabs.
 				logger.error('[retry] Replay after re-auth threw', undefined, error);
 			});
+	}
+
+	if (missingSnapshots.length > 0) {
+		// Deliberately a toast rather than a silent log: the user pressed a button
+		// labelled "Resume Agent" and nothing happened. Click-to-jump lands them on
+		// the tab holding the prompt, which is still in the transcript - so the
+		// remedy is one keypress once they can see where to press it.
+		const first = missingSnapshots[0];
+		const more = missingSnapshots.length - 1;
+		notifyToast({
+			color: 'yellow',
+			title: 'Nothing to resend',
+			message:
+				more > 0
+					? `Signed back in, but the prompts for ${missingSnapshots.length} tabs were not held over the restart. They are still in each transcript - press send again.`
+					: 'Signed back in, but the prompt was not held over the restart. It is still in the transcript - press send again.',
+			sessionId: first.sessionId,
+			tabId: first.tabId,
+		});
 	}
 }
 
