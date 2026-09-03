@@ -115,6 +115,36 @@ export function isClaudeLimitNotice(text: string): boolean {
 	return CLAUDE_LIMIT_NOTICE_RE.test(trimmed);
 }
 
+/**
+ * Claude Code's standalone signed-out banner, captured from the wire:
+ *
+ *   "Not logged in · Please run /login"
+ *
+ * ANCHORED and length-capped for the same reason as the limit notice above, and
+ * the risk here is sharper: agents discuss `/login` and quote this exact string
+ * while troubleshooting, so a contains-match would abort perfectly good turns
+ * whenever a reply happened to mention it. The banner has to BE the message.
+ *
+ * This is only the fallback. The structured `error: 'authentication_failed'`
+ * field on the event is the primary signal and cannot be spoofed by reply text.
+ */
+const CLAUDE_NOT_LOGGED_IN_RE = /^\s*not\s+logged\s+in\b/i;
+
+/** Longest a standalone signed-out notice can plausibly be. */
+const CLAUDE_NOT_LOGGED_IN_MAX_LENGTH = 200;
+
+/**
+ * True when `text` is Claude Code's standalone signed-out banner rather than an
+ * assistant reply that merely mentions logging in.
+ * See {@link CLAUDE_NOT_LOGGED_IN_RE}.
+ */
+export function isClaudeNotLoggedInNotice(text: string): boolean {
+	if (typeof text !== 'string') return false;
+	const trimmed = text.trim();
+	if (!trimmed || trimmed.length > CLAUDE_NOT_LOGGED_IN_MAX_LENGTH) return false;
+	return CLAUDE_NOT_LOGGED_IN_RE.test(trimmed);
+}
+
 // ============================================================================
 // Claude Code Error Patterns
 // ============================================================================

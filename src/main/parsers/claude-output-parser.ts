@@ -14,7 +14,12 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
-import { getErrorPatterns, isClaudeLimitNotice, matchErrorPattern } from './error-patterns';
+import {
+	getErrorPatterns,
+	isClaudeLimitNotice,
+	isClaudeNotLoggedInNotice,
+	matchErrorPattern,
+} from './error-patterns';
 
 /**
  * Content block in Claude assistant messages
@@ -415,6 +420,14 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		const limitError = this.detectPlanLimitNotice(obj, parsed);
 		if (limitError) return limitError;
 
+		// ── Signed-out notice ───────────────────────────────────────────────────
+		// Same shape as the plan-limit notice above, and it cost us the same way: a
+		// signed-out agent renders an ordinary reply bubble and the turn looks
+		// successful, so Agent Resilience never saw a failure, the ReauthModal never
+		// opened, and "Resume Agent" had nothing to resume.
+		const authError = this.detectAuthFailureNotice(obj, parsed);
+		if (authError) return authError;
+
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 
@@ -526,6 +539,72 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			agentId: this.agentId,
 			timestamp: Date.now(),
 			// Carries `quotaLimits.resetsAt` through to the retry scheduler.
+			parsedJson: parsed,
+		};
+	}
+
+	/**
+	 * Claude Code's signed-out banner, which is NOT reported as an error event.
+	 * Captured from the wire (`CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p
+	 * --output-format stream-json`), a signed-out run emits:
+	 *
+	 *   { type: 'assistant', error: 'authentication_failed',
+	 *     is_api_error_message: true,
+	 *     message: { model: '<synthetic>',
+	 *                content: [{ type:'text', text: 'Not logged in · Please run /login' }] } }
+	 *   { type: 'result', subtype: 'success', is_error: true,
+	 *     terminal_reason: 'api_error', result: 'Not logged in · Please run /login' }
+	 *
+	 * Two traps live in that payload. The result's `subtype` is **'success'**
+	 * despite `is_error: true`, which is why the turn looked fine. And the flag is
+	 * `is_api_error_message` (snake_case) on the stdout stream, while the
+	 * transcript path carries `isApiErrorMessage` (camelCase) - the plan-limit
+	 * notice above documents the camelCase form. Both are accepted here; matching
+	 * only one silently covers half the paths.
+	 *
+	 * The STRUCTURED `error: 'authentication_failed'` is the primary signal and is
+	 * checked first on purpose. Reply text cannot set it, so an agent quoting the
+	 * banner while troubleshooting - which happens constantly in this codebase -
+	 * can never trip it. The anchored text match is only a fallback for paths that
+	 * forward `message` alone.
+	 */
+	private detectAuthFailureNotice(
+		obj: Record<string, unknown>,
+		parsed: unknown
+	): AgentError | null {
+		const isAssistant = obj.type === 'assistant';
+		const isResult = obj.type === 'result';
+		if (!isAssistant && !isResult) return null;
+
+		const msg = obj as unknown as ClaudeRawMessage;
+		const text = isResult
+			? typeof obj.result === 'string'
+				? obj.result
+				: ''
+			: this.extractTextFromMessage(msg);
+
+		const flaggedApiError = obj.isApiErrorMessage === true || obj.is_api_error_message === true;
+		const structurallyAuth = obj.error === 'authentication_failed';
+
+		// Primary: the event says so. Fallback: the banner IS the whole message.
+		if (!structurallyAuth && !isClaudeNotLoggedInNotice(text)) return null;
+		// A bare text match with no corroboration must still look synthetic - a real
+		// assistant turn that opens with those words carries tool calls or a real model.
+		if (!structurallyAuth && !flaggedApiError) {
+			const message = obj.message as { model?: unknown } | undefined;
+			if (isAssistant && message?.model !== '<synthetic>') return null;
+		}
+
+		return {
+			type: 'auth_expired',
+			// Claude's own wording. Deliberately NOT a remedy: the credential behind
+			// this agent may be an API key or a gateway, where a login flow fixes
+			// nothing (see providerAuthIdentity). The surface that shows the error
+			// knows which, and names the remedy itself.
+			message: text.trim() || 'Not logged in',
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
 			parsedJson: parsed,
 		};
 	}

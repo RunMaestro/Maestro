@@ -53,6 +53,7 @@ export {
 	SSH_ERROR_PATTERNS,
 	ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH,
 	isClaudeLimitNotice,
+	isClaudeNotLoggedInNotice,
 	getErrorPatterns,
 	matchErrorPattern,
 	registerErrorPatterns,

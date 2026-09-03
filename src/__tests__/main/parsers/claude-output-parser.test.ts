@@ -719,6 +719,79 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('signed-out notices', () => {
+		// Envelope captured from the wire with
+		//   CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p --output-format stream-json
+		// Note `subtype: 'success'` alongside `is_error: true` - that combination is
+		// why a signed-out turn used to look successful and never reached Agent
+		// Resilience, so the ReauthModal never opened and Resume Agent had nothing
+		// to replay.
+		const BANNER = 'Not logged in \u00b7 Please run /login';
+
+		it('flags the assistant event via the structured authentication_failed field', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				error: 'authentication_failed',
+				is_api_error_message: true,
+				message: { model: '<synthetic>', content: [{ type: 'text', text: BANNER }] },
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('auth_expired');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.message).toBe(BANNER);
+		});
+
+		it('flags the result event even though its subtype says success', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				terminal_reason: 'api_error',
+				result: BANNER,
+			});
+			expect(error?.type).toBe('auth_expired');
+			expect(error?.recoverable).toBe(true);
+		});
+
+		// The stdout stream uses snake_case; the transcript path uses camelCase.
+		// Matching only one silently covers half the paths.
+		it('accepts the camelCase isApiErrorMessage flag too', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				isApiErrorMessage: true,
+				message: { model: '<synthetic>', content: [{ type: 'text', text: BANNER }] },
+			});
+			expect(error?.type).toBe('auth_expired');
+		});
+
+		// The load-bearing guard. Agents in this codebase quote this banner verbatim
+		// while troubleshooting; a contains-match would abort perfectly good turns.
+		it('does NOT flag a real answer that merely mentions /login', () => {
+			const chatty =
+				'If the agent is signed out it prints "Not logged in \u00b7 Please run /login" and you ' +
+				'then have to re-authenticate before the next turn will run. That is what the ' +
+				'ReauthModal is for, and it is why we snapshot the prompt before dispatching it.';
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'assistant',
+					message: { model: 'claude-opus-4', content: [{ type: 'text', text: chatty }] },
+				})
+			).toBeNull();
+		});
+
+		it('does NOT flag a real model turn that merely opens with those words', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'assistant',
+					message: {
+						model: 'claude-opus-4',
+						content: [{ type: 'text', text: 'Not logged in? Here is how to fix that.' }],
+					},
+				})
+			).toBeNull();
+		});
+	});
+
 	describe('plan-limit notices in result events', () => {
 		it('reports the session-limit notice as a recoverable rate_limited error', () => {
 			const notice = "You've hit your session limit · resets 11:40am (America/Chicago)";
