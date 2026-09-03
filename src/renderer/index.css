@@ -320,6 +320,34 @@ textarea::placeholder {
 	pointer-events: none;
 }
 
+/*
+ * Theme-aware, keyboard-only focus ring.
+ *
+ * Pairs with the CLAUDE.md focus pattern ("outline-none + custom ring"): the
+ * default `:focus` outline is suppressed so mouse clicks stay quiet, while
+ * keyboard `:focus-visible` paints an accent-colored ring. Color resolves from
+ * a local `--focus-ring-color` override (set inline when an element needs a
+ * higher-contrast ring on a filled background) and otherwise falls back to the
+ * app accent (`--accent-color`, kept in sync with the active theme by
+ * useThemeStyles). Use `.focus-ring` for standalone controls and
+ * `.focus-ring-inset` for controls inside an `overflow-hidden` / rounded
+ * container that would clip an outset ring (e.g. a segmented toggle).
+ */
+.focus-ring:focus,
+.focus-ring-inset:focus {
+	outline: none;
+}
+
+.focus-ring:focus-visible {
+	outline: 2px solid var(--focus-ring-color, var(--accent-color, rgba(99, 102, 241, 0.9)));
+	outline-offset: 2px;
+}
+
+.focus-ring-inset:focus-visible {
+	outline: 2px solid var(--focus-ring-color, var(--accent-color, rgba(99, 102, 241, 0.9)));
+	outline-offset: -2px;
+}
+
 @keyframes check-pop {
 	0% {
 		transform: scale(0);
