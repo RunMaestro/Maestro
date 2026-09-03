@@ -80,11 +80,15 @@ import {
 	getGroupChatReadOnlyState,
 	setGetSessionsCallback,
 	setSshStore,
+	setModeratorResponseTimeout,
+	clearModeratorResponseTimeout,
+	noteGroupChatActivity,
 	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
 	clearAllModeratorSessions,
+	getModeratorSessionId,
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
 import {
@@ -1551,6 +1555,138 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+	});
+
+	// ===========================================================================
+	// Turn supervision: the budget is SILENCE, not wall clock
+	// ===========================================================================
+	describe('turn supervision', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		const IDLE_MS = 10 * 60 * 1000;
+		const MAX_MS = 30 * 60 * 1000;
+
+		/**
+		 * The id a turn actually spawns under. `getModeratorSessionId` returns the
+		 * per-chat PREFIX; every turn appends a timestamp to it, and that full id is
+		 * what the process manager and the liveness events both speak.
+		 */
+		function moderatorTurnSessionId(chatId: string): string {
+			return `${getModeratorSessionId(chatId)}-1700000000000`;
+		}
+
+		it('gives up on a moderator that goes silent, and kills its process', async () => {
+			const emitMessage = vi.fn();
+			const emitStateChange = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+			groupChatEmitters.emitStateChange = emitStateChange;
+
+			const chat = await createTestChatWithModerator('Silent moderator');
+			const sessionId = moderatorTurnSessionId(chat.id);
+			setModeratorResponseTimeout(chat.id, mockProcessManager, sessionId);
+
+			vi.advanceTimersByTime(IDLE_MS);
+
+			expect(emitMessage).toHaveBeenCalledWith(
+				chat.id,
+				expect.objectContaining({ content: expect.stringContaining('went silent') })
+			);
+			expect(emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+			// Reporting a failure while leaving the cause running is the worse half of
+			// the original bug: the room was told nothing had been implemented while
+			// the process it gave up on went on committing and starting a push. The
+			// FULL session id must reach kill - the prefix matches nothing.
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId);
+
+			groupChatEmitters.emitStateChange = undefined;
+		});
+
+		// The regression this whole change exists for. A wall-clock timer armed at
+		// dispatch declared a participant dead at ten minutes while its transcript
+		// showed 19-41 events per minute straight through the cutoff.
+		it('never gives up on a moderator that keeps producing output', async () => {
+			const emitMessage = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+
+			const chat = await createTestChatWithModerator('Busy moderator');
+			const sessionId = moderatorTurnSessionId(chat.id);
+			setModeratorResponseTimeout(chat.id, mockProcessManager, sessionId);
+
+			// Twenty minutes of steady work: twice the old hard deadline, still
+			// inside both the silence budget and the ceiling.
+			for (let elapsed = 0; elapsed < MAX_MS - IDLE_MS; elapsed += 60_000) {
+				vi.advanceTimersByTime(60_000);
+				noteGroupChatActivity(sessionId);
+			}
+
+			expect(emitMessage).not.toHaveBeenCalled();
+			expect(mockProcessManager.kill).not.toHaveBeenCalled();
+
+			clearModeratorResponseTimeout(chat.id);
+		});
+
+		it('still stops a moderator that chatters past the hard ceiling', async () => {
+			const emitMessage = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+
+			const chat = await createTestChatWithModerator('Chattering moderator');
+			const sessionId = moderatorTurnSessionId(chat.id);
+			setModeratorResponseTimeout(chat.id, mockProcessManager, sessionId);
+
+			// Output every five minutes forever: the silence budget never expires.
+			for (let elapsed = 0; elapsed < MAX_MS; elapsed += 5 * 60 * 1000) {
+				vi.advanceTimersByTime(5 * 60 * 1000);
+				noteGroupChatActivity(sessionId);
+			}
+
+			expect(emitMessage).toHaveBeenCalledWith(
+				chat.id,
+				expect.objectContaining({
+					content: expect.stringContaining('exceeded the single-turn limit'),
+				})
+			);
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId);
+		});
+
+		it('stops supervising once the turn is cleared', async () => {
+			const emitMessage = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+
+			const chat = await createTestChatWithModerator('Finished moderator');
+			setModeratorResponseTimeout(chat.id, mockProcessManager, moderatorTurnSessionId(chat.id));
+			clearModeratorResponseTimeout(chat.id);
+
+			vi.advanceTimersByTime(MAX_MS * 2);
+
+			expect(emitMessage).not.toHaveBeenCalled();
+			expect(mockProcessManager.kill).not.toHaveBeenCalled();
+		});
+
+		it('ignores liveness for sessions it is not supervising', async () => {
+			const emitMessage = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+
+			const chat = await createTestChatWithModerator('Unrelated liveness');
+			setModeratorResponseTimeout(chat.id, mockProcessManager, moderatorTurnSessionId(chat.id));
+
+			// Neither of these belongs to this chat, so neither may re-arm it.
+			expect(() => noteGroupChatActivity('some-agent-session-ai-1')).not.toThrow();
+			expect(() =>
+				noteGroupChatActivity('group-chat-00000000-0000-4000-8000-000000000000-moderator-1')
+			).not.toThrow();
+
+			vi.advanceTimersByTime(IDLE_MS);
+			expect(emitMessage).toHaveBeenCalledWith(
+				chat.id,
+				expect.objectContaining({ content: expect.stringContaining('went silent') })
+			);
 		});
 	});
 });
