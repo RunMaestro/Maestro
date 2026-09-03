@@ -6,6 +6,11 @@ export default {
 			fontFamily: {
 				mono: ['"JetBrains Mono"', '"Fira Code"', '"Courier New"', 'monospace'],
 			},
+			fontSize: {
+				'3xs': '0.643rem', // 9px at 14px root
+				'2xs': '0.714rem', // 10px at 14px root
+				'xs-plus': '0.786rem', // 11px at 14px root
+			},
 		},
 	},
 	plugins: [],
