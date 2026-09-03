@@ -258,7 +258,7 @@ export const SessionItem = memo(function SessionItem({
 		// so the grid would put its actions on an otherwise empty second line and
 		// turn a compact child row into a two-line one.
 		const layoutClass = variant === 'worktree' ? '' : 'session-row ';
-		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
+		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all row-hover ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
 			return `mx-3 px-3 py-2 rounded mb-1 ${base}`;

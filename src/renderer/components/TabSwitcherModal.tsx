@@ -773,7 +773,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -875,7 +875,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -958,7 +958,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -1032,7 +1032,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -1095,7 +1095,7 @@ export function TabSwitcherModal({
 									key={session.agentSessionId}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,

@@ -545,7 +545,7 @@ export function FileSearchModal({
 									<button
 										key={file.fullPath}
 										onClick={() => handleItemSelect(file)}
-										className="absolute top-0 left-0 w-full text-left px-4 py-2 flex items-center gap-3 hover:bg-opacity-10"
+										className="absolute top-0 left-0 w-full text-left px-4 py-2 flex items-center gap-3 row-hover"
 										style={{
 											height: `${virtualRow.size}px`,
 											transform: `translateY(${virtualRow.start}px)`,

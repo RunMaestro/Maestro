@@ -1410,7 +1410,7 @@ function SessionListInner(props: SessionListProps) {
 						<div className="mb-1">
 							<button
 								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
 								aria-expanded={!starredSectionCollapsed}
 							>
@@ -1490,7 +1490,7 @@ function SessionListInner(props: SessionListProps) {
 						<div className="mb-1">
 							<button
 								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
 								aria-expanded={!bookmarksCollapsed}
 							>
@@ -1584,7 +1584,7 @@ function SessionListInner(props: SessionListProps) {
 											toggleGroup(group.id);
 										}
 									}}
-									className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 									style={
 										dragOverTarget === group.id
 											? { backgroundColor: `${theme.colors.accent}33` }
@@ -1755,7 +1755,7 @@ function SessionListInner(props: SessionListProps) {
 							onDragLeave={handleDropTargetLeave}
 						>
 							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								style={
 									dragOverTarget === UNGROUPED_DROP_TARGET
 										? { backgroundColor: `${theme.colors.accent}33` }

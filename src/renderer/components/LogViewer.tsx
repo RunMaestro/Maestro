@@ -430,7 +430,7 @@ export function LogViewer({
 						<>
 							<button
 								onClick={expandAll}
-								className="p-2 rounded hover:bg-opacity-10 transition-all"
+								className="p-2 rounded row-hover transition-all"
 								style={{ color: allExpanded ? theme.colors.accent : theme.colors.textDim }}
 								title="Expand all"
 								disabled={allExpanded}
@@ -439,7 +439,7 @@ export function LogViewer({
 							</button>
 							<button
 								onClick={collapseAll}
-								className="p-2 rounded hover:bg-opacity-10 transition-all"
+								className="p-2 rounded row-hover transition-all"
 								style={{ color: allCollapsed ? theme.colors.textDim : theme.colors.accent }}
 								title="Collapse all"
 								disabled={allCollapsed}
@@ -451,7 +451,7 @@ export function LogViewer({
 					)}
 					<button
 						onClick={handleExportLogs}
-						className="p-2 rounded hover:bg-opacity-10 transition-all"
+						className="p-2 rounded row-hover transition-all"
 						style={{ color: theme.colors.textDim }}
 						title="Export logs"
 					>
@@ -459,7 +459,7 @@ export function LogViewer({
 					</button>
 					<button
 						onClick={() => setShowClearConfirm(true)}
-						className="p-2 rounded hover:bg-opacity-10 transition-all"
+						className="p-2 rounded row-hover transition-all"
 						style={{ color: theme.colors.textDim }}
 						title="Clear logs"
 					>
@@ -467,7 +467,7 @@ export function LogViewer({
 					</button>
 					<button
 						onClick={onClose}
-						className="p-2 rounded hover:bg-opacity-10 transition-all"
+						className="p-2 rounded row-hover transition-all"
 						style={{ color: theme.colors.textDim }}
 						title="Close log viewer"
 					>
@@ -673,7 +673,7 @@ export function LogViewer({
 								{/* Copy Button */}
 								<button
 									onClick={() => handleCopyEntry(log, index)}
-									className="p-1 rounded hover:bg-opacity-10 transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
+									className="p-1 rounded row-hover transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
 									style={{
 										color: copiedIndex === index ? theme.colors.accent : theme.colors.textDim,
 									}}
@@ -799,7 +799,7 @@ export function LogViewer({
 										<div className="mt-2">
 											<button
 												onClick={() => toggleDataExpanded(index)}
-												className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-opacity-10 transition-colors"
+												className="flex items-center gap-1 text-xs px-2 py-1 rounded row-hover transition-colors"
 												style={{
 													color: theme.colors.textDim,
 													backgroundColor: theme.colors.bgMain,

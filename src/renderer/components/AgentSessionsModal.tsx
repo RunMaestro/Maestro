@@ -639,7 +639,7 @@ export function AgentSessionsModal({
 											key={session.sessionId}
 											ref={i === selectedIndex ? selectedItemRef : null}
 											onClick={() => handleViewSession(session)}
-											className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-opacity-10 transition-colors group"
+											className="w-full text-left px-4 py-3 flex items-start gap-3 row-hover transition-colors group"
 											style={{
 												backgroundColor: i === selectedIndex ? theme.colors.accent : 'transparent',
 												color: theme.colors.textMain,

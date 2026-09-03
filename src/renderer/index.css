@@ -1602,6 +1602,42 @@ html[data-theme-mode='light'] .chrome-raised-active {
 }
 
 /* ============================================================================
+   ROW HOVER WASH
+
+   Replaces the dead `hover:bg-opacity-*` classes that were scattered across the
+   renderer. Tailwind's opacity utility only edits the alpha channel of a
+   `bg-{color}` utility, so an element whose background comes from an INLINE
+   style (every Left Bar agent row, every group header, most icon buttons in the
+   Process Monitor and the Log Viewer) had a hover class that resolved to
+   nothing at all. Those controls had no hover feedback whatsoever.
+
+   The wash is painted with `background-image` rather than `background-color`
+   ON PURPOSE. The rows that need it most are exactly the ones that already
+   carry an inline `backgroundColor` for their active / keyboard-selected /
+   drag-over state, and a hover `background-color` rule loses to that inline
+   declaration (or, with `!important`, erases the selection while the pointer is
+   over it). A gradient is a separate layer: it composites ON TOP of whatever
+   background-color the element sets inline, so a selected row still reads as
+   selected and simply brightens under the cursor.
+
+   Dark and vibe themes lighten, light themes darken. The neutral wash is
+   deliberate: these are ambient surfaces, and tinting every hover with the
+   accent turns the sidebar into a highlight reel.
+   ============================================================================ */
+
+.row-hover {
+	--row-hover-wash: rgb(255 255 255 / 0.06);
+}
+
+html[data-theme-mode='light'] .row-hover {
+	--row-hover-wash: rgb(0 0 0 / 0.05);
+}
+
+.row-hover:hover {
+	background-image: linear-gradient(var(--row-hover-wash), var(--row-hover-wash));
+}
+
+/* ============================================================================
    FILES TOOLBAR HIERARCHY (dormant; no UI and nothing seeds this attribute)
 
    The same defect the Left Bar had, in another panel: Find, Open, .files and
