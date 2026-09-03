@@ -3,6 +3,15 @@ import { useThrottledCallback } from '../../../hooks';
 
 /** How long a programmatic bottom-jump keeps its scroll-event guard armed. */
 const PROGRAMMATIC_SCROLL_GUARD_MS = 100;
+/**
+ * How long to keep re-applying a restored transcript offset while the content
+ * settles. Images, web fonts, markdown reflow and code highlighting all grow
+ * scrollHeight after the first frame, and the restore clamps against whatever
+ * height it sees. Hard stop so a transcript that never reaches its saved offset
+ * cannot leave an observer running.
+ */
+const SCROLL_RESTORE_SETTLE_MS = 2000;
+
 /** Slack (px) for treating scrollTop as still parked at the recorded bottom. */
 const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
 /** Slack (px) within which the transcript counts as scrolled to the bottom. */
@@ -113,6 +122,8 @@ export function useTerminalOutputScroll({
 	const tabReadStateRef = useRef<Map<string, number>>(new Map());
 	const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const hasRestoredScrollRef = useRef(false);
+	// Tears down an in-flight restore-settle retry (observer, timer, listeners).
+	const cancelRestoreSettleRef = useRef<(() => void) | undefined>(undefined);
 
 	const handleScrollInner = useCallback(() => {
 		if (!scrollContainerRef.current) return;
@@ -383,29 +394,81 @@ export function useTerminalOutputScroll({
 			// runs earlier in declaration order, so a later prop change cannot
 			// re-trigger this. (J1)
 			if (initialIsAtBottom !== false) return;
+
+			// Applying the offset ONCE, one frame after mount, is not enough. The
+			// clamp below is against whatever scrollHeight happens to be in that
+			// frame, and a transcript is at its shortest right then: images have not
+			// decoded, web fonts have not loaded, markdown and code highlighting have
+			// not settled. A deep offset lands short and the tab opens scrolled UP
+			// from where it was left, permanently - the deps here do not change as
+			// content grows.
+			//
+			// This is the same growth the ResizeObserver above was added for, and its
+			// comment describes this exact mechanism. That one is gated on
+			// isAtBottomRef.current, so it only ever rescued the bottom-following
+			// case. This is the scrolled-up half of the same problem.
+			//
+			// No conflict between the two: the moment we restore to a non-bottom
+			// position we set isAtBottomRef.current = false, which is precisely the
+			// gate the bottom-follower checks. Only one of them can be live.
+			let settleObserver: ResizeObserver | undefined;
+			let settleTimer: number | undefined;
+			const stopSettling = () => {
+				settleObserver?.disconnect();
+				settleObserver = undefined;
+				window.clearTimeout(settleTimer);
+				const el = scrollContainerRef.current;
+				el?.removeEventListener('wheel', stopSettling);
+				el?.removeEventListener('touchstart', stopSettling);
+			};
+			cancelRestoreSettleRef.current = stopSettling;
+
+			// Returns true once the offset has been reached, or the transcript
+			// genuinely cannot scroll that far.
+			const applyRestore = (): boolean => {
+				const container = scrollContainerRef.current;
+				if (!container) return true;
+				const { scrollHeight, clientHeight } = container;
+				const maxScroll = Math.max(0, scrollHeight - clientHeight);
+				const targetScroll = Math.min(initialScrollTop, maxScroll);
+				if (targetScroll < maxScroll - AT_BOTTOM_SLACK_PX) {
+					// Flip isAtBottomRef first so the observer's live at-bottom
+					// check sees the restored position this frame (#1140).
+					userScrolledAwayRef.current = true;
+					isAtBottomRef.current = false;
+					setAutoScrollPaused(true);
+					setIsAtBottom(false);
+				} else {
+					userScrolledAwayRef.current = false;
+				}
+				container.scrollTop = targetScroll;
+				return Math.abs(container.scrollTop - initialScrollTop) <= 1 || targetScroll >= maxScroll;
+			};
+
 			requestAnimationFrame(() => {
 				// A cross-tab search jump asked for a specific message in this tab.
 				// That beats the position the tab was left at - restoring here would
 				// scroll straight back off the hit.
 				if (jumpInFlightRef.current) return;
-				if (scrollContainerRef.current) {
-					const { scrollHeight, clientHeight } = scrollContainerRef.current;
-					const maxScroll = Math.max(0, scrollHeight - clientHeight);
-					const targetScroll = Math.min(initialScrollTop, maxScroll);
-					if (targetScroll < maxScroll - AT_BOTTOM_SLACK_PX) {
-						// Flip isAtBottomRef first so the observer's live at-bottom
-						// check sees the restored position this frame (#1140).
-						userScrolledAwayRef.current = true;
-						isAtBottomRef.current = false;
-						setAutoScrollPaused(true);
-						setIsAtBottom(false);
-					} else {
-						userScrolledAwayRef.current = false;
-					}
-					scrollContainerRef.current.scrollTop = targetScroll;
+				const container = scrollContainerRef.current;
+				if (!container) return;
+				if (applyRestore()) return;
+
+				// Fell short: the content is still growing. Re-apply as it does, and
+				// give up the moment the user takes over - a restore that fights a
+				// scroll already in progress is worse than the miss it corrects.
+				if (typeof ResizeObserver !== 'undefined') {
+					settleObserver = new ResizeObserver(() => {
+						if (jumpInFlightRef.current || applyRestore()) stopSettling();
+					});
+					settleObserver.observe(container);
 				}
+				settleTimer = window.setTimeout(stopSettling, SCROLL_RESTORE_SETTLE_MS);
+				container.addEventListener('wheel', stopSettling, { passive: true });
+				container.addEventListener('touchstart', stopSettling, { passive: true });
 			});
 		}
+		return () => cancelRestoreSettleRef.current?.();
 	}, [initialScrollTop, initialIsAtBottom, scrollContainerRef]);
 
 	useEffect(() => {
