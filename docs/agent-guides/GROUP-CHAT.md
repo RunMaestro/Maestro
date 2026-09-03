@@ -169,6 +169,24 @@ The central message routing engine. Key exports:
 | `respawnParticipantWithRecovery()` | Re-spawns a participant with recovery context after session loss                                                                                                                              |
 | `extractMentions()`                | Extracts `@Name` patterns from text, matches against participants                                                                                                                             |
 | `markParticipantResponded()`       | Removes participant from pending set, returns true if last                                                                                                                                    |
+| `noteGroupChatActivity()`          | Re-arms the silence budget for whichever turn owns a session id. Ignores anything that is not a group chat turn.                                                                              |
+| `setModeratorResponseTimeout()`    | Arms the moderator's silence budget for a turn. Takes the process manager and the FULL spawned session id so the timeout can kill.                                                            |
+
+**Turn supervision is a silence budget, not a duration cap.** Every moderator and
+participant turn is watched by a `createIdleWatchdog` (`src/main/utils/idle-watchdog.ts`):
+10 minutes of SILENCE, plus a 30-minute ceiling for a turn that chatters without
+finishing. The budget is restarted by `noteGroupChatActivity()`, which the
+`group-chat-liveness-listener` calls on every chunk. Before this it was a plain
+`setTimeout` armed at dispatch, which cannot tell a working agent from a wedged
+one, so a participant was declared dead at ten minutes while emitting 19-41
+events per minute.
+
+A timeout **kills the process before reporting**. Telling the room the turn
+failed while leaving the agent running means it goes on editing files and
+committing under a chat that has moved on. The kill uses the full spawned
+session id, never the prefix `getModeratorSessionId()` returns. An Auto Run
+participant has no group chat process of its own, so nothing is killed there -
+the user's own agent must never be taken down to settle a room.
 
 Module-level callbacks set during initialization:
 

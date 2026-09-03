@@ -95,6 +95,7 @@ import {
 	addParticipant,
 	removeParticipant,
 	clearAllParticipantSessionsGlobal,
+	getParticipantSessionId,
 } from '../../../main/group-chat/group-chat-agent';
 import {
 	createGroupChat,
@@ -1687,6 +1688,63 @@ describe('group-chat-router', () => {
 				chat.id,
 				expect.objectContaining({ content: expect.stringContaining('went silent') })
 			);
+		});
+
+		/**
+		 * Dispatch a participant so its silence budget is armed, and hand back the
+		 * id the process actually spawned under - the same id the liveness listener
+		 * reports activity on.
+		 */
+		async function dispatchParticipant(chatId: string, name: string): Promise<string> {
+			await addParticipant(chatId, name, 'claude-code', mockProcessManager);
+			await routeModeratorResponse(
+				chatId,
+				`@${name}: Build the feature`,
+				mockProcessManager,
+				mockAgentDetector
+			);
+			const sessionId = getParticipantSessionId(chatId, name);
+			if (!sessionId) throw new Error(`Participant ${name} did not spawn a session`);
+			return sessionId;
+		}
+
+		// The participant half of the same regression: this is the one the user hit,
+		// where a working agent was declared dead and the room was told nothing had
+		// been implemented while the process went on committing.
+		it('never gives up on a participant that keeps producing output', async () => {
+			const chat = await createTestChatWithModerator('Busy participant');
+			const sessionId = await dispatchParticipant(chat.id, 'Dev');
+
+			const emitMessage = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+			vi.mocked(mockProcessManager.kill).mockClear();
+
+			// Twenty minutes of steady work: twice the old hard deadline.
+			for (let elapsed = 0; elapsed < MAX_MS - IDLE_MS; elapsed += 60_000) {
+				await vi.advanceTimersByTimeAsync(60_000);
+				noteGroupChatActivity(sessionId);
+			}
+
+			expect(emitMessage).not.toHaveBeenCalled();
+			expect(mockProcessManager.kill).not.toHaveBeenCalled();
+		});
+
+		it('gives up on a silent participant, killing the session it spawned', async () => {
+			const chat = await createTestChatWithModerator('Silent participant');
+			const sessionId = await dispatchParticipant(chat.id, 'Dev');
+
+			const emitMessage = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+			vi.mocked(mockProcessManager.kill).mockClear();
+
+			await vi.advanceTimersByTimeAsync(IDLE_MS);
+
+			expect(emitMessage).toHaveBeenCalledWith(
+				chat.id,
+				expect.objectContaining({ content: expect.stringContaining('@Dev went silent') })
+			);
+			// The participant's own session, never the moderator's or the user's agent.
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId);
 		});
 	});
 });
