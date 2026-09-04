@@ -1409,7 +1409,7 @@ function SessionListInner(props: SessionListProps) {
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (
 								<button
 									onClick={() => setAboutModalOpen(true)}
-									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors hover:bg-white/10"
+									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-bold transition-colors hover:bg-white/10"
 									title={`${getBadgeForTime(autoRunStats.cumulativeTimeMs)?.name || 'Apprentice'} - Click to view achievements`}
 									style={{
 										color: autoRunStats.currentBadgeLevel >= 8 ? '#FFD700' : theme.colors.accent,
@@ -1438,7 +1438,7 @@ function SessionListInner(props: SessionListProps) {
 												setLiveOverlayOpen(!liveOverlayOpen);
 											}
 										}}
-										className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
+										className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-bold transition-colors ${
 											isLiveMode
 												? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
 												: 'text-gray-500 hover:bg-white/10'
@@ -1653,7 +1653,7 @@ function SessionListInner(props: SessionListProps) {
 							<div className="mb-1">
 								<button
 									type="button"
-									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 									onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
 									aria-expanded={!starredSectionCollapsed}
 								>
@@ -1733,7 +1733,7 @@ function SessionListInner(props: SessionListProps) {
 						<div className="mb-1">
 							<button
 								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
 								aria-expanded={!bookmarksCollapsed}
 							>
@@ -1822,7 +1822,7 @@ function SessionListInner(props: SessionListProps) {
 									<div key={group.id} className={parent ? 'ml-4 mb-1 rounded' : 'mb-1 rounded'}>
 										<button
 											type="button"
-											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider hover:bg-opacity-50"
+											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider row-hover"
 											style={{ color: theme.colors.textDim }}
 											aria-expanded={!collapsed}
 											onClick={() =>
@@ -1928,7 +1928,7 @@ function SessionListInner(props: SessionListProps) {
 												toggleGroup(group.id);
 											}
 										}}
-										className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+										className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 										style={
 											dragOverTarget === group.id
 												? { backgroundColor: `${theme.colors.accent}33` }
@@ -2097,7 +2097,7 @@ function SessionListInner(props: SessionListProps) {
 								<div className="mt-4 px-3">
 									<button
 										onClick={() => createNewGroup()}
-										className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+										className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -2131,7 +2131,7 @@ function SessionListInner(props: SessionListProps) {
 							onDragLeave={handleDropTargetLeave}
 						>
 							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								style={
 									dragOverTarget === UNGROUPED_DROP_TARGET
 										? { backgroundColor: `${theme.colors.accent}33` }
@@ -2170,7 +2170,7 @@ function SessionListInner(props: SessionListProps) {
 											e.stopPropagation();
 											createNewGroup();
 										}}
-										className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+										className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -2245,7 +2245,7 @@ function SessionListInner(props: SessionListProps) {
 							)}
 							<button
 								onClick={() => createNewGroup()}
-								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 								style={{
 									backgroundColor: theme.colors.accent + '20',
 									color: theme.colors.accent,

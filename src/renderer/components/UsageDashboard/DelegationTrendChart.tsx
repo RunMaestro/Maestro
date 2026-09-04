@@ -240,7 +240,7 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 					    cell is a couple of pixels wide and would clip "Mar 14" down to
 					    nothing - the labels have to be free to overhang their bar. */}
 					<div
-						className="relative mt-2 h-4 text-[10px]"
+						className="relative mt-2 h-4 text-2xs"
 						style={{ color: theme.colors.textDim }}
 						aria-hidden="true"
 					>
@@ -268,7 +268,7 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 					</div>
 
 					<div
-						className="flex items-center gap-4 mt-3 pt-3 border-t text-[10px]"
+						className="flex items-center gap-4 mt-3 pt-3 border-t text-2xs"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 					>
 						<span className="flex items-center gap-1.5">
@@ -291,7 +291,7 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 
 					{cueTruncated && (
 						<div
-							className="mt-2 text-[10px]"
+							className="mt-2 text-2xs"
 							style={{ color: theme.colors.textDim }}
 							data-testid="delegation-trend-cue-notice"
 						>

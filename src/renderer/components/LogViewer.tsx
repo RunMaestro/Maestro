@@ -13,6 +13,7 @@ import {
 	Check,
 } from 'lucide-react';
 import type { Theme } from '../types';
+import { blendColors, readableTextOn, transparentize } from '../../shared/colorContrast';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useThrottledCallback } from '../hooks';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -50,16 +51,50 @@ const LOG_LEVEL_PRIORITY: Record<string, number> = {
 	error: 3,
 };
 
-// Log level color mappings
-const LOG_LEVEL_COLORS: Record<string, { fg: string; bg: string }> = {
-	debug: { fg: '#6366f1', bg: 'rgba(99, 102, 241, 0.15)' }, // Indigo
-	info: { fg: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' }, // Blue
-	warn: { fg: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)' }, // Amber
-	error: { fg: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' }, // Red
-	toast: { fg: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' }, // Purple
-	autorun: { fg: '#f97316', bg: 'rgba(249, 115, 22, 0.15)' }, // Orange
-	cue: { fg: '#06b6d4', bg: 'rgba(6, 182, 212, 0.15)' }, // Teal
-};
+type LogLevel = SystemLogEntry['level'];
+
+interface LogLevelColor {
+	/** Solid fill: timeline stripe, selected filter chip, pill border. */
+	fg: string;
+	/** The level color washed over the card the pill sits on. */
+	bg: string;
+	/** Pill label, held to AA against `bg` rather than assumed readable. */
+	text: string;
+}
+
+/**
+ * Level colors are DERIVED from the active theme instead of living in a second
+ * palette beside it. `warn` and `error` were already byte-identical to
+ * `theme.colors.warning` / `theme.colors.error`, so the literals only bought a
+ * copy that stops tracking the theme the moment the user picks a different one.
+ * The three levels with no semantic slot of their own (toast, autorun, cue) are
+ * mixed out of the slots that do exist, which keeps them distinguishable from
+ * each other in every theme rather than pinning one purple, one orange, and one
+ * teal onto a palette that may contain none of the three.
+ */
+function buildLogLevelColors(theme: Theme): Record<LogLevel, LogLevelColor> {
+	const { colors } = theme;
+	const fills: Record<LogLevel, string> = {
+		debug: colors.textDim,
+		info: colors.accent,
+		warn: colors.warning,
+		error: colors.error,
+		// A notification reads as accent everywhere else in the app; lifting it
+		// toward textMain keeps it in the accent family but apart from `info`.
+		toast: blendColors(colors.accent, colors.textMain, 0.35),
+		// Between warning and error: in flight, not yet a problem.
+		autorun: blendColors(colors.warning, colors.error, 0.35),
+		cue: colors.success,
+	};
+
+	const entries = Object.entries(fills) as [LogLevel, string][];
+	return Object.fromEntries(
+		entries.map(([level, fg]) => {
+			const bg = transparentize(fg, colors.bgActivity, 0.15);
+			return [level, { fg, bg, text: readableTextOn(fg, [bg]) }];
+		})
+	) as Record<LogLevel, LogLevelColor>;
+}
 
 export function LogViewer({
 	theme,
@@ -399,8 +434,19 @@ export function LogViewer({
 		[throttledScrollHandler]
 	);
 
-	const getLevelColor = (level: string) => LOG_LEVEL_COLORS[level]?.fg ?? theme.colors.textDim;
-	const getLevelBgColor = (level: string) => LOG_LEVEL_COLORS[level]?.bg ?? 'transparent';
+	const levelColors = useMemo(() => buildLogLevelColors(theme), [theme]);
+	const getLevelColor = (level: string) =>
+		levelColors[level as LogLevel]?.fg ?? theme.colors.textDim;
+	const getLevelBgColor = (level: string) => levelColors[level as LogLevel]?.bg ?? 'transparent';
+	const getLevelTextColor = (level: string) =>
+		levelColors[level as LogLevel]?.text ?? theme.colors.textDim;
+	/** Label for a chip filled with `fill`, so a pale warning keeps a dark label. */
+	const onFillTextColor = (fill: string) => readableTextOn(theme.colors.accentForeground, [fill]);
+	/** Jump-to-agent pill: the same wash as a level pill, one step more opaque. */
+	const agentPillStyle = (color: string) => {
+		const backgroundColor = transparentize(color, theme.colors.bgActivity, 0.2);
+		return { backgroundColor, color: readableTextOn(color, [backgroundColor]) };
+	};
 
 	return (
 		<div
@@ -430,7 +476,7 @@ export function LogViewer({
 						<>
 							<button
 								onClick={expandAll}
-								className="p-2 rounded hover:bg-opacity-10 transition-all"
+								className="p-2 rounded row-hover transition-all"
 								style={{ color: allExpanded ? theme.colors.accent : theme.colors.textDim }}
 								title="Expand all"
 								disabled={allExpanded}
@@ -439,7 +485,7 @@ export function LogViewer({
 							</button>
 							<button
 								onClick={collapseAll}
-								className="p-2 rounded hover:bg-opacity-10 transition-all"
+								className="p-2 rounded row-hover transition-all"
 								style={{ color: allCollapsed ? theme.colors.textDim : theme.colors.accent }}
 								title="Collapse all"
 								disabled={allCollapsed}
@@ -451,7 +497,7 @@ export function LogViewer({
 					)}
 					<button
 						onClick={handleExportLogs}
-						className="p-2 rounded hover:bg-opacity-10 transition-all"
+						className="p-2 rounded row-hover transition-all"
 						style={{ color: theme.colors.textDim }}
 						title="Export logs"
 					>
@@ -459,7 +505,7 @@ export function LogViewer({
 					</button>
 					<button
 						onClick={() => setShowClearConfirm(true)}
-						className="p-2 rounded hover:bg-opacity-10 transition-all"
+						className="p-2 rounded row-hover transition-all"
 						style={{ color: theme.colors.textDim }}
 						title="Clear logs"
 					>
@@ -467,7 +513,7 @@ export function LogViewer({
 					</button>
 					<button
 						onClick={onClose}
-						className="p-2 rounded hover:bg-opacity-10 transition-all"
+						className="p-2 rounded row-hover transition-all"
 						style={{ color: theme.colors.textDim }}
 						title="Close log viewer"
 					>
@@ -519,7 +565,7 @@ export function LogViewer({
 							? theme.colors.accent
 							: 'transparent',
 						color: Array.from(enabledLevels).every((level) => selectedLevels.has(level))
-							? 'white'
+							? onFillTextColor(theme.colors.accent)
 							: theme.colors.textDim,
 						border: `1px solid ${Array.from(enabledLevels).every((level) => selectedLevels.has(level)) ? theme.colors.accent : theme.colors.border}`,
 					}}
@@ -549,11 +595,10 @@ export function LogViewer({
 							className="px-3 py-1 rounded text-xs font-bold transition-all"
 							style={{
 								backgroundColor: isEnabled && isSelected ? getLevelColor(level) : 'transparent',
-								color: isEnabled
-									? isSelected
-										? 'white'
-										: theme.colors.textDim
-									: theme.colors.textDim,
+								color:
+									isEnabled && isSelected
+										? onFillTextColor(getLevelColor(level))
+										: theme.colors.textDim,
 								border: `1px solid ${isEnabled && isSelected ? getLevelColor(level) : theme.colors.border}`,
 								opacity: isEnabled ? 1 : 0.3,
 								cursor: isEnabled ? 'pointer' : 'not-allowed',
@@ -664,7 +709,7 @@ export function LogViewer({
 									className="px-2 py-0.5 rounded text-xs font-bold uppercase flex-shrink-0"
 									style={{
 										backgroundColor: getLevelBgColor(log.level),
-										color: getLevelColor(log.level),
+										color: getLevelTextColor(log.level),
 									}}
 								>
 									{log.level}
@@ -673,7 +718,7 @@ export function LogViewer({
 								{/* Copy Button */}
 								<button
 									onClick={() => handleCopyEntry(log, index)}
-									className="p-1 rounded hover:bg-opacity-10 transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
+									className="p-1 rounded row-hover transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
 									style={{
 										color: copiedIndex === index ? theme.colors.accent : theme.colors.textDim,
 									}}
@@ -725,7 +770,7 @@ export function LogViewer({
 											return (
 												<span
 													className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1${canNavigate ? ' cursor-pointer hover:brightness-125' : ''}`}
-													style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+													style={agentPillStyle(theme.colors.success)}
 													onClick={
 														canNavigate
 															? (e) => {
@@ -750,7 +795,7 @@ export function LogViewer({
 												return (
 													<span
 														className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1${canNavigate ? ' cursor-pointer hover:brightness-125' : ''}`}
-														style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+														style={agentPillStyle(theme.colors.success)}
 														onClick={
 															canNavigate
 																? (e) => {
@@ -775,7 +820,7 @@ export function LogViewer({
 												return (
 													<span
 														className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1${canNavigate ? ' cursor-pointer hover:brightness-125' : ''}`}
-														style={{ backgroundColor: 'rgba(6, 182, 212, 0.2)', color: '#06b6d4' }}
+														style={agentPillStyle(getLevelColor('cue'))}
 														onClick={
 															canNavigate
 																? (e) => {
@@ -799,7 +844,7 @@ export function LogViewer({
 										<div className="mt-2">
 											<button
 												onClick={() => toggleDataExpanded(index)}
-												className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-opacity-10 transition-colors"
+												className="flex items-center gap-1 text-xs px-2 py-1 rounded row-hover transition-colors"
 												style={{
 													color: theme.colors.textDim,
 													backgroundColor: theme.colors.bgMain,

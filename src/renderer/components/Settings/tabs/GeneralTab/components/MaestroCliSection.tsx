@@ -116,7 +116,7 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 								: 'Reinstall CLI'}
 					</button>
 				</div>
-				<div className="text-[11px] opacity-55">
+				<div className="text-xs-plus opacity-55">
 					Install target: <code>{status?.installDir || '~/.local/bin'}</code>
 				</div>
 			</div>

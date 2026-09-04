@@ -671,7 +671,7 @@ export const RightPanel = memo(
 								{currentSessionBatchState.isStopping && (
 									<button
 										onClick={() => setShowKillConfirm(true)}
-										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-90"
+										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-90"
 										style={{
 											backgroundColor: theme.colors.error,
 											color: 'white',
@@ -698,7 +698,7 @@ export const RightPanel = memo(
 						{/* Live playbook status from .maestro/STATUS.json */}
 						{currentSessionBatchState.playbookStatus && (
 							<div
-								className="mb-2 px-2 py-1.5 rounded text-[11px] leading-relaxed"
+								className="mb-2 px-2 py-1.5 rounded text-xs-plus leading-relaxed"
 								style={{
 									backgroundColor: theme.colors.accent + '10',
 									borderLeft: `2px solid ${theme.colors.accent}`,
@@ -712,7 +712,7 @@ export const RightPanel = memo(
 									)}
 									{currentSessionBatchState.playbookStatus.phase && (
 										<span
-											className="px-1 py-0.5 rounded text-[10px] font-medium uppercase"
+											className="px-1 py-0.5 rounded text-2xs font-medium uppercase"
 											style={{
 												backgroundColor: theme.colors.accent + '20',
 												color: theme.colors.accent,
@@ -723,7 +723,7 @@ export const RightPanel = memo(
 									)}
 									{currentSessionBatchState.playbookStatus.tests && (
 										<span
-											className="text-[10px] font-mono"
+											className="text-2xs font-mono"
 											style={{
 												color:
 													currentSessionBatchState.playbookStatus.tests.fail > 0
@@ -852,7 +852,7 @@ export const RightPanel = memo(
 						    (which must always show "View History" / "View Thoughts" intact). */}
 						<div className="mt-2">
 							<span
-								className="block text-[10px] truncate"
+								className="block text-2xs truncate"
 								style={{
 									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
@@ -910,7 +910,7 @@ export const RightPanel = memo(
 										className="w-3 h-3 rounded cursor-pointer accent-current"
 										style={{ accentColor: theme.colors.accent }}
 									/>
-									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 										Follow active task
 									</span>
 								</label>
@@ -921,7 +921,7 @@ export const RightPanel = memo(
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (
 									<span
-										className="text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap"
+										className="text-2xs px-1.5 py-0.5 rounded whitespace-nowrap"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -935,7 +935,7 @@ export const RightPanel = memo(
 								    persistent, searchable panel; works for goal and task runs. */}
 								{sessionId && (
 									<button
-										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										className="flex items-center gap-1 text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
 											color: bufferedThoughts > 0 ? theme.colors.accent : theme.colors.textDim,
 											textDecoration: 'underline',
@@ -954,7 +954,7 @@ export const RightPanel = memo(
 								{/* View history link - shown on all tabs except history */}
 								{activeRightTab !== 'history' && (
 									<button
-										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										className="flex items-center gap-1 text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
 											color: theme.colors.textDim,
 											textDecoration: 'underline',
@@ -972,7 +972,7 @@ export const RightPanel = memo(
 										{batchError?.recoverable && onResumeAfterError && (
 											<button
 												onClick={onResumeAfterError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
 												style={{
 													backgroundColor: theme.colors.accent,
 													color: theme.colors.accentForeground,
@@ -986,7 +986,7 @@ export const RightPanel = memo(
 										{onAbortBatchOnError && (
 											<button
 												onClick={onAbortBatchOnError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
 												style={{
 													backgroundColor: theme.colors.error,
 													color: 'white',
@@ -1003,7 +1003,7 @@ export const RightPanel = memo(
 									onStopBatchRun && (
 										<button
 											onClick={() => onStopBatchRun(session.id)}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
 											style={{
 												backgroundColor: theme.colors.error,
 												color: 'white',

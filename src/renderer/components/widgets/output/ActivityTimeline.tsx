@@ -101,7 +101,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 
 			{showLegend && (
 				<div
-					className="flex items-center gap-4 text-[11px]"
+					className="flex items-center gap-4 text-xs-plus"
 					style={{ color: theme.colors.textDim }}
 				>
 					<LegendDot color={palette.user} label="User" />

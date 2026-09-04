@@ -272,6 +272,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					tabId,
 					force,
 					imageCount: images?.length ?? 0,
+					background,
 				});
 				logger.debug('[useRemoteIntegration] onRemoteCommand preview:', undefined, {
 					sessionId,
@@ -320,10 +321,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					}));
 				}
 
-				// Switch to the target session (for visual feedback) unless this is a
-				// background dispatch. Background is the default for `dispatch`; passing
-				// `--focus` re-enables switching to the target agent/tab.
-				if (!background) {
+				// Switch to the target session (for visual feedback). A phone tapping
+				// send wants exactly this; an agent handing work to another agent
+				// does not, and until `background` existed it had no way to say so -
+				// which is also what defeated `create-worktree --background` the
+				// moment it was given a message to deliver.
+				if (background === true) {
+					logger.info(
+						'[useRemoteIntegration] Background dispatch - leaving the view where it is:',
+						undefined,
+						sessionId
+					);
+				} else {
 					setActiveSessionId(sessionId);
 					logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
 				}
@@ -1312,13 +1321,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 	// Handle remote refresh auto-run docs from web/CLI interface
 	useEffect(() => {
-		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs((sessionId: string) => {
-			window.dispatchEvent(
-				new CustomEvent('maestro:refreshAutoRunDocs', {
-					detail: { sessionId },
-				})
-			);
-		});
+		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs(
+			(sessionId: string, background?: boolean) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:refreshAutoRunDocs', {
+						detail: { sessionId, background },
+					})
+				);
+			}
+		);
 		return () => {
 			unsubscribe();
 		};

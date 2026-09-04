@@ -59,7 +59,7 @@ export function Keycap({
 	return (
 		<kbd
 			data-pressed={pressed || undefined}
-			className={`maestro-keycap inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-[5px] font-mono text-[11px] leading-none shrink-0 ${className}`.trim()}
+			className={`maestro-keycap inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-[5px] font-mono text-xs-plus leading-none shrink-0 ${className}`.trim()}
 			style={{
 				color: pressed ? tint : theme.colors.textMain,
 				backgroundColor: pressed ? `${tint}2e` : theme.colors.bgMain,
@@ -125,7 +125,7 @@ export function KeycapHint({
 				))}
 			</span>
 			<span
-				className="text-[11px] whitespace-nowrap"
+				className="text-xs-plus whitespace-nowrap"
 				style={{ color: pressed ? toneColor(theme, tone) : theme.colors.textDim }}
 			>
 				{label}

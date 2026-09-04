@@ -413,7 +413,10 @@ program
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
 	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
-	.option('--background', 'Leave the new tab in the background (default; with --new-tab)')
+	.option(
+		'--background',
+		'Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)'
+	)
 	.option(
 		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
@@ -640,8 +643,12 @@ program
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program
 	.command('refresh-files')
-	.description('Refresh the file tree in the Maestro desktop app')
+	.description('Refresh the file tree in the Maestro desktop app (never moves the view)')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--background',
+		'Accepted and ignored: this refresh never moves the view or shows a notice'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshFiles);
 
@@ -650,6 +657,8 @@ program
 	.command('refresh-auto-run')
 	.description('Refresh Auto Run documents in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--background', 'Refresh without switching to the target agent')
+	.option('--focus', 'Switch to the target agent while refreshing (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshAutoRun);
 

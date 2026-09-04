@@ -97,7 +97,7 @@ export function FontsSection({
 						{spec.label}
 					</span>
 				</div>
-				<p className="text-[11px] leading-snug opacity-60 flex-1">{spec.description}</p>
+				<p className="text-xs-plus leading-snug opacity-60 flex-1">{spec.description}</p>
 				<FontConfigurationPanel
 					compact
 					fontFamily={storedFont}

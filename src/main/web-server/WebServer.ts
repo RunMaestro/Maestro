@@ -1041,8 +1041,8 @@ export class WebServer {
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
-			refreshAutoRunDocs: async (sessionId: string) =>
-				this.callbackRegistry.refreshAutoRunDocs(sessionId),
+			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
+				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
 				sessionId: string,
 				config: Parameters<CallbackRegistry['configureAutoRun']>[1]

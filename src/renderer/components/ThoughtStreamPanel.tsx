@@ -183,7 +183,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						Thought Stream
 					</span>
 					<span
-						className="text-[10px] truncate leading-tight"
+						className="text-2xs truncate leading-tight"
 						style={{ color: theme.colors.textDim }}
 						title={label}
 					>
@@ -257,7 +257,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						{visibleBlocks.map((block) => (
 							<div key={block.id}>
 								<div
-									className="text-[10px] font-mono mb-1 select-none"
+									className="text-2xs font-mono mb-1 select-none"
 									style={{ color: theme.colors.textDim }}
 									title={new Date(block.startTimestamp).toLocaleString()}
 								>
@@ -285,7 +285,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 
 			{searching && (
 				<div
-					className="px-3 py-1.5 border-t text-[10px] shrink-0"
+					className="px-3 py-1.5 border-t text-2xs shrink-0"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					{visibleBlocks.length} of {blocks.length} block{blocks.length === 1 ? '' : 's'} match

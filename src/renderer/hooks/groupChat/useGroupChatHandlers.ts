@@ -574,12 +574,18 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
 			try {
-				const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
+				const chat = await window.maestro.groupChat.create(
+					name,
+					moderatorAgentId,
+					moderatorConfig,
+					requireIdleParticipants
+				);
 				setGroupChats((prev) => [chat, ...prev]);
 				closeModal('newGroupChat');
 				handleOpenGroupChat(chat.id);
@@ -649,7 +655,8 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
@@ -657,6 +664,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				name,
 				moderatorAgentId,
 				moderatorConfig,
+				requireIdleParticipants,
 			});
 			setGroupChats((prev) => prev.map((c) => (c.id === id ? updated : c)));
 			closeModal('editGroupChat');

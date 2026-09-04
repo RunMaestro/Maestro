@@ -10,7 +10,7 @@ import type { Theme } from '../../../types';
 import { StagedImageDropLine, type StagedImageTileDragHandlers } from './stagedImageDrag';
 
 const TILE_SIZES = {
-	strip: { height: '4rem', maxWidth: '200px', badge: 'text-[10px] px-1.5' },
+	strip: { height: '4rem', maxWidth: '200px', badge: 'text-2xs px-1.5' },
 	large: { height: '11rem', maxWidth: '340px', badge: 'text-xs px-2' },
 } as const;
 

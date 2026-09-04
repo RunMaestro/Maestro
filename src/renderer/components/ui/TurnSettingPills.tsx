@@ -36,7 +36,7 @@ export const TurnSettingPills = memo(function TurnSettingPills({
 		<>
 			{model && (
 				<span
-					className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded max-w-[12rem]"
+					className="flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded max-w-[12rem]"
 					style={{
 						backgroundColor: `${theme.colors.accent}20`,
 						color: theme.colors.accent,
@@ -51,7 +51,7 @@ export const TurnSettingPills = memo(function TurnSettingPills({
 			)}
 			{effort && (
 				<span
-					className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded max-w-[12rem]"
+					className="flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded max-w-[12rem]"
 					style={{
 						backgroundColor: `${theme.colors.warning}20`,
 						color: theme.colors.warning,

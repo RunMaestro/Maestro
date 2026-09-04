@@ -579,6 +579,32 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
+		it('still selects the agent for anything that is not a literal true', () => {
+			// The regression this guards: reading the absent field as an opt-in
+			// would stop the web and mobile clients focusing, and they never send it.
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+
+			for (const value of [undefined, false, 'yes', 1, null] as unknown[]) {
+				const deps = createDeps({ sessions: [session] });
+				const { unmount } = renderHook(() => useRemoteIntegration(deps));
+
+				act(() => {
+					onRemoteCommandHandler?.(
+						'session-1',
+						'loud work',
+						'ai',
+						undefined,
+						undefined,
+						undefined,
+						value as boolean | undefined
+					);
+				});
+
+				expect(deps.setActiveSessionId, String(value)).toHaveBeenCalledWith('session-1');
+				unmount();
+			}
+		});
+
 		it('ignores command when session not found', () => {
 			const deps = createDeps({ sessions: [] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');

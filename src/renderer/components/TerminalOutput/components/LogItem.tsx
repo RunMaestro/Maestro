@@ -329,7 +329,7 @@ export const LogItem = memo(
 				style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
 			>
 				<div
-					className={`shrink-0 text-[10px] sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
+					className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
 					{(() => {
@@ -490,7 +490,7 @@ export const LogItem = memo(
 						>
 							<div className="flex items-center gap-2 mb-1">
 								<span
-									className="text-[10px] px-1.5 py-0.5 rounded"
+									className="text-2xs px-1.5 py-0.5 rounded"
 									style={{
 										backgroundColor: `${theme.colors.accent}30`,
 										color: theme.colors.accent,
@@ -872,7 +872,7 @@ export const LogItem = memo(
 										});
 										return (
 											<span
-												className="text-[10px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+												className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
 												style={{
 													backgroundColor: `${theme.colors.accent}20`,
 													color: theme.colors.accent,

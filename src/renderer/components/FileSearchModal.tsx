@@ -455,10 +455,7 @@ export function FileSearchModal({
 							);
 						})}
 						{visibleCategories.length > 1 && (
-							<span
-								className="text-[10px] opacity-50 ml-auto"
-								style={{ color: theme.colors.textDim }}
-							>
+							<span className="text-2xs opacity-50 ml-auto" style={{ color: theme.colors.textDim }}>
 								Tab to switch
 							</span>
 						)}
@@ -545,7 +542,7 @@ export function FileSearchModal({
 									<button
 										key={file.fullPath}
 										onClick={() => handleItemSelect(file)}
-										className="absolute top-0 left-0 w-full text-left px-4 py-2 flex items-center gap-3 hover:bg-opacity-10"
+										className="absolute top-0 left-0 w-full text-left px-4 py-2 flex items-center gap-3 row-hover"
 										style={{
 											height: `${virtualRow.size}px`,
 											transform: `translateY(${virtualRow.start}px)`,
@@ -588,7 +585,7 @@ export function FileSearchModal({
 											<span className="font-medium truncate">{file.name}</span>
 											{directory && (
 												<span
-													className="text-[10px] truncate"
+													className="text-2xs truncate"
 													style={{
 														color: isSelected
 															? theme.colors.accentForeground

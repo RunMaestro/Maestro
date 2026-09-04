@@ -43,6 +43,13 @@ type AutoRunTreeNode = {
 	children?: AutoRunTreeNode[];
 };
 
+/** A node returned by `window.maestro.fs.readDirTree`. Matches `FileTreeNode`. */
+type LocalFileScanNode = {
+	name: string;
+	type: 'file' | 'folder';
+	children?: LocalFileScanNode[];
+};
+
 interface ProcessConfig {
 	sessionId: string;
 	toolType: string;
@@ -159,6 +166,7 @@ type GroupChatData = {
 	imagesDir: string;
 	draftMessage?: string;
 	archived?: boolean;
+	requireIdleParticipants?: boolean;
 };
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
@@ -709,7 +717,9 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
 		) => void;
-		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
+		onRemoteRefreshAutoRunDocs: (
+			callback: (sessionId: string, background?: boolean) => void
+		) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (
 				sessionId: string,
@@ -1509,6 +1519,25 @@ interface MaestroAPI {
 				maxFiles?: number;
 			}
 		) => Promise<{ directories: string[]; files: string[]; truncated: boolean }>;
+		/**
+		 * Walk a LOCAL directory tree in one round-trip. Recursing with `readDir`
+		 * from the renderer costs a round-trip per folder, which is what a large
+		 * tree's load time is actually made of. SSH uses `listTreeRemote`.
+		 */
+		readDirTree: (
+			dirPath: string,
+			options: {
+				maxDepth: number;
+				maxEntries?: number;
+				ignorePatterns?: string[];
+				honorGitignore?: boolean;
+			}
+		) => Promise<{
+			tree: LocalFileScanNode[];
+			truncated: boolean;
+			filesFound: number;
+			directoriesScanned: number;
+		}>;
 		readFile: (
 			filePath: string,
 			sshRemoteId?: string,
@@ -2922,7 +2951,8 @@ interface MaestroAPI {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => Promise<GroupChatData>;
 		list: () => Promise<Array<GroupChatData>>;
 		load: (id: string) => Promise<GroupChatData | null>;
@@ -2941,6 +2971,7 @@ interface MaestroAPI {
 					maestroPMode?: 'interactive' | 'dynamic';
 					maestroPPath?: string;
 				};
+				requireIdleParticipants?: boolean;
 			}
 		) => Promise<GroupChatData>;
 		archive: (id: string, archived: boolean) => Promise<GroupChatData>;

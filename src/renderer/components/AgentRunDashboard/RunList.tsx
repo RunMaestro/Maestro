@@ -16,7 +16,7 @@ export function RunList({
 	return (
 		<>
 			<div
-				className="border-b px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em]"
+				className="border-b px-4 py-2 text-xs-plus font-semibold uppercase tracking-[0.18em]"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 			>
 				Runs

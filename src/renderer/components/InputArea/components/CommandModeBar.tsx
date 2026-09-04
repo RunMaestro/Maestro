@@ -55,7 +55,7 @@ export const CommandModeBar = memo(function CommandModeBar({
 
 	return (
 		<div
-			className="flex items-center gap-2 px-3 py-1 border-b text-[10px] select-none"
+			className="flex items-center gap-2 px-3 py-1 border-b text-2xs select-none"
 			style={{
 				borderColor: `${theme.colors.accent}30`,
 				backgroundColor: `color-mix(in srgb, ${theme.colors.accent} 10%, transparent)`,

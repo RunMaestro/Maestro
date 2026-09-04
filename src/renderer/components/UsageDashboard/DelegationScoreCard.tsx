@@ -128,7 +128,7 @@ export const DelegationScoreCard = memo(function DelegationScoreCard({
 				</div>
 				{unlockedMilestone > 0 && (
 					<span
-						className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full whitespace-nowrap"
+						className="text-2xs uppercase tracking-wide px-2 py-0.5 rounded-full whitespace-nowrap"
 						style={{
 							color: DELEGATION_MILESTONE_GOLD,
 							border: `1px solid ${DELEGATION_MILESTONE_GOLD}66`,
@@ -217,7 +217,7 @@ export const DelegationScoreCard = memo(function DelegationScoreCard({
 				{DELEGATION_MILESTONES.map((milestone) => (
 					<span
 						key={milestone}
-						className="absolute top-0 text-[10px]"
+						className="absolute top-0 text-2xs"
 						style={{
 							left: `${milestone}%`,
 							transform: milestone === 100 ? 'translateX(-100%)' : 'translateX(-50%)',
@@ -255,7 +255,7 @@ export const DelegationScoreCard = memo(function DelegationScoreCard({
 			)}
 
 			{totals && hasData && (
-				<div className="mt-2 text-[10px]" style={{ color: theme.colors.textDim }}>
+				<div className="mt-2 text-2xs" style={{ color: theme.colors.textDim }}>
 					{formatDurationHuman(delegatedMs(totals))} delegated of{' '}
 					{formatDurationHuman(trackedMs(totals))} tracked
 					{unlockedMilestone > reached ? ` - bar held at your ${unlockedMilestone}% milestone` : ''}

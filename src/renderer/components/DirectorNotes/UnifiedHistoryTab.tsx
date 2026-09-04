@@ -690,7 +690,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						/>
 						{searchQuery && (
 							<span
-								className="text-[10px] font-mono whitespace-nowrap flex-shrink-0"
+								className="text-2xs font-mono whitespace-nowrap flex-shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								{filteredEntries.length}
@@ -737,7 +737,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					{/* Entry count badge - shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (
 						<span
-							className="text-[10px] font-mono whitespace-nowrap flex-shrink-0 mt-1"
+							className="text-2xs font-mono whitespace-nowrap flex-shrink-0 mt-1"
 							style={{ color: theme.colors.textDim }}
 						>
 							{!isAtTop
