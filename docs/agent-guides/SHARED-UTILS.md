@@ -405,10 +405,10 @@ text while the same link worked in a file-preview tab.
 
 `resolve.ts` is the other half: what a click handler does with the path the
 plugin hands back. That path is project-RELATIVE for anything matched in the
-tree and absolute for everything else, and agents quote `src/foo.ts:42`
-constantly, so every consumer needs the same strip-then-join. Do NOT hand-roll
-it - a surface that skips the join hands a bare `Notes/Thing.md` to a reader
-expecting an absolute path and silently opens nothing.
+tree and absolute for everything else, and agents quote a path with a
+trailing `:42` constantly, so every consumer needs the same strip-then-join. Do
+NOT hand-roll it - a surface that skips the join hands a bare `Notes/Thing.md`
+to a reader expecting an absolute path and silently opens nothing.
 
 | Function                                       | Signature                                             | Purpose                                                                        |
 | ---------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
