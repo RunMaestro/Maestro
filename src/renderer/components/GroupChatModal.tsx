@@ -91,6 +91,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		ac.setCustomPath(groupChat.moderatorConfig?.customPath || '');
 		ac.setCustomArgs(groupChat.moderatorConfig?.customArgs || '');
 		ac.setCustomEnvVars(groupChat.moderatorConfig?.customEnvVars || {});
+		ac.setCustomEnvVarsDisabled(groupChat.moderatorConfig?.customEnvVarsDisabled || {});
 		ac.setSshRemoteConfig(groupChat.moderatorConfig?.sshRemoteConfig as any);
 		// Claude token source (Claude Code moderator only)
 		ac.setEnableMaestroP(groupChat.moderatorConfig?.enableMaestroP ?? false);
@@ -166,6 +167,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			ac.customPath ||
 			ac.customArgs ||
 			Object.keys(ac.customEnvVars).length > 0 ||
+			Object.keys(ac.customEnvVarsDisabled).length > 0 ||
 			customModelValue ||
 			ac.sshRemoteConfig ||
 			tokenSourceEnabled;
@@ -175,6 +177,8 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			customPath: ac.customPath || undefined,
 			customArgs: ac.customArgs || undefined,
 			customEnvVars: Object.keys(ac.customEnvVars).length > 0 ? ac.customEnvVars : undefined,
+			customEnvVarsDisabled:
+				Object.keys(ac.customEnvVarsDisabled).length > 0 ? ac.customEnvVarsDisabled : undefined,
 			customModel: customModelValue || undefined,
 			sshRemoteConfig: ac.sshRemoteConfig || undefined,
 			enableMaestroP: tokenSourceEnabled || undefined,
@@ -185,6 +189,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		ac.customPath,
 		ac.customArgs,
 		ac.customEnvVars,
+		ac.customEnvVarsDisabled,
 		ac.agentConfig.model,
 		ac.sshRemoteConfig,
 		ac.selectedAgent,
@@ -221,7 +226,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		const argsChanged = ac.customArgs !== (groupChat.moderatorConfig?.customArgs || '');
 
 		const originalEnvVars = groupChat.moderatorConfig?.customEnvVars || {};
-		const envVarsChanged = JSON.stringify(ac.customEnvVars) !== JSON.stringify(originalEnvVars);
+		const originalDisabledEnvVars = groupChat.moderatorConfig?.customEnvVarsDisabled || {};
+		const envVarsChanged =
+			JSON.stringify(ac.customEnvVars) !== JSON.stringify(originalEnvVars) ||
+			JSON.stringify(ac.customEnvVarsDisabled) !== JSON.stringify(originalDisabledEnvVars);
 
 		const originalSshConfig = groupChat.moderatorConfig?.sshRemoteConfig;
 		const sshChanged = JSON.stringify(ac.sshRemoteConfig) !== JSON.stringify(originalSshConfig);
@@ -258,6 +266,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		ac.customPath,
 		ac.customArgs,
 		ac.customEnvVars,
+		ac.customEnvVarsDisabled,
 		ac.sshRemoteConfig,
 		ac.enableMaestroP,
 		ac.maestroPMode,
@@ -502,16 +511,52 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 									/* Local state only */
 								}}
 								customEnvVars={ac.customEnvVars}
-								onEnvVarKeyChange={(oldKey, newKey, value) => {
+								customEnvVarsDisabled={ac.customEnvVarsDisabled}
+								onEnvVarToggle={(key, nextEnabled) => {
+									// Move the var between the two records, value intact.
+									const from = nextEnabled ? ac.customEnvVarsDisabled : ac.customEnvVars;
+									const value = from[key] ?? '';
+									const remaining = { ...from };
+									delete remaining[key];
+									if (nextEnabled) {
+										ac.setCustomEnvVarsDisabled(remaining);
+										ac.setCustomEnvVars({ ...ac.customEnvVars, [key]: value });
+									} else {
+										ac.setCustomEnvVars(remaining);
+										ac.setCustomEnvVarsDisabled((prev) => ({ ...prev, [key]: value }));
+									}
+								}}
+								onEnvVarKeyChange={(oldKey, newKey, value, enabled) => {
+									if (enabled === false) {
+										ac.setCustomEnvVarsDisabled((prev) => {
+											const newVars = { ...prev };
+											delete newVars[oldKey];
+											newVars[newKey] = value;
+											return newVars;
+										});
+										return;
+									}
 									const newVars = { ...ac.customEnvVars };
 									delete newVars[oldKey];
 									newVars[newKey] = value;
 									ac.setCustomEnvVars(newVars);
 								}}
-								onEnvVarValueChange={(key, value) => {
+								onEnvVarValueChange={(key, value, enabled) => {
+									if (enabled === false) {
+										ac.setCustomEnvVarsDisabled((prev) => ({ ...prev, [key]: value }));
+										return;
+									}
 									ac.setCustomEnvVars({ ...ac.customEnvVars, [key]: value });
 								}}
-								onEnvVarRemove={(key) => {
+								onEnvVarRemove={(key, enabled) => {
+									if (enabled === false) {
+										ac.setCustomEnvVarsDisabled((prev) => {
+											const newVars = { ...prev };
+											delete newVars[key];
+											return newVars;
+										});
+										return;
+									}
 									const newVars = { ...ac.customEnvVars };
 									delete newVars[key];
 									ac.setCustomEnvVars(newVars);
@@ -519,7 +564,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								onEnvVarAdd={() => {
 									let newKey = 'NEW_VAR';
 									let counter = 1;
-									while (ac.customEnvVars[newKey]) {
+									// A parked key still occupies the name - reusing it would collide
+									// the moment the user switches that row back on.
+									while (newKey in ac.customEnvVars || newKey in ac.customEnvVarsDisabled) {
 										newKey = `NEW_VAR_${counter}`;
 										counter++;
 									}

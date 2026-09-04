@@ -250,6 +250,41 @@ describe('FilePreview', () => {
 	});
 
 	describe('Document Graph button', () => {
+		it('leaves Cmd+Shift+G alone so View Git Log still gets it', () => {
+			// The graph used to claim Cmd+Shift+G here, in a hardcoded branch that
+			// called stopPropagation(). That chord belongs to View Git Log, so the
+			// graph silently won it whenever a markdown preview had focus - and
+			// because it was in no shortcut registry, it could not be seen in
+			// Settings or rebound out of the way. The button is the way in now.
+			const onOpenInGraph = vi.fn();
+			const onOpenFuzzySearch = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+					onOpenInGraph={onOpenInGraph}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+					shortcuts={{
+						fuzzyFileSearch: {
+							id: 'fuzzyFileSearch',
+							label: 'Fuzzy File Search',
+							keys: ['Meta', 'g'],
+						},
+					}}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			fireEvent.keyDown(previewContainer!, { key: 'g', metaKey: true, shiftKey: true });
+
+			expect(onOpenInGraph).not.toHaveBeenCalled();
+			// Cmd+G's own handler must not catch the shifted chord on the way past.
+			// Modifier matching is exact, so this is the guard on that staying true.
+			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
+		});
+
 		it('shows Document Graph button for markdown files when onOpenInGraph is provided', () => {
 			const onOpenInGraph = vi.fn();
 			render(

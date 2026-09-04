@@ -531,6 +531,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleSidebar: shortcuts.toggleSidebar,
 				toggleRightPanel: shortcuts.toggleRightPanel,
 				nextUnreadTab: shortcuts.nextUnreadTab,
+				toggleUnreadFilters: shortcuts.toggleUnreadFilters,
 				killInstance: shortcuts.killInstance,
 				navBack: shortcuts.navBack,
 				navForward: shortcuts.navForward,

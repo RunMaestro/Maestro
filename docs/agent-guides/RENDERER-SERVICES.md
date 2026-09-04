@@ -309,6 +309,25 @@ The modal renders inside its own tab's transcript, so the service lands there fi
 
 ---
 
+### unreadFilters.ts - the two "show unread only" filters
+
+Maestro has two independent unread filters: `uiStore.showUnreadAgentsOnly` narrows the Left Bar to agents with unread activity, `uiStore.showUnreadOnly` narrows the tab bar to unread/draft tabs. Each is useful alone, but sweeping a busy fleet means turning both on.
+
+**Key exports:**
+
+- `toggleTabUnreadFilter()` - the tab filter. NOT a plain setter: entering the filter saves the active AI tab in `uiStore.preFilterActiveTabId`, leaving it restores that tab if it still exists. The save is skipped when the user is on a terminal or file tab, so exiting the filter cannot yank them into an AI tab they never asked for.
+- `areUnreadFiltersActive()` - true only when BOTH are on.
+- `toggleAllUnreadFilters()` - drives both to the same state. Bound to the `toggleUnreadFilters` shortcut (ships unbound) and the palette's `Unread Only` entry.
+
+Two behaviors are easy to "simplify" into bugs, and both are pinned by tests:
+
+- **A half-filtered view completes, it does not clear.** Treating "either one on" as active would make one press turn everything off, which is the opposite of what a half-filtered view asks for - and the palette entry would read "On" while switching things off.
+- **The tab side routes through `toggleTabUnreadFilter()`,** never `setShowUnreadOnly()` directly, or the pre-filter tab save/restore is skipped and the user is stranded on whatever tab the filtered view left them on.
+
+Everything reads the stores at call time rather than a render snapshot: the palette, the shortcut, and the tab bar button fire from different render trees, and a stale snapshot is the one way they could disagree about which direction the toggle goes.
+
+---
+
 ### contextGroomer.ts (~430 lines)
 
 Manages merging multiple conversation contexts across agents.
@@ -545,6 +564,8 @@ Defines all keyboard shortcuts in three tiers:
 - Tab actions: rename, toggle read-only, toggle save to history, toggle show thinking, toggle unread, toggle star
 
 Each shortcut has `id`, `label`, and `keys` array.
+
+An entry with an empty `keys` array ships **unbound**: it costs no chord, still appears in Settings → Shortcuts so a user can assign one, and is what makes a convenience reachable from the command palette without claiming a key. `toggleUnreadFilters` is the current example - `Opt+U` and `Cmd+U` already drive the two unread filters separately. Prefer this over taking a third chord for a shortcut most users will reach from the palette.
 
 ---
 

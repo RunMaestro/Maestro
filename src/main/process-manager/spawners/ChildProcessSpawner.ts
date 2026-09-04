@@ -13,6 +13,7 @@ import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
+import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
@@ -228,7 +229,8 @@ export class ChildProcessSpawner {
 				isResuming,
 				shellEnvVars,
 				config.extraPathDirs,
-				config.unsetEnvKeys
+				config.unsetEnvKeys,
+				config.querySource
 			);
 
 			// Log environment variable application for troubleshooting
@@ -463,7 +465,12 @@ export class ChildProcessSpawner {
 				// `StdoutHandler.emitSessionIdIfNeeded` remains the source of
 				// truth for fresh sessions.
 				agentSessionId: config.agentSessionId,
-				maestroEnvVars: collectMaestroEnvVars(shellEnvVars, customEnvVars, isResuming),
+				maestroEnvVars: collectMaestroEnvVars(
+					shellEnvVars,
+					customEnvVars,
+					isResuming,
+					config.querySource ?? DEFAULT_QUERY_SOURCE
+				),
 			};
 
 			// A killed process keeps emitting stdio and fires `close` well after
