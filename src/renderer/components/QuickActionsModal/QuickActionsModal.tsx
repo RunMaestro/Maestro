@@ -20,6 +20,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
@@ -375,8 +376,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const activeTabInfo = getActiveTabInfo(activeSession, isAiMode);
 
-	// Cross-tab search needs AI tabs to search; group chats have none.
-	const canSearchAllTabs = !activeGroupChatId && (activeSession?.aiTabs?.length ?? 0) > 0;
+	// Cross-tab search needs AI tabs to search; group chats have none, and hidden
+	// consult tabs are outside the corpus.
+	const canSearchAllTabs = !activeGroupChatId && visibleAiTabs(activeSession?.aiTabs).length > 0;
 	const activeTabType = activeTabInfo.activeTabType;
 
 	// Dismissal shared by the Escape layer handler and the ESC pill in the

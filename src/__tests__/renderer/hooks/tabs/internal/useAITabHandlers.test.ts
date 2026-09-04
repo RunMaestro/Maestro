@@ -134,6 +134,45 @@ describe('useAITabHandlers', () => {
 		});
 	});
 
+	// "Close all" is scoped to what the strip draws. A hidden consult tab holds a
+	// transcript and a resume id the user was never shown a chip for, so closing it
+	// here would destroy work silently.
+	it('leaves a hidden consult tab alive when closing all tabs', () => {
+		const consult = createMockAITab({ id: 'consult', hidden: true });
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' }), consult],
+			activeTabId: 'ai-1',
+		});
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleCloseAllTabs();
+		});
+
+		const ids = getSession().aiTabs.map((tab) => tab.id);
+		expect(ids).toContain('consult');
+		expect(ids).not.toContain('ai-1');
+		expect(ids).not.toContain('ai-2');
+	});
+
+	// The draft prompt guards tabs the user can still get back to. A draft parked on
+	// a chipless consult must not put a confirmation in front of a close-all.
+	it('does not prompt about drafts that live only on hidden consult tabs', () => {
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'consult', hidden: true })],
+			activeTabId: 'ai-1',
+		});
+		setLiveDraft('consult', 'pending consult text');
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleCloseAllTabs();
+		});
+
+		expect(useModalStore.getState().modals.get('confirm')).toBeUndefined();
+		expect(getSession().aiTabs.map((tab) => tab.id)).toContain('consult');
+	});
+
 	it('persists star changes through the provider-specific API', () => {
 		const tab = createMockAITab({ id: 'ai-1', agentSessionId: 'agent-1' });
 		setupSession({

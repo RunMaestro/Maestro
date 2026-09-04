@@ -20,7 +20,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
-import { getTabDisplayName } from '../utils/tabHelpers';
+import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { useWizardActiveTabs } from '../contexts/InlineWizardContext';
 import { isWizardTab } from '../utils/wizardActivity';
 import { WizardIndicator } from './SessionList/WizardIndicator';
@@ -213,7 +213,7 @@ const EMPTY_BROWSER_TABS: BrowserTab[] = [];
  */
 export function TabSwitcherModal({
 	theme,
-	tabs,
+	tabs: allTabs,
 	fileTabs = EMPTY_FILE_TABS,
 	terminalTabs = EMPTY_TERMINAL_TABS,
 	browserTabs = EMPTY_BROWSER_TABS,
@@ -232,6 +232,13 @@ export function TabSwitcherModal({
 	onClose,
 	colorBlindMode,
 }: TabSwitcherModalProps) {
+	// Hidden cross-agent consult tabs are not open tabs. They hold the transcript of
+	// a question another agent's user asked, have no chip in the strip, and surface
+	// only when the user opens one from a response bubble. Listing one here offers a
+	// row with nothing to click back from, and syncing its generated `↩ Name` to the
+	// named-session store would invent a session name the user never chose.
+	const tabs = useMemo(() => visibleAiTabs(allTabs), [allTabs]);
+
 	// A tab running `/wizard` looks like any other row here, and its wizard is the one
 	// thing about it the user can't see from the tab strip once the strip overflows.
 	// Read the live map rather than `tab.wizardState`, which is only mirrored onto the

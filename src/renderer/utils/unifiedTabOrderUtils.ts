@@ -19,6 +19,24 @@ export function isAiTabHidden(tab: AITab): boolean {
 }
 
 /**
+ * The AI tabs a user-facing list may show: everything `buildUnifiedTabs` draws a
+ * chip for, with hidden consult tabs dropped.
+ *
+ * Reach for this in any surface that ENUMERATES an agent's tabs - the tab
+ * switcher, cross-tab search, a merge target list, a tab count in copy. A hidden
+ * consult tab is a transcript the user never asked to open, so listing it offers
+ * a row that has no chip to go back to, and counting it makes "Close all N tabs"
+ * name a number the strip contradicts.
+ *
+ * Returns the input by reference when there is nothing to drop (the common case),
+ * since callers memoize on identity.
+ */
+export function visibleAiTabs(tabs: AITab[] | undefined): AITab[] {
+	if (!tabs || tabs.length === 0) return tabs ?? [];
+	return tabs.some(isAiTabHidden) ? tabs.filter((tab) => !isAiTabHidden(tab)) : tabs;
+}
+
+/**
  * Narrow a unifiedTabOrder to the refs a keyboard shortcut may land on: the ones
  * `buildUnifiedTabs` actually renders as a chip.
  *
