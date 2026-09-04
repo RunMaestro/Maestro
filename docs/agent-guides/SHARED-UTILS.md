@@ -518,7 +518,7 @@ Providers translate grants to their own CLI vocabulary in `additionalDirArgs` (`
 | `dirsWithWriteAccess(dirs)` | `(AdditionalDirectory[] \| undefined) => AdditionalDirectory[]` | Grants the agent may write. For writable-root flags (Codex).                                      |
 | `repeatDirFlag(flag, dirs)` | `(string, AdditionalDirectory[]) => string[]`                   | Emit `<flag> <path>` once per dir. Never use a variadic list - it swallows the prompt positional. |
 
-Adding a provider? See [AGENT_SUPPORT.md → Step 3.5](../../AGENT_SUPPORT.md#step-35-additional-directories). `agent-completeness.test.ts` fails CI if `supportsAdditionalDirectories` and `additionalDirArgs` disagree.
+Adding a provider? See [PROVIDER-SUPPORT.md → Step 3.5](../../PROVIDER-SUPPORT.md#step-35-additional-directories). `agent-completeness.test.ts` fails CI if `supportsAdditionalDirectories` and `additionalDirArgs` disagree.
 
 UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - do NOT hand-roll a row editor. It is already wired into NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen. Pass `nativelyEnforced` from the selected agent's capability so the copy doesn't promise enforcement the provider can't deliver.
 

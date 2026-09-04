@@ -78,7 +78,7 @@ const ROOT = resolve(value('--repo') ?? join(dirname(fileURLToPath(import.meta.u
 const DOC_SOURCES = [
 	{ dir: '.', match: /^CLAUDE.*\.md$/ },
 	{ dir: 'docs/agent-guides', match: /\.md$/ },
-	{ dir: '.', match: /^(AGENT_SUPPORT|ARCHITECTURE|CONTRIBUTING)\.md$/ },
+	{ dir: '.', match: /^(PROVIDER-SUPPORT|ARCHITECTURE|CONTRIBUTING)\.md$/ },
 ];
 
 /**

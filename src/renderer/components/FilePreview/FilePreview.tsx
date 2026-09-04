@@ -108,6 +108,15 @@ import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 
+/**
+ * How long to keep re-applying a restored scroll offset while the document
+ * settles. Images decoding, web fonts, markdown reflow and syntax highlighting
+ * all grow the content AFTER the first layout pass, and assigning scrollTop is
+ * clamped to whatever the height is at that instant. This is the hard stop, so
+ * a file that never reaches its saved offset cannot leave an observer running.
+ */
+const SCROLL_RESTORE_SETTLE_MS = 2000;
+
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
 // means small-file previews don't pay the ~135 KB cost of markdown-it +
 // react-virtuoso + DOMPurify until a large file actually triggers it.
@@ -1327,19 +1336,83 @@ export const FilePreview = React.memo(
 			const contentEl = contentRef.current;
 			if (!contentEl || !file?.path) return;
 
-			// Only restore if this is a new file and we have a scroll position to restore
-			if (
+			// `>= 0`, not `> 0`: a file deliberately left at the very top persists
+			// `scrollTop: 0`, and requiring a positive offset made that one position
+			// unrestorable. It lands on the same branch as "no saved position" today,
+			// so the behaviour is identical - but it stops being an accident.
+			const wantsRestore =
 				initialScrollTop !== undefined &&
-				initialScrollTop > 0 &&
-				hasRestoredScrollRef.current !== file.path
-			) {
-				contentEl.scrollTop = initialScrollTop;
-				hasRestoredScrollRef.current = file.path;
-			} else if (hasRestoredScrollRef.current !== file.path) {
-				// New file without saved scroll position - reset to top
-				contentEl.scrollTop = 0;
-				hasRestoredScrollRef.current = file.path;
+				initialScrollTop >= 0 &&
+				hasRestoredScrollRef.current !== file.path;
+
+			if (!wantsRestore) {
+				if (hasRestoredScrollRef.current !== file.path) {
+					// New file without a saved position - reset to top. The container is
+					// reused across files, so leftover scrollTop has to be cleared.
+					contentEl.scrollTop = 0;
+					hasRestoredScrollRef.current = file.path;
+				}
+				return;
 			}
+
+			// Assigning scrollTop is CLAMPED BY THE BROWSER to the element's current
+			// scrollHeight. In a layout effect - before paint, before images decode,
+			// before fonts load, before markdown and syntax highlighting settle - the
+			// content is at its shortest, so a deep offset silently lands short and
+			// the file opens scrolled UP from where it was left.
+			//
+			// So don't latch on the attempt, latch on the RESULT: keep re-applying
+			// while the content grows, and only mark this file done once the offset
+			// actually sticks. `target` is re-derived each pass because scrollHeight
+			// is what changes.
+			const applyScroll = (): boolean => {
+				const el = contentRef.current;
+				if (!el) return true; // Unmounted - stop trying.
+				const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+				const target = Math.min(initialScrollTop, maxScroll);
+				el.scrollTop = target;
+				// Settled once we reached the offset the user actually left, or once
+				// the content genuinely cannot scroll that far.
+				return Math.abs(el.scrollTop - initialScrollTop) <= 1 || target >= maxScroll;
+			};
+
+			if (applyScroll()) {
+				hasRestoredScrollRef.current = file.path;
+				return;
+			}
+
+			// Still short. Re-apply as the content grows, and stop the moment the
+			// user takes over - a restore that keeps yanking the view after they
+			// have started scrolling is worse than the miss it is correcting.
+			let done = false;
+			const finish = () => {
+				if (done) return;
+				done = true;
+				hasRestoredScrollRef.current = file.path;
+				observer?.disconnect();
+				window.clearTimeout(giveUpTimer);
+				contentEl.removeEventListener('wheel', finish);
+				contentEl.removeEventListener('touchstart', finish);
+				contentEl.removeEventListener('keydown', finish);
+			};
+
+			const observer =
+				typeof ResizeObserver !== 'undefined'
+					? new ResizeObserver(() => {
+							if (applyScroll()) finish();
+						})
+					: undefined;
+			observer?.observe(contentEl);
+
+			// Hard stop, so a document that never reaches the saved offset (content
+			// shrank, file changed on disk) cannot leave an observer running.
+			const giveUpTimer = window.setTimeout(finish, SCROLL_RESTORE_SETTLE_MS);
+
+			contentEl.addEventListener('wheel', finish, { passive: true });
+			contentEl.addEventListener('touchstart', finish, { passive: true });
+			contentEl.addEventListener('keydown', finish);
+
+			return finish;
 		}, [file?.path, initialScrollTop]);
 
 		// Auto-focus on mount and when file changes so keyboard shortcuts work immediately
@@ -1689,8 +1762,19 @@ export const FilePreview = React.memo(
 					container.scrollTop += 40;
 				}
 			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Left: Navigate back in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Left: walk back through this tab's breadcrumb history.
+				//
+				// Bail whenever the caret is in a text field, NOT merely when the
+				// markdown editor is open. On macOS Cmd+Left is beginning-of-line, so
+				// the find bar (Cmd+F), the fast/plain text editor, and any other input
+				// rendered inside the preview all need it to stay a caret move. The old
+				// guard tested `isEditableText && markdownEditMode`, and `isEditableText`
+				// is a FILE-TYPE property (`!isImage && !isBinary && !isParquet`), not a
+				// focus check - so typing in the find bar and reaching for Cmd+Left
+				// navigated to the previous file instead of jumping to the line start.
+				// Same rule the browser back/forward path already applies in
+				// useMainKeyboardHandler.
+				if (isTextInputTarget(e.target)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoBack && onNavigateBack) {
@@ -1698,8 +1782,9 @@ export const FilePreview = React.memo(
 					onShortcutUsed?.('filePreviewBack');
 				}
 			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Right: Navigate forward in history (disabled in edit mode)
-				if (isEditableText && markdownEditMode) return;
+				// Cmd+Right: forward through the breadcrumb. Same caret rule as Cmd+Left
+				// above - end-of-line has to keep working inside any text field.
+				if (isTextInputTarget(e.target)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoForward && onNavigateForward) {

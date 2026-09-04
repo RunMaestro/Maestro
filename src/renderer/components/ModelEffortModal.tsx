@@ -581,8 +581,17 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 								{/* items-start, not items-end: '(default)' has no level bar, and
 								    aligning on the bar baseline would drop its pill below the
 								    rest of the row. Every option pads to the same total height
-								    instead, so the pills share a line and the bars share a floor. */}
-								<div className="flex items-start justify-center gap-1.5 flex-wrap">
+								    instead, so the pills share a line and the bars share a floor.
+
+								    w-max, not w-full: the scale reads as a scale only while it is
+								    one line, and a provider with seven stops is wider than the
+								    wheel's column - so the row sizes to its content and breaks
+								    out of that column rather than folding 'max' and 'ultra' onto
+								    a second row. It stays exactly as wide as the pills, so the
+								    scrim either side of it still closes the modal, and the 92vw
+								    cap is what lets wrapping come back on a window too narrow to
+								    hold the line at all. */}
+								<div className="flex items-start justify-center gap-1.5 flex-wrap w-max max-w-[92vw]">
 									{hasDefaultEffort && (
 										<>
 											{renderEffortOption('')}
