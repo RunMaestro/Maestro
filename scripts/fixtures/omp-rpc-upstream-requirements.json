@@ -1,0 +1,144 @@
+{
+	"schemaVersion": 1,
+	"protocol": "OMP RPC v2",
+	"authority": "OMP owns Worker identity, hierarchy, lifecycle, command ordering, acknowledgement, effect, and terminal state",
+	"requirements": [
+		{
+			"id": "G1",
+			"name": "host-created workers",
+			"statusIn18.1.6": "missing",
+			"request": {
+				"type": "create_worker",
+				"required": ["id", "task"],
+				"optional": ["parentWorkerId", "model", "thinkingLevel", "tools"]
+			},
+			"response": {
+				"command": "create_worker",
+				"successDataRequired": [
+					"commandId",
+					"workerId",
+					"providerWorkerId",
+					"parentWorkerId",
+					"status"
+				]
+			},
+			"events": [
+				{
+					"type": "worker_created",
+					"required": ["commandId", "workerId", "providerWorkerId", "parentWorkerId", "sequence"]
+				},
+				{
+					"type": "worker_lifecycle_changed",
+					"required": ["workerId", "status", "sequence", "isTerminal"]
+				}
+			],
+			"invariants": [
+				"Response acknowledgement is not creation effect.",
+				"worker_created is the effect observation for the correlated commandId.",
+				"Worker identity and parent lineage are stable for the Session.",
+				"Duplicate commandId is idempotent or returns a typed duplicate-command error without creating another Worker.",
+				"An unknown parent fails before acknowledgement."
+			]
+		},
+		{
+			"id": "G2",
+			"name": "direct worker steering and messaging",
+			"statusIn18.1.6": "missing",
+			"request": {
+				"type": "command_worker",
+				"required": ["id", "workerId", "action"],
+				"optional": ["message", "images", "expectedWorkerRevision"],
+				"actionEnum": ["message", "steer", "follow_up", "interrupt", "resume", "cancel", "kill"]
+			},
+			"response": {
+				"command": "command_worker",
+				"successDataRequired": ["commandId", "workerId", "action", "acknowledged"]
+			},
+			"events": [
+				{
+					"type": "worker_command_effect",
+					"required": ["commandId", "workerId", "action", "outcome", "sequence"],
+					"outcomeEnum": [
+						"effectObserved",
+						"rejected",
+						"failed",
+						"ambiguous",
+						"cancelled",
+						"stopped"
+					]
+				}
+			],
+			"errors": [
+				"unknown_worker",
+				"stale_worker_revision",
+				"unsupported_action",
+				"worker_not_mutable",
+				"session_busy"
+			],
+			"invariants": [
+				"The addressed Worker, not its root Session, receives the action.",
+				"Acknowledgement never implies effect.",
+				"Late completion after cancel remains separately observable and ordered.",
+				"A stale or terminal Worker fails closed.",
+				"Every mutation carries a host-provided id and provider-correlated commandId."
+			]
+		},
+		{
+			"id": "G3",
+			"name": "completed worker transcript visibility",
+			"statusIn18.1.6": "documented-but-not-observed",
+			"request": {
+				"type": "get_subagent_messages",
+				"required": ["id"],
+				"optional": ["subagentId", "sessionFile", "fromByte"]
+			},
+			"response": {
+				"command": "get_subagent_messages",
+				"successDataRequired": ["workerId", "messages", "entries", "nextByte", "workerRevision"]
+			},
+			"events": [
+				{
+					"type": "worker_transcript_updated",
+					"required": ["workerId", "workerRevision", "nextByte", "sequence"]
+				}
+			],
+			"errors": ["unknown_worker", "stale_worker_revision", "transcript_unavailable"],
+			"invariants": [
+				"Exactly one of subagentId or sessionFile selects the Worker transcript.",
+				"After terminal Worker lifecycle and root completion, the correlated completed Worker message is observable.",
+				"workerRevision and nextByte provide monotonic incremental reads without private file access.",
+				"A response acknowledgement is correlated to the selected Worker and workerRevision."
+			]
+		},
+		{
+			"id": "G5",
+			"name": "deterministic abort-and-prompt completion",
+			"statusIn18.1.6": "requires-live-proof",
+			"request": {
+				"type": "abort_and_prompt",
+				"required": ["id", "message"],
+				"optional": ["images"]
+			},
+			"response": {
+				"command": "abort_and_prompt",
+				"successDataRequired": ["agentInvoked", "abortedTurnId", "replacementTurnId"]
+			},
+			"events": [
+				{
+					"type": "prompt_result",
+					"required": ["id", "agentInvoked", "replacementTurnId"]
+				},
+				{
+					"type": "agent_end",
+					"required": ["turnId", "isTerminal"]
+				}
+			],
+			"invariants": [
+				"The response or prompt_result always identifies whether replacement execution began.",
+				"The aborted and replacement turns have distinct stable identities.",
+				"Terminal completion is correlated to replacementTurnId, never inferred from the next unscoped agent_end.",
+				"A consume-before-ack disconnect returns an authoritative status or explicit ambiguous outcome; hosts never retry blindly."
+			]
+		}
+	]
+}

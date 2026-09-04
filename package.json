@@ -47,6 +47,8 @@
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/ && eslint -c eslint.dashes.config.mjs src/__tests__ scripts",
 		"lint:doc-refs": "node scripts/check-doc-refs.mjs",
+		"test:omp-protocol": "node --test scripts/omp-rpc-protocol.test.mjs scripts/omp-rpc-conformance.test.mjs",
+		"probe:omp-protocol": "node scripts/omp-rpc-conformance.mjs",
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
 		"format:all": "prettier --write .",
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
