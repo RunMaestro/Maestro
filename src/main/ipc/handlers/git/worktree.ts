@@ -19,6 +19,7 @@ import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktr
 import { runWorktreeSetupScript } from '../../../utils/worktree-setup-script';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { LOG_CONTEXT, handlerOpts } from './shared';
+import { markWorktreeCreatedByMaestro } from './worktreeCreationMarks';
 
 /**
  * Look up the worktree path currently checked out on the given branch
@@ -158,6 +159,16 @@ export function registerWorktreeHandlers(): void {
 				sshRemoteId?: string,
 				baseBranch?: string
 			) => {
+				// Claim the path BEFORE `git worktree add` runs. The directory watcher
+				// fires the moment the directory appears, and `worktree:discovered` is
+				// broadcast to EVERY renderer - each Electron window and every connected
+				// web-desktop client. Only the renderer that asked for this worktree
+				// knows it is about to build the child session for it, so without a
+				// mark the others each mint a rival child at the same path under the
+				// same parent (issue #1506). Marking here suppresses the event for all
+				// of them; the requesting renderer creates the child directly.
+				markWorktreeCreatedByMaestro(worktreePath);
+
 				// SSH remote: dispatch to remote git operations
 				if (sshRemoteId) {
 					const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
@@ -331,6 +342,9 @@ export function registerWorktreeHandlers(): void {
 					if (isWorktreeAlreadyUsedError(errMsg)) {
 						const existingPath = await findLocalWorktreeForBranch(mainRepoCwd, branchName);
 						if (existingPath) {
+							// The caller opens this path instead of the one it requested, so
+							// it needs the same suppression the requested path already got.
+							markWorktreeCreatedByMaestro(existingPath);
 							return {
 								success: true,
 								created: false,

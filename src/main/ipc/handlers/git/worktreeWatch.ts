@@ -13,6 +13,7 @@ import { readDirRemote } from '../../../utils/remote-fs';
 import { captureException } from '../../../utils/sentry';
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
 import { LOG_CONTEXT, handlerOpts, GitHandlerDependencies } from './shared';
+import { isWorktreeCreatedByMaestro } from './worktreeCreationMarks';
 
 /**
  * Directory-scan failures that are environmental rather than bugs: the path was
@@ -331,6 +332,18 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 						const timer = setTimeout(async () => {
 							worktreeWatchDebounceTimers.delete(debounceKey);
 
+							// Maestro just created this worktree itself (`git:worktreeSetup`),
+							// and the renderer that asked for it is already building the child
+							// session. This event is broadcast to every renderer - each
+							// Electron window and every web-desktop bridge client - so letting
+							// it through has each of the others mint a rival child at the same
+							// path under the same parent (issue #1506). Suppress it here, at
+							// the one place all of them share.
+							if (isWorktreeCreatedByMaestro(dirPath)) {
+								logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro`);
+								return;
+							}
+
 							// Check if this new directory is a git worktree
 							const isInsideWorkTree = await execFileNoThrow(
 								'git',
@@ -367,6 +380,15 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 								logger.warn(
 									`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${resolvedDir} toplevel=${resolvedToplevel})`
 								);
+								return;
+							}
+
+							// Re-check against the realpath: a symlinked basePath (or an
+							// NTFS junction) means the watcher's `dirPath` and the path the
+							// renderer asked `worktreeSetup` for can be spellings of the same
+							// directory, and only one of them is marked.
+							if (isWorktreeCreatedByMaestro(resolvedDir)) {
+								logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro (realpath)`);
 								return;
 							}
 
