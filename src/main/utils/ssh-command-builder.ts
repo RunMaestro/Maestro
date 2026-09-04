@@ -12,6 +12,7 @@ import { shellEscape, buildShellCommand } from './shell-escape';
 import { expandTilde } from '../../shared/pathUtils';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
+import { buildSshOptionArgs } from '../../shared/sshOptions';
 import { parseDataUrl, buildImagePromptPrefix } from '../process-manager/utils/imageUtils';
 
 /**
@@ -173,19 +174,6 @@ export interface RemoteCommandOptions {
 }
 
 /**
- * Default SSH options for all connections.
- * These options ensure non-interactive, key-based authentication.
- */
-const DEFAULT_SSH_OPTIONS: Record<string, string> = {
-	BatchMode: 'yes', // Disable password prompts (key-only)
-	StrictHostKeyChecking: 'accept-new', // Auto-accept new host keys
-	ConnectTimeout: '10', // Connection timeout in seconds
-	ClearAllForwardings: 'yes', // Disable port forwarding from SSH config (avoids "Address already in use" errors)
-	RequestTTY: 'no', // Default: do NOT request a TTY. We only force a TTY for specific remote modes (e.g., --print)
-	LogLevel: 'ERROR', // Suppress SSH warnings like "Pseudo-terminal will not be allocated..."
-};
-
-/**
  * Build the remote shell command string from command, args, cwd, and env.
  *
  * This function constructs a properly escaped shell command that:
@@ -330,10 +318,10 @@ export async function buildSshCommandWithStdin(
 		args.push('-i', expandTilde(config.privateKeyPath));
 	}
 
-	// Default SSH options - but RequestTTY is always 'no' for stdin mode
-	for (const [key, value] of Object.entries(DEFAULT_SSH_OPTIONS)) {
-		args.push('-o', `${key}=${value}`);
-	}
+	// Default SSH options plus this remote's overrides. RequestTTY stays 'no'
+	// for stdin mode (a TTY would interfere with piping the script), which the
+	// reserved-key rule in sshOptions.ts guarantees no override can change.
+	args.push(...buildSshOptionArgs(config.sshOptions));
 
 	// Port specification
 	if (!config.useSshConfig || config.port !== 22) {
@@ -596,17 +584,11 @@ export async function buildSshCommand(
 		args.push('-i', expandTilde(config.privateKeyPath));
 	}
 
-	// Default SSH options for non-interactive operation
-	// These are always needed to ensure BatchMode behavior. If `forceTty` is true,
-	// override RequestTTY to `force` so SSH will allocate a TTY even in non-interactive contexts.
-	for (const [key, value] of Object.entries(DEFAULT_SSH_OPTIONS)) {
-		// If we will force a TTY for this command, override the RequestTTY option
-		if (key === 'RequestTTY' && forceTty) {
-			args.push('-o', `${key}=force`);
-		} else {
-			args.push('-o', `${key}=${value}`);
-		}
-	}
+	// Default SSH options for non-interactive operation, plus this remote's
+	// overrides. These are always needed to ensure BatchMode behavior. When
+	// `forceTty` is true RequestTTY becomes `force` so SSH allocates a TTY even
+	// in non-interactive contexts.
+	args.push(...buildSshOptionArgs(config.sshOptions, { forceTty }));
 
 	// Port specification - only add if not default and not using SSH config
 	// (when using SSH config, let SSH config handle the port)
@@ -684,6 +666,10 @@ export async function buildSshCommand(
 		port: config.port,
 		useSshConfig: config.useSshConfig,
 		privateKeyPath: config.privateKeyPath ? '***configured***' : '(using SSH config/agent)',
+		// Per-remote -o overrides run arbitrary local programs (ProxyCommand) and
+		// outlive the session that wrote them, so name them in the log rather than
+		// leaving them buried in the argv.
+		sshOptionOverrides: config.sshOptions,
 		remoteCommand,
 		wrappedCommand,
 		sshPath,

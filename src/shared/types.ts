@@ -829,6 +829,23 @@ export interface SshRemoteConfig {
 	/** Environment variables to set on remote */
 	remoteEnv?: Record<string, string>;
 
+	/**
+	 * Extra `ssh -o KEY=VALUE` options for this remote, merged over Maestro's
+	 * defaults by `resolveSshOptions()` in `src/shared/sshOptions.ts`.
+	 *
+	 * This is how an exotic transport is expressed without a field per
+	 * transport: a `ProxyCommand` through tailcat / cloudflared / Teleport, a
+	 * `ProxyJump` bastion, or simply a `ConnectTimeout` longer than the default
+	 * 10s that a tunnel needs to finish its handshake. It is also the only way
+	 * to change one of Maestro's defaults, since a command-line `-o` outranks
+	 * anything in `~/.ssh/config`.
+	 *
+	 * `RequestTTY` is reserved: it is derived per command from whether the
+	 * remote agent speaks stream-json, so pinning it per host corrupts the
+	 * stream. Overrides for it are rejected on write and ignored on read.
+	 */
+	sshOptions?: Record<string, string>;
+
 	/** Enable this remote configuration */
 	enabled: boolean;
 
