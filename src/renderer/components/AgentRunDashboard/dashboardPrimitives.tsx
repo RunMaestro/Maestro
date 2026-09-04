@@ -7,7 +7,7 @@ export function DetailLine({ label, value }: { label: string; value: unknown }) 
 	if (!rendered) return null;
 	return (
 		<div className="min-w-0">
-			<div className="text-[10px] uppercase tracking-[0.16em] opacity-60">{label}</div>
+			<div className="text-2xs uppercase tracking-[0.16em] opacity-60">{label}</div>
 			<div className="text-xs break-words">{rendered}</div>
 		</div>
 	);
@@ -24,7 +24,7 @@ export function Pill({
 }) {
 	return (
 		<span
-			className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
+			className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs-plus font-medium"
 			style={{
 				borderColor: tone ?? theme.colors.border,
 				color: tone ?? theme.colors.textDim,
@@ -108,7 +108,7 @@ export function JsonBox({ theme, title, value }: { theme: Theme; title: string; 
 		<div className="rounded-xl border p-3" style={{ borderColor: theme.colors.border }}>
 			<h4 className="text-sm font-semibold">{title}</h4>
 			<pre
-				className="mt-2 max-h-44 overflow-auto rounded p-2 text-[11px]"
+				className="mt-2 max-h-44 overflow-auto rounded p-2 text-xs-plus"
 				style={{ backgroundColor: theme.colors.bgSidebar, color: theme.colors.textDim }}
 			>
 				{JSON.stringify(value, null, 2)}

@@ -157,7 +157,7 @@ export const TocOverlay = React.memo(function TocOverlay({
 						>
 							Contents
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							{entries.length} headings
 						</span>
 					</div>

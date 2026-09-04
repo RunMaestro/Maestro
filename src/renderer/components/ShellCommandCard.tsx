@@ -132,7 +132,7 @@ export function ShellCommandCard({
 			    intent. */}
 			{shell.request && (
 				<div
-					className="flex items-start gap-1.5 px-3 pt-2 text-[11px] select-text"
+					className="flex items-start gap-1.5 px-3 pt-2 text-xs-plus select-text"
 					style={{ color: theme.colors.textDim }}
 					data-testid="shell-command-request"
 				>
@@ -202,7 +202,7 @@ export function ShellCommandCard({
 
 				<div className="ml-auto flex items-center gap-2 shrink-0">
 					<span
-						className="text-[10px] hidden sm:inline"
+						className="text-2xs hidden sm:inline"
 						style={{ color: theme.colors.textDim }}
 						title={shell.remoteName ? `${shell.remoteName}:${shell.cwd}` : shell.cwd}
 					>
@@ -217,7 +217,7 @@ export function ShellCommandCard({
 								type="button"
 								onClick={handleStop}
 								disabled={stopping}
-								className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] hover:opacity-80 transition-opacity disabled:opacity-50"
+								className="flex items-center gap-1 px-2 py-0.5 rounded border text-2xs hover:opacity-80 transition-opacity disabled:opacity-50"
 								style={{
 									borderColor: theme.colors.border,
 									color: theme.colors.textMain,
@@ -230,7 +230,7 @@ export function ShellCommandCard({
 						</>
 					) : (
 						<span
-							className="flex items-center gap-1 text-[10px] tabular-nums"
+							className="flex items-center gap-1 text-2xs tabular-nums"
 							style={{ color: statusColor }}
 						>
 							{shell.status === 'cancelled' ? (
@@ -282,7 +282,7 @@ export function ShellCommandCard({
 								}}
 								data-testid="shell-command-delete-confirm"
 							>
-								<span className="text-[10px] px-0.5" style={{ color: theme.colors.error }}>
+								<span className="text-2xs px-0.5" style={{ color: theme.colors.error }}>
 									Delete?
 								</span>
 								<button
@@ -291,7 +291,7 @@ export function ShellCommandCard({
 										onSetDeleteConfirmLogId?.(null);
 										onDelete?.(log.id);
 									}}
-									className="px-1.5 py-0.5 rounded text-[10px] font-medium hover:opacity-80"
+									className="px-1.5 py-0.5 rounded text-2xs font-medium hover:opacity-80"
 									style={{ backgroundColor: theme.colors.error, color: '#fff' }}
 									data-testid="shell-command-delete-yes"
 								>
@@ -300,7 +300,7 @@ export function ShellCommandCard({
 								<button
 									type="button"
 									onClick={() => onSetDeleteConfirmLogId?.(null)}
-									className="px-1.5 py-0.5 rounded text-[10px] hover:opacity-80"
+									className="px-1.5 py-0.5 rounded text-2xs hover:opacity-80"
 									style={{ color: theme.colors.textDim }}
 									data-testid="shell-command-delete-no"
 								>
@@ -347,7 +347,7 @@ export function ShellCommandCard({
 
 			{shell.truncated && (
 				<div
-					className="px-3 py-1 text-[10px] border-t"
+					className="px-3 py-1 text-2xs border-t"
 					style={{ color: theme.colors.textDim, borderColor: theme.colors.border }}
 				>
 					Output truncated - the command produced more than Maestro keeps in the transcript.

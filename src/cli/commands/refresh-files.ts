@@ -5,6 +5,16 @@ import { refreshFileTreeFor } from '../services/file-tree-refresh';
 
 interface RefreshFilesOptions {
 	agent?: string;
+	/**
+	 * Accepted and intentionally ignored: this verb is already quiet. It renders
+	 * no notice and moves no selection - the Files panel it refreshes is only
+	 * drawn for the agent already on screen - so there is nothing for the flag to
+	 * suppress. It exists because the guidance is "pass `--background` unless the
+	 * user asked to be taken there", and commander rejects an unknown option, so a
+	 * verb that refused the flag would turn that habit into a failed command. See
+	 * `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts`.
+	 */
+	background?: boolean;
 	json?: boolean;
 }
 

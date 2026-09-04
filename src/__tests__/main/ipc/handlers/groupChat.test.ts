@@ -249,6 +249,7 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Test Chat',
 				'claude-code',
+				undefined,
 				undefined
 			);
 			expect(groupChatModerator.spawnModerator).toHaveBeenCalledWith(mockChat, mockProcessManager);
@@ -283,7 +284,36 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Config Chat',
 				'claude-code',
-				moderatorConfig
+				moderatorConfig,
+				undefined
+			);
+		});
+
+		it('should forward the idle-agent requirement to storage', async () => {
+			const mockChat: GroupChat = {
+				id: 'gc-idle',
+				name: 'Idle Chat',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: '',
+				participants: [],
+				logPath: '/logs/idle',
+				imagesDir: '/images/idle',
+				requireIdleParticipants: false,
+			};
+			vi.mocked(groupChatStorage.createGroupChat).mockResolvedValue(mockChat);
+			vi.mocked(groupChatModerator.spawnModerator).mockResolvedValue('session-idle');
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(mockChat);
+
+			const handler = handlers.get('groupChat:create');
+			await handler!({} as any, 'Idle Chat', 'claude-code', undefined, false);
+
+			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
+				'Idle Chat',
+				'claude-code',
+				undefined,
+				false
 			);
 		});
 

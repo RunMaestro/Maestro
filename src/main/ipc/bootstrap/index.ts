@@ -437,7 +437,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions
 	setGetSessionsCallback(() =>
-		mapSessionsForMentions(deps.sessionsStore.get('sessions', []), getSshRemoteById)
+		mapSessionsForMentions(
+			deps.sessionsStore.get('sessions', []),
+			getSshRemoteById,
+			deps.getProcessManager()
+		)
 	);
 
 	// Set up callback for group chat router to lookup custom env vars for agents

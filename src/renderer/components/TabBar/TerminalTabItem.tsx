@@ -379,7 +379,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			{/* Shortcut hint badge */}
 			{shortcutHint !== null && shortcutHint !== undefined && (
 				<span
-					className="w-4 h-4 flex items-center justify-center rounded text-[10px] font-medium shrink-0 opacity-50"
+					className="w-4 h-4 flex items-center justify-center rounded text-2xs font-medium shrink-0 opacity-50"
 					style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 				>
 					{shortcutHint}
@@ -412,7 +412,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				<button
 					type="button"
 					onClick={handleCoworkingPillClick}
-					className="px-1 py-px rounded text-[9px] font-mono shrink-0 transition-colors hover:bg-white/10"
+					className="px-1 py-px rounded text-3xs font-mono shrink-0 transition-colors hover:bg-white/10"
 					title={`Coworking id - click to copy "${coworkingPillId}"`}
 					style={{
 						backgroundColor: theme.colors.bgActivity,
@@ -427,7 +427,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			{/* Exit code badge - only when exited with non-zero code */}
 			{tab.state === 'exited' && (tab.exitCode ?? 0) !== 0 && (
 				<span
-					className="px-1 rounded text-[9px] font-semibold shrink-0"
+					className="px-1 rounded text-3xs font-semibold shrink-0"
 					style={{
 						backgroundColor: theme.colors.error + '30',
 						color: theme.colors.error,

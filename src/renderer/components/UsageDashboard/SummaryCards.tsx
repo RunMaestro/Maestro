@@ -528,7 +528,7 @@ export const ContextUsageBar = memo(function ContextUsageBar({
 	return (
 		<div className="w-full" data-testid="context-usage-bar">
 			<div
-				className="flex items-center justify-between text-[10px] mb-1"
+				className="flex items-center justify-between text-2xs mb-1"
 				style={{ color: theme.colors.textDim }}
 			>
 				<span className="uppercase tracking-wide">Context</span>
@@ -600,7 +600,7 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 
 	return (
 		<div className="flex flex-col" data-testid="token-cost-badge">
-			<div className="text-[10px] uppercase tracking-wide" style={{ color: theme.colors.textDim }}>
+			<div className="text-2xs uppercase tracking-wide" style={{ color: theme.colors.textDim }}>
 				Cycle Tokens
 			</div>
 			<div className="flex items-baseline gap-2 mt-0.5">
@@ -622,7 +622,7 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 			</div>
 			{breakdown.length > 0 && (
 				<div
-					className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[9px]"
+					className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-3xs"
 					style={{ color: theme.colors.textDim }}
 					data-testid="token-cost-breakdown"
 				>
@@ -754,7 +754,7 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 					</div>
 					{isThinking && (
 						<div
-							className="mt-3 inline-flex items-center gap-1.5 text-[11px] animate-pulse"
+							className="mt-3 inline-flex items-center gap-1.5 text-xs-plus animate-pulse"
 							style={{ color: theme.colors.warning }}
 							data-testid="realtime-thinking-elapsed"
 							aria-label={`Thinking for ${formatDurationWords(elapsedMs)}`}
@@ -766,7 +766,7 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 				</div>
 			</div>
 			<div
-				className="mt-3 pt-3 border-t flex items-center gap-1.5 text-[10px]"
+				className="mt-3 pt-3 border-t flex items-center gap-1.5 text-2xs"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				data-testid="realtime-active-count"
 			>
@@ -848,7 +848,7 @@ export const SummaryCards = memo(function SummaryCards({
 
 	const statusBreakdown = statusCounts ? (
 		<div
-			className="flex items-center gap-2 mt-1.5 text-[10px]"
+			className="flex items-center gap-2 mt-1.5 text-2xs"
 			style={{ color: theme.colors.textDim }}
 			data-testid="agent-status-breakdown"
 			aria-label={`${statusCounts.busy} busy, ${statusCounts.idle} idle, ${statusCounts.error} errors${
@@ -963,7 +963,7 @@ export const SummaryCards = memo(function SummaryCards({
 			extra:
 				usageAgg.totalTokens > 0 ? (
 					<div
-						className="text-[10px] mt-1 uppercase tracking-wide"
+						className="text-2xs mt-1 uppercase tracking-wide"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatTokensCompact(usageAgg.inputTokens)} in /{' '}
@@ -1010,7 +1010,7 @@ export const SummaryCards = memo(function SummaryCards({
 			extra:
 				streaks.max > 0 ? (
 					<div
-						className="text-[10px] mt-1 uppercase tracking-wide"
+						className="text-2xs mt-1 uppercase tracking-wide"
 						style={{ color: theme.colors.textDim }}
 					>
 						Best: {streaks.max}d
@@ -1023,7 +1023,7 @@ export const SummaryCards = memo(function SummaryCards({
 			value: bestDay ? formatNumber(bestDay.count) : '-',
 			extra: bestDay ? (
 				<div
-					className="text-[10px] mt-1 uppercase tracking-wide"
+					className="text-2xs mt-1 uppercase tracking-wide"
 					style={{ color: theme.colors.textDim }}
 				>
 					{formatShortDate(bestDay.date)}
@@ -1062,7 +1062,7 @@ export const SummaryCards = memo(function SummaryCards({
 						mergeDelegated
 						height={4}
 					/>
-					<div className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+					<div className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
 						{delegatedPct}% ran without you
 					</div>
 				</div>

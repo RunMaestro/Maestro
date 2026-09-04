@@ -51,12 +51,12 @@ This guide has been split into focused sub-documents for progressive disclosure:
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 
-Grep-verified 2026-04-10. Import from these canonical locations:
+Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is the INDEX: name, canonical symbols, home file. The full entry for each - the failure it replaced, its invariants, and the traps that made the duplicates wrong - lives in [CANONICAL-UTILITIES.md](docs/agent-guides/CANONICAL-UTILITIES.md). If a name below matches what you are about to write, import the canonical one; read its full entry before extending or working around it.
 
-- **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
+- **ID generation:** `generateId()`, `generateUUID()` in `src/renderer/utils/ids.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
-- **Format numbers:** `formatNumber()` (compact: `1.2M`) and `formatCount()` (exact, grouped: `1,204,993`) in `src/shared/formatters.ts`. Pick by whether the digits ARE the information - a badge wants the magnitude, a filtered row count wants the number.
-- **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
+- **Format numbers:** `formatNumber()`, `formatCount()` in `src/shared/formatters.ts`
+- **Format tokens:** `formatTokens()`, `formatTokensCompact()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts` (re-exported from `formatters.ts`). `humanizeDuration(ms, opts)` is the one engine; `formatDurationHuman` / `Compact` / `Verbose` / `Parts` / `Decimal` / `Long` / `Words`, plus `formatActiveTime`, `formatElapsedTime`, `formatElapsedTicker` (thinking pill: `"0m 3s"`), and `formatElapsedTickerCompact` (the same ladder without the padded lead, for a counter inside a chip: `"3s"`, `"20m 4s"`), are presets over it. **Never hand-roll another `Math.floor(ms / 86400000)` ladder** - a dozen near-identical copies had already drifted apart on where the ladder stops, whether a zero segment is padded (`"2h 0m"` vs `"2h"`), and whether a countdown rounds up. Those are options (`units`, `maxUnits`, `style`, `keepZeroUnits`, `keepLeadingZero`, `adjacentUnits`, `round`, `fallback`), so pick a preset or call the engine. Unit sizes are in `DURATION_MS` - don't redeclare `const DAY = 86400000`. See [SHARED-UTILS.md → Durations](docs/agent-guides/SHARED-UTILS.md#durations-srcshareddurationts---both).
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts - common mistake). Two-decimal `"123.45ms"` / `"1.23s"` for perf traces only; it caps at seconds, so a multi-day span comes out as a giant seconds float. For anything user-facing use `src/shared/duration.ts`.
@@ -170,8 +170,11 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `remarkMaestroMarkers` (`src/renderer/components/Markdown/remarkMaestroMarkers.ts`) + `<MarkerPill>`. All three markers are HTML comments, so they render as NOTHING - and two of them silently block the next run (a live HITL gate pauses it, a halt marker makes Auto Run refuse to start), which presents to the user as "I pressed Run and nothing happened". `scanMaestroMarkers` is the rendering side and reports each marker's STATUS (`live` / `spent` / `invalid`), because presence is not the useful question: a gate above an unchecked task and one above a checked task are a character apart in the source and only the first stops the run. Do NOT hand-roll another marker regex - the engines and the pill must agree, or the pill sends the user to remove the wrong marker. Pills are wired ONLY into `createMarkdownComponents` (the document map); chat builds its own map, so an agent explaining the syntax in a message keeps rendering as prose rather than claiming a setting exists. One deliberate asymmetry: `detectHaltMarker` is NOT fence-aware (the engine must never miss a halt an agent mis-indented) while `scanMaestroMarkers` is (a pill on a documentation example would be a lie).
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`. Every Auto Run document scanner (task counting, HITL gates, model hints, human-step detection) rides this one walk, in `shared/` because the CLI engine cannot import from `src/renderer`. Do NOT hand-roll another line loop: any scanner that forgets the fence bookkeeping fires on a playbook that merely DOCUMENTS the marker syntax, and the copies drift on closing-fence length, tilde fences, and CRLF.
 - **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`. One cycle order serves the composer's Thinking chip and `maestro-cli tab thinking <tab-id> cycle`, so a click and a CLI cycle cannot disagree about what comes next - do NOT hand-roll another `['off', 'on', 'sticky']` ladder or an inline `indexOf(...) + 1` step. Narrow anything arriving from the CLI or the web bridge through `asThinkingMode()` rather than casting: `'off'` is a truthy string, and an unrecognized mode written straight into a tab is a permanently wrong chip rather than a rejected command.
+- **Whether an agent is working right now (main process):** `isAgentBusy(session, processManager)` / `isAiTabProcessActive(processManager, agentId, tabId, isActiveTab)` in `src/main/utils/agent-busy.ts`. LIVE liveness, not the persisted state: persistence rewrites every session and tab to `'idle'` on the way to disk, so the stored record can never say whether an agent is mid-turn. It also folds in `isSessionBusyWithCli`, because a playbook run holds the same working directory a Group Chat delegation would hand work to. Do NOT hand-roll another `processManager.get(`${id}-ai-${tabId}`)` probe: the ACTIVE tab also answers to the legacy bare `{agentId}-ai` id that older spawn paths still use, and a copy that forgets it reports a busy agent as free.
+- **Loading a LOCAL file tree:** `walkLocalFileTree()` / `loadFileTree()` in `src/main/utils/file-tree-walk.ts`. One main-process walk per refresh instead of a directory-at-a-time IPC round trip from the renderer.
+- **`{{template}}` variable autocomplete:** `useTemplateAutocompleteEngine()` in `src/renderer/hooks/input/useTemplateAutocompleteEngine.ts` owns the state machine (when the popup opens, what the query is, which key does what, what text replaces what); the text surface is supplied by a small `TemplateAutocompleteTarget` binding. Two exist: `useTemplateAutocomplete()` for a plain `<textarea>` (Auto Run, the command panels) and `useEditorTemplateAutocomplete()` for the CodeMirror `MarkdownEditor` (Maestro Prompts). Do NOT hand-roll a second `{{` detector for a new editor - write a target for it.
 
-If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add it to the relevant guide in `docs/agent-guides/` so the next person can find it.
+If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add the full entry to [CANONICAL-UTILITIES.md](docs/agent-guides/CANONICAL-UTILITIES.md) and a one-line index entry above so the next person can find it.
 
 The tracker at [DEDUP-TRACKER.md](docs/agent-guides/DEDUP-TRACKER.md) lists all known duplication findings.
 
@@ -179,15 +182,15 @@ The tracker at [DEDUP-TRACKER.md](docs/agent-guides/DEDUP-TRACKER.md) lists all 
 
 ## Agent Behavioral Guidelines
 
-Core behaviors for effective collaboration. Failures here cause the most rework.
+Core behaviors for effective collaboration. Failures here cause the most rework. These are judgment calls, not scripts: state what you decided and why, then keep moving - blocking on questions is the exception, reserved for choices that are expensive to reverse.
 
-### Surface Assumptions Early
+### Surface Assumptions That Matter
 
-Before implementing non-trivial work, explicitly state assumptions. Never silently fill in ambiguous requirements - the most common failure mode is guessing wrong and running with it. Format: "Assumptions: 1) X, 2) Y. Correct me now or I proceed."
+If a wrong guess would materially change the work, name that assumption in one sentence and say which reading you took. Do not enumerate assumptions for their own sake - a list format invites inventing filler to complete it, and manufactured assumptions are worse than none.
 
-### Manage Confusion Actively
+### Name Conflicts, Then Proceed
 
-When encountering inconsistencies, conflicting requirements, or unclear specs: **STOP**. Name the specific confusion, present the tradeoff, and wait for resolution. Bad: silently picking one interpretation. Good: "I see X in file A but Y in file B - which takes precedence?"
+On inconsistent or conflicting requirements ("X in file A but Y in file B"), name the conflict, state which interpretation you chose and why, and continue. Stop and ask only when both readings are plausible AND choosing wrong is expensive to undo. Silently picking one is the failure; halting on every ambiguity is the overcorrection.
 
 ### Push Back When Warranted
 
@@ -195,15 +198,15 @@ Not a yes-machine. When an approach has clear problems: point out the issue dire
 
 ### Enforce Simplicity
 
-Natural tendency is to overcomplicate - actively resist. Before finishing: Can this be fewer lines? Are abstractions earning their complexity? Would a senior dev say "why didn't you just..."? Prefer the boring, obvious solution.
+Resist overcomplicating: abstractions must earn their complexity, and the boring, obvious solution usually wins. This is about structure, not line count - routing through a canonical shared utility is correct even when inlining would be shorter.
 
 ### Maintain Scope Discipline
 
-Touch only what's asked. Do NOT: remove comments you don't understand, "clean up" orthogonal code, refactor adjacent systems as side effects, or delete seemingly-unused code without approval. Surgical precision, not unsolicited renovation.
+Deliver what was asked at the scope asked. A bug or cleanup opportunity you trip over is worth one line in your summary, not a detour: do not remove comments you don't understand, refactor adjacent systems as side effects, or widen a task because something nearby looks fixable. If the discovery genuinely blocks the task, say so and fix only the blocking part.
 
 ### Dead Code Hygiene
 
-After refactoring: identify now-unreachable code, list it explicitly, ask "Should I remove these now-unused elements: [list]?" Don't leave corpses. Don't delete without asking.
+After refactoring, identify now-unreachable code and list it in your summary. Delete it in the same change when it is unambiguously dead (only your refactor referenced it); list it and leave it when there is any doubt. Don't leave corpses silently, and don't silently delete code you merely believe is unused.
 
 ### Validate Before Push
 

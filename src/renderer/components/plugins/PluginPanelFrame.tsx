@@ -146,7 +146,7 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<div
-				className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] shrink-0 select-none"
+				className="flex items-center gap-1.5 px-2.5 py-1 text-xs-plus shrink-0 select-none"
 				style={{ color: theme.colors.textDim, borderBottom: `1px solid ${theme.colors.border}` }}
 				title={`This panel is provided by the "${panel.pluginId}" plugin`}
 			>

@@ -43,7 +43,7 @@ function CountPill({
 }) {
 	return (
 		<span
-			className="px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-none"
+			className="px-1.5 py-0.5 rounded-full text-2xs font-medium leading-none"
 			style={{
 				backgroundColor: `${theme.colors.accent}20`,
 				color: theme.colors.accent,
@@ -149,7 +149,7 @@ export const SearchPopover = memo(function SearchPopover({
 				<Search className="w-4 h-4" />
 				{badgeCount != null && (
 					<span
-						className="absolute -top-1 -right-1.5 px-1 rounded-full text-[9px] font-medium leading-[13px] min-w-[13px] text-center pointer-events-none"
+						className="absolute -top-1 -right-1.5 px-1 rounded-full text-3xs font-medium leading-[13px] min-w-[13px] text-center pointer-events-none"
 						style={{
 							backgroundColor: theme.colors.bgSidebar,
 							color: theme.colors.accent,

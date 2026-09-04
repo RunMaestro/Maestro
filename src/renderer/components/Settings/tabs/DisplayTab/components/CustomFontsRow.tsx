@@ -42,7 +42,7 @@ export function CustomFontsRow({
 				<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 					Custom fonts
 				</span>
-				<span className="text-[11px] opacity-60">Added here, offered in every picker below.</span>
+				<span className="text-xs-plus opacity-60">Added here, offered in every picker below.</span>
 			</div>
 			<div className="flex gap-2">
 				<input

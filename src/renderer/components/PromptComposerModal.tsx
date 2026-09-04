@@ -653,7 +653,7 @@ export function PromptComposerModal({
 												<span className="flex-1 truncate font-mono">{item.fullPath}</span>
 												{item.source === 'autorun' && (
 													<span
-														className="text-[9px] px-1 py-0.5 rounded shrink-0"
+														className="text-3xs px-1 py-0.5 rounded shrink-0"
 														style={{
 															backgroundColor: `${theme.colors.accent}30`,
 															color: theme.colors.accent,
@@ -662,7 +662,7 @@ export function PromptComposerModal({
 														Auto Run
 													</span>
 												)}
-												<span className="text-[10px] opacity-40 shrink-0">{item.fileType}</span>
+												<span className="text-2xs opacity-40 shrink-0">{item.fileType}</span>
 											</>
 										) : item.type === 'group' ? (
 											<>
@@ -673,7 +673,7 @@ export function PromptComposerModal({
 												<span>{item.group.emoji}</span>
 												<span>@{item.mentionName}</span>
 												<span
-													className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full"
+													className="ml-auto text-2xs px-1.5 py-0.5 rounded-full"
 													style={{
 														backgroundColor: `${theme.colors.accent}20`,
 														color: theme.colors.accent,
@@ -758,7 +758,7 @@ export function PromptComposerModal({
 						{onToggleTabSaveToHistory && (
 							<button
 								onClick={onToggleTabSaveToHistory}
-								className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+								className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 									tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
 								}`}
 								style={{
@@ -779,7 +779,7 @@ export function PromptComposerModal({
 						{onToggleTabReadOnlyMode && (
 							<button
 								onClick={onToggleTabReadOnlyMode}
-								className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+								className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 									tabReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
 								}`}
 								style={{
@@ -804,7 +804,7 @@ export function PromptComposerModal({
 						{supportsThinking && onToggleTabShowThinking && (
 							<button
 								onClick={onToggleTabShowThinking}
-								className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+								className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 									tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
 								}`}
 								style={{
@@ -845,7 +845,7 @@ export function PromptComposerModal({
 						{onToggleEnterToSend && (
 							<button
 								onClick={onToggleEnterToSend}
-								className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+								className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
 								title={formatEnterToSendTooltip(enterToSend)}
 							>
 								<Keyboard className="w-3 h-3" style={{ color: theme.colors.textDim }} />

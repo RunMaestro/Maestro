@@ -105,7 +105,7 @@ export const DelegationSplitBar = memo(function DelegationSplitBar({
 			</div>
 
 			{showLegend && (
-				<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+				<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs">
 					{segments.map((segment) => (
 						<span key={segment.key} className="flex items-center gap-1">
 							<span

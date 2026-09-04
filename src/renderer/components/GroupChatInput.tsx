@@ -580,7 +580,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 									<span>{item.group.emoji}</span>
 									<span>@{item.mentionName}</span>
 									<span
-										className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full"
+										className="ml-auto text-2xs px-1.5 py-0.5 rounded-full"
 										style={{
 											backgroundColor: `${theme.colors.accent}20`,
 											color: theme.colors.accent,
@@ -724,7 +724,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							{/* Read-only mode toggle */}
 							<button
 								onClick={() => setReadOnlyMode(!readOnlyMode)}
-								className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+								className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 									readOnlyMode ? '' : 'opacity-40 hover:opacity-70'
 								}`}
 								style={{
@@ -743,7 +743,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							{/* Enter to send toggle */}
 							<button
 								onClick={() => setEnterToSend(!enterToSend)}
-								className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+								className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
 								title={formatEnterToSendTooltip(enterToSend)}
 							>
 								<Keyboard className="w-3 h-3" />

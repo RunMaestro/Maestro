@@ -182,9 +182,11 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 
 ### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
 
-| Function                                     | Signature                               | Purpose                                                                                                                          |
-| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal. |
+| Function                                     | Signature                               | Purpose                                                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `splitOnMatches(text, query)`                | `(string, string) => MatchSegment[]`    | Split `text` into alternating plain/match segments, each carrying its `start` offset. The one matcher the other two are built from, so escaping and match parity cannot drift.                 |
+| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal.                                                               |
+| `searchMatchRanges(text, query)`             | `(string, string) => { from, to }[]`    | The same hits as byte ranges, for `MarkdownEditorHandle.setSearchMatches`. Use it rather than re-deriving offsets, or a pane's rendered half and its source half disagree about what is a hit. |
 
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 

@@ -9,10 +9,12 @@
 
 import os from 'os';
 import type { getSshRemoteById } from '../../stores';
+import { isAgentBusy, type ProcessLivenessProbe } from '../../utils/agent-busy';
 
 export function mapSessionsForMentions(
 	sessions: any[],
-	getSshRemoteByIdFn: typeof getSshRemoteById
+	getSshRemoteByIdFn: typeof getSshRemoteById,
+	processManager?: ProcessLivenessProbe | null
 ) {
 	return sessions.map((s: any) => {
 		// Resolve SSH remote name if session has SSH config
@@ -39,6 +41,10 @@ export function mapSessionsForMentions(
 			sshRemoteConfig: s.sessionSshRemoteConfig,
 			autoRunFolderPath: s.autoRunFolderPath,
 			worktreeBasePath: s.worktreeConfig?.basePath,
+			// Live liveness, not the persisted state: persistence rewrites every
+			// session and tab to 'idle' on the way to disk, so the stored record
+			// can never say whether this agent is mid-turn.
+			isBusy: isAgentBusy(s, processManager),
 		};
 	});
 }

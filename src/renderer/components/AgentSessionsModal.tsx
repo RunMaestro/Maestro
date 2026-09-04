@@ -587,7 +587,7 @@ export function AgentSessionsModal({
 											{msg.content || '[No content]'}
 										</div>
 										<div
-											className="text-[10px] mt-1 opacity-60"
+											className="text-2xs mt-1 opacity-60"
 											style={{
 												color:
 													msg.type === 'user'
@@ -639,7 +639,7 @@ export function AgentSessionsModal({
 											key={session.sessionId}
 											ref={i === selectedIndex ? selectedItemRef : null}
 											onClick={() => handleViewSession(session)}
-											className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-opacity-10 transition-colors group"
+											className="w-full text-left px-4 py-3 flex items-start gap-3 row-hover transition-colors group"
 											style={{
 												backgroundColor: i === selectedIndex ? theme.colors.accent : 'transparent',
 												color: theme.colors.textMain,
@@ -697,7 +697,7 @@ export function AgentSessionsModal({
 												</span>
 											</div>
 										) : (
-											<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+											<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 												{sessions.length} of {totalSessionCount} sessions loaded
 											</span>
 										)}

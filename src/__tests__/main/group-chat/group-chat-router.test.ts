@@ -101,6 +101,7 @@ import {
 	createGroupChat,
 	deleteGroupChat,
 	loadGroupChat,
+	updateGroupChat,
 	getGroupChatHistory,
 	GroupChatParticipant,
 } from '../../../main/group-chat/group-chat-storage';
@@ -1351,6 +1352,121 @@ describe('group-chat-router', () => {
 
 			expect(mockCaptureException).not.toHaveBeenCalled();
 			expect((await loadGroupChat(chat.id))?.participants).toEqual([]);
+		});
+	});
+
+	// ===========================================================================
+	// Busy-agent gating (requireIdleParticipants)
+	// ===========================================================================
+	describe('only engaging agents that are free', () => {
+		const busyClientSession: GroupChatSessionInfo = {
+			id: 'session-client',
+			name: 'Client',
+			toolType: 'claude-code',
+			cwd: '/tmp/project',
+			isBusy: true,
+		};
+
+		function participantSpawnsFor(chatId: string) {
+			return mockProcessManager.spawn.mock.calls.filter((call) =>
+				call[0].sessionId?.includes(`group-chat-${chatId}-participant-Client-`)
+			);
+		}
+
+		it('skips delegation to a busy agent and says so in the chat', async () => {
+			const chat = await createTestChatWithModerator('Busy Skip Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [busyClientSession]);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement this feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+			// The skip is logged, not just emitted: the moderator reads recent log
+			// lines as context, so this is how it learns the work never went out.
+			const messages = await readLog(chat.logPath);
+			const systemMessage = messages.find((m) => m.from === 'system');
+			expect(systemMessage?.content).toContain('@Client');
+			expect(systemMessage?.content).toContain('busy');
+		});
+
+		it('delegates to a busy agent when the chat opted out', async () => {
+			const chat = await createTestChatWithModerator('Busy Override Test');
+			await updateGroupChat(chat.id, { requireIdleParticipants: false });
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [busyClientSession]);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement this feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((m) => m.from === 'system')).toBe(false);
+		});
+
+		it('delegates to an idle agent with the default setting on', async () => {
+			const chat = await createTestChatWithModerator('Idle Delegation Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [{ ...busyClientSession, isBusy: false }]);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement this feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+		});
+
+		it('still delegates when the agent has no matching Maestro agent to probe', async () => {
+			// Unknown must not read as busy - a participant whose agent was renamed
+			// would otherwise become permanently unreachable.
+			const chat = await createTestChatWithModerator('Unknown Agent Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => []);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement this feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+		});
+
+		it('does not trigger Auto Run on a busy agent', async () => {
+			const chat = await createTestChatWithModerator('Busy Auto Run Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{ ...busyClientSession, autoRunFolderPath: '/tmp/project/.maestro/playbooks' },
+			]);
+			const emitAutoRunTriggered = vi.fn();
+			groupChatEmitters.emitAutoRunTriggered = emitAutoRunTriggered;
+
+			await routeModeratorResponse(
+				chat.id,
+				'!autorun @Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(emitAutoRunTriggered).not.toHaveBeenCalled();
+			groupChatEmitters.emitAutoRunTriggered = undefined;
 		});
 	});
 

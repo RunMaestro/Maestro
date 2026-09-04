@@ -549,9 +549,9 @@ export class CallbackRegistry {
 		return this.callbacks.removeQueueItem(sessionId, itemId);
 	}
 
-	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
+	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
 		if (!this.callbacks.refreshAutoRunDocs) return false;
-		return this.callbacks.refreshAutoRunDocs(sessionId);
+		return this.callbacks.refreshAutoRunDocs(sessionId, background);
 	}
 
 	async configureAutoRun(

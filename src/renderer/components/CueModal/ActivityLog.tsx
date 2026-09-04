@@ -299,7 +299,7 @@ export function ActivityLog({
 												"{entry.subscriptionName}"
 												{isReconciled && (
 													<span
-														className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold"
+														className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-2xs font-bold"
 														style={{
 															backgroundColor: `${theme.colors.warning}20`,
 															color: theme.colors.warning,

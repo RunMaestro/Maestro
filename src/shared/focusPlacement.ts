@@ -36,9 +36,19 @@
  *
  * ## Verbs that are allowed to move the view
  *
- * `select_session` (focus-agent, send --tab) and `open_modal` (open) exist TO
- * move the view - the caller named that intent. They are deliberately absent
- * from this table and must stay that way.
+ * `select_session` (focus-agent, send --tab), `open_modal` (open) and
+ * `open_document_graph` (open-graph) exist TO move the view - the caller named
+ * that intent, and the graph is a full-window overlay whose only effect IS being
+ * looked at, so "background" there would mean "do nothing". They are deliberately
+ * absent from this table and must stay that way.
+ *
+ * ## Verbs that move nothing already
+ *
+ * `refresh-files` renders no notice and moves no selection - the panel it
+ * refreshes is only drawn for the agent already on screen. It still ACCEPTS
+ * `--background` (see `isAlreadyQuietVerb`) so the flag is safe to pass on every
+ * verb an agent might reach for, which is what makes "pass --background by
+ * default" teachable as one rule instead of a lookup table.
  */
 
 /**
@@ -66,10 +76,34 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * no-default-changes rule as everything else here, not an exception to it.
 	 */
 	'dispatch-new-tab': true,
+	/**
+	 * maestro-cli dispatch (no --new-tab) - the `send_command` path, which selects
+	 * the target agent today "for visual feedback".
+	 *
+	 * Keyed apart from `dispatch-new-tab` because the two disagree, which is the
+	 * whole reason this table is keyed by verb: the same command name resolves to
+	 * background when it creates a tab and to foreground when it writes to one.
+	 */
+	dispatch: false,
 	/** maestro-cli create-agent - selects the new agent today. */
 	'create-agent': false,
-	/** maestro-cli create-worktree - selects the new agent today. */
+	/**
+	 * maestro-cli create-worktree - selects the new agent today.
+	 *
+	 * When a message is passed, the follow-on `send_command` carries this SAME
+	 * resolved bit rather than re-resolving as `dispatch`. Without that,
+	 * `create-worktree --background <msg>` created the agent quietly and was then
+	 * yanked to it one message later, which reads as the flag not working.
+	 */
 	'create-worktree': false,
+	/**
+	 * maestro-cli refresh-auto-run - switches to the target agent today.
+	 *
+	 * Like `switch-mode`, it creates nothing, so `--background` means "refresh the
+	 * documents where they are rather than moving me to them". The refresh itself
+	 * still happens either way.
+	 */
+	'refresh-auto-run': false,
 	/**
 	 * maestro-cli switch-mode - proceeds today.
 	 *
@@ -134,4 +168,30 @@ export function readBackgroundField(message: { background?: unknown }): boolean 
  */
 export function readSwitchToAgentField(message: { switchToAgent?: unknown }): boolean {
 	return message.switchToAgent !== false;
+}
+
+/**
+ * Verbs that accept `--background` and do nothing with it, because they already
+ * behave that way.
+ *
+ * This is not a placeholder for future behaviour. The guidance an agent is given
+ * is "pass `--background` unless the user asked to be taken there", and a rule
+ * with exceptions is a rule that gets applied wrong - commander rejects an
+ * unknown option, so one verb that refuses the flag turns a polite habit into a
+ * failed command. Accepting it here keeps the habit uniform and keeps the CLI
+ * honest about which verbs could ever have disturbed the user.
+ *
+ * A verb belongs here only while it renders NO notice and moves NO selection. The
+ * moment one grows either, it moves into `CLI_BACKGROUND_DEFAULTS` and the flag
+ * starts meaning something - the surface stays the same, so nothing calling it
+ * has to change.
+ */
+export const ALREADY_QUIET_VERBS = ['refresh-files'] as const;
+
+/** A verb that accepts `--background` purely so the flag is always safe to pass. */
+export type AlreadyQuietVerb = (typeof ALREADY_QUIET_VERBS)[number];
+
+/** Whether `verb` accepts `--background` as an accepted no-op. */
+export function isAlreadyQuietVerb(verb: string): verb is AlreadyQuietVerb {
+	return (ALREADY_QUIET_VERBS as readonly string[]).includes(verb);
 }

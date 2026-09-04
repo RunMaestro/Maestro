@@ -24,7 +24,7 @@ export function AttachmentStrip({
 		<div className="px-2 py-2 mb-2 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
 			<button
 				onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
-				className="w-full flex items-center gap-1 text-[10px] uppercase font-semibold hover:opacity-80 transition-opacity"
+				className="w-full flex items-center gap-1 text-2xs uppercase font-semibold hover:opacity-80 transition-opacity"
 				style={{ color: theme.colors.textDim }}
 			>
 				{attachmentsExpanded ? (

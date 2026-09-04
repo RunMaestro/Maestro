@@ -1,4 +1,5 @@
 import { FileCode, FilePlus, FileText, Trash2 } from 'lucide-react';
+import { blendColors } from '../../shared/colorContrast';
 import type { Theme, SessionState, FileChangeType } from '../types';
 import type { FileExplorerIconTheme } from './fileExplorerIcons/shared';
 import { FILE_EXPLORER_ICON_THEMES, isFileExplorerIconTheme } from './fileExplorerIcons/shared';
@@ -26,6 +27,23 @@ export const getContextColor = (
 	return theme.colors.success;
 };
 
+// How much of the theme's error color is mixed into its warning color to land on
+// the connecting orange. Enough to read as a distinctly warmer hue than the busy
+// yellow, not enough to be mistaken for the error red.
+const CONNECTING_ERROR_MIX = 0.35;
+
+/**
+ * The orange used for "attempting to connect" and for an agent stuck auto-retrying
+ * after an outage. Connecting is deliberately NOT the same color as busy: the
+ * status legend calls one yellow and the other orange, and the pulse animation is
+ * a second signal rather than the only one. Derived from the theme's own warning
+ * and error slots so a theme that repaints its semantic palette repaints this too
+ * - it used to be a hard-coded `#ff8800` that stayed put on every theme.
+ * Colorblind mode overrides it upstream via `COLORBLIND_STATUS_COLORS.connecting`.
+ */
+export const getConnectingColor = (theme: Theme): string =>
+	blendColors(theme.colors.warning, theme.colors.error, CONNECTING_ERROR_MIX);
+
 // Get color based on session state
 // Status indicator colors:
 // - Green: ready and waiting (idle)
@@ -43,7 +61,7 @@ export const getStatusColor = (state: SessionState, theme: Theme): string => {
 		case 'error':
 			return theme.colors.error; // Red - no connection
 		case 'connecting':
-			return '#ff8800'; // Orange - attempting to connect
+			return getConnectingColor(theme); // Orange - attempting to connect
 		default:
 			return theme.colors.success;
 	}

@@ -109,7 +109,7 @@ function PresetCard({
 				</span>
 				{selected && (
 					<span
-						className="ml-auto flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full"
+						className="ml-auto flex items-center gap-1 text-xs-plus font-bold px-2 py-0.5 rounded-full"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
@@ -144,7 +144,7 @@ function PresetCard({
 				</p>
 			</div>
 
-			<dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-[11px]">
+			<dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-xs-plus">
 				{preset.surfaces.map((surface) => (
 					<div key={surface.label} className="contents">
 						<dt style={{ color: theme.colors.textDim, fontFamily: proseFont }}>{surface.label}</dt>

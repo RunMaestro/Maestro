@@ -248,7 +248,7 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 					}}
 				>
 					<div
-						className="px-3 py-1 text-[10px] font-bold uppercase"
+						className="px-3 py-1 text-2xs font-bold uppercase"
 						style={{ color: theme.colors.textDim }}
 					>
 						Lookback Period
@@ -277,7 +277,7 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 			{/* Hover tooltip - positioned below the graph */}
 			{hoveredIndex !== null && (
 				<div
-					className="absolute top-full mt-1 px-2 py-1.5 rounded text-[10px] font-mono whitespace-nowrap z-20 pointer-events-none"
+					className="absolute top-full mt-1 px-2 py-1.5 rounded text-2xs font-mono whitespace-nowrap z-20 pointer-events-none"
 					style={{
 						backgroundColor: theme.colors.bgSidebar,
 						border: `1px solid ${theme.colors.border}`,
@@ -345,7 +345,7 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 				{axisLabels.map(({ label, index }) => (
 					<span
 						key={`${label}-${index}`}
-						className="absolute text-[8px] font-mono"
+						className="absolute text-3xs font-mono"
 						style={{
 							color: theme.colors.textDim,
 							left:

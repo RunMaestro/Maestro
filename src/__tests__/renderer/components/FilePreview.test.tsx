@@ -7,8 +7,8 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
-import { mockTheme } from '../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
@@ -231,6 +231,9 @@ describe('FilePreview', () => {
 		// opt in explicitly. (clearAllMocks resets call history, not the return
 		// value, so pin it back to false here.)
 		vi.mocked(isWebDesktop).mockReturnValue(false);
+		// `useFontScale` persists the pane's zoom to localStorage, so a test that
+		// zooms hands its scale to the next test. A fresh mock per test is the reset.
+		installLocalStorageMock();
 		useSettingsStore.setState({ bionifyReadingMode: false });
 		// Reset useClickOutside call counter so each test starts fresh
 		useClickOutsideCallCount = 0;

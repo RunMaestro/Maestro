@@ -41,7 +41,7 @@ const WORDMARK_TRACKING_EM = 0.1; // tracking-widest
  * OFFLINE is the state the app spends most of its time in.
  */
 const LIVE_LABEL_TEXT = 'OFFLINE';
-const LIVE_LABEL_SIZE_PX = 10; // text-[10px]
+const LIVE_LABEL_SIZE_PX = 10; // text-2xs
 
 export interface HeaderTextDelta {
 	/** Extra px the wordmark needs versus the baseline font. >= 0. */
@@ -102,7 +102,7 @@ export function useHeaderTextDelta(): HeaderTextDelta {
 			),
 			liveLabel: widthDelta(
 				LIVE_LABEL_TEXT,
-				// This label is `text-[10px]`, an absolute size, so it does NOT grow
+				// This label is `text-2xs`, an absolute size, so it does NOT grow
 				// with the root - only the family changes it. Measured at the literal
 				// size on both sides so the delta reflects only that.
 				`bold ${LIVE_LABEL_SIZE_PX}px ${family}`,

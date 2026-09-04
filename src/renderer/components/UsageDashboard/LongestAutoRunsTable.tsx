@@ -201,7 +201,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 										{isGoal ? (
 											<span className="inline-flex items-center gap-1.5 min-w-0">
 												<span
-													className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
+													className="shrink-0 px-1.5 py-0.5 rounded text-2xs font-semibold uppercase tracking-wide"
 													style={{
 														backgroundColor: `${theme.colors.accent}20`,
 														color: theme.colors.accent,
