@@ -167,7 +167,15 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			//     loop is parked by pauseBatchOnError further below in this handler.
 			// Skipped for session_not_found (recovered below). Requires a concrete
 			// tab so the retry targets the right turn / countdown.
-			const batchState = deps.getBatchStateRef.current?.(actualSessionId);
+			// A MIRRORED batch belongs to another Maestro client (see
+			// useAutoRunStateMirror). `agent:error` fans out to every client, so
+			// without this the mirroring client would also schedule a batch resume
+			// it cannot perform, and write a second copy of the owner's history
+			// entry. Treat a mirror as no batch at all: the owner handles its own
+			// run, and this client behaves exactly as it did before it could see
+			// the run.
+			const rawBatchState = deps.getBatchStateRef.current?.(actualSessionId);
+			const batchState = rawBatchState?.mirrored === true ? undefined : rawBatchState;
 			const batchOwnsError = !!(batchState?.isRunning && !batchState.errorPaused);
 			const canAutoRetry = !isSessionNotFound && !!tabIdFromSession;
 			const willAutoRetryInteractive =
@@ -346,7 +354,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			// Pause active Auto Run batch and record history when applicable.
 			if (deps.getBatchStateRef.current && deps.pauseBatchOnErrorRef.current) {
 				const batchState = deps.getBatchStateRef.current(actualSessionId);
-				if (batchState.isRunning && !batchState.errorPaused) {
+				// Mirrored run - the owning client pauses it and writes the history
+				// entry. Doing either here duplicates a persisted record and parks a
+				// loop that does not exist in this client.
+				if (batchState.isRunning && !batchState.errorPaused && batchState.mirrored !== true) {
 					logger.info(
 						'[onAgentError] Pausing active batch run due to error:',
 						undefined,

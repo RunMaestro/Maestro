@@ -417,7 +417,16 @@ export async function runAutoResumeTick(
 	// cleared by the user); forget its give-up window so a future limit is fresh.
 	pruneGiveUpTracking(giveUp, new Set(limitPaused.map((s) => s.id)));
 
-	const candidates = limitPaused.filter((s) => isEligibleToProbe(s, now));
+	// Skip any session whose Auto Run is a read-only mirror of a run owned by
+	// another Maestro client (a web-desktop tab watching the desktop app's run).
+	// Neither branch of `resume()` is safe from here: the Auto Run branch pokes
+	// refs that live in the owning client, and the standard branch would clear
+	// the agent error and drain the queue out from under a loop this client
+	// cannot see. The owner runs its own coordinator and will resume it.
+	const batchStates = useBatchStore.getState().batchRunStates;
+	const candidates = limitPaused.filter(
+		(s) => batchStates[s.id]?.mirrored !== true && isEligibleToProbe(s, now)
+	);
 	if (candidates.length === 0) return;
 
 	// Give-up pass: resolve each candidate's give-up anchor (which also stamps the

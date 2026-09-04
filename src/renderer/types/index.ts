@@ -521,6 +521,18 @@ export interface BatchRunState {
 	isRunning: boolean;
 	isStopping: boolean; // Waiting for current task to finish before stopping
 
+	/**
+	 * True when this entry is a read-only MIRROR of a run owned by a different
+	 * Maestro client (see `useAutoRunStateMirror`). The run loop, its cursors,
+	 * and the refs the control actions poke all live in the owning client, so a
+	 * mirroring client can render the run but cannot steer it. Every mutator in
+	 * `useBatchControlActions` / `useBatchKillAction` bails on a mirrored entry,
+	 * and the controls that call them are disabled - a Stop button that quietly
+	 * did nothing would be worse than no Stop button. Absent (not `false`) on a
+	 * run this client actually owns.
+	 */
+	mirrored?: boolean;
+
 	// State machine integration (Phase 11)
 	// Tracks explicit processing state for invariant checking and debugging
 	processingState?: BatchProcessingState;

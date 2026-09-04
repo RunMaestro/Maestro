@@ -527,7 +527,11 @@ function ThinkingStatusPillInner({
 			<AutoRunPill
 				theme={theme}
 				autoRunState={autoRunState}
-				onStop={onStopAutoRun}
+				// A run mirrored from another Maestro window has no local loop for
+				// Stop to reach, so drop the button rather than draw a dead one. The
+				// Right Panel card and the Auto Run tab keep a disabled Stop that
+				// explains why; this pill is too tight for that copy.
+				onStop={autoRunState.mirrored ? undefined : onStopAutoRun}
 				thinkingItems={thinkingItems}
 				namedSessions={namedSessions}
 				onSessionClick={onSessionClick}
@@ -741,7 +745,7 @@ function ThinkingStatusPillInner({
 									completedTasks={getAutoRunTaskCounts(demotedAutoRun).completed}
 									totalTasks={getAutoRunTaskCounts(demotedAutoRun).total}
 									isStopping={demotedAutoRun.isStopping}
-									onStop={onStopAutoRun}
+									onStop={demotedAutoRun.mirrored ? undefined : onStopAutoRun}
 								/>
 							)}
 							{thinkingItems.map((item) => (
@@ -780,6 +784,8 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
 			prevAutoRun?.startTime !== nextAutoRun?.startTime ||
+			// Decides whether the Stop button is rendered at all
+			prevAutoRun?.mirrored !== nextAutoRun?.mirrored ||
 			// Goal-Driven progress fields drive the goal readout on the pill
 			prevAutoRun?.goalMode !== nextAutoRun?.goalMode ||
 			prevAutoRun?.goalProgress !== nextAutoRun?.goalProgress ||

@@ -143,6 +143,16 @@ class BridgeClient {
 			) {
 				channel = 'remote:selectTab';
 				args = [msg.sessionId, msg.activeTabId, Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined];
+			} else if (msg.type === 'autorun_state' && typeof msg.sessionId === 'string') {
+				// Auto Run is renderer-owned in-memory state, so it never crosses the
+				// bridge as a `bridge.event` the way `process:*` does - the owning
+				// client hands it to main, which fans it out as this packet. Route it
+				// into a channel so `useAutoRunStateMirror` can render the run. The
+				// server also replays the current state for every active run when a
+				// client connects (wsRoute), so a browser tab opened mid-run catches
+				// up rather than waiting for the next progress tick.
+				channel = 'remote:autoRunStateMirror';
+				args = [msg.sessionId, msg.state ?? null];
 			}
 			if (channel) {
 				const set = this.listeners.get(channel);

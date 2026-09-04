@@ -149,6 +149,57 @@ describe('web-desktop electron-shim desktop navigation sync', () => {
 	});
 });
 
+describe('web-desktop electron-shim autorun_state routing', () => {
+	// Auto Run is renderer-owned in-memory state. The owning client pushes it to
+	// main, which fans it out to every WebSocket client as an `autorun_state`
+	// packet - the only way a browser tab can learn a run exists. The router had
+	// no case for it, so the frame was parsed and dropped and every Auto Run
+	// surface in the browser stayed empty for the whole run.
+	it('routes an autorun_state packet onto the mirror channel', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		const state = {
+			isRunning: true,
+			totalTasks: 6,
+			completedTasks: 2,
+			currentTaskIndex: 2,
+			documents: ['plan'],
+		};
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'session-9', state }),
+		});
+
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-9', state);
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+
+	it('forwards a null state (run cleared) rather than dropping the frame', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'session-9', state: null }),
+		});
+
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-9', null);
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+
+	it('ignores a packet with no sessionId to address it to', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', state: { isRunning: true } }),
+		});
+
+		expect(listener).not.toHaveBeenCalled();
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+});
+
 describe('web-desktop electron-shim bridge reconnect', () => {
 	it('reloads the page on a RE-connect (drop + reopen), not on the first open', () => {
 		const first = InertWebSocket.instances[0];

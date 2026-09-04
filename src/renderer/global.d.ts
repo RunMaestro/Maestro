@@ -794,6 +794,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteAutoRunStateMirror: (
+			callback: (
+				sessionId: string,
+				state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
+			) => void
+		) => () => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
@@ -1166,30 +1172,7 @@ interface MaestroAPI {
 		) => Promise<void>;
 		broadcastAutoRunState: (
 			sessionId: string,
-			state: {
-				isRunning: boolean;
-				totalTasks: number;
-				completedTasks: number;
-				currentTaskIndex: number;
-				isStopping?: boolean;
-				// Multi-document progress fields
-				totalDocuments?: number;
-				currentDocumentIndex?: number;
-				totalTasksAcrossAllDocs?: number;
-				completedTasksAcrossAllDocs?: number;
-				// Error pause fields - surfaced to web/mobile so they can show recovery UI
-				errorPaused?: boolean;
-				errorMessage?: string;
-				errorType?: string;
-				errorRecoverable?: boolean;
-				errorDocumentIndex?: number;
-				errorTaskDescription?: string;
-				// Goal-Driven mode fields - surfaced so web/mobile show goal percent + iteration
-				goalMode?: boolean;
-				goalProgress?: number;
-				goalRationale?: string;
-				goalIteration?: number;
-			} | null
+			state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
 		) => Promise<void>;
 		broadcastTabsChange: (
 			sessionId: string,
