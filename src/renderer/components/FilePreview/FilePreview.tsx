@@ -31,6 +31,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
 import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { requestFileDeletion } from '../../services/fileDeletion';
@@ -1508,31 +1509,20 @@ export const FilePreview = React.memo(
 			}
 		};
 
-		// Helper to check if a shortcut matches
-		const isShortcut = (e: React.KeyboardEvent, shortcutId: string) => {
-			const shortcut = shortcuts[shortcutId];
-			if (!shortcut) return false;
-
-			const hasModifier = (key: string) => {
-				if (key === 'Meta') return e.metaKey;
-				if (key === 'Ctrl') return e.ctrlKey;
-				if (key === 'Alt') return e.altKey;
-				if (key === 'Shift') return e.shiftKey;
-				return false;
-			};
-
-			const modifiers = shortcut.keys.filter((k: string) =>
-				['Meta', 'Ctrl', 'Alt', 'Shift'].includes(k)
-			);
-			const mainKey = shortcut.keys.find(
-				(k: string) => !['Meta', 'Ctrl', 'Alt', 'Shift'].includes(k)
-			);
-
-			const modifiersMatch = modifiers.every((m: string) => hasModifier(m));
-			const keyMatches = mainKey?.toLowerCase() === e.key.toLowerCase();
-
-			return modifiersMatch && keyMatches;
-		};
+		/**
+		 * Does this event match a configured shortcut?
+		 *
+		 * Routes to the shared matcher rather than the local copy this used to
+		 * carry. That copy asked whether the binding's modifiers were PRESENT
+		 * instead of whether they were the ones held, so every chord here also
+		 * fired for itself plus Shift: Cmd+Shift+G ran Cmd+G's fuzzy search,
+		 * Cmd+Shift+P ran Copy File Path, and each one called stopPropagation()
+		 * on the way out, so the global chord that really owned those keys never
+		 * saw them. It also missed Shift-rewritten punctuation and treated
+		 * Meta and Ctrl as different modifiers, which broke rebinding on Windows.
+		 */
+		const isShortcut = (e: React.KeyboardEvent, shortcutId: string) =>
+			eventMatchesShortcutKeys(e, shortcuts[shortcutId]?.keys);
 
 		// Handle keyboard events
 		const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1712,18 +1702,6 @@ export const FilePreview = React.memo(
 					onNavigateForward();
 					onShortcutUsed?.('filePreviewForward');
 				}
-			} else if (
-				e.key === 'g' &&
-				(e.metaKey || e.ctrlKey) &&
-				e.shiftKey &&
-				isMarkdown &&
-				onOpenInGraph
-			) {
-				// Cmd+Shift+G: Open Document Graph focused on this file (markdown files only)
-				// Must come before fuzzyFileSearch check since isShortcut doesn't check for extra modifiers
-				e.preventDefault();
-				e.stopPropagation();
-				onOpenInGraph();
 			} else if (isShortcut(e, 'fuzzyFileSearch') && onOpenFuzzySearch) {
 				// Cmd+G: Open fuzzy file search (only in preview mode, not edit mode)
 				if (isEditableText && markdownEditMode) return;

@@ -366,11 +366,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							)}
 						{/* Document Graph button - show for markdown files when callback is available */}
 						{toolbarVisibility.documentGraph && isMarkdown && onOpenInGraph && (
-							<HoverTooltip
-								theme={theme}
-								label="View in Document Graph"
-								shortcut={formatShortcutKeys(['Meta', 'Shift', 'g'])}
-							>
+							<HoverTooltip theme={theme} label="View in Document Graph">
 								<button
 									onClick={onOpenInGraph}
 									className={headerBtnClass}
