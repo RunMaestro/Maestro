@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { createIpcHandler } from '../../../utils/ipcHandler';
 import { captureException } from '../../../utils/sentry';
+import { fetchWithTimeout } from '../../../utils/fetchWithTimeout';
 import {
 	SYMPHONY_REGISTRY_URL,
 	REGISTRY_CACHE_TTL_MS,
@@ -30,6 +31,8 @@ import {
 	getCachePath,
 	writeCache,
 	SymphonyHandlerDependencies,
+	SYMPHONY_GITHUB_API_TIMEOUT_MS,
+	SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS,
 } from './shared';
 
 /**
@@ -140,7 +143,7 @@ function redactUrlForLog(rawUrl: string): string {
 async function fetchSingleRegistry(url: string): Promise<SymphonyRegistry | null> {
 	const safeUrl = redactUrlForLog(url);
 	try {
-		const response = await fetch(url);
+		const response = await fetchWithTimeout(url, {}, SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			logger.warn(`Failed to fetch registry from ${safeUrl}: ${response.status}`, LOG_CONTEXT);
 			return null;
@@ -217,12 +220,16 @@ async function fetchStarCounts(repoSlugs: string[]): Promise<Record<string, numb
 		const batch = repoSlugs.slice(i, i + CONCURRENCY);
 		const results = await Promise.allSettled(
 			batch.map(async (slug) => {
-				const response = await fetch(`${GITHUB_API_BASE}/repos/${slug}`, {
-					headers: {
-						Accept: 'application/vnd.github.v3+json',
-						'User-Agent': 'Maestro-Symphony',
+				const response = await fetchWithTimeout(
+					`${GITHUB_API_BASE}/repos/${slug}`,
+					{
+						headers: {
+							Accept: 'application/vnd.github.v3+json',
+							'User-Agent': 'Maestro-Symphony',
+						},
 					},
-				});
+					SYMPHONY_GITHUB_API_TIMEOUT_MS
+				);
 				if (!response.ok) return { slug, stars: 0 };
 				const data = (await response.json()) as { stargazers_count?: number };
 				return { slug, stars: data.stargazers_count ?? 0 };
@@ -248,12 +255,16 @@ async function enrichIssuesWithPRStatus(repoSlug: string, issues: SymphonyIssue[
 	try {
 		// Fetch open PRs for the repository
 		const prsUrl = `${GITHUB_API_BASE}/repos/${repoSlug}/pulls?state=open&per_page=100`;
-		const response = await fetch(prsUrl, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
+		const response = await fetchWithTimeout(
+			prsUrl,
+			{
+				headers: {
+					Accept: 'application/vnd.github.v3+json',
+					'User-Agent': 'Maestro-Symphony',
+				},
 			},
-		});
+			SYMPHONY_GITHUB_API_TIMEOUT_MS
+		);
 
 		if (!response.ok) {
 			logger.warn(`Failed to fetch PRs for issue status: ${response.status}`, LOG_CONTEXT);
@@ -312,12 +323,16 @@ async function fetchIssues(repoSlug: string): Promise<SymphonyIssue[]> {
 
 	try {
 		const url = `${GITHUB_API_BASE}/repos/${repoSlug}/issues?labels=${encodeURIComponent(SYMPHONY_ISSUE_LABEL)}&state=open`;
-		const response = await fetch(url, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
+		const response = await fetchWithTimeout(
+			url,
+			{
+				headers: {
+					Accept: 'application/vnd.github.v3+json',
+					'User-Agent': 'Maestro-Symphony',
+				},
 			},
-		});
+			SYMPHONY_GITHUB_API_TIMEOUT_MS
+		);
 
 		if (!response.ok) {
 			throw new SymphonyError(`Failed to fetch issues: ${response.status}`, 'github_api');
@@ -390,12 +405,16 @@ async function fetchIssueCounts(repoSlugs: string[]): Promise<Record<string, num
 	let page = 1;
 	while (true) {
 		const url = `${GITHUB_API_BASE}/search/issues?q=${query}&per_page=100&page=${page}`;
-		const response = await fetch(url, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
+		const response = await fetchWithTimeout(
+			url,
+			{
+				headers: {
+					Accept: 'application/vnd.github.v3+json',
+					'User-Agent': 'Maestro-Symphony',
+				},
 			},
-		});
+			SYMPHONY_GITHUB_API_TIMEOUT_MS
+		);
 
 		if (!response.ok) {
 			throw new SymphonyError(`Search API failed: ${response.status}`, 'github_api');

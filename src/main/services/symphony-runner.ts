@@ -13,7 +13,12 @@ import { resolveGhPath } from '../utils/cliDetection';
 import type { DocumentReference } from '../../shared/symphony-types';
 import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
 import { captureException } from '../utils/sentry';
-import { toSafeDocumentFileName, uniqueDocumentFileName } from '../ipc/handlers/symphony/shared';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import {
+	toSafeDocumentFileName,
+	uniqueDocumentFileName,
+	SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS,
+} from '../ipc/handlers/symphony/shared';
 
 const LOG_CONTEXT = '[SymphonyRunner]';
 
@@ -171,7 +176,7 @@ Closes #${issueNumber}
  */
 async function downloadFile(url: string, destPath: string): Promise<boolean> {
 	try {
-		const response = await fetch(url);
+		const response = await fetchWithTimeout(url, {}, SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			logger.error('Failed to download file', LOG_CONTEXT, { url, status: response.status });
 			return false;
