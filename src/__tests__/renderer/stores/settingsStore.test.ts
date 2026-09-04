@@ -12,14 +12,25 @@ import {
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
+import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import {
 	selectShowNowPlayingIndicator,
 	useMediaPlaybackStore,
 } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import { FILE_EXPLORER_ICON_THEMES } from '../../../renderer/utils/fileExplorerIcons/shared';
+import {
+	DEFAULT_SHORTCUTS,
+	TAB_SHORTCUTS,
+	FIXED_SHORTCUTS,
+} from '../../../renderer/constants/shortcuts';
+import {
+	KEYBOARD_MASTERY_LEVELS,
+	collectBoundShortcuts,
+} from '../../../renderer/constants/keyboardMastery';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
+import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 
 // Pull defaults from a freshly-initialized store so tests don't need to re-import them.
 // Deep-cloned so test mutations can't affect the captured reference.
@@ -85,7 +96,7 @@ function resetStore() {
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
-		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		fontFamily: MAESTRO_FONT_STACK,
 		fontSize: 14,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -102,7 +113,7 @@ function resetStore() {
 		chatRawTextMode: false,
 		groupChatAutoScroll: true,
 		showHiddenFiles: true,
-		fileExplorerIconTheme: 'default',
+		fileExplorerIconTheme: 'rich',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -129,6 +140,7 @@ function resetStore() {
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
+		webInterfaceAutoStart: false,
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
@@ -141,6 +153,7 @@ function resetStore() {
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
+		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
@@ -165,6 +178,7 @@ describe('settingsStore', () => {
 		if (!window.maestro.power) {
 			(window.maestro as any).power = {
 				setEnabled: vi.fn().mockResolvedValue(undefined),
+				setKeepDisplayAwake: vi.fn().mockResolvedValue(undefined),
 			};
 		}
 
@@ -198,8 +212,18 @@ describe('settingsStore', () => {
 			expect(state.customShellPath).toBe('');
 			expect(state.shellArgs).toBe('');
 			expect(state.shellEnvVars).toEqual({});
+			expect(state.shellEnvVarsDisabled).toEqual({});
 			expect(state.ghPath).toBe('');
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
+			// Every surface font defaults to empty, meaning "inherit the interface
+			// font", so a fresh install pins no surface to a face of its own.
+			expect(state.terminalFontFamily).toBe('');
+			expect(state.chatFontFamily).toBe('');
+			expect(state.filePreviewFontFamily).toBe('');
+			expect(state.fileEditorFontFamily).toBe('');
+			// False on a fresh install AND on every install predating the chooser,
+			// which is what makes one gate serve new and existing users alike.
+			expect(state.typographyPromptSeen).toBe(false);
 			expect(state.fontSize).toBe(14);
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
@@ -216,7 +240,7 @@ describe('settingsStore', () => {
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.groupChatAutoScroll).toBe(true);
 			expect(state.showHiddenFiles).toBe(true);
-			expect(state.fileExplorerIconTheme).toBe('default');
+			expect(state.fileExplorerIconTheme).toBe('rich');
 			expect(state.fileExplorerMaxDepth).toBe(10);
 			expect(state.fileExplorerMaxEntries).toBe(100_000);
 			expect(state.sshReduceEntryCapEnabled).toBe(false);
@@ -247,6 +271,7 @@ describe('settingsStore', () => {
 			expect(state.firstAutoRunCompleted).toBe(false);
 			expect(state.onboardingStats).toEqual(DEFAULT_ONBOARDING_STATS);
 			expect(state.leaderboardRegistration).toBeNull();
+			expect(state.webInterfaceAutoStart).toBe(false);
 			expect(state.webInterfaceUseCustomPort).toBe(false);
 			expect(state.webInterfaceCustomPort).toBe(8080);
 			expect(state.contextManagementSettings).toEqual(DEFAULT_CONTEXT_MANAGEMENT_SETTINGS);
@@ -331,6 +356,21 @@ describe('settingsStore', () => {
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('shellEnvVars', envVars);
 			});
 
+			it('setShellEnvVarsDisabled updates state and persists', () => {
+				const parked = { HTTP_PROXY: 'http://proxy:8080' };
+				useSettingsStore.getState().setShellEnvVarsDisabled(parked);
+				expect(useSettingsStore.getState().shellEnvVarsDisabled).toEqual(parked);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('shellEnvVarsDisabled', parked);
+			});
+
+			it('keeps parked variables out of the effective shell env', () => {
+				// The two records are separate on purpose: a spawner reads only
+				// shellEnvVars, so parking a variable is what stops it shipping.
+				useSettingsStore.getState().setShellEnvVars({ KEEP: 'yes' });
+				useSettingsStore.getState().setShellEnvVarsDisabled({ OFF: 'no' });
+				expect(useSettingsStore.getState().shellEnvVars).toEqual({ KEEP: 'yes' });
+			});
+
 			it('setGhPath updates state and persists', () => {
 				useSettingsStore.getState().setGhPath('/usr/local/bin/gh');
 				expect(useSettingsStore.getState().ghPath).toBe('/usr/local/bin/gh');
@@ -343,6 +383,58 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setFontFamily('Fira Code');
 				expect(useSettingsStore.getState().fontFamily).toBe('Fira Code');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontFamily', 'Fira Code');
+			});
+
+			it.each([
+				['setTerminalFontFamily', 'terminalFontFamily'],
+				['setChatFontFamily', 'chatFontFamily'],
+				['setFilePreviewFontFamily', 'filePreviewFontFamily'],
+				['setFileEditorFontFamily', 'fileEditorFontFamily'],
+			] as const)('%s updates state and persists', (action, key) => {
+				const store = useSettingsStore.getState() as unknown as Record<
+					string,
+					(value: string) => void
+				>;
+				store[action]('Verdana');
+				expect((useSettingsStore.getState() as unknown as Record<string, string>)[key]).toBe(
+					'Verdana'
+				);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(key, 'Verdana');
+			});
+
+			it('applyTypographyPreset writes every font field in one state update', () => {
+				useSettingsStore.getState().applyTypographyPreset('default');
+				const state = useSettingsStore.getState();
+				const preset = TYPOGRAPHY_PRESETS.default.fonts;
+
+				expect(state.fontFamily).toBe(preset.fontFamily);
+				expect(state.chatFontFamily).toBe(preset.chatFontFamily);
+				expect(state.terminalFontFamily).toBe(preset.terminalFontFamily);
+				expect(state.filePreviewFontFamily).toBe(preset.filePreviewFontFamily);
+				expect(state.fileEditorFontFamily).toBe(preset.fileEditorFontFamily);
+
+				for (const [key, value] of Object.entries(preset)) {
+					expect(window.maestro.settings.set).toHaveBeenCalledWith(key, value);
+				}
+			});
+
+			it('applyTypographyPreset round-trips between the two presets', () => {
+				// A preset that skipped a surface would leave the other preset's
+				// value there, so Default -> Hacker would not restore Hacker.
+				useSettingsStore.getState().applyTypographyPreset('default');
+				useSettingsStore.getState().applyTypographyPreset('hacker');
+				const state = useSettingsStore.getState();
+
+				expect(state.fontFamily).toBe(TYPOGRAPHY_PRESETS.hacker.fonts.fontFamily);
+				expect(state.terminalFontFamily).toBe('');
+				expect(state.filePreviewFontFamily).toBe('');
+				expect(state.fileEditorFontFamily).toBe('');
+			});
+
+			it('setTypographyPromptSeen updates state and persists', () => {
+				useSettingsStore.getState().setTypographyPromptSeen(true);
+				expect(useSettingsStore.getState().typographyPromptSeen).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('typographyPromptSeen', true);
 			});
 
 			it('setFontSize updates state and persists', () => {
@@ -587,6 +679,12 @@ describe('settingsStore', () => {
 		});
 
 		describe('Web', () => {
+			it('setWebInterfaceAutoStart updates state and persists', () => {
+				useSettingsStore.getState().setWebInterfaceAutoStart(true);
+				expect(useSettingsStore.getState().webInterfaceAutoStart).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('webInterfaceAutoStart', true);
+			});
+
 			it('setWebInterfaceUseCustomPort updates state and persists', () => {
 				useSettingsStore.getState().setWebInterfaceUseCustomPort(true);
 				expect(useSettingsStore.getState().webInterfaceUseCustomPort).toBe(true);
@@ -906,9 +1004,15 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().documentGraphMaxNodes).toBe(500);
 		});
 
-		it('setDocumentGraphPreviewCharLimit clamps to 50-500', () => {
-			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(10);
-			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(50);
+		it('setDocumentGraphPreviewCharLimit clamps to 0-500, keeping 0 as "previews off"', () => {
+			// 0 is a mode, not a floor violation: it draws each graph node as a
+			// filename pill. Clamping it up to 50 would make the setting
+			// unreachable and snap the graph back to full cards.
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(0);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
+
+			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(-10);
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
 
 			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(1000);
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(500);
@@ -940,6 +1044,22 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().preventSleepEnabled).toBe(true);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('preventSleepEnabled', true);
 			expect(window.maestro.power.setEnabled).toHaveBeenCalledWith(true);
+		});
+
+		it('setPreventDisplaySleepEnabled updates state, persists, and calls power.setKeepDisplayAwake', async () => {
+			await useSettingsStore.getState().setPreventDisplaySleepEnabled(true);
+			expect(useSettingsStore.getState().preventDisplaySleepEnabled).toBe(true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', true);
+			expect(window.maestro.power.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+		});
+
+		it('setPreventDisplaySleepEnabled rolls back when the power call fails', async () => {
+			(window.maestro.power.setKeepDisplayAwake as any).mockRejectedValueOnce(new Error('boom'));
+
+			await expect(useSettingsStore.getState().setPreventDisplaySleepEnabled(true)).rejects.toThrow(
+				'boom'
+			);
+			expect(useSettingsStore.getState().preventDisplaySleepEnabled).toBe(false);
 		});
 	});
 
@@ -1474,39 +1594,69 @@ describe('settingsStore', () => {
 			]);
 		});
 
+		// The denominator is the shortcuts that actually have a chord bound, so the
+		// ids used here have to be real ones - made-up ids count for nothing.
+		const boundShortcutIds = () =>
+			collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS).map((s) => s.id);
+
 		it('recordShortcutUsage detects level-up', () => {
-			// To trigger level 1 (student), we need >= 25% of total shortcuts
-			// Total = DEFAULT_SHORTCUTS + TAB_SHORTCUTS + FIXED_SHORTCUTS keys
-			const totalShortcuts =
-				Object.keys(DEFAULT_SHORTCUTS).length + Object.keys(TAB_SHORTCUTS).length + 8; // FIXED_SHORTCUTS has 8 entries
+			const bound = boundShortcutIds();
+			// Level 1 (Student) starts at 25% of the bound shortcuts.
+			const needed = Math.ceil(bound.length * 0.25);
 
-			const needed = Math.ceil(totalShortcuts * 0.25);
-
-			// Pre-populate with enough shortcuts to be just below level 1
-			const fakeShortcuts: string[] = [];
-			for (let i = 0; i < needed - 1; i++) {
-				fakeShortcuts.push(`fake-shortcut-${i}`);
-			}
+			// Pre-populate to one short of the threshold.
 			useSettingsStore.setState({
 				keyboardMasteryStats: {
 					...DEFAULT_KEYBOARD_MASTERY_STATS,
-					usedShortcuts: fakeShortcuts,
+					usedShortcuts: bound.slice(0, needed - 1),
 					currentLevel: 0,
 				},
 			});
 
-			const result = useSettingsStore
-				.getState()
-				.recordShortcutUsage(`shortcut-that-triggers-level-up`);
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[needed - 1]);
 
-			// The new shortcut should have been added
 			expect(useSettingsStore.getState().keyboardMasteryStats.usedShortcuts).toHaveLength(needed);
+			expect(result.newLevel).toBe(1);
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(1);
+		});
 
-			// If this crossed the threshold, newLevel should be 1
-			if (result.newLevel !== null) {
-				expect(result.newLevel).toBeGreaterThan(0);
-				expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBeGreaterThan(0);
-			}
+		it('recordShortcutUsage ignores ids that have no chord bound', () => {
+			const bound = boundShortcutIds();
+			const needed = Math.ceil(bound.length * 0.25);
+
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, needed - 1),
+					currentLevel: 0,
+				},
+			});
+
+			// An unbound action can never be fired, so recording one must not move
+			// the level - otherwise the numerator outruns its own denominator.
+			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => s.keys.length === 0);
+			expect(unbound).toBeDefined();
+			const result = useSettingsStore.getState().recordShortcutUsage(unbound!.id);
+
+			expect(result.newLevel).toBeNull();
+			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(0);
+		});
+
+		it('reaches 100% once every bound shortcut has been used', () => {
+			const bound = boundShortcutIds();
+			useSettingsStore.setState({
+				keyboardMasteryStats: {
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					usedShortcuts: bound.slice(0, -1),
+					currentLevel: 3,
+				},
+			});
+
+			const result = useSettingsStore.getState().recordShortcutUsage(bound[bound.length - 1]);
+
+			// Unbound shortcuts used to sit in the denominator, which made the top
+			// level unreachable no matter how many chords the user learned.
+			expect(result.newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
 		});
 
 		it('acknowledgeKeyboardMasteryLevel updates level', () => {
@@ -1587,6 +1737,10 @@ describe('settingsStore', () => {
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',
+				chatFontFamily: 'Verdana',
+				filePreviewFontFamily: 'Georgia',
+				fileEditorFontFamily: 'Iosevka',
+				typographyPromptSeen: true,
 				fontSize: 16,
 				activeThemeId: 'one-dark-pro',
 				enterToSendAI: true,
@@ -1597,9 +1751,28 @@ describe('settingsStore', () => {
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('JetBrains Mono');
+			expect(state.chatFontFamily).toBe('Verdana');
+			expect(state.filePreviewFontFamily).toBe('Georgia');
+			expect(state.fileEditorFontFamily).toBe('Iosevka');
+			expect(state.typographyPromptSeen).toBe(true);
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		it('restores both halves of the environment editor', async () => {
+			// A parked variable that did not survive a restart would come back
+			// live, which is the opposite of what switching it off asked for.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shellEnvVars: { KEEP: 'yes' },
+				shellEnvVarsDisabled: { PARKED: 'later' },
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.shellEnvVars).toEqual({ KEEP: 'yes' });
+			expect(state.shellEnvVarsDisabled).toEqual({ PARKED: 'later' });
 		});
 
 		it('loads fileExplorerIconTheme when the persisted value is valid', async () => {
@@ -1612,15 +1785,25 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
-		it('falls back to default for invalid fileExplorerIconTheme values', async () => {
-			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
+		it('ignores a non-boolean persisted webInterfaceAutoStart value', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				webInterfaceAutoStart: 'false' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().webInterfaceAutoStart).toBe(false);
+		});
+
+		it('falls back to rich for invalid fileExplorerIconTheme values', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'neon' as any,
 			});
 
 			await loadAllSettings();
 
-			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
 		it('keeps edits made while a reload is in flight', async () => {
@@ -1756,7 +1939,7 @@ describe('settingsStore', () => {
 
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
 			expect(state.fontSize).toBe(14);
 		});
 
@@ -2156,6 +2339,79 @@ describe('settingsStore', () => {
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
 		});
 
+		it('strips a persisted Cmd+Shift+Down binding and restores the bundled default', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Meta', 'Shift', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			// Cmd+Shift+Down is select-to-end in every text field; Maestro must not
+			// shadow it, so the action falls back to its own default instead.
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'shortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.nextUnreadTab.keys).toEqual(['Alt', 'Meta', 'ArrowDown']);
+		});
+
+		it('strips the Windows Ctrl+Shift+Down spelling of the same reserved chord', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Ctrl', 'Shift', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+		});
+
+		it('strips a reserved chord from tabShortcuts too, which is a separate persist key', async () => {
+			// tabShortcuts runs the same migration through a second call site with
+			// its own defaults table and its own settings key. A guard applied to
+			// only one of the two leaves half the bindings able to shadow the OS.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				tabShortcuts: {
+					closeAllTabs: {
+						id: 'closeAllTabs',
+						label: 'Close All Tabs',
+						keys: ['Meta', 'Shift', 'ArrowUp'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().tabShortcuts.closeAllTabs.keys).toEqual([
+				'Meta',
+				'Shift',
+				'w',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'tabShortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.closeAllTabs.keys).toEqual(['Meta', 'Shift', 'w']);
+		});
+
 		it('moves New Group Chat off Opt+Cmd+C and hands the combo to Concerto', async () => {
 			// Without this remap the two COLLIDE: anyone who has ever opened the
 			// Shortcuts tab has the whole map persisted, so New Group Chat would keep
@@ -2203,6 +2459,102 @@ describe('settingsStore', () => {
 					'c',
 				]);
 			}
+		});
+
+		it('returns Jump to Bottom to Cmd+Shift+J from every interim binding', async () => {
+			// The action went Cmd+Shift+J -> Opt+J -> Opt+Cmd+Down -> Cmd+Shift+J.
+			// Both interim eras must land back on the original chord; a user who
+			// skipped a build carries whichever one they last received.
+			for (const oldKeys of [
+				['Alt', 'j'],
+				['Alt', 'Meta', 'ArrowDown'],
+			]) {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: oldKeys },
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.jumpToBottom.keys).toEqual([
+					'Meta',
+					'Shift',
+					'j',
+				]);
+			}
+		});
+
+		it('does not re-migrate Jump to Bottom once it is already on Cmd+Shift+J', async () => {
+			// Cmd+Shift+J is the destination, so it must NOT appear in fromKeys -
+			// remapping a chord onto itself sets needsMigration on every load and
+			// re-enters the persist/file-watcher loop.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					jumpToBottom: {
+						id: 'jumpToBottom',
+						label: 'Jump to Bottom',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			vi.mocked(window.maestro.settings.set).mockClear();
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.jumpToBottom.keys).toEqual([
+				'Meta',
+				'Shift',
+				'j',
+			]);
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.some(([k]) => k === 'shortcuts')
+			).toBe(false);
+		});
+
+		it('gives the tiling family its Ctrl+Cmd defaults over a persisted unbound map', async () => {
+			// The merge keeps a saved `keys` whenever it is PRESENT, and `[]` is
+			// present. Anyone who opened Settings -> Shortcuts while these shipped
+			// unbound has empty arrays on disk and would never see the new defaults.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					tileAiBelow: { id: 'tileAiBelow', label: 'Tile New AI Chat Below', keys: [] },
+					tileBrowserBelow: { id: 'tileBrowserBelow', label: 'Tile New Browser Below', keys: [] },
+					tileFileBelow: { id: 'tileFileBelow', label: 'Tile New File Below', keys: [] },
+					tileTerminalBelow: {
+						id: 'tileTerminalBelow',
+						label: 'Tile New Terminal Below',
+						keys: [],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.tileAiBelow.keys).toEqual(['Control', 'Meta', 't']);
+			expect(shortcuts.tileBrowserBelow.keys).toEqual(['Control', 'Meta', 'b']);
+			expect(shortcuts.tileFileBelow.keys).toEqual(['Control', 'Meta', 'f']);
+			expect(shortcuts.tileTerminalBelow.keys).toEqual(['Control', 'Meta', 'j']);
+		});
+
+		it('moves Tile New Terminal off Cmd+Shift+J so Jump to Bottom can hold it', async () => {
+			// The one binding that would otherwise put two live actions on one key.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					tileTerminalBelow: {
+						id: 'tileTerminalBelow',
+						label: 'Tile New Terminal Below',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.tileTerminalBelow.keys).toEqual(['Control', 'Meta', 'j']);
+			expect(shortcuts.jumpToBottom.keys).toEqual(['Meta', 'Shift', 'j']);
 		});
 
 		it('leaves a user-customized New Group Chat binding alone', async () => {
@@ -2519,6 +2871,19 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(100);
 		});
 
+		it('keeps a saved documentGraphPreviewCharLimit of 0 on load', async () => {
+			// The "previews off" choice round-trips through settings on every
+			// launch. A floor of 50 in the load validator would discard it
+			// silently and the graph would come back as full cards each time.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				documentGraphPreviewCharLimit: 0,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(0);
+		});
+
 		it('validates documentGraphLayoutType on load (rejects invalid)', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				documentGraphLayoutType: 'invalid-layout',
@@ -2791,6 +3156,43 @@ describe('settingsStore', () => {
 
 			for (const key of FILE_PREVIEW_TOOLBAR_BUTTON_KEYS) {
 				expect(description).toContain(key);
+			}
+		});
+	});
+	// ========================================================================
+	// 16. File Explorer Icon Theme Metadata Parity
+	// ========================================================================
+
+	// The shipped default lives in three places: the store's initial state, the
+	// invalid-value fallback in loadAllSettings, and SETTINGS_METADATA (which is
+	// what `maestro-cli settings` reports and what a reset writes to disk). The
+	// metadata description had already drifted far enough to advertise two theme
+	// values that never existed.
+	describe('fileExplorerIconTheme metadata parity', () => {
+		it('metadata default is a real icon theme', () => {
+			expect(FILE_EXPLORER_ICON_THEMES).toContain(
+				SETTINGS_METADATA.fileExplorerIconTheme.default as FileExplorerIconTheme
+			);
+		});
+
+		it('metadata default matches the value an invalid setting falls back to', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'neon' as unknown as FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe(
+				SETTINGS_METADATA.fileExplorerIconTheme.default
+			);
+		});
+
+		it('metadata description names every real icon theme', () => {
+			const { description } = SETTINGS_METADATA.fileExplorerIconTheme;
+
+			for (const value of FILE_EXPLORER_ICON_THEMES) {
+				expect(description).toContain(value);
 			}
 		});
 	});

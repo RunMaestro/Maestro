@@ -3,6 +3,7 @@ import type { UsageDashboardViewMode as ViewMode } from '../../../types';
 export const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
+	'delegation-score',
 	'query-percentiles',
 	'agent-comparison',
 	'provider-trends',
@@ -12,6 +13,7 @@ export const OVERVIEW_SECTIONS = [
 ] as const;
 
 export const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
+export const GROUPS_SECTIONS = ['group-overview-cards'] as const;
 export const AGENT_OVERVIEW_SECTIONS = [
 	'session-stats',
 	'agent-efficiency',
@@ -24,6 +26,7 @@ export const AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS = [
 	'agent-usage',
 ] as const;
 export const ACTIVITY_SECTIONS = [
+	'delegation-trend',
 	'activity-heatmap',
 	'weekday-comparison',
 	'duration-trends',
@@ -40,6 +43,7 @@ export const CODEX_USAGE_SECTIONS = ['codex-usage'] as const;
 export type SectionId =
 	| (typeof OVERVIEW_SECTIONS)[number]
 	| (typeof AGENTS_SECTIONS)[number]
+	| (typeof GROUPS_SECTIONS)[number]
 	| (typeof AGENT_OVERVIEW_SECTIONS)[number]
 	| (typeof AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS)[number]
 	| (typeof ACTIVITY_SECTIONS)[number]
@@ -50,9 +54,12 @@ export type SectionId =
 const SECTION_LABELS: Record<SectionId, string> = {
 	'year-in-pixels': 'Past Year Activity Strip',
 	'summary-cards': 'Summary Cards',
+	'delegation-score': 'Delegation Score',
+	'delegation-trend': 'Interactive vs Delegated Trend',
 	'query-percentiles': 'Query Duration Percentiles',
 	'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',
 	'agent-overview-cards': 'Active Agents Overview',
+	'group-overview-cards': 'Group Usage Overview',
 	'session-stats': 'Agent Statistics',
 	'worktree-analytics': 'Worktree Analytics',
 	'anthropic-usage': 'Anthropic Usage',
@@ -85,6 +92,8 @@ export function getSectionsForViewMode(
 			return OVERVIEW_SECTIONS;
 		case 'agents':
 			return AGENTS_SECTIONS;
+		case 'groups':
+			return GROUPS_SECTIONS;
 		case 'agent-overview':
 			return options.hasWorktreeAnalytics
 				? AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS

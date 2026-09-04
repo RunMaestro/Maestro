@@ -46,6 +46,8 @@
 		"postinstall": "patch-package && node scripts/ensure-electron.mjs && electron-rebuild -f -w node-pty,better-sqlite3",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/ && eslint -c eslint.dashes.config.mjs src/__tests__ scripts",
+		"lint:doc-refs": "node scripts/check-doc-refs.mjs",
+		"docs:verify": "node scripts/verify-docs-paths.mjs",
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
 		"format:all": "prettier --write .",
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
@@ -62,7 +64,9 @@
 		"test:performance": "vitest run --config vitest.performance.config.mts",
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
 		"refresh-openspec": "node scripts/refresh-openspec.mjs",
-		"refresh-bmad": "node scripts/refresh-bmad.mjs"
+		"refresh-bmad": "node scripts/refresh-bmad.mjs",
+		"fonts:fetch": "node scripts/fetch-webfonts.mjs",
+		"fonts:check": "node scripts/fetch-webfonts.mjs --check"
 	},
 	"build": {
 		"npmRebuild": false,
@@ -348,6 +352,8 @@
 		"electron-updater": "^6.8.3",
 		"fastify": "^4.25.2",
 		"highlight.js": "^11.11.1",
+		"hyparquet": "^1.29.2",
+		"hyparquet-compressors": "^1.1.1",
 		"js-tiktoken": "^1.0.21",
 		"js-yaml": "^4.2.0",
 		"katex": "^0.16.46",
@@ -420,6 +426,7 @@
 		"eslint-plugin-react-hooks": "^7.0.1",
 		"globals": "^16.5.0",
 		"husky": "^9.1.7",
+		"hyparquet-writer": "^0.16.8",
 		"jsdom": "^27.2.0",
 		"lucide-react": "^0.303.0",
 		"patch-package": "^8.0.1",

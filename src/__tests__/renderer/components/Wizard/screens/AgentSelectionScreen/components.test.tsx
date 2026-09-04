@@ -164,6 +164,48 @@ describe('AgentSelectionScreen components', () => {
 		expect(onShowAllProvidersChange).toHaveBeenCalledWith(true);
 	});
 
+	it('wraps a short tile set and only reaches for the strip when it has to', () => {
+		const onColumnsChange = vi.fn();
+		const tileRefs: React.MutableRefObject<(HTMLButtonElement | null)[]> = { current: [] };
+
+		function renderGrid(tiles: typeof AGENT_TILES) {
+			return (
+				<AgentGrid
+					theme={mockTheme}
+					tiles={tiles}
+					detectedAgents={tiles.map((tile) => detectedAgent(tile.id))}
+					selectedAgent={null}
+					focusedTileIndex={0}
+					isNameFieldFocused={false}
+					totalProviderCount={AGENT_TILES.length}
+					availableProviderCount={tiles.length}
+					providerLocationLabel="locally"
+					showAllProviders
+					tileRefs={tileRefs}
+					onTileClick={vi.fn()}
+					onOpenConfig={vi.fn()}
+					onShowAllProvidersChange={vi.fn()}
+					onColumnsChange={onColumnsChange}
+					setFocusedTileIndex={vi.fn()}
+					setIsNameFieldFocused={vi.fn()}
+				/>
+			);
+		}
+
+		// Five tiles fit in two rows, so there is nothing to scroll and no arrows to
+		// draw. An arrow that cannot move is worse than no arrow.
+		const { rerender } = render(renderGrid(AGENT_TILES.slice(0, 5)));
+		expect(screen.queryByTitle('Scroll right')).toBeNull();
+		// Balanced 3 + 2 rather than 4 + 1, and the count is reported upward so
+		// up/down arrow movement steps by the layout that was actually drawn.
+		expect(onColumnsChange).toHaveBeenLastCalledWith(3);
+
+		// The full registry does not, so the strip and its affordances come back.
+		rerender(renderGrid(AGENT_TILES));
+		expect(screen.getByTitle('Scroll right')).toBeInTheDocument();
+		expect(screen.getByTitle('Scroll left')).toBeInTheDocument();
+	});
+
 	it('renders location select only when remotes exist and forwards selection', () => {
 		const onSshRemoteChange = vi.fn();
 		const { rerender } = render(

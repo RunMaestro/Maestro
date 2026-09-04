@@ -33,6 +33,8 @@ const enableGroupsPlus = () =>
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import { requestSidebarReveal } from '../../../renderer/utils/sidebarReveal';
 import type { BatchRunState } from '../../../renderer/types';
 
 const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
@@ -57,6 +59,10 @@ vi.mock('lucide-react', async (importOriginal) => ({
 	X: () => <span data-testid="icon-x" />,
 	Keyboard: () => <span data-testid="icon-keyboard" />,
 	Radio: () => <span data-testid="icon-radio" />,
+	// The now-playing pill's transport, needed by the wordmark width-gate tests.
+	Play: () => <span data-testid="icon-play" />,
+	Pause: () => <span data-testid="icon-pause" />,
+	Maximize2: () => <span data-testid="icon-maximize" />,
 	Copy: () => <span data-testid="icon-copy" />,
 	ExternalLink: () => <span data-testid="icon-external-link" />,
 	PanelLeftClose: () => <span data-testid="icon-panel-left-close" />,
@@ -333,6 +339,12 @@ describe('SessionList', () => {
 			bookmarksCollapsed: false,
 			sessionFilterOpen: false,
 			showUnreadAgentsOnly: false,
+			// The filter text and the archived-chat toggle live in uiStore now (the
+			// Cmd+[ / Cmd+] cycle has to see them). Reset them here or the "filters
+			// sessions by name" test leaves a query behind and every later test
+			// renders an empty sidebar.
+			sessionFilter: '',
+			showArchivedGroupChats: false,
 		});
 		useSessionStore.setState({
 			sessions: [],
@@ -407,6 +419,10 @@ describe('SessionList', () => {
 	describe('Basic Rendering', () => {
 		it('renders the MAESTRO branding header when expanded', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
+			// Wide enough to clear the wordmark's width gate. The default sidebar
+			// width is the 256px minimum, where the wordmark is dropped rather than
+			// clipped, so a branding assertion has to state the width it means.
+			useSettingsStore.setState({ leftSidebarWidth: 400 });
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 
@@ -415,6 +431,7 @@ describe('SessionList', () => {
 
 		it('branding header has z-20 to stack menu above sidebar content', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 400 });
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 
@@ -588,15 +605,15 @@ describe('SessionList', () => {
 			expect(toggleGlobalLive).toHaveBeenCalled();
 		});
 
-		it('hides OFFLINE text when sidebar width is narrow (< 256px) with autoRunStats badge', () => {
-			// When autoRunStats.currentBadgeLevel > 0, threshold is 295px
-			// When no autoRunStats, threshold is 256px
+		it('still shows OFFLINE text at the minimum width with an autoRunStats badge', () => {
+			// The wordmark is already dropped at 256px, and the room it vacated is
+			// more than the badge costs - so the badge must not push the label out.
 			const autoRunStats = {
 				totalDocuments: 1,
 				currentDocument: 1,
 				completedTasks: 0,
 				totalTasks: 5,
-				currentBadgeLevel: 1, // This raises threshold to 295px
+				currentBadgeLevel: 1,
 			};
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
@@ -608,7 +625,19 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Text should be hidden when below threshold with active badge
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			expect(screen.getByText('OFFLINE')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
+		});
+
+		it('hides OFFLINE text below the label threshold', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 255 });
+			const props = createDefaultProps({
+				isLiveMode: false,
+			});
+			render(<SessionList {...props} />);
+
 			expect(screen.queryByText('OFFLINE')).not.toBeInTheDocument();
 			// But the Radio icon should still be present
 			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
@@ -639,14 +668,13 @@ describe('SessionList', () => {
 			expect(screen.getByText('OFFLINE')).toBeInTheDocument();
 		});
 
-		it('hides LIVE text when sidebar width is narrow with autoRunStats badge', () => {
-			// When autoRunStats.currentBadgeLevel > 0, threshold is 295px
+		it('still shows LIVE text at the minimum width with an autoRunStats badge', () => {
 			const autoRunStats = {
 				totalDocuments: 1,
 				currentDocument: 1,
 				completedTasks: 0,
 				totalTasks: 5,
-				currentBadgeLevel: 1, // This raises threshold to 295px
+				currentBadgeLevel: 1,
 			};
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
@@ -659,7 +687,20 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Text should be hidden when below threshold with active badge
+			expect(screen.getByText('LIVE')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
+		});
+
+		it('hides LIVE text below the label threshold', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 255 });
+			const props = createDefaultProps({
+				isLiveMode: true,
+				webInterfaceUrl: 'http://localhost:3000',
+			});
+			render(<SessionList {...props} />);
+
+			// Text should be hidden when below threshold
 			expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
 			// But the Radio icon should still be present
 			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
@@ -4115,6 +4156,17 @@ describe('SessionList', () => {
 			Element.prototype.scrollIntoView = scrollSpy as unknown as () => void;
 		});
 
+		/**
+		 * The reveal defers a frame so the cursor can settle - `selectedSidebarIndex`
+		 * is synced from `activeSessionId` by a parent effect, and reading it
+		 * synchronously gives the row the cursor is leaving.
+		 */
+		const flushFrames = async () => {
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 40));
+			});
+		};
+
 		it('does not scroll the list when the active group chat is archived', () => {
 			// The group chat section only renders with at least two AI agents.
 			const sessions = [
@@ -4146,8 +4198,11 @@ describe('SessionList', () => {
 			expect(scrollSpy).not.toHaveBeenCalled();
 		});
 
-		it('still scrolls a group chat into view when it is opened', () => {
-			// The group chat section only renders with at least two AI agents.
+		// The list scrolls when something ASKS it to, not when state that a click
+		// and a keystroke both produce happens to change. Opening a group chat by
+		// clicking it must not move the list; the Cmd+[ / Cmd+] cycle requests a
+		// reveal explicitly and does.
+		it('does not scroll when a group chat simply becomes active', async () => {
 			const sessions = [
 				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
 				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
@@ -4155,10 +4210,7 @@ describe('SessionList', () => {
 			useSessionStore.setState({ sessions, activeSessionId: 's1' });
 			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
 			useSettingsStore.setState({ groupChatsExpanded: true });
-			useGroupChatStore.setState({
-				groupChats: [makeChat()],
-				activeGroupChatId: null,
-			});
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
 			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
 			render(<SessionList {...props} />);
 			scrollSpy.mockClear();
@@ -4166,7 +4218,183 @@ describe('SessionList', () => {
 			act(() => {
 				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
 			});
+			await flushFrames();
+
+			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		it('scrolls the group chat into view when a reveal is requested', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+				requestSidebarReveal();
+			});
+			await flushFrames();
+
 			expect(scrollSpy).toHaveBeenCalled();
+		});
+
+		it('does not scroll when an agent is clicked', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// The user is already looking at the row they clicked. Re-aiming the
+			// list they just scrolled by hand is the reported bug - and it used to
+			// scroll TWICE, first to wherever the keyboard cursor had been left.
+			fireEvent.click(screen.getByText('Agent Two'));
+			act(() => {
+				useSessionStore.setState({ activeSessionId: 's2' });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	// ============================================================================
+	// Wordmark width gate
+	// ============================================================================
+
+	/**
+	 * The rule: MAESTRO is drawn IN FULL or not drawn at all. It used to
+	 * `truncate`, so a narrow sidebar rendered the brand as "MAE...", which reads
+	 * as a rendering bug rather than as a deliberate space saving.
+	 *
+	 * These drive `leftSidebarWidth` directly, the same way the LIVE and
+	 * now-playing label tests above do, so jsdom's missing layout engine is not a
+	 * problem.
+	 */
+	describe('MAESTRO wordmark', () => {
+		beforeEach(() => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		});
+
+		afterEach(() => {
+			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		});
+
+		/** Put the now-playing pill on screen: engaged this session, then hidden. */
+		const showNowPlayingPill = () => {
+			useMediaPlaybackStore.setState({
+				dismissed: true,
+				dormant: false,
+				activeItemId: 'media-1',
+				items: [
+					{
+						id: 'media-1',
+						name: 'a-very-long-recording-name.mp3',
+						path: '/tmp/a-very-long-recording-name.mp3',
+						kind: 'audio',
+					},
+				],
+			} as never);
+		};
+
+		/**
+		 * The header is three zones: identity, indicators, menu. jsdom has no
+		 * layout engine, so these assert the structure that produces the centering
+		 * (a flex-1 band between two shrink-0 zones) rather than pixel positions.
+		 */
+		it('puts every indicator in the centered band, not beside the wordmark', () => {
+			useSettingsStore.setState({
+				leftSidebarWidth: 600,
+				autoRunStats: {
+					totalDocuments: 1,
+					currentDocument: 1,
+					completedTasks: 0,
+					totalTasks: 5,
+					currentBadgeLevel: 1,
+				},
+			});
+			showNowPlayingPill();
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const band = screen.getByTestId('sidebar-header-indicators');
+			// flex-1 between two shrink-0 zones is what centers the band.
+			expect(band.className).toContain('flex-1');
+			expect(band.className).toContain('justify-center');
+
+			// The wordmark is identity, so it stays out of the band.
+			expect(band.contains(screen.getByText('MAESTRO'))).toBe(false);
+			expect(band.contains(screen.getByTitle('Switch agent'))).toBe(false);
+			expect(band.contains(screen.getByTitle('Menu'))).toBe(false);
+
+			// Every indicator lives inside it.
+			expect(band.contains(screen.getByTestId('icon-radio'))).toBe(true);
+			expect(band.contains(screen.getByTestId('now-playing-indicator'))).toBe(true);
+			expect(band.contains(screen.getByTestId('icon-trophy'))).toBe(true);
+		});
+
+		it('shows the wordmark on a wide sidebar', () => {
+			useSettingsStore.setState({ leftSidebarWidth: 600 });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+		});
+
+		it('drops the wordmark entirely on a narrow sidebar', () => {
+			useSettingsStore.setState({ leftSidebarWidth: 256 });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			// Absence, not a class. Asserting that `truncate` is gone would pass on
+			// a wordmark that still renders clipped.
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			// The wand stays at every width, so the header keeps its identity and
+			// its switch-agent affordance.
+			expect(screen.getByTitle('Switch agent')).toBeInTheDocument();
+		});
+
+		// The regression that matters. Nothing between "MAESTRO" and nothing.
+		it('never renders a partial wordmark at any allowed width', () => {
+			for (let width = 256; width <= 600; width += 8) {
+				useSettingsStore.setState({ leftSidebarWidth: width });
+				const { unmount } = render(<SessionList {...createDefaultProps({})} />);
+
+				const heading = document.querySelector('h1');
+				if (heading) {
+					expect(heading.textContent).toBe('MAESTRO');
+					// A clipped wordmark is a full one that CSS cut off, so the class
+					// that would do the cutting must not be there either.
+					expect(heading.className).not.toContain('truncate');
+				}
+				unmount();
+			}
+		});
+
+		it('gives up the wordmark once the badge and the now-playing pill take the room', () => {
+			// One width, three states: the wordmark survives each control alone and
+			// is dropped once both are drawn.
+			const width = 330;
+
+			useSettingsStore.setState({ leftSidebarWidth: width, autoRunStats: undefined });
+			const bare = render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+			bare.unmount();
+
+			useSettingsStore.setState({ leftSidebarWidth: width });
+			showNowPlayingPill();
+			const withPill = render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			withPill.unmount();
 		});
 	});
 });

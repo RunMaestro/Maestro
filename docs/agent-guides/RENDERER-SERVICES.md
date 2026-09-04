@@ -250,15 +250,62 @@ A LEADING mention (`suppressLocal`) is the same story. The source agent does not
 
 Module-level functions, not a hook: the queue drain runs outside React. The send itself is `sendCrossAgentRequest` in `hooks/agent/useCrossAgentDispatch.ts`, also module-level, sharing one `pendingRequests` tracker with the hook that subscribes to the response chunks.
 
+**Only agents are targets - a group is not.** `resolveMentionedTargetSessionIds()` (`hooks/input/useAgentMentionCompletion.ts`) skips group suggestions outright, and `buildKnownMentionNameSet()` leaves group names out of the chip set for the same reason. A group is picker shorthand: accepting the row inserts `memberMentionValue` (every member's own `@name`), so the sent text names agents and nothing else. Resolving a group here TOO is how an agent that merely shared a name with a group had its message fanned out to the whole group - suggestions are built groups-first, so the group won that name every time. It also matters for `suppressLocal`: a message leading with a token that resolves to nothing must not suppress the local send, or it is addressed to nobody at all. A group name that survives into the sent text stays plain text, like any other unrecognized `@word`.
+
+**Stop cancels consults - it is an agent-level action, not a tab one.** A mention fans one turn out across several processes: the agent's own tab plus one ephemeral `cross-agent-*` process per target, none of which carry the agent's process id. `useInterruptHandler` therefore calls `window.maestro.crossAgent.cancel(sessionId)` before it signals anything else (non-critical - a failure there must not block the interrupt). Cancellation is addressed by SOURCE AGENT, never by request id: the renderer only learns a request id once `crossAgent.send` resolves, so a Stop pressed inside that window would miss a consult main is already spawning. Main holds the authoritative registry (`cancelCrossAgentRequestsForSource` in `main/cross-agent/cross-agent-router.ts`), which is registered BEFORE the target's binary is resolved and re-checked around the spawn, so a Stop landing in either race still lands. A cancelled consult settles exactly like a timeout - process killed, partial flushed - but stamped `canceled` rather than `error`, because the user stopping a consult is not the target failing to answer. `crossAgentTerminationNote()` is the one place that wording is chosen, so the bubble and the history entry cannot disagree.
+
+### queuedPrompt.ts - send a prompt without a composer
+
+Everything that asks an agent a question without a user typing it - the CLI's `dispatch --queue`, a snooze's wake prompt - builds its queue item here.
+
+- `buildQueuedMessageItem({ session, tab, text, images? })` - the `QueuedItem` a message becomes, exactly as the composer builds it.
+- `enqueuePromptForTab({ sessionId, tabId, text, images? })` - resolve both from the store and append to the tail of `session.executionQueue`. Returns the item, or `null` when the agent is gone or has no AI tab.
+
+**Queue it, do not spawn it.** The queue solves the timing problem for free: `useQueueProcessing` drains an idle agent on its next render and a busy one when its turn finishes, so no caller re-implements "is the agent free?", and nothing has to reach for the spawn config. It also re-resolves the target at DRAIN time through `resolveQueuedItemTarget`, which is what makes this safe to call in the same tick as the store write that created the tab. The alternative - dispatching the `maestro:remoteCommand` event - reads a render-time `sessionsRef`, so a prompt fired before React re-rendered finds a stale session and is dropped.
+
+Three fields are easy to omit and each has a visible cost. `tabName` is the label a queued item falls back to once its tab is closed. `readOnlyMode` is what lets the item bypass the parallel-execution guard. `turnSettings` (from `captureQueuedTurnSettings`) freezes the model and effort at queue time, so a queue that drains after the user switches models still runs - and is labeled - with what was selected when it was queued. The `@mention` flags are STAMPED here and fired by `agentStore.processQueuedItem` at drain time, per the contract above; this module plans, it never consults.
+
+Module-level functions, not a hook: the callers are a 15s sweep timer and an IPC listener, both outside React. `useRemoteIntegration`'s `dispatch --queue` path hand-rolled this item and had already drifted - a `agentSessionId.split('-')[0]` tab label instead of `getTabDisplayName`, and no `turnSettings` capture at all.
+
+### snoozeWakePrompt.ts - run a snooze's prompt when its tab returns
+
+A snooze carries a note AND, optionally, a prompt. They address different readers: the note becomes the wake notification (for the user), the prompt is sent to the agent the instant the tab is back. Either, both, or neither.
+
+- `runSnoozeWakePrompt(sessionId, entry, restoredTabId, isMemberRestored?)` - queue `entry.wakePrompt` into the tab that came back. Returns whether anything was queued.
+- `runSnoozeWakePromptAfterGroupWake(sessionId, entry, restoredTabId, droppedMembers)` - the same, for a group wake that already knows which panes it had to drop.
+
+It fires on BOTH ways a tab returns - the scheduler's wake (`useSnoozeScheduler`) and an early "Unsnooze now" (`tabStore.unsnoozeTab`) - because the user wrote the prompt against the tab COMING BACK, not against the clock. A dismissed snooze restores nothing, so nothing is dispatched there.
+
+The target comes from `resolveWakePromptTabId()` in `utils/snoozeHelpers.ts`, which is not the same as `entry.tab.id`: when an equivalent tab was already open the wake focuses THAT one and the prompt has to follow the tab the user actually lands on. A group resolves to its first surviving AI pane in leaf order - the layout's focused pane is stored as a pane id rather than a tab id, and a group focused on a file pane would otherwise have nowhere to send a prompt the user did ask for. A file, terminal, or browser snooze resolves to `null` and is logged rather than rerouted; the dialog hides the field for those kinds (`canSnoozeRunWakePrompt`), so an entry carrying one at all came from an older build or the CLI.
+
+Everything goes through `queuedPrompt.ts` rather than a spawn, for the tick-safety reason above: the tab is restored in the same `setSessions` call the wake runs in.
+
 ### fileDeletion.ts - delete the previewed file
 
 One confirmation, one delete, behind every surface that offers to remove the file you are looking at: the File Preview toolbar's trash button and the command palette's `File: Delete` entry.
 
 **Key export:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })` - opens the shared `confirm` modal (destructive, titled "Delete File") and, only on confirm, runs `window.maestro.fs.delete` - the same IPC the Files panel context menu uses, so SSH remotes are honored. `sessionId` defaults to the active session, which is what both surfaces are scoped to.
 
-After a successful delete it force-closes every file preview tab in that session pointing at the path, then dispatches the `maestro:refreshFileTree` CustomEvent so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
+After a successful delete it force-closes every file preview tab in that session pointing at the path, then calls `requestFileTreeRefresh(sessionId)` (`src/renderer/utils/fileTreeRefresh.ts`) so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
 
 Do NOT add a second delete path. A new surface should call `requestFileDeletion` so the confirmation copy and the tab cleanup cannot drift.
+
+---
+
+### editQueuedMessage.ts - edit the newest queued message
+
+One picker, one landing, one "nothing to edit" message, behind both surfaces that offer it: the `editLastQueuedMessage` shortcut and the command palette's `Edit Last Queued Message` entry.
+
+**Key export:** `requestEditLastQueuedMessage(): boolean` - returns whether a modal was opened, which is what the keyboard path uses to decide if the shortcut counts as used.
+
+Four rules the two surfaces must not disagree on:
+
+- **Everything is read from the stores at call time**, never from a render snapshot. The pencil on a queued row reads live props, so a stale snapshot is the one way this can claim nothing is queued while a card sits on screen.
+- **Only `type === 'command'` items are skipped** (they carry no editable prompt text). Nothing else is filtered out: the queue the user sees is not filtered by tab membership, so a filter here could only reject an item Maestro is actively displaying.
+- **A missing tab RANKS, it does not filter.** Items whose tab still exists are preferred, but falling back to the full list keeps a closed tab from turning into "nothing is queued".
+- **Say WHICH empty it is.** `Nothing queued to edit` and `Only commands are queued` are different states, and the second one renders on a screen that is visibly showing queued cards.
+
+The modal renders inside its own tab's transcript, so the service lands there first with `setActiveTab` + `aiTabFocusFields` before setting `uiStore.editingQueuedItemId`. It writes through `updateSessionWith` against fresh state, so the snapshot it read cannot clobber a concurrent update.
 
 ---
 
@@ -616,7 +663,7 @@ Used by AchievementCard, LeaderboardRegistrationModal, PlaygroundPanel, SessionL
 
 ---
 
-### keyboardMastery.ts (~47 lines)
+### keyboardMastery.ts (~87 lines)
 
 Keyboard shortcut mastery progression system.
 
@@ -634,8 +681,12 @@ Keyboard shortcut mastery progression system.
 
 - `getLevelForPercentage(percentage)` - Returns highest matching level
 - `getLevelIndex(percentage)` - Returns index 0-4
+- `collectBoundShortcuts(...maps)` - Merges shortcut maps (later maps win on id) and keeps only the entries with a chord bound. This is the mastery DENOMINATOR everywhere: an unbound shortcut cannot be fired, so counting one pins the user below 100% forever and lists a chord that does not exist under "Unused Shortcuts". Pass the LIVE maps (`shortcuts`, `tabShortcuts` off the settings store) plus `FIXED_SHORTCUTS`, so a binding cleared in Settings -> Shortcuts leaves the denominator too.
+- `countUsedBoundShortcuts(bound, usedShortcutIds)` - The NUMERATOR. Not `usedShortcuts.length`: that list keeps ids whose binding was later cleared or that were removed from the app, which would push the count past the total and report over 100%.
 
-Used by ShortcutsHelpModal, KeyboardMasteryCelebration, LeaderboardRegistrationModal, PlaygroundPanel, settingsStore.
+Do NOT hand-roll another `Object.keys(DEFAULT_SHORTCUTS).length + ...` total - `settingsStore` and `LeaderboardRegistrationModal` each had their own copy, and they disagreed with the two surfaces that render the figure.
+
+Used by ShortcutsHelpModal, KeyboardStats, KeyboardMasteryCelebration, LeaderboardRegistrationModal, PlaygroundPanel, settingsStore.
 
 ---
 

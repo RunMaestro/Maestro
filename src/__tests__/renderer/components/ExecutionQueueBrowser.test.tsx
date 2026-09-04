@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQueueBrowser';
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
@@ -1166,7 +1166,7 @@ describe('ExecutionQueueBrowser', () => {
 
 			expect(
 				screen.getByText(
-					'Drag and drop to reorder, or Send Now to run one out of turn. Items are otherwise processed sequentially per agent to prevent file conflicts.'
+					'Up/Down selects a message, Enter opens its actions. Drag and drop to reorder, or Send Now to run one out of turn. Items are otherwise processed sequentially per agent to prevent file conflicts.'
 				)
 			).toBeInTheDocument();
 		});
@@ -1213,9 +1213,11 @@ describe('ExecutionQueueBrowser', () => {
 		});
 
 		it('should apply theme colors to queue item rows', () => {
+			// Two items so the assertion lands on an UNSELECTED row - the keyboard
+			// cursor starts on the first one and paints it with the accent.
 			const session = createSession({
 				id: 'active-session',
-				executionQueue: [createQueuedItem()],
+				executionQueue: [createQueuedItem(), createQueuedItem()],
 			});
 			const { container } = render(
 				<ExecutionQueueBrowser
@@ -1229,7 +1231,7 @@ describe('ExecutionQueueBrowser', () => {
 				/>
 			);
 
-			const itemRow = container.querySelector('.rounded-lg.border.group');
+			const itemRow = container.querySelectorAll('.rounded-lg.border.group')[1];
 			expect(itemRow).toHaveStyle({
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -2066,14 +2068,14 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.queryByText('Force Send Message?')).not.toBeInTheDocument();
 		});
 
-		it('disables Send Now while the target tab is working', () => {
+		it('hides Send Now while the target tab is working', () => {
+			// The tab is mid-turn, so this item is next in line and nothing the
+			// user does on the card changes that. A control that can only be
+			// disabled here reads as broken.
 			const onForceSendItem = vi.fn();
 			renderBrowser(forceSendSession(['busy']), onForceSendItem);
 
-			const button = screen.getByText('Send Now').closest('button')!;
-			expect(button).toBeDisabled();
-			fireEvent.click(button);
-			expect(onForceSendItem).not.toHaveBeenCalled();
+			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
 		});
 
 		it('disables Send Now when another tab is working and forced parallel is off', () => {
@@ -2096,6 +2098,229 @@ describe('ExecutionQueueBrowser', () => {
 
 			fireEvent.click(screen.getByText('Force Send'));
 			expect(onForceSendItem).toHaveBeenCalledWith('active-session', 'item-1');
+		});
+	});
+	describe('keyboard navigation', () => {
+		const rows = (container: HTMLElement) =>
+			Array.from(container.querySelectorAll('.rounded-lg.border.group'));
+		const selectedIndexOf = (container: HTMLElement) =>
+			rows(container).findIndex((row) => row.getAttribute('data-selected') === 'true');
+		// The browser handles nav on its own card, not on window - see
+		// handleCardKeyDown.
+		const card = () => screen.getByLabelText('Execution Queue');
+		const menuList = () => screen.getByTestId('queue-action-list');
+
+		const renderWithQueue = (extraProps: Record<string, unknown> = {}) => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'first' }),
+					createQueuedItem({ id: 'item-2', text: 'second' }),
+					createQueuedItem({ id: 'item-3', text: 'third' }),
+				],
+			});
+			return render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					{...extraProps}
+				/>
+			);
+		};
+
+		it('starts with the first row selected', () => {
+			const { container } = renderWithQueue();
+			expect(selectedIndexOf(container)).toBe(0);
+		});
+
+		it('moves the selection with Down and Up without wrapping', () => {
+			const { container } = renderWithQueue();
+
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
+			expect(selectedIndexOf(container)).toBe(1);
+
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
+			expect(selectedIndexOf(container)).toBe(2);
+
+			fireEvent.keyDown(card(), { key: 'ArrowUp' });
+			expect(selectedIndexOf(container)).toBe(1);
+
+			fireEvent.keyDown(card(), { key: 'ArrowUp' });
+			fireEvent.keyDown(card(), { key: 'ArrowUp' });
+			expect(selectedIndexOf(container)).toBe(0);
+		});
+
+		it('walks across agents in the global view', () => {
+			const sessionA = createSession({
+				id: 'session-a',
+				name: 'Agent A',
+				executionQueue: [createQueuedItem({ id: 'a-1' })],
+			});
+			const sessionB = createSession({
+				id: 'session-b',
+				name: 'Agent B',
+				executionQueue: [createQueuedItem({ id: 'b-1' })],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[sessionA, sessionB]}
+					activeSessionId="session-a"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('All Agents'));
+			expect(selectedIndexOf(container)).toBe(0);
+
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
+			expect(selectedIndexOf(container)).toBe(1);
+		});
+
+		it('clicking a row moves the selection to it', () => {
+			const { container } = renderWithQueue();
+
+			fireEvent.click(rows(container)[2]);
+			expect(selectedIndexOf(container)).toBe(2);
+		});
+
+		it('Enter opens the action menu for the selected row', () => {
+			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+
+			fireEvent.keyDown(card(), { key: 'ArrowDown' });
+			fireEvent.keyDown(card(), { key: 'Enter' });
+
+			expect(screen.getByText('Test Session \u00b7 Tab 1')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-edit')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-pause')).toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-copy')).toBeInTheDocument();
+		});
+
+		it('omits actions the item does not support', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1', type: 'command', command: '/test' })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onEditItem={vi.fn()}
+				/>
+			);
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+
+			// A command has no editable text, and no pause handler was wired.
+			expect(screen.queryByTestId('queue-action-edit')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('queue-action-pause')).not.toBeInTheDocument();
+			expect(screen.getByTestId('queue-action-delete')).toBeInTheDocument();
+		});
+
+		it('runs the highlighted action on Enter and closes the menu', () => {
+			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+			// Edit, Delete, Hold, Copy - step down to Delete.
+			fireEvent.keyDown(menuList(), { key: 'ArrowDown' });
+			expect(screen.getByTestId('queue-action-delete')).toHaveAttribute('data-selected', 'true');
+
+			fireEvent.keyDown(menuList(), { key: 'Enter' });
+			expect(mockOnRemoveItem).toHaveBeenCalledWith('active-session', 'item-1');
+			expect(screen.queryByTestId('queue-action-delete')).not.toBeInTheDocument();
+		});
+
+		it('clicking an action runs it', () => {
+			const onToggleItemPause = vi.fn();
+			renderWithQueue({ onToggleItemPause });
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+			fireEvent.click(screen.getByTestId('queue-action-pause'));
+
+			expect(onToggleItemPause).toHaveBeenCalledWith('active-session', 'item-1');
+			expect(screen.queryByTestId('queue-action-pause')).not.toBeInTheDocument();
+		});
+
+		it('titles the action menu with the agent and tab, not a queue position', () => {
+			const session = createSession({
+				id: 'active-session',
+				name: 'Payments API',
+				executionQueue: [createQueuedItem({ id: 'item-1', tabId: 'tab-1', tabName: 'Refactor' })],
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Refactor',
+						logs: [],
+						inputValue: '',
+						isProcessing: false,
+					},
+				] as Session['aiTabs'],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+
+			expect(screen.getByText('Payments API \u00b7 Refactor')).toBeInTheDocument();
+			expect(screen.queryByText('Message #1')).not.toBeInTheDocument();
+		});
+
+		it('leaves Enter to a focused button instead of opening the menu', () => {
+			renderWithQueue();
+
+			const allAgents = screen.getByText('All Agents').closest('button') as HTMLElement;
+			fireEvent.keyDown(allAgents, { key: 'Enter' });
+
+			expect(screen.queryByTestId('queue-action-list')).not.toBeInTheDocument();
+		});
+
+		it('focuses the card on open so the arrows work without clicking first', async () => {
+			renderWithQueue();
+
+			await waitFor(() => expect(card()).toHaveFocus());
+		});
+
+		it('focuses the action list when the menu opens, and the card again when it closes', async () => {
+			renderWithQueue();
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+			await waitFor(() => expect(menuList()).toHaveFocus());
+
+			fireEvent.click(screen.getByTestId('queue-action-copy'));
+			await waitFor(() => expect(card()).toHaveFocus());
+		});
+
+		it('arrow keys stop moving the row cursor while the action menu is open', () => {
+			const { container } = renderWithQueue();
+
+			fireEvent.keyDown(card(), { key: 'Enter' });
+			fireEvent.keyDown(menuList(), { key: 'ArrowDown' });
+
+			expect(selectedIndexOf(container)).toBe(0);
 		});
 	});
 });

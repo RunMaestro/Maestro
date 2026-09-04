@@ -15,15 +15,18 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
+import { GroupDetailModal } from '../GroupDetailModal';
 import { AgentDetailModal } from '../AgentDetailModal';
 import { EmptyState } from '../EmptyState';
 import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
 import { TokenSeriesProvider } from '../TokenSeriesContext';
+import type { GroupStatRollup } from '../../../../shared/statsGroupRollup';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
+import { useSessionStore } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useClaudeUsageStore } from '../../../stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../../stores/codexUsageStore';
@@ -47,6 +50,7 @@ import {
 	ActivityView,
 	AgentOverviewView,
 	AgentsView,
+	GroupsView,
 	AutoRunView,
 	DashboardTabPanel,
 	OverviewView,
@@ -95,14 +99,33 @@ export function UsageDashboardModal({
 	useQuotaTabDiscovery(isOpen, usageStatsTabEnabled);
 
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
-	const { data, cueSourceTotals, loading, error, showNewDataIndicator, databaseSize, fetchStats } =
-		useUsageDashboardData({
-			isOpen,
-			timeRange,
-			cueTabEnabled,
-		});
+	const {
+		data,
+		cueSourceTotals,
+		delegationTotals,
+		lifetimeDelegation,
+		delegationByDay,
+		loading,
+		error,
+		showNewDataIndicator,
+		databaseSize,
+		fetchStats,
+	} = useUsageDashboardData({
+		isOpen,
+		timeRange,
+		cueTabEnabled,
+	});
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
+	// Groups come straight from the store rather than a prop: the dashboard is
+	// the only consumer, and threading them through AppInfoModals would add a
+	// prop to a component that has no other reason to know about groups.
+	const groups = useSessionStore((s) => s.groups);
+	// The group whose detail modal is open. Holds the whole rollup rather than an
+	// id: the modal renders the same totals the clicked tile showed, and
+	// re-deriving them would let the two disagree if the aggregation refreshed
+	// underneath (the dashboard polls stats:updated) while the modal was open.
+	const [detailGroup, setDetailGroup] = useState<GroupStatRollup | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -118,6 +141,17 @@ export function UsageDashboardModal({
 		contentRef,
 		onViewModeChanged: handleViewModeChanged,
 	});
+
+	// Clicking a group tile opens its detail modal - the per-agent breakdown of
+	// the totals on the tile. It does NOT switch tabs: the Agents tab answers a
+	// different question ("show me every agent"), and its own group dropdown
+	// covers narrowing that grid.
+	const handleSelectGroup = useCallback((rollup: GroupStatRollup) => setDetailGroup(rollup), []);
+
+	// An agent row inside the group modal opens the per-agent modal ON TOP,
+	// rather than replacing it - the group stays behind so Escape walks back to
+	// the breakdown the user came from instead of dumping them on the grid.
+	const handleSelectGroupMember = useCallback((session: Session) => setDetailSession(session), []);
 
 	// Reset time range to default when modal opens
 	useEffect(() => {
@@ -186,14 +220,18 @@ export function UsageDashboardModal({
 				<DashboardSkeleton
 					theme={theme}
 					viewMode={
-						viewMode === 'cue' ||
-						viewMode === 'agent-overview' ||
-						viewMode === 'shortcuts' ||
-						viewMode === 'tokens' ||
-						viewMode === 'anthropic-usage' ||
-						viewMode === 'codex-usage'
-							? 'overview'
-							: viewMode
+						// Groups is a card grid like Agents, so it borrows that
+						// skeleton; the rest have no skeleton of their own.
+						viewMode === 'groups'
+							? 'agents'
+							: viewMode === 'cue' ||
+								  viewMode === 'agent-overview' ||
+								  viewMode === 'shortcuts' ||
+								  viewMode === 'tokens' ||
+								  viewMode === 'anthropic-usage' ||
+								  viewMode === 'codex-usage'
+								? 'overview'
+								: viewMode
 					}
 					chartGridCols={layout.chartGridCols}
 					summaryCardsCols={layout.summaryCardsCols}
@@ -273,6 +311,8 @@ export function UsageDashboardModal({
 						sessions={sessions}
 						layout={layout}
 						cueSourceTotals={cueSourceTotals}
+						delegationTotals={delegationTotals}
+						lifetimeDelegation={lifetimeDelegation}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
@@ -289,6 +329,22 @@ export function UsageDashboardModal({
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
 						onShowAgentDetails={setDetailSession}
+						groups={groups}
+					/>
+				);
+			case 'groups':
+				return (
+					<GroupsView
+						key={viewMode}
+						data={data}
+						theme={theme}
+						sessions={sessions}
+						groups={groups}
+						activeGroupId={detailGroup?.groupId ?? null}
+						onSelectGroup={handleSelectGroup}
+						focusedSection={focusedSection}
+						setSectionRef={setSectionRef}
+						handleSectionKeyDown={handleSectionKeyDown}
 					/>
 				);
 			case 'agent-overview':
@@ -313,6 +369,7 @@ export function UsageDashboardModal({
 						timeRange={timeRange}
 						theme={theme}
 						colorBlindMode={colorBlindMode}
+						delegationByDay={delegationByDay}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
@@ -421,6 +478,17 @@ export function UsageDashboardModal({
 					databaseSize={databaseSize}
 				/>
 			</div>
+
+			{detailGroup && data && (
+				<GroupDetailModal
+					rollup={detailGroup}
+					sessions={sessions}
+					data={data}
+					theme={theme}
+					onClose={() => setDetailGroup(null)}
+					onSelectAgent={handleSelectGroupMember}
+				/>
+			)}
 
 			{detailSession && data && (
 				<AgentDetailModal

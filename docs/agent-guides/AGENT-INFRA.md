@@ -95,6 +95,23 @@ the logo case the tile renders a blank fallback ring, and a test in
 
 A login shell that dies without printing anything also writes `[the login session ended]` into the terminal, because an empty box with no explanation is indistinguishable from a hang.
 
+**The sign-in URL needs a Copy button, because it cannot be read off the screen.** `findLoginUrl()` (`src/renderer/utils/loginUrl.ts`) scans a rolling tail of the login PTY's output and `ReauthModal` surfaces the match as `Copy Login URL`. Every part of that is load-bearing for the same reason: the URL is hundreds of characters of query string, the TUI soft-wraps it across several rows so it is not one selectable run of text, and a provider TUI with mouse tracking on eats the drag that would select it anyway - so without the button the user has no way to reach it and the login is abandoned. Three details in the scanner are decisions, not accidents. It strips ANSI first and REJOINS rows the terminal wrapped, since a newline inside a URL is formatting rather than content (a blank line is a real break and is kept, so following prose is never glued onto the link). It matches against an ALLOWLIST of sign-in hosts rather than taking any URL, because the same screen prints docs and status links and a Copy button that silently grabs the wrong one sends the user somewhere that cannot log them in. And it returns the LAST match, because a retried login prints a fresh URL and the earlier one is spent. Do not hand-roll a second URL scraper for a new provider - add its host to `LOGIN_URL_HINTS`.
+
+**Testing that flow means faking the failure, not waiting for one.** The command
+palette carries `Debug: Trigger Provider Re-auth` and a `(Cue pipeline)` variant,
+which call `debug:simulateAuthExpiry` in the MAIN process. The handler emits the
+real `agent:error` / `agent:authExpired` event rather than poking the renderer's
+stores, so classification, the provider-scoped outage grouping, the modal, the
+login PTY, and the resume that replays blocked turns all run exactly as they do
+in production - anything that only works when a test reaches past the IPC
+boundary is a bug this is meant to catch, not hide. Two payload details decide whether the
+exercise proves anything: the interactive variant sends the FULL process id
+(`{sessionId}-ai-{tabId}`), because that is what a real error carries and it is
+how the failing tab is identified for replay, while the pipeline variant sends
+the bare agent id on the separate channel Cue uses (its agents are spawned
+outside the ProcessManager). Send a bare id down the interactive path and the
+dialog opens and then resumes nothing, which looks like a passing test.
+
 ### Context Windows (`src/shared/agentConstants.ts`)
 
 ```typescript

@@ -17,6 +17,7 @@ interface ProviderUsageComponentProps {
 	theme: Theme;
 	showAllAccounts?: boolean;
 	autoRefresh?: boolean;
+	refreshHotkey?: boolean;
 }
 
 const PROVIDER_CONFIG: Record<
@@ -61,7 +62,13 @@ export function ProviderQuotaUsageView({
 				theme={theme}
 			>
 				<ChartErrorBoundary theme={theme} chartName={chartName}>
-					<Component theme={theme} showAllAccounts autoRefresh={false} />
+					{/*
+					 * `refreshHotkey` claims Cmd/Ctrl+R for this panel's Refresh. It is
+					 * opt-in rather than automatic because only the panel the user is
+					 * LOOKING at may answer the chord, and this view renders exactly one
+					 * provider at a time - which is what makes the claim unambiguous here.
+					 */}
+					<Component theme={theme} showAllAccounts autoRefresh={false} refreshHotkey />
 				</ChartErrorBoundary>
 			</DashboardSection>
 		</DashboardTabPanel>

@@ -28,7 +28,14 @@ interface BridgeConfig {
 
 declare global {
 	interface Window {
-		__MAESTRO_CONFIG__?: { wsUrl: string; apiBase: string; securityToken: string };
+		__MAESTRO_CONFIG__?: {
+			wsUrl: string;
+			apiBase: string;
+			securityToken: string;
+			/** Read-only token for the Concerto HTML document route. Optional so an
+			 *  older server's page still type-checks against this bundle. */
+			concertoToken?: string;
+		};
 	}
 }
 
@@ -118,9 +125,26 @@ class BridgeClient {
 				else pending.reject(new Error(String(msg.error ?? 'bridge error')));
 				return;
 			}
+			let channel: string | undefined;
+			let args: unknown[] = [];
 			if (msg.type === 'bridge.event') {
-				const channel = msg.channel as string;
-				const args = (msg.args as unknown[]) ?? [];
+				channel = msg.channel as string;
+				args = (msg.args as unknown[]) ?? [];
+			} else if (msg.type === 'active_session_changed' && typeof msg.sessionId === 'string') {
+				// Desktop navigation still uses the original web-client packets. Route
+				// them through the renderer's existing remote-selection listeners so the
+				// full web-desktop UI follows the active agent without a second state path.
+				channel = 'remote:selectSession';
+				args = [msg.sessionId];
+			} else if (
+				msg.type === 'tabs_changed' &&
+				typeof msg.sessionId === 'string' &&
+				typeof msg.activeTabId === 'string'
+			) {
+				channel = 'remote:selectTab';
+				args = [msg.sessionId, msg.activeTabId, Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined];
+			}
+			if (channel) {
 				const set = this.listeners.get(channel);
 				if (!set) return;
 				const fakeEvent = { senderFrame: null };

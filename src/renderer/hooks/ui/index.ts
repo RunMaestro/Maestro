@@ -92,10 +92,20 @@ export {
 export type { UseFontScaleReturn } from './useFontScale';
 export { useScalePreference, clampScale } from './useScalePreference';
 export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference';
+export { useScaleShortcuts } from './useScaleShortcuts';
+export type { UseScaleShortcutsOptions } from './useScaleShortcuts';
+export { useIsTopLayer } from './useIsTopLayer';
 
 // Persisted view toggle (collapsed banners, folded sections)
 export { usePersistedToggle } from './usePersistedToggle';
 export type { UsePersistedToggleReturn } from './usePersistedToggle';
+export { usePersistedChoice } from './usePersistedChoice';
+export type { UsePersistedChoiceReturn } from './usePersistedChoice';
+export { usePersistedPanelWidth } from './usePersistedPanelWidth';
+export type {
+	UsePersistedPanelWidthOptions,
+	UsePersistedPanelWidthReturn,
+} from './usePersistedPanelWidth';
 
 // Client-side pagination for lists already held in memory
 export { usePagination } from './usePagination';

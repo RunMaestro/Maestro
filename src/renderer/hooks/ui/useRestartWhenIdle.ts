@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { useSessionStore, selectIsAnySessionBusy } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectIsAnySessionBusy,
+	selectHasAnyRunnableQueuedWork,
+} from '../../stores/sessionStore';
 import { selectHasAnyActiveBatch, useBatchStore } from '../../stores/batchStore';
 import { useRestartPendingStore } from '../../stores/restartPendingStore';
 
@@ -9,8 +13,12 @@ import { useRestartPendingStore } from '../../stores/restartPendingStore';
  * fires `updates.install()` so the app restarts and applies the downloaded
  * update without further user input.
  *
- * Activity matches `useIdleNotification`: any session busy OR any Auto Run
- * batch running. Cue tasks are intentionally excluded.
+ * Activity matches `useIdleNotification` by reading the SAME selectors: any
+ * session busy, any session with runnable queued work, or any Auto Run batch
+ * running. Cue tasks are intentionally excluded. Keep the two definitions
+ * sharing `selectHasAnyRunnableQueuedWork` rather than restating the condition -
+ * this hook restarts the app, so a definition that drifts from the notification's
+ * would relaunch Maestro in the gap between two queued turns.
  *
  * If the flag is set while the app is *already* idle (user clicked the
  * deferred-restart button without anything running), we fire on the next
@@ -18,12 +26,13 @@ import { useRestartPendingStore } from '../../stores/restartPendingStore';
  */
 export function useRestartWhenIdle(): void {
 	const anySessionBusy = useSessionStore(selectIsAnySessionBusy);
+	const anyQueuedWork = useSessionStore(selectHasAnyRunnableQueuedWork);
 	const anyBatchRunning = useBatchStore(selectHasAnyActiveBatch);
 	const pending = useRestartPendingStore((s) => s.pending);
 	const setPending = useRestartPendingStore((s) => s.setPending);
 
-	const wasActiveRef = useRef(anySessionBusy || anyBatchRunning);
-	const isActive = anySessionBusy || anyBatchRunning;
+	const wasActiveRef = useRef(anySessionBusy || anyQueuedWork || anyBatchRunning);
+	const isActive = anySessionBusy || anyQueuedWork || anyBatchRunning;
 
 	useEffect(() => {
 		if (!pending) {

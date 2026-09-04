@@ -21,6 +21,10 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { compareNamesIgnoringEmojis } from './useSortedSessions';
+import { sessionMatchesFilter } from '../../utils/sidebarMembership';
+import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
+import { requestSidebarReveal } from '../../utils/sidebarReveal';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import type { StarredItem } from './useStarredItems';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
@@ -118,12 +122,23 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		leftSidebarOpen,
 		bookmarksCollapsed,
 		showUnreadAgentsOnly,
+		showArchivedGroupChats,
+		// The sidebar's search box. It moved into uiStore precisely so the cycle
+		// can see it: while it was useState inside the rendering component, the
+		// cycle had no way to know a filter was narrowing the list and walked
+		// agents the Left Bar was not drawing.
+		sessionFilter,
 		sidebarExtraSelection,
 		setSidebarExtraSelection,
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
-	const { ungroupedCollapsed, groupChatsExpanded, starredSessionsCollapsed, encoreFeatures } =
-		useSettingsStore.getState();
+	const {
+		ungroupedCollapsed,
+		groupChatsExpanded,
+		starredSessionsCollapsed,
+		groupChatSortAlphabetical,
+		encoreFeatures,
+	} = useSettingsStore.getState();
 
 	// Agents the Left Bar does not render. Pianola stays in the session store
 	// after its Encore flag is switched off (so re-enabling restores the same
@@ -236,11 +251,19 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 			ungroupedSessions.forEach((s) => addSessionWithWorktrees(s, 'ungrouped'));
 		}
 
-		// Group Chats section (if expanded and has non-archived group chats)
-		const activeGroupChats = groupChats.filter((gc) => !gc.archived);
+		// Group Chats section (if expanded and has non-archived group chats).
+		// Ordered through the SHARED helper, honoring the user's sort toggle: the
+		// sidebar and the arrow keys both read it, so hard-sorting alphabetically
+		// here made the cycle walk a different order than the list being drawn.
+		// The helper drops archived chats itself.
+		// orderGroupChatsForDisplay drops archived chats itself unless told not
+		// to, so pass the sidebar's toggle rather than pre-filtering here.
+		const activeGroupChats = groupChats;
 		if (groupChatsExpanded && activeGroupChats.length > 0) {
-			const sortedGroupChats = [...activeGroupChats].sort((a, b) =>
-				compareNamesIgnoringEmojis(a.name, b.name)
+			const sortedGroupChats = orderGroupChatsForDisplay(
+				activeGroupChats,
+				groupChatSortAlphabetical,
+				{ includeArchived: showArchivedGroupChats }
 			);
 			visualOrder.push(
 				...sortedGroupChats.map((gc) => ({
@@ -290,6 +313,25 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		visualOrder.push(...filteredOrder);
 	}
 
+	// Restrict to what the sidebar's search box is actually showing, using the
+	// SAME predicate the render path uses (utils/sidebarMembership) so the two
+	// cannot disagree about membership. Group chats are not filtered by it.
+	const cycleQuery = sessionFilter.trim();
+	if (cycleQuery) {
+		const matching = visualOrder.filter((item) => {
+			if (item.type === 'groupChat') return true;
+			const session = sessions.find((s) => s.id === item.id);
+			if (!session) return false;
+			return sessionMatchesFilter(
+				session,
+				cycleQuery,
+				sessions.filter((s) => s.parentSessionId === session.id)
+			);
+		});
+		visualOrder.length = 0;
+		visualOrder.push(...matching);
+	}
+
 	// Drop rows for agents the Left Bar hides (see hiddenSessionIds). Applied to
 	// the finished visual order so it covers agent rows, their worktree children,
 	// starred rows owned by a hidden agent, and the collapsed-sidebar branch
@@ -317,7 +359,26 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		visualOrder.push(...scopedOrder);
 	}
 
-	if (visualOrder.length === 0) return;
+	if (visualOrder.length === 0) {
+		// A shortcut that does nothing and explains nothing is indistinguishable
+		// from a broken one. When the list is empty BECAUSE OF A FILTER the user
+		// can clear, say so; the center flash is the existing affordance for a
+		// momentary answer to a keypress, so nothing new is invented here.
+		//
+		// Stay silent when there is simply nothing to cycle (no agents at all,
+		// sidebar closed) - there is no misunderstanding to correct, and a flash
+		// on every stray Cmd+] in an empty workspace is noise.
+		if (cycleQuery) {
+			notifyCenterFlash({
+				message: 'No agents match the filter',
+				detail: cycleQuery,
+				color: 'yellow',
+			});
+		} else if (showUnreadAgentsOnly) {
+			notifyCenterFlash({ message: 'No unread agents', color: 'yellow' });
+		}
+		return;
+	}
 
 	// Determine what is currently active (session or group chat)
 	const currentActiveId = activeGroupChatId || activeSessionId;
@@ -358,6 +419,12 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 	// focuses its tab or resumes its closed session (activateStarredItem sets
 	// the active session itself).
 	const activateVisualItem = (item: VisualOrderItem) => {
+		// Cmd+[ / Cmd+] moves the cursor without the user touching the list, so the
+		// destination has to be brought into view - a selection the user cannot see
+		// reads as the shortcut doing nothing. Requested BEFORE the cursor is set:
+		// the consumer defers a frame and re-reads it, so the reveal lands on the
+		// destination rather than the row being left.
+		requestSidebarReveal();
 		if (item.type === 'session') {
 			setActiveGroupChatId(null);
 			// Landing on a plain agent clears the non-agent cursor so the agent's

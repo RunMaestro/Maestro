@@ -53,8 +53,10 @@ interface UnifiedHistoryEntry extends HistoryEntry {
 interface UnifiedHistoryTabProps {
 	theme: Theme;
 	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
+	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	fileTree?: FileNode[];
+	cwd?: string;
+	projectRoot?: string;
 	onFileClick?: (path: string) => void;
 	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
 	lookbackHours: number | null;
@@ -63,7 +65,16 @@ interface UnifiedHistoryTabProps {
 
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
 	function UnifiedHistoryTab(
-		{ theme, onResumeSession, fileTree, onFileClick, lookbackHours, onLookbackChange },
+		{
+			theme,
+			onResumeSession,
+			fileTree,
+			cwd,
+			projectRoot,
+			onFileClick,
+			lookbackHours,
+			onLookbackChange,
+		},
 		ref
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
@@ -442,7 +453,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							return;
 						}
 						trackShortcutUsage('historyJumpToSession');
-						onResumeSession(entry.sourceSessionId, entry.agentSessionId);
+						onResumeSession(entry.sourceSessionId, entry.agentSessionId, entry.sessionName);
 					}
 				: undefined,
 			initialIndex: -1,
@@ -604,7 +615,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					| UnifiedHistoryEntry
 					| undefined;
 				if (entry) {
-					onResumeSession(entry.sourceSessionId, agentSessionId);
+					onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
 				}
 			},
 			[onResumeSession, entries]
@@ -615,7 +626,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			(agentSessionId: string) => {
 				if (!onResumeSession || !detailModalEntry) return;
 				const entry = detailModalEntry as UnifiedHistoryEntry;
-				onResumeSession(entry.sourceSessionId, agentSessionId);
+				onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
 			},
 			[onResumeSession, detailModalEntry]
 		);
@@ -679,7 +690,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						/>
 						{searchQuery && (
 							<span
-								className="text-[10px] font-mono whitespace-nowrap flex-shrink-0"
+								className="text-2xs font-mono whitespace-nowrap flex-shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								{filteredEntries.length}
@@ -726,7 +737,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					{/* Entry count badge - shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (
 						<span
-							className="text-[10px] font-mono whitespace-nowrap flex-shrink-0 mt-1"
+							className="text-2xs font-mono whitespace-nowrap flex-shrink-0 mt-1"
 							style={{ color: theme.colors.textDim }}
 						>
 							{!isAtTop
@@ -845,6 +856,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
 						}}
 						fileTree={fileTree}
+						cwd={cwd}
+						projectRoot={projectRoot}
 						onFileClick={onFileClick}
 					/>
 				)}

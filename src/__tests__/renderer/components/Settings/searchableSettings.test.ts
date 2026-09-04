@@ -73,8 +73,8 @@ describe('searchableSettings', () => {
 		});
 
 		it('should match by label', () => {
-			const results = searchSettings('Font Size');
-			expect(results.some((s) => s.id === 'display-font-size')).toBe(true);
+			const results = searchSettings('Fonts');
+			expect(results.some((s) => s.id === 'display-fonts')).toBe(true);
 		});
 
 		it('should match by description', () => {
@@ -148,6 +148,9 @@ describe('searchableSettings', () => {
 			['custom shell path', 'general-default-shell'],
 			['pwsh', 'general-default-shell'],
 			['worktree', 'general-gh-path'],
+			['web interface', 'general-web-interface-auto-start'],
+			['online at launch', 'general-web-interface-auto-start'],
+			['remote control', 'general-web-interface-auto-start'],
 			['cue pipeline', 'general-power'],
 			['ctrl+click', 'general-browser'],
 			['context menu', 'general-browser'],
@@ -159,9 +162,20 @@ describe('searchableSettings', () => {
 			['spelling', 'general-spell-check'],
 			['typo', 'general-spell-check'],
 
-			// Display tab
-			['x-large', 'display-font-size'],
-			['medium', 'display-font-size'],
+			// Display tab. The single Small/Medium/Large global size was replaced
+			// by a per-surface stepper plus a global zoom, so "font size" now
+			// leads to Zoom and to the individual surface pickers.
+			['zoom', 'display-font-zoom'],
+			['bigger', 'display-font-zoom'],
+			['factory reset', 'display-typography-reset'],
+			['hacker', 'display-typography-reset'],
+			// The five per-surface pickers are one grouped section now, so every
+			// surface's name has to surface that one entry.
+			['ai chat font', 'display-fonts'],
+			['file preview font', 'display-fonts'],
+			['file editor font', 'display-fonts'],
+			['terminal font', 'display-fonts'],
+			['custom font', 'display-fonts'],
 			['ai response', 'display-message-alignment'],
 			['file indexing', 'display-file-indexing'],
 			['file panel', 'display-file-indexing'],

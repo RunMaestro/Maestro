@@ -19,6 +19,8 @@ import {
 	formatDurationWords,
 	formatActiveTime,
 	formatElapsedTime,
+	formatElapsedTicker,
+	formatElapsedTickerCompact,
 	DURATION_MS,
 	DURATION_LADDER_DAYS,
 	DURATION_LADDER_HOURS,
@@ -53,6 +55,16 @@ describe('shared/duration', () => {
 
 		it('never pads a leading zero unit', () => {
 			expect(humanizeDuration(45 * SECOND, { keepZeroUnits: true })).toBe('45s');
+		});
+
+		it('pads a leading zero when keepLeadingZero is also set', () => {
+			expect(
+				humanizeDuration(3 * SECOND, {
+					units: ['minute', 'second'],
+					keepZeroUnits: true,
+					keepLeadingZero: true,
+				})
+			).toBe('0m 3s');
 		});
 
 		it('honors the unit budget', () => {
@@ -298,6 +310,35 @@ describe('shared/duration', () => {
 			expect(formatElapsedTime(30 * SECOND)).toBe('30s');
 			expect(formatElapsedTime(5 * MINUTE + 12 * SECOND)).toBe('5m 12s');
 			expect(formatElapsedTime(HOUR + 10 * MINUTE)).toBe('1h 10m');
+		});
+	});
+
+	describe('formatElapsedTicker', () => {
+		it('keeps the thinking-pill display, including a leading 0m', () => {
+			expect(formatElapsedTicker(0)).toBe('0m 0s');
+			expect(formatElapsedTicker(3 * SECOND)).toBe('0m 3s');
+			expect(formatElapsedTicker(HOUR + 2 * MINUTE + 5 * SECOND)).toBe('1h 2m 5s');
+			expect(formatElapsedTicker(DAY + HOUR + MINUTE + SECOND)).toBe('1d 1h 1m 1s');
+		});
+	});
+
+	describe('formatElapsedTickerCompact', () => {
+		it('stays a bare seconds count below a minute', () => {
+			expect(formatElapsedTickerCompact(0)).toBe('0s');
+			expect(formatElapsedTickerCompact(3 * SECOND)).toBe('3s');
+			expect(formatElapsedTickerCompact(59 * SECOND)).toBe('59s');
+		});
+
+		it('humanizes past a minute on the same ladder as the ticker', () => {
+			expect(formatElapsedTickerCompact(MINUTE)).toBe('1m 0s');
+			expect(formatElapsedTickerCompact(20 * MINUTE + 4 * SECOND)).toBe('20m 4s');
+			expect(formatElapsedTickerCompact(HOUR + 2 * MINUTE + 5 * SECOND)).toBe('1h 2m 5s');
+			expect(formatElapsedTickerCompact(DAY + HOUR + MINUTE + SECOND)).toBe('1d 1h 1m 1s');
+		});
+
+		it('collapses a backwards or non-finite clock delta to 0s', () => {
+			expect(formatElapsedTickerCompact(-5000)).toBe('0s');
+			expect(formatElapsedTickerCompact(Number.NaN)).toBe('0s');
 		});
 	});
 

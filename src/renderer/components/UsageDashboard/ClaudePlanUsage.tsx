@@ -23,13 +23,14 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
 import { useUIStore } from '../../stores/uiStore';
-import { makeAccountKeyHelpers } from './quota/quotaFormatting';
+import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaFormatting';
 import {
 	QuotaAccountEmail,
 	QuotaAccountPill,
 	QuotaAccountTabs,
 	QuotaAgentCountBadge,
 	QuotaBarRow,
+	QuotaLastRefreshed,
 	QuotaPendingRow,
 	QuotaRefreshControls,
 	QuotaSharedAccountBadge,
@@ -56,6 +57,8 @@ interface ClaudePlanUsageProps {
 	showAllAccounts?: boolean;
 	autoRefresh?: boolean;
 	showRefreshButton?: boolean;
+	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
+	refreshHotkey?: boolean;
 }
 
 interface AccountRowProps {
@@ -169,6 +172,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	showAllAccounts = false,
 	autoRefresh = true,
 	showRefreshButton = true,
+	refreshHotkey = false,
 }: ClaudePlanUsageProps) {
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
 	const refreshing = useClaudeUsageStore((s) => s.refreshing);
@@ -193,6 +197,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		? (snapshots[effectiveSelectedKey] ?? null)
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
+	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
 
 	// Config dirs that resolve to one Anthropic account share a single quota
 	// bucket, so their bars are identical by construction. Resolve the sibling
@@ -243,6 +248,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		accountCount: configuredAccountKeys.length,
 		snapshotCount,
 		doRefresh,
+		refreshHotkey,
 	});
 
 	const renderAccount = useCallback(
@@ -331,6 +337,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 							sweepClassName="claude-plan-refresh-sweep"
 							intervalAriaLabel="Claude usage auto refresh interval"
 							buttonAriaLabel="Refresh Claude usage snapshots"
+							showHotkeyHint={refreshHotkey}
 						/>
 					)}
 				</div>
@@ -420,6 +427,12 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					theme={theme}
 				/>
 			) : null}
+
+			<QuotaLastRefreshed
+				sampledAtMs={lastSampledAtMs}
+				theme={theme}
+				testIdPrefix={TEST_ID_PREFIX}
+			/>
 		</div>
 	);
 });

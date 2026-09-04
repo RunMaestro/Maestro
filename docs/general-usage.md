@@ -66,8 +66,14 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Image viewing** for common image formats
 - **Audio and video playback** with a speed control that sticks (see below)
 - **CSV and TSV tables** with sortable columns and a per-row detail view (see below)
+- **JSON and JSONL records** with jq filtering
+- **Parquet tables** with a typed query language, on files far larger than memory
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
+
+Several formats come with a filtering language built for that format rather than
+a plain search box. **[File Formats](./file-formats)** is the full map: what
+opens as what, and what you can type at each one.
 
 ### CSV and TSV Tables
 
@@ -123,7 +129,7 @@ widget that stays on top of whatever you are doing:
   file's tab, which re-docks the player into it.
 - **Close** it to get it out of the way. This hides the controls only - the audio
   keeps playing. Bring it back by opening a media file again, or with
-  **Show Floating Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
+  **Open Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
 
 Audio-only files get just the controls, since there is no picture to show.
 
@@ -415,7 +421,7 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 
 ### Force Send
 
-When [Forced Parallel Execution](./features) is enabled and another tab in the same agent is already working, a queued item gains a **Force Send** button. This dispatches that message immediately, running it in parallel instead of waiting its turn in the cross-tab queue. A confirmation lists which other tabs are currently busy before it sends.
+A queued item carries a **Force Send** button that dispatches that message immediately instead of waiting its turn in the cross-tab queue. On a quiet agent it just sends. When another tab in the same agent is already working, it runs the message in parallel and a confirmation lists which other tabs are busy first - which needs [Forced Parallel Execution](./features) enabled, so with that setting off the button is visible but dimmed and says so. The button is hidden when there is nothing to force: the item's own tab is mid-turn, so the item is next in line regardless, or the tab it was queued for is gone. This is the same rule the **Send Now** button in the Execution Queue view follows.
 
 `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` does the same thing from the keyboard, and it works wherever you are in the app - you do not have to click into the input box first. With text in the input, it sends what you typed in parallel; with the input empty, it force-sends the newest eligible queued item.
 
@@ -423,7 +429,9 @@ When [Forced Parallel Execution](./features) is enabled and another tab in the s
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
-Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims with an explanation when the item cannot run yet: its own tab is mid-turn, or another tab in that agent is working and Forced Parallel Execution is off. When another tab is working, Send Now confirms first and lists which tabs are busy.
+The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry.
+
+Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims with an explanation when the item cannot run yet because another tab in that agent is working and Forced Parallel Execution is off - a state you can fix from Settings. It is hidden entirely when there is nothing to force: the item's own tab is already mid-turn, so the item is next in line anyway, or the tab it was queued for is gone. When another tab is working, Send Now confirms first and lists which tabs are busy.
 
 ## Input Toggles
 
@@ -483,6 +491,34 @@ When working with image attachments, use the **Image Carousel** to view, manage,
 - **Esc** - Close the carousel
 
 Images can be attached via drag-and-drop, paste, or the attachment button. The carousel shows all images queued for the current message.
+
+## Staged Images
+
+Attached images wait in a thumbnail strip directly above the input box until you send. Their **order in that strip is the order the agent receives them**, so the first thumbnail is Screenshot 1, the second is Screenshot 2, and so on. That is what lets you write "compare Screenshot 1 and Screenshot 3" and have the agent look at the right pictures.
+
+### Reordering
+
+Drag a thumbnail sideways to move it. While a drag is in flight, every thumbnail shows the slot number it currently occupies, so with six or seven screenshots staged you can aim at a number instead of counting positions.
+
+### The Staged Images organizer
+
+With two or more images staged, an expand button (⤢) appears to the left of the strip. It opens the **Staged Images** organizer: the same set of images at a size you can actually tell apart, always numbered, with the same drag-to-reorder.
+
+- **Zoom** with the magnifier buttons in the header, or with the bare `+` and `-` keys (`=` and `_` work too, so you never have to think about Shift). `0` snaps back to 100%, as does clicking the percentage. The size you pick is remembered across sessions.
+- **Annotate** or **remove** any image from its thumbnail, exactly as in the strip.
+- **Esc** or the ESC pill closes it.
+
+With a single image staged the button is hidden, since there is nothing to compare and nothing to reorder.
+
+### Referring to an image by number
+
+Drag a thumbnail from the strip into the conversation and Maestro types its reference into your message for you, as `Screenshot 1`, `Screenshot 2`, and so on. Drop it anywhere in the chat area, not just on the input box itself.
+
+**References follow the pictures.** If you write `Screenshot 1` and then reorder the strip so that image becomes the third one, Maestro rewrites the reference in your draft to `Screenshot 3`. Swapping two images swaps both references rather than collapsing them onto one number, and numbers you typed for images that did not move are left alone.
+
+<Note>
+Reordering rewrites references in the message you are currently composing. Messages you have already sent are unchanged, since the agent has already seen those images in the order they were sent.
+</Note>
 
 ## Output Filtering
 
@@ -821,9 +857,9 @@ The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the 
 | **Tile New File Below**     | New blank file tab takes the bottom half              |
 | **Tile New Terminal Below** | New terminal takes the bottom half                    |
 
-**Tile New Terminal Below** also has a key of its own: `Cmd+Shift+J` (`Ctrl+Shift+J` on Windows and Linux), one modifier away from `Cmd+J` for a new terminal tab.
+Each of the four also has a key of its own, on `Ctrl+Cmd` beside the rest of the pane commands: `Ctrl+Cmd+T` AI chat, `Ctrl+Cmd+B` browser, `Ctrl+Cmd+F` file, `Ctrl+Cmd+J` terminal. The letter matches the plain "new tab" chord, so the tiled twin is that letter with one more modifier. On Windows and Linux the second modifier is the Windows / Super key.
 
-The other three ship with no key assigned, so Maestro is not claiming three more chords on your behalf. They are still in the shortcuts list: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want - it reads **Not set** - and click it to record whatever combination you like. Once bound, the key works everywhere the terminal one does, and Quick Actions starts showing it next to the command.
+Any of the four can be rebound: open **Settings → Shortcuts** (`Cmd+,` / `Ctrl+,`), find the one you want, and click it to record whatever combination you like. Quick Actions shows your binding next to the command.
 
 Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half.
 
@@ -883,9 +919,19 @@ See [Pane Shortcuts](./keyboard-shortcuts#pane-shortcuts-tiled-tabs) for moving 
 
 ### Snoozing Tabs
 
-Snooze hides an AI tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to conversations: park work you can't act on yet without closing it or letting it clutter the tab bar.
+Snooze hides a tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to your workspace: park work you can't act on yet without closing it or letting it clutter the tab bar.
 
-Hover a tab and choose **Snooze Tab**, press `Opt+Cmd+S` / `Alt+Ctrl+S`, or run **Snooze Tab** from Quick Actions (`Cmd+K` / `Ctrl+K`). Snoozing is available on AI tabs only.
+Hover a tab and choose **Snooze Tab**, press `Opt+Cmd+S` / `Alt+Ctrl+S`, or run **Snooze Tab** from Quick Actions (`Cmd+K` / `Ctrl+K`). The shortcut and Quick Actions act on the active AI tab; the hover menu works on every kind of tab, and a tiled group's chip menu offers **Snooze group** to park the whole layout at once.
+
+What comes back differs by what you parked, and the difference is the point:
+
+| What you snooze | What comes back                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **AI tab**      | The conversation verbatim, transcript and provider session intact                                                 |
+| **File tab**    | The file reopened at its path. If the file has since been deleted or moved, you're told instead                   |
+| **Browser tab** | The page reloaded at its URL                                                                                      |
+| **Terminal**    | The tab and its position, at the same working directory. A shell can't be parked, so it comes back as a fresh one |
+| **Tiled group** | The whole layout - split direction, sizes, focused pane - with every pane that still exists                       |
 
 **Choosing when it comes back**
 
@@ -908,9 +954,23 @@ The snooze dialog gives you three ways to pick a time, and always previews the e
 
 - **Calendar** - pick a date from the month grid and set a time of day.
 
+![Snooze Tab dialog](./screenshots/snooze-tab.png)
+
 **Note to self**
 
 Every snooze takes an optional note, and that note becomes the body of the notification when the tab returns. This is what turns snooze into a reminder system: leave yourself the reason you're coming back ("check if the migration finished", "review this before standup") instead of rediscovering it later.
+
+**Prompt on return**
+
+Only a conversation can be given work to do, so this box appears when you snooze an **AI tab**, or a **tiled group** that holds at least one AI pane. It is hidden for a file, browser, or terminal tab, which have no agent to send it to.
+
+The second optional box is addressed to the agent rather than to you. Whatever you type there is sent as a message the instant the tab comes back, so the work is already underway by the time you read the notification: "re-run the failing tests", "check whether the PR merged and summarize what changed", "pick up the refactor from where we stopped".
+
+The note and the prompt are independent. Use either, both, or neither.
+
+<Note>
+The prompt joins the agent's [execution queue](#execution-queue-view) rather than interrupting whatever it is doing. On an idle agent it runs immediately; on a busy one it waits its turn. It also runs if you **Unsnooze** early, because it is written against the tab coming back rather than against the clock.
+</Note>
 
 **What happens while a tab is snoozed**
 
@@ -928,11 +988,11 @@ Wakes are delivered by the running app. If Maestro is closed when a snooze comes
 
 **Managing snoozed tabs**
 
-Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, or run **See All Snoozed Tabs** from Quick Actions. It shows every snoozed tab across all agents, soonest first, with its note and a countdown. Each row offers:
+Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, or run **See All Snoozed Tabs** from Quick Actions. It shows every snoozed tab across all agents, soonest first, with its note, its prompt on return, and a countdown. Each row offers:
 
-- **Unsnooze** - bring the tab back right now
-- **Reschedule** - pick a new time or edit the note
-- **Dismiss** - drop the snooze and the tab, for when you no longer care
+- **Unsnooze** - bring the tab back right now, which also runs its prompt on return if it has one
+- **Reschedule** - pick a new time, or edit the note and the prompt (clearing a box removes it)
+- **Dismiss** - drop the snooze and the tab, for when you no longer care. Nothing is restored, so a prompt on return never runs.
 
 **Snooze history**
 

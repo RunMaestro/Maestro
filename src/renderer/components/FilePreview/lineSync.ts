@@ -131,13 +131,19 @@ export function domGetTopLineByAttr(
 	const blocks = taggedBlocks(containerEl);
 	if (blocks.length === 0) return null;
 	const edge = scrollEl.getBoundingClientRect().top + 1; // +1px epsilon
-	// Last block whose top is at/above the fold; fall back to the first block.
-	let chosen = blocks[0];
+	// Last block whose top is at/above the fold.
+	let chosen: TaggedBlock | null = null;
 	for (const b of blocks) {
 		if (b.top <= edge) chosen = b;
 		else break;
 	}
-	return chosen.line;
+	// Nothing has reached the fold yet, so the viewport is sitting ABOVE the
+	// first tagged block - the top of the document. Answer line 1 rather than
+	// the first block's line: the container's own padding puts even block one
+	// below the fold at scrollTop 0, so falling back to `blocks[0]` reported
+	// the first HEADING for a document scrolled to the very top, and entering
+	// edit mode jumped there.
+	return chosen ? chosen.line : 1;
 }
 
 /**
@@ -153,6 +159,14 @@ export function domScrollToLineByAttr(
 ): boolean {
 	const blocks = taggedBlocks(containerEl);
 	if (blocks.length === 0) return false;
+	// At or above the first tagged block, the top of the document IS the answer.
+	// Aligning block one with the scroller edge instead would scroll the
+	// container's leading padding away, so "back to the top" landed a few pixels
+	// short of the top.
+	if (line <= blocks[0].line) {
+		scrollEl.scrollTop = 0;
+		return true;
+	}
 	let chosen = blocks[0];
 	for (const b of blocks) {
 		if (b.line <= line) chosen = b;

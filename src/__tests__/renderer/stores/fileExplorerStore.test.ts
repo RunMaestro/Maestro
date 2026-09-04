@@ -181,6 +181,36 @@ describe('fileExplorerStore', () => {
 			expect(useFileExplorerStore.getState().lastGraphFocusFilePath).toBe('important.ts');
 		});
 
+		it('openGraphScope records where closing the graph should return to', () => {
+			useFileExplorerStore
+				.getState()
+				.openGraphScope({ directory: '', rootPath: '/memory', returnTo: 'memoryViewer' });
+
+			expect(useFileExplorerStore.getState().graphReturnTo).toBe('memoryViewer');
+		});
+
+		it('leaves graphReturnTo unset for a graph opened in place', () => {
+			// Only a caller that CLOSED itself to make room has somewhere to hand
+			// control back to; the ordinary graph must not reopen anything.
+			useFileExplorerStore.getState().openGraphScope({ directory: 'docs' });
+
+			expect(useFileExplorerStore.getState().graphReturnTo).toBeUndefined();
+		});
+
+		it('clears graphReturnTo on close, so the next graph does not inherit it', () => {
+			useFileExplorerStore
+				.getState()
+				.openGraphScope({ directory: '', rootPath: '/memory', returnTo: 'memoryViewer' });
+			useFileExplorerStore.getState().closeGraphView();
+
+			expect(useFileExplorerStore.getState().graphReturnTo).toBeUndefined();
+
+			// A focus-rooted graph opened afterwards must be clean too - a stale
+			// target would pop the Memories viewer over an unrelated graph.
+			useFileExplorerStore.getState().focusFileInGraph('README.md');
+			expect(useFileExplorerStore.getState().graphReturnTo).toBeUndefined();
+		});
+
 		it('setIsGraphViewOpen directly sets the boolean', () => {
 			useFileExplorerStore.getState().setIsGraphViewOpen(true);
 			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(true);

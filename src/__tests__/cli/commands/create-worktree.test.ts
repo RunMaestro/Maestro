@@ -73,6 +73,45 @@ describe('create-worktree command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 		});
 
+		describe('placement', () => {
+			function ok() {
+				return mockClient({
+					create_worktree_session_result: {
+						type: 'create_worktree_session_result',
+						success: true,
+						sessionId: 'wt-1',
+					},
+				});
+			}
+
+			it('selects the new agent by default, exactly as it always has', async () => {
+				const sent = ok();
+				await createWorktree({ agent: 'p', branch: 'feature/foo' });
+				expect(sent[0].payload.background).toBe(false);
+			});
+
+			it('leaves the Left Bar selection alone with --background', async () => {
+				const sent = ok();
+				await createWorktree({ agent: 'p', branch: 'feature/foo', background: true });
+				expect(sent[0].payload.background).toBe(true);
+				// Background placement never means "created but invisible": the id is
+				// still what the caller addresses the new agent by.
+				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('wt-1'));
+				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('in the background'));
+			});
+
+			it('lets --focus win over --background', async () => {
+				const sent = ok();
+				await createWorktree({
+					agent: 'p',
+					branch: 'feature/foo',
+					background: true,
+					focus: true,
+				});
+				expect(sent[0].payload.background).toBe(false);
+			});
+		});
+
 		it('forwards a trimmed baseBranch when provided', async () => {
 			const sent = mockClient({
 				create_worktree_session_result: {
@@ -107,6 +146,48 @@ describe('create-worktree command', () => {
 				inputMode: 'ai',
 			});
 			expect(sent[1].expected).toBe('command_result');
+		});
+
+		it('carries --background through to the message, not just the creation', async () => {
+			// The bug this pins: --background created the agent quietly and the
+			// follow-on send_command then selected it anyway, one message later, so
+			// the flag looked broken for every caller that passed a message.
+			const sent = mockClient({
+				create_worktree_session_result: {
+					type: 'create_worktree_session_result',
+					success: true,
+					sessionId: 'wt-id-bg',
+				},
+				command_result: { type: 'command_result', tabId: 'tab-bg' },
+			});
+
+			await createWorktree({
+				agent: 'p',
+				branch: 'feature/quiet',
+				message: 'start working',
+				background: true,
+			});
+
+			expect(sent[0].payload.background).toBe(true);
+			expect(sent[1].payload).toMatchObject({
+				type: 'send_command',
+				background: true,
+			});
+		});
+
+		it('keeps the message foregrounded when the creation was', async () => {
+			const sent = mockClient({
+				create_worktree_session_result: {
+					type: 'create_worktree_session_result',
+					success: true,
+					sessionId: 'wt-id-fg',
+				},
+				command_result: { type: 'command_result', tabId: 'tab-fg' },
+			});
+
+			await createWorktree({ agent: 'p', branch: 'feature/loud', message: 'go' });
+
+			expect(sent[1].payload).toMatchObject({ background: false });
 		});
 
 		it('does not send a command when no message is provided', async () => {

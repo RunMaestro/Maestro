@@ -30,6 +30,7 @@ export function useAgentSessionsRename({
 	renameValue: string;
 	setRenameValue: React.Dispatch<React.SetStateAction<string>>;
 	setRenamingSessionId: React.Dispatch<React.SetStateAction<string | null>>;
+	beginRename: (session: AgentSession) => void;
 	startRename: (session: AgentSession, e: React.MouseEvent) => void;
 	submitRename: (sessionId: string) => Promise<void>;
 	cancelRename: () => void;
@@ -37,14 +38,23 @@ export function useAgentSessionsRename({
 	const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
 
-	const startRename = useCallback(
-		(session: AgentSession, e: React.MouseEvent) => {
-			e.stopPropagation();
+	// The rename itself, with no event to consume: the edit button, the detail
+	// header, and the keyboard shortcut all enter rename mode the same way.
+	const beginRename = useCallback(
+		(session: AgentSession) => {
 			setRenamingSessionId(session.sessionId);
 			setRenameValue(session.sessionName || '');
 			setTimeout(() => renameInputRef.current?.focus(), 50);
 		},
 		[renameInputRef]
+	);
+
+	const startRename = useCallback(
+		(session: AgentSession, e: React.MouseEvent) => {
+			e.stopPropagation();
+			beginRename(session);
+		},
+		[beginRename]
 	);
 
 	const cancelRename = useCallback(() => {
@@ -108,6 +118,7 @@ export function useAgentSessionsRename({
 		renameValue,
 		setRenameValue,
 		setRenamingSessionId,
+		beginRename,
 		startRename,
 		submitRename,
 		cancelRename,

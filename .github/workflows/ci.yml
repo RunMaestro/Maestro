@@ -22,6 +22,12 @@ jobs:
       # dash-rule-only pass over src/__tests__ and scripts.
       - run: npm run lint:eslint
       - run: npm run lint # TypeScript type checking
+      # Agent briefing docs (CLAUDE*.md, docs/agent-guides/) are the first thing
+      # every coding agent reads, and CLAUDE.md's list of canonical helpers is a
+      # table of import paths. A moved file silently turns those into
+      # instructions to import from nowhere, so the paths get checked here
+      # rather than in the pre-push hook, which is routinely --no-verify'd past.
+      - run: npm run lint:doc-refs
 
   test:
     name: Test (${{ matrix.os }}, shard ${{ matrix.shard }}/2)

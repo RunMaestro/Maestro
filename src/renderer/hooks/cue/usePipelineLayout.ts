@@ -17,6 +17,7 @@ import type {
 import { PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY } from '../../../shared/cue-pipeline-types';
 import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/utils/yamlToPipeline';
 import { mergePipelinesWithSavedLayout } from '../../components/CuePipelineEditor/utils/pipelineLayout';
+import { beautifyPipelineLayouts } from '../../components/CuePipelineEditor/utils/pipelineAutoArrange';
 import { resolvePipelinesWriteRoots } from '../../components/CuePipelineEditor/utils/pipelineRoots';
 import { captureException } from '../../utils/sentry';
 import { cueService } from '../../services/cue';
@@ -306,9 +307,24 @@ export function usePipelineLayout({
 			// Guard: if a newer load started or a previous one already completed, bail out
 			if (reqId !== latestRestoreIdRef.current || hasRestoredLayoutRef.current) return;
 
+			// Beautify-on-load: the canvas must be circuit-board clean at every
+			// open, no matter what wrote the YAML. Saved positions are merged
+			// FIRST (below) so the user's arrangement survives as ordering, then
+			// the whole state is re-laid onto the grid: untangled flow columns
+			// per pipeline, masonry-packed group cards. This is what heals
+			// subscriptions other agents appended to cue.yaml at naive default
+			// positions, and stale saved layouts that drifted. Runs BEFORE the
+			// savedStateRef snapshot so healing never flips the dirty flag.
+			// Only the window aspect matters (it picks the column-group packing),
+			// so window dimensions stand in for the not-yet-measured canvas.
+			const healViewport = { width: window.innerWidth, height: window.innerHeight };
+
 			let pipelinesForRoots: CuePipelineState['pipelines'];
 			if (savedLayout && savedLayout.pipelines) {
 				const merged = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+				const preHealSnapshot = JSON.stringify(merged.pipelines);
+				merged.pipelines = beautifyPipelineLayouts(merged.pipelines, healViewport);
+				const healChangedLayout = JSON.stringify(merged.pipelines) !== preHealSnapshot;
 				// Seed the per-project cache so future saves don't stomp on
 				// sibling projects' entries.
 				perProjectRef.current = { ...(savedLayout.perProject ?? {}) };
@@ -347,15 +363,21 @@ export function usePipelineLayout({
 				// has measured the restored nodes. Applying it here on a timeout
 				// raced against `fitView` and - more importantly - against node
 				// measurement, which caused the initial canvas to appear empty.
-				if (projectView?.viewport) {
-					pendingSavedViewportRef.current = projectView.viewport;
-				} else if (savedLayout.viewport) {
-					pendingSavedViewportRef.current = savedLayout.viewport;
+				// When the beautify pass MOVED nodes, the saved pan/zoom frames a
+				// layout that no longer exists - skip it so the editor falls back
+				// to fitView and opens centered on the healed graph.
+				if (!healChangedLayout) {
+					if (projectView?.viewport) {
+						pendingSavedViewportRef.current = projectView.viewport;
+					} else if (savedLayout.viewport) {
+						pendingSavedViewportRef.current = savedLayout.viewport;
+					}
 				}
 			} else {
-				setPipelineState({ pipelines: livePipelines, selectedPipelineId: livePipelines[0].id });
-				savedStateRef.current = JSON.stringify(livePipelines);
-				pipelinesForRoots = livePipelines;
+				const healed = beautifyPipelineLayouts(livePipelines, healViewport);
+				setPipelineState({ pipelines: healed, selectedPipelineId: healed[0].id });
+				savedStateRef.current = JSON.stringify(healed);
+				pipelinesForRoots = healed;
 			}
 
 			// Seed lastWrittenRootsRef from two sources, unioned:

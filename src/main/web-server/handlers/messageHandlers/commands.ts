@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../../../utils/logger';
+import { readBackgroundField } from '../../../../shared/focusPlacement';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import { armDispatchCallback } from './dispatchCallbacks';
 import { LOG_CONTEXT } from './shared';
@@ -192,8 +193,9 @@ export function handleSwitchMode(
 ): void {
 	const sessionId = message.sessionId as string;
 	const mode = message.mode as 'ai' | 'terminal';
+	const background = readBackgroundField(message);
 	logger.info(
-		`[Web] Received switch_mode message: session=${sessionId}, mode=${mode}`,
+		`[Web] Received switch_mode message: session=${sessionId}, mode=${mode}, background=${background}`,
 		LOG_CONTEXT
 	);
 
@@ -212,7 +214,7 @@ export function handleSwitchMode(
 	// This ensures single source of truth - desktop handles state updates and broadcasts
 	logger.info(`[Web] Calling switchModeCallback for session ${sessionId}: ${mode}`, LOG_CONTEXT);
 	ctx.callbacks
-		.switchMode(sessionId, mode)
+		.switchMode(sessionId, mode, background)
 		.then(async (success) => {
 			// Spawn or kill the web terminal PTY based on mode
 			if (success && mode === 'terminal') {

@@ -20,8 +20,10 @@ import {
 	GIANT_TIER_LINES,
 	LINE_LENGTH_GIANT_THRESHOLD,
 	canScaleFontForView,
+	isGistPublishableFile,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
+import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
 
 describe('filePreviewUtils', () => {
 	describe('getLanguageFromFilename', () => {
@@ -122,6 +124,28 @@ describe('filePreviewUtils', () => {
 		it('returns true for fonts', () => {
 			expect(isBinaryExtension('font.ttf')).toBe(true);
 			expect(isBinaryExtension('font.woff2')).toBe(true);
+		});
+
+		it('leaves parquet out, because parquet has a viewer of its own', () => {
+			// Parquet IS a binary format, so adding these here looks like an
+			// obvious tidy-up. It is not: a parquet tab holds a handoff marker
+			// and renders as a filterable grid, and classifying it binary swaps
+			// that grid for an "Open in Default App" card.
+			//
+			// FilePreview also guards on the marker itself, so this absence is
+			// not the only thing holding the viewer up - but the two together
+			// are why the grid survives an edit to either one.
+			expect(isBinaryExtension('events.parquet')).toBe(false);
+			expect(isBinaryExtension('events.parq')).toBe(false);
+			expect(isBinaryExtension('events.pq')).toBe(false);
+		});
+
+		it('still treats database files as binary - Maestro has no SQLite viewer', () => {
+			// If a SQLite viewer ever lands, this is the assertion that will fail
+			// and point at the classifier that needs to learn about it.
+			expect(isBinaryExtension('app.db')).toBe(true);
+			expect(isBinaryExtension('app.sqlite')).toBe(true);
+			expect(isBinaryExtension('app.sqlite3')).toBe(true);
 		});
 
 		it('returns false for text files', () => {
@@ -526,6 +550,37 @@ describe('filePreviewUtils', () => {
 		it('offers the zoom for HTML source, not the rendered iframe', () => {
 			expect(canScaleFontForView(view({ isRenderedHtml: false }))).toBe(true);
 			expect(canScaleFontForView(view({ isRenderedHtml: true }))).toBe(false);
+		});
+	});
+
+	describe('isGistPublishableFile', () => {
+		it('accepts plain text, prose, and code', () => {
+			expect(isGistPublishableFile('notes.txt', 'just some notes')).toBe(true);
+			expect(isGistPublishableFile('README.md', '# Title')).toBe(true);
+			expect(isGistPublishableFile('index.ts', 'export const a = 1;')).toBe(true);
+			expect(isGistPublishableFile('Makefile', 'all:\n\techo hi')).toBe(true);
+		});
+
+		// A gist body is text. Everything below would publish garbage or nothing.
+		it('rejects images', () => {
+			expect(isGistPublishableFile('shot.png', 'anything')).toBe(false);
+			expect(isGistPublishableFile('logo.svg', '<svg></svg>')).toBe(false);
+		});
+
+		it('rejects binaries by extension and by content', () => {
+			expect(isGistPublishableFile('app.wasm', 'text-looking')).toBe(false);
+			expect(isGistPublishableFile('mystery', 'abc\u0000def')).toBe(false);
+		});
+
+		it('rejects the parquet marker, which holds a path rather than the file', () => {
+			expect(
+				isGistPublishableFile('data.parquet', buildParquetPreviewMarker('/tmp/data.parquet'))
+			).toBe(false);
+		});
+
+		it('rejects an empty file, which would publish a blank gist', () => {
+			expect(isGistPublishableFile('empty.txt', '')).toBe(false);
+			expect(isGistPublishableFile('blank.txt', '   \n\t ')).toBe(false);
 		});
 	});
 });

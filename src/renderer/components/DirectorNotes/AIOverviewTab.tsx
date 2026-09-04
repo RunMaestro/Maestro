@@ -17,6 +17,7 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { RichOverview } from './RichOverview';
 import type { TabFocusHandle } from './OverviewTab';
 import { NarrativeParseError } from './NarrativeParseError';
+import { useNarrativeGroupLookup } from './useNarrativeGroupLookup';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { TocOverlay, computeTocWidth } from '../Toc';
 import { buildRichTocEntries, buildPlainTocEntries } from './directorNotesToc';
@@ -122,6 +123,8 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	ref
 ) {
 	const { directorNotesSettings, bionifyReadingMode, shortcuts } = useSettings();
+	// Agent -> group mapping used to bucket the narrative bullets.
+	const groupLookup = useNarrativeGroupLookup();
 	const [lookbackDays, setLookbackDays] = useState(directorNotesSettings.defaultLookbackDays);
 	const [synopsis, setSynopsis] = useState<string>(cachedSynopsis?.content ?? '');
 	// Structured narrative and its overt parse-failure detail, both derived from
@@ -230,9 +233,16 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// JSON-shaped, in which case there is no readable report to show and the
 	// parse-error banner takes over. Empty rather than raw JSON: dumping the
 	// object into the markdown renderer is the wall-of-JSON regression itself.
+	// Bullets bucket by group (or agent) here too, so Plain Mode, Copy, and Save
+	// read the same way Rich Mode does rather than as one flat list.
 	const plainContent = useMemo(
-		() => (narrative ? narrativeToMarkdown(narrative) : isStructuredShaped ? '' : synopsis),
-		[narrative, synopsis, isStructuredShaped]
+		() =>
+			narrative
+				? narrativeToMarkdown(narrative, { groupLookup })
+				: isStructuredShaped
+					? ''
+					: synopsis,
+		[narrative, synopsis, isStructuredShaped, groupLookup]
 	);
 
 	// --- Table of contents ---------------------------------------------------

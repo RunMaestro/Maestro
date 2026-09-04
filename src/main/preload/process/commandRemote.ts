@@ -92,12 +92,17 @@ export function createCommandRemoteApi() {
 		 * Forwards to desktop's toggleInputMode logic
 		 */
 		onRemoteSwitchMode: (
-			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
+			callback: (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => void
 		): (() => void) => {
 			log('Registering onRemoteSwitchMode listener');
-			const handler = (_: unknown, sessionId: string, mode: 'ai' | 'terminal') => {
-				log('Received remote:switchMode IPC', { sessionId, mode });
-				callback(sessionId, mode);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				mode: 'ai' | 'terminal',
+				background?: boolean
+			) => {
+				log('Received remote:switchMode IPC', { sessionId, mode, background });
+				callback(sessionId, mode, background === true);
 			};
 			ipcRenderer.on('remote:switchMode', handler);
 			return () => ipcRenderer.removeListener('remote:switchMode', handler);

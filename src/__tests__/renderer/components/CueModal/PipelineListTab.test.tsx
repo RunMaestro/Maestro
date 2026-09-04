@@ -6,8 +6,48 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor, act } from '@testing-library/react';
 import { PipelineListTab } from '../../../../renderer/components/CueModal/PipelineListTab';
+
+const mockRenamePipeline = vi.hoisted(() => vi.fn());
+vi.mock('../../../../renderer/services/cue', () => ({
+	cueService: { renamePipeline: mockRenamePipeline },
+}));
+const mockNotifyToast = vi.hoisted(() => vi.fn());
+vi.mock('../../../../renderer/stores/notificationStore', () => ({
+	notifyToast: mockNotifyToast,
+}));
+
+// The rename claims Escape by registering a layer that outranks CUE_MODAL -
+// an input-local keydown handler could never win, because the layer stack
+// listens on window at capture. Capture the registration so the tests can
+// assert BOTH that it is enabled only during a rename and what it does.
+const layerRegistration = vi.hoisted(() => ({
+	priority: undefined as number | undefined,
+	onEscape: undefined as (() => void) | undefined,
+	options: undefined as { enabled?: boolean } | undefined,
+}));
+vi.mock('../../../../renderer/hooks/ui/useModalLayer', () => ({
+	useModalLayer: (
+		priority: number,
+		_ariaLabel: string | undefined,
+		onEscape: () => void,
+		options?: { enabled?: boolean }
+	) => {
+		layerRegistration.priority = priority;
+		layerRegistration.onEscape = onEscape;
+		layerRegistration.options = options;
+	},
+}));
+
+/** Fire Escape the way the layer stack would - via the registered handler. */
+function pressEscape() {
+	if (!layerRegistration.options?.enabled) {
+		throw new Error('the rename layer is not enabled, so Escape would close the Cue modal');
+	}
+	act(() => layerRegistration.onEscape!());
+}
+import { MODAL_PRIORITIES } from '../../../../renderer/constants/modalPriorities';
 import type { Theme } from '../../../../renderer/types';
 import type { CuePipeline, PipelineNode } from '../../../../shared/cue-pipeline-types';
 import type { CueRunResult } from '../../../../shared/cue/contracts';
@@ -105,6 +145,7 @@ function makeMultiTrigger(): CuePipeline {
 const onViewInGraph = vi.fn();
 const onTriggerSubscription = vi.fn();
 const onRetry = vi.fn();
+const onRenamed = vi.fn();
 
 function renderList(overrides: Partial<React.ComponentProps<typeof PipelineListTab>> = {}) {
 	return render(
@@ -119,6 +160,7 @@ function renderList(overrides: Partial<React.ComponentProps<typeof PipelineListT
 			onRetry={onRetry}
 			onViewInGraph={onViewInGraph}
 			onTriggerSubscription={onTriggerSubscription}
+			onRenamed={onRenamed}
 			{...overrides}
 		/>
 	);
@@ -126,6 +168,12 @@ function renderList(overrides: Partial<React.ComponentProps<typeof PipelineListT
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockRenamePipeline.mockResolvedValue({
+		renamed: true,
+		subscriptionsUpdated: 2,
+		filesWritten: ['/p/.maestro/cue.yaml'],
+		warnings: [],
+	});
 });
 
 describe('PipelineListTab', () => {
@@ -468,6 +516,178 @@ describe('PipelineListTab', () => {
 			});
 			expect(screen.getByText('ODIN Weekly')).toBeInTheDocument();
 			expect(screen.queryByText('Daily Digest')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('rename', () => {
+		function startRename(name = 'Daily Digest') {
+			fireEvent.click(screen.getByRole('button', { name: `Rename ${name}` }));
+			return screen.getByTestId('pipeline-rename-input');
+		}
+
+		it('opens an editor seeded with the current name', () => {
+			renderList();
+			expect(startRename()).toHaveValue('Daily Digest');
+		});
+
+		it('commits on Enter and refetches once the write lands', async () => {
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'Morning Digest' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			await waitFor(() =>
+				expect(mockRenamePipeline).toHaveBeenCalledWith('Daily Digest', 'Morning Digest')
+			);
+			await waitFor(() => expect(onRenamed).toHaveBeenCalledOnce());
+		});
+
+		it('commits on blur, because clicking away from typed text means keep it', async () => {
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'Renamed' } });
+			fireEvent.blur(input);
+
+			await waitFor(() =>
+				expect(mockRenamePipeline).toHaveBeenCalledWith('Daily Digest', 'Renamed')
+			);
+		});
+
+		it('cancels on Escape without writing', () => {
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'Discarded' } });
+			pressEscape();
+
+			expect(mockRenamePipeline).not.toHaveBeenCalled();
+			expect(screen.queryByTestId('pipeline-rename-input')).not.toBeInTheDocument();
+			expect(screen.getByText('Daily Digest')).toBeInTheDocument();
+		});
+
+		// Escape must reach the rename, not the Cue modal underneath it. The
+		// layer stack listens on window at capture, so this only works if the
+		// rename registers a layer that OUTRANKS the modal - hence asserting the
+		// registration itself, not just that some handler ran.
+		it('claims Escape from the Cue modal only while a rename is open', () => {
+			renderList();
+			expect(layerRegistration.options?.enabled).toBe(false);
+
+			startRename();
+			expect(layerRegistration.options?.enabled).toBe(true);
+			expect(layerRegistration.priority).toBeGreaterThan(MODAL_PRIORITIES.CUE_MODAL);
+
+			pressEscape();
+			expect(layerRegistration.options?.enabled).toBe(false);
+		});
+
+		it('treats an unchanged name as a cancel, not a write', () => {
+			renderList();
+			const input = startRename();
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockRenamePipeline).not.toHaveBeenCalled();
+			expect(screen.queryByTestId('pipeline-rename-input')).not.toBeInTheDocument();
+		});
+
+		// Rejected in the field rather than after a round-trip, so the bad text
+		// stays put and the user can see what they typed.
+		it('refuses an empty name and keeps the editor open', () => {
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: '   ' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockRenamePipeline).not.toHaveBeenCalled();
+			expect(screen.getByText('A pipeline needs a name')).toBeInTheDocument();
+			expect(screen.getByTestId('pipeline-rename-input')).toBeInTheDocument();
+		});
+
+		it('refuses a name another pipeline already has', () => {
+			renderList({ pipelines: [makePipeline('Daily Digest'), makePipeline('Cyber Stocks')] });
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'cyber stocks' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockRenamePipeline).not.toHaveBeenCalled();
+			expect(screen.getByText('Another pipeline already has that name')).toBeInTheDocument();
+		});
+
+		// The row's own name is excluded from the clash set, so re-casing works.
+		it('allows changing only the casing of the existing name', async () => {
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'DAILY DIGEST' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			await waitFor(() =>
+				expect(mockRenamePipeline).toHaveBeenCalledWith('Daily Digest', 'DAILY DIGEST')
+			);
+		});
+
+		// The row is a button that Space/Enter toggles - typing must not drive it.
+		it('does not toggle the row while typing in the editor', () => {
+			renderList();
+			const input = startRename();
+			fireEvent.keyDown(input, { key: ' ' });
+			expect(screen.queryByTestId('pipeline-list-detail-Daily Digest')).not.toBeInTheDocument();
+		});
+
+		it('does not expand the row when the rename button is clicked', () => {
+			renderList();
+			startRename();
+			expect(screen.queryByTestId('pipeline-list-detail-Daily Digest')).not.toBeInTheDocument();
+		});
+
+		it('reports a backend refusal instead of pretending it worked', async () => {
+			mockRenamePipeline.mockResolvedValue({
+				renamed: false,
+				subscriptionsUpdated: 0,
+				filesWritten: [],
+				reason: 'no subscriptions found for pipeline "Daily Digest"',
+				warnings: [],
+			});
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'Nope' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			await waitFor(() =>
+				expect(mockNotifyToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }))
+			);
+			expect(onRenamed).not.toHaveBeenCalled();
+		});
+
+		// A warning means the YAML rename DID land - reporting it as a failure
+		// would send the user looking for a change that is already on disk.
+		it('still refreshes when the write succeeded with warnings', async () => {
+			mockRenamePipeline.mockResolvedValue({
+				renamed: true,
+				subscriptionsUpdated: 1,
+				filesWritten: ['/p/.maestro/cue.yaml'],
+				warnings: ['pipeline renamed, but saved node positions could not be moved: disk full'],
+			});
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'Renamed' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			await waitFor(() => expect(onRenamed).toHaveBeenCalledOnce());
+			expect(mockNotifyToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
+		});
+
+		it('surfaces a thrown IPC failure as an error toast', async () => {
+			mockRenamePipeline.mockRejectedValue(new Error('IPC exploded'));
+			renderList();
+			const input = startRename();
+			fireEvent.change(input, { target: { value: 'Renamed' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			await waitFor(() =>
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ type: 'error', message: 'IPC exploded' })
+				)
+			);
+			expect(onRenamed).not.toHaveBeenCalled();
 		});
 	});
 

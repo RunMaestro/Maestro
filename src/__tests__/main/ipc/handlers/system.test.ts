@@ -88,6 +88,12 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 }));
 
 // Mock execFile utility
+vi.mock('../../../../main/runtime/getShellPath', () => ({
+	peekShellPath: vi.fn(() => '/opt/homebrew/bin:/usr/bin:/bin'),
+}));
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
@@ -100,6 +106,20 @@ vi.mock('../../../../main/update-checker', () => ({
 // Mock auto-updater
 vi.mock('../../../../main/auto-updater', () => ({
 	setAllowPrerelease: vi.fn(),
+}));
+
+// Mock power manager. The real singleton reaches for electron's
+// powerSaveBlocker, which this file's electron mock does not provide.
+vi.mock('../../../../main/power-manager', () => ({
+	powerManager: {
+		setEnabled: vi.fn(),
+		isEnabled: vi.fn(),
+		setKeepDisplayAwake: vi.fn(),
+		isKeepingDisplayAwake: vi.fn(),
+		getStatus: vi.fn(),
+		addBlockReason: vi.fn(),
+		removeBlockReason: vi.fn(),
+	},
 }));
 
 // Mock tunnel manager
@@ -130,9 +150,11 @@ import { logger } from '../../../../main/utils/logger';
 import { detectShells } from '../../../../main/utils/shellDetector';
 import { isCloudflaredInstalled } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { captureException } from '../../../../main/utils/sentry';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
+import { powerManager } from '../../../../main/power-manager';
 import * as fsSync from 'fs';
 
 describe('system IPC handlers', () => {
@@ -258,6 +280,7 @@ describe('system IPC handlers', () => {
 				// Power management handlers
 				'power:setEnabled',
 				'power:isEnabled',
+				'power:setKeepDisplayAwake',
 				'power:getStatus',
 				'power:addReason',
 				'power:removeReason',
@@ -273,6 +296,47 @@ describe('system IPC handlers', () => {
 
 			// Verify exact count
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	// `preventDisplaySleepEnabled` is the only power preference the main process
+	// has to restore for itself: the renderer's toggle pushes the value down on
+	// change, but nothing replays it after a restart, so without the read at
+	// registration the setting reads as ON in Settings while the blocker is
+	// still running at the weaker `prevent-app-suspension` type.
+	describe('power:setKeepDisplayAwake', () => {
+		it('persists the preference and pushes it to the power manager', async () => {
+			await handlers.get('power:setKeepDisplayAwake')!({} as any, true);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', true);
+		});
+
+		it('persists the off state too', async () => {
+			await handlers.get('power:setKeepDisplayAwake')!({} as any, false);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(false);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', false);
+		});
+
+		it('restores a saved preference at registration', () => {
+			vi.clearAllMocks();
+			mockSettingsStore.get.mockImplementation((key: string) =>
+				key === 'preventDisplaySleepEnabled' ? true : undefined
+			);
+
+			registerSystemHandlers(deps);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+		});
+
+		it('does not touch the power manager when nothing was saved', () => {
+			vi.clearAllMocks();
+			mockSettingsStore.get.mockReturnValue(undefined);
+
+			registerSystemHandlers(deps);
+
+			expect(powerManager.setKeepDisplayAwake).not.toHaveBeenCalled();
 		});
 	});
 
@@ -439,7 +503,20 @@ describe('system IPC handlers', () => {
 	});
 
 	describe('fonts:detect', () => {
-		it('should return array of system fonts using fc-list', async () => {
+		// The handler returns a RESULT rather than a bare array now: the caller
+		// has to be able to tell "here is what is installed" from "we could not
+		// look", or it annotates real fonts "(Not Found)".
+		const FALLBACK = [
+			'Monaco',
+			'Menlo',
+			'Courier New',
+			'Consolas',
+			'Roboto Mono',
+			'Fira Code',
+			'JetBrains Mono',
+		];
+
+		it('should return the installed fonts, flagged reliable', async () => {
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'Arial\nHelvetica\nMonaco\nCourier New',
 				stderr: '',
@@ -449,8 +526,51 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('fc-list', [':', 'family']);
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco', 'Courier New']);
+			expect(result).toEqual({
+				fonts: ['Arial', 'Helvetica', 'Monaco', 'Courier New'],
+				source: 'fc-list',
+				reliable: true,
+			});
+		});
+
+		it('should run fc-list with the login-shell PATH', async () => {
+			// The GUI process PATH excludes /opt/homebrew/bin, so a packaged app
+			// could not find fc-list even where it was installed.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'Arial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'fc-list',
+				[':', 'family'],
+				undefined,
+				expect.objectContaining({ env: expect.anything() })
+			);
+		});
+
+		it('should split comma-separated family aliases', async () => {
+			// fc-list prints "DejaVu Sans,DejaVu Sans Book" for one family. The
+			// previous parse kept the whole line, so an aliased family could
+			// never match a picker entry by name.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'DejaVu Sans,DejaVu Sans Book\nArial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			const result = await handler!({} as any);
+
+			expect((result as { fonts: string[] }).fonts).toEqual([
+				'DejaVu Sans',
+				'DejaVu Sans Book',
+				'Arial',
+			]);
 		});
 
 		it('should deduplicate fonts', async () => {
@@ -463,7 +583,7 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica']);
 		});
 
 		it('should filter empty lines', async () => {
@@ -476,10 +596,13 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica', 'Monaco']);
 		});
 
-		it('should return fallback fonts when fc-list fails', async () => {
+		it('should flag the fallback list unreliable when fc-list is absent', async () => {
+			// This is the majority case: fontconfig ships with neither macOS nor
+			// Windows. The seven names are a placeholder so the picker has
+			// something to show, NOT a claim about what is installed.
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: '',
 				stderr: 'command not found',
@@ -489,32 +612,36 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+			expect((result as { reason?: string }).reason).toBeTruthy();
 		});
 
-		it('should return fallback fonts on error', async () => {
+		it('should flag the fallback list unreliable on error', async () => {
 			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('Command failed'));
 
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+		});
+
+		it('should not report a missing fc-list to Sentry', async () => {
+			// It is the EXPECTED path off Linux, so reporting it would bury real
+			// crashes under noise from the majority platform.
+			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('ENOENT'));
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(captureException).not.toHaveBeenCalled();
 		});
 	});
 

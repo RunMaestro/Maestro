@@ -1,3 +1,4 @@
+import type { GroupLike } from '../../../../../shared/statsGroupRollup';
 import type { Session } from '../../../../types';
 import { AgentOverviewCards } from '../../AgentOverviewCards';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
@@ -7,6 +8,8 @@ import type { AgentsBaseViewProps } from './types';
 
 interface AgentsViewProps extends AgentsBaseViewProps {
 	onShowAgentDetails: (session: Session) => void;
+	/** Left Bar groups, used to populate the grid's own group filter dropdown. */
+	groups?: GroupLike[];
 }
 
 export function AgentsView({
@@ -17,6 +20,7 @@ export function AgentsView({
 	setSectionRef,
 	handleSectionKeyDown,
 	onShowAgentDetails,
+	groups,
 }: AgentsViewProps) {
 	return (
 		<DashboardTabPanel viewMode="agents">
@@ -35,6 +39,7 @@ export function AgentsView({
 							data={data}
 							theme={theme}
 							onShowAgentDetails={onShowAgentDetails}
+							groups={groups}
 						/>
 					</ChartErrorBoundary>
 				) : (

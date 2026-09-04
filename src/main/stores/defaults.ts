@@ -7,6 +7,7 @@
 
 import path from 'path';
 import { isWindows } from '../../shared/platformDetection';
+import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 
 import type {
 	MaestroSettings,
@@ -79,8 +80,21 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	apiKey: '',
 	shortcuts: {},
 	fontSize: 14,
-	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+	fontFamily: MAESTRO_FONT_STACK,
 	terminalFontFamily: '',
+	chatFontFamily: '',
+	filePreviewFontFamily: '',
+	fileEditorFontFamily: '',
+	documentGraphFontFamily: '',
+	chatFontSize: 0,
+	terminalFontSize: 0,
+	filePreviewFontSize: 0,
+	fileEditorFontSize: 0,
+	documentGraphFontSize: 0,
+	fontZoom: 1,
+	typographyPromptSeen: false,
+	themePromptSeen: false,
+	agentPowersPromptSeen: false,
 	customFonts: [],
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,
@@ -90,6 +104,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	webAuthEnabled: false,
 	webAuthToken: null,
 	persistentWebLink: false,
+	webInterfaceAutoStart: false,
 	webInterfaceUseCustomPort: false,
 	webInterfaceCustomPort: 8080,
 	sshRemotes: [],
@@ -101,6 +116,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	wakatimeApiKey: '',
 	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
+	delegationMilestone: 0,
 	lastSelectedPromptId: null,
 	modalSizes: {},
 	concertoStageFloating: false,

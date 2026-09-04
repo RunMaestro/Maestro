@@ -25,6 +25,13 @@ import {
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
+import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
+import { spawnPtyForTab } from '../../services/terminalSpawn';
+import { useTabStore } from '../../stores/tabStore';
+import {
+	createTabPidChangeHandler,
+	createTabStateChangeHandler,
+} from '../../components/TerminalView';
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
@@ -60,12 +67,12 @@ export interface UseAppRemoteEventListenersDeps {
 			/** Optional 1-based line to jump to once the editor mounts (deep links). */
 			pendingScrollToLine?: number;
 		},
-		options?: { targetSessionId?: string }
+		options?: { targetSessionId?: string; activate?: boolean }
 	) => void;
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
 	/** Refresh the Auto Run document list for the active session */
-	handleAutoRunRefresh: () => void;
+	handleAutoRunRefresh: (options?: { silent?: boolean }) => void;
 	/** Start a batch (Auto Run) for a session */
 	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
 	/** Stop a batch run directly (no confirmation dialog) */
@@ -102,9 +109,20 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, switchToAgent, line } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, background, switchToAgent, line } = (e as CustomEvent).detail as {
 			sessionId: string;
 			filePath: string;
+			/**
+			 * true = create the preview tab without moving the human at all: neither
+			 * the active agent nor the active tab inside any agent changes. Absent
+			 * means an in-app open (a toast click, a file-tree click, a deep link),
+			 * which is a human asking to be taken there.
+			 */
+			background?: boolean;
+			/**
+			 * false = the older, weaker `--no-switch` ask: stay on the current agent,
+			 * but still activate the tab inside the target one. Absent means switch.
+			 */
 			switchToAgent?: boolean;
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
@@ -117,9 +135,18 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 		const sshRemoteId =
 			session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-		// Honor `--no-switch`: register the tab on the target agent but leave the
-		// active agent untouched so the CLI invocation doesn't hijack focus.
-		if (switchToAgent !== false) {
+		// Three distinct outcomes, because `--no-switch` and `--background` are
+		// different asks and both have to keep working:
+		//
+		//   neither          -> switch agent, activate the tab (today's default)
+		//   --no-switch      -> stay on this agent, still activate the tab there
+		//   --background     -> touch nothing that is currently rendered, anywhere
+		//
+		// Suppressing only the agent switch was never enough for the strong case:
+		// a file tab outranks the AI tab in the render precedence, so activating
+		// one changes the view even when the caller stayed on the same agent.
+		// That is exactly why `--no-switch` reads like `--background` and is not.
+		if (!background && switchToAgent !== false) {
 			setActiveSessionId(sessionId);
 		}
 		try {
@@ -139,7 +166,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						sshRemoteId,
 						pendingScrollToLine: line,
 					},
-					{ targetSessionId: sessionId }
+					{ targetSessionId: sessionId, activate: !background }
 				);
 			}
 		} catch (error) {
@@ -148,7 +175,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote refresh file tree events from CLI/web interface
-	useEventListener('maestro:refreshFileTree', (e: Event) => {
+	useEventListener(FILE_TREE_REFRESH_EVENT, (e: Event) => {
 		const { sessionId } = (e as CustomEvent).detail;
 		refreshFileTree(sessionId);
 	});
@@ -258,10 +285,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Acks success to responseChannel so the CLI only reports success after
 	// the tab is actually created.
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
-		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+		const { sessionId, config, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
 			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
 			responseChannel?: string;
+			background?: boolean;
 		};
 		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
@@ -274,7 +302,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			ack(false);
 			return;
 		}
-		setActiveSessionId(sessionId);
+		if (!background) {
+			setActiveSessionId(sessionId);
+		}
 		const baseTab = createTerminalTabHelper(
 			config?.shell,
 			config?.cwd ?? session.cwd,
@@ -289,10 +319,52 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
-				const updated = addTerminalTabHelper(s, tab);
-				return { ...updated, inputMode: 'terminal' as const };
+				// A background terminal is added to the tab bar and nothing else:
+				// `activate: false` leaves every active-* id alone, and the mode is
+				// left as-is because flipping the agent into terminal mode is itself
+				// a view change for anyone looking at that agent.
+				if (background) return addTerminalTabHelper(s, tab, { activate: false });
+				return { ...addTerminalTabHelper(s, tab), inputMode: 'terminal' as const };
 			})
 		);
+
+		// Start the shell here rather than leaving it to TerminalView. That component
+		// only renders the agent the user is looking at, and only spawns for the ACTIVE
+		// tab (or a non-active one carrying a startup command), so a backgrounded
+		// terminal never got a PTY at all: the tab existed, `send-terminal` reported
+		// "has no running shell yet", and the only fix was to click it - which is the
+		// one thing `--background` exists to avoid. Spawning at creation makes the tab
+		// usable immediately no matter which agent is on screen.
+		//
+		// Safe to call unconditionally: the spawn dedupes in-flight calls by process
+		// id, and once the PID lands TerminalView's own `pid !== 0` check stops it
+		// spawning a second one when it later mounts.
+		const sessionForSpawn = selectSessionById(sessionId)(useSessionStore.getState());
+		if (sessionForSpawn) {
+			void spawnPtyForTab({
+				session: sessionForSpawn,
+				tab,
+				onPid: createTabPidChangeHandler(sessionId),
+				onSpawnFailure: (tabId, isPersistent, message) => {
+					// No xterm to write into from here, so report through the store and a
+					// toast. Persistent tabs stay as restartable husks exactly as they do
+					// on the view path; scratch tabs are closed.
+					logger.warn('Background terminal PTY spawn failed', 'RemoteEvents', {
+						sessionId,
+						tabId,
+						isPersistent,
+						message,
+					});
+					if (isPersistent) {
+						createTabStateChangeHandler(sessionId)(tabId, 'exited');
+					} else {
+						useTabStore.getState().closeTerminalTab(tabId, 'spawn-failure');
+					}
+					notifyToast({ type: 'error', title: 'Failed to start terminal', message });
+				},
+			});
+		}
+
 		ack(true, tab.id);
 	});
 
@@ -415,11 +487,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote refresh auto-run docs events from CLI/web interface
 	useEventListener('maestro:refreshAutoRunDocs', (e: Event) => {
-		const { sessionId } = (e as CustomEvent).detail;
+		const { sessionId, background } = (e as CustomEvent).detail as {
+			sessionId: string;
+			background?: boolean;
+		};
 		const currentActiveId = useSessionStore.getState().activeSessionId;
 		if (sessionId === currentActiveId) {
-			// Already the active session - refresh immediately
-			handleAutoRunRefresh();
+			// Already the active session - refresh immediately. A background caller
+			// still gets the refresh; what it opts out of is the flash, which is a
+			// confirmation of an action the user took and not of one an agent took.
+			handleAutoRunRefresh(background === true ? { silent: true } : undefined);
+		} else if (background === true) {
+			// Nothing on screen is showing this agent's Auto Run list, so there is
+			// nothing to re-read into: the loader effect reads the folder fresh when
+			// the user switches to it. Doing nothing here IS the refresh, and it is
+			// the only reading of `--background` that leaves the view alone - the
+			// switch below is how the non-background path gets the target refreshed
+			// at all.
 		} else {
 			// Switch to the target session - the autoRunFolderPath useEffect
 			// will trigger handleAutoRunRefresh for the newly active session
@@ -877,7 +961,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// path uses) but skips the batch dispatch: the new agent is left idle, and
 	// the CLI optionally follows up with `dispatch` to send an initial prompt.
 	useEventListener('maestro:createWorktreeSession', async (e: Event) => {
-		const { parentSessionId, config, responseChannel } = (e as CustomEvent).detail;
+		const { parentSessionId, config, responseChannel, background } = (e as CustomEvent).detail;
 
 		try {
 			const parent = sessionsRef.current.find((s) => s.id === parentSessionId);
@@ -918,6 +1002,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					error: 'Failed to create worktree agent',
 				});
 				return;
+			}
+
+			// spawnWorktreeAgentAndDispatch does not select the child on its own
+			// (unlike the desktop worktree flows, where a human clicked Create), so
+			// background placement is already the behaviour here and `--focus` is
+			// what has to be implemented rather than suppressed.
+			if (!background) {
+				setActiveSessionId(newSessionId);
 			}
 
 			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
@@ -1246,7 +1338,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote create session from web interface
 	useEventListener('maestro:remoteCreateSession', async (e: Event) => {
-		const { name, toolType, cwd, groupId, config, responseChannel } = (e as CustomEvent).detail;
+		const { name, toolType, cwd, groupId, config, responseChannel, background } = (e as CustomEvent)
+			.detail;
 		try {
 			// Get agent definition to validate
 			const agent = await (window as any).maestro.agents.get(toolType);
@@ -1377,7 +1470,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
-			setActiveSessionId(newId);
+			// A background create leaves the Left Bar selection where it is. The
+			// agent still exists, is listed, and is addressable by the id handed
+			// back - it just does not take the window from whoever is working.
+			if (!background) {
+				setActiveSessionId(newId);
+			}
 			(window as any).maestro.stats.recordSessionCreated({
 				sessionId: newId,
 				agentType: toolType,

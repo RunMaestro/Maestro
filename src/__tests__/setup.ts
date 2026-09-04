@@ -319,6 +319,7 @@ const mockMaestro = {
 		worktreeInfo: vi.fn().mockResolvedValue({ success: true, exists: false, isWorktree: false }),
 		getRepoRoot: vi.fn().mockResolvedValue({ success: true, root: '/path/to/project' }),
 		log: vi.fn().mockResolvedValue({ entries: [], error: undefined }),
+		graph: vi.fn().mockResolvedValue({ nodes: [], error: undefined }),
 		commitCount: vi.fn().mockResolvedValue({ count: 0, error: null }),
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),
@@ -343,6 +344,9 @@ const mockMaestro = {
 	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
+		readDirTree: vi
+			.fn()
+			.mockResolvedValue({ tree: [], truncated: false, filesFound: 0, directoriesScanned: 0 }),
 		readFile: vi.fn().mockResolvedValue(''),
 		// Mirrors the preload webUtils bridge: returns the dropped file's absolute
 		// path. Test fixtures set `.path` on their fake File objects.
@@ -658,6 +662,14 @@ const mockMaestro = {
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
 		}),
+		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
+		// dashboard renders the "nothing tracked yet" state rather than throwing.
+		getDelegationTotals: vi.fn().mockResolvedValue({
+			interactive: { count: 0, durationMs: 0 },
+			autoRun: { count: 0, durationMs: 0 },
+			cue: { count: 0, durationMs: 0 },
+		}),
+		getDelegationByDay: vi.fn().mockResolvedValue([]),
 		getStats: vi.fn().mockResolvedValue([]),
 		startAutoRun: vi.fn().mockResolvedValue('auto-run-id'),
 		endAutoRun: vi.fn().mockResolvedValue(true),
@@ -700,6 +712,9 @@ const mockMaestro = {
 		// mirroring the preload contract so useCrossAgentDispatch's mount effect
 		// (window.maestro.crossAgent.onChunk) doesn't throw under test.
 		send: vi.fn().mockResolvedValue({ requestId: 'test-cross-agent-request' }),
+		// Stop calls this for every interrupt in AI mode, so it has to exist or
+		// handleInterrupt throws before it ever signals a process.
+		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
 		onChunk: vi.fn().mockReturnValue(() => {}),
 	},
 	leaderboard: {

@@ -159,6 +159,31 @@ describe('agentOverviewUtils', () => {
 		expect(sortAgentOverviewSessions(sessions, data, 'auto')[0].name).toBe('Alpha');
 	});
 
+	// A hidden consult tab has no chip, so ranking by it would order the grid on a
+	// tab count each agent's own strip contradicts.
+	it('ranks by tabs the strip draws, ignoring hidden consult tabs', () => {
+		const alpha = makeSession({
+			id: 'codexSession',
+			name: 'Alpha',
+			toolType: 'codex',
+			aiTabs: [{ id: 'a' }, { id: 'b' }] as any,
+		});
+		const beta = makeSession({
+			id: 'claude',
+			name: 'Beta',
+			toolType: 'claude-code',
+			aiTabs: [
+				{ id: 'a' },
+				{ id: 'consult-1', hidden: true },
+				{ id: 'consult-2', hidden: true },
+			] as any,
+		});
+
+		expect(
+			sortAgentOverviewSessions([beta, alpha], data, 'tabs').map((session) => session.name)
+		).toEqual(['Alpha', 'Beta']);
+	});
+
 	it('sorts by most recently queried and sinks agents with no queries in range', () => {
 		// Alpha was created later and has more queries, but Beta queried last.
 		const alpha = makeSession({

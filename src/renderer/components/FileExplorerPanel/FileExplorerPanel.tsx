@@ -193,6 +193,18 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		[selectedPaths]
 	);
 
+	// Drives the context menu's "Open N in Document Graph" entry. Counts only
+	// markdown, because that is all the graph can parse - labelling the action
+	// with the raw selection size would promise to graph files it will drop.
+	const selectedMarkdownCount = useMemo(
+		() =>
+			Array.from(selectedPaths).filter((path) => {
+				const lower = path.toLowerCase();
+				return lower.endsWith('.md') || lower.endsWith('.markdown');
+			}).length,
+		[selectedPaths]
+	);
+
 	// ── Virtualizer ───────────────────────────────────────────────────────────
 
 	const parentRef = useRef<HTMLDivElement>(null);
@@ -375,6 +387,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
+		handleGraphFolder,
+		handleGraphSelection,
 		autoRunStagedDocs,
 		handleStageForAutoRun,
 		handlePreviewFile,
@@ -546,7 +560,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								setTimeout(() => fileTreeFilterInputRef?.current?.focus(), 0);
 							}
 						}}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="fx-btn fx-primary flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: fileTreeFilterOpen ? theme.colors.accent : theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
@@ -565,7 +579,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							onClick={() =>
 								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)
 							}
-							className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
@@ -581,7 +595,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					{!dotfilesToggleHidden && (
 						<button
 							onClick={() => setShowHiddenFiles(!showHiddenFiles)}
-							className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
@@ -602,7 +616,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						onClick={handleRefresh}
 						onMouseEnter={handleRefreshMouseEnter}
 						onMouseLeave={handleRefreshMouseLeave}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
@@ -944,7 +958,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					    drop target: pointer-events-none keeps it out of the way of the
 					    receptacle above it and of anything the drag passes over. */}
 					<div
-						className="px-2.5 py-1.5 rounded text-[11px] flex items-center justify-center gap-1.5 transition-colors pointer-events-none"
+						className="px-2.5 py-1.5 rounded text-xs-plus flex items-center justify-center gap-1.5 transition-colors pointer-events-none"
 						style={{
 							// Borderless and faintly tinted so it doesn't read as another
 							// bordered bar next to the stats strip right below it. The
@@ -973,7 +987,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								<span className="flex items-center gap-1.5">
 									{altKeySymbol !== altKeyName && (
 										<kbd
-											className="px-1 py-px rounded text-[10px] font-semibold leading-none"
+											className="px-1 py-px rounded text-2xs font-semibold leading-none"
 											style={{
 												border: `1px solid ${theme.colors.border}`,
 												color: theme.colors.textMain,
@@ -1049,10 +1063,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					contextMenuPos={contextMenuPos}
 					sshRemoteId={sshRemoteId}
 					onFocusFileInGraph={onFocusFileInGraph}
+					onGraphFolder={handleGraphFolder}
+					onGraphSelection={handleGraphSelection}
 					onOpenBrowserTabAt={onOpenBrowserTabAt}
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
 					selectedMediaCount={selectedMediaCount}
+					selectedMarkdownCount={selectedMarkdownCount}
 					onCopyPath={handleCopyPath}
 					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}

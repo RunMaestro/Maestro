@@ -5,8 +5,8 @@
  * defaults as an argument so its tests need no live store). This module is the
  * thin layer that reads the settings store, commits the new session, and moves
  * focus to the pane that was just created. Both surfaces that offer the action -
- * the command palette's "Tile New ... Below" family and the Cmd+Shift+J
- * terminal hotkey - go through here, so they cannot drift on which settings the
+ * the command palette's "Tile New ... Below" family and the Ctrl+Cmd+T/J/B/F
+ * hotkeys - go through here, so they cannot drift on which settings the
  * new tab inherits or on whether focus follows the tile.
  */
 

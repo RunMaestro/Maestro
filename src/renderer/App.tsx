@@ -475,8 +475,10 @@ function MaestroConsoleInner() {
 		keyboardMasteryStats,
 		recordShortcutUsage,
 		colorBlindMode,
+		themeGloss,
 		defaultStatsTimeRange,
 		documentGraphShowExternalLinks,
+		documentGraphConfirmClose,
 		documentGraphMaxNodes,
 		documentGraphPreviewCharLimit,
 		documentGraphLayoutType,
@@ -835,7 +837,9 @@ function MaestroConsoleInner() {
 	// See stagedImages/setStagedImages computed from active tab below
 
 	// Global Live Mode - extracted to useLiveMode hook (Tier 3B)
-	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode();
+	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode(
+		settings.settingsLoaded && settings.webInterfaceAutoStart && !isWebDesktop()
+	);
 
 	// Auto Run document management state (from batchStore)
 	// Content is per-session in session.autoRunContent
@@ -897,7 +901,9 @@ function MaestroConsoleInner() {
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
 	// Ref for handleResumeSession - bridges ordering gap between useModalHandlers and useAgentSessionManagement
-	const handleResumeSessionRef = useRef<((agentSessionId: string) => void) | null>(null);
+	const handleResumeSessionRef = useRef<
+		((agentSessionId: string, providedMessages?: undefined, sessionName?: string) => void) | null
+	>(null);
 
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 	// Note: pauseBatchOnErrorRef and getBatchStateRef moved into useBatchHandlers hook
@@ -937,7 +943,10 @@ function MaestroConsoleInner() {
 	const { initialLoadComplete } = useSessionRestoration();
 
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
-	useCueAutoDiscovery(encoreFeatures);
+	// The Electron renderer owns the one main-process Cue lifecycle. A browser
+	// mirror must not rescan every project root or toggle that shared engine on
+	// mount; doing so floods the WebSocket bridge and starves interactive calls.
+	useCueAutoDiscovery(encoreFeatures, !isWebDesktop());
 
 	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and
@@ -1252,7 +1261,7 @@ function MaestroConsoleInner() {
 		handleLogViewerShortcutUsed,
 		handleViewGitDiff,
 		handleDirectorNotesResumeSession,
-	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef);
+	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef, groupChatInputRef);
 
 	const {
 		handleOpenWorktreeConfig,
@@ -1376,7 +1385,6 @@ function MaestroConsoleInner() {
 		isLiveMode,
 		sessionsRef,
 		activeSessionIdRef,
-		setSessions,
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
@@ -1395,6 +1403,8 @@ function MaestroConsoleInner() {
 	// Theme styles hook - manages CSS variables and scrollbar fade animations
 	useThemeStyles({
 		themeColors: theme.colors,
+		themeMode: theme.mode,
+		glossLevel: themeGloss,
 	});
 
 	// Get capabilities for the active session's agent type
@@ -2101,6 +2111,10 @@ function MaestroConsoleInner() {
 	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Sort/nav/starred
 	// come from sidebarNavStore (no App subscription).
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
+	// Arrow nav needs both: the flag to know the section is closed, and the setter
+	// to open it when the cursor crosses into it.
+	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const setUngroupedCollapsed = useSettingsStore((s) => s.setUngroupedCollapsed);
 	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
 	const starredSessionsCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const { setGroupChatsExpanded, setStarredSessionsCollapsed } = useSettingsStore.getState();
@@ -2132,6 +2146,8 @@ function MaestroConsoleInner() {
 		setGroupChatsExpanded,
 		groupChatSortAlphabetical,
 		showUnreadAgentsOnly,
+		ungroupedCollapsed,
+		setUngroupedCollapsed,
 	});
 
 	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
@@ -2487,6 +2503,7 @@ function MaestroConsoleInner() {
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
+		handleQuickActionsRefreshGitFileState,
 		logsEndRef,
 		inputRef,
 		terminalOutputRef,
@@ -2592,6 +2609,9 @@ function MaestroConsoleInner() {
 		handleSelectTerminalTab,
 		handleCloseTerminalTab,
 		mainPanelRef,
+
+		// AI tab handler for keyboard shortcut (Cmd+T)
+		handleNewTab,
 
 		// File tab handler for keyboard shortcut (Alt+N)
 		handleNewFileTab,
@@ -3019,8 +3039,6 @@ function MaestroConsoleInner() {
 			<PluginModalPanelMount theme={theme} />
 			<AppShell
 				theme={theme}
-				fontFamily={fontFamily}
-				fontSize={fontSize}
 				keyboardShellOffset={keyboardShellOffset}
 				isMobileLandscape={isMobileLandscape}
 				useNativeTitleBar={useNativeTitleBar}
@@ -3398,7 +3416,6 @@ function MaestroConsoleInner() {
 						onBrowserTabSelect={handleSelectBrowserTab}
 						onNamedSessionSelect={handleNamedSessionSelect}
 						filteredFileTree={filteredFileTree}
-						fileExplorerExpanded={activeSession?.fileExplorerExpanded}
 						onCloseFileSearch={handleCloseFileSearch}
 						onFileSearchSelect={handleFileSearchSelect}
 						onClosePromptComposer={handleClosePromptComposer}
@@ -3529,6 +3546,7 @@ function MaestroConsoleInner() {
 						onOpenFileTab={handleOpenFileTab}
 						mainPanelRef={mainPanelRef}
 						documentGraphShowExternalLinks={documentGraphShowExternalLinks}
+						documentGraphConfirmClose={documentGraphConfirmClose}
 						onExternalLinksChange={settings.setDocumentGraphShowExternalLinks}
 						documentGraphMaxNodes={documentGraphMaxNodes}
 						documentGraphPreviewCharLimit={documentGraphPreviewCharLimit}

@@ -32,6 +32,7 @@ import type {
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
+import type { GlossLevel } from '../../../shared/themeGloss';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -47,6 +48,9 @@ import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSiz
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
+import type { TypographySurface } from '../../../shared/typography';
+import type { TypographyPresetId } from '../../../shared/typographyPresets';
+import { applyTypographyVars } from '../../utils/applyTypographyVars';
 
 export interface UseSettingsReturn {
 	// Loading state
@@ -77,6 +81,9 @@ export interface UseSettingsReturn {
 	setShellArgs: (value: string) => void;
 	shellEnvVars: Record<string, string>;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	/** Variables switched off in the editor: kept for later, never spawned with. */
+	shellEnvVarsDisabled: Record<string, string>;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 
 	// GitHub CLI settings
 	ghPath: string;
@@ -85,10 +92,33 @@ export interface UseSettingsReturn {
 	// Font settings
 	fontFamily: string;
 	terminalFontFamily: string;
+	chatFontFamily: string;
+	filePreviewFontFamily: string;
+	fileEditorFontFamily: string;
+	documentGraphFontFamily: string;
 	fontSize: number;
 	setFontFamily: (value: string) => void;
 	setTerminalFontFamily: (value: string) => void;
+	setChatFontFamily: (value: string) => void;
+	setFilePreviewFontFamily: (value: string) => void;
+	setFileEditorFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
+	chatFontSize: number;
+	terminalFontSize: number;
+	filePreviewFontSize: number;
+	fileEditorFontSize: number;
+	documentGraphFontSize: number;
+	fontZoom: number;
+	setSurfaceFontFamily: (surface: TypographySurface, value: string) => void;
+	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
+	setFontZoom: (value: number) => void;
+	resetTypography: (id: TypographyPresetId) => void;
+	typographyPromptSeen: boolean;
+	setTypographyPromptSeen: (value: boolean) => void;
+	themePromptSeen: boolean;
+	setThemePromptSeen: (value: boolean) => void;
+	agentPowersPromptSeen: boolean;
+	setAgentPowersPromptSeen: (value: boolean) => void;
 
 	// UI settings
 	activeThemeId: ThemeId;
@@ -260,6 +290,8 @@ export interface UseSettingsReturn {
 	isLeaderboardRegistered: boolean;
 
 	// Web Interface settings
+	webInterfaceAutoStart: boolean;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	webInterfaceUseCustomPort: boolean;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	webInterfaceCustomPort: number;
@@ -280,6 +312,10 @@ export interface UseSettingsReturn {
 	// Accessibility settings
 	colorBlindMode: boolean;
 	setColorBlindMode: (value: boolean) => void;
+
+	// Surface gloss (app-chrome lighting; changes no theme color)
+	themeGloss: GlossLevel;
+	setThemeGloss: (value: GlossLevel) => void;
 
 	// Tab filtering settings
 	showStarredInUnreadFilter: boolean;
@@ -302,6 +338,8 @@ export interface UseSettingsReturn {
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	documentGraphConfirmClose: boolean;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	documentGraphPreviewCharLimit: number;
@@ -318,6 +356,8 @@ export interface UseSettingsReturn {
 	// Power management settings
 	preventSleepEnabled: boolean;
 	setPreventSleepEnabled: (value: boolean) => Promise<void>;
+	preventDisplaySleepEnabled: boolean;
+	setPreventDisplaySleepEnabled: (value: boolean) => Promise<void>;
 
 	// Rendering settings
 	disableGpuAcceleration: boolean;
@@ -552,16 +592,53 @@ export function useSettings(): UseSettingsReturn {
 		return cleanup;
 	}, []);
 
-	// Apply font size to HTML root element so rem-based Tailwind classes scale.
-	// Also expose --font-scale so fixed-width modals can scale proportionally
-	// (see .modal-w-* utility classes in index.css). 14px is the design baseline.
-	// Only apply after settings are loaded to prevent layout shift from default->saved font size
+	// Publish the resolved typography as CSS custom properties on the document
+	// root, and set the root font-size so rem-based Tailwind spacing scales.
+	//
+	// The custom properties are how a font setting reaches surfaces no prop can
+	// carry: everything that portals to document.body (47 components) and every
+	// `font-mono` utility (~200 sites). See applyTypographyVars.
+	//
+	// Gated on settingsLoaded so the app does not paint at the default size and
+	// then jump to the saved one.
 	useEffect(() => {
-		if (store.settingsLoaded) {
-			document.documentElement.style.fontSize = `${store.fontSize}px`;
-			document.documentElement.style.setProperty('--font-scale', String(store.fontSize / 14));
-		}
-	}, [store.fontSize, store.settingsLoaded]);
+		if (!store.settingsLoaded) return;
+		applyTypographyVars({
+			fonts: {
+				interface: store.fontFamily,
+				chat: store.chatFontFamily,
+				terminal: store.terminalFontFamily,
+				filePreview: store.filePreviewFontFamily,
+				fileEditor: store.fileEditorFontFamily,
+				documentGraph: store.documentGraphFontFamily,
+			},
+			sizes: {
+				interface: store.fontSize,
+				chat: store.chatFontSize,
+				terminal: store.terminalFontSize,
+				filePreview: store.filePreviewFontSize,
+				fileEditor: store.fileEditorFontSize,
+				documentGraph: store.documentGraphFontSize,
+			},
+			baseSize: store.fontSize,
+			zoom: store.fontZoom,
+		});
+	}, [
+		store.settingsLoaded,
+		store.fontFamily,
+		store.chatFontFamily,
+		store.terminalFontFamily,
+		store.filePreviewFontFamily,
+		store.fileEditorFontFamily,
+		store.documentGraphFontFamily,
+		store.fontSize,
+		store.chatFontSize,
+		store.terminalFontSize,
+		store.filePreviewFontSize,
+		store.fileEditorFontSize,
+		store.documentGraphFontSize,
+		store.fontZoom,
+	]);
 
 	// Surface global-hotkey registration failures (e.g. combo already owned by
 	// another app). Mounted here so the toast fires even when Settings is closed.

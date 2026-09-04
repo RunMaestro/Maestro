@@ -188,6 +188,41 @@ const CREATE_CUE_TELEMETRY_OUTBOX_SQL = `
   )
 `;
 
+/**
+ * Items blocked by the 0DIN SusFactor pre-flight check.
+ *
+ * Keyed by sha256 of the exact scored text, NOT by issue number: an edited
+ * issue is different content and deserves a fresh verdict, while a re-poll of
+ * unchanged content must not re-score (cost) or re-notify (spam). GitHub
+ * polling revisits every open item on every cycle, so without this table the
+ * user is toasted about the same malicious issue every few minutes.
+ *
+ * `event_json` stores the full CueEvent so an override can re-dispatch the
+ * item directly instead of waiting for the poller to rediscover it.
+ */
+const CREATE_CUE_SUSFACTOR_BLOCKS_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_susfactor_blocks (
+    content_hash TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    subscription_name TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    item_ref TEXT NOT NULL,
+    url TEXT,
+    score REAL NOT NULL,
+    threshold REAL NOT NULL,
+    event_json TEXT NOT NULL,
+    blocked_at INTEGER NOT NULL,
+    notified INTEGER NOT NULL DEFAULT 0,
+    allowed INTEGER NOT NULL DEFAULT 0,
+    allowed_at INTEGER
+  )
+`;
+
+const CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_cue_susfactor_blocked_at ON cue_susfactor_blocks(blocked_at)
+`;
+
 const CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_telemetry_outbox_created ON cue_telemetry_outbox(created_at)
 `;
@@ -261,6 +296,8 @@ export function initCueDb(
 	}
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
+	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
+	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL).run();
 
 	log('info', `Cue database initialized at ${dbPath}`);
 }
@@ -565,6 +602,72 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		providerSessionId: row.provider_session_id,
 		errorMessage: row.error_message,
 		exitCode: row.exit_code,
+	}));
+}
+
+/**
+ * Cue's contribution to the delegation split: how many runs finished and how
+ * much wall-clock time they took, over all retained history or since `sinceMs`.
+ *
+ * Only naturally-completed runs count, matching the crediting rule the engine
+ * and `getHistoricalConductorCreditMs` already use. A failed or killed run has
+ * a `completed_at` too, so including them would credit hours of hung processes
+ * as delegated work - the dashboard's Cue duration total already does that, and
+ * it is why that figure reads so much higher than the Conductor card's.
+ *
+ * Unlike the Conductor credit, durations are NOT floored to whole minutes: this
+ * feeds a ratio against per-turn query durations, most of which are seconds, so
+ * flooring would drop the short runs entirely and skew the ratio.
+ *
+ * Returns zeroes when the DB hasn't been initialized, the same tolerance as the
+ * other read paths, so a delegation surface renders "no Cue history" instead of
+ * throwing.
+ */
+export function getCueRunTotals(sinceMs = 0): { count: number; durationMs: number } {
+	if (!db) return { count: 0, durationMs: 0 };
+	const row = db
+		.prepare(
+			`SELECT COUNT(*) AS count, COALESCE(SUM(completed_at - created_at), 0) AS duration_ms
+			 FROM cue_events
+			 WHERE status = 'completed'
+			   AND completed_at IS NOT NULL
+			   AND completed_at >= created_at
+			   AND created_at >= ?`
+		)
+		.get(sinceMs) as { count: number; duration_ms: number } | undefined;
+	return { count: row?.count ?? 0, durationMs: Math.max(0, row?.duration_ms ?? 0) };
+}
+
+/**
+ * The same completed-run totals, bucketed by local-time day so the delegation
+ * trend chart can lay Cue runs alongside the per-day query series.
+ *
+ * Bucketing is by `created_at` (when the run started), matching how the stats
+ * DB buckets a query by its start time - a run that crosses midnight belongs to
+ * the day it was triggered on.
+ */
+export function getCueRunTotalsByDay(
+	sinceMs = 0
+): Array<{ date: string; count: number; durationMs: number }> {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS date,
+			        COUNT(*) AS count,
+			        COALESCE(SUM(completed_at - created_at), 0) AS duration_ms
+			 FROM cue_events
+			 WHERE status = 'completed'
+			   AND completed_at IS NOT NULL
+			   AND completed_at >= created_at
+			   AND created_at >= ?
+			 GROUP BY date(created_at / 1000, 'unixepoch', 'localtime')
+			 ORDER BY date ASC`
+		)
+		.all(sinceMs) as Array<{ date: string; count: number; duration_ms: number }>;
+	return rows.map((row) => ({
+		date: row.date,
+		count: row.count,
+		durationMs: Math.max(0, row.duration_ms),
 	}));
 }
 
@@ -993,4 +1096,146 @@ export function countTelemetryEvents(): number {
 export function clearTelemetryOutbox(): void {
 	if (!db) return;
 	db.prepare(`DELETE FROM cue_telemetry_outbox`).run();
+}
+
+// ─── SusFactor blocks ────────────────────────────────────────────────────────
+
+export interface CueSusFactorBlock {
+	contentHash: string;
+	subscriptionId: string;
+	sessionId: string;
+	subscriptionName: string;
+	eventType: string;
+	itemRef: string;
+	url: string | null;
+	score: number;
+	threshold: number;
+	eventJson: string;
+	blockedAt: number;
+	notified: boolean;
+	allowed: boolean;
+	allowedAt: number | null;
+}
+
+interface SusFactorBlockRow {
+	content_hash: string;
+	subscription_id: string;
+	session_id: string;
+	subscription_name: string;
+	event_type: string;
+	item_ref: string;
+	url: string | null;
+	score: number;
+	threshold: number;
+	event_json: string;
+	blocked_at: number;
+	notified: number;
+	allowed: number;
+	allowed_at: number | null;
+}
+
+function toSusFactorBlock(row: SusFactorBlockRow): CueSusFactorBlock {
+	return {
+		contentHash: row.content_hash,
+		subscriptionId: row.subscription_id,
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		eventType: row.event_type,
+		itemRef: row.item_ref,
+		url: row.url,
+		score: row.score,
+		threshold: row.threshold,
+		eventJson: row.event_json,
+		blockedAt: row.blocked_at,
+		notified: row.notified === 1,
+		allowed: row.allowed === 1,
+		allowedAt: row.allowed_at,
+	};
+}
+
+/**
+ * Look up a prior verdict for this exact content. A hit means the item was
+ * already scored and blocked, so the poller skips both the API call and the
+ * notification - unless `allowed` is set, in which case the user overrode it.
+ */
+export function getSusFactorBlock(contentHash: string): CueSusFactorBlock | null {
+	if (!db) return null;
+	const row = getDb()
+		.prepare(`SELECT * FROM cue_susfactor_blocks WHERE content_hash = ?`)
+		.get(contentHash) as SusFactorBlockRow | undefined;
+	return row ? toSusFactorBlock(row) : null;
+}
+
+/**
+ * Persist a block. `INSERT OR IGNORE` so a concurrent re-poll cannot clobber
+ * the `notified` / `allowed` flags on an existing row.
+ */
+export function recordSusFactorBlock(
+	block: Omit<CueSusFactorBlock, 'notified' | 'allowed' | 'allowedAt'>
+): void {
+	if (!db) {
+		log(
+			'warn',
+			`Dropping recordSusFactorBlock (${block.itemRef}): Cue DB not initialized - the item is still blocked, but it will be re-scored on the next poll`
+		);
+		return;
+	}
+	getDb()
+		.prepare(
+			`INSERT OR IGNORE INTO cue_susfactor_blocks
+			 (content_hash, subscription_id, session_id, subscription_name, event_type, item_ref, url,
+			  score, threshold, event_json, blocked_at, notified, allowed, allowed_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL)`
+		)
+		.run(
+			block.contentHash,
+			block.subscriptionId,
+			block.sessionId,
+			block.subscriptionName,
+			block.eventType,
+			block.itemRef,
+			block.url,
+			block.score,
+			block.threshold,
+			block.eventJson,
+			block.blockedAt
+		);
+}
+
+/** Mark that the user has been told about this block, so we never re-toast it. */
+export function markSusFactorNotified(contentHash: string): void {
+	if (!db) return;
+	getDb()
+		.prepare(`UPDATE cue_susfactor_blocks SET notified = 1 WHERE content_hash = ?`)
+		.run(contentHash);
+}
+
+/**
+ * Override a block. Returns the row so the caller can re-dispatch the stored
+ * event, or null when the hash is unknown. Idempotent.
+ */
+export function allowSusFactorBlock(contentHash: string): CueSusFactorBlock | null {
+	if (!db) return null;
+	const existing = getSusFactorBlock(contentHash);
+	if (!existing) return null;
+	getDb()
+		.prepare(`UPDATE cue_susfactor_blocks SET allowed = 1, allowed_at = ? WHERE content_hash = ?`)
+		.run(Date.now(), contentHash);
+	return { ...existing, allowed: true, allowedAt: Date.now() };
+}
+
+/** Most recent blocks first - backs the review/override surface. */
+export function listSusFactorBlocks(limit: number = 50): CueSusFactorBlock[] {
+	if (!db) return [];
+	const rows = getDb()
+		.prepare(`SELECT * FROM cue_susfactor_blocks ORDER BY blocked_at DESC LIMIT ?`)
+		.all(limit) as SusFactorBlockRow[];
+	return rows.map(toSusFactorBlock);
+}
+
+export function pruneSusFactorBlocks(olderThanMs: number): void {
+	if (!db) return;
+	getDb()
+		.prepare(`DELETE FROM cue_susfactor_blocks WHERE blocked_at < ?`)
+		.run(Date.now() - olderThanMs);
 }

@@ -4,9 +4,12 @@
  *
  * Functions:
  * - parseSynopsis: Parse AI-generated synopsis responses into structured format
+ * - isFailedSynopsisResponse: Tell a provider error apart from a real synopsis
  */
 
 import { stripAnsiCodes } from './stringUtils';
+import { getErrorPatterns, matchErrorPattern } from './agentErrorPatterns';
+import type { ToolType } from './types';
 
 /**
  * Sentinel token that AI agents should return when there's nothing meaningful to report.
@@ -221,4 +224,39 @@ export function parseSynopsis(response: string): ParsedSynopsis {
 	const fullSynopsis = details ? `${shortSummary}\n\n${details}` : shortSummary;
 
 	return { shortSummary, fullSynopsis, nothingToReport: false };
+}
+
+/**
+ * Longest response still treated as a bare provider error rather than prose.
+ *
+ * A provider error arrives alone on the stream ("Prompt is too long",
+ * "API Error: 529 Overloaded"), while a real synopsis is a summary plus a
+ * details paragraph. The length guard is what keeps a synopsis that DESCRIBES
+ * an error ("Fixed the prompt-is-too-long failure in ...") from being read as
+ * one - the error bank matches on phrases that legitimately appear in prose.
+ */
+export const SYNOPSIS_ERROR_MAX_LENGTH = 300;
+
+/**
+ * Whether a synopsis run's output is a provider error rather than a synopsis.
+ *
+ * `claude -p` prints the API's error text and exits, so a synopsis that failed
+ * (most often "Prompt is too long" when the resumed transcript no longer fits
+ * the model's context window) still produces stdout. Without this check that
+ * text is parsed as a summary and written to History as if the run succeeded,
+ * which both fabricates the entry and stamps `lastSynopsisTime` - hiding every
+ * turn done before the failure from the NEXT synopsis.
+ *
+ * @param response - Raw synopsis output
+ * @param agentId - Agent whose error bank to match against
+ * @returns True when the output is empty or a bare error line
+ */
+export function isFailedSynopsisResponse(
+	response: string,
+	agentId: ToolType | string = 'claude-code'
+): boolean {
+	const clean = stripAnsiCodes(response).trim();
+	if (!clean) return true;
+	if (clean.length > SYNOPSIS_ERROR_MAX_LENGTH) return false;
+	return matchErrorPattern(getErrorPatterns(agentId), clean) !== null;
 }

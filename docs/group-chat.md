@@ -4,16 +4,14 @@ description: Coordinate multiple AI agents in a single conversation with a moder
 icon: comments
 ---
 
-<Note>
-  Group Chat is currently in **Beta**. The feature is functional but under active development.
-</Note>
+Group Chat lets you coordinate multiple AI agents in a single conversation. You appoint one agent as the **moderator** and hand it your question; it orchestrates the discussion from there, routing to the right agents, following up when an answer is thin, and synthesizing what comes back.
 
-Group Chat lets you coordinate multiple AI agents in a single conversation. A moderator AI orchestrates the discussion, routing questions to the right agents and synthesizing their responses.
+The point of a Group Chat is that you are **delegating the moderating**. In an ordinary chat you can [`@mention`](./cross-agent-mentions) other agents too, but each mention is a single-turn consult and you are the one who keeps the conversation going. A moderator acts as your fiduciary in that job, wrangling the agents to work together across as many turns as the question needs. For a side-by-side overview of both approaches, see [Agent Collaboration](./agent-collaboration).
 
 ![Group chat](./screenshots/group-chat.png)
 
 <Tip>
-  Just need a quick one-off answer from another agent? [Cross-Agent Mentions](./cross-agent-mentions) let you `@mention` an agent inline from any chat - no moderator, no shared room. Reach for Group Chat when agents need to deliberate together over multiple rounds.
+  Just need a quick one-off answer from another agent? [Cross-Agent Mentions](./cross-agent-mentions) let you `@mention` an agent inline from any chat. That answer arrives once and stops there: no moderator, no shared room, and no second round unless you type it. Reach for Group Chat when the agents need to deliberate together over several turns.
 </Tip>
 
 ## When to Use Group Chat
@@ -47,7 +45,9 @@ The moderator is an AI that controls the conversation flow:
 - **Follow-up**: If agent responses are incomplete, keeps asking until satisfied
 - **Synthesis**: Combines multiple agent perspectives into a final answer
 
-The moderator won't return to you until your question is properly answered - it will keep going back to agents as many times as needed.
+The moderator won't return to you until your question is properly answered - it will keep going back to agents as many times as needed. That is the capability you are buying, and it is the one thing a [Cross-Agent Mention](./cross-agent-mentions) cannot do: a mention is answered in a single turn, so every round after the first is yours to drive.
+
+Participants do not see each other's replies automatically. The moderator decides who hears what, quoting an earlier agent's answer forward when a later one needs it, which is why a Group Chat produces a coordinated result rather than several agents talking past each other.
 
 ## Example Conversation
 
@@ -92,6 +92,29 @@ Remote agents are identified by the **REMOTE** pill in the participant list. Eac
 - Get perspectives from agents with access to different servers
 - Coordinate changes that span multiple machines
 - Synthesize information from agents with different tool installations
+
+## Agent Availability
+
+An agent brought into a group chat runs as its own process, in that agent's own working directory. If you are already talking to that agent in its own tab, two processes end up editing the same files at once.
+
+**Only work with agents that are free** controls what happens then. It is on by default, and you set it when you create a group chat (or later, through Edit):
+
+| Setting          | Behavior                                                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **On** (default) | The moderator skips any agent that is busy - with your own conversation, an Auto Run, or a CLI run - and posts a note in the chat naming who was skipped. Nothing else about the turn changes; other agents still get their work. |
+| **Off**          | The moderator hands work to an agent even while it is working. Two processes can edit the same files, overwrite each other, and leave both conversations acting on stale state.                                                   |
+
+<Warning>
+  Turn this off only when you know the work cannot collide - separate worktrees, separate projects, or read-only questions. There is no lock behind it; it is your judgment doing the work.
+</Warning>
+
+When an agent is skipped, the chat shows a line like:
+
+```
+⏸️ Skipped @Backend - that agent is busy with their own work right now.
+```
+
+Send another message once the agent is free, and the moderator picks the work back up.
 
 ## Tips for Effective Group Chats
 

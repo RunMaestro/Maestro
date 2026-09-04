@@ -415,8 +415,13 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 	};
 
 	const components: Partial<Components> = {
-		// Override paragraph to apply search highlighting
-		p: ({ children }: any) => React.createElement('p', null, withReadableTransforms(children)),
+		// Override paragraph to apply search highlighting.
+		// Props are forwarded (minus `node`) so `rehypeSourceLine`'s
+		// `data-source-line` survives. Dropping it left HEADINGS as the only
+		// anchored blocks, so the preview -> edit toggle could not tell "the top
+		// of the document" from "the first heading" and jumped down to it.
+		p: ({ children, node: _node, ...props }: any) =>
+			React.createElement('p', props, withReadableTransforms(children)),
 
 		// Override headings to apply readable transforms (search highlighting + Bionify)
 		// Forward id/props for rehype-slug anchors (rc) while piping through withReadableTransforms (main/Bionify)
@@ -433,8 +438,11 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		h6: ({ children, node: _node, ...props }: any) =>
 			React.createElement('h6', props, withReadableTransforms(children)),
 
-		// Override list items to apply search highlighting
-		li: ({ children }: any) => React.createElement('li', null, withReadableTransforms(children)),
+		// Override list items to apply search highlighting. Props forwarded for
+		// the same reason as `p` - a long list between two headings is otherwise
+		// one unanchored run.
+		li: ({ children, node: _node, ...props }: any) =>
+			React.createElement('li', props, withReadableTransforms(children)),
 
 		// Override table cells to apply search highlighting
 		td: ({ children }: any) => React.createElement('td', null, withReadableTransforms(children)),
@@ -442,7 +450,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 
 		// Override blockquote to apply search highlighting; render GitHub
 		// `[!NOTE]`-style callouts (tagged by remarkAlert) as styled AlertCallouts.
-		blockquote: ({ children, className }: any) => {
+		blockquote: ({ children, node: _node, className, ...props }: any) => {
 			const alertType = alertTypeFromClassName(className);
 			if (alertType) {
 				return React.createElement(AlertCallout, {
@@ -453,7 +461,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 			}
 			return React.createElement(
 				'blockquote',
-				className ? { className } : null,
+				{ ...props, ...(className ? { className } : null) },
 				withReadableTransforms(children)
 			);
 		},

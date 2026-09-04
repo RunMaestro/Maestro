@@ -19,7 +19,13 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useFocusOnMount } from '../../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import {
+	ANNOTATOR_ROOT_ATTR,
+	isAnnotatorFormControl,
+	isAnnotatorTextEntry,
+} from './annotatorKeyboard';
 import { safeClipboardWriteImage } from '../../utils/clipboard';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
@@ -59,8 +65,8 @@ export function ImageAnnotator({ theme }: ImageAnnotatorProps) {
 	const sessionKey = useMemo(() => (isOpen ? imageDataUrl : null), [isOpen, imageDataUrl]);
 
 	// Left arrow opens the settings drawer, Right arrow closes it - but only
-	// when focus isn't on a form control (range sliders inside the drawer use
-	// Left/Right natively to adjust their value).
+	// when focus isn't on one of the annotator's own form controls (range
+	// sliders inside the drawer use Left/Right natively to adjust their value).
 	const drawerOpenRef = useRef(drawerOpen);
 	drawerOpenRef.current = drawerOpen;
 	useEventListener(
@@ -69,11 +75,7 @@ export function ImageAnnotator({ theme }: ImageAnnotatorProps) {
 			const e = event as KeyboardEvent;
 			if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-			const target = e.target as HTMLElement | null;
-			const tag = target?.tagName;
-			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
-				return;
-			}
+			if (isAnnotatorFormControl(e.target)) return;
 			if (e.key === 'ArrowLeft' && !drawerOpenRef.current) {
 				e.preventDefault();
 				setDrawerOpen(true);
@@ -182,20 +184,16 @@ function ImageAnnotatorContent({
 	const handleKeepEditing = useCallback(() => setConfirmingDiscard(false), []);
 
 	// Single-key tool hotkeys. Mnemonic where the tool value diverges from the
-	// key: S -> rect (Square), C -> ellipse (Circle). Skipped while a text label
-	// is being edited (the textarea must receive the letters) and whenever a
-	// modifier is held so app-level shortcuts still work.
+	// key: S -> rect (Square), C -> ellipse (Circle). Skipped while one of the
+	// annotator's own text fields is being edited (the textarea must receive the
+	// letters) and whenever a modifier is held so app-level shortcuts still work.
 	const setTool = state.setTool;
 	useEventListener(
 		'keydown',
 		(event) => {
 			const e = event as KeyboardEvent;
 			if (e.metaKey || e.ctrlKey || e.altKey) return;
-			const target = e.target as HTMLElement | null;
-			const tag = target?.tagName;
-			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
-				return;
-			}
+			if (isAnnotatorTextEntry(e.target)) return;
 			const tool = TOOL_HOTKEYS[e.key.toLowerCase()];
 			if (!tool) return;
 			e.preventDefault();
@@ -247,12 +245,24 @@ function ImageAnnotatorContent({
 
 	const toggleDrawer = useCallback(() => setDrawerOpen((v) => !v), []);
 
+	// Take focus on open. Every entry point (Alt+Cmd+E from the composer, the
+	// staged-image pencil, the lightbox) leaves the caret wherever it was, and
+	// the canvas calls preventDefault() on pointerdown so drawing never blurs it
+	// either. Without this, keystrokes keep landing in a text field underneath
+	// the overlay: Cmd+Z undoes the user's chat message instead of a stroke, and
+	// tool hotkeys type letters into it.
+	const rootRef = useRef<HTMLDivElement>(null);
+	useFocusOnMount(rootRef);
+
 	return (
 		<div
+			ref={rootRef}
+			tabIndex={-1}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Image Annotator"
-			className="fixed inset-0 z-[160]"
+			{...{ [ANNOTATOR_ROOT_ATTR]: '' }}
+			className="fixed inset-0 z-[160] outline-none"
 			style={{
 				backgroundColor: `${theme.colors.bgMain}f2`,
 				color: theme.colors.textMain,

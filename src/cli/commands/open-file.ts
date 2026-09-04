@@ -1,14 +1,28 @@
-// Open file command - open a file as a preview tab in the Maestro desktop app
+// Open file command - open a file as a preview tab in the Maestro desktop app.
+//
+// Focuses by default, as it always has. Two different opt-outs, deliberately
+// NOT merged - folding one into the other would silently change behaviour for
+// anyone already passing `--no-switch`:
+//
+//   --no-switch   stay on the current agent, but still activate the tab in the
+//                 target agent. If you are already on that agent your view
+//                 still changes, which is why the name over-promises.
+//   --background  change nothing that is currently rendered, on any agent.
+//                 Strictly stronger, so it wins when both are passed.
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { SessionInfo } from '../../shared/types';
 import { withMaestroClient } from '../services/maestro-client';
-import { getSessionById, getSessionHistoryMtimeMs, readSessions } from '../services/storage';
+import { getSessionById } from '../services/storage';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { resolveOwningAgent } from '../utils/owning-agent';
 
 interface OpenFileOptions {
 	agent?: string;
+	/** commander sets this false for `--no-switch`. Distinct from `background`. */
 	switch?: boolean;
+	background?: boolean;
+	focus?: boolean;
 	json?: boolean;
 }
 
@@ -25,6 +39,9 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 		process.exit(1);
 	}
 
+	const background = resolveBackgroundFlag(options, 'open-file');
+	// `--background` is strictly stronger, so it implies the weaker ask too and
+	// there is no combination that has to be rejected.
 	const switchToAgent = options.switch !== false;
 
 	try {
@@ -34,6 +51,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 					type: 'open_file_tab',
 					sessionId: target.sessionId,
 					filePath: target.absolutePath,
+					background,
 					switchToAgent,
 				},
 				'open_file_tab_result'
@@ -47,9 +65,16 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 						success: true,
 						sessionId: target.sessionId,
 						path: target.absolutePath,
+						background,
+						switchToAgent,
 					})
 				);
-			else console.log(`Opened ${path.basename(target.absolutePath)} in Maestro`);
+			else
+				console.log(
+					`Opened ${path.basename(target.absolutePath)} in Maestro${
+						background ? ' (background tab)' : ''
+					}`
+				);
 		} else {
 			const error = result.error || 'Failed to open file';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
@@ -88,56 +113,20 @@ function resolveTarget(filePath: string, options: OpenFileOptions): ResolvedTarg
 		return { sessionId: session.id, absolutePath };
 	}
 
-	const owners = findOwningSessions(absolutePath, readSessions());
+	const owned = resolveOwningAgent(absolutePath);
 
-	if (owners.length === 0) {
+	if (!owned) {
 		console.error(
 			`Error: ${absolutePath} is not inside any agent's working directory. Pick an agent with --agent <id>.`
 		);
 		process.exit(1);
 	}
 
-	if (owners.length === 1) {
-		return { sessionId: owners[0].id, absolutePath };
+	if (owned.others.length > 0) {
+		const others = owned.others.map((s) => s.name);
+		console.error(
+			`Note: ${owned.others.length + 1} agents own this path; opened in ${owned.agent.name}. Other candidates: ${others.join(', ')}. Use --agent to override.`
+		);
 	}
-
-	const winner = pickMostRecentlyActive(owners);
-	const others = owners.filter((s) => s.id !== winner.id).map((s) => s.name);
-	console.error(
-		`Note: ${owners.length} agents own this path; opened in ${winner.name}. Other candidates: ${others.join(', ')}. Use --agent to override.`
-	);
-	return { sessionId: winner.id, absolutePath };
-}
-
-/**
- * True if `target` is `parent` itself or lives strictly inside it. Uses a
- * trailing-separator prefix check to avoid `/foo/bar` matching `/foo/barbaz`.
- */
-function isPathInside(target: string, parent: string): boolean {
-	const resolvedParent = path.resolve(parent);
-	const resolvedTarget = path.resolve(target);
-	if (resolvedTarget === resolvedParent) return true;
-	return resolvedTarget.startsWith(resolvedParent + path.sep);
-}
-
-function findOwningSessions(absolutePath: string, sessions: SessionInfo[]): SessionInfo[] {
-	const owners = sessions.filter((s) => s.cwd && isPathInside(absolutePath, s.cwd));
-	if (owners.length <= 1) return owners;
-	// Longest-prefix match wins. Sessions with shorter cwds are dropped only
-	// when a deeper one also owns the path (e.g. nested worktrees).
-	const maxLen = Math.max(...owners.map((s) => path.resolve(s.cwd).length));
-	return owners.filter((s) => path.resolve(s.cwd).length === maxLen);
-}
-
-function pickMostRecentlyActive(sessions: SessionInfo[]): SessionInfo {
-	let best = sessions[0];
-	let bestMtime = getSessionHistoryMtimeMs(best.id);
-	for (let i = 1; i < sessions.length; i++) {
-		const mtime = getSessionHistoryMtimeMs(sessions[i].id);
-		if (mtime > bestMtime) {
-			best = sessions[i];
-			bestMtime = mtime;
-		}
-	}
-	return best;
+	return { sessionId: owned.agent.id, absolutePath };
 }

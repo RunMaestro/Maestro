@@ -96,7 +96,7 @@ function ToolActivityRow({
 				: theme.colors.textDim;
 
 	return (
-		<div className="flex items-start gap-2 text-[11px] leading-snug">
+		<div className="flex items-start gap-2 text-xs-plus leading-snug">
 			<span
 				className="font-mono shrink-0 select-none pt-px"
 				style={{ color: theme.colors.textDim }}
@@ -321,7 +321,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						Thought Stream
 					</span>
 					<span
-						className="text-[10px] truncate leading-tight"
+						className="text-2xs truncate leading-tight"
 						style={{ color: theme.colors.textDim }}
 						title={label}
 					>
@@ -429,7 +429,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 							) : (
 								<div key={item.block.id}>
 									<div
-										className="text-[10px] font-mono mb-1 select-none"
+										className="text-2xs font-mono mb-1 select-none"
 										style={{ color: theme.colors.textDim }}
 										title={new Date(item.block.startTimestamp).toLocaleString()}
 									>
@@ -437,7 +437,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 									</div>
 									<div
 										className="prose max-w-none break-words"
-										style={{ fontSize: '12px', color: theme.colors.textMain }}
+										style={{ fontSize: '0.75rem', color: theme.colors.textMain }}
 									>
 										<Markdown
 											preset="document"
@@ -458,7 +458,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 
 			{searching && (
 				<div
-					className="px-3 py-1.5 border-t text-[10px] shrink-0"
+					className="px-3 py-1.5 border-t text-2xs shrink-0"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					{visibleFeed.length} of {feed.length} entr{feed.length === 1 ? 'y' : 'ies'} match

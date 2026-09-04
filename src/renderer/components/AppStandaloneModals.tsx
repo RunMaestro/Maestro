@@ -1,10 +1,11 @@
-import { lazy, memo, Suspense, useMemo } from 'react';
-import { useModalActions } from '../stores/modalStore';
+import { lazy, memo, Suspense, useCallback, useMemo } from 'react';
+import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -16,6 +17,7 @@ import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
+import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
 import { GitPillModals } from './GitPillModals';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -41,6 +43,8 @@ import type { MainPanelHandle } from './MainPanel';
 import type { FileNode } from '../types/fileTree';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { resolveFileReference } from '../utils/fileLinks/resolve';
+import { getBasename } from '../../shared/formatters';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -101,7 +105,11 @@ export interface AppStandaloneModalsProps {
 	encoreFeatures: EncoreFeatureFlags;
 
 	// --- Director's Notes ---
-	onDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
+	onDirectorNotesResumeSession: (
+		sourceSessionId: string,
+		agentSessionId: string,
+		sessionName?: string
+	) => void;
 	onFileClick: (node: FileNode, path: string) => void;
 
 	// --- Cue ---
@@ -118,6 +126,7 @@ export interface AppStandaloneModalsProps {
 	onOpenFileTab: (info: FileTabInfo) => void;
 	mainPanelRef: React.RefObject<MainPanelHandle | null>;
 	documentGraphShowExternalLinks: boolean;
+	documentGraphConfirmClose: boolean;
 	onExternalLinksChange: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -193,6 +202,7 @@ function AppStandaloneModalsInner({
 	onOpenFileTab,
 	mainPanelRef,
 	documentGraphShowExternalLinks,
+	documentGraphConfirmClose,
 	onExternalLinksChange,
 	documentGraphMaxNodes,
 	documentGraphPreviewCharLimit,
@@ -228,6 +238,7 @@ function AppStandaloneModalsInner({
 		debugPackageModalOpen,
 		windowsWarningModalOpen,
 		setWindowsWarningModalOpen,
+		openSettings,
 		setDebugPackageModalOpen,
 		debugApplicationStatsOpen,
 		setDebugApplicationStatsOpen,
@@ -266,6 +277,10 @@ function AppStandaloneModalsInner({
 	// Self-source file explorer state
 	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
 	const graphFocusFilePath = useFileExplorerStore((s) => s.graphFocusFilePath);
+	const graphScopeFiles = useFileExplorerStore((s) => s.graphScopeFiles);
+	const graphScopeDirectory = useFileExplorerStore((s) => s.graphScopeDirectory);
+	const graphRootPath = useFileExplorerStore((s) => s.graphRootPath);
+	const graphReturnTo = useFileExplorerStore((s) => s.graphReturnTo);
 
 	// Self-source tab gist content
 	const tabGistContent = useTabStore((s) => s.tabGistContent);
@@ -273,6 +288,11 @@ function AppStandaloneModalsInner({
 	// Self-source active session
 	const activeSession = useActiveSession();
 
+	// Typography chooser: "does this user already have agents" is what tells a
+	// returning user from a fresh install, and it is the only signal that needs
+	// no new persisted state. A returning user with every agent deleted gets the
+	// new-user copy, which offers the same two choices - harmless either way.
+	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
 	// Merge plugin-contributed themes into the picker list through the shared
 	// contribution registry (built-in always wins an id collision). Identical to
 	// THEMES when the plugins Encore flag is off (no contributions).
@@ -300,6 +320,16 @@ function AppStandaloneModalsInner({
 				onOpenDebugPackage={() => setDebugPackageModalOpen(true)}
 				useBetaChannel={enableBetaUpdates}
 				onSetUseBetaChannel={setEnableBetaUpdates}
+			/>
+
+			{/* --- FIRST-RUN SERIES: typography -> theme -> agent powers ---
+			    One step on screen at a time; see OnboardingSeriesHost. */}
+			<OnboardingSeriesHost
+				theme={theme}
+				themes={mergedThemes}
+				isReturningUser={hasAnySession}
+				onOpenSettings={(tab) => openSettings(tab)}
+				hasActiveAgent={Boolean(activeSession)}
 			/>
 
 			{/* --- CELEBRATION OVERLAYS --- */}
@@ -395,9 +425,18 @@ function AppStandaloneModalsInner({
 						onClose={() => setDirectorNotesOpen(false)}
 						onResumeSession={onDirectorNotesResumeSession}
 						fileTree={activeSession?.fileTree}
-						onFileClick={(path: string) =>
-							onFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
-						}
+						cwd={activeSession?.cwd}
+						projectRoot={activeSession?.projectRoot || activeSession?.cwd}
+						onFileClick={(path: string) => {
+							// remarkFileLinks hands back a project-relative path for anything
+							// it matched in the tree, so join it onto the root before the
+							// reader sees it - a bare `Notes/Thing.md` opens nothing.
+							const fullPath = resolveFileReference(
+								activeSession?.projectRoot || activeSession?.cwd || '',
+								path
+							);
+							onFileClick({ name: getBasename(fullPath), type: 'file' }, fullPath);
+						}}
 					/>
 				</Suspense>
 			)}
@@ -454,9 +493,14 @@ function AppStandaloneModalsInner({
 					}}
 					onSuccess={(gistUrl, isPublic) => {
 						const publishedAt = Date.now();
-						// Save gist URL for the file if it's from file preview tab (not tab context)
-						if (activeFileTab && !tabGistContent) {
-							saveFileGistUrl(activeFileTab.path, {
+						// Save gist URL for the file the content came from. The toolbar
+						// button publishes the active file tab directly; a file tab's
+						// overlay menu names its own path, since the tab it was opened
+						// on need not be the active one.
+						const publishedFilePath =
+							tabGistContent?.filePath ?? (tabGistContent ? undefined : activeFileTab?.path);
+						if (publishedFilePath) {
+							saveFileGistUrl(publishedFilePath, {
 								gistUrl,
 								isPublic,
 								publishedAt,
@@ -493,31 +537,55 @@ function AppStandaloneModalsInner({
 					existingGist={
 						tabGistContent?.messageId
 							? useMessageGistStore.getState().published[tabGistContent.messageId]
-							: activeFileTab && !tabGistContent
-								? fileGistUrls[activeFileTab.path]
-								: undefined
+							: tabGistContent?.filePath
+								? fileGistUrls[tabGistContent.filePath]
+								: activeFileTab && !tabGistContent
+									? fileGistUrls[activeFileTab.path]
+									: undefined
 					}
 				/>
 			)}
 
 			{/* --- DOCUMENT GRAPH VIEW (Mind Map, lazy-loaded) --- */}
-			{/* Only render when a focus file is provided - mind map requires a center document */}
-			{graphFocusFilePath && (
+			{/* Needs something to draw: either a focus document, or a scope the
+			    builder can pick a center from. `graphScopeDirectory` may legitimately
+			    be `''` (the project root), so it is compared against undefined
+			    rather than tested for truthiness - `''` is falsy and the root
+			    directory is a real scope. */}
+			{(graphFocusFilePath ||
+				(graphScopeFiles && graphScopeFiles.length > 0) ||
+				graphScopeDirectory !== undefined) && (
 				<Suspense fallback={null}>
 					<DocumentGraphView
 						isOpen={isGraphViewOpen}
 						onClose={() => {
+							// Read the target BEFORE closing - closeGraphView clears it.
+							const returnTo = useFileExplorerStore.getState().graphReturnTo;
 							useFileExplorerStore.getState().closeGraphView();
+							if (returnTo === 'memoryViewer') {
+								// The viewer closed itself to hand the window over, so
+								// closing the graph has to hand it back or the user lands
+								// on an empty workspace.
+								useModalStore.getState().openModal('memoryViewer');
+								return;
+							}
 							// Return focus to file preview if it was open
 							requestAnimationFrame(() => {
 								mainPanelRef.current?.focusFilePreview();
 							});
 						}}
+						// A graph that knows where it came from is one Escape from being
+						// back there, so the "are you sure?" prompt is pure friction.
+						confirmOnClose={documentGraphConfirmClose && !graphReturnTo}
 						theme={theme}
-						rootPath={activeSession?.projectRoot || activeSession?.cwd || ''}
+						rootPath={graphRootPath || activeSession?.projectRoot || activeSession?.cwd || ''}
 						onDocumentOpen={async (filePath) => {
-							// Open the document in a file tab (migrated from legacy setPreviewFile overlay)
-							const treeRoot = activeSession?.projectRoot || activeSession?.cwd || '';
+							// Resolve against the SAME root the graph was built with. A scoped
+							// graph can be rooted outside the project (memory lives under
+							// ~/.claude), and rebuilding the project root here would open a
+							// path that does not exist.
+							const treeRoot =
+								graphRootPath || activeSession?.projectRoot || activeSession?.cwd || '';
 							const fullPath = `${treeRoot}/${filePath}`;
 							const filename = filePath.split('/').pop() || filePath;
 							// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
@@ -553,7 +621,9 @@ function AppStandaloneModalsInner({
 							// Open external URL in default browser
 							openUrl(url);
 						}}
-						focusFilePath={graphFocusFilePath}
+						focusFilePath={graphFocusFilePath ?? ''}
+						scopeFiles={graphScopeFiles}
+						scopeDirectory={graphScopeDirectory}
 						defaultShowExternalLinks={documentGraphShowExternalLinks}
 						onExternalLinksChange={onExternalLinksChange}
 						defaultMaxNodes={documentGraphMaxNodes}

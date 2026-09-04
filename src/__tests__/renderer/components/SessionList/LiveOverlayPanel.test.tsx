@@ -214,6 +214,30 @@ describe('LiveOverlayPanel', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// Persistent Web Link
+	// -----------------------------------------------------------------------
+	describe('persistent web link', () => {
+		it('renders the toggle as a switch reflecting the current value', () => {
+			render(<LiveOverlayPanel {...createDefaultProps({ persistentWebLink: true })} />);
+			const toggle = screen.getByRole('switch', { name: 'Persistent Web Link' });
+			expect(toggle).toHaveAttribute('aria-checked', 'true');
+			expect(toggle).toHaveAttribute('title', 'Disable persistent link');
+		});
+
+		it('flips the value on click', () => {
+			const setPersistentWebLink = vi.fn().mockResolvedValue(undefined);
+			render(
+				<LiveOverlayPanel
+					{...createDefaultProps({ persistentWebLink: false, setPersistentWebLink })}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Persistent Web Link' }));
+			expect(setPersistentWebLink).toHaveBeenCalledWith(true);
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// Custom Port
 	// -----------------------------------------------------------------------
 	describe('custom port', () => {

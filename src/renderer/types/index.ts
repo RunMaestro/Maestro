@@ -70,6 +70,7 @@ export type {
 } from '../../shared/providerFailover';
 import type { FailoverConfig } from '../../shared/providerFailover';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
+import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
@@ -81,6 +82,7 @@ export type RightPanelTab = 'files' | 'history' | 'autorun';
 export type UsageDashboardViewMode =
 	| 'overview'
 	| 'agents'
+	| 'groups'
 	| 'agent-overview'
 	| 'tokens'
 	| 'activity'
@@ -91,6 +93,10 @@ export type UsageDashboardViewMode =
 	| 'shortcuts';
 export type SettingsTab =
 	| 'general'
+	// SettingsModal has always rendered a Display tab and accepted it as an
+	// `initialTab`; it was simply missing from this union, so nothing could
+	// deep-link there through openSettings().
+	| 'display'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
@@ -1087,6 +1093,25 @@ interface SnoozedTabEntryBase {
 	snoozedAt: number; // When the user snoozed it
 	wakeAt: number; // When it should come back (ms epoch)
 	note?: string; // Optional note-to-self surfaced in the wake notification
+	// Optional prompt sent to the agent the moment the tab is restored. Only an
+	// AI tab (or a group with an AI pane) can carry one - see
+	// `resolveWakePromptTabId` in utils/snoozeHelpers.ts.
+	wakePrompt?: string;
+}
+
+/**
+ * The free-text a snooze carries. Both fields are optional and both are edited
+ * together in the snooze dialog, so they travel as one object rather than as a
+ * growing tail of positional arguments.
+ *
+ * On a reschedule the two are read per field: an absent field keeps whatever
+ * the snooze already had, and an empty string clears it.
+ */
+export interface SnoozeContent {
+	/** Note-to-self, surfaced in the wake notification and the return card. */
+	note?: string;
+	/** Prompt dispatched to the agent the instant the tab comes back. */
+	wakePrompt?: string;
 }
 
 /**
@@ -1403,7 +1428,7 @@ export interface Session {
 	 * value-comparison heuristic gets exactly the codex case wrong.
 	 */
 	contextWindowSource?: 'user-edited';
-	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
+	documentGraphLayout?: MindMapLayoutType; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally
 	sessionSshRemoteConfig?: {

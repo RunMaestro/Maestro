@@ -17,6 +17,7 @@ import type {
 import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
 import { formatTimestamp } from '../../shared/formatters';
+import { useListNavigation, useScrollIntoView } from '../hooks';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -244,7 +245,7 @@ function GroupChatActivityGraph({
 					}}
 				>
 					<div
-						className="px-3 py-1 text-[10px] font-bold uppercase"
+						className="px-3 py-1 text-2xs font-bold uppercase"
 						style={{ color: theme.colors.textDim }}
 					>
 						Lookback Period
@@ -273,7 +274,7 @@ function GroupChatActivityGraph({
 			{/* Hover tooltip - positioned below the graph */}
 			{hoveredIndex !== null && (
 				<div
-					className="absolute top-full mt-1 px-2 py-1.5 rounded text-[10px] font-mono whitespace-nowrap z-20 pointer-events-none"
+					className="absolute top-full mt-1 px-2 py-1.5 rounded text-2xs font-mono whitespace-nowrap z-20 pointer-events-none"
 					style={{
 						backgroundColor: theme.colors.bgSidebar,
 						border: `1px solid ${theme.colors.border}`,
@@ -389,7 +390,7 @@ function GroupChatActivityGraph({
 				{axisLabels.map(({ label, index }) => (
 					<span
 						key={`${label}-${index}`}
-						className="absolute text-[8px] font-mono"
+						className="absolute text-3xs font-mono"
 						style={{
 							color: theme.colors.textDim,
 							left:
@@ -460,6 +461,9 @@ export function GroupChatHistoryPanel({
 	);
 	const searchFilterOpen = useUIStore((s) => s.groupChatHistorySearchFilterOpen);
 	const setSearchFilterOpen = useUIStore((s) => s.setGroupChatHistorySearchFilterOpen);
+	const activeFocus = useUIStore((s) => s.activeFocus);
+	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
+	const panelRef = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -519,6 +523,45 @@ export function GroupChatHistoryPanel({
 		[entries, activeFilters, searchFilter]
 	);
 
+	// Arrow-key selection over the rendered entries. The tab is reachable by
+	// keyboard (Cmd+Shift+[ / ] cycles Participants <-> History), so the list it
+	// lands on has to answer Up/Down without a click first.
+	const handleSelectByIndex = useCallback(
+		(index: number) => {
+			const entry = filteredEntries[index];
+			if (entry) onJumpToMessage?.(entry.timestamp);
+		},
+		[filteredEntries, onJumpToMessage]
+	);
+
+	const {
+		selectedIndex,
+		setSelectedIndex,
+		handleKeyDown: listNavKeyDown,
+	} = useListNavigation({
+		listLength: filteredEntries.length,
+		onSelect: handleSelectByIndex,
+		initialIndex: -1,
+	});
+
+	// Keeps the cursor on screen: block 'nearest' only scrolls once the selected
+	// entry has left the top or bottom of the list box. Scrolling is INSTANT
+	// rather than smooth because a held arrow key repeats faster than a smooth
+	// scroll animates - each repeat would cancel the animation in flight, so the
+	// list lurches instead of stepping.
+	const entryRefs = useScrollIntoView<HTMLDivElement>(
+		true,
+		selectedIndex,
+		filteredEntries.length,
+		'auto'
+	);
+
+	// Take focus when the right panel is the focused area - otherwise the arrow
+	// keys land on whatever held focus before the tab switch.
+	useEffect(() => {
+		if (activeFocus === 'right') panelRef.current?.focus();
+	}, [activeFocus]);
+
 	// Handle bar click - scroll to entries in that time range
 	const handleBarClick = (bucketStart: number, bucketEnd: number) => {
 		const entriesInBucket = filteredEntries.filter(
@@ -533,16 +576,20 @@ export function GroupChatHistoryPanel({
 		}
 	};
 
-	// Keyboard handler for Cmd+F search toggle
+	// Keyboard handler for Cmd+F search toggle, then Up/Down/Enter list navigation.
+	// The search input sits inside this container, so arrows walk the results while
+	// the filter has the caret too.
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !searchFilterOpen) {
 				e.preventDefault();
 				setSearchFilterOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
+				return;
 			}
+			listNavKeyDown(e);
 		},
-		[searchFilterOpen, setSearchFilterOpen]
+		[searchFilterOpen, setSearchFilterOpen, listNavKeyDown]
 	);
 
 	// Filter chips are toggles, not a color legend: per-entry colors come from the
@@ -558,9 +605,11 @@ export function GroupChatHistoryPanel({
 
 	return (
 		<div
-			className="flex-1 flex flex-col overflow-hidden p-3"
+			ref={panelRef}
+			className="flex-1 flex flex-col overflow-hidden p-3 outline-none"
 			tabIndex={0}
 			onKeyDown={handleKeyDown}
+			onClick={() => setActiveFocus('right')}
 		>
 			{/* Type Filter Pills */}
 			<div className="flex gap-1.5 flex-wrap mb-2 justify-center">
@@ -571,7 +620,7 @@ export function GroupChatHistoryPanel({
 						<button
 							key={type}
 							onClick={() => toggleFilter(type)}
-							className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold uppercase transition-all ${
+							className={`flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-bold uppercase transition-all ${
 								isActive ? 'opacity-100' : 'opacity-40'
 							}`}
 							style={{
@@ -614,14 +663,14 @@ export function GroupChatHistoryPanel({
 							if (e.key === 'Escape') {
 								setSearchFilterOpen(false);
 								setSearchFilter('');
-								listRef.current?.focus();
+								panelRef.current?.focus();
 							}
 						}}
 						className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
 						style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 					/>
 					{searchFilter && (
-						<div className="text-[10px] mt-1 text-right" style={{ color: theme.colors.textDim }}>
+						<div className="text-2xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
 							{filteredEntries.length} result{filteredEntries.length !== 1 ? 's' : ''}
 						</div>
 					)}
@@ -629,7 +678,20 @@ export function GroupChatHistoryPanel({
 			)}
 
 			{/* History List */}
-			<div ref={listRef} className="flex-1 overflow-y-auto space-y-2 scrollbar-thin">
+			<div
+				ref={listRef}
+				role="listbox"
+				aria-label="Group chat history"
+				aria-activedescendant={
+					filteredEntries[selectedIndex]
+						? `gc-history-${filteredEntries[selectedIndex].id}`
+						: undefined
+				}
+				// scroll-p-2 leaves a sliver of the next entry visible when the
+				// selection reaches an edge, so holding an arrow reads as scrolling
+				// through a list rather than pinning a row against the boundary.
+				className="flex-1 overflow-y-auto space-y-2 scrollbar-thin scroll-p-2"
+			>
 				{isLoading ? (
 					<div className="text-center py-8 text-xs opacity-50">Loading history...</div>
 				) : filteredEntries.length === 0 ? (
@@ -647,19 +709,31 @@ export function GroupChatHistoryPanel({
 						)}
 					</div>
 				) : (
-					filteredEntries.map((entry) => {
+					filteredEntries.map((entry, index) => {
 						const participantColor =
 							participantColors[entry.participantName] ||
 							entry.participantColor ||
 							theme.colors.accent;
+						const isSelected = index === selectedIndex;
 						return (
 							<div
 								key={entry.id}
+								id={`gc-history-${entry.id}`}
+								ref={(el) => {
+									entryRefs.current[index] = el;
+								}}
+								role="option"
 								data-entry-id={entry.id}
-								onClick={() => onJumpToMessage?.(entry.timestamp)}
+								data-selected={isSelected || undefined}
+								aria-selected={isSelected}
+								onClick={() => {
+									setSelectedIndex(index);
+									onJumpToMessage?.(entry.timestamp);
+								}}
 								className="p-2.5 rounded border transition-colors cursor-pointer hover:bg-white/5"
 								style={{
-									borderColor: theme.colors.border,
+									borderColor: isSelected ? theme.colors.accent : theme.colors.border,
+									backgroundColor: isSelected ? theme.colors.accent + '15' : undefined,
 									borderLeftWidth: '3px',
 									borderLeftColor: participantColor,
 								}}
@@ -669,7 +743,7 @@ export function GroupChatHistoryPanel({
 								<div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-1.5">
 									{/* Participant Name Pill */}
 									<span
-										className="justify-self-start truncate max-w-full px-2 py-0.5 rounded text-[10px] font-bold"
+										className="justify-self-start truncate max-w-full px-2 py-0.5 rounded text-2xs font-bold"
 										style={{
 											backgroundColor: participantColor + '25',
 											color: participantColor,
@@ -685,7 +759,7 @@ export function GroupChatHistoryPanel({
 										const { label, icon: TypeIcon } = typeConfig;
 										return (
 											<span
-												className="justify-self-center flex items-center gap-1 text-[10px] font-bold uppercase whitespace-nowrap"
+												className="justify-self-center flex items-center gap-1 text-2xs font-bold uppercase whitespace-nowrap"
 												style={{ color: theme.colors.accent }}
 												title={`${label} entry`}
 											>
@@ -696,7 +770,7 @@ export function GroupChatHistoryPanel({
 									})()}
 									{/* Timestamp */}
 									<span
-										className="justify-self-end text-[10px] whitespace-nowrap"
+										className="justify-self-end text-2xs whitespace-nowrap"
 										style={{ color: theme.colors.textDim }}
 									>
 										{formatTime(entry.timestamp)}
@@ -712,7 +786,7 @@ export function GroupChatHistoryPanel({
 								{entry.cost !== undefined && entry.cost > 0 && (
 									<div className="flex items-center gap-2 mt-1.5">
 										<span
-											className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full"
+											className="text-2xs font-mono font-bold px-1.5 py-0.5 rounded-full"
 											style={{
 												backgroundColor: theme.colors.success + '15',
 												color: theme.colors.success,

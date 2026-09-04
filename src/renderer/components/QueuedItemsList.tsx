@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
 import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
-import { getForceSendTitle } from '../utils/executionQueue';
+import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
@@ -258,15 +258,10 @@ export const QueuedItemsList = memo(
 							onForceSendQueuedItem && getForceSendContext && !item.forceParallel
 								? getForceSendContext(item)
 								: null;
-						// Same rule as the Execution Queue modal, deliberately: visible
-						// unless the item has no tab left to run on (where the button
-						// could never work), disabled with the reason otherwise. The old
-						// rule hid the button whenever the target tab was busy or nothing
-						// else was running - which meant that on a quiet agent, where
-						// force send is ALWAYS allowed, the chat offered nothing while
-						// the modal offered a working button.
-						const showForceSendButton =
-							!!forceSendContext && forceSendContext.blockedReason !== 'no-target-tab';
+						// Same rule as the Execution Queue modal, deliberately - see
+						// shouldOfferForceSend for why a busy target tab hides the button
+						// rather than dimming it.
+						const showForceSendButton = shouldOfferForceSend(forceSendContext);
 						const canForceSend = !!forceSendContext?.canForce;
 						const forceSendTitle = forceSendContext
 							? getForceSendTitle(forceSendContext)
@@ -395,7 +390,7 @@ export const QueuedItemsList = memo(
 												className="inline-block w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.warning }}
 											/>
-											<span className="font-mono">{tab.displayName}</span>
+											<span>{tab.displayName}</span>
 										</li>
 									))}
 								</ul>
@@ -531,7 +526,7 @@ function QueuedItemRow({
 				{isPaused && (
 					<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
 						<span
-							className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider"
+							className="px-1.5 py-0.5 rounded text-2xs font-bold tracking-wider"
 							style={{
 								backgroundColor: theme.colors.warning + '33',
 								color: theme.colors.warning,
@@ -649,37 +644,49 @@ function QueuedItemRow({
 				)}
 
 				{/* Bottom footer: Force Send anchored bottom-left, control
-				    buttons anchored bottom-right (always visible). mt-auto
-				    pushes the row to the bottom of the flex column. */}
-				<div className={`mt-auto pt-2 flex items-center gap-2 ${canDrag ? 'pl-4' : ''}`}>
-					{showForceSendButton && (
-						<button
-							onClick={onForceSend}
-							disabled={!canForceSend}
-							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-opacity hover:opacity-80 disabled:cursor-default"
-							style={{
-								backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
-								color: theme.colors.warning,
-								opacity: canForceSend ? 1 : 0.5,
-							}}
-							title={forceSendTitle}
-						>
-							<Hammer className="w-3.5 h-3.5" />
-							Force Send
-						</button>
-					)}
+				    buttons anchored bottom-right (always visible), model/effort
+				    pills centered between them. mt-auto pushes the row to the
+				    bottom of the flex column. The three-column grid is what puts
+				    the pills on the card's true center line the way the finished
+				    turn's pills sit on the message's: the outer columns are equal
+				    1fr tracks, so the middle one stays centered no matter how wide
+				    the Force Send button or the control cluster gets, and nothing
+				    overlaps the way an absolutely-positioned center would. */}
+				<div
+					className={`mt-auto pt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 ${canDrag ? 'pl-4' : ''}`}
+				>
+					<div className="flex items-center gap-2 min-w-0">
+						{showForceSendButton && (
+							<button
+								onClick={onForceSend}
+								disabled={!canForceSend}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80 disabled:cursor-default"
+								style={{
+									backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
+									color: theme.colors.warning,
+									opacity: canForceSend ? 1 : 0.5,
+								}}
+								title={forceSendTitle}
+							>
+								<Hammer className="w-3.5 h-3.5" />
+								Force Send
+							</button>
+						)}
+					</div>
 
 					{/* What this item will actually run under. The queue can sit through
 					    any number of model/effort changes, so naming the frozen values
 					    here is the only way the user can tell which pending message is
 					    on the big model. Same pills the finished turn gets. */}
-					<TurnSettingPills
-						theme={theme}
-						model={item.turnSettings?.model}
-						effort={item.turnSettings?.effort}
-					/>
+					<div className="flex items-center justify-center gap-1 min-w-0">
+						<TurnSettingPills
+							theme={theme}
+							model={item.turnSettings?.model}
+							effort={item.turnSettings?.effort}
+						/>
+					</div>
 
-					<div className="ml-auto flex items-center gap-1">
+					<div className="flex items-center justify-end gap-1">
 						{/* Edit button */}
 						{onEdit && (
 							<button

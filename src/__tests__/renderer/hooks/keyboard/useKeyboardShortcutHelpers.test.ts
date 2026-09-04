@@ -806,10 +806,12 @@ describe('useKeyboardShortcutHelpers', () => {
 });
 
 describe('unbound shortcuts (keys: [])', () => {
-	// Actions like the Tile New AI/Browser/File Below family ship with no default
-	// chord so users can assign their own. Without an explicit guard, `mainKey`
-	// is undefined and only the modifier checks run - which an unmodified
-	// keypress satisfies - so an unbound action would fire on stray keys.
+	// Actions like Show Snoozed Tabs and the media-player family ship with no
+	// default chord so users can assign their own. Without an explicit guard,
+	// `mainKey` is undefined and only the modifier checks run - which an
+	// unmodified keypress satisfies - so an unbound action would fire on stray
+	// keys. `tileAiBelow` is used as the fixture here for historical reasons; it
+	// ships bound now, but the map below is local so the invariant still holds.
 	const shortcuts: Record<string, Shortcut> = {
 		tileAiBelow: { id: 'tileAiBelow', label: 'Tile New AI Chat Below', keys: [] },
 		bound: { id: 'bound', label: 'Bound', keys: ['Meta', 'k'] },
@@ -850,6 +852,30 @@ describe('unbound shortcuts (keys: [])', () => {
 		expect(
 			result.current.isShortcut(createKeyboardEvent({ key: 'k', metaKey: true }), 'bound')
 		).toBe(true);
+	});
+
+	it('is why a Ctrl+Cmd binding must be matched with isPaneShortcut, not isShortcut', () => {
+		// eventMatchesShortcutKeys folds Meta and Ctrl into ONE modifier so a single
+		// table serves macOS and Windows. The cost is that it cannot tell Ctrl+Cmd+T
+		// from a plain Cmd+T, so routing the tiling family through isShortcut would
+		// fire it on the everyday "new AI chat" chord. isPaneShortcut requires both
+		// physical modifiers and is the only correct matcher for that family.
+		const ctrlCmd: Record<string, Shortcut> = {
+			tileAiBelow: {
+				id: 'tileAiBelow',
+				label: 'Tile New AI Chat Below',
+				keys: ['Control', 'Meta', 't'],
+			},
+		};
+		const { result } = renderHook(() =>
+			useKeyboardShortcutHelpers({ shortcuts: ctrlCmd, tabShortcuts: {} })
+		);
+		const plainCmdT = createKeyboardEvent({ key: 't', metaKey: true });
+		expect(result.current.isShortcut(plainCmdT, 'tileAiBelow')).toBe(true);
+		expect(result.current.isPaneShortcut(plainCmdT, 'tileAiBelow')).toBe(false);
+
+		const ctrlCmdT = createKeyboardEvent({ key: 't', metaKey: true, ctrlKey: true });
+		expect(result.current.isPaneShortcut(ctrlCmdT, 'tileAiBelow')).toBe(true);
 	});
 
 	it('matches once the user records a binding for a previously unbound action', () => {

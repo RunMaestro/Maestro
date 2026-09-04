@@ -1,4 +1,7 @@
 import { formatSize } from '../../../shared/formatters';
+import { isImageFile } from '../../../shared/gitUtils';
+import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { getOpenedMediaKind } from '../../utils/mediaItems';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -160,6 +163,8 @@ export interface FontScaleTargetView {
 	isMermaid: boolean;
 	/** CSV / TSV table view. */
 	isCsv: boolean;
+	/** Parquet grid, which owns its own row height and column widths. */
+	isParquet: boolean;
 	/** JSONL viewer, including JSON under a jq filter. */
 	isJsonlView: boolean;
 	/** HTML being rendered in the sandboxed iframe (not shown as source). */
@@ -171,7 +176,8 @@ export interface FontScaleTargetView {
  *
  * Only where zoom actually moves type. The views that own their own layout -
  * images, the binary card, rendered HTML inside a sandboxed iframe we cannot
- * style, Mermaid diagrams, and the CSV / JSONL table viewers - are excluded: a
+ * style, Mermaid diagrams, and the CSV / JSONL / parquet table viewers - are
+ * excluded: a
  * control that changes nothing reads as broken, which is exactly why Rich Mode
  * lost its copy of these buttons in Director's Notes.
  */
@@ -181,6 +187,7 @@ export function canScaleFontForView(view: FontScaleTargetView): boolean {
 		!view.isImage &&
 		!view.isBinary &&
 		!view.isCsv &&
+		!view.isParquet &&
 		!view.isJsonlView &&
 		!view.isMermaid &&
 		!view.isRenderedHtml
@@ -351,6 +358,28 @@ export const isBinaryExtension = (filename: string): boolean => {
 	const ext = filename.split('.').pop()?.toLowerCase();
 	return BINARY_EXTENSIONS.has(ext || '');
 };
+
+// ─── Gist Publishing ──────────────────────────────────────────────────────────
+
+/**
+ * Whether a previewed file can go up as a GitHub Gist. A gist body is plain
+ * text, so images, playable media, binaries, and the parquet marker (which
+ * holds a path rather than the file) are all out, and so is an empty file -
+ * publishing one produces a gist with nothing in it.
+ *
+ * Shared so the FilePreview toolbar button and the file tab's overlay menu
+ * offer the action on exactly the same files. `filename` must carry the
+ * extension (a file tab stores name and extension apart).
+ */
+export function isGistPublishableFile(filename: string, content: string): boolean {
+	if (!content.trim()) return false;
+	if (isImageFile(filename)) return false;
+	if (getOpenedMediaKind(filename, content) !== null) return false;
+	// Parquet is binary on disk but never arrives as content, so it is checked
+	// off the marker before the binary tests below (which the marker passes).
+	if (isParquetPreviewMarker(content)) return false;
+	return !isBinaryExtension(filename) && !isBinaryContent(content);
+}
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
 

@@ -290,10 +290,10 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 			</div>
 
 			<div className="flex justify-between mt-2">
-				<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 					{new Date(data.timeline[0].startMs).toLocaleDateString()}
 				</span>
-				<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 					{new Date(data.timeline[data.timeline.length - 1].startMs).toLocaleDateString()}
 				</span>
 			</div>
@@ -443,17 +443,6 @@ export const TokenStats = memo(function TokenStats({
 					/>
 				</ChartErrorBoundary>
 
-				<ChartErrorBoundary theme={theme} chartName="Tokens by Model">
-					<Breakdown
-						title="By Model"
-						groups={data.byModel}
-						theme={theme}
-						colorBlindMode={colorBlindMode}
-						emptyNote="No model data in this range."
-						testId="token-by-model"
-					/>
-				</ChartErrorBoundary>
-
 				<ChartErrorBoundary theme={theme} chartName="Tokens by Account">
 					<Breakdown
 						title="By Account"
@@ -462,6 +451,17 @@ export const TokenStats = memo(function TokenStats({
 						colorBlindMode={colorBlindMode}
 						emptyNote="No provider accounts detected."
 						testId="token-by-account"
+					/>
+				</ChartErrorBoundary>
+
+				<ChartErrorBoundary theme={theme} chartName="Tokens by Model">
+					<Breakdown
+						title="By Model"
+						groups={data.byModel}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						emptyNote="No model data in this range."
+						testId="token-by-model"
 					/>
 				</ChartErrorBoundary>
 
@@ -479,7 +479,7 @@ export const TokenStats = memo(function TokenStats({
 
 			{/* Provenance footer: what the numbers mean and how fresh they are. */}
 			<div
-				className="flex items-center justify-between pt-2 text-[11px]"
+				className="flex items-center justify-between pt-2 text-xs-plus"
 				style={{ color: theme.colors.textDim, borderTop: `1px solid ${theme.colors.border}` }}
 			>
 				<span>

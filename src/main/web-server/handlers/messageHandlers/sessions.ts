@@ -8,6 +8,7 @@
  */
 
 import { AGENT_IDS } from '../../../../shared/agentIds';
+import { readBackgroundField } from '../../../../shared/focusPlacement';
 import type { CreateSessionConfig } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -156,7 +157,7 @@ export function handleCreateWorktreeSession(
 	};
 
 	ctx.callbacks
-		.createWorktreeSession(parentSessionId, config)
+		.createWorktreeSession(parentSessionId, config, readBackgroundField(message))
 		.then((result) => {
 			ctx.send(client, {
 				type: 'create_worktree_session_result',

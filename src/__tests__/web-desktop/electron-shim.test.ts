@@ -56,7 +56,7 @@ Object.defineProperty(window, 'location', {
 	value: { ...originalLocation, reload: vi.fn() },
 });
 
-const { webFrame } = await import('../../web-desktop/electron-shim');
+const { ipcRenderer, webFrame } = await import('../../web-desktop/electron-shim');
 
 afterAll(() => {
 	vi.unstubAllGlobals();
@@ -104,6 +104,48 @@ describe('web-desktop electron-shim webFrame zoom', () => {
 	it('getZoomLevel derives the level from a factor set via setZoomFactor', () => {
 		webFrame.setZoomFactor(1.2);
 		expect(webFrame.getZoomLevel()).toBeCloseTo(1, 10);
+	});
+});
+
+describe('web-desktop electron-shim desktop navigation sync', () => {
+	it('routes desktop active-session packets through the renderer remote-selection event', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:selectSession', listener);
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'active_session_changed', sessionId: 'session-2' }),
+		});
+
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-2');
+		ipcRenderer.removeListener('remote:selectSession', listener);
+	});
+
+	it('routes desktop active-tab packets through the renderer remote-selection event', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:selectTab', listener);
+		const aiTabs = [
+			{
+				id: 'tab-3',
+				agentSessionId: 'provider-session-3',
+				name: 'Synced tab',
+				starred: false,
+				inputValue: '',
+				createdAt: 1700000000000,
+				state: 'idle',
+			},
+		];
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({
+				type: 'tabs_changed',
+				sessionId: 'session-2',
+				activeTabId: 'tab-3',
+				aiTabs,
+			}),
+		});
+
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-2', 'tab-3', aiTabs);
+		ipcRenderer.removeListener('remote:selectTab', listener);
 	});
 });
 

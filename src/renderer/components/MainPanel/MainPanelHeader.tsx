@@ -249,7 +249,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	return (
 		<div
 			ref={headerRef}
-			className={`header-container h-16 border-b flex items-center justify-between px-6 shrink-0 relative z-20 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
+			className={`chrome-sheen header-container h-16 border-b flex items-center justify-between px-6 shrink-0 relative z-20 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
 			style={{
 				borderColor: theme.colors.border,
 				backgroundColor: theme.colors.bgSidebar,
@@ -290,9 +290,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							data-testid="bookmark-icon"
 						/>
 					)}
+					{/* min-w-0 (not shrink-0) so the pills inside can give up width when the
+					    header runs out of room. A hard cap truncates a name that had space to
+					    spare; letting flex do the clamping means the text is only ever cut when
+					    something else genuinely needs the pixels. */}
 					<div
 						ref={gitPillRef}
-						className="relative shrink-0 flex items-center gap-2"
+						className="relative min-w-0 flex items-center gap-2"
 						{...gitPillHoverHandlers}
 					>
 						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
@@ -301,7 +305,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						    the branch the same way local agents do. */}
 						{activeSession.sessionSshRemoteConfig?.enabled && sshRemoteName ? (
 							<button
-								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 max-w-[120px] outline-none ${
+								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 min-w-0 outline-none ${
 									activeSession.isGitRepo ? 'cursor-pointer hover:bg-purple-500/20' : ''
 								}`}
 								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch})` : ''}`}
@@ -312,7 +316,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							</button>
 						) : (
 							<button
-								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border cursor-pointer outline-none ${
+								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border min-w-0 cursor-pointer outline-none ${
 									activeSession.isGitRepo
 										? 'border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20'
 										: 'border-blue-500/30 text-blue-500 bg-blue-500/10'
@@ -343,7 +347,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							sshRemoteName &&
 							activeSession.isGitRepo && (
 								<button
-									className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20 cursor-pointer outline-none"
+									className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20 min-w-0 cursor-pointer outline-none"
 									title={gitInfo?.branch || undefined}
 									onClick={handleGitPillClick}
 									aria-haspopup="menu"
@@ -397,7 +401,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					    Goal-Driven runs have no task list, so show the self-reported
 					    percent instead of an X/Y task count. */}
 					{currentSessionBatchState && !isCurrentSessionStopping && (
-						<span className="text-[10px] opacity-80">
+						<span className="text-2xs opacity-80">
 							{currentSessionBatchState.goalMode
 								? `${currentSessionBatchState.goalProgress ?? 0}%`
 								: `${currentSessionBatchState.completedTasks}/${currentSessionBatchState.totalTasks}`}
@@ -420,7 +424,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					activeTab?.agentSessionId &&
 					hasCapability('supportsSessionId') && (
 						<button
-							className="header-uuid-pill text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border transition-colors hover:opacity-80"
+							className="header-uuid-pill text-2xs font-mono font-bold px-2 py-0.5 rounded-full border transition-colors hover:opacity-80"
 							style={{
 								backgroundColor: theme.colors.accent + '20',
 								color: theme.colors.accent,
@@ -516,7 +520,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 											}}
 										>
 											<div
-												className="text-[10px] uppercase font-bold mb-3"
+												className="text-2xs uppercase font-bold mb-3"
 												style={{ color: theme.colors.textDim }}
 											>
 												Context Details
@@ -553,7 +557,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													<div className="flex justify-between items-center">
 														<span className="text-xs" style={{ color: theme.colors.textDim }}>
 															Reasoning Tokens
-															<span className="ml-1 text-[10px] opacity-60">(in output)</span>
+															<span className="ml-1 text-2xs opacity-60">(in output)</span>
 														</span>
 														<span
 															className="text-xs font-mono"
@@ -656,7 +660,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														style={{ borderColor: theme.colors.border }}
 													>
 														<div
-															className="text-[10px] uppercase font-bold mb-2"
+															className="text-2xs uppercase font-bold mb-2"
 															style={{ color: theme.colors.textDim }}
 														>
 															Max Plan Usage
@@ -681,7 +685,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														</div>
 														{batchUsageSnapshot.authState === 'unauthenticated' ? (
 															<div
-																className="flex items-center gap-2 px-2 py-1.5 rounded text-[11px]"
+																className="flex items-center gap-2 px-2 py-1.5 rounded text-xs-plus"
 																style={{
 																	backgroundColor: `${theme.colors.warning ?? theme.colors.accent}15`,
 																	color: theme.colors.textMain,
@@ -741,7 +745,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																			/>
 																		</div>
 																		<div
-																			className="text-[10px] mt-0.5 text-right"
+																			className="text-2xs mt-0.5 text-right"
 																			style={{ color: theme.colors.textDim, opacity: 0.7 }}
 																		>
 																			{window.resetsAt

@@ -47,6 +47,8 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
+import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
 
 const LOG_CONTEXT = '[CrossAgentRouter]';
 
@@ -68,24 +70,10 @@ const CROSS_AGENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * The ProcessManager events that prove a consulted agent is still working.
- *
- * This list is the whole point, and getting it wrong silently reintroduces the
- * wall-clock bug the idle/hard split was meant to kill. For a `--print`
- * stream-json run, `StdoutHandler` routes a turn's intermediate activity to
- * `thinking-chunk` / `tool-execution` / `usage`, and only emits `data` when
- * `isResultMessage(event)` is true - i.e. the terminal result, at the very end
- * (see `handleParsedEvent`, plus the exit-time flush in `ExitHandler`). A
- * healthy Claude consult therefore emits ZERO `data` events until it is
- * completely finished.
- *
- * Arming the budget on `data` alone made it a hard N-minute deadline for every
- * claude-code consult: an agent doing real work for longer than the budget was
- * killed at exactly the budget, having never once re-armed the timer. That is
- * precisely the "agent is working fine but the consult dies anyway" failure.
- *
- * Every event here is emitted as `(sessionId, payload)`, so one filter fits all.
+ * Shared with Group Chat's supervision - see `AGENT_LIVENESS_EVENTS` for why
+ * `data` alone is not enough.
  */
-const LIVENESS_EVENTS = ['data', 'thinking-chunk', 'tool-execution', 'usage'] as const;
+const LIVENESS_EVENTS = AGENT_LIVENESS_EVENTS;
 
 /**
  * Absolute ceiling on a single consult, regardless of how chatty it is. A target
@@ -93,6 +81,48 @@ const LIVENESS_EVENTS = ['data', 'thinking-chunk', 'tool-execution', 'usage'] as
  * so the idle budget alone cannot bound the run.
  */
 const CROSS_AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
+
+/**
+ * A consult that has been started and has not yet emitted its terminal chunk.
+ *
+ * Stop is an AGENT-level action, and a `@mention` fans the agent's turn out
+ * across several processes: its own tab plus one ephemeral `cross-agent-*`
+ * process per consulted target. Interrupting only the tab leaves those consults
+ * running, streaming an answer into a conversation the user already stopped, so
+ * the registry below is what gives Stop a handle on them.
+ *
+ * Keyed by `requestId`, but cancellation is addressed by SOURCE agent: the
+ * renderer's in-flight map is only populated once `crossAgent.send` resolves, so
+ * a Stop pressed in that window would miss a request the main process is already
+ * spawning. Main holds the authoritative list, so it answers "what did this
+ * agent fan out?" without that race.
+ */
+interface ActiveConsult {
+	/** The agent the mention was typed in - what Stop is addressed to. */
+	sourceSessionId: string;
+	/** Terminate this consult and emit its terminal chunk. Idempotent. */
+	cancel: () => void;
+}
+
+const activeConsults = new Map<string, ActiveConsult>();
+
+/**
+ * Stop every consult the given source agent still has in flight.
+ *
+ * Each cancelled consult settles exactly like a timeout does - the process is
+ * killed and whatever the target already said is flushed as the terminal chunk -
+ * except that it is stamped `canceled` rather than `error`, so the source
+ * agent's bubble reports that the user stopped it instead of blaming the target
+ * for failing to answer.
+ *
+ * @returns How many consults were cancelled.
+ */
+export function cancelCrossAgentRequestsForSource(sourceSessionId: string): number {
+	// Snapshot first: `cancel()` deletes from the map it is iterating.
+	const doomed = [...activeConsults.values()].filter((c) => c.sourceSessionId === sourceSessionId);
+	for (const consult of doomed) consult.cancel();
+	return doomed.length;
+}
 
 /**
  * The subset of a target agent's stored session config the router needs to
@@ -276,8 +306,25 @@ export async function startCrossAgentRequest(
 			requestId: request.requestId,
 			targetSessionId: request.targetSessionId,
 		});
+		activeConsults.delete(request.requestId);
 		onChunk(baseChunk({ chunk: '', done: true, error: message }));
 	};
+
+	/**
+	 * Stop can land before the process exists: resolving the target agent's binary
+	 * is async, and the spawn itself is awaited. Register a cancel that only raises
+	 * this flag now (it is swapped for the real terminal path once the listeners
+	 * are attached), and re-check it around the spawn so a consult cancelled in
+	 * that window is never left running.
+	 */
+	let cancelRequested = false;
+	const registration: ActiveConsult = {
+		sourceSessionId: request.sourceSessionId,
+		cancel: () => {
+			cancelRequested = true;
+		},
+	};
+	activeConsults.set(request.requestId, registration);
 
 	if (!target) {
 		emitError(`Target agent not found for session ${request.targetSessionId}`);
@@ -353,13 +400,9 @@ export async function startCrossAgentRequest(
 	// on the terminal chunk so the renderer stores it on the consult tab and
 	// resumes it on the next mention from this source tab.
 	let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
-	// Held on a const object so `cleanup` can close over the (later-assigned)
-	// handles without `let`s that trip prefer-const. `idle` is rearmed on every
-	// data event; `hard` is armed once and never reset.
-	const timer: {
-		idle?: ReturnType<typeof setTimeout>;
-		hard?: ReturnType<typeof setTimeout>;
-	} = {};
+	// Assigned once the consult is actually under way (see below). Held on a const
+	// object so `cleanup` can close over it without a `let` that trips prefer-const.
+	const watch: { dog?: IdleWatchdog } = {};
 
 	const onData = (sid: string, data: string): void => {
 		if (sid !== sessionId) return;
@@ -373,7 +416,7 @@ export async function startCrossAgentRequest(
 	 */
 	const onLiveness = (sid: string): void => {
 		if (sid !== sessionId) return;
-		armIdleTimer();
+		watch.dog?.touch();
 	};
 
 	const onSessionId = (sid: string, agentSessionId: string): void => {
@@ -381,12 +424,12 @@ export async function startCrossAgentRequest(
 	};
 
 	const cleanup = (): void => {
+		activeConsults.delete(request.requestId);
 		processManager.off('data', onData);
 		for (const evt of LIVENESS_EVENTS) processManager.off(evt, onLiveness);
 		processManager.off('exit', onExit);
 		processManager.off('session-id', onSessionId);
-		if (timer.idle) clearTimeout(timer.idle);
-		if (timer.hard) clearTimeout(timer.hard);
+		watch.dog?.disarm();
 	};
 
 	const onExit = (sid: string, code: number): void => {
@@ -445,14 +488,18 @@ export async function startCrossAgentRequest(
 	};
 
 	/**
-	 * Terminal path shared by both timers: kill the process, then flush whatever
-	 * the target managed to say before we pulled the plug. Emitting the partial
-	 * keeps a long consult's real work visible instead of replacing it with a bare
-	 * warning. We deliberately do NOT forward `targetAgentSessionId` - matching the
-	 * non-zero-exit policy, a killed run starts fresh next time rather than
-	 * resuming a session we interrupted mid-turn.
+	 * Terminal path shared by both timers and by Stop: kill the process, then
+	 * flush whatever the target managed to say before we pulled the plug. Emitting
+	 * the partial keeps a long consult's real work visible instead of replacing it
+	 * with a bare warning. We deliberately do NOT forward `targetAgentSessionId` -
+	 * matching the non-zero-exit policy, a killed run starts fresh next time rather
+	 * than resuming a session we interrupted mid-turn.
+	 *
+	 * `canceled` splits the two callers apart at the chunk level: a timeout is a
+	 * failure of the target, while Stop is the user's own decision and must not be
+	 * reported as the target failing to answer.
 	 */
-	const settleWithTimeout = (message: string): void => {
+	const settleTerminated = (message: string, canceled = false): void => {
 		if (settled) return;
 		settled = true;
 		cleanup();
@@ -472,18 +519,11 @@ export async function startCrossAgentRequest(
 			targetSessionId: request.targetSessionId,
 			partialChars: partial.length,
 		});
-		onChunk(baseChunk({ chunk: partial, done: true, error: message }));
-	};
-
-	/** (Re)start the silence budget. Called on spawn and on every data event. */
-	const armIdleTimer = (): void => {
-		if (settled) return;
-		if (timer.idle) clearTimeout(timer.idle);
-		timer.idle = setTimeout(() => {
-			settleWithTimeout(
-				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
-			);
-		}, CROSS_AGENT_IDLE_TIMEOUT_MS);
+		onChunk(
+			canceled
+				? baseChunk({ chunk: partial, done: true, canceled: true })
+				: baseChunk({ chunk: partial, done: true, error: message })
+		);
 	};
 
 	processManager.on('data', onData);
@@ -493,14 +533,29 @@ export async function startCrossAgentRequest(
 	processManager.on('exit', onExit);
 	processManager.on('session-id', onSessionId);
 
-	// Safety net: never leave the listeners attached forever. The idle timer covers
+	// Safety net: never leave the listeners attached forever. The idle budget covers
 	// a wedged target; the hard ceiling covers one that chatters without finishing.
-	timer.hard = setTimeout(() => {
-		settleWithTimeout(
-			`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
-		);
-	}, CROSS_AGENT_MAX_DURATION_MS);
-	armIdleTimer();
+	watch.dog = createIdleWatchdog({
+		idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
+		maxMs: CROSS_AGENT_MAX_DURATION_MS,
+		onIdle: () =>
+			settleTerminated(
+				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
+			),
+		onMax: () =>
+			settleTerminated(
+				`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
+			),
+	});
+
+	// The real Stop path, now that there is something to tear down. A cancel that
+	// arrived while the target's binary was being resolved is settled here instead
+	// of spawning a process only to kill it a moment later.
+	registration.cancel = () => settleTerminated(`${target.name} was stopped by the user.`, true);
+	if (cancelRequested) {
+		registration.cancel();
+		return;
+	}
 
 	try {
 		const spawnResult = await spawnGroupChatAgent({
@@ -536,6 +591,18 @@ export async function startCrossAgentRequest(
 				settled = true;
 				cleanup();
 				emitError(`${target.name} could not be started.`);
+			}
+			return;
+		}
+		// Stop can land between `registration.cancel` going live and the spawn
+		// resolving. `settleTerminated` already killed a process id that did not
+		// exist yet, so the one we just created has to be killed here or it survives
+		// the Stop that was meant to end it.
+		if (settled) {
+			try {
+				processManager.kill(sessionId);
+			} catch {
+				// Already gone - nothing to kill.
 			}
 			return;
 		}

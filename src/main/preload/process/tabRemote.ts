@@ -1,12 +1,16 @@
 import { ipcRenderer } from 'electron';
+import type { AITabData } from '../../web-server/types';
 
 export function createTabRemoteApi() {
 	return {
 		/**
 		 * Subscribe to remote tab selection from web interface
 		 */
-		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string) => callback(sessionId, tabId);
+		onRemoteSelectTab: (
+			callback: (sessionId: string, tabId: string, aiTabs?: AITabData[]) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, aiTabs?: AITabData[]) =>
+				callback(sessionId, tabId, aiTabs);
 			ipcRenderer.on('remote:selectTab', handler);
 			return () => ipcRenderer.removeListener('remote:selectTab', handler);
 		},
@@ -15,10 +19,14 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote new tab from web interface
 		 */
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string) => void
+			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, responseChannel: string) =>
-				callback(sessionId, responseChannel);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				responseChannel: string,
+				background?: boolean
+			) => callback(sessionId, responseChannel, background === true);
 			ipcRenderer.on('remote:newTab', handler);
 			return () => ipcRenderer.removeListener('remote:newTab', handler);
 		},
@@ -86,16 +94,53 @@ export function createTabRemoteApi() {
 
 		/**
 		 * Subscribe to remote open file tab from web interface.
-		 * `switchToAgent` controls whether the UI switches to the target agent
-		 * (defaults to true if the sender omits it).
+		 *
+		 * `background: true` creates the preview tab without moving the view at all:
+		 * neither the active agent nor the active tab within any agent changes.
+		 * `switchToAgent: false` is the older, weaker `--no-switch` ask - stay on
+		 * the current agent, but still activate the tab inside the target one.
 		 */
 		onRemoteOpenFileTab: (
-			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
+			callback: (
+				sessionId: string,
+				filePath: string,
+				options: { background: boolean; switchToAgent: boolean }
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, filePath: string, switchToAgent?: boolean) =>
-				callback(sessionId, filePath, switchToAgent !== false);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filePath: string,
+				options?: { background?: boolean; switchToAgent?: boolean }
+			) =>
+				callback(sessionId, filePath, {
+					background: options?.background === true,
+					switchToAgent: options?.switchToAgent !== false,
+				});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
+		},
+
+		/**
+		 * Subscribe to a remote request to render the Document Graph over an
+		 * explicit set of documents (from `maestro-cli open-graph`). Paths are
+		 * ABSOLUTE - the renderer relativizes them against the graph's own root,
+		 * which is not always the cwd the caller resolved against.
+		 */
+		onRemoteOpenDocumentGraph: (
+			callback: (params: {
+				sessionId: string;
+				files?: string[];
+				directory?: string;
+				focusPath?: string;
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				params: { sessionId: string; files?: string[]; directory?: string; focusPath?: string }
+			) => callback(params);
+			ipcRenderer.on('remote:openDocumentGraph', handler);
+			return () => ipcRenderer.removeListener('remote:openDocumentGraph', handler);
 		},
 
 		/**

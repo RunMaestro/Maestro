@@ -318,33 +318,49 @@ export function setupExitListener(
 				debugLog('GroupChat:Debug', ` Is last participant to respond: ${isLastParticipant}`);
 				const pm = getProcessManager();
 				const ad = getAgentDetector();
-				if (isLastParticipant && pm && ad) {
-					// All participants have responded - spawn moderator synthesis round
-					debugLog('GroupChat:Debug', ` All participants responded - spawning synthesis round...`);
-					logger.info(
-						'[GroupChat] All participants responded, spawning moderator synthesis',
-						'ProcessListener',
-						{ groupChatId }
-					);
-					groupChatRouter.spawnModeratorSynthesis(groupChatId, pm, ad).catch((err) => {
-						debugLog('GroupChat:Debug', ` ERROR spawning synthesis:`, err);
-						logger.error('[GroupChat] Failed to spawn moderator synthesis', 'ProcessListener', {
-							error: String(err),
-							groupChatId,
+				if (isLastParticipant) {
+					// "Can synthesis run?" is a different question from "is the room
+					// still working?". Gating both on one condition meant a missing
+					// process manager or agent detector fell through every branch,
+					// leaving the room on 'agent-working' with its power block held -
+					// the quit dialog then reports a running chat that has finished.
+					if (pm && ad) {
+						// All participants have responded - spawn moderator synthesis round
+						debugLog(
+							'GroupChat:Debug',
+							` All participants responded - spawning synthesis round...`
+						);
+						logger.info(
+							'[GroupChat] All participants responded, spawning moderator synthesis',
+							'ProcessListener',
+							{ groupChatId }
+						);
+						groupChatRouter.spawnModeratorSynthesis(groupChatId, pm, ad).catch((err) => {
+							debugLog('GroupChat:Debug', ` ERROR spawning synthesis:`, err);
+							logger.error('[GroupChat] Failed to spawn moderator synthesis', 'ProcessListener', {
+								error: String(err),
+								groupChatId,
+							});
+							// Reset to idle so user is not stuck waiting indefinitely
+							groupChatRouter.settleGroupChatToIdle(groupChatId);
+							groupChatEmitters.emitMessage?.(groupChatId, {
+								timestamp: new Date().toISOString(),
+								from: 'system',
+								content: `⚠️ Synthesis failed. You can send another message to continue.`,
+							});
+							captureException(err, {
+								operation: 'groupChat:spawnModeratorSynthesis',
+								groupChatId,
+							});
 						});
-						// Reset to idle so user is not stuck waiting indefinitely
-						groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-						groupChatEmitters.emitMessage?.(groupChatId, {
-							timestamp: new Date().toISOString(),
-							from: 'system',
-							content: `⚠️ Synthesis failed. You can send another message to continue.`,
-						});
-						captureException(err, {
-							operation: 'groupChat:spawnModeratorSynthesis',
-							groupChatId,
-						});
-					});
-				} else if (!isLastParticipant) {
+					} else {
+						debugLog(
+							'GroupChat:Debug',
+							` All participants responded but synthesis is unavailable - settling to idle`
+						);
+						groupChatRouter.settleGroupChatToIdle(groupChatId);
+					}
+				} else {
 					// More participants pending
 					debugLog('GroupChat:Debug', ` Waiting for more participants to respond...`);
 				}

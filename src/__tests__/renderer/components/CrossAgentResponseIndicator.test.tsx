@@ -18,7 +18,7 @@ function req(over: Partial<InFlightCrossAgentRequest> = {}): InFlightCrossAgentR
 		targetSessionId: 'target-1',
 		targetAgentName: 'Backend',
 		targetToolType: 'claude-code',
-		startedAt: 1_700_000_000_000,
+		startedAt: Date.now(),
 		...over,
 	};
 }
@@ -31,7 +31,8 @@ function seed(...requests: InFlightCrossAgentRequest[]): void {
 function renderIndicator(
 	sourceSessionId: string | null = SESSION,
 	sourceTabId: string | null = TAB,
-	onSessionClick?: (sessionId: string, tabId?: string) => void
+	onSessionClick?: (sessionId: string, tabId?: string) => void,
+	onInterrupt?: () => void
 ) {
 	return render(
 		<CrossAgentResponseIndicator
@@ -39,6 +40,7 @@ function renderIndicator(
 			sourceSessionId={sourceSessionId}
 			sourceTabId={sourceTabId}
 			onSessionClick={onSessionClick}
+			onInterrupt={onInterrupt}
 		/>
 	);
 }
@@ -127,9 +129,50 @@ describe('CrossAgentResponseIndicator', () => {
 		expect(chip.getAttribute('title')).toMatch(/^Backend · \d+s$/);
 	});
 
+	it('humanizes the chip elapsed time past a minute', () => {
+		// Below a minute a bare seconds count reads fine; past it, `1203s` does not.
+		seed(req({ startedAt: Date.now() - (20 * 60 + 4) * 1000 }));
+		renderIndicator();
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		const chip = screen.getByRole('button', { name: /Backend/ });
+		expect(chip.getAttribute('title')).toBe('Backend · 20m 4s');
+	});
+
 	it('renders nothing when the tab id is missing', () => {
 		seed(req());
 		const { container } = renderIndicator(SESSION, null);
+		expect(container.firstChild).toBeNull();
+	});
+});
+
+/**
+ * A message that LEADS with a mention is answered only by the consulted agents,
+ * so the source agent never goes busy and the thinking pill - the usual home of
+ * Stop - never appears. Without a Stop here the user has no way at all to end
+ * work other agents are doing on their behalf.
+ */
+describe('CrossAgentResponseIndicator Stop', () => {
+	beforeEach(() => {
+		useCrossAgentInFlightStore.setState({ requests: {} });
+	});
+
+	it('omits Stop when the caller does not supply an interrupt', () => {
+		seed(req());
+		renderIndicator();
+		expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
+	});
+
+	it('offers Stop when the caller supplies an interrupt', () => {
+		seed(req());
+		const onInterrupt = vi.fn();
+		renderIndicator(SESSION, TAB, undefined, onInterrupt);
+		fireEvent.click(screen.getByRole('button', { name: /stop/i }));
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+	});
+
+	it('draws no Stop when nothing is in flight (the pill is absent entirely)', () => {
+		const { container } = renderIndicator(SESSION, TAB, undefined, vi.fn());
 		expect(container.firstChild).toBeNull();
 	});
 });

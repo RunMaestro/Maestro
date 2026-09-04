@@ -10,18 +10,25 @@ import { Search, FolderPlus, Puzzle, ChevronLeft } from 'lucide-react';
 import type { EncoreFeatureFlags, Theme } from '../../../types';
 import type { ReactNode } from 'react';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { usePersistedChoice } from '../../../hooks/ui/usePersistedChoice';
 import { useGridColumnCount } from '../../../hooks/ui/useGridColumnCount';
 import { useListNavigation } from '../../../hooks/keyboard/useListNavigation';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { useExtensions } from './useExtensions';
 import { ExtensionsGrid, ACTIVE_EXTENSION_TILE_SELECTOR } from './ExtensionsGrid';
 import { ExtensionDetails } from './ExtensionDetails';
+import { SegmentedControl } from '../../ui/SegmentedControl';
 import { FirstPartyEnableModal } from './FirstPartyEnableModal';
 import {
 	CATEGORY_FILTERS,
 	CATEGORY_LABELS,
+	EXTENSION_SORT_STORAGE_KEY,
+	EXTENSION_SORT_VALUES,
+	SORT_OPTIONS,
 	filterExtensions,
+	sortExtensions,
 	type CategoryFilter,
+	type ExtensionSort,
 	type UnifiedExtension,
 } from './extensionModel';
 
@@ -54,10 +61,17 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	const [category, setCategory] = useState<CategoryFilter>('all');
 	const [onlyInstalled, setOnlyInstalled] = useState(false);
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	// Remembered rather than reset per visit: which order the grid reads in is a
+	// standing preference, and Settings unmounts this view on every tab switch.
+	const { value: sort, setValue: setSort } = usePersistedChoice<ExtensionSort>(
+		EXTENSION_SORT_STORAGE_KEY,
+		EXTENSION_SORT_VALUES,
+		'name'
+	);
 
 	const visible = useMemo(
-		() => filterExtensions(extensions, { category, onlyInstalled, query }),
-		[extensions, category, onlyInstalled, query]
+		() => sortExtensions(filterExtensions(extensions, { category, onlyInstalled, query }), sort),
+		[extensions, category, onlyInstalled, query, sort]
 	);
 
 	// The selected tile, resolved against the live list so it stays fresh after
@@ -94,6 +108,20 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 		},
 		enabled: !selected,
 	});
+
+	// Re-sorting renumbers the grid, so carry the keyboard cursor by TILE rather
+	// than by index - otherwise switching to Newest silently moves the ring onto
+	// whatever extension happens to land in that slot.
+	const handleSortChange = useCallback(
+		(next: ExtensionSort) => {
+			const activeKey = visible[activeIndex]?.key;
+			setSort(next);
+			if (!activeKey) return;
+			const nextIndex = sortExtensions(visible, next).findIndex((e) => e.key === activeKey);
+			if (nextIndex >= 0) setActiveIndex(nextIndex);
+		},
+		[visible, activeIndex, setSort, setActiveIndex]
+	);
 
 	// While the details pane is open it owns Escape: back to the grid, not out of
 	// the whole Settings modal. Non-blocking / no focus trap so the rest of
@@ -211,8 +239,8 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 						})}
 					</div>
 
-					{/* Search + only-installed */}
-					<div className="flex items-center gap-2 mb-4">
+					{/* Search + sort + only-installed */}
+					<div className="flex items-center gap-2 mb-4 flex-wrap">
 						<div
 							className="flex items-center gap-2 flex-1 px-2.5 py-1.5 rounded-lg border"
 							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -234,6 +262,19 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 								className="bg-transparent flex-1 text-sm outline-none"
 								style={{ color: theme.colors.textMain }}
 								aria-label="Search extensions"
+							/>
+						</div>
+						<div className="flex items-center gap-1.5 flex-shrink-0">
+							<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								Sort
+							</span>
+							<SegmentedControl
+								value={sort}
+								onChange={handleSortChange}
+								options={SORT_OPTIONS}
+								theme={theme}
+								ariaLabel="Sort extensions"
+								testId="extensions-sort"
 							/>
 						</div>
 						<button

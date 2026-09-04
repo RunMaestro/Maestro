@@ -8,11 +8,13 @@ import { useContextMenuPosition } from '../../../hooks/ui/useContextMenuPosition
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { getModalActions, useModalStore } from '../../../stores/modalStore';
 import { useBatchStore } from '../../../stores/batchStore';
+import { useFileExplorerStore } from '../../../stores/fileExplorerStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { safeClipboardWrite } from '../../../utils/clipboard';
 import {
+	autoRunDocIdForFile,
 	collectAutoRunDocsInFolder,
-	relativeAutoRunFolderPath,
+	relativeToAutoRunFolder,
 } from '../../../utils/autoRunStaging';
 import { captureException } from '../../../utils/sentry';
 import { shouldOpenExternally } from '../../../utils/fileExplorer';
@@ -72,7 +74,13 @@ interface UseFileContextMenuResult {
 	handleOpenRename: () => void;
 	handleOpenDelete: () => Promise<void>;
 	handleFocusInGraph: () => void;
-	/** Auto Run documents under the right-clicked folder ([] when it isn't one). */
+	handleGraphFolder: () => void;
+	handleGraphSelection: () => void;
+	/**
+	 * Auto Run documents the current menu context resolves to - a folder's whole
+	 * subtree, one markdown file, or a multi-selection. Empty when nothing under
+	 * the cursor lives in the agent's Auto Run folder.
+	 */
 	autoRunStagedDocs: string[];
 	handleStageForAutoRun: () => void;
 	handlePreviewFile: () => Promise<void>;
@@ -92,6 +100,12 @@ function isMissingFileError(error: unknown): boolean {
 		'code' in error &&
 		(error as { code?: unknown }).code === 'ENOENT'
 	);
+}
+
+/** Files the Document Graph can actually parse. */
+function isMarkdownPath(pathOrName: string): boolean {
+	const lower = pathOrName.toLowerCase();
+	return lower.endsWith('.md') || lower.endsWith('.markdown');
 }
 
 export function useFileContextMenu({
@@ -183,26 +197,24 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu, onFocusFileInGraph]);
 
-	// Auto Run staging. Only a folder inside the agent's Auto Run folder can be
-	// staged, and only the documents the Auto Run loader already knows about are
-	// offered - the run list can't resolve anything else.
-	const autoRunDocumentList = useBatchStore((s) => s.documentList);
-	const autoRunStagedDocs = useMemo(() => {
-		if (!contextMenu?.node || contextMenu.node.type !== 'folder') return [];
-		const relativeFolder = relativeAutoRunFolderPath(
-			`${session.fullPath}/${contextMenu.path}`,
-			session.autoRunFolderPath
-		);
-		if (relativeFolder === null) return [];
-		return collectAutoRunDocsInFolder(relativeFolder, autoRunDocumentList);
-	}, [contextMenu, session.fullPath, session.autoRunFolderPath, autoRunDocumentList]);
-
-	const handleStageForAutoRun = useCallback(() => {
-		const docs = autoRunStagedDocs;
+	/**
+	 * Graph every markdown file under the right-clicked folder.
+	 *
+	 * The folder path is handed to the builder rather than a file list, so the
+	 * scope does not depend on the folder being expanded in the tree - a
+	 * collapsed folder has no loaded children, and enumerating from the tree
+	 * would silently graph nothing.
+	 *
+	 * These two handlers write to the store directly instead of taking a prop.
+	 * `onFocusFileInGraph` is itself just `focusFileInGraph` handed down through
+	 * four files, and `FileContextMenu.tsx` already calls the store this way.
+	 */
+	const handleGraphFolder = useCallback(() => {
+		if (contextMenu?.node?.type === 'folder') {
+			useFileExplorerStore.getState().openGraphScope({ directory: contextMenu.path });
+		}
 		setContextMenu(null);
-		if (docs.length === 0) return;
-		getModalActions().openBatchRunnerWithPresets(docs);
-	}, [autoRunStagedDocs]);
+	}, [contextMenu]);
 
 	/**
 	 * Open a run of files, playing the first media file and queueing the rest.
@@ -313,6 +325,80 @@ export function useFileContextMenu({
 		}
 		return result;
 	}, [selectedPathsRef, session.fileTree]);
+
+	/**
+	 * Graph exactly the selected markdown files.
+	 *
+	 * The right-clicked row becomes the center when it is itself markdown;
+	 * otherwise the builder picks the most-connected file, which beats
+	 * centering on whichever file happened to be selected first.
+	 */
+	const handleGraphSelection = useCallback(() => {
+		const files = resolveSelectedNodes()
+			.filter(({ node }) => node.type === 'file' && isMarkdownPath(node.name))
+			.map(({ path }) => path);
+		if (files.length > 0) {
+			const clicked = contextMenu?.path;
+			useFileExplorerStore.getState().openGraphScope({
+				files,
+				focusPath: clicked && files.includes(clicked) ? clicked : undefined,
+			});
+		}
+		setContextMenu(null);
+	}, [contextMenu, resolveSelectedNodes]);
+
+	// Auto Run staging. A folder contributes every document beneath it, a
+	// markdown file contributes itself, and anything outside the agent's Auto Run
+	// folder contributes nothing. Ids are reconciled against the loader's list so
+	// the run list only ever receives documents it can resolve, and the result is
+	// emitted in that list's order so a staged run reads the same way the Auto Run
+	// panel does.
+	const autoRunDocumentList = useBatchStore((s) => s.documentList);
+	const autoRunStagedDocs = useMemo(() => {
+		const menu = contextMenu;
+		if (!menu?.node) return [];
+		const autoRunFolderPath = session.autoRunFolderPath;
+		if (!autoRunFolderPath) return [];
+
+		const docsForNode = (node: FileNode, path: string): string[] => {
+			const absolutePath = `${session.fullPath}/${path}`;
+			if (node.type === 'folder') {
+				const relativeFolder = relativeToAutoRunFolder(absolutePath, autoRunFolderPath);
+				return relativeFolder === null
+					? []
+					: collectAutoRunDocsInFolder(relativeFolder, autoRunDocumentList);
+			}
+			const docId = autoRunDocIdForFile(absolutePath, autoRunFolderPath);
+			return docId ? [docId] : [];
+		};
+
+		// Right-clicking one row inside a multi-selection stages the selection;
+		// right-clicking outside one stages just that row. Same rule the media
+		// queue action uses, so the two menus never disagree about what "this"
+		// means.
+		const selected = resolveSelectedNodes();
+		const targets =
+			selected.length > 1 && selected.some((entry) => entry.path === menu.path)
+				? selected
+				: [{ node: menu.node, path: menu.path }];
+
+		const wanted = new Set(targets.flatMap(({ node, path }) => docsForNode(node, path)));
+		if (wanted.size === 0) return [];
+		return autoRunDocumentList.filter((doc) => wanted.has(doc));
+	}, [
+		contextMenu,
+		resolveSelectedNodes,
+		session.fullPath,
+		session.autoRunFolderPath,
+		autoRunDocumentList,
+	]);
+
+	const handleStageForAutoRun = useCallback(() => {
+		const docs = autoRunStagedDocs;
+		setContextMenu(null);
+		if (docs.length === 0) return;
+		getModalActions().openBatchRunnerWithPresets(docs);
+	}, [autoRunStagedDocs]);
 
 	const handlePreviewMulti = useCallback(async () => {
 		const selectedNodes = resolveSelectedNodes();
@@ -738,6 +824,8 @@ export function useFileContextMenu({
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
+		handleGraphFolder,
+		handleGraphSelection,
 		autoRunStagedDocs,
 		handleStageForAutoRun,
 		handlePreviewFile,

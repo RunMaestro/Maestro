@@ -55,6 +55,12 @@ export interface AiTabState {
  */
 export function createWebApi() {
 	return {
+		// Create a tab in the Electron renderer, which owns canonical tab state.
+		requestNewTab: (sessionId: string, background = false) =>
+			ipcRenderer.invoke('web:requestNewTab', sessionId, background) as Promise<{
+				tabId: string;
+			} | null>,
+
 		// Broadcast user input to web clients (for keeping web interface in sync)
 		broadcastUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') =>
 			ipcRenderer.invoke('web:broadcastUserInput', sessionId, command, inputMode),

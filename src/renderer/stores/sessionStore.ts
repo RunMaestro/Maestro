@@ -14,9 +14,10 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group, LogEntry, AITab } from '../types';
+import type { Session, Group, LogEntry, AITab, FilePreviewTab, BrowserTab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
+import { hasRunnableQueueItem } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
 import {
@@ -406,6 +407,24 @@ export const selectSessionById =
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');
 
+/**
+ * Whether any agent still has queued work that would actually run.
+ *
+ * `busy` only means a turn is in flight RIGHT NOW, and the dequeue is atomic:
+ * `applyQueuedItemDispatch` flips the session to `busy` and drops the item from
+ * the queue in one update. So between two queued turns the agent is genuinely
+ * `idle` with the next item still sitting in `executionQueue`, and anything
+ * gating on busy alone reads that gap as "all work finished" - draining a
+ * five-item queue hits that gap four times.
+ *
+ * Paused items deliberately do NOT count as work: a held item keeps its position
+ * but is invisible to every dispatch path, so it can never start on its own and
+ * must not suppress an idle signal forever. That rule lives in
+ * `hasRunnableQueueItem`; do not re-derive `!item.paused` at a call site.
+ */
+export const selectHasAnyRunnableQueuedWork = (state: SessionStore): boolean =>
+	state.sessions.some((s) => hasRunnableQueueItem(s.executionQueue ?? []));
+
 // ============================================================================
 // Non-React Access
 // ============================================================================
@@ -446,6 +465,56 @@ export function updateAiTab(
 			return {
 				...s,
 				aiTabs: s.aiTabs.map((t) => (t.id === tabId ? updater(t) : t)),
+			};
+		})
+	);
+}
+
+/**
+ * Update a specific file preview tab within a session using a mapper function.
+ * The file-tab counterpart to {@link updateAiTab}.
+ *
+ * Operates directly on the store outside of React - safe to call from callbacks.
+ *
+ * @example
+ * updateFileTab(sessionId, tabId, (tab) => ({ ...tab, scrollTop }));
+ */
+export function updateFileTab(
+	sessionId: string,
+	tabId: string,
+	updater: (tab: FilePreviewTab) => FilePreviewTab
+): void {
+	useSessionStore.getState().setSessions((prev: Session[]) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				filePreviewTabs: s.filePreviewTabs.map((t) => (t.id === tabId ? updater(t) : t)),
+			};
+		})
+	);
+}
+
+/**
+ * Update a specific browser tab within a session using a mapper function.
+ * The browser-tab counterpart to {@link updateAiTab}.
+ *
+ * Operates directly on the store outside of React - safe to call from callbacks.
+ *
+ * @example
+ * updateBrowserTab(sessionId, tabId, (tab) => ({ ...tab, isLoading: false }));
+ */
+export function updateBrowserTab(
+	sessionId: string,
+	tabId: string,
+	updater: (tab: BrowserTab) => BrowserTab
+): void {
+	useSessionStore.getState().setSessions((prev: Session[]) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				browserTabs: (s.browserTabs || []).map((t) => (t.id === tabId ? updater(t) : t)),
 			};
 		})
 	);

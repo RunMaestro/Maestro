@@ -1,7 +1,7 @@
 import React, { memo, useRef, useState } from 'react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { Modal } from './ui/Modal';
+import { Modal, MODAL_BUTTON_BASE_CLASS, MODAL_BUTTON_SECONDARY_CLASS } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 
@@ -68,7 +68,7 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 							type="button"
 							onClick={onAutoName}
 							title={`Auto-rename (${formatMetaKey()}+Shift+Enter)`}
-							className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1 mr-auto"
+							className={`${MODAL_BUTTON_SECONDARY_CLASS} mr-auto`}
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.accent,
@@ -80,7 +80,7 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 					<button
 						type="button"
 						onClick={onClose}
-						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+						className={MODAL_BUTTON_SECONDARY_CLASS}
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
@@ -91,7 +91,7 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 					<button
 						type="button"
 						onClick={handleRename}
-						className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+						className={MODAL_BUTTON_BASE_CLASS}
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,

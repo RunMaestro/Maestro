@@ -34,6 +34,7 @@ import {
 	registerDocumentGraphHandlers,
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
+	registerParquetHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerLeaderboardHandlers,
@@ -436,7 +437,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions
 	setGetSessionsCallback(() =>
-		mapSessionsForMentions(deps.sessionsStore.get('sessions', []), getSshRemoteById)
+		mapSessionsForMentions(
+			deps.sessionsStore.get('sessions', []),
+			getSshRemoteById,
+			deps.getProcessManager()
+		)
 	);
 
 	// Set up callback for group chat router to lookup custom env vars for agents
@@ -462,6 +467,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register filesystem handlers (extracted to handlers/filesystem.ts)
 	registerFilesystemHandlers();
+
+	// Parquet preview handlers. Registered HERE, not only in registerAllHandlers()
+	// - that function is dead code, so a registration that lives solely there
+	// never runs and every Parquet preview fails with no handler.
+	registerParquetHandlers();
 
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts

@@ -31,9 +31,15 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../types';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
-import { getLevelIndex } from '../constants/keyboardMastery';
+import { FIXED_SHORTCUTS } from '../constants/shortcuts';
+import {
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+	getLevelIndex,
+} from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
+import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
@@ -92,6 +98,7 @@ export {
 } from './settingsFileExplorerSlice';
 import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
 import { sanitizeTextareaHeights } from '../utils/textareaSizing';
+import { normalizeUnlockedMilestone } from '../../shared/delegation';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -152,13 +159,13 @@ function getCommitCommandPrompt(): string {
 // Shared Type Aliases
 // ============================================================================
 
-export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'hierarchical' | 'force';
-const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
-	'mindmap',
-	'radial',
-	'hierarchical',
-	'force',
-];
+/**
+ * Alias kept for the existing call sites. The layout names themselves live in
+ * `DocumentGraph/layoutTypes`, which is also what the graph's own toolbar and
+ * `L` cycle read - a private copy here silently rejected any layout added to
+ * the graph but not mirrored into this file.
+ */
+export type DocumentGraphLayoutType = MindMapLayoutType;
 
 const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 	autoGroomContexts: true,
@@ -197,11 +204,6 @@ const DEFAULT_KEYBOARD_MASTERY_STATS: KeyboardMasteryStats = {
 	lastLevelUpTimestamp: 0,
 	lastAcknowledgedLevel: 0,
 };
-
-const TOTAL_SHORTCUTS_COUNT =
-	Object.keys(DEFAULT_SHORTCUTS).length +
-	Object.keys(TAB_SHORTCUTS).length +
-	Object.keys(FIXED_SHORTCUTS).length;
 
 const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	wizardStartCount: 0,
@@ -344,6 +346,13 @@ export interface SettingsStoreState
 	customShellPath: string;
 	shellArgs: string;
 	shellEnvVars: Record<string, string>;
+	/**
+	 * Variables the user switched OFF in the environment editor. Same shape as
+	 * `shellEnvVars`, but nothing reads it except the editor: parking a variable
+	 * here is what keeps it out of every spawned process while preserving its
+	 * value for later. Never merge this into a spawn env.
+	 */
+	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	mediaPlaybackRate: number;
@@ -386,6 +395,15 @@ export interface SettingsStoreState
 	logViewerSelectedLevels: string[];
 	customAICommands: CustomAICommand[];
 	totalActiveTimeMs: number;
+	/**
+	 * Highest delegation milestone ever unlocked (0 | 25 | 50 | 75 | 100).
+	 *
+	 * A high-water mark, not the live score: the delegation percentage is a
+	 * ratio over retained history and can fall when you do a stretch of
+	 * interactive work, and a bar that un-fills would read as losing something
+	 * you earned. The live number rides a separate marker on the same track.
+	 */
+	delegationMilestone: number;
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
@@ -397,6 +415,7 @@ export interface SettingsStoreState
 	onboardingStats: OnboardingStats;
 	leaderboardRegistration: LeaderboardRegistration | null;
 	persistentWebLink: boolean;
+	webInterfaceAutoStart: boolean;
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
 	contextManagementSettings: ContextManagementSettings;
@@ -407,12 +426,14 @@ export interface SettingsStoreState
 	showBrowserTabsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
 	documentGraphShowExternalLinks: boolean;
+	documentGraphConfirmClose: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
 	documentGraphLayoutType: DocumentGraphLayoutType;
 	statsCollectionEnabled: boolean;
 	defaultStatsTimeRange: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 	preventSleepEnabled: boolean;
+	preventDisplaySleepEnabled: boolean;
 	disableGpuAcceleration: boolean;
 	disableConfetti: boolean;
 	suppressWindowsWarning: boolean;
@@ -464,6 +485,7 @@ export interface SettingsStoreActions
 	setCustomShellPath: (value: string) => void;
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
@@ -510,6 +532,7 @@ export interface SettingsStoreActions
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
 	setPersistentWebLink: (value: boolean) => Promise<void>;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	setWebInterfaceCustomPort: (value: number) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
@@ -518,6 +541,7 @@ export interface SettingsStoreActions
 	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
 	setDocumentGraphLayoutType: (value: DocumentGraphLayoutType) => void;
@@ -556,10 +580,14 @@ export interface SettingsStoreActions
 	setLogLevel: (value: string) => Promise<void>;
 	setMaxLogBuffer: (value: number) => Promise<void>;
 	setPreventSleepEnabled: (value: boolean) => Promise<void>;
+	setPreventDisplaySleepEnabled: (value: boolean) => Promise<void>;
 
 	// Standalone active time
 	setTotalActiveTimeMs: (value: number) => void;
 	addTotalActiveTimeMs: (delta: number) => void;
+
+	// Delegation milestone high-water mark
+	unlockDelegationMilestone: (milestone: number) => void;
 
 	// Usage stats
 	setUsageStats: (value: MaestroUsageStats) => void;
@@ -696,6 +724,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
+		shellEnvVarsDisabled: {},
 		ghPath: '',
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -733,6 +762,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
+		delegationMilestone: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
@@ -744,6 +774,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
 		persistentWebLink: false,
+		webInterfaceAutoStart: false,
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
@@ -754,12 +785,14 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		showBrowserTabsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
 		documentGraphShowExternalLinks: false,
+		documentGraphConfirmClose: true,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
 		documentGraphLayoutType: 'hierarchical',
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
+		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
 		suppressWindowsWarning: false,
@@ -846,6 +879,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setShellEnvVars: (value) => {
 			set({ shellEnvVars: value });
 			window.maestro.settings.set('shellEnvVars', value);
+		},
+
+		setShellEnvVarsDisabled: (value) => {
+			set({ shellEnvVarsDisabled: value });
+			window.maestro.settings.set('shellEnvVarsDisabled', value);
 		},
 
 		setGhPath: (value) => {
@@ -1168,6 +1206,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			}
 		},
 
+		setWebInterfaceAutoStart: (value) => {
+			set({ webInterfaceAutoStart: value });
+			window.maestro.settings.set('webInterfaceAutoStart', value);
+		},
+
 		setWebInterfaceUseCustomPort: (value) => {
 			set({ webInterfaceUseCustomPort: value });
 			window.maestro.settings.set('webInterfaceUseCustomPort', value);
@@ -1212,6 +1255,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('documentGraphShowExternalLinks', value);
 		},
 
+		setDocumentGraphConfirmClose: (value) => {
+			set({ documentGraphConfirmClose: value });
+			window.maestro.settings.set('documentGraphConfirmClose', value);
+		},
+
 		setDocumentGraphMaxNodes: (value) => {
 			const clamped = Math.max(50, Math.min(1000, value));
 			set({ documentGraphMaxNodes: clamped });
@@ -1219,13 +1267,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		},
 
 		setDocumentGraphPreviewCharLimit: (value) => {
-			const clamped = Math.max(50, Math.min(500, value));
+			// 0 is a real value, not a floor to clamp away: it means "previews off",
+			// which draws each node as a filename pill.
+			const clamped = Math.max(0, Math.min(500, value));
 			set({ documentGraphPreviewCharLimit: clamped });
 			window.maestro.settings.set('documentGraphPreviewCharLimit', clamped);
 		},
 
 		setDocumentGraphLayoutType: (value) => {
-			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'hierarchical';
+			const layoutType = isMindMapLayoutType(value) ? value : 'hierarchical';
 			set({ documentGraphLayoutType: layoutType });
 			window.maestro.settings.set('documentGraphLayoutType', layoutType);
 		},
@@ -1417,6 +1467,19 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			}
 		},
 
+		setPreventDisplaySleepEnabled: async (value) => {
+			const prev = get().preventDisplaySleepEnabled;
+			set({ preventDisplaySleepEnabled: value });
+			try {
+				await window.maestro.settings.set('preventDisplaySleepEnabled', value);
+				await window.maestro.power.setKeepDisplayAwake(value);
+			} catch (error) {
+				// Rollback on failure so UI stays in sync with actual power state
+				set({ preventDisplaySleepEnabled: prev });
+				throw error; // Let Sentry capture
+			}
+		},
+
 		// ============================================================================
 		// Standalone Active Time Actions
 		// ============================================================================
@@ -1431,6 +1494,23 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			const updated = prev + delta;
 			set({ totalActiveTimeMs: updated });
 			window.maestro.settings.set('totalActiveTimeMs', updated);
+		},
+
+		// ============================================================================
+		// Delegation Milestone Actions
+		// ============================================================================
+
+		// Raise the delegation high-water mark. Monotonic on purpose: the caller
+		// passes whatever milestone the CURRENT score has reached, and a score
+		// that has since fallen must not claw back a mark already unlocked. The
+		// value is normalized to a real milestone so nothing can fill the bar to
+		// a mark the track does not have.
+		unlockDelegationMilestone: (milestone) => {
+			const normalized = normalizeUnlockedMilestone(milestone);
+			const prev = get().delegationMilestone;
+			if (normalized <= prev) return;
+			set({ delegationMilestone: normalized });
+			window.maestro.settings.set('delegationMilestone', normalized);
 		},
 
 		// ============================================================================
@@ -1778,8 +1858,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// Add new shortcut to the list
 			const updatedShortcuts = [...currentStats.usedShortcuts, shortcutId];
 
-			// Calculate new percentage and level
-			const percentage = (updatedShortcuts.length / TOTAL_SHORTCUTS_COUNT) * 100;
+			// Calculate new percentage and level over the BOUND shortcuts only - an
+			// unbound one can never be fired, so counting it would make the top
+			// level unreachable. Read from the live maps so a binding the user
+			// cleared in Settings leaves the denominator too.
+			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const percentage =
+				bound.length > 0
+					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
+					: 0;
 			const newLevelIndex = getLevelIndex(percentage);
 
 			// Check if user leveled up
@@ -1879,6 +1966,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['shellEnvVars'] !== undefined)
 			patch.shellEnvVars = allSettings['shellEnvVars'] as Record<string, string>;
+
+		if (allSettings['shellEnvVarsDisabled'] !== undefined)
+			patch.shellEnvVarsDisabled = allSettings['shellEnvVarsDisabled'] as Record<string, string>;
 
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
@@ -2078,6 +2168,10 @@ export async function loadAllSettings(): Promise<void> {
 			}
 		}
 
+		if (allSettings['delegationMilestone'] !== undefined) {
+			patch.delegationMilestone = normalizeUnlockedMilestone(allSettings['delegationMilestone']);
+		}
+
 		if (allSettings['autoRunStats'] !== undefined) {
 			// NOTE: a `concurrentAutoRunTimeMigrationApplied` migration used to add
 			// 3 hours to `cumulativeTimeMs` here. It was removed because it grew the
@@ -2203,8 +2297,8 @@ export async function loadAllSettings(): Promise<void> {
 		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
 		// what was queued should not start a podcast at launch, and it should not
 		// put media controls in the Left Bar header either, since the user has not
-		// played anything yet. The command palette's "Show Floating Media Player"
-		// is what reaches a dormant queue, and the first thing the user opens or
+		// played anything yet. The command palette's "Open Media Player" is what
+		// reaches a dormant queue, and the first thing the user opens or
 		// queues wakes it. Recently played is NOT restored - it is per-session by
 		// design.
 		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
@@ -2241,6 +2335,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['persistentWebLink'] !== undefined)
 			patch.persistentWebLink = allSettings['persistentWebLink'] as boolean;
 
+		if (typeof allSettings['webInterfaceAutoStart'] === 'boolean')
+			patch.webInterfaceAutoStart = allSettings['webInterfaceAutoStart'];
+
 		if (allSettings['webInterfaceUseCustomPort'] !== undefined)
 			patch.webInterfaceUseCustomPort = allSettings['webInterfaceUseCustomPort'] as boolean;
 
@@ -2272,6 +2369,9 @@ export async function loadAllSettings(): Promise<void> {
 				'documentGraphShowExternalLinks'
 			] as boolean;
 
+		if (allSettings['documentGraphConfirmClose'] !== undefined)
+			patch.documentGraphConfirmClose = allSettings['documentGraphConfirmClose'] as boolean;
+
 		if (allSettings['documentGraphMaxNodes'] !== undefined) {
 			const maxNodes = allSettings['documentGraphMaxNodes'] as number;
 			if (typeof maxNodes === 'number' && maxNodes >= 50 && maxNodes <= 1000) {
@@ -2281,15 +2381,18 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['documentGraphPreviewCharLimit'] !== undefined) {
 			const charLimit = allSettings['documentGraphPreviewCharLimit'] as number;
-			if (typeof charLimit === 'number' && charLimit >= 50 && charLimit <= 500) {
+			// 0 means "previews off" (filename pills), so the floor is 0, not 50 -
+			// a stricter floor here would silently discard the user's saved choice
+			// on every launch and snap the graph back to full cards.
+			if (typeof charLimit === 'number' && charLimit >= 0 && charLimit <= 500) {
 				patch.documentGraphPreviewCharLimit = charLimit;
 			}
 		}
 
 		if (allSettings['documentGraphLayoutType'] !== undefined) {
 			const lt = allSettings['documentGraphLayoutType'] as string;
-			if (DOCUMENT_GRAPH_LAYOUT_TYPES.includes(lt as DocumentGraphLayoutType)) {
-				patch.documentGraphLayoutType = lt as DocumentGraphLayoutType;
+			if (isMindMapLayoutType(lt)) {
+				patch.documentGraphLayoutType = lt;
 			}
 		}
 
@@ -2312,6 +2415,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['preventSleepEnabled'] !== undefined)
 			patch.preventSleepEnabled = allSettings['preventSleepEnabled'] as boolean;
+
+		if (allSettings['preventDisplaySleepEnabled'] !== undefined)
+			patch.preventDisplaySleepEnabled = allSettings['preventDisplaySleepEnabled'] as boolean;
 
 		if (allSettings['disableGpuAcceleration'] !== undefined)
 			patch.disableGpuAcceleration = allSettings['disableGpuAcceleration'] as boolean;
@@ -2560,9 +2666,21 @@ export function getSettingsActions() {
 		setCustomShellPath: state.setCustomShellPath,
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,
+		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setTerminalFontFamily: state.setTerminalFontFamily,
+		setChatFontFamily: state.setChatFontFamily,
+		setFilePreviewFontFamily: state.setFilePreviewFontFamily,
+		setFileEditorFontFamily: state.setFileEditorFontFamily,
+		setSurfaceFontFamily: state.setSurfaceFontFamily,
+		setSurfaceFontSize: state.setSurfaceFontSize,
+		setFontZoom: state.setFontZoom,
+		resetTypography: state.resetTypography,
+		setTypographyPromptSeen: state.setTypographyPromptSeen,
+		setThemePromptSeen: state.setThemePromptSeen,
+		setAgentPowersPromptSeen: state.setAgentPowersPromptSeen,
+		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,
 		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,
@@ -2610,6 +2728,7 @@ export function getSettingsActions() {
 		setCustomAICommands: state.setCustomAICommands,
 		setTotalActiveTimeMs: state.setTotalActiveTimeMs,
 		addTotalActiveTimeMs: state.addTotalActiveTimeMs,
+		unlockDelegationMilestone: state.unlockDelegationMilestone,
 		setAutoRunStats: state.setAutoRunStats,
 		recordAutoRunComplete: state.recordAutoRunComplete,
 		updateAutoRunProgress: state.updateAutoRunProgress,
@@ -2634,6 +2753,7 @@ export function getSettingsActions() {
 		getOnboardingAnalytics: state.getOnboardingAnalytics,
 		setLeaderboardRegistration: state.setLeaderboardRegistration,
 		setPersistentWebLink: state.setPersistentWebLink,
+		setWebInterfaceAutoStart: state.setWebInterfaceAutoStart,
 		setWebInterfaceUseCustomPort: state.setWebInterfaceUseCustomPort,
 		setWebInterfaceCustomPort: state.setWebInterfaceCustomPort,
 		setContextManagementSettings: state.setContextManagementSettings,
@@ -2643,13 +2763,16 @@ export function getSettingsActions() {
 		acknowledgeKeyboardMasteryLevel: state.acknowledgeKeyboardMasteryLevel,
 		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
 		setColorBlindMode: state.setColorBlindMode,
+		setThemeGloss: state.setThemeGloss,
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
+		setDocumentGraphConfirmClose: state.setDocumentGraphConfirmClose,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,
 		setDocumentGraphLayoutType: state.setDocumentGraphLayoutType,
 		setStatsCollectionEnabled: state.setStatsCollectionEnabled,
 		setDefaultStatsTimeRange: state.setDefaultStatsTimeRange,
 		setPreventSleepEnabled: state.setPreventSleepEnabled,
+		setPreventDisplaySleepEnabled: state.setPreventDisplaySleepEnabled,
 		setDisableGpuAcceleration: state.setDisableGpuAcceleration,
 		setDisableConfetti: state.setDisableConfetti,
 		setLocalIgnorePatterns: state.setLocalIgnorePatterns,

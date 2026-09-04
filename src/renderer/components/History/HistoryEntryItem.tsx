@@ -8,15 +8,13 @@ import { formatTimestamp } from '../../../shared/formatters';
 import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
 
-const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
-
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;
 	index: number;
 	isSelected: boolean;
 	theme: Theme;
 	onOpenDetailModal: (entry: HistoryEntry, index: number) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onOpenAboutModal?: () => void;
 	/** When true, displays the agentName field prominently in the entry header (used in unified history view) */
 	showAgentName?: boolean;
@@ -81,9 +79,11 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath);
+								// Hand the label on this pill to the restore: it IS the tab's name,
+								// and nothing downstream can recover it once the tab is closed.
+								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath, entry.sessionName);
 							}}
-							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
+							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{
 								backgroundColor: theme.colors.accent + '20',
 								color: theme.colors.accent,
@@ -106,7 +106,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					 */}
 					{!entry.agentSessionId && entry.sessionName && (
 						<span
-							className="px-2 py-0.5 rounded-full text-[10px] font-bold min-w-0 flex-shrink truncate"
+							className="px-2 py-0.5 rounded-full text-2xs font-bold min-w-0 flex-shrink truncate"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textDim,
@@ -158,7 +158,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 
 					{/* Type Pill */}
 					<span
-						className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase flex-shrink-0"
+						className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase flex-shrink-0"
 						style={{
 							backgroundColor: colors.bg,
 							color: colors.text,
@@ -171,8 +171,8 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 				</div>
 
 				{/* Timestamp */}
-				<span className="text-[10px] flex-shrink-0" style={{ color: theme.colors.textDim }}>
-					{formatTime(entry.timestamp)}
+				<span className="text-2xs flex-shrink-0" style={{ color: theme.colors.textDim }}>
+					{formatTimestamp(entry.timestamp, 'smart')}
 				</span>
 			</div>
 
@@ -192,7 +192,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 			{/* CUE metadata subtitle */}
 			{entry.type === 'CUE' && entry.cueEventType && (
 				<p
-					className="text-[10px] mt-1"
+					className="text-2xs mt-1"
 					style={{ color: theme.colors.textDim }}
 					title={entry.cueEventType}
 				>
@@ -214,7 +214,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					{entry.elapsedTimeMs !== undefined && (
 						<div className="flex items-center gap-1">
 							<Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-							<span className="text-[10px] font-mono" style={{ color: theme.colors.textDim }}>
+							<span className="text-2xs font-mono" style={{ color: theme.colors.textDim }}>
 								{formatElapsedTime(entry.elapsedTimeMs)}
 							</span>
 						</div>
@@ -222,7 +222,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					{/* Cost */}
 					{entry.usageStats && entry.usageStats.totalCostUsd > 0 && (
 						<span
-							className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full"
+							className="text-2xs font-mono font-bold px-1.5 py-0.5 rounded-full"
 							style={{
 								backgroundColor: theme.colors.success + '15',
 								color: theme.colors.success,
@@ -235,7 +235,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					{/* Token Source Pill (Claude-only): TUI vs API for this turn */}
 					{tokenPill && (
 						<span
-							className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full"
+							className="text-2xs font-mono font-bold px-1.5 py-0.5 rounded-full"
 							style={{
 								backgroundColor: tokenPillColor + '20',
 								color: tokenPillColor,
@@ -253,7 +253,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 								e.stopPropagation();
 								onOpenAboutModal();
 							}}
-							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors hover:opacity-80 ml-auto"
+							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 ml-auto"
 							style={{
 								backgroundColor: theme.colors.warning + '20',
 								color: theme.colors.warning,
@@ -268,7 +268,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 					{/* Remote hostname pill - shown for entries from other hosts */}
 					{entry.hostname && (
 						<span
-							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${entry.achievementAction ? '' : 'ml-auto'}`}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-mono font-bold ${entry.achievementAction ? '' : 'ml-auto'}`}
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textDim,

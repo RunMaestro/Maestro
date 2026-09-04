@@ -8,7 +8,7 @@
  */
 
 import type { StateCreator } from 'zustand';
-import { shortcutKeysEqual } from '../../shared/shortcutKeys';
+import { shortcutKeysEqual, findReservedShortcutCombo } from '../../shared/shortcutKeys';
 import type { Shortcut } from '../types';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import type { SettingsStore } from './settingsStore';
@@ -127,26 +127,52 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 		],
 		toKeys: ['Alt', 'Meta', 'Shift', 'c'],
 	},
-	// jumpToBottom moved off Opt+J: the J key already carries Cmd+J (AI/Shell
-	// mode), Cmd+Shift+J (tile a new terminal) and Opt+Cmd+J (jump to nearest
-	// terminal), and a bare Opt+letter types a character in the composer. It now
-	// sits on Opt+Cmd+Down, the mirror of focusActiveTab's Opt+Cmd+Up.
-	// Cmd+Shift+J is the ORIGINAL default this action shipped with (b37423abf).
-	// Only Opt+J was covered here, so any install predating the Opt+J era kept
-	// Cmd+Shift+J forever - and tileTerminalBelow later claimed that chord as a
-	// new default, putting two live actions on one key. Covering both eras moves
-	// those installs onto Opt+Cmd+Down with everyone else.
+	// jumpToBottom is back on Cmd+Shift+J, the chord it ORIGINALLY shipped with
+	// (b37423abf). It briefly went to Opt+J, then to Opt+Cmd+Down, both times to
+	// get out of the way of a tiling default that has since moved to Ctrl+Cmd.
+	// Both interim eras are listed, plus Opt+J for the installs that never left
+	// it: a user who skipped a build carries whichever one they last received.
+	// Cmd+Shift+J itself is NOT listed - it is the destination, and remapping a
+	// chord onto itself would set needsMigration on every load.
 	jumpToBottom: {
 		fromKeys: [
 			['Alt', 'j'],
-			['Meta', 'Shift', 'j'],
+			['Alt', 'Meta', 'ArrowDown'],
 		],
-		toKeys: ['Alt', 'Meta', 'ArrowDown'],
+		toKeys: ['Meta', 'Shift', 'j'],
 	},
-	// nextUnreadTab moved off Opt+Cmd+Down to hand that combo to jumpToBottom.
+	// nextUnreadTab moved off Opt+Cmd+Down when jumpToBottom briefly held that
+	// combo. It stays on Cmd+Shift+Down now that jumpToBottom has left again -
+	// moving it back would be a second forced remap on users who have already
+	// relearned it, to reclaim a chord nothing needs.
 	nextUnreadTab: {
 		fromKeys: [['Alt', 'Meta', 'ArrowDown']],
 		toKeys: ['Meta', 'Shift', 'ArrowDown'],
+	},
+	// The tiling family moved from unbound (and, before that, Cmd+Shift+J for the
+	// terminal one) onto Ctrl+Cmd + the same letter its plain "new tab" chord
+	// uses. Both eras are listed, and the UNBOUND one is the important half: the
+	// merge below preserves a saved `keys` whenever it is present, and `[]` is
+	// present, so anyone who has opened Settings -> Shortcuts since these shipped
+	// has an empty array persisted and would never see the new default. Remapping
+	// from `[]` is safe here because nothing can WRITE an empty binding - the
+	// recorder rejects modifier-only presses and there is no clear-binding
+	// control, so a persisted `[]` can only be an inherited unbound default.
+	tileTerminalBelow: {
+		fromKeys: [[], ['Meta', 'Shift', 'j']],
+		toKeys: ['Control', 'Meta', 'j'],
+	},
+	tileAiBelow: {
+		fromKeys: [[]],
+		toKeys: ['Control', 'Meta', 't'],
+	},
+	tileBrowserBelow: {
+		fromKeys: [[]],
+		toKeys: ['Control', 'Meta', 'b'],
+	},
+	tileFileBelow: {
+		fromKeys: [[]],
+		toKeys: ['Control', 'Meta', 'f'],
 	},
 };
 
@@ -190,6 +216,24 @@ function migrateShortcuts(
 			migrated[id] = { ...current, keys: remap.toKeys };
 			needsMigration = true;
 		}
+	}
+
+	// Drop any binding on a chord the OS owns inside a text field (see
+	// RESERVED_SHORTCUT_COMBOS). The recorder refuses these now, but a chord
+	// bound before that guard existed is still on disk, and it shadows the
+	// native behavior every time - the user's select-to-end silently jumps
+	// agents instead. Fall back to the bundled default so the action keeps
+	// working rather than going unbound without explanation.
+	for (const [id, shortcut] of Object.entries(migrated)) {
+		if (!findReservedShortcutCombo(shortcut.keys)) continue;
+		const fallback = defaults[id]?.keys;
+		// Only take a default that is itself free, or the next load would strip
+		// it again and re-persist forever through the settings file watcher.
+		migrated[id] = {
+			...shortcut,
+			keys: fallback && !findReservedShortcutCombo(fallback) ? fallback : [],
+		};
+		needsMigration = true;
 	}
 
 	// Merge: use default labels (in case they changed) but preserve user's custom keys

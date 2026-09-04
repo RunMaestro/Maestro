@@ -20,7 +20,7 @@ import { GroupChatHeader } from './GroupChatHeader';
 import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
 import { OutputSearchBar } from './TerminalOutput/components/OutputSearchBar';
-import { groupChatOutputSearchKey } from '../utils/outputSearch';
+import { groupChatOutputSearchKey, groupChatSearchContentRevision } from '../utils/outputSearch';
 import { useOutputSearchSlot } from '../hooks/ui/useOutputSearchSlot';
 import { useOutputSearchLayer } from '../hooks/ui/useOutputSearchLayer';
 import { useOutputSearchMatching } from '../hooks/ui/useOutputSearchMatching';
@@ -153,7 +153,11 @@ export function GroupChatPanel({
 			outputSearchOpen,
 			outputSearchRegex,
 			debouncedSearchQuery,
-			contentRevision: `${messages.length}:${debouncedSearchQuery}:${outputSearchOpen}`,
+			contentRevision: groupChatSearchContentRevision(
+				messages,
+				debouncedSearchQuery,
+				outputSearchOpen
+			),
 		});
 
 	// Leaving this group chat (unmount or switch to another id) must clear the

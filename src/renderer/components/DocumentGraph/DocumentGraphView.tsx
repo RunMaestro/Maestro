@@ -18,6 +18,7 @@ import {
 	X,
 	Network,
 	ExternalLink,
+	Unlink,
 	RefreshCw,
 	Search,
 	ChevronDown,
@@ -30,12 +31,24 @@ import {
 	Type,
 	ChevronLeft,
 	ChevronRight,
+	ZoomIn,
+	Move,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { usePersistedPanelWidth } from '../../hooks/ui/usePersistedPanelWidth';
+import { useResizablePanel } from '../../hooks/ui/useResizablePanel';
+import { viewportModalSize } from '../../utils/modalSizing';
+import {
+	previewMaxWidthForContainer,
+	PREVIEW_DEFAULT_WIDTH,
+	PREVIEW_MIN_WIDTH,
+	PREVIEW_MAX_WIDTH,
+	PREVIEW_WIDTH_STORAGE_KEY,
+} from './previewPaneSizing';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -60,17 +73,45 @@ import {
 import {
 	type MindMapLayoutType,
 	LAYOUT_LABELS,
+	MIND_MAP_LAYOUT_TYPES,
+	nextMindMapLayout,
 	SPACING_SCALE_DEFAULT,
 	SPACING_SCALE_MIN,
 	SPACING_SCALE_MAX,
 	SPACING_SCALE_STEP,
 } from './mindMapLayouts';
+import {
+	formatNeighborDepth,
+	NEIGHBOR_DEPTH_ALL,
+	NEIGHBOR_DEPTH_MAX,
+	nextNeighborDepth,
+} from './neighborDepth';
+import {
+	clampPreviewCharLimit,
+	formatPreviewCharLimit,
+	isPreviewOff,
+	nextPreviewCharLimit,
+	PREVIEW_CHAR_LIMIT_MAX,
+	PREVIEW_CHAR_LIMIT_MIN,
+	PREVIEW_CHAR_LIMIT_STEP,
+} from './previewCharLimit';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
+import {
+	DEFAULT_SCROLL_MODE,
+	SCROLL_MODE_LABELS,
+	SCROLL_MODE_STORAGE_KEY,
+	nextScrollMode,
+	scrollModeFromPans,
+	scrollModePans,
+	type GraphScrollMode,
+} from './scrollMode';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
-import type { FileNode } from '../../types/fileTree';
+import { buildFileTreeFromPaths } from '../../utils/fileTree';
+import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
 
@@ -78,68 +119,16 @@ import { useSettingsStore } from '../../stores/settingsStore';
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
 
 /**
- * Build a file tree structure from graph node file paths.
- * This enables wiki-link resolution in the preview panel.
+ * Width of the toolbar's search box, in px.
+ *
+ * Wide enough for the full "Search documents..." placeholder at `text-sm` plus
+ * both icon gutters. It was 180, which clipped the hint mid-word.
  */
-function buildFileTreeFromPaths(filePaths: string[]): FileNode[] {
-	const root: FileNode[] = [];
-	const folderMap = new Map<string, FileNode>();
-
-	for (const filePath of filePaths) {
-		if (!filePath) continue;
-
-		const parts = filePath.split('/');
-		let currentLevel = root;
-		let currentPath = '';
-
-		for (let i = 0; i < parts.length; i++) {
-			const part = parts[i];
-			const isLastPart = i === parts.length - 1;
-			currentPath = currentPath ? `${currentPath}/${part}` : part;
-
-			if (isLastPart) {
-				// It's a file
-				currentLevel.push({
-					name: part,
-					type: 'file',
-					fullPath: filePath,
-				});
-			} else {
-				// It's a folder - check if it already exists
-				let folder = folderMap.get(currentPath);
-				if (!folder) {
-					folder = {
-						name: part,
-						type: 'folder',
-						isFolder: true,
-						children: [],
-					};
-					folderMap.set(currentPath, folder);
-					currentLevel.push(folder);
-				}
-				currentLevel = folder.children!;
-			}
-		}
-	}
-
-	return root;
-}
+export const SEARCH_BOX_WIDTH = 230;
 /** Default maximum number of nodes to load initially */
 const DEFAULT_MAX_NODES = 200;
 /** Number of additional nodes to load when clicking "Load more" */
 const LOAD_MORE_INCREMENT = 25;
-
-/**
- * Count markdown tasks (checkboxes) in content
- * Reuses pattern from FilePreview.tsx
- */
-const countMarkdownTasks = (content: string): { completed: number; total: number } => {
-	const openMatches = content.match(/^[\s]*[-*]\s*\[\s*\]/gm);
-	const closedMatches = content.match(/^[\s]*[-*]\s*\[[xX]\]/gm);
-	const open = openMatches?.length || 0;
-	const closed = closedMatches?.length || 0;
-	return { completed: closed, total: open + closed };
-};
 
 /**
  * Format date for display in footer
@@ -170,8 +159,26 @@ export interface DocumentGraphViewProps {
 	onExternalLinkOpen?: (url: string) => void;
 	/** Required file path (relative to rootPath) to focus on - the center of the mind map */
 	focusFilePath: string;
+	/**
+	 * Explicit set of files to graph (relative to rootPath). Switches the view
+	 * from FOCUS mode ("what does this document reach?") to SCOPE mode ("how do
+	 * these documents relate, and which of them relate to nothing?").
+	 */
+	scopeFiles?: string[];
+	/** Directory whose markdown files form the scope. Ignored when `scopeFiles` is set. */
+	scopeDirectory?: string;
 	/** Callback when focus file is consumed (cleared after focusing) */
 	onFocusFileConsumed?: () => void;
+	/**
+	 * Ask before closing. Defaults to true.
+	 *
+	 * The prompt exists because a graph is usually WORK: a layout picked, a
+	 * depth widened, nodes dragged into place, all of it thrown away by one
+	 * stray Escape. It is worth nothing when closing is cheap - a graph opened
+	 * from another surface goes straight back to it, and a user who has turned
+	 * the prompt off in Settings has said the trade is not worth it to them.
+	 */
+	confirmOnClose?: boolean;
 	/** Default setting for showing external links (from settings) */
 	defaultShowExternalLinks?: boolean;
 	/** Callback to persist external links toggle changes */
@@ -205,7 +212,10 @@ export function DocumentGraphView({
 	onDocumentOpen,
 	onExternalLinkOpen,
 	focusFilePath,
+	scopeFiles,
+	scopeDirectory,
 	onFocusFileConsumed: _onFocusFileConsumed,
+	confirmOnClose = true,
 	defaultShowExternalLinks = false,
 	onExternalLinksChange,
 	defaultMaxNodes = DEFAULT_MAX_NODES,
@@ -226,15 +236,53 @@ export function DocumentGraphView({
 	const [error, setError] = useState<string | null>(null);
 	const [progress, setProgress] = useState<ProgressData | null>(null);
 
+	/**
+	 * Files in the scope that connect to nothing else in it. Reported by the
+	 * builder rather than re-derived here: it owns the edge list, and a second
+	 * opinion about what counts as connected is a second thing to get wrong.
+	 */
+	const [orphanFiles, setOrphanFiles] = useState<string[]>([]);
+
 	// Settings state
 	const [includeExternalLinks, setIncludeExternalLinks] = useState(defaultShowExternalLinks);
+	// Orphans start visible: the whole reason to graph a hand-picked scope is to
+	// see which of those documents stand alone, so hiding them by default would
+	// hide the answer.
+	const [showOrphans, setShowOrphans] = useState(true);
 	const [neighborDepth, setNeighborDepth] = useState(defaultNeighborDepth);
 	const [showDepthSlider, setShowDepthSlider] = useState(false);
 	const [previewCharLimit, setPreviewCharLimit] = useState(defaultPreviewCharLimit);
 	const [showPreviewSlider, setShowPreviewSlider] = useState(false);
+	// The toolbar pill reads "active" whenever previews are not at the shipped
+	// 100-character default - Off is as deliberate a choice as 500 is.
+	const previewNonDefault = previewCharLimit !== 100;
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
+	// Bumped by `F` to re-frame the whole graph. A token rather than a callback
+	// because the transform lives inside the canvas component.
+	const [fitToken, setFitToken] = useState(0);
+	// What the scroll wheel does. Persisted because it is a working posture
+	// rather than a per-visit choice: a user reading a wide graph in Pan mode
+	// should not have to switch back every time the graph is reopened.
+	const { value: scrollPans, setValue: setScrollPans } = usePersistedToggle(
+		SCROLL_MODE_STORAGE_KEY,
+		scrollModePans(DEFAULT_SCROLL_MODE)
+	);
+	const scrollMode = scrollModeFromPans(scrollPans);
+	// The Help panel's segmented control names a destination while `S` and the
+	// pill flip, so clicking the mode you are already in is a no-op rather than
+	// a toggle that undoes itself. Both go through the same setter, and the flip
+	// goes through `nextScrollMode` for the same reason `L` goes through
+	// `nextMindMapLayout`: one place decides what comes next.
+	const setScrollMode = useCallback(
+		(mode: GraphScrollMode) => setScrollPans(scrollModePans(mode)),
+		[setScrollPans]
+	);
+	const toggleScrollMode = useCallback(
+		() => setScrollMode(nextScrollMode(scrollMode)),
+		[setScrollMode, scrollMode]
+	);
 
 	// Close all other dropdowns when opening one
 	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
@@ -372,11 +420,26 @@ export function DocumentGraphView({
 	const streamingActiveRef = useRef(false);
 
 	/**
-	 * Handle escape - show confirmation modal
+	 * Handle escape.
+	 *
+	 * The body lives in `escapeLadderRef`, assigned during render further down
+	 * where the search query, the node list, and `handleNodeSelect` are all in
+	 * scope. Registering this stable wrapper instead keeps the layer
+	 * registration from re-running on every keystroke in the search box.
 	 */
+	const escapeLadderRef = useRef<() => void>(() => {});
 	const handleEscapeRequest = useCallback(() => {
-		setShowCloseConfirmation(true);
+		escapeLadderRef.current();
 	}, []);
+
+	/** The bottom rung: confirm first, unless closing is cheap enough not to. */
+	const requestClose = useCallback(() => {
+		if (!confirmOnClose) {
+			onCloseRef.current();
+			return;
+		}
+		setShowCloseConfirmation(true);
+	}, [confirmOnClose]);
 
 	/**
 	 * Register with layer stack for Escape handling
@@ -617,6 +680,8 @@ export function DocumentGraphView({
 				const graphData = await buildGraphData({
 					rootPath,
 					focusFile: focusFilePath,
+					scopeFiles,
+					scopeDirectory,
 					maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
 					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
 					onProgress: handleProgress,
@@ -702,8 +767,12 @@ export function DocumentGraphView({
 					setLinks(allMindMapLinks);
 				}
 
-				// Set active focus file from the required focusFilePath prop
-				setActiveFocusFile(focusFilePath);
+				// Take the center the builder actually used. In scope mode it may
+				// have auto-picked the highest-degree file, and keeping the
+				// requested (possibly empty) path here renders an empty graph on
+				// top of a perfectly good node set.
+				setActiveFocusFile(graphData.centerFile || focusFilePath);
+				setOrphanFiles(graphData.orphanFiles);
 
 				// Streaming BFS is done - clear the in-flight badge.
 				setExpandingGraph(false);
@@ -739,6 +808,8 @@ export function DocumentGraphView({
 			handleBacklinkUpdate,
 			handleBacklinkComplete,
 			sshRemoteId,
+			scopeFiles,
+			scopeDirectory,
 		]
 	);
 
@@ -897,8 +968,9 @@ export function DocumentGraphView({
 			.readFile(fullPath, sshRemoteId)
 			.then((content) => {
 				if (!content) return;
-				const tasks = countMarkdownTasks(content);
-				setSelectedNodeTasks(tasks.total > 0 ? tasks : null);
+				const { open, closed } = countMarkdownTasks(content);
+				const total = open + closed;
+				setSelectedNodeTasks(total > 0 ? { completed: closed, total } : null);
 			})
 			.catch(() => {
 				setSelectedNodeTasks(null);
@@ -963,25 +1035,38 @@ export function DocumentGraphView({
 	/**
 	 * Handle neighbor depth change
 	 */
-	const handleNeighborDepthChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newDepth = parseInt(e.target.value, 10);
+	const applyNeighborDepth = useCallback(
+		(newDepth: number) => {
 			setNeighborDepth(newDepth);
 			onNeighborDepthChange?.(newDepth);
 		},
 		[onNeighborDepthChange]
 	);
 
+	const handleNeighborDepthChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			applyNeighborDepth(parseInt(e.target.value, 10));
+		},
+		[applyNeighborDepth]
+	);
+
 	/**
 	 * Handle preview character limit change
 	 */
-	const handlePreviewCharLimitChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newLimit = parseInt(e.target.value, 10);
-			setPreviewCharLimit(newLimit);
-			onPreviewCharLimitChange?.(newLimit);
+	const applyPreviewCharLimit = useCallback(
+		(newLimit: number) => {
+			const clamped = clampPreviewCharLimit(newLimit);
+			setPreviewCharLimit(clamped);
+			onPreviewCharLimitChange?.(clamped);
 		},
 		[onPreviewCharLimitChange]
+	);
+
+	const handlePreviewCharLimitChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			applyPreviewCharLimit(parseInt(e.target.value, 10));
+		},
+		[applyPreviewCharLimit]
 	);
 
 	/**
@@ -1304,74 +1389,181 @@ export function DocumentGraphView({
 	 * First Escape: clear search if there's content
 	 * Second Escape (or first if empty): blur search, return focus to graph, select center node
 	 */
-	const handleSearchKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key === 'Escape') {
-				e.stopPropagation(); // Prevent layer stack from handling
-				if (searchQuery) {
-					// First Escape: clear search query
-					setSearchQuery('');
-				} else {
-					// Second Escape (or first if empty): blur search, select center node, focus graph
-					searchInputRef.current?.blur();
+	/**
+	 * Escape is a LADDER, climbed one rung per press, never skipping to close.
+	 *
+	 *   1. caret in the search box -> hand focus back to the graph, query intact
+	 *   2. search still has text    -> clear it
+	 *   3. otherwise                -> close (confirming per `confirmOnClose`)
+	 *
+	 * Rung 1 is what makes "search, then arrow to a hit" work: the query has to
+	 * survive the key that gets you out of the text box, or the highlighted
+	 * nodes you were about to walk to go dim as you reach for them.
+	 *
+	 * This is assigned during render rather than bound to the input's own
+	 * `onKeyDown`, because the layer stack handles Escape at CAPTURE on
+	 * `window` (see `LayerStackProvider`) - so a handler on the input never
+	 * sees the key, and `stopPropagation` there cannot stop a listener that has
+	 * already run. An `onKeyDown` version of this ladder was in place and dead:
+	 * every Escape went straight to the close confirmation.
+	 */
+	escapeLadderRef.current = () => {
+		if (document.activeElement === searchInputRef.current) {
+			searchInputRef.current?.blur();
 
-					// Select the center node (the focus file) first
-					if (activeFocusFile) {
-						const centerNode = nodes.find((n) => n.filePath === activeFocusFile);
-						if (centerNode) {
-							handleNodeSelect(centerNode);
-						}
-					}
-
-					// Focus the mind map container after state update
-					requestAnimationFrame(() => {
-						mindMapContainerRef.current?.focus();
-					});
+			// Select the center node (the focus file) first, so the arrow keys
+			// have somewhere to start from.
+			if (activeFocusFile) {
+				const centerNode = nodes.find((n) => n.filePath === activeFocusFile);
+				if (centerNode) {
+					handleNodeSelect(centerNode);
 				}
 			}
-		},
-		[searchQuery, activeFocusFile, nodes, handleNodeSelect]
-	);
 
-	/**
-	 * Handle container keyboard shortcuts (Cmd+F for search; +/- for node spacing)
-	 */
-	const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
-		// Cmd+F or Ctrl+F to focus search
-		if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-			e.preventDefault();
-			searchInputRef.current?.focus();
-			searchInputRef.current?.select();
+			// Focus the mind map container after state update
+			requestAnimationFrame(() => {
+				mindMapContainerRef.current?.focus();
+			});
 			return;
 		}
+		if (searchQuery) {
+			setSearchQuery('');
+			return;
+		}
+		requestClose();
+	};
 
-		// +/- adjust node spacing in any layout. Skip when modifiers are held so
-		// browser zoom (Cmd/Ctrl +/-) and similar shortcuts still work, and skip
-		// when typing into an input (search box, sliders).
-		if (e.metaKey || e.ctrlKey || e.altKey) return;
-		const target = e.target as HTMLElement | null;
-		const tag = target?.tagName;
-		if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+	/**
+	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
+	 * P preview length; F fit to view; +/- node spacing)
+	 */
+	const handleContainerKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			// Cmd+F or Ctrl+F to focus search
+			if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+				e.preventDefault();
+				searchInputRef.current?.focus();
+				searchInputRef.current?.select();
+				return;
+			}
 
-		// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
-		const isIncrease = e.key === '+' || e.key === '=';
-		const isDecrease = e.key === '-' || e.key === '_';
-		if (!isIncrease && !isDecrease) return;
+			// Everything below is an unmodified single key, so skip when a modifier
+			// is held (browser zoom on Cmd/Ctrl +/-, OS chords) and when the user is
+			// typing into an input (the search box, the sliders).
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			const target = e.target as HTMLElement | null;
+			const tag = target?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
 
-		e.preventDefault();
-		setSpacingScale((prev) => {
-			const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
-			const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
-			// Round to one decimal to avoid floating-point drift.
-			return Math.round(clamped * 10) / 10;
-		});
-	}, []);
+			// L cycles the layout; D widens the neighbor depth. Both go through the
+			// same handlers the toolbar controls use, so a key press persists the
+			// choice and clears layout-specific drag overrides exactly like a click.
+			if (e.key === 'l' || e.key === 'L') {
+				e.preventDefault();
+				handleLayoutTypeChange(nextMindMapLayout(layoutType));
+				return;
+			}
+			if (e.key === 'd' || e.key === 'D') {
+				e.preventDefault();
+				applyNeighborDepth(nextNeighborDepth(neighborDepth));
+				return;
+			}
+			// P cycles preview length, ending at Off (filename pills). It used to
+			// be a second spelling of Enter's in-graph preview, which spent a key
+			// on a duplicate of a binding the user already has.
+			if (e.key === 'p' || e.key === 'P') {
+				e.preventDefault();
+				applyPreviewCharLimit(nextPreviewCharLimit(previewCharLimit));
+				return;
+			}
+
+			// F re-frames the entire graph. Zooming out by hand cannot always get
+			// there, so this is the only reliable way back to the whole picture.
+			if (e.key === 'f' || e.key === 'F') {
+				e.preventDefault();
+				setFitToken((prev) => prev + 1);
+				return;
+			}
+
+			// S swaps what the scroll wheel does. Reachable without leaving the
+			// canvas, because the moment you want it is mid-gesture: the framing
+			// is right and the next scroll just threw it away.
+			if (e.key === 's' || e.key === 'S') {
+				e.preventDefault();
+				toggleScrollMode();
+				return;
+			}
+
+			// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
+			const isIncrease = e.key === '+' || e.key === '=';
+			const isDecrease = e.key === '-' || e.key === '_';
+			if (!isIncrease && !isDecrease) return;
+
+			e.preventDefault();
+			setSpacingScale((prev) => {
+				const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
+				const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
+				// Round to one decimal to avoid floating-point drift.
+				return Math.round(clamped * 10) / 10;
+			});
+		},
+		[
+			applyNeighborDepth,
+			applyPreviewCharLimit,
+			handleLayoutTypeChange,
+			layoutType,
+			neighborDepth,
+			previewCharLimit,
+			toggleScrollMode,
+		]
+	);
+	// The graph is a canvas the user pans around in, so its useful default is
+	// "as much of the screen as a modal may take" rather than a fixed box - the
+	// old 1200x760 default was a postage stamp on a large display. clampModalSize
+	// caps this at the shared 90% viewport ratio.
+	const defaultModalSize = useMemo(
+		() => viewportModalSize({ width: 0.95, height: 0.95 }),
+		// Recomputing per render would fight the resize listener inside the hook,
+		// which already re-clamps the live size when the viewport changes.
+		[]
+	);
 	const resizableModal = useResizableModal({
 		resizeKey: 'document-graph',
-		defaultSize: { width: 1200, height: 760 },
+		defaultSize: defaultModalSize,
 		minSize: { width: 760, height: 500 },
 		enabled: isOpen,
 		externalRef: containerRef,
+	});
+
+	// Preview pane width: dragged by its left edge, remembered across opens.
+	const {
+		width: previewWidth,
+		setWidth: setPreviewWidth,
+		reset: resetPreviewWidth,
+	} = usePersistedPanelWidth(PREVIEW_WIDTH_STORAGE_KEY, {
+		defaultWidth: PREVIEW_DEFAULT_WIDTH,
+		minWidth: PREVIEW_MIN_WIDTH,
+		maxWidth: PREVIEW_MAX_WIDTH,
+	});
+	// Leave a strip of graph visible no matter how wide the pane is dragged. The
+	// container can be narrower than the stored width (a small modal, a resized
+	// window), so the live clamp is separate from the stored bounds.
+	const previewMaxWidth = previewMaxWidthForContainer(graphDimensions.width);
+	// The drag must start from the width actually on screen, not the stored one:
+	// when the container is narrower than the remembered width the pane renders
+	// clamped, and starting the delta from the larger value snaps it wider on the
+	// first mousemove.
+	const renderedPreviewWidth = Math.min(previewWidth, previewMaxWidth);
+	const {
+		panelRef: previewPanelRef,
+		isResizing: isPreviewResizing,
+		onResizeStart: onPreviewResizeStart,
+	} = useResizablePanel({
+		width: renderedPreviewWidth,
+		minWidth: PREVIEW_MIN_WIDTH,
+		maxWidth: previewMaxWidth,
+		setWidth: setPreviewWidth,
+		side: 'right',
 	});
 
 	if (!isOpen) return null;
@@ -1428,13 +1620,17 @@ export function DocumentGraphView({
 					className="px-6 py-4 border-b flex items-center justify-between flex-shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-3">
-						<Network className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+					{/* The title yields first. This row neither wraps nor scrolls, and
+					    the modal clips at its right edge, so something has to give when
+					    it gets tight - and a truncated heading costs the user nothing
+					    next to a close button pushed out of the window. */}
+					<div className="flex items-center gap-3 min-w-0 shrink">
+						<Network className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="text-lg font-semibold truncate" style={{ color: theme.colors.textMain }}>
 							Document Graph
 						</h2>
 						<span
-							className="text-xs px-2 py-0.5 rounded"
+							className="text-xs px-2 py-0.5 rounded truncate"
 							style={{
 								backgroundColor: `${theme.colors.accent}20`,
 								color: theme.colors.textDim,
@@ -1444,9 +1640,9 @@ export function DocumentGraphView({
 						</span>
 					</div>
 
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-3 shrink-0">
 						{/* Search Input */}
-						<div className="relative">
+						<div className="relative shrink-0">
 							<Search
 								className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
 								style={{ color: theme.colors.textDim }}
@@ -1456,14 +1652,20 @@ export function DocumentGraphView({
 								type="text"
 								value={searchQuery}
 								onChange={(e) => setSearchQuery(e.target.value)}
-								onKeyDown={handleSearchKeyDown}
 								placeholder="Search documents..."
-								className="pl-8 pr-3 py-1.5 rounded text-sm outline-none transition-colors"
+								// `pr-8` keeps a permanent slot for the clear button rather
+								// than adding one when a query appears: a padding that
+								// changes with the value reflows the text under the caret on
+								// the first keystroke.
+								className="pl-8 pr-8 py-1.5 rounded text-sm outline-none transition-colors"
 								style={{
 									backgroundColor: `${theme.colors.accent}10`,
 									color: theme.colors.textMain,
 									border: `1px solid ${searchQuery ? theme.colors.accent : 'transparent'}`,
-									width: 180,
+									// Sized to hold the whole placeholder. A box that clips its
+									// own hint to "Search docume" reads as a broken control,
+									// and the hint is the only thing naming what it searches.
+									width: SEARCH_BOX_WIDTH,
 								}}
 								onFocus={(e) => (e.currentTarget.style.borderColor = theme.colors.accent)}
 								onBlur={(e) =>
@@ -1506,7 +1708,7 @@ export function DocumentGraphView({
 								onMouseLeave={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
 								}
-								title={`Layout: ${LAYOUT_LABELS[layoutType].name}`}
+								title={`Layout: ${LAYOUT_LABELS[layoutType].name} (L to cycle)`}
 							>
 								<Network className="w-4 h-4" />
 								{LAYOUT_LABELS[layoutType].name}
@@ -1522,35 +1724,33 @@ export function DocumentGraphView({
 										minWidth: 200,
 									}}
 								>
-									{(['mindmap', 'radial', 'hierarchical', 'force'] as MindMapLayoutType[]).map(
-										(type) => (
-											<button
-												key={type}
-												onClick={() => handleLayoutTypeChange(type)}
-												className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
-												style={{
-													backgroundColor:
-														layoutType === type ? `${theme.colors.accent}15` : 'transparent',
-													color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
-												}}
-												onMouseEnter={(e) =>
-													(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-												}
-												onMouseLeave={(e) =>
-													(e.currentTarget.style.backgroundColor =
-														layoutType === type ? `${theme.colors.accent}15` : 'transparent')
-												}
+									{MIND_MAP_LAYOUT_TYPES.map((type) => (
+										<button
+											key={type}
+											onClick={() => handleLayoutTypeChange(type)}
+											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
+											style={{
+												backgroundColor:
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent',
+												color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
+											}}
+											onMouseEnter={(e) =>
+												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+											}
+											onMouseLeave={(e) =>
+												(e.currentTarget.style.backgroundColor =
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent')
+											}
+										>
+											<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
+											<span
+												className="text-xs whitespace-nowrap shrink-0"
+												style={{ color: theme.colors.textDim }}
 											>
-												<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
-												<span
-													className="text-xs whitespace-nowrap shrink-0"
-													style={{ color: theme.colors.textDim }}
-												>
-													{LAYOUT_LABELS[type].description}
-												</span>
-											</button>
-										)
-									)}
+												{LAYOUT_LABELS[type].description}
+											</span>
+										</button>
+									))}
 								</div>
 							)}
 						</div>
@@ -1574,12 +1774,12 @@ export function DocumentGraphView({
 								}
 								title={
 									neighborDepth > 0
-										? `Showing ${neighborDepth} level${neighborDepth > 1 ? 's' : ''} of neighbors`
-										: 'Show all nodes'
+										? `Showing ${neighborDepth} level${neighborDepth > 1 ? 's' : ''} of neighbors (D to widen)`
+										: 'Showing all nodes (D to cycle)'
 								}
 							>
 								<Sliders className="w-4 h-4" />
-								Depth: {neighborDepth === 0 ? 'All' : neighborDepth}
+								Depth: {formatNeighborDepth(neighborDepth)}
 							</button>
 
 							{showDepthSlider && (
@@ -1596,13 +1796,13 @@ export function DocumentGraphView({
 											Neighbor Depth
 										</span>
 										<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-											{neighborDepth === 0 ? 'All' : neighborDepth}
+											{formatNeighborDepth(neighborDepth)}
 										</span>
 									</div>
 									<input
 										type="range"
-										min="0"
-										max="5"
+										min={NEIGHBOR_DEPTH_ALL}
+										max={NEIGHBOR_DEPTH_MAX}
 										value={neighborDepth}
 										onChange={handleNeighborDepthChange}
 										className="w-full"
@@ -1634,25 +1834,27 @@ export function DocumentGraphView({
 								onClick={() => openDropdown('preview')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
-									backgroundColor:
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`,
-									color: previewCharLimit > 100 ? theme.colors.accent : theme.colors.textDim,
+									backgroundColor: previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+									color: previewNonDefault ? theme.colors.accent : theme.colors.textDim,
 								}}
 								onMouseEnter={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
 								}
 								onMouseLeave={(e) =>
-									(e.currentTarget.style.backgroundColor =
-										previewCharLimit > 100
-											? `${theme.colors.accent}25`
-											: `${theme.colors.accent}10`)
+									(e.currentTarget.style.backgroundColor = previewNonDefault
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`)
 								}
-								title={`Preview text limit: ${previewCharLimit} characters`}
+								title={
+									isPreviewOff(previewCharLimit)
+										? 'Previews off - nodes are filename pills (P to cycle)'
+										: `Preview text limit: ${previewCharLimit} characters (P to cycle)`
+								}
 							>
 								<Type className="w-4 h-4" />
-								Preview: {previewCharLimit}
+								Preview: {formatPreviewCharLimit(previewCharLimit)}
 							</button>
 
 							{showPreviewSlider && (
@@ -1669,14 +1871,14 @@ export function DocumentGraphView({
 											Preview Characters
 										</span>
 										<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-											{previewCharLimit}
+											{formatPreviewCharLimit(previewCharLimit)}
 										</span>
 									</div>
 									<input
 										type="range"
-										min="50"
-										max="500"
-										step="50"
+										min={PREVIEW_CHAR_LIMIT_MIN}
+										max={PREVIEW_CHAR_LIMIT_MAX}
+										step={PREVIEW_CHAR_LIMIT_STEP}
 										value={previewCharLimit}
 										onChange={handlePreviewCharLimitChange}
 										className="w-full"
@@ -1686,17 +1888,48 @@ export function DocumentGraphView({
 										className="flex justify-between text-xs mt-1"
 										style={{ color: theme.colors.textDim }}
 									>
-										<span>50</span>
+										<span>Off</span>
+										<span>100</span>
 										<span>200</span>
-										<span>350</span>
+										<span>300</span>
+										<span>400</span>
 										<span>500</span>
 									</div>
 									<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-										Characters shown in document previews
+										{isPreviewOff(previewCharLimit)
+											? 'Nodes render as filename pills, with no preview text'
+											: 'Characters shown in document previews'}
 									</p>
 								</div>
 							)}
 						</div>
+
+						{/* Scroll mode indicator. Reads as ACTIVE in Pan, because Zoom
+						    is the shipped default and a permanently-lit pill stops
+						    meaning anything. The label names what the wheel does
+						    right now, not what clicking would change it to. */}
+						<button
+							onClick={toggleScrollMode}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+							style={{
+								backgroundColor:
+									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
+								color: scrollMode === 'pan' ? theme.colors.accent : theme.colors.textDim,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor =
+									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`)
+							}
+							title={`Scroll wheel: ${SCROLL_MODE_LABELS[scrollMode].wheelAction}. Shift+scroll: ${SCROLL_MODE_LABELS[scrollMode].modifierAction}. (S to switch)`}
+							aria-pressed={scrollMode === 'pan'}
+							data-testid="document-graph-scroll-mode-toggle"
+						>
+							{scrollMode === 'pan' ? <Move className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
+							Scroll: {SCROLL_MODE_LABELS[scrollMode].name}
+						</button>
 
 						{/* External Links Toggle */}
 						<button
@@ -1721,6 +1954,31 @@ export function DocumentGraphView({
 							<ExternalLink className="w-4 h-4" />
 							External
 						</button>
+
+						{/* Unlinked (orphan) toggle. Only scope mode can produce orphans,
+						    so the control stays hidden in focus mode rather than
+						    offering a toggle that can never change anything. */}
+						{orphanFiles.length > 0 && (
+							<button
+								onClick={() => setShowOrphans((v) => !v)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+								style={{
+									backgroundColor: showOrphans
+										? `${theme.colors.warning}25`
+										: `${theme.colors.warning}10`,
+									color: showOrphans ? theme.colors.warning : theme.colors.textDim,
+								}}
+								title={
+									showOrphans
+										? `Hide the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+										: `Show the ${orphanFiles.length} document${orphanFiles.length === 1 ? '' : 's'} nothing links to`
+								}
+								data-testid="document-graph-orphan-toggle"
+							>
+								<Unlink className="w-4 h-4" />
+								Unlinked {orphanFiles.length}
+							</button>
+						)}
 
 						{/* Reset Layout Button - only show when positions have been modified */}
 						{nodePositions.size > 0 && (
@@ -1907,6 +2165,7 @@ export function DocumentGraphView({
 							height={graphDimensions.height}
 							maxDepth={neighborDepth || 2}
 							showExternalLinks={includeExternalLinks}
+							showOrphans={showOrphans}
 							selectedNodeId={selectedNodeId}
 							onNodeSelect={handleNodeSelect}
 							onNodeDoubleClick={handleNodeDoubleClick}
@@ -1925,6 +2184,8 @@ export function DocumentGraphView({
 							onNodePositionChange={handleNodePositionChange}
 							containerRef={mindMapContainerRef}
 							legendExpanded={legendExpanded}
+							fitToken={fitToken}
+							scrollMode={scrollMode}
 						/>
 					) : (
 						<div
@@ -1942,6 +2203,8 @@ export function DocumentGraphView({
 						<GraphLegend
 							theme={theme}
 							showExternalLinks={includeExternalLinks}
+							scrollMode={scrollMode}
+							onScrollModeChange={setScrollMode}
 							onClose={() => setLegendExpanded(false)}
 						/>
 					)}
@@ -1964,15 +2227,35 @@ export function DocumentGraphView({
 					{/* Markdown Preview Panel */}
 					{(previewFile || previewLoading || previewError) && (
 						<div
+							ref={previewPanelRef}
 							className="absolute top-4 right-4 bottom-4 rounded-lg shadow-2xl border flex flex-col z-50 outline-none"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								borderColor: theme.colors.border,
-								width: 'min(560px, 42vw)',
+								width: renderedPreviewWidth,
 								maxWidth: '90%',
 							}}
 							onKeyDown={handlePreviewKeyDown}
 						>
+							{/* Drag the left edge to widen/narrow; double-click restores the default. */}
+							<div
+								className={`absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent z-20 ${
+									isPreviewResizing ? '' : 'transition-colors'
+								}`}
+								style={{ borderLeftColor: isPreviewResizing ? theme.colors.accent : undefined }}
+								onPointerDown={onPreviewResizeStart}
+								onDoubleClick={resetPreviewWidth}
+								onMouseEnter={(e) => (e.currentTarget.style.borderLeftColor = theme.colors.accent)}
+								onMouseLeave={(e) =>
+									(e.currentTarget.style.borderLeftColor = isPreviewResizing
+										? theme.colors.accent
+										: 'transparent')
+								}
+								role="separator"
+								aria-orientation="vertical"
+								aria-label="Resize document preview"
+								title="Drag to resize (double-click to reset)"
+							/>
 							<style>{generateProseStyles({ theme, scopeSelector: '.graph-preview' })}</style>
 							<div
 								className="px-4 py-3 border-b flex items-center justify-between gap-3"

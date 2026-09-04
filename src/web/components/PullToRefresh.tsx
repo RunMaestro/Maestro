@@ -179,7 +179,7 @@ export function PullToRefreshIndicator({
 				)}
 				<span
 					style={{
-						fontSize: '12px',
+						fontSize: '0.75rem',
 						color: colors.textDim,
 						fontWeight: 500,
 					}}

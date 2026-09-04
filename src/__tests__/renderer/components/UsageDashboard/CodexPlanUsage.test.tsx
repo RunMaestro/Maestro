@@ -7,7 +7,7 @@
  *   - multi-account tab selection
  *   - accessible quota progress bars
  *   - non-authenticated/error rows
- *   - refresh IPC wiring
+ *   - refresh IPC wiring, incl. the Cmd+R hotkey
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -239,6 +239,22 @@ describe('CodexPlanUsage - refresh wiring', () => {
 		});
 	});
 
+	it('re-samples on Cmd+R when the panel owns the hotkey', async () => {
+		render(<CodexPlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		await waitFor(() => {
+			expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('ignores Cmd+R when the panel does not own the hotkey', () => {
+		render(<CodexPlanUsage theme={theme} />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
 	it('disables the refresh button while a refresh is already in flight', () => {
 		useCodexUsageStore.setState({
 			snapshots: {},
@@ -363,5 +379,43 @@ describe('CodexPlanUsage - agent count badge', () => {
 
 		expect(screen.getByTestId('codex-plan-row-pending-pending')).toBeInTheDocument();
 		expect(screen.getByTestId('codex-plan-agents-pending')).toHaveTextContent('1 agent');
+	});
+});
+
+describe('CodexPlanUsage - last refreshed footer', () => {
+	it('reports the age of the newest sample', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+		try {
+			seedSnapshots({
+				'/Users/me/.codex': {
+					sampledAt: '2026-05-15T11:48:00.000Z',
+					codexHomeKey: '/Users/me/.codex',
+					authState: 'authenticated',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+				'/Users/me/.codex-work': {
+					sampledAt: '2026-05-15T02:00:00.000Z',
+					codexHomeKey: '/Users/me/.codex-work',
+					authState: 'authenticated',
+					session: { percent: 10, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekly: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			render(<CodexPlanUsage theme={theme} />);
+			expect(screen.getByTestId('codex-plan-last-refreshed')).toHaveTextContent(
+				'Last refreshed 12 minutes ago'
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('renders nothing when no account has been sampled yet', () => {
+		seedSessions(['/Users/me/.codex-pending']);
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		expect(screen.queryByTestId('codex-plan-last-refreshed')).toBeNull();
 	});
 });

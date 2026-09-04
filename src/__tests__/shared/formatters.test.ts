@@ -6,11 +6,13 @@
 import {
 	formatSize,
 	formatNumber,
+	formatCount,
 	formatTokens,
 	formatTokensCompact,
 	formatRelativeTime,
 	formatCacheAge,
 	formatAgeShort,
+	formatCalendarDay,
 	formatActiveTime,
 	formatElapsedTime,
 	formatElapsedTimeColon,
@@ -85,6 +87,29 @@ describe('shared/formatters', () => {
 		it('should format billions with B suffix', () => {
 			expect(formatNumber(1000000000)).toBe('1.0B');
 			expect(formatNumber(2500000000)).toBe('2.5B');
+		});
+	});
+
+	// ==========================================================================
+	// formatCount tests (exact counterpart to formatNumber)
+	// ==========================================================================
+	describe('formatCount', () => {
+		it('groups digits instead of rounding to a magnitude', () => {
+			expect(formatCount(42)).toBe('42');
+			expect(formatCount(1000)).toBe('1,000');
+			expect(formatCount(1204993)).toBe('1,204,993');
+		});
+
+		it('keeps every digit where formatNumber discards them', () => {
+			// The whole reason this exists: a filtered row count is read for its
+			// digits, and `1.2M` throws away the part the user was looking at.
+			expect(formatNumber(1204993)).toBe('1.2M');
+			expect(formatCount(1204993)).toBe('1,204,993');
+		});
+
+		it('handles zero and negatives', () => {
+			expect(formatCount(0)).toBe('0');
+			expect(formatCount(-5)).toBe('-5');
 		});
 	});
 
@@ -223,6 +248,32 @@ describe('shared/formatters', () => {
 			expect(formatCacheAge(60 * 60_000)).toBe('1h ago');
 			expect(formatCacheAge(2 * 60 * 60_000)).toBe('2h ago');
 			expect(formatCacheAge(25 * 60 * 60_000)).toBe('25h ago');
+		});
+	});
+
+	// ==========================================================================
+	// formatCalendarDay tests
+	// ==========================================================================
+	describe('formatCalendarDay', () => {
+		it('formats a YYYY-MM-DD day for display', () => {
+			expect(formatCalendarDay('2026-07-10')).toBe('Jul 10, 2026');
+			expect(formatCalendarDay('2025-11-26')).toBe('Nov 26, 2025');
+		});
+
+		it('renders the day it was given, not the UTC-shifted one', () => {
+			// `new Date('2026-01-01')` is UTC midnight, which is Dec 31 anywhere
+			// west of Greenwich. The parts are read out of the string instead.
+			expect(formatCalendarDay('2026-01-01')).toBe('Jan 1, 2026');
+		});
+
+		it('tolerates surrounding whitespace', () => {
+			expect(formatCalendarDay('  2026-03-01  ')).toBe('Mar 1, 2026');
+		});
+
+		it('returns the input unchanged when it is not a calendar day', () => {
+			expect(formatCalendarDay('July 2026')).toBe('July 2026');
+			expect(formatCalendarDay('2026-7-1')).toBe('2026-7-1');
+			expect(formatCalendarDay('')).toBe('');
 		});
 	});
 

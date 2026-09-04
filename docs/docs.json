@@ -52,10 +52,13 @@
 					"context-management",
 					"document-graph",
 					"git-worktrees",
+					"agent-collaboration",
 					"group-chat",
 					"cross-agent-mentions",
 					"image-annotator",
 					"media-player",
+					"file-formats",
+					"parquet-preview",
 					"remote-control",
 					"ssh-remote-execution",
 					"agent-resilience",
@@ -102,7 +105,7 @@
 			},
 			{
 				"group": "Providers & CLI",
-				"pages": ["provider-notes", "multi-claude", "cli"]
+				"pages": ["provider-notes", "multi-claude", "cli", "cli-reference"]
 			},
 			{
 				"group": "Integrations",

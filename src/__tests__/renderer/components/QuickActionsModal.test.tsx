@@ -1156,15 +1156,30 @@ describe('QuickActionsModal', () => {
 			expect(buttons[1]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
-		it('does not go below zero index', () => {
+		it('wraps to the last item when arrowing up from the first', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
 
-			// Try to go up from zero
+			// Up from index 0 lands on the last row
 			fireEvent.keyDown(input, { key: 'ArrowUp' });
+
+			const buttons = getActionRows();
+			expect(buttons[buttons.length - 1]).toHaveStyle({
+				backgroundColor: mockTheme.colors.accent,
+			});
+		});
+
+		it('wraps to the first item when arrowing down from the last', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
+
+			// Up wraps to the end, down wraps back to the start
 			fireEvent.keyDown(input, { key: 'ArrowUp' });
+			fireEvent.keyDown(input, { key: 'ArrowDown' });
 
 			const buttons = getActionRows();
 			expect(buttons[0]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
@@ -1521,6 +1536,23 @@ describe('QuickActionsModal', () => {
 
 			expect(screen.getByText('Refresh Files, Git, History')).toBeInTheDocument();
 			expect(screen.getByText('Reload file tree, git status, and history')).toBeInTheDocument();
+		});
+
+		it('displays the Refresh Files shortcut when one is bound', () => {
+			const props = createDefaultProps({
+				onRefreshGitFileState: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					refreshGitFileState: {
+						id: 'refreshGitFileState',
+						keys: ['Alt', 'Cmd', 'R'],
+						enabled: true,
+					},
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText(formatShortcutKeys(['Alt', 'Cmd', 'R']))).toBeInTheDocument();
 		});
 
 		it('handles Refresh Files action', async () => {

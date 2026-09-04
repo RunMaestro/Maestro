@@ -6,7 +6,11 @@
  */
 
 import type Database from 'better-sqlite3';
-import type { StatsTimeRange, StatsAggregation } from '../../shared/stats-types';
+import type {
+	StatsTimeRange,
+	StatsAggregation,
+	SessionTokenTotals,
+} from '../../shared/stats-types';
 import {
 	percentilesFromSorted,
 	emptyPercentiles,
@@ -405,6 +409,69 @@ function queryBySessionLastQuery(db: Database.Database, startTime: number): Reco
 }
 
 /**
+ * Token and cost totals per session.
+ */
+function queryBySessionTokens(
+	db: Database.Database,
+	startTime: number
+): Record<string, SessionTokenTotals> {
+	const perfStart = perfMetrics.start();
+	// COALESCE inside the SUMs so a mix of NULL and real rows totals the real
+	// ones instead of returning NULL for the whole group. `priced_queries`
+	// counts rows that reported ANY usage, which is how the dashboard can say
+	// "cost covers 40 of 900 queries" rather than implying the total is
+	// complete - every row written before migration v8 reports nothing.
+	const rows = db
+		.prepare(
+			`
+      SELECT session_id,
+             SUM(COALESCE(input_tokens, 0)) as input_tokens,
+             SUM(COALESCE(output_tokens, 0)) as output_tokens,
+             SUM(COALESCE(cache_read_tokens, 0)) as cache_read_tokens,
+             SUM(COALESCE(cache_creation_tokens, 0)) as cache_creation_tokens,
+             SUM(COALESCE(cost_usd, 0)) as cost_usd,
+             SUM(
+               CASE WHEN input_tokens IS NOT NULL
+                      OR output_tokens IS NOT NULL
+                      OR cache_read_tokens IS NOT NULL
+                      OR cache_creation_tokens IS NOT NULL
+                      OR cost_usd IS NOT NULL
+                    THEN 1 ELSE 0 END
+             ) as priced_queries
+      FROM query_events
+      WHERE start_time >= ?
+      GROUP BY session_id
+    `
+		)
+		.all(startTime) as Array<{
+		session_id: string;
+		input_tokens: number;
+		output_tokens: number;
+		cache_read_tokens: number;
+		cache_creation_tokens: number;
+		cost_usd: number;
+		priced_queries: number;
+	}>;
+
+	const result: Record<string, SessionTokenTotals> = {};
+	for (const row of rows) {
+		// Sessions that never reported usage are omitted entirely, so consumers
+		// can tell "no data" from "zero" without inspecting the numbers.
+		if (row.priced_queries === 0) continue;
+		result[row.session_id] = {
+			inputTokens: row.input_tokens,
+			outputTokens: row.output_tokens,
+			cacheReadTokens: row.cache_read_tokens,
+			cacheCreationTokens: row.cache_creation_tokens,
+			costUsd: row.cost_usd,
+			pricedQueries: row.priced_queries,
+		};
+	}
+	perfMetrics.end(perfStart, 'getAggregatedStats:bySessionTokens');
+	return result;
+}
+
+/**
  * Query duration distribution overall and per agent type.
  *
  * SQLite (better-sqlite3) has no `PERCENTILE_CONT`, so we pull the `duration`
@@ -502,6 +569,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const bySessionByDay = queryBySessionByDay(db, startTime);
 	const bySessionSource = queryBySessionSource(db, startTime);
 	const bySessionLastQuery = queryBySessionLastQuery(db, startTime);
+	const bySessionTokens = queryBySessionTokens(db, startTime);
 	const worktreeStatus = queryByWorktreeStatus(db, startTime);
 	const durationPercentiles = queryDurationPercentiles(db, startTime);
 	const autoRunTaskDurationPercentiles = queryAutoRunTaskPercentiles(db, startTime);
@@ -538,6 +606,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		bySessionByDay,
 		bySessionSource,
 		bySessionLastQuery,
+		bySessionTokens,
 		worktreeQueries: worktreeStatus.worktreeQueries,
 		parentQueries: worktreeStatus.parentQueries,
 		byWorktreeStatus: worktreeStatus.byWorktreeStatus,

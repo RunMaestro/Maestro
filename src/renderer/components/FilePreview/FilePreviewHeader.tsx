@@ -61,6 +61,8 @@ interface FilePreviewHeaderProps {
 	currentHistoryIndex?: number;
 	ghCliAvailable?: boolean;
 	onPublishGist?: () => void;
+	/** Whether this file's contents can go up as a gist (plain text only) */
+	canPublishGist?: boolean;
 	hasGist?: boolean;
 	onOpenInGraph?: () => void;
 	/** Open this file as a new tab in the embedded Maestro browser. */
@@ -125,6 +127,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	currentHistoryIndex,
 	ghCliAvailable,
 	onPublishGist,
+	canPublishGist,
 	hasGist,
 	onOpenInGraph,
 	onOpenInBrowser,
@@ -342,12 +345,13 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Publish as Gist button - only show if gh CLI is available and not in edit mode */}
+						{/* Publish as Gist button - gh CLI available, not editing, and the
+							file is plain text a gist can carry (see isGistPublishableFile) */}
 						{toolbarVisibility.publishGist &&
 							ghCliAvailable &&
 							!markdownEditMode &&
 							onPublishGist &&
-							!isImage && (
+							canPublishGist && (
 								<HoverTooltip
 									theme={theme}
 									label={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
@@ -448,7 +452,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 				>
 					<div className="flex items-center gap-4">
 						{fileStats && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Size:</span>{' '}
 								<span style={{ color: theme.colors.textMain }}>
 									{formatFileSize(fileStats.size)}
@@ -456,26 +460,26 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							</div>
 						)}
 						{lineCount !== null && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Lines:</span>{' '}
 								<span style={{ color: theme.colors.textMain }}>{formatNumber(lineCount)}</span>
 							</div>
 						)}
 						{tokenCount !== null && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Tokens:</span>{' '}
 								<span style={{ color: theme.colors.accent }}>{formatTokenCount(tokenCount)}</span>
 							</div>
 						)}
 						{fileStats && (
 							<>
-								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 									<span className="opacity-60">Modified:</span>{' '}
 									<span style={{ color: theme.colors.textMain }}>
 										{formatDateTime(fileStats.modifiedAt)}
 									</span>
 								</div>
-								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 									<span className="opacity-60">Created:</span>{' '}
 									<span style={{ color: theme.colors.textMain }}>
 										{formatDateTime(fileStats.createdAt)}
@@ -484,7 +488,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							</>
 						)}
 						{taskCounts && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Tasks:</span>{' '}
 								<span style={{ color: theme.colors.success }}>{taskCounts.closed}</span>
 								<span style={{ color: theme.colors.textMain }}>

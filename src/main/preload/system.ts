@@ -108,10 +108,13 @@ export function createPowerApi() {
 		setEnabled: (enabled: boolean): Promise<void> =>
 			ipcRenderer.invoke('power:setEnabled', enabled),
 		isEnabled: (): Promise<boolean> => ipcRenderer.invoke('power:isEnabled'),
+		setKeepDisplayAwake: (keepAwake: boolean): Promise<void> =>
+			ipcRenderer.invoke('power:setKeepDisplayAwake', keepAwake),
 		getStatus: (): Promise<{
 			enabled: boolean;
 			blocking: boolean;
 			reasons: string[];
+			keepDisplayAwake: boolean;
 			platform: 'darwin' | 'win32' | 'linux';
 		}> => ipcRenderer.invoke('power:getStatus'),
 		addReason: (reason: string): Promise<void> => ipcRenderer.invoke('power:addReason', reason),

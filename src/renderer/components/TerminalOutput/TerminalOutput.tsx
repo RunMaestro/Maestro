@@ -520,6 +520,13 @@ export const TerminalOutput = memo(
 					className="flex-1 overflow-y-auto scrollbar-thin"
 					style={{
 						overflowAnchor: session.inputMode === 'ai' && autoScrollPaused ? 'none' : undefined,
+						// The AI Chat surface's own size. Set here and inherited by every
+						// log row rather than threaded as a prop: the transcript is DOM,
+						// so the CSS variable reaches the whole subtree - including the
+						// markdown, tool cards, and code fences nested several
+						// components deep - without touching any of them. The family
+						// still arrives as a prop because individual rows override it.
+						fontSize: 'var(--maestro-size-chat, inherit)',
 					}}
 					onScroll={handleScroll}
 				>
@@ -664,7 +671,7 @@ export const TerminalOutput = memo(
 					{/* End ref for scrolling - always rendered so the jump works even when busy.
 					    LOAD-BEARING: this marker MUST stay a direct child of the scroll container
 					    (the overflow-y-auto element above), NOT nested inside the contentRef wrapper.
-					    useMainKeyboardHandler's Opt+Cmd+Down "Jump to Bottom" resolves the scroll target
+					    useMainKeyboardHandler's Cmd+Shift+J "Jump to Bottom" resolves the scroll target
 					    via logsEndRef.current.parentElement, so if you wrap this marker in another
 					    subtree parentElement lands on an unscrollable element and it silently no-ops. */}
 					<div ref={logsEndRef} />

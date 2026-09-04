@@ -27,6 +27,10 @@ import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
 import { SUPPORTED_AGENTS } from '../../../../../../renderer/components/NewInstanceModal/types';
 import { getNextAgentTileIndex } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGrid';
 import {
+	agentTilesPerRow,
+	resolveAgentGridLayout,
+} from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGridLayout';
+import {
 	getInitialSshRemoteConfig,
 	getSshRemoteIdForDetection,
 	getSyncedSshRemoteConfig,
@@ -116,6 +120,44 @@ describe('AgentSelectionScreen utils', () => {
 		// The strip is one row, so vertical movement has nowhere to go.
 		expect(getNextAgentTileIndex(0, 'ArrowDown', count)).toBe(0);
 		expect(getNextAgentTileIndex(1, 'ArrowUp', count)).toBe(1);
+	});
+
+	it('steps a whole row on up/down once the tiles wrap', () => {
+		// Five tiles laid out 3 + 2. Down from the end of the full row has no tile
+		// directly beneath it, and refusing to move there reads as a dead key.
+		expect(getNextAgentTileIndex(0, 'ArrowDown', 5, 3)).toBe(3);
+		expect(getNextAgentTileIndex(2, 'ArrowDown', 5, 3)).toBe(4);
+		expect(getNextAgentTileIndex(4, 'ArrowDown', 5, 3)).toBe(4);
+		expect(getNextAgentTileIndex(3, 'ArrowUp', 5, 3)).toBe(0);
+		expect(getNextAgentTileIndex(1, 'ArrowUp', 5, 3)).toBe(1);
+		// Left/right still walk the flat order across the row break.
+		expect(getNextAgentTileIndex(2, 'ArrowRight', 5, 3)).toBe(3);
+	});
+
+	it('balances the rows rather than filling one and stranding the rest', () => {
+		// Wide enough for four across (the strip's own max width).
+		const wide = 1200;
+
+		// Everything fits on one row: one row, centered, no leftovers.
+		expect(resolveAgentGridLayout(4, wide)).toMatchObject({ mode: 'wrap', columns: 4 });
+		// Five would draw 4 + 1, which looks like a mistake. 3 + 2 does not.
+		expect(resolveAgentGridLayout(5, wide)).toMatchObject({ mode: 'wrap', columns: 3 });
+		expect(resolveAgentGridLayout(7, wide)).toMatchObject({ mode: 'wrap', columns: 4 });
+		// Past two rows the Continue button goes below the fold, so back to the strip.
+		expect(resolveAgentGridLayout(9, wide).mode).toBe('strip');
+		expect(resolveAgentGridLayout(AGENT_TILES.length, wide).mode).toBe('strip');
+	});
+
+	it('measures the row against the real width, and falls back before it is known', () => {
+		expect(agentTilesPerRow(0)).toBe(4);
+		expect(agentTilesPerRow(300)).toBe(1);
+		expect(agentTilesPerRow(500)).toBe(2);
+		// Capped at the strip's own width, so a maximized wizard does not spread the
+		// tiles wider than the strip it just replaced.
+		expect(agentTilesPerRow(4000)).toBe(4);
+		// A narrow wizard fits fewer per row, so it drops to the strip sooner.
+		expect(resolveAgentGridLayout(7, 700)).toMatchObject({ mode: 'strip' });
+		expect(resolveAgentGridLayout(5, 700)).toMatchObject({ mode: 'wrap', columns: 3 });
 	});
 
 	it('clamps against the RENDERED tile count, not the provider total', () => {

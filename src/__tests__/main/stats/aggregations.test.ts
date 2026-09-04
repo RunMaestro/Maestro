@@ -1427,10 +1427,11 @@ describe('Aggregation queries return correct calculations', () => {
 				.mockReturnValueOnce([]) // 9: bySessionByDay
 				.mockReturnValueOnce([]) // 10: bySessionSource
 				.mockReturnValueOnce([]) // 11: bySessionLastQuery
+				.mockReturnValueOnce([]) // 12: bySessionTokens
 				.mockReturnValueOnce([
 					{ is_worktree: 0, count: 70, duration: 350000 },
 					{ is_worktree: 1, count: 30, duration: 150000 },
-				]); // 12: byWorktreeStatus
+				]); // 13: byWorktreeStatus
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1480,6 +1481,7 @@ describe('Aggregation queries return correct calculations', () => {
 				.mockReturnValueOnce([]) // 9: bySessionByDay
 				.mockReturnValueOnce([]) // 10: bySessionSource
 				.mockReturnValueOnce([]) // 11: bySessionLastQuery
+				.mockReturnValueOnce([]) // 12: bySessionTokens
 				.mockReturnValueOnce([{ is_worktree: 0, count: 50, duration: 250000 }]); // 12
 
 			const { StatsDB } = await import('../../../main/stats');

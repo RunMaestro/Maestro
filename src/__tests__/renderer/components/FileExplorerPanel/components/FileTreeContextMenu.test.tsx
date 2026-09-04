@@ -444,6 +444,16 @@ describe('FileTreeContextMenu', () => {
 		expect(menu.style.opacity).toBe('0');
 	});
 
+	// The menu is shrink-to-fit and positioned by measured width, so letting it
+	// grow is free - a wrapped label just looks broken. Every other context menu
+	// in the app already sets this.
+	it('never wraps a menu label', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+		const menu = document.body.querySelector('.fixed') as HTMLElement;
+		expect(menu.className).toContain('whitespace-nowrap');
+	});
+
 	describe('Auto Run staging', () => {
 		it('offers staging when the folder holds Auto Run documents', () => {
 			const onStageForAutoRun = vi.fn();
@@ -474,6 +484,57 @@ describe('FileTreeContextMenu', () => {
 
 		it('hides staging for a folder with no Auto Run documents', () => {
 			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('offers staging on a single Auto Run document file', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					autoRunStagedCount={1}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage Document for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging on a file outside the Auto Run folder', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('offers staging for a multi-selection of Auto Run documents', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					autoRunStagedCount={5}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage 5 Documents for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging for a multi-selection outside the Auto Run folder', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(fileNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+				/>
+			);
 
 			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
 		});

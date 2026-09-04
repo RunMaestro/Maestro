@@ -125,6 +125,12 @@ export interface FirstPartyPluginDefinition {
 	settingsNamespace: string;
 	/** The Encore feature flag that authorizes the first-party surface. */
 	encoreFlag: FirstPartyEncoreFlag;
+	/**
+	 * The day this feature first shipped, as `YYYY-MM-DD`. Required, because the
+	 * marketplace sorts by it: a feature with no date would sort to the end of
+	 * "Newest" forever and read as the oldest thing Maestro has.
+	 */
+	releaseDate: string;
 	/** Supervised background services the feature runs (empty when none). */
 	backgroundServices: readonly FirstPartyBackgroundService[];
 	/** How to actually use the feature once it is on. */
@@ -261,6 +267,7 @@ export const PIANOLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'pianola',
 	encoreFlag: 'pianola',
+	releaseDate: '2026-06-24',
 	backgroundServices: [
 		{
 			id: 'pianola.supervisor',
@@ -330,6 +337,7 @@ export const COWORKING_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'coworking',
 	encoreFlag: 'coworking',
+	releaseDate: '2026-05-03',
 	// No supervised background service tied to the flag: the coworking IPC bridge
 	// is app-scoped (main startup/shutdown owns its lifecycle), so disable = flag
 	// off + per-agent MCP uninstall; nothing flag-supervised keeps running.
@@ -357,6 +365,7 @@ export const OPENCODE_SERVER_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'opencodeServer',
 	encoreFlag: 'opencodeServer',
+	releaseDate: '2026-07-07',
 	// The shared `opencode serve` process is app-scoped (spawned lazily by
 	// OpencodeServerManager, torn down on quit), not flag-supervised: disable =
 	// flag off, and routing falls back to the CLI path. Nothing keeps running.
@@ -419,6 +428,7 @@ export const DIRECTOR_NOTES_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'directorNotes',
 	encoreFlag: 'directorNotes',
+	releaseDate: '2026-02-16',
 	// No supervised background services: every Director's Notes surface is
 	// on-demand (unified history / graph / stats are computed per IPC call;
 	// synopsis generation is a single awaited, timeout-bounded batch spawn
@@ -497,6 +507,7 @@ export const USAGE_STATS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	// `fs:write` scope is claimed.
 	settingsNamespace: 'usageStats',
 	encoreFlag: 'usageStats',
+	releaseDate: '2025-11-26',
 	backgroundServices: [
 		{
 			id: 'stats.sampler',
@@ -576,6 +587,7 @@ export const SYMPHONY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: SYMPHONY_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'symphony',
 	encoreFlag: 'symphony',
+	releaseDate: '2025-12-30',
 	// NONE on purpose: registry/issue fetching is on-demand (2h/5min/24h TTL
 	// caches, refreshed when the UI asks) and PR-status sync is renderer-side
 	// polling of on-demand IPC while the Symphony modal is open. There is no
@@ -648,6 +660,7 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'maestroCue',
 	encoreFlag: 'maestroCue',
+	releaseDate: '2026-03-01',
 	backgroundServices: [
 		{
 			id: 'cue.engine',
@@ -694,6 +707,7 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 	settingsNamespace: 'concerto',
 	encoreFlag: 'concerto',
+	releaseDate: '2026-07-05',
 	// No supervised background service: the movement overlay + cadenza HUD are
 	// purely reactive to CLI-pushed payloads (dropped at the render gate when the
 	// flag is off), and the bridge that carries them is app-scoped. Disable =
@@ -762,6 +776,7 @@ export const GROUPS_PLUS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	permissions: GROUPS_PLUS_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'groupsPlus',
 	encoreFlag: 'groupsPlus',
+	releaseDate: '2026-07-10',
 	// Groups+ has no service or broker entry point: existing group persistence stays
 	// host-owned. Disable only hides its renderer surfaces and preserves stored data.
 	backgroundServices: [],

@@ -22,6 +22,21 @@ export function dragCarriesStagedImage(dataTransfer: DataTransfer | null): boole
 	return Array.from(dataTransfer.types).includes(STAGED_IMAGE_MIME);
 }
 
+/**
+ * Spread on the tile WRAPPER, which is both the drag source and the drop target.
+ *
+ * The element the user presses has to be a plain `<div>`, not a form control.
+ * Blink clears `mouse_down_may_start_drag_` when a control consumes the press
+ * for activation, so a `<button>` under the cursor kills the drag before
+ * `dragstart` - and it kills it whether `draggable` sits on the button or on an
+ * ancestor, which is why the thumbnail could never be dragged out of the strip
+ * while `-webkit-user-drag` on it computed to `element` the whole time. The
+ * thumbnail image is `pointer-events-none` so the press always lands here.
+ *
+ * The remove and annotate buttons carry `draggable={false}` for the same
+ * reason, read from the other direction: their subtree computes
+ * `-webkit-user-drag: none`, so pressing one cannot start a tile drag.
+ */
 export interface StagedImageTileDragHandlers {
 	draggable: true;
 	onDragStart: (e: React.DragEvent<HTMLElement>) => void;

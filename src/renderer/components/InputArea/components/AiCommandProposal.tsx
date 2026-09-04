@@ -47,7 +47,11 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 		>
 			{/* The request stays on screen the whole time. Judging a proposed
 			    command means judging it against what was actually asked for. */}
-			<div className="text-[11px] truncate" style={{ color: theme.colors.textDim }} title={request}>
+			<div
+				className="text-xs-plus truncate"
+				style={{ color: theme.colors.textDim }}
+				title={request}
+			>
 				{request}
 			</div>
 
@@ -126,7 +130,7 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 							onSelect={() => onChoose('cancel')}
 							onActivate={onDismiss}
 						/>
-						<span className="ml-auto text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="ml-auto text-2xs" style={{ color: theme.colors.textDim }}>
 							&#8592; &#8594; to choose
 						</span>
 					</div>
@@ -184,7 +188,7 @@ function ChoiceButton({
 			{icon}
 			{label}
 			<kbd
-				className="px-1 rounded border font-mono text-[10px]"
+				className="px-1 rounded border font-mono text-2xs"
 				style={{ borderColor: theme.colors.border }}
 			>
 				{hint}

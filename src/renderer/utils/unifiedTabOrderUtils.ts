@@ -1,10 +1,64 @@
 // Shared helpers for the per-session `unifiedTabOrder` array.
 //
-// Lives in its own file (rather than tabHelpers.ts or terminalTabHelpers.ts)
+// Lives in its own file (rather than tabHelpers or terminalTabHelpers.ts)
 // so both consumers can import it without forming a circular dependency.
 
-import type { Session, UnifiedTabRef } from '../types';
+import type { AITab, Session, UnifiedTabRef } from '../types';
 import { useSettingsStore } from '../stores/settingsStore';
+
+/**
+ * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
+ * Currently only unopened cross-agent consult tabs (see `AITab.hidden`).
+ *
+ * The single predicate behind both visibility surfaces: `buildUnifiedTabs` (what
+ * renders) and `getNavigableTabs` (what Cmd+1..9 / cycling reaches). They must
+ * agree, or a shortcut lands on a tab the strip never showed.
+ */
+export function isAiTabHidden(tab: AITab): boolean {
+	return tab.hidden === true;
+}
+
+/**
+ * The AI tabs a user-facing list may show: everything `buildUnifiedTabs` draws a
+ * chip for, with hidden consult tabs dropped.
+ *
+ * Reach for this in any surface that ENUMERATES an agent's tabs - the tab
+ * switcher, cross-tab search, a merge target list, a tab count in copy. A hidden
+ * consult tab is a transcript the user never asked to open, so listing it offers
+ * a row that has no chip to go back to, and counting it makes "Close all N tabs"
+ * name a number the strip contradicts.
+ *
+ * Returns the input by reference when there is nothing to drop (the common case),
+ * since callers memoize on identity.
+ */
+export function visibleAiTabs(tabs: AITab[] | undefined): AITab[] {
+	if (!tabs || tabs.length === 0) return tabs ?? [];
+	return tabs.some(isAiTabHidden) ? tabs.filter((tab) => !isAiTabHidden(tab)) : tabs;
+}
+
+/**
+ * Narrow a unifiedTabOrder to the refs a keyboard shortcut may land on: the ones
+ * `buildUnifiedTabs` actually renders as a chip.
+ *
+ * The stored order deliberately keeps the ref of a hidden AI tab (an unopened
+ * cross-agent consult) - that ref is what restores the tab to its original
+ * position when the user reveals it. The strip drops those refs, so indexing the
+ * stored order makes navigation walk stops that have no chip: Cmd+Shift+[ appears
+ * to skip a beat, and Cmd+N counts past a tab nobody can see. Every navigation
+ * index, and every "pick the neighbor" fallback after a close, comes from THIS
+ * list; only the write-back uses the stored one.
+ *
+ * Returns the input by reference when there is nothing to drop (the common case),
+ * since callers memoize on identity.
+ */
+export function getNavigableUnifiedTabOrder(
+	session: Session,
+	order: UnifiedTabRef[]
+): UnifiedTabRef[] {
+	const hiddenAiIds = new Set((session.aiTabs || []).filter(isAiTabHidden).map((tab) => tab.id));
+	if (hiddenAiIds.size === 0) return order;
+	return order.filter((ref) => !(ref.type === 'ai' && hiddenAiIds.has(ref.id)));
+}
 
 /**
  * Find the index of the currently active tab within a unifiedTabOrder array.

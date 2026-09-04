@@ -42,11 +42,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			language,
 			theme,
 			spellCheck = false,
+			readOnly = false,
 			wrap = true,
 			showLineNumbers = true,
 			onLineNumberContextMenu,
 			onKeyDown,
 			fontScale = 1,
+			fontFamily,
+			baseFontPx,
 			className,
 		},
 		ref
@@ -96,6 +99,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
 			});
@@ -110,7 +114,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				doc: value,
 				extensions: [
 					compartments.base.of(baseExt),
-					compartments.theme.of(buildEditorTheme(theme, fontScale)),
+					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
 					updateListener,
@@ -156,16 +160,20 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			}
 		}, [value]);
 
-		// Theme or font-zoom change → reconfigure the theme compartment. Font size
-		// rides in the theme (see themeAdapter) so a zoom re-measures line heights
-		// the same way a theme swap does.
+		// Theme, font-zoom, or surface-font change → reconfigure the theme
+		// compartment. Font size and family both ride in the theme (see
+		// themeAdapter) so either re-measures line heights the same way a theme
+		// swap does; leaving fontFamily out of the deps would apply a new face
+		// only on the next unrelated theme change.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
 			view.dispatch({
-				effects: compartments.theme.reconfigure(buildEditorTheme(theme, fontScale)),
+				effects: compartments.theme.reconfigure(
+					buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)
+				),
 			});
-		}, [theme, fontScale, compartments.theme]);
+		}, [theme, fontScale, fontFamily, baseFontPx, compartments.theme]);
 
 		// Language change → reload + reconfigure. Plain-text falls through to
 		// an empty extension so the previously loaded grammar is cleared.
@@ -196,11 +204,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
 			});
 			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
-		}, [wrap, showLineNumbers, spellCheck, compartments.base]);
+		}, [wrap, showLineNumbers, spellCheck, readOnly, compartments.base]);
 
 		useImperativeHandle(
 			ref,
@@ -263,6 +272,38 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 							? EditorView.scrollIntoView(clampedFrom, { y: 'center' })
 							: undefined,
 					});
+				},
+				getCaret() {
+					const view = viewRef.current;
+					if (!view) return 0;
+					return view.state.selection.main.head;
+				},
+				coordsAtPos(pos: number) {
+					const view = viewRef.current;
+					const host = hostRef.current;
+					if (!view || !host) return null;
+					const docLen = view.state.doc.length;
+					const coords = view.coordsAtPos(Math.max(0, Math.min(pos, docLen)));
+					if (!coords) return null;
+					// Viewport coordinates, rebased onto the host so a popup can be
+					// positioned with plain `absolute` inside it.
+					const hostRect = host.getBoundingClientRect();
+					return {
+						top: coords.bottom - hostRect.top + 4,
+						left: coords.left - hostRect.left,
+					};
+				},
+				replaceRange(from: number, to: number, text: string) {
+					const view = viewRef.current;
+					if (!view) return;
+					const docLen = view.state.doc.length;
+					const clampedFrom = Math.max(0, Math.min(from, docLen));
+					const clampedTo = Math.max(clampedFrom, Math.min(to, docLen));
+					view.dispatch({
+						changes: { from: clampedFrom, to: clampedTo, insert: text },
+						selection: EditorSelection.single(clampedFrom + text.length),
+					});
+					view.contentDOM.focus({ preventScroll: true });
 				},
 				setSearchMatches(matches, currentIndex) {
 					const view = viewRef.current;

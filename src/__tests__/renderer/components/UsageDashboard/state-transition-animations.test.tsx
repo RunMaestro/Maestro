@@ -70,6 +70,10 @@ vi.mock('lucide-react', () => {
 		CalendarCheck: createIcon('calendar-check', '📆'),
 		PenLine: createIcon('pen-line', '✏️'),
 		Coins: createIcon('coins', '🪙'),
+		// Delegation score card + summary ratio card icons
+		Rocket: createIcon('rocket', '🚀'),
+		Info: createIcon('info', 'ℹ️'),
+		Split: createIcon('split', '🔀'),
 	};
 });
 
@@ -135,6 +139,8 @@ class MockResizeObserver {
 // Mock the maestro API
 const mockStats = {
 	getAggregation: vi.fn(),
+	getDelegationTotals: vi.fn(),
+	getDelegationByDay: vi.fn(),
 	getDatabaseSize: vi.fn(),
 	getAutoRunSessions: vi.fn().mockResolvedValue([]),
 	onStatsUpdate: vi.fn(() => () => {}),
@@ -217,6 +223,12 @@ beforeEach(() => {
 		bySessionByDay: {},
 		bySessionSource: {},
 	});
+	mockStats.getDelegationTotals.mockResolvedValue({
+		interactive: { count: 0, durationMs: 0 },
+		autoRun: { count: 0, durationMs: 0 },
+		cue: { count: 0, durationMs: 0 },
+	});
+	mockStats.getDelegationByDay.mockResolvedValue([]);
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024); // 1 MB
 });
 

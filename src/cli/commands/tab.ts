@@ -27,10 +27,13 @@ import {
 import { formatSuccess } from '../output/formatter';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 interface TabNewOptions {
 	agent: string;
 	prompt?: string;
+	background?: boolean;
+	focus?: boolean;
 	json?: boolean;
 }
 
@@ -43,11 +46,16 @@ interface TabMutateOptions {
 export async function tabNew(options: TabNewOptions): Promise<void> {
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
 	const prompt = options.prompt?.trim();
+	// Keyed by VERB, not by message. `tab new --prompt` sends the same
+	// `new_ai_tab_with_prompt` as `dispatch --new-tab` but has always focused,
+	// while dispatch has always been background - so the message cannot be what
+	// decides, or one of the two would change behaviour.
+	const background = resolveBackgroundFlag(options, 'tab-new');
 
 	try {
 		const payload = prompt
-			? { type: 'new_ai_tab_with_prompt', sessionId, prompt }
-			: { type: 'new_tab', sessionId };
+			? { type: 'new_ai_tab_with_prompt', sessionId, prompt, background }
+			: { type: 'new_tab', sessionId, background };
 		const responseType = prompt ? 'new_ai_tab_with_prompt_result' : 'new_tab_result';
 		const result = await sendSimpleCommand(payload, responseType);
 
@@ -56,9 +64,11 @@ export async function tabNew(options: TabNewOptions): Promise<void> {
 		}
 		const tabId = result.tabId as string | undefined;
 		if (options.json) {
-			console.log(JSON.stringify({ success: true, sessionId, tabId: tabId ?? null }));
+			console.log(JSON.stringify({ success: true, sessionId, tabId: tabId ?? null, background }));
 		} else {
-			console.log(formatSuccess(`Opened new tab for ${sessionId}`));
+			console.log(
+				formatSuccess(`Opened new tab for ${sessionId}${background ? ' (background tab)' : ''}`)
+			);
 			if (tabId) console.log(`  Tab: ${tabId}`);
 		}
 	} catch (error) {

@@ -78,6 +78,11 @@ export const DEFAULT_SHORTCUTS = {
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
 	viewGitDiff: { id: 'viewGitDiff', label: 'View Git Diff', keys: ['Meta', 'Shift', 'd'] },
 	viewGitLog: { id: 'viewGitLog', label: 'View Git Log', keys: ['Meta', 'Shift', 'g'] },
+	refreshGitFileState: {
+		id: 'refreshGitFileState',
+		label: 'Refresh Files, Git, History',
+		keys: ['Alt', 'Meta', 'r'],
+	},
 	agentSessions: {
 		id: 'agentSessions',
 		label: 'View Agent Sessions',
@@ -100,10 +105,14 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Edit Last Queued Message',
 		keys: ['Meta', 'Shift', 'e'],
 	},
-	// Opt+Cmd+Down, not Opt+J: the J key is crowded (Cmd+J switches AI/Shell mode,
-	// Cmd+Shift+J tiles a new terminal, Opt+Cmd+J jumps to the nearest terminal),
-	// and a bare Opt+letter types a character while the composer has focus.
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'Meta', 'ArrowDown'] },
+	// Back on Cmd+Shift+J, the chord this action ORIGINALLY shipped with
+	// (b37423abf) and the one most installs never actually left - the Opt+J-era
+	// migration missed them, so they kept it through both the Opt+J and
+	// Opt+Cmd+Down eras. What made Cmd+Shift+J look unavailable was the tiling
+	// family briefly claiming it; that family now lives on Ctrl+Cmd with the rest
+	// of the pane commands, so the J key is free again. A bare Opt+letter is still
+	// off the table here: it types a character while the composer has focus.
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Meta', 'Shift', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
@@ -158,7 +167,10 @@ export const DEFAULT_SHORTCUTS = {
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
 		label: 'Next Unread / Draft Tab',
-		keys: ['Meta', 'Shift', 'ArrowDown'],
+		// NOT Cmd+Shift+Down: that chord is in RESERVED_SHORTCUT_COMBOS (macOS
+		// select-to-bottom inside a text field), so the new load-time guard strips
+		// it and the action would arrive unbound. Alt+Meta+ArrowDown is free.
+		keys: ['Alt', 'Meta', 'ArrowDown'],
 	},
 	jumpToTerminal: {
 		id: 'jumpToTerminal',
@@ -272,42 +284,50 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
-	// The "tile a NEW tab" family, all four registered UNBOUND (`keys: []`) rather
-	// than left out - that keeps them in Settings -> Shortcuts where a user can
-	// record their own binding, without Maestro claiming four default chords
-	// nobody asked for. An empty `keys` never matches an event (see isShortcut)
-	// and renders as "Not set".
+	// The "tile a NEW tab" family. All four live on Ctrl+Cmd, alongside the pane
+	// commands above, because that is literally what they do: Ctrl+Cmd+D splits
+	// the current view, and each of these splits it AND puts a new tab of one kind
+	// in the bottom half. The letter is the same mnemonic the plain "new tab"
+	// chord uses (Cmd+J terminal, Cmd+B browser), so the tiled twin is the same
+	// letter one modifier over.
 	//
-	// The terminal one used to ship on Cmd+Shift+J, reasoned as "one modifier away
-	// from Cmd+J". That reasoning held against the defaults table and not against
-	// real installs: Cmd+Shift+J was jumpToBottom's ORIGINAL default (b37423abf),
-	// and the migration that later moved it only covered the Opt+J era, so every
-	// install predating that still holds Cmd+Shift+J for Jump to Bottom. Shipping
-	// a new default onto an occupied chord put two live actions on one key. The
-	// migration below now covers it, and this ships unbound like its siblings -
-	// claiming a fourth chord was the same act the comment argues against.
+	// Ctrl+Cmd is the only modifier pair Maestro can express for a family like
+	// this. `eventMatchesShortcutKeys` folds Meta and Ctrl into ONE modifier so a
+	// single table serves macOS and Windows, which means Ctrl+Opt is not a
+	// distinct chord there - on Windows it IS Cmd+Opt, where these letters already
+	// carry Tab Switcher, Jump to Nearest Terminal and Search All Tabs. These are
+	// matched by isPaneShortcut, which requires BOTH physical modifiers, so they
+	// never fire on the plain-Cmd equivalents.
+	//
+	// The terminal one previously shipped on Cmd+Shift+J, reasoned as "one
+	// modifier away from Cmd+J". That reasoning held against the defaults table
+	// and not against real installs: Cmd+Shift+J was jumpToBottom's ORIGINAL
+	// default (b37423abf), and the migration that later moved it only covered the
+	// Opt+J era, so every install predating that still held Cmd+Shift+J for Jump
+	// to Bottom and got two live actions on one key. Jump to Bottom now owns that
+	// chord outright and the whole tiling family sits here instead.
 	tileTerminalBelow: {
 		id: 'tileTerminalBelow',
 		label: 'Tile New Terminal Below',
-		keys: [],
+		keys: ['Control', 'Meta', 'j'],
 		windowScoped: true,
 	},
 	tileAiBelow: {
 		id: 'tileAiBelow',
 		label: 'Tile New AI Chat Below',
-		keys: [],
+		keys: ['Control', 'Meta', 't'],
 		windowScoped: true,
 	},
 	tileBrowserBelow: {
 		id: 'tileBrowserBelow',
 		label: 'Tile New Browser Below',
-		keys: [],
+		keys: ['Control', 'Meta', 'b'],
 		windowScoped: true,
 	},
 	tileFileBelow: {
 		id: 'tileFileBelow',
 		label: 'Tile New File Below',
-		keys: [],
+		keys: ['Control', 'Meta', 'f'],
 		windowScoped: true,
 	},
 
@@ -380,6 +400,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'filePreviewForward',
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
+	},
+	renameAgentSession: {
+		id: 'renameAgentSession',
+		label: 'Rename Session (in Sessions Browser)',
+		keys: ['Meta', 'e'],
 	},
 	fontSizeIncrease: {
 		id: 'fontSizeIncrease',

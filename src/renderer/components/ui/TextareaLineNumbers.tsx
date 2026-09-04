@@ -64,6 +64,14 @@ export interface TextareaLineNumbersProps {
 	/** Current textarea value - the gutter re-measures whenever it changes. */
 	value: string;
 	theme: Theme;
+	/**
+	 * Any value that changes the textarea's typography without changing its box.
+	 * A font-size change leaves the border box the same size, so the internal
+	 * ResizeObserver never fires and the numbers keep the row heights of the old
+	 * font until the next keystroke. Pass the font scale (or whatever drives it)
+	 * to re-measure on the spot.
+	 */
+	remeasureKey?: string | number;
 	/** Test id on the gutter element. Defaults to `line-numbers`. */
 	testId?: string;
 }
@@ -72,6 +80,7 @@ export function TextareaLineNumbers({
 	textareaRef,
 	value,
 	theme,
+	remeasureKey,
 	testId = 'line-numbers',
 }: TextareaLineNumbersProps) {
 	const rowsRef = useRef<HTMLDivElement>(null);
@@ -82,6 +91,7 @@ export function TextareaLineNumbers({
 	const [boxStyle, setBoxStyle] = useState<{
 		paddingTop: number;
 		fontSize?: string;
+		fontFamily?: string;
 		lineHeight?: string;
 	}>({ paddingTop: 0 });
 
@@ -119,11 +129,19 @@ export function TextareaLineNumbers({
 				paddingTop: parseFloat(computed.paddingTop) || 0,
 				fontSize: computed.fontSize || undefined,
 				lineHeight: computed.lineHeight || undefined,
+				// The gutter must render in the textarea's OWN family, not a
+				// hard-coded mono stack. `ch` is a font-relative unit, so a gutter
+				// sized in `ch` against a different face is a different width than
+				// the padding it is supposed to fill - the numbers drift out from
+				// under the text as soon as the two fonts disagree. They now can:
+				// the File Editor font is a user setting.
+				fontFamily: computed.fontFamily || undefined,
 			};
 			setBoxStyle((prev) =>
 				prev.paddingTop === nextBox.paddingTop &&
 				prev.fontSize === nextBox.fontSize &&
-				prev.lineHeight === nextBox.lineHeight
+				prev.lineHeight === nextBox.lineHeight &&
+				prev.fontFamily === nextBox.fontFamily
 					? prev
 					: nextBox
 			);
@@ -157,17 +175,18 @@ export function TextareaLineNumbers({
 		const observer = new ResizeObserver(measure);
 		observer.observe(textarea);
 		return () => observer.disconnect();
-	}, [textareaRef, lines]);
+	}, [textareaRef, lines, remeasureKey]);
 
 	return (
 		<>
 			<div
 				aria-hidden="true"
 				data-testid={testId}
-				className="absolute top-px bottom-px left-px overflow-hidden select-none pointer-events-none font-mono text-sm"
+				className="absolute top-px bottom-px left-px overflow-hidden select-none pointer-events-none text-sm"
 				style={{
 					width: metrics.gutterWidth,
 					paddingTop: boxStyle.paddingTop,
+					fontFamily: boxStyle.fontFamily,
 					fontSize: boxStyle.fontSize,
 					lineHeight: boxStyle.lineHeight,
 					color: theme.colors.textDim,

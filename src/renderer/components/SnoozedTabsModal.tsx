@@ -10,8 +10,8 @@
  */
 
 import { useState, useMemo, useCallback } from 'react';
-import { Clock, RotateCcw, CalendarClock, X, StickyNote, History } from 'lucide-react';
-import type { Theme } from '../types';
+import { Clock, RotateCcw, CalendarClock, X, StickyNote, History, Play } from 'lucide-react';
+import type { SnoozeContent, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { CountBadge, Modal } from './ui';
 import { getTabKindIcon, getTabKindColor } from './TabBar/tabBarUtils';
@@ -20,6 +20,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
 import { notifyToast } from '../stores/notificationStore';
 import {
+	canSnoozeRunWakePrompt,
 	collectSnoozedTabs,
 	getSnoozedTabLabel,
 	isSnoozedGroup,
@@ -117,9 +118,9 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 	);
 
 	const handleReschedule = useCallback(
-		(wakeAt: number, note: string) => {
+		(wakeAt: number, content: SnoozeContent) => {
 			if (!editing) return;
-			rescheduleSnoozedTab(editing.sessionId, editing.snoozeId, wakeAt, note);
+			rescheduleSnoozedTab(editing.sessionId, editing.snoozeId, wakeAt, content);
 			setEditing(null);
 		},
 		[editing, rescheduleSnoozedTab]
@@ -146,7 +147,7 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 						View History
 						{historyCount > 0 && (
 							<span
-								className="text-[10px] px-1.5 py-0.5 rounded"
+								className="text-2xs px-1.5 py-0.5 rounded"
 								style={{ backgroundColor: theme.colors.bgActivity }}
 							>
 								{historyCount}
@@ -238,6 +239,20 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 														<span className="italic">{entry.note}</span>
 													</div>
 												)}
+
+												{/* A queued prompt is the row's most consequential fact - it
+												    means unsnoozing starts a turn - so it is shown here rather
+												    than only inside the reschedule dialog. */}
+												{entry.wakePrompt && (
+													<div
+														className="flex items-start gap-1.5 text-xs mt-1.5"
+														style={{ color: theme.colors.accent }}
+														title="Sent to the agent when this tab comes back"
+													>
+														<Play className="w-3 h-3 shrink-0 mt-0.5" />
+														<span>{entry.wakePrompt}</span>
+													</div>
+												)}
 											</div>
 
 											{/* Row actions */}
@@ -293,6 +308,8 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 					tabLabel={getSnoozedTabLabel(editingItem.entry)}
 					initialWakeAt={editingItem.entry.wakeAt}
 					initialNote={editingItem.entry.note}
+					initialWakePrompt={editingItem.entry.wakePrompt}
+					canRunWakePrompt={canSnoozeRunWakePrompt(editingItem.entry)}
 					onClose={() => setEditing(null)}
 					onConfirm={handleReschedule}
 				/>

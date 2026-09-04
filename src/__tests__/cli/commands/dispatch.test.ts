@@ -112,6 +112,8 @@ describe('dispatch command', () => {
 					type: 'new_ai_tab_with_prompt',
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
+					// The dispatched tab is created in the background; the tabId we
+					// return is how the caller follows it without stealing the view.
 					background: true,
 				},
 				'new_ai_tab_with_prompt_result'
@@ -237,6 +239,24 @@ describe('dispatch command', () => {
 				'command_result'
 			);
 		});
+
+		it('lets --focus win when both flags are passed', async () => {
+			// The pair is contradictory, and a script that sends both is better
+			// served by the narrower ask than by a hard failure.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-active-99',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'Hi', { background: true, focus: true });
+
+			expect(mockSendCommand.mock.calls[0][0]).not.toHaveProperty('background');
+		});
 	});
 
 	describe('--tab <tabId> flow', () => {
@@ -260,6 +280,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Follow up',
 					inputMode: 'ai',
+					background: false,
 					tabId: 'tab-xyz',
 					background: true,
 				},
@@ -325,6 +346,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Concurrent message',
 					inputMode: 'ai',
+					background: false,
 					force: true,
 					background: true,
 				},

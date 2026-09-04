@@ -6,6 +6,7 @@
 
 import { memo, useState, useRef, useMemo, useCallback } from 'react';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useUIStore } from '../stores/uiStore';
 import {
 	MessageSquare,
 	ChevronDown,
@@ -203,7 +204,10 @@ function GroupChatListInner({
 	const [internalIsExpanded, setInternalIsExpanded] = useState(groupChats.length > 0);
 	const isExpanded = controlledIsExpanded !== undefined ? controlledIsExpanded : internalIsExpanded;
 
-	const [showArchived, setShowArchived] = useState(false);
+	// Shared, not local: whether archived chats are drawn decides which rows the
+	// list contains, and the Cmd+[ / Cmd+] cycle has to walk exactly that set.
+	const showArchived = useUIStore((s) => s.showArchivedGroupChats);
+	const setShowArchived = useUIStore((s) => s.setShowArchivedGroupChats);
 
 	const setIsExpanded = useCallback(
 		(expanded: boolean) => {
@@ -349,7 +353,7 @@ function GroupChatListInner({
 					<span className="truncate">Group Chats</span>
 					{activeCount > 0 && (
 						<span
-							className="gc-count-badge relative text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0"
+							className="gc-count-badge relative text-2xs px-1.5 py-0.5 rounded-full font-medium shrink-0"
 							style={{
 								backgroundColor: theme.colors.border,
 								color: theme.colors.textDim,
@@ -384,7 +388,7 @@ function GroupChatListInner({
 								e.stopPropagation();
 								onSortAlphabeticalChange(!sortAlphabetical);
 							}}
-							className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+							className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 							style={{
 								backgroundColor: 'transparent',
 								color: theme.colors.textDim,
@@ -409,7 +413,7 @@ function GroupChatListInner({
 								e.stopPropagation();
 								setShowArchived(!showArchived);
 							}}
-							className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+							className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 							style={{
 								backgroundColor: showArchived ? `${theme.colors.textDim}20` : 'transparent',
 								color: theme.colors.textDim,
@@ -432,7 +436,7 @@ function GroupChatListInner({
 							setIsExpanded(true);
 							onNewGroupChat();
 						}}
-						className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+						className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 						style={{
 							backgroundColor: theme.colors.accent + '20',
 							color: theme.colors.accent,
@@ -507,7 +511,7 @@ function GroupChatListInner({
 										</span>
 										{chat.participants.length > 0 && (
 											<span
-												className="text-[10px] px-1.5 py-0.5 rounded-full"
+												className="text-2xs px-1.5 py-0.5 rounded-full"
 												style={{
 													backgroundColor: theme.colors.border,
 													color: theme.colors.textDim,

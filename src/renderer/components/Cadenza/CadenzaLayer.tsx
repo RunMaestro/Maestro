@@ -208,7 +208,7 @@ const CadenzaCard = memo(function CadenzaCard({
 				</div>
 				{view.sourcePlugin && (
 					<span
-						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-2xs font-medium"
 						style={{ maxWidth: 120, backgroundColor: `${accent}1f`, color: accent }}
 						title={`from ${view.sourcePlugin}`}
 					>
@@ -217,7 +217,7 @@ const CadenzaCard = memo(function CadenzaCard({
 				)}
 				{view.sourceAgent && (
 					<span
-						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-2xs font-medium"
 						style={{ maxWidth: 88, backgroundColor: `${accent}1f`, color: accent }}
 						title={`opened by ${view.sourceAgent}`}
 					>
@@ -283,7 +283,7 @@ const CadenzaCard = memo(function CadenzaCard({
 								{getBasename(view.path)}
 							</div>
 							<div
-								className="text-[11px] font-mono truncate"
+								className="text-xs-plus font-mono truncate"
 								style={{ color: theme.colors.textDim }}
 							>
 								{getParentDir(view.path)}

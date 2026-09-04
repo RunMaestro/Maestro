@@ -60,13 +60,14 @@ describe('StaticRoutes', () => {
 	const securityToken = 'test-token-123';
 	const webAssetsPath = '/path/to/web/assets';
 	const webDesktopPath = '/path/to/web-desktop';
+	const concertoToken = 'test-concerto-token';
 
 	let staticRoutes: StaticRoutes;
 	let mockFastify: ReturnType<typeof createMockFastify>;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		staticRoutes = new StaticRoutes(securityToken, webAssetsPath, webDesktopPath);
+		staticRoutes = new StaticRoutes(securityToken, webAssetsPath, webDesktopPath, concertoToken);
 		mockFastify = createMockFastify();
 		staticRoutes.registerRoutes(mockFastify as any);
 	});
@@ -114,7 +115,7 @@ describe('StaticRoutes', () => {
 
 	describe('Null path handling', () => {
 		it('should return 404 for manifest.json when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null, webDesktopPath);
+			const noAssetsRoutes = new StaticRoutes(securityToken, null, webDesktopPath, concertoToken);
 			const noAssetsFastify = createMockFastify();
 			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
 
@@ -126,7 +127,7 @@ describe('StaticRoutes', () => {
 		});
 
 		it('should return 404 for sw.js when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null, webDesktopPath);
+			const noAssetsRoutes = new StaticRoutes(securityToken, null, webDesktopPath, concertoToken);
 			const noAssetsFastify = createMockFastify();
 			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
 
@@ -138,7 +139,7 @@ describe('StaticRoutes', () => {
 		});
 
 		it('should return 503 for the token root when the web-desktop bundle is missing', async () => {
-			const noDesktopRoutes = new StaticRoutes(securityToken, webAssetsPath, null);
+			const noDesktopRoutes = new StaticRoutes(securityToken, webAssetsPath, null, concertoToken);
 			const noDesktopFastify = createMockFastify();
 			noDesktopRoutes.registerRoutes(noDesktopFastify as any);
 
@@ -166,7 +167,12 @@ describe('StaticRoutes', () => {
 	describe('Security Token Validation', () => {
 		it('should use provided security token in routes', () => {
 			const customToken = 'custom-secure-token-456';
-			const customRoutes = new StaticRoutes(customToken, webAssetsPath, webDesktopPath);
+			const customRoutes = new StaticRoutes(
+				customToken,
+				webAssetsPath,
+				webDesktopPath,
+				concertoToken
+			);
 			const customFastify = createMockFastify();
 			customRoutes.registerRoutes(customFastify as any);
 
@@ -193,7 +199,12 @@ describe('StaticRoutes', () => {
 					'utf8'
 				);
 
-				const freshRoutes = new StaticRoutes(securityToken, webAssetsPath, tempDesktopPath);
+				const freshRoutes = new StaticRoutes(
+					securityToken,
+					webAssetsPath,
+					tempDesktopPath,
+					concertoToken
+				);
 				const freshFastify = createMockFastify();
 				freshRoutes.registerRoutes(freshFastify as any);
 
@@ -207,10 +218,20 @@ describe('StaticRoutes', () => {
 				);
 				// Config is injected so the electron-shim can open the WS bridge.
 				expect(firstReply.send).toHaveBeenCalledWith(expect.stringContaining('__MAESTRO_CONFIG__'));
+				// ...including the Concerto document token, which the renderer needs
+				// to point an HTML Movement's iframe at a URL a browser can load.
+				expect(firstReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(`concertoToken: "${concertoToken}"`)
+				);
 				// PWA manifest and iOS home-screen icon are wired into the page,
 				// token-prefixed to match their HTTP-served routes.
 				expect(firstReply.send).toHaveBeenCalledWith(
 					expect.stringContaining(`<link rel="manifest" href="/${securityToken}/manifest.json" />`)
+				);
+				expect(firstReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(
+						`<link rel="icon" href="/${securityToken}/icons/icon-192x192.png" />`
+					)
 				);
 				expect(firstReply.send).toHaveBeenCalledWith(
 					expect.stringContaining(
@@ -250,7 +271,12 @@ describe('StaticRoutes', () => {
 					'utf8'
 				);
 
-				const freshRoutes = new StaticRoutes(securityToken, webAssetsPath, tempDesktopPath);
+				const freshRoutes = new StaticRoutes(
+					securityToken,
+					webAssetsPath,
+					tempDesktopPath,
+					concertoToken
+				);
 				const freshFastify = createMockFastify();
 				freshRoutes.registerRoutes(freshFastify as any);
 

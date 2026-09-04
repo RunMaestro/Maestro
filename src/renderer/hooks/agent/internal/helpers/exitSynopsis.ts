@@ -20,6 +20,7 @@ import { notifyToast } from '../../../../stores/notificationStore';
 import { formatRelativeTime } from '../../../../../shared/formatters';
 import { parseSynopsis } from '../../../../../shared/synopsis';
 import { hasRunnableQueueItem } from '../../../../utils/executionQueue';
+import { isSessionIdLabel } from '../../../../utils/tabHelpers';
 import type { ToolType, Session, LogEntry } from '../../../../types';
 import type { UseAgentListenersDeps } from '../types';
 import type { RightPanelHandle } from '../../../../components/RightPanel';
@@ -109,8 +110,27 @@ export async function runExitSynopsis(
 						sessionId: synopsisData.sessionId,
 						agentSessionId: synopsisData.agentSessionId,
 						hasResponse: !!result.response,
+						error: result.error,
 					}
 				);
+				// Say so rather than going quiet. The usual cause is a transcript
+				// too long to resume, which repeats on every turn until the user
+				// starts a fresh tab - and the History entry they are waiting for
+				// never arrives. `lastSynopsisTime` is deliberately NOT stamped
+				// here, so the next successful synopsis still covers this turn.
+				if (result.error) {
+					notifyToast({
+						color: 'yellow',
+						title: 'Synopsis failed',
+						message: result.error,
+						group: synopsisData.groupName,
+						project: synopsisData.projectName,
+						sessionId: synopsisData.sessionId,
+						tabId: synopsisData.tabId,
+						tabName: synopsisData.tabName,
+						skipCustomNotification: true,
+					});
+				}
 			}
 			return;
 		}
@@ -173,14 +193,14 @@ export async function runExitSynopsis(
 /**
  * Persist the tab name to the agent's session origins store so the session
  * remains searchable in TabSwitcherModal's "All Named" view after it closes.
- * Skip UUID-prefix fallback names (8 hex chars) - those aren't real
- * user-facing names.
+ * Skips the id-label fallback an unnamed tab displays - that is not a
+ * user-facing name, and storing it would hand a placeholder back to whatever
+ * restores the session later.
  */
 function persistTabNameAfterSynopsis(synopsisData: SynopsisData): void {
 	const persistName = synopsisData.tabName;
 	if (!persistName) return;
-	const isUuidPrefix = /^[0-9A-F]{8}$/.test(persistName);
-	if (isUuidPrefix) return;
+	if (isSessionIdLabel(persistName, synopsisData.agentSessionId)) return;
 	if (!synopsisData.agentSessionId || !synopsisData.projectRoot) return;
 
 	const persistAgentId = synopsisData.toolType || 'claude-code';

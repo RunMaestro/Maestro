@@ -269,6 +269,30 @@ export function getForceSendEligibility(
 }
 
 /**
+ * Whether a Force Send control should be RENDERED at all, given its eligibility.
+ *
+ * Separate from {@link ForceSendEligibility.canForce}, which decides whether the
+ * control is enabled. Two of the three blocked reasons are dead ends the user
+ * cannot act on from the card: an item with no tab left to run on could never be
+ * sent, and an item whose own tab is already mid-turn is simply waiting its turn
+ * - a tab runs one turn at a time, so the wait resolves itself and offering
+ * "Force Send" there reads as a control that refuses to work. Only
+ * `needs-forced-parallel` stays visible-but-disabled, because its tooltip names
+ * a setting the user can go turn on.
+ *
+ * Both Force Send surfaces (the inline QUEUED card and the Execution Queue
+ * browser) call this, so they cannot drift on when the button exists.
+ */
+export function shouldOfferForceSend(
+	eligibility: ForceSendEligibility | null | undefined
+): boolean {
+	if (!eligibility) return false;
+	return (
+		eligibility.blockedReason !== 'no-target-tab' && eligibility.blockedReason !== 'target-tab-busy'
+	);
+}
+
+/**
  * The tooltip a Force Send control shows, given its eligibility.
  *
  * Both surfaces that offer Force Send - the Execution Queue modal and the

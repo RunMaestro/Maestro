@@ -14,6 +14,7 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'activeThemeId',
 	'customThemeColors',
 	'customThemeBaseId',
+	'themeGloss',
 	'fontSize',
 	'enterToSendAI',
 	'defaultSaveToHistory',

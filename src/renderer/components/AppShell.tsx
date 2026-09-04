@@ -7,7 +7,6 @@
  */
 
 import React, { useEffect, type ComponentProps, type ReactNode } from 'react';
-import { withMonoFallback } from '../../shared/fontStack';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { SessionList } from './SessionList';
 import { RightPanel, type RightPanelHandle } from './RightPanel';
@@ -37,8 +36,6 @@ type EmptyStateViewProps = ComponentProps<typeof EmptyStateView>;
 
 export interface AppShellProps {
 	theme: Theme;
-	fontFamily: string;
-	fontSize: number;
 	keyboardShellOffset: number;
 	isMobileLandscape: boolean;
 	useNativeTitleBar: boolean;
@@ -79,8 +76,6 @@ export interface AppShellProps {
 
 export function AppShell({
 	theme,
-	fontFamily,
-	fontSize,
 	keyboardShellOffset,
 	isMobileLandscape,
 	useNativeTitleBar,
@@ -142,22 +137,28 @@ export function AppShell({
 
 	return (
 		<div
-			className={`flex maestro-app-shell w-full font-mono overflow-hidden transition-colors duration-300 ${
+			// `font-mono` is deliberately absent. It resolves to the CODE face now
+			// (see tailwind.config.mjs), which is not what the shell wants, and it
+			// was already dead here - the inline fontFamily below has always won.
+			className={`flex maestro-app-shell w-full overflow-hidden transition-colors duration-300 ${
 				showTitleBar ? 'pt-10' : 'pt-0'
 			}`}
 			style={
 				{
 					backgroundColor: theme.colors.bgMain,
 					color: theme.colors.textMain,
-					fontFamily: withMonoFallback(fontFamily),
-					fontSize: `${fontSize}px`,
+					// Read from the published variables rather than re-deriving from
+					// props, so the shell and every portal outside it resolve the
+					// same value. The literals are the first-paint fallback.
+					fontFamily: 'var(--maestro-font-interface, ui-monospace, Menlo, monospace)',
+					fontSize: 'var(--maestro-size-interface, 14px)',
 					'--keyboard-offset': `${keyboardShellOffset}px`,
 				} as React.CSSProperties
 			}
 		>
 			{showTitleBar && (
 				<div
-					className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
+					className="chrome-sheen fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
 					style={
 						{
 							WebkitAppRegion: 'drag',

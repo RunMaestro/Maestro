@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { formatKeyFor, formatShortcutKeysFor } from '../../shared/shortcutKeys';
+import {
+	formatKeyFor,
+	formatShortcutKeysFor,
+	findReservedShortcutCombo,
+} from '../../shared/shortcutKeys';
 
 describe('formatKeyFor', () => {
 	it('maps modifiers to macOS symbols', () => {
@@ -58,5 +62,30 @@ describe('formatShortcutKeysFor', () => {
 
 	it('returns an empty string for an empty binding', () => {
 		expect(formatShortcutKeysFor([], true)).toBe('');
+	});
+});
+
+describe('findReservedShortcutCombo', () => {
+	it('flags Cmd+Shift+Down, which the OS uses to extend a text selection', () => {
+		expect(findReservedShortcutCombo(['Meta', 'Shift', 'ArrowDown'])?.reason).toContain(
+			'text selection'
+		);
+	});
+
+	it('flags the Ctrl spelling too, since Meta and Ctrl are one modifier when matching', () => {
+		expect(findReservedShortcutCombo(['Ctrl', 'Shift', 'ArrowDown'])).not.toBeNull();
+	});
+
+	it('ignores key order, matching how a chord is compared everywhere else', () => {
+		expect(findReservedShortcutCombo(['Shift', 'ArrowDown', 'Meta'])).not.toBeNull();
+	});
+
+	it('leaves Opt+Cmd+Down free - it is the default for Next Unread / Draft Tab', () => {
+		expect(findReservedShortcutCombo(['Alt', 'Meta', 'ArrowDown'])).toBeNull();
+	});
+
+	it('returns null for an unbound action rather than treating [] as a chord', () => {
+		expect(findReservedShortcutCombo([])).toBeNull();
+		expect(findReservedShortcutCombo(undefined)).toBeNull();
 	});
 });

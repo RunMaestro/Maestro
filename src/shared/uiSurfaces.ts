@@ -92,6 +92,7 @@ export const UI_SURFACES: UiSurface[] = [
 		description: 'Application settings, themes, shortcuts, and Maestro Prompts.',
 		tabs: [
 			{ id: 'general', label: 'General' },
+			{ id: 'display', label: 'Display' },
 			{ id: 'shortcuts', label: 'Shortcuts' },
 			{ id: 'theme', label: 'Theme' },
 			{ id: 'notifications', label: 'Notifications' },

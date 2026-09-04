@@ -96,16 +96,18 @@ describe('buildTileCommands', () => {
 	});
 
 	it('badges a row only once its shortcut is actually bound', () => {
-		// Three of the four ship unbound (keys: []). Rendering an empty pill next to
-		// the label reads as a broken badge, so those rows carry no shortcut at all
-		// until the user records one in Settings.
+		// The family ships on Ctrl+Cmd now, but an install migrating up from the
+		// unbound era can still hand this an empty `keys`. Rendering an empty pill
+		// next to the label reads as a broken badge, so such a row must carry no
+		// shortcut at all rather than a blank one.
 		const { actions } = build(session(), {
-			tileTerminalBelow: { id: 'tileTerminalBelow', label: 'T', keys: ['Meta', 'Shift', 'j'] },
+			tileTerminalBelow: { id: 'tileTerminalBelow', label: 'T', keys: ['Control', 'Meta', 'j'] },
 			tileAiBelow: { id: 'tileAiBelow', label: 'A', keys: [] },
 		});
 		const byId = Object.fromEntries(actions.map((a) => [a.id, a]));
-		expect(byId['tileBelow:terminal'].shortcut?.keys).toEqual(['Meta', 'Shift', 'j']);
+		expect(byId['tileBelow:terminal'].shortcut?.keys).toEqual(['Control', 'Meta', 'j']);
 		expect(byId['tileBelow:ai'].shortcut).toBeUndefined();
+		// Absent from the map entirely is the same story as an empty binding.
 		expect(byId['tileBelow:file'].shortcut).toBeUndefined();
 	});
 

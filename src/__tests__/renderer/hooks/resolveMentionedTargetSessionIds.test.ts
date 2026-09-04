@@ -58,28 +58,45 @@ describe('resolveMentionedTargetSessionIds', () => {
 		expect(resolveMentionedTargetSessionIds('@Self hey', sessions, [], 'self')).toEqual([]);
 	});
 
-	it('expands a @group mention to its non-terminal member session ids', () => {
+	// Groups are shorthand the picker expands into member `@name` tokens at accept
+	// time, never a message target. A group token that reaches dispatch was typed
+	// by hand and resolves to nothing.
+	it('does not dispatch a @group mention to its members', () => {
 		const sessions = [
 			agent('a', 'Alpha', { groupId: 'g' }),
 			agent('b', 'Beta', { groupId: 'g' }),
 			agent('c', 'Gamma'),
 		];
 		expect(
-			resolveMentionedTargetSessionIds('@Squad go', sessions, [group('g', 'Squad')], 'cur').sort()
+			resolveMentionedTargetSessionIds('@Squad go', sessions, [group('g', 'Squad')], 'cur')
+		).toEqual([]);
+	});
+
+	it('routes the expanded member tokens a picked group inserts', () => {
+		// What the composer actually carries after picking the Squad row.
+		const sessions = [agent('a', 'Alpha', { groupId: 'g' }), agent('b', 'Beta', { groupId: 'g' })];
+		expect(
+			resolveMentionedTargetSessionIds(
+				'@Alpha @Beta please',
+				sessions,
+				[group('g', 'Squad')],
+				'cur'
+			)
 		).toEqual(['a', 'b']);
 	});
 
-	it('dedupes when an agent and a group containing it are both mentioned', () => {
-		const sessions = [agent('a', 'Alpha', { groupId: 'g' }), agent('b', 'Beta', { groupId: 'g' })];
-		const ids = resolveMentionedTargetSessionIds(
-			'@Alpha and @Squad please',
-			sessions,
-			[group('g', 'Squad')],
-			'cur'
-		);
-		// Alpha resolved first from the direct mention, then Beta from the group;
-		// Alpha is not repeated by the group expansion.
-		expect(ids).toEqual(['a', 'b']);
+	it('sends to the AGENT when a group shares its name, never to the group', () => {
+		// The reported bug: groups are built first, so a group used to win a name it
+		// shared with an agent - the user picked the agent they could see and the
+		// message fanned out to every member of the like-named group.
+		const sessions = [
+			agent('ops', 'Ops'),
+			agent('a', 'Alpha', { groupId: 'g' }),
+			agent('b', 'Beta', { groupId: 'g' }),
+		];
+		expect(
+			resolveMentionedTargetSessionIds('@Ops ping', sessions, [group('g', 'Ops')], 'cur')
+		).toEqual(['ops']);
 	});
 
 	it('resolves multiple distinct agent mentions in message order', () => {

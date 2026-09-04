@@ -6,14 +6,14 @@ icon: at
 
 Cross-Agent Mentions let you pull another agent into your current conversation without leaving it. Type `@` in any AI input, pick an agent, and Maestro forwards the relevant slice of your chat to that agent, runs it in the background, and streams its answer back inline - stamped with who replied.
 
-It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are.
+It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are. Each mention buys you exactly one answer, and you stay the moderator: if the reply needs a follow-up, you write it. When you want an agent to run that back and forth for you instead, open a [Group Chat](./group-chat). For a side-by-side overview of both approaches, see [Agent Collaboration](./agent-collaboration).
 
 ## When to Use It
 
 - **Second opinion** - "@Reviewer does this migration look safe?" without copy-pasting your thread into another agent.
 - **Cross-project context** - Ask the agent that owns the backend repo a question while you work in the frontend one.
 - **Specialist consult** - Route a security or performance question to the agent that has that codebase loaded.
-- **Quick fan-out** - Mention several agents (or a whole group) in one message and let them answer in parallel.
+- **Quick fan-out** - Mention several agents in one message (or pick a group, which inserts every member) and let them answer in parallel.
 
 ## Mentioning an Agent
 
@@ -41,6 +41,12 @@ The consultation is **non-blocking and isolated**:
 Every consulted reply lands in a tinted bubble topped by an **attribution header**: the answering agent's name, its provider, and its session id. That header is what tells replies apart when several agents answer at once, and it does double duty as a jump control. Click the agent name (or the jump button on the right) to open that agent's consult tab in the Left Bar, where the full exchange is kept, so you can continue the thread in its own context; click the session id to copy it. While a reply is still streaming the header shows a spinner, and a consult that failed tints the header red.
 
 Mention several agents in one message and each runs independently and concurrently, so a fan-out returns as fast as the slowest agent, not the sum of them.
+
+### Stopping a consult
+
+**Stop** ends the whole turn, consults included. A consultation is part of your agent's turn even though it runs as its own background process, so pressing Stop (or `Ctrl+C`) signals your agent _and_ every agent it fanned out to. Each one stops where it is: whatever it had already written is kept in its bubble, followed by a note that it was stopped. That is deliberately worded apart from a failure - a consult you stopped did not fail to answer you.
+
+When your message was addressed **only** to other agents (it starts with `@name`), your own agent never goes busy, so the usual Stop on the thinking pill never appears. In that case the in-flight consultation pill carries the Stop button itself, so there is always exactly one Stop on screen while other agents are working for you.
 
 ### Mentions in a queued message wait their turn
 
@@ -87,21 +93,30 @@ An explicit count always wins over a softer hint, and the hint is read from your
 
 ## Mentioning a Group
 
-Mention a [group](./general-usage) by name (`@Backend-Team`) to consult every agent in it at once. Group mentions expand to each non-terminal member and run as independent consultations. If you mention both a group and an agent that belongs to it, that agent is still consulted only once.
-
-Picking a group from the picker inserts its members' names rather than the group's, so you can see exactly who you are about to ask and drop anyone you did not mean to include before sending. The row shows the member count for the same reason. Typing `@Backend-Team` by hand still works and still expands.
+Pick a [group](./general-usage) from the picker (`@Backend-Team`) to consult every agent in it at once. The row shows the member count, and accepting it inserts **each member's own `@name`**, not the group's name - so you can see exactly who you are about to ask and drop anyone you did not mean to include before sending. Each member then runs as an independent consultation, and an agent named twice (say, once on its own and once through a group it belongs to) is still consulted only once.
 
 Groups sort above individual agents in the picker, so a name that matches both surfaces the group first.
 
+<Warning>
+  A group name is only shorthand **in the picker**. It is not a target, so typing `@Backend-Team` by hand and sending it consults nobody - the token stays plain text like any other unrecognized `@word`, and the picker will not chip it. Pick the group from the list instead and send the member names it inserts.
+
+This is deliberate. When an agent and a group share a name, a hand-typed token cannot tell you which one it resolved to, and the group used to win - so picking the single agent you could see quietly fanned your message out to five.
+</Warning>
+
 ## Cross-Agent Mentions vs Group Chat
 
-Both let agents talk to each other, but they solve different problems:
+Both let you reach other agents, but the difference is not the syntax. It is **who moderates**.
 
-|                      | Cross-Agent Mentions                               | [Group Chat](./group-chat)            |
-| -------------------- | -------------------------------------------------- | ------------------------------------- |
-| **Where it happens** | Inline, in your existing chat                      | A dedicated group conversation        |
-| **Coordination**     | None - a direct one-off consult                    | A moderator AI routes and synthesizes |
-| **Best for**         | Quick questions and fan-out                        | Multi-round discussions and synthesis |
-| **The other agent**  | Answers in its own consult tab, resumed per thread | Is a persistent participant           |
+A mention is a **single-turn consult**. The agent you mention answers your question once and stops. It does not reply to another agent, ask a follow-up, or carry the thread forward on its own. If the answer opens a new question, you write the next message. You are the moderator, and every round of the discussion costs you a turn at the keyboard. Mentions will never produce a multi-turn collaboration between agents, by design.
 
-Reach for a mention when you just need an answer; open Group Chat when you need agents to deliberate together over several rounds.
+A [Group Chat](./group-chat) **delegates the moderating to an agent**. You appoint a moderator, hand it the question, and it keeps working without you: routing to the right agents, reading what comes back, pushing again when an answer is thin, and going around as many rounds as the question needs before it returns to you with a synthesis. That is the whole reason to open one.
+
+|                        | Cross-Agent Mentions                                | [Group Chat](./group-chat)                           |
+| ---------------------- | --------------------------------------------------- | ---------------------------------------------------- |
+| **Who moderates**      | You                                                 | An agent you appoint                                 |
+| **Rounds per message** | Exactly one                                         | As many as the moderator decides it needs            |
+| **Where it happens**   | Inline, in your existing chat                       | A dedicated group conversation                       |
+| **The other agents**   | Answer in their own consult tab, resumed per thread | Persistent participants the moderator can re-consult |
+| **Best for**           | A quick answer or a parallel fan-out                | Work that takes several rounds of back and forth     |
+
+Reach for a mention when you just need an answer. Open a Group Chat when you want someone other than you to keep the agents working together.

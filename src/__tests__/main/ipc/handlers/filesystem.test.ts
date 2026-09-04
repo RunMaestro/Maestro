@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
+import {
+	isParquetPreviewMarker,
+	parseParquetPreviewMarker,
+} from '../../../../shared/parquet/preview';
 
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
@@ -19,6 +23,10 @@ vi.mock('electron', () => ({
 }));
 
 // Mock the drag-out icon so the handler doesn't reach into Electron's nativeImage.
+vi.mock('../../../../main/utils/file-tree-walk', () => ({
+	walkLocalFileTree: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/drag-out-icon', () => ({
 	getDragOutIcon: vi.fn(() => ({ __icon: true })),
 }));
@@ -101,6 +109,7 @@ vi.mock('../../../../main/stores', () => ({
 }));
 
 import { registerFilesystemHandlers } from '../../../../main/ipc/handlers/filesystem';
+import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
 import {
@@ -136,6 +145,7 @@ describe('filesystem handlers', () => {
 		it('should register all filesystem handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:homeDir', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:readDir', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith('fs:readDirTree', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:readFile', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:stat', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:directorySize', expect.any(Function));
@@ -158,6 +168,32 @@ describe('filesystem handlers', () => {
 
 			const result = await handler!({}, null);
 			expect(result).toBe('/Users/testuser');
+		});
+	});
+
+	describe('fs:readDirTree', () => {
+		it('delegates to the shared walker and passes the scan options through', async () => {
+			const scan = {
+				tree: [{ name: 'a.txt', type: 'file' }],
+				truncated: false,
+				filesFound: 1,
+				directoriesScanned: 1,
+			};
+			vi.mocked(walkLocalFileTree).mockResolvedValue(scan as never);
+
+			const handler = registeredHandlers.get('fs:readDirTree');
+			expect(handler).toBeDefined();
+
+			const options = {
+				maxDepth: 5,
+				maxEntries: 100,
+				ignorePatterns: ['.git'],
+				honorGitignore: true,
+			};
+			const result = await handler!({}, '/test/path', options);
+
+			expect(walkLocalFileTree).toHaveBeenCalledWith('/test/path', options);
+			expect(result).toEqual(scan);
 		});
 	});
 
@@ -360,6 +396,47 @@ describe('filesystem handlers', () => {
 			const result = await handler!({}, '/test/icon.svg');
 
 			expect(result).toMatch(/^data:image\/svg\+xml;base64,/);
+		});
+
+		it('short-circuits a parquet file to a marker instead of reading it as text', async () => {
+			// Parquet is binary, columnar, and routinely larger than RAM. Reading
+			// it as UTF-8 would corrupt it and blow up the IPC payload for a file
+			// the viewer only ever reads a window of, so the handler hands back a
+			// marker and the ParquetViewer queries it over `parquet:*` instead.
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/data/events.parquet');
+
+			expect(isParquetPreviewMarker(result)).toBe(true);
+			expect(parseParquetPreviewMarker(result)).toBe('/data/events.parquet');
+			// The whole point: the file is never opened here.
+			expect(fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('short-circuits every parquet extension, including over SSH', async () => {
+			const handler = registeredHandlers.get('fs:readFile');
+
+			for (const path of ['/d/a.parquet', '/d/b.parq', '/d/c.pq', '/d/D.PARQUET']) {
+				expect([path, isParquetPreviewMarker(await handler!({}, path))]).toEqual([path, true]);
+			}
+
+			// Remote parquet takes the same path: the reader fetches the file into
+			// a local cache itself, so this must NOT fall through to the SSH text
+			// read (which would mangle the binary through a `cat` over stdout).
+			const remote = await handler!({}, '/remote/events.parquet', 'remote-7');
+			expect(isParquetPreviewMarker(remote)).toBe(true);
+			expect(fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('does not mistake a file inside a .parquet directory for a parquet file', async () => {
+			// Hive-style layouts are full of `.../table.parquet/part-0` paths, and
+			// the file being opened there is the part, not the directory.
+			vi.mocked(fs.readFile).mockResolvedValue('plain text' as any);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/data/table.parquet/notes.txt');
+
+			expect(result).toBe('plain text');
+			expect(fs.readFile).toHaveBeenCalledWith('/data/table.parquet/notes.txt', 'utf-8');
 		});
 
 		it('should return null when path resolves to a directory (EISDIR)', async () => {

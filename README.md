@@ -36,7 +36,8 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 - 🌳 **[Git Worktrees](https://docs.runmaestro.ai/git-worktrees)** - Run AI agents in parallel on isolated branches. Create worktree sub-agents from the git branch menu, each operating in their own directory. Work interactively in the main repo while sub-agents process tasks independently - then create PRs with one click. True parallel development without conflicts.
 - 🤖 **[Auto Run & Playbooks](https://docs.runmaestro.ai/autorun-playbooks)** - File-system-based task runner that batch-processes markdown checklists (Spec-Driven) or pursues a free-text objective (Goal-Driven) through AI agents. Create playbooks for repeatable workflows, run in loops, and track progress with full history. Each task gets its own AI session for clean conversation context, and you can open the live Thought Stream to watch the agent's reasoning as it works.
-- 💬 **[Group Chat](https://docs.runmaestro.ai/group-chat)** - Coordinate multiple AI agents in a single conversation. A moderator AI orchestrates discussions, routing questions to the right agents and synthesizing their responses for cross-project questions and architecture discussions.
+- 💬 **[Group Chat](https://docs.runmaestro.ai/group-chat)** - Delegate the moderating. You appoint one agent as moderator and hand it the question; it routes to the right agents, follows up when an answer is thin, and keeps going for as many rounds as it takes before returning a synthesis. The multi-turn collaboration is the point, and it is what an inline `@mention` cannot do.
+- 📣 **[Cross-Agent Mentions](https://docs.runmaestro.ai/cross-agent-mentions)** - Type `@another-agent` in any chat to consult it inline. Maestro forwards the relevant slice of your conversation, runs the other agent in the background without blocking you, and streams its reply back attributed to who answered. Each mention is a single-turn consult and you stay the moderator, so reach for Group Chat when you want an agent to run the follow-ups instead.
 - 🌐 **[Mobile Remote Control](https://docs.runmaestro.ai/remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
 - 💻 **[Command Line Interface](https://docs.runmaestro.ai/cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
 - 🚀 **Multi-Agent Management** - Run unlimited agents and terminal sessions in parallel. Each agent has its own workspace, conversation history, and isolated context.
@@ -50,6 +51,8 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 - 📋 **Session Discovery** - Automatically discovers and imports existing sessions from all supported providers, including conversations from before Maestro was installed. Browse, search, star, rename, and resume any session.
 - 🔀 **Git Integration** - Automatic repo detection, branch display, diff viewer, commit logs, and git-aware file completion. Work with git without leaving the app.
 - 📁 **[File Explorer](https://docs.runmaestro.ai/general-usage#file-explorer-and-preview)** - Browse project files with syntax highlighting, markdown preview, and image viewing. Reference files in prompts with `@` mentions.
+- 🗃️ **[File Formats](https://docs.runmaestro.ai/file-formats)** - Data files open in a viewer built for them, several with their own filtering language: jq over JSON and JSONL, sortable filtered tables for CSV and TSV, rendered Mermaid diagrams, and audio and video in a floating player.
+- 🧮 **[Parquet Preview](https://docs.runmaestro.ai/parquet-preview)** - Parquet files open as a live, filterable table with a schema rail. A typed query language (`ts >= now-7d and price > 100`) runs against the whole file while Maestro skips the row groups it can prove cannot match, so a multi-gigabyte file filters instantly and never loads into memory.
 - 🔍 **[Powerful Output Filtering](https://docs.runmaestro.ai/general-usage#output-filtering)** - Search and filter AI output with include/exclude modes, regex support, and per-response local filters.
 - ⚡ **[Slash Commands](https://docs.runmaestro.ai/slash-commands)** - Extensible command system with autocomplete. Create custom commands with template variables for your workflows.
 - 💾 **Draft Auto-Save** - Never lose work. Drafts are automatically saved and restored per session.
@@ -78,13 +81,19 @@ On the Agents tab, Escape clears the agent filter first when it holds text, so f
 
 **Document Graph** (Command K → "Document Graph"):
 
-| Action                      | Key                            |
-| --------------------------- | ------------------------------ |
-| Navigate to connected node  | Arrow Up/Down/Left/Right       |
-| Cycle through connections   | Tab                            |
-| Open selected document/link | Enter                          |
-| Close graph                 | Escape                         |
-| Search documents            | Focus search input, type query |
+| Action                       | Key                            |
+| ---------------------------- | ------------------------------ |
+| Navigate to connected node   | Arrow Up/Down/Left/Right       |
+| Cycle through connections    | Tab                            |
+| Preview document / open link | Enter                          |
+| Recenter graph on node       | Space                          |
+| Cycle preview length         | P                              |
+| Step back / close graph      | Escape                         |
+| Search documents             | Focus search input, type query |
+
+Escape steps back one level at a time: out of the search box first (your query stays,
+so the matches are still highlighted while you arrow to one), then it clears the query,
+then it closes the graph.
 
 Additional interactions: Drag nodes to reposition, scroll to zoom, use mini-map for overview.
 

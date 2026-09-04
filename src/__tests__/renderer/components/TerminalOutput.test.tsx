@@ -1286,10 +1286,9 @@ describe('TerminalOutput', () => {
 					executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 				});
 
-			// These three used to assert the button was ABSENT. That was the bug:
-			// the inline card hid Force Send in cases the shared helper allows, or
-			// blocks-with-a-reason, while the Execution Queue modal showed it. The
-			// card now mirrors the modal - present unless there is no tab to run on.
+			// The inline card mirrors the Execution Queue modal exactly: present
+			// when force sending is possible or one settings toggle away, absent
+			// when the block is a dead end the user cannot act on from the card.
 			it('renders Force Send disabled when forced parallel is off and another tab is busy', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
@@ -1307,7 +1306,10 @@ describe('TerminalOutput', () => {
 				expect(screen.getByRole('button', { name: /Force Send/ })).toBeDisabled();
 			});
 
-			it('renders Force Send disabled when the target tab is busy', () => {
+			it('hides Force Send when the target tab is busy', () => {
+				// The card is rendered under the turn that tab is already running,
+				// so the queued item is next in line by definition and there is
+				// nothing to force.
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: true,
@@ -1321,7 +1323,7 @@ describe('TerminalOutput', () => {
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.getByRole('button', { name: /Force Send/ })).toBeDisabled();
+				expect(screen.queryByRole('button', { name: /Force Send/ })).toBeNull();
 			});
 
 			it('renders Force Send ENABLED on a quiet agent - the always-allowed case', () => {

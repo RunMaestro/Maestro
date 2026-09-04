@@ -218,7 +218,11 @@ describe('query-events-buffer', () => {
 
 		expect(stmt.run).toHaveBeenCalledTimes(1);
 		const args = stmt.run.mock.calls[0];
-		expect(args).toHaveLength(9);
+		// 15 columns: the 10 identity/timing/flag columns plus the five token
+		// and cost columns. This used to be 9 - the buffered statement had
+		// silently dropped is_worktree, so every interactive turn wrote NULL
+		// there while the direct insert path wrote the real flag.
+		expect(args).toHaveLength(15);
 		// args[0] is the generated id; args[1..] mirror the event fields.
 		expect(args[1]).toBe('s1');
 		expect(args[2]).toBe('claude-code');
@@ -228,6 +232,38 @@ describe('query-events-buffer', () => {
 		expect(args[6]).toBe('/p');
 		expect(args[7]).toBe('t1');
 		expect(args[8]).toBe(0); // isRemote false → 0
+	});
+
+	it('carries is_worktree through the buffer', () => {
+		const { db, stmt } = makeMockDb();
+		enqueueQueryEvent(db as never, { ...sampleEvent, isWorktree: true });
+		flushQueryEventsSync();
+
+		expect(stmt.run.mock.calls[0][9]).toBe(1);
+	});
+
+	it('writes NULL token columns for a turn that reported no usage', () => {
+		const { db, stmt } = makeMockDb();
+		enqueueQueryEvent(db as never, sampleEvent);
+		flushQueryEventsSync();
+
+		// NULL rather than 0 - an unreported turn is not a free turn.
+		expect(stmt.run.mock.calls[0].slice(10)).toEqual([null, null, null, null, null]);
+	});
+
+	it('carries per-turn token and cost values through the buffer', () => {
+		const { db, stmt } = makeMockDb();
+		enqueueQueryEvent(db as never, {
+			...sampleEvent,
+			inputTokens: 100,
+			outputTokens: 20,
+			cacheReadTokens: 900,
+			cacheCreationTokens: 5,
+			costUsd: 0.75,
+		});
+		flushQueryEventsSync();
+
+		expect(stmt.run.mock.calls[0].slice(10)).toEqual([100, 20, 900, 5, 0.75]);
 	});
 
 	it('encodes isRemote=true as 1 and missing tabId as null', () => {

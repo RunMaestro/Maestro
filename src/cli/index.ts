@@ -17,6 +17,8 @@ import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { imageList, imageSave } from './commands/image';
+import { openGraph } from './commands/open-graph';
 import { openBrowser, closeBrowser } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
@@ -48,6 +50,7 @@ import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
+import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
@@ -55,6 +58,14 @@ import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
+import {
+	displayFont,
+	displayFontList,
+	displayFontSize,
+	displayFontsCatalog,
+	displayPreset,
+	displayZoom,
+} from './commands/display-font';
 import { settingsReset } from './commands/settings-reset';
 import {
 	settingsAgentList,
@@ -109,6 +120,7 @@ import {
 } from './commands/tab';
 import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
+import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
 import { setVerbosity } from './output/verbosity';
@@ -402,6 +414,10 @@ program
 	)
 	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
 	.option(
+		'--background',
+		'Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)'
+	)
+	.option(
 		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
 	)
@@ -483,14 +499,38 @@ session
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
 
-// Open file command - open a file in the Maestro desktop app
+// Open file command - open a file in the Maestro desktop app.
+//
+// Also the verb that PLAYS media: the renderer's open path recognizes a
+// playable local audio or video file and hands it to the floating player
+// instead of making a tab, so there is no separate `play` command and nothing
+// should be shelling out to the OS player.
 program
 	.command('open-file <file-path>')
-	.description('Open a file as a preview tab in the Maestro desktop app')
+	.description(
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)'
+	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
-	.option('--no-switch', "Don't switch the Maestro UI to the target agent/tab")
+	.option(
+		'--background',
+		'Open the preview tab without changing anything currently rendered, on any agent'
+	)
+	.option('--focus', 'Switch to the file after opening it (default)')
+	.option('--no-switch', "Don't switch to the target agent, but still activate the tab there")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
+
+// Open graph command - render a Document Graph over specific documents.
+//
+// Its own verb rather than a `open <surface>` entry: `open_modal` carries only
+// a surface name and a tab, and a graph needs a file set.
+program
+	.command('open-graph [paths...]')
+	.description('Open the Document Graph over specific markdown files or a directory')
+	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(openGraph);
 
 // Open browser command - open a URL in a browser tab in the Maestro desktop app
 program
@@ -501,6 +541,7 @@ program
 		'--background',
 		'Create the tab without focusing it or switching agents (use for agent research, then close-browser when done)'
 	)
+	.option('--focus', 'Switch to the browser tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openBrowser);
 
@@ -515,6 +556,38 @@ program
 	.option('--list', 'List every openable surface, its tabs, and its shortcut')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);
+
+// Image commands - reach the screenshots a user pasted into the chat.
+//
+// The agent can see a pasted image but has no path to it, so saving one used to
+// be a right-click only the human could perform. `image list` names them and
+// `image save` writes the bytes to disk.
+const image = program
+	.command('image')
+	.description('List and save images pasted into a Maestro chat');
+
+image
+	.command('list')
+	.description("List images pasted into an agent's conversation, newest first")
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option('--limit <n>', 'Maximum images to show (default: 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageList);
+
+image
+	.command('save [target]')
+	.description('Save a pasted image to disk (target: index, handle, or "latest")')
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option(
+		'-o, --output <path>',
+		'File or directory to write (default: a generated name in the cwd)'
+	)
+	.option('--all', 'Save every image in scope instead of just the newest')
+	.option('--force', 'Overwrite an existing file named by --output')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageSave);
 
 // Close browser command - close a browser tab opened via open-browser
 program
@@ -535,6 +608,8 @@ program
 		'--command <command>',
 		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
 	)
+	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--focus', 'Switch to the terminal tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
 
@@ -552,11 +627,28 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sendTerminal);
 
+// Read-terminal command - read the scrollback of an existing Maestro terminal tab
+program
+	.command('read-terminal')
+	.description("Read a Maestro terminal tab's output")
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--tab <id-or-name>',
+		"Terminal tab ID or display name (defaults to the agent's active terminal)"
+	)
+	.option('--tail <n>', `Return only the last N lines (default: ${DEFAULT_TAIL_LINES})`)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(readTerminal);
+
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program
 	.command('refresh-files')
-	.description('Refresh the file tree in the Maestro desktop app')
+	.description('Refresh the file tree in the Maestro desktop app (never moves the view)')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--background',
+		'Accepted and ignored: this refresh never moves the view or shows a notice'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshFiles);
 
@@ -565,6 +657,8 @@ program
 	.command('refresh-auto-run')
 	.description('Refresh Auto Run documents in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--background', 'Refresh without switching to the target agent')
+	.option('--focus', 'Switch to the target agent while refreshing (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshAutoRun);
 
@@ -845,6 +939,8 @@ program
 		'--auto-run-folder <path>',
 		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
 	)
+	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
+	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
@@ -897,6 +993,8 @@ program
 		'-m, --message <text>',
 		'Optional initial prompt to dispatch to the new agent after creation'
 	)
+	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
+	.option('--focus', 'Select the new worktree agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createWorktree);
 
@@ -997,6 +1095,11 @@ program
 program
 	.command('switch-mode <agent-id> <mode>')
 	.description('Switch an agent between "ai" and "terminal" mode')
+	.option(
+		'--background',
+		'Refuse the switch if the agent is the one on screen, rather than changing what the user is looking at'
+	)
+	.option('--focus', 'Switch even when the agent is the one on screen (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, mode, options) => switchMode(agentId, mode, options));
 
@@ -1019,6 +1122,8 @@ tab
 	.description('Open a new tab for an agent (optionally seeded with a prompt)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('-p, --prompt <text>', 'Seed the new AI tab with this prompt')
+	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--focus', 'Switch to the new tab after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabNew(options));
 
@@ -1137,6 +1242,53 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeSshRemote);
 
+// Display / typography commands
+//
+// Addressed by SURFACE rather than by settings key: `settings set` can already
+// write these ten keys, but only if you know their names and the
+// empty-string-means-inherit convention. These validate against the shared
+// registry, so a scripted setup can put the app in a known typographic state.
+const display = program
+	.command('display')
+	.description('View and manage typography (fonts, sizes, zoom)');
+
+display
+	.command('font [surface] [value]')
+	.description(
+		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((surface: string | undefined, value: string | undefined, options: { json?: boolean }) => {
+		if (!surface) displayFontList(options);
+		else displayFont(surface, value, options);
+	});
+
+display
+	.command('size <surface> [value]')
+	.description('Get or set a surface font size in px. Pass "inherit" to follow the interface size.')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontSize);
+
+display
+	.command('zoom [level]')
+	.description('Get or set the global zoom applied to every surface (e.g. 125% or 1.25)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayZoom);
+
+display
+	.command('preset [name]')
+	.description(
+		'Get the active typography preset, or reset every font and size to one (default | hacker)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayPreset);
+
+display
+	.command('fonts')
+	.description('List the fonts bundled with Maestro (guaranteed available on any machine)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayFontsCatalog);
+
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');
 
@@ -1211,6 +1363,18 @@ program
 	.option('-l, --list', 'List available themes')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((nameOrId, options) => setTheme(nameOrId, options));
+
+// Gloss command - how much light the app chrome catches (the themeGloss
+// setting). Mirrors Settings -> Themes -> Surface Gloss. Prints the current
+// level when called with no argument.
+program
+	.command('gloss [level]')
+	.description(
+		'Set the surface gloss level: off, sheen, strong or max (applies live). Omit the level to see the current one.'
+	)
+	.option('-l, --list', 'List the gloss levels and what each one does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((level, options) => gloss(level, options));
 
 // Theme commands - manage the user-configurable "Custom" theme palette
 // (the customThemeColors / customThemeBaseId settings). Mirrors the in-app
@@ -1465,6 +1629,10 @@ gist
 	)
 	.option('-d, --description <text>', 'Gist description')
 	.option('-p, --public', 'Create a public gist (default: private)')
+	.option(
+		'-s, --session <id>',
+		"Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs"
+	)
 	.action(gistCreate);
 
 // Notify commands - surface notifications in the Maestro desktop app

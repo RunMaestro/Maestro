@@ -51,7 +51,7 @@ export function MarkdownPreview({
 			style={{
 				borderColor: theme.colors.border,
 				color: theme.colors.textMain,
-				fontSize: '13px',
+				fontSize: '0.8125rem',
 			}}
 		>
 			<style>{proseStyles}</style>

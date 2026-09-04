@@ -123,6 +123,19 @@ export interface UIStoreState {
 
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
+	/**
+	 * The sidebar's filter text. Shared rather than local to the filter hook,
+	 * because Cmd+[ / Cmd+] has to cycle exactly the rows the sidebar is drawing
+	 * and a `useState` inside the hook gives every caller its own copy - the
+	 * cycle could not see the filter at all, so it walked agents that were not
+	 * on screen.
+	 */
+	sessionFilter: string;
+	/**
+	 * Whether archived group chats are shown. Same reason as `sessionFilter`:
+	 * membership of the drawn list is a shared question, not a private one.
+	 */
+	showArchivedGroupChats: boolean;
 
 	// History panel search
 	historySearchFilterOpen: boolean;
@@ -255,6 +268,8 @@ export interface UIStoreActions {
 
 	// Session filter (sidebar agent search)
 	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+	setSessionFilter: (value: string | ((prev: string) => string)) => void;
+	setShowArchivedGroupChats: (show: boolean | ((prev: boolean) => boolean)) => void;
 
 	// History panel search
 	setHistorySearchFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -386,6 +401,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 	outputSearchByKey: {},
 	pendingLogJump: null,
 	sessionFilterOpen: false,
+	sessionFilter: '',
+	showArchivedGroupChats: false,
 	historySearchFilterOpen: false,
 	groupChatHistorySearchFilterOpen: false,
 	draggingSessionId: null,
@@ -493,6 +510,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 		set((s) => (s.pendingLogJump?.logId === logId ? { pendingLogJump: null } : s)),
 
 	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
+	setSessionFilter: (v) => set((s) => ({ sessionFilter: resolve(v, s.sessionFilter) })),
+	setShowArchivedGroupChats: (v) =>
+		set((s) => ({ showArchivedGroupChats: resolve(v, s.showArchivedGroupChats) })),
 	setHistorySearchFilterOpen: (v) =>
 		set((s) => ({ historySearchFilterOpen: resolve(v, s.historySearchFilterOpen) })),
 	setGroupChatHistorySearchFilterOpen: (v) =>

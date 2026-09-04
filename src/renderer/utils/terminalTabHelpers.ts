@@ -1,15 +1,19 @@
 // Terminal tab helper functions - pure functions for managing TerminalTab state in Maestro sessions.
-// Follows the same pattern as tabHelpers.ts: take a Session, return a new Session (immutable).
+// Follows the same pattern as tabHelpers: take a Session, return a new Session (immutable).
 // No React hooks, no side effects, no IPC.
 
 import { Session, TerminalTab, ClosedTabEntry, UnifiedTabRef } from '../types';
 import { generateId } from './ids';
-import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
+import {
+	getNavigableUnifiedTabOrder,
+	insertAfterActiveInUnifiedTabOrder,
+} from './unifiedTabOrderUtils';
+import { terminalTabFocusFields } from './tabFocusFields';
 
 /** Maximum number of closed terminal tab entries to expose via the public API (e.g., for UI limits). */
 export const MAX_CLOSED_TERMINAL_TABS = 10;
 
-/** Maximum entries in unifiedClosedTabHistory - matches tabHelpers.ts MAX_CLOSED_TAB_HISTORY. */
+/** Maximum entries in unifiedClosedTabHistory - matches tabHelpers MAX_CLOSED_TAB_HISTORY. */
 const MAX_CLOSED_UNIFIED_HISTORY = 25;
 
 // ─── Factory ────────────────────────────────────────────────────────────────
@@ -153,6 +157,13 @@ export function parseTerminalSessionId(
 
 // ─── CRUD Mutations ──────────────────────────────────────────────────────────
 
+/** Options for {@link addTerminalTab}. */
+export interface AddTerminalTabOptions {
+	/** When false, append the tab without making it visible (background create).
+	 *  Every active-* selection and `inputMode` are left untouched. Default true. */
+	activate?: boolean;
+}
+
 /**
  * Mint the next `coworkingId` for a terminal tab plus the bumped session
  * counter. Shared by addTerminalTab and the reopen-closed-tab restore path so
@@ -175,7 +186,13 @@ export function nextTerminalCoworkingId(session: Session): {
 /**
  * Add a terminal tab to a session.
  * Appends the tab to terminalTabs, inserts it into unifiedTabOrder directly to
- * the right of the currently active tab, and makes it the active terminal tab.
+ * the right of the currently active tab, and (unless `activate` is false) makes
+ * it the active terminal tab.
+ *
+ * Activation also sets `inputMode: 'terminal'` via terminalTabFocusFields: a
+ * terminal tab renders in terminal mode only, so activating one without the mode
+ * would select a tab the user cannot see. A BACKGROUND add deliberately leaves
+ * the mode alone - flipping an agent into terminal mode is itself a view change.
  *
  * Mints a stable, monotonic, never-reused `coworkingId` (used by the coworking
  * MCP server to address terminals as "term:N") via the session-level counter
@@ -195,7 +212,7 @@ export function nextTerminalCoworkingId(session: Session): {
 export function addTerminalTab(
 	session: Session,
 	tab: TerminalTab,
-	options: { activate?: boolean } = {}
+	options: AddTerminalTabOptions = {}
 ): Session {
 	const { activate = true } = options;
 	// Mint the base id + bumped counter from the shared source, then let an
@@ -211,18 +228,7 @@ export function addTerminalTab(
 	return {
 		...session,
 		terminalTabs: [...(session.terminalTabs || []), tabWithCoworkingId],
-		...(activate
-			? {
-					activeTerminalTabId: tab.id,
-					activeFileTabId: null,
-					activeBrowserTabId: null,
-					// A newly-created standalone terminal takes over the panel, so it must leave
-					// any active tiled group (mirrors selectTerminalTab). Without this the group
-					// stays active, TiledLayout keeps publishing pane rects, and a tiled browser
-					// overlay bleeds over the terminal view (its webview sits above at z-index 2).
-					activeGroupId: null,
-				}
-			: {}),
+		...(activate ? terminalTabFocusFields(tab.id) : {}),
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 		// Bump strictly past the larger of the bumped counter and the chosen id so
 		// we never hand out the same id twice within a session.
@@ -270,10 +276,17 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 	let fallbackRef: UnifiedTabRef | null = null;
 	let newActiveTerminalTabId = session.activeTerminalTabId;
 	if (session.activeTerminalTabId === tabId) {
-		if (updatedUnifiedTabOrder.length > 0 && unifiedIndex !== -1) {
-			const fallbackIndex = Math.max(0, unifiedIndex - 1);
-			fallbackRef =
-				updatedUnifiedTabOrder[Math.min(fallbackIndex, updatedUnifiedTabOrder.length - 1)];
+		// The neighbor to activate comes from the NAVIGABLE order (what the tab strip
+		// renders), while `unifiedIndex` above stays in stored-order coordinates so a
+		// reopen lands back in the same slot. Handing focus to a hidden ref would show
+		// a conversation with no chip to click back from.
+		const navigableRemaining = getNavigableUnifiedTabOrder(session, updatedUnifiedTabOrder);
+		const navigableIndex = getNavigableUnifiedTabOrder(session, unifiedOrder).findIndex(
+			(ref) => ref.type === 'terminal' && ref.id === tabId
+		);
+		if (navigableRemaining.length > 0 && navigableIndex !== -1) {
+			const fallbackIndex = Math.max(0, navigableIndex - 1);
+			fallbackRef = navigableRemaining[Math.min(fallbackIndex, navigableRemaining.length - 1)];
 		} else {
 			// unifiedTabOrder out of sync - fall back to terminalTabs position
 			const newIndex = Math.max(0, tabIndex - 1);
@@ -387,7 +400,7 @@ export function renameTerminalTab(session: Session, tabId: string, name: string)
 /**
  * Reorder terminal tabs within the terminalTabs array.
  * Note: The visual order in the tab bar is determined by unifiedTabOrder and is reordered separately
- * (via reorderUnifiedTabs in tabHelpers.ts). This function updates the underlying array order.
+ * (via reorderUnifiedTabs in tabHelpers). This function updates the underlying array order.
  *
  * @param session - The Maestro session
  * @param fromIndex - Zero-based index of the tab to move

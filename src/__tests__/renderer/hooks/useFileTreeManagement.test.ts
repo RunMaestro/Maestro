@@ -25,6 +25,7 @@ import {
 import { gitService } from '../../../renderer/services/git';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 vi.mock('../../../renderer/utils/fileExplorer', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/utils/fileExplorer')>();
@@ -50,6 +51,18 @@ vi.mock('../../../renderer/services/git', () => ({
 		getTags: vi.fn(),
 	},
 }));
+
+// Switching agents cancels an in-flight walk ONLY in the browser build, where
+// every readDir shares one WebSocket. The real `isWebDesktop` memoizes its
+// answer on first call, so drive it through the module mock rather than by
+// poking `window.__MAESTRO_CONFIG__` mid-test.
+vi.mock('../../../renderer/utils/runtimeContext', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/utils/runtimeContext')>();
+	return { ...actual, isWebDesktop: vi.fn(() => false) };
+});
+
+/** Run the enclosing test as the browser build instead of Electron. */
+const asWebDesktop = () => vi.mocked(isWebDesktop).mockReturnValue(true);
 
 // ============================================================================
 // Test Helpers
@@ -93,6 +106,9 @@ describe('useFileTreeManagement', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// clearAllMocks wipes call history but keeps implementations, so a test
+		// that opted into the browser build would leak into the next one.
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		useFileExplorerStore.setState({ fileTreeFilter: '' });
 		// Most tests assume sessions are loaded (safety timeout can fire)
 		useSessionStore.setState({ sessionsLoaded: true });
@@ -364,7 +380,7 @@ describe('useFileTreeManagement', () => {
 				5,
 				0,
 				undefined,
-				undefined,
+				expect.any(Function),
 				undefined,
 				100_000,
 				expect.any(AbortSignal)
@@ -520,11 +536,49 @@ describe('useFileTreeManagement', () => {
 			5,
 			0,
 			undefined,
-			undefined,
+			expect.any(Function), // onProgress
 			undefined,
 			100_000,
 			expect.any(AbortSignal)
 		);
+	});
+
+	it('clears the spinner when a refresh overtakes an in-flight initial load', async () => {
+		// The initial load owns the spinner. A refresh bumps the load sequence and
+		// orphans it, so the refresh has to put the spinner down itself.
+		let resolveInitial: (value: ReturnType<typeof asResult>) => void = () => {};
+		const pendingInitial = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveInitial = resolve;
+		});
+		const refreshedTree: FileNode[] = [{ name: 'fresh.txt', type: 'file' }];
+		vi.mocked(loadFileTree)
+			.mockReturnValueOnce(pendingInitial)
+			.mockResolvedValue(asResult(refreshedTree));
+		vi.mocked(compareFileTrees).mockReturnValue({ added: [], removed: [], modified: [] });
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTreeLoading).toBe(true);
+		});
+
+		await act(async () => {
+			await result.current.refreshFileTree(state.getSessions()[0].id);
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(refreshedTree);
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		expect(state.getSessions()[0].fileTreeLoadingProgress).toBeUndefined();
+
+		// The orphaned initial load settling afterwards must not resurrect the spinner.
+		await act(async () => {
+			resolveInitial(asResult([{ name: 'stale.txt', type: 'file' }]));
+			await Promise.resolve();
+		});
+		expect(state.getSessions()[0].fileTree).toEqual(refreshedTree);
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
 	});
 
 	it('cancelFileTreeLoad aborts the in-flight load signal and clears loading state', async () => {
@@ -562,6 +616,194 @@ describe('useFileTreeManagement', () => {
 
 		// Resolve the pending load so the promise machinery settles cleanly.
 		resolveLoad(asResult([]));
+	});
+
+	it('cancels an unfinished tree load when the active session changes (web-desktop)', async () => {
+		asWebDesktop();
+		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
+		let resolveSecond: (value: ReturnType<typeof asResult>) => void = () => {};
+		const firstPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveFirst = resolve;
+		});
+		const secondPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveSecond = resolve;
+		});
+		vi.mocked(loadFileTree).mockReturnValueOnce(firstPending).mockReturnValueOnce(secondPending);
+
+		const firstSession = createMockSession({ id: 'session-a', fileTree: [] });
+		const secondSession = createMockSession({ id: 'session-b', fileTree: [] });
+		const state = createSessionsState([firstSession, secondSession]);
+		const baseDeps = createDeps(state);
+		const { rerender } = renderHook(
+			({ activeSessionId, activeSession }: { activeSessionId: string; activeSession: Session }) =>
+				useFileTreeManagement({ ...baseDeps, activeSessionId, activeSession }),
+			{
+				initialProps: { activeSessionId: firstSession.id, activeSession: firstSession },
+			}
+		);
+
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(1));
+		const firstSignal = vi.mocked(loadFileTree).mock.calls[0].at(-1) as AbortSignal;
+		expect(firstSignal.aborted).toBe(false);
+
+		rerender({ activeSessionId: secondSession.id, activeSession: secondSession });
+
+		await waitFor(() => {
+			expect(firstSignal.aborted).toBe(true);
+			expect(loadFileTree).toHaveBeenCalledTimes(2);
+		});
+		expect(
+			state.getSessions().find((session) => session.id === firstSession.id)?.fileTreeLoading
+		).toBe(false);
+
+		await act(async () => {
+			resolveFirst(asResult([{ name: 'stale.txt', type: 'file' }]));
+			resolveSecond(asResult([{ name: 'current.txt', type: 'file' }]));
+			await Promise.all([firstPending, secondPending]);
+		});
+
+		expect(state.getSessions().find((session) => session.id === firstSession.id)?.fileTree).toEqual(
+			[]
+		);
+		expect(
+			state.getSessions().find((session) => session.id === secondSession.id)?.fileTree
+		).toEqual([{ name: 'current.txt', type: 'file' }]);
+	});
+
+	it('keeps an unfinished tree load running when the active session changes on desktop', async () => {
+		// Electron issues readDir over per-call IPC with no shared choke point, so
+		// switching agents is not a reason to throw away a walk in progress. The
+		// load must finish and land its tree even though the user is looking at a
+		// different agent - otherwise coming back restarts the whole scan.
+		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
+		const firstPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveFirst = resolve;
+		});
+		vi.mocked(loadFileTree)
+			.mockReturnValueOnce(firstPending)
+			.mockReturnValue(Promise.resolve(asResult([{ name: 'b.txt', type: 'file' }])));
+
+		const firstSession = createMockSession({ id: 'session-a', fileTree: [] });
+		const secondSession = createMockSession({ id: 'session-b', fileTree: [] });
+		const state = createSessionsState([firstSession, secondSession]);
+		const baseDeps = createDeps(state);
+		const { rerender } = renderHook(
+			({ activeSessionId, activeSession }: { activeSessionId: string; activeSession: Session }) =>
+				useFileTreeManagement({ ...baseDeps, activeSessionId, activeSession }),
+			{ initialProps: { activeSessionId: firstSession.id, activeSession: firstSession } }
+		);
+
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(1));
+		const firstSignal = vi.mocked(loadFileTree).mock.calls[0].at(-1) as AbortSignal;
+
+		rerender({ activeSessionId: secondSession.id, activeSession: secondSession });
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(2));
+
+		// The walk it left behind is untouched: still marked loading, not aborted.
+		expect(firstSignal.aborted).toBe(false);
+		expect(
+			state.getSessions().find((session) => session.id === firstSession.id)?.fileTreeLoading
+		).toBe(true);
+
+		await act(async () => {
+			resolveFirst(asResult([{ name: 'a.txt', type: 'file' }]));
+			await firstPending;
+		});
+
+		// And it still lands, so switching back shows a finished tree rather than
+		// starting the scan over.
+		expect(state.getSessions().find((session) => session.id === firstSession.id)).toMatchObject({
+			fileTree: [{ name: 'a.txt', type: 'file' }],
+			fileTreeLoading: false,
+		});
+	});
+
+	it('does not let an old A load clear a newer A load after an A to B to A switch', async () => {
+		// Web-desktop only: the restart this guards against exists because the
+		// switch away cancelled A. On Electron nothing cancels, so there is never
+		// a second A load to be clobbered by the first.
+		asWebDesktop();
+		let resolveFirst: (value: ReturnType<typeof asResult>) => void = () => {};
+		let resolveSecond: (value: ReturnType<typeof asResult>) => void = () => {};
+		let resolveThird: (value: ReturnType<typeof asResult>) => void = () => {};
+		const firstPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveFirst = resolve;
+		});
+		const secondPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveSecond = resolve;
+		});
+		const thirdPending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveThird = resolve;
+		});
+		vi.mocked(loadFileTree)
+			.mockReturnValueOnce(firstPending)
+			.mockReturnValueOnce(secondPending)
+			.mockReturnValueOnce(thirdPending);
+
+		const firstSession = createMockSession({ id: 'session-a', fileTree: [] });
+		const secondSession = createMockSession({ id: 'session-b', fileTree: [] });
+		const state = createSessionsState([firstSession, secondSession]);
+		const baseDeps = createDeps(state);
+		const { rerender } = renderHook(
+			({ activeSessionId, activeSession }: { activeSessionId: string; activeSession: Session }) =>
+				useFileTreeManagement({ ...baseDeps, activeSessionId, activeSession }),
+			{ initialProps: { activeSessionId: firstSession.id, activeSession: firstSession } }
+		);
+
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(1));
+		rerender({ activeSessionId: secondSession.id, activeSession: secondSession });
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(2));
+		rerender({ activeSessionId: firstSession.id, activeSession: firstSession });
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledTimes(3));
+
+		await act(async () => {
+			resolveFirst(asResult([{ name: 'stale-a.txt', type: 'file' }]));
+			await firstPending;
+		});
+		expect(
+			state.getSessions().find((session) => session.id === firstSession.id)?.fileTreeLoading
+		).toBe(true);
+
+		await act(async () => {
+			resolveSecond(asResult([{ name: 'stale-b.txt', type: 'file' }]));
+			resolveThird(asResult([{ name: 'current-a.txt', type: 'file' }]));
+			await Promise.all([secondPending, thirdPending]);
+		});
+		expect(state.getSessions().find((session) => session.id === firstSession.id)).toMatchObject({
+			fileTree: [{ name: 'current-a.txt', type: 'file' }],
+			fileTreeLoading: false,
+		});
+	});
+
+	it('ignores load progress and completion after unmount', async () => {
+		let resolveLoad: (value: ReturnType<typeof asResult>) => void = () => {};
+		const pending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveLoad = resolve;
+		});
+		vi.mocked(loadFileTree).mockReturnValue(pending);
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const { unmount } = renderHook(() => useFileTreeManagement(createDeps(state)));
+		await waitFor(() => expect(loadFileTree).toHaveBeenCalledOnce());
+		await act(async () => {});
+
+		const onProgress = vi.mocked(loadFileTree).mock.calls[0][4] as
+			| ((progress: {
+					directoriesScanned: number;
+					filesFound: number;
+					currentDirectory: string;
+			  }) => void)
+			| undefined;
+		const writesBeforeUnmount = state.setSessions.mock.calls.length;
+		unmount();
+
+		await act(async () => {
+			onProgress?.({ directoriesScanned: 1, filesFound: 1, currentDirectory: '/stale' });
+			resolveLoad(asResult([{ name: 'stale.txt', type: 'file' }]));
+			await pending;
+		});
+
+		expect(state.setSessions).toHaveBeenCalledTimes(writesBeforeUnmount);
 	});
 
 	it('decouples stats from tree display in initial load', async () => {

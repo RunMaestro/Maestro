@@ -7,7 +7,6 @@ import { clearGitHubSeenForSubscription } from './cue-db';
 import {
 	computeOwnershipWarning,
 	countActiveSubscriptions,
-	hasTimeBasedSubscriptions,
 	type SessionState,
 } from './cue-session-state';
 import type { CueSessionRegistry } from './cue-session-registry';
@@ -214,7 +213,6 @@ export function createCueSessionRuntimeService(
 			configRoot: undefined,
 			triggerSources: [],
 			yamlWatchers: [],
-			sleepPrevented: false,
 			ownershipWarning,
 		};
 
@@ -321,14 +319,18 @@ export function createCueSessionRuntimeService(
 			}
 		}
 
-		state.sleepPrevented = hasTimeBasedSubscriptions(
-			{ ...config, subscriptions: runnableSubscriptions },
-			session.id
-		);
-		if (state.sleepPrevented) {
-			deps.onPreventSleep?.(`cue:schedule:${session.id}`);
-		}
-
+		// NOTE: we deliberately do NOT take a sleep blocker just because this
+		// session has time-based subscriptions registered.
+		//
+		// That used to happen here, keyed `cue:schedule:{sessionId}`, and it was
+		// held from session init all the way to teardown. Having a subscription is
+		// a static property of the YAML, not a runtime state, so a single job that
+		// fires once a day at 03:00 kept a blocker up for all 24 hours. On macOS
+		// that suppressed the OS's entire discretionary maintenance tier for as
+		// long as the app was open.
+		//
+		// Actually running a subscription is what needs the machine awake, and
+		// CueRunManager already covers exactly that window via `cue:run:{runId}`.
 		deps.onLog(
 			'cue',
 			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(runnableSubscriptions, session.id, session.name)} active subscription(s)`
@@ -339,10 +341,6 @@ export function createCueSessionRuntimeService(
 	function teardownSession(sessionId: string): void {
 		const state = registry.get(sessionId);
 		if (!state) return;
-
-		if (state.sleepPrevented) {
-			deps.onAllowSleep?.(`cue:schedule:${sessionId}`);
-		}
 
 		// Each trigger source owns its own underlying mechanism (timer, watcher,
 		// poller). Calling stop() releases all of them in one place - no more

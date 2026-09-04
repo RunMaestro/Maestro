@@ -20,6 +20,12 @@ import {
 } from './group-chat-storage';
 import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
+	finishGroupChatTurn,
+	resolveGroupChatTurnKey,
+	GROUP_CHAT_MODERATOR_NAME,
+} from './group-chat-turn-metrics';
+import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
+import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
 	cleanMentionName,
@@ -27,6 +33,8 @@ import {
 	getMentionNameForContext,
 	getMentionMatchPriority,
 	stripUnmatchedTrailingClosers,
+	normalizeMentionName,
+	requiresIdleParticipants,
 } from '../../shared/group-chat-types';
 import {
 	IProcessManager,
@@ -39,6 +47,7 @@ import {
 	addParticipant,
 	setActiveParticipantSession,
 	clearActiveParticipantSession,
+	getParticipantSessionId,
 	wasParticipantRecentlyRemoved,
 } from './group-chat-agent';
 import { AgentDetector } from '../agents';
@@ -95,6 +104,13 @@ export interface GroupChatSessionInfo {
 	};
 	/** Auto Run folder path for this session */
 	autoRunFolderPath?: string;
+	/**
+	 * True when this agent is running a turn right now (any AI tab, or a CLI
+	 * playbook). Computed live by the provider callback - the persisted session
+	 * record always reads idle, so it can never answer this. Group chats with
+	 * "only engage idle agents" on skip delegation to a busy agent.
+	 */
+	isBusy?: boolean;
 }
 
 /**
@@ -145,13 +161,23 @@ const pendingSynthesisRounds = new Set<string>();
  * add + emit + failure-handling pattern shared by the moderator, participant, and
  * error history-record sites. History logging is best-effort: a failure here is
  * reported but never thrown, so it can't break the message flow.
+ *
+ * The entry also closes out the turn's measurement here rather than at each
+ * call site: this is the one place every finished turn passes through, and the
+ * duration and token totals a chat reports are only as complete as the entries
+ * that carry them. Values already on the entry win, so a caller that measured
+ * something itself is never overwritten.
  */
 async function recordGroupChatHistory(
 	groupChatId: string,
 	entry: Omit<GroupChatHistoryEntry, 'id'>
 ): Promise<void> {
 	try {
-		const historyEntry = await addGroupChatHistoryEntry(groupChatId, entry);
+		const measured = finishGroupChatTurn(groupChatId, entry.participantName);
+		const historyEntry = await addGroupChatHistoryEntry(groupChatId, {
+			...measured,
+			...entry,
+		});
 		groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
 		logger.debug(
 			`[GroupChatRouter] Added ${entry.type} history entry for ${entry.participantName}: ${entry.summary.substring(0, 50)}...`
@@ -179,64 +205,180 @@ async function recordGroupChatHistory(
 const autoRunParticipantTracker = new Map<string, Set<string>>();
 
 /**
- * Tracks per-participant response timeout handles.
- * Maps `${groupChatId}:${participantName}` -> NodeJS.Timeout
- * Timeouts fire if a participant never responds (hung process, lost IPC, etc.)
+ * Tracks per-participant silence budgets.
+ * Maps `${groupChatId}:${participantName}` -> IdleWatchdog
+ * Fires if a participant goes quiet for too long (hung process, lost IPC, etc.)
  */
-const participantTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+const participantTimeouts = new Map<string, IdleWatchdog>();
 
-/** How long to wait for a participant before treating them as timed-out (10 minutes). */
+/**
+ * How long a participant may stay SILENT before it is treated as timed out
+ * (10 minutes).
+ *
+ * This is a silence budget, not a duration cap: it is restarted by every chunk
+ * the participant emits (see `noteGroupChatActivity`). It used to be a plain
+ * wall-clock timer armed at dispatch, which cannot tell a working agent from a
+ * wedged one - a participant was declared dead at the ten-minute mark while its
+ * transcript showed 19-41 events per minute straight through the cutoff, and the
+ * room was told nothing had been implemented while the process went on to commit
+ * four changes and start a push.
+ *
+ * It is also the value forwarded to maestro-p as `--max-wait`, which is itself an
+ * idle budget - so the router's supervision and the wrapper's now agree in KIND
+ * as well as in number. They did not before.
+ */
 const PARTICIPANT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** How long to wait for the moderator process before treating it as timed-out (10 minutes). */
+/**
+ * Absolute ceiling on one participant turn, regardless of how chatty it is
+ * (30 minutes). A participant stuck in a tool loop emits output forever and can
+ * never satisfy the idle budget, so silence alone cannot bound the run. Same
+ * split, and the same value, as a cross-agent consult.
+ */
+const PARTICIPANT_MAX_DURATION_MS = 30 * 60 * 1000;
+
+/** How long the moderator may stay SILENT before it is treated as timed out (10 minutes). */
 const MODERATOR_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
 
-/**
- * Tracks per-group-chat moderator timeout handles.
- * Maps groupChatId -> NodeJS.Timeout
- * Timeouts fire if the moderator process never exits (hung process, API hang, etc.)
- */
-const moderatorTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+/** Absolute ceiling on one moderator turn (30 minutes). See PARTICIPANT_MAX_DURATION_MS. */
+const MODERATOR_MAX_DURATION_MS = 30 * 60 * 1000;
 
 /**
- * Registers a response timeout for the moderator.
- * If the moderator doesn't exit in MODERATOR_RESPONSE_TIMEOUT_MS, the state is
- * force-reset to idle so the chat doesn't hang forever.
+ * Tracks per-group-chat moderator silence budgets.
+ * Maps groupChatId -> IdleWatchdog
+ * Fires if the moderator process goes quiet and never exits (hang, API stall, etc.)
  */
-export function setModeratorResponseTimeout(groupChatId: string): void {
+const moderatorTimeouts = new Map<string, IdleWatchdog>();
+
+/**
+ * Records proof of life for whichever moderator or participant owns `sessionId`,
+ * restarting its silence budget.
+ *
+ * Called from the shared process data listener, which is the one place that
+ * already sees every chunk a group chat process emits and can resolve a session
+ * id back to a room. Routing liveness through it rather than attaching listeners
+ * here keeps `IProcessManager` a spawn/write/kill interface: the router never
+ * needed to observe output before, and widening it to an EventEmitter for this
+ * would put a second output path beside the buffering one.
+ *
+ * Unknown or non-group-chat session ids are ignored, so the caller can hand over
+ * every chunk it sees without pre-filtering.
+ */
+export function noteGroupChatActivity(sessionId: string): void {
+	const key = resolveGroupChatTurnKey(sessionId);
+	if (!key) return;
+	if (key.participantName === GROUP_CHAT_MODERATOR_NAME) {
+		moderatorTimeouts.get(key.groupChatId)?.touch();
+		return;
+	}
+	participantTimeouts.get(getParticipantTimeoutKey(key.groupChatId, key.participantName))?.touch();
+}
+
+/**
+ * Puts a room back to rest: clears the running state and releases its power
+ * block. These two always belong together - a room left non-idle is reported as
+ * a running chat by `collectActiveOperations` (so quitting warns about work that
+ * finished, and Quit When Idle never fires again), and a leaked power block
+ * keeps the machine awake for the same phantom.
+ *
+ * Exported because the three places that decide "all participants are done" live
+ * in three different files, and only this one has `powerManager` - a caller that
+ * emits the state change but cannot release the block fixes half the bug.
+ */
+export function settleGroupChatToIdle(groupChatId: string): void {
+	groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+	powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+}
+
+/**
+ * Registers a silence budget for the moderator.
+ * If the moderator goes quiet for MODERATOR_RESPONSE_TIMEOUT_MS (or runs past
+ * MODERATOR_MAX_DURATION_MS while still talking), its process is killed and the
+ * state is force-reset to idle so the chat doesn't hang forever.
+ */
+export function setModeratorResponseTimeout(
+	groupChatId: string,
+	processManager?: IProcessManager,
+	sessionId?: string
+): void {
 	clearModeratorResponseTimeout(groupChatId);
 
-	const handle = setTimeout(() => {
+	const giveUp = (reason: string, budgetMs: number): void => {
 		moderatorTimeouts.delete(groupChatId);
 		console.warn(
-			`[GroupChat:Debug] Moderator timed out after ${MODERATOR_RESPONSE_TIMEOUT_MS / 1000}s for ${groupChatId} - force-resetting to idle`
+			`[GroupChat:Debug] Moderator ${reason} after ${budgetMs / 1000}s for ${groupChatId} - killing and resetting to idle`
 		);
 		logger.warn('[GroupChat] Moderator timed out - resetting to idle', LOG_CONTEXT, {
 			groupChatId,
-			timeoutMs: MODERATOR_RESPONSE_TIMEOUT_MS,
+			reason,
+			timeoutMs: budgetMs,
 		});
+
+		// Kill before reporting. A timeout that only changes Maestro's state
+		// leaves the process running with write access: the room is told the turn
+		// failed while the agent it gave up on keeps editing files, committing,
+		// and pushing. Reporting a failure and leaving the cause running is worse
+		// than either outcome alone.
+		// The FULL spawned session id, not `getModeratorSessionId`, which returns the
+		// per-chat PREFIX (`group-chat-<id>-moderator`) that every turn appends a
+		// timestamp to. ProcessManager.kill looks its map up by exact key, so the
+		// prefix silently kills nothing and the timeout goes back to being a report
+		// with no teeth.
+		killTimedOutSession(sessionId, processManager, 'moderator');
 
 		groupChatEmitters.emitMessage?.(groupChatId, {
 			timestamp: new Date().toISOString(),
 			from: 'system',
-			content: `⚠️ Moderator did not respond within ${MODERATOR_RESPONSE_TIMEOUT_MS / 60000} minutes. Resetting to idle. You can send another message to retry.`,
+			content: `⚠️ Moderator ${reason} after ${budgetMs / 60000} minutes and was stopped. Resetting to idle. You can send another message to retry.`,
 		});
 
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
-	}, MODERATOR_RESPONSE_TIMEOUT_MS);
+	};
 
-	moderatorTimeouts.set(groupChatId, handle);
+	moderatorTimeouts.set(
+		groupChatId,
+		createIdleWatchdog({
+			idleMs: MODERATOR_RESPONSE_TIMEOUT_MS,
+			maxMs: MODERATOR_MAX_DURATION_MS,
+			onIdle: () => giveUp('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
+			onMax: () => giveUp('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
+		})
+	);
 }
 
 /**
  * Cancels the moderator response timeout (called when the moderator process exits).
  */
 export function clearModeratorResponseTimeout(groupChatId: string): void {
-	const handle = moderatorTimeouts.get(groupChatId);
-	if (handle) {
-		clearTimeout(handle);
+	const watchdog = moderatorTimeouts.get(groupChatId);
+	if (watchdog) {
+		watchdog.disarm();
 		moderatorTimeouts.delete(groupChatId);
+	}
+}
+
+/**
+ * Kills the process behind a turn we have just given up on.
+ *
+ * Best-effort by design: the session may already be gone (that is the ordinary
+ * case for a genuinely dead process), and a kill that throws must not stop the
+ * room from settling back to idle - a timeout whose cleanup half-ran is how a
+ * chat ends up permanently stuck on 'agent-working'.
+ */
+function killTimedOutSession(
+	sessionId: string | undefined,
+	processManager: IProcessManager | undefined,
+	label: string
+): void {
+	if (!sessionId || !processManager) return;
+	try {
+		processManager.kill(sessionId);
+	} catch (err) {
+		logger.warn(`[GroupChat] Failed to kill timed-out ${label} process`, LOG_CONTEXT, {
+			sessionId,
+			error: err,
+		});
 	}
 }
 
@@ -245,8 +387,9 @@ function getParticipantTimeoutKey(groupChatId: string, participantName: string):
 }
 
 /**
- * Registers a response timeout for a participant.
- * If the participant doesn't respond in PARTICIPANT_RESPONSE_TIMEOUT_MS, they are
+ * Registers a silence budget for a participant.
+ * If the participant goes quiet for PARTICIPANT_RESPONSE_TIMEOUT_MS (or runs past
+ * PARTICIPANT_MAX_DURATION_MS while still talking), its process is killed and it is
  * force-marked as responded so synthesis can proceed and the chat doesn't hang forever.
  */
 function setParticipantResponseTimeout(
@@ -256,22 +399,32 @@ function setParticipantResponseTimeout(
 	agentDetector: AgentDetector | undefined
 ): void {
 	const key = getParticipantTimeoutKey(groupChatId, participantName);
-	// Clear any existing timeout for this participant
-	const existing = participantTimeouts.get(key);
-	if (existing) clearTimeout(existing);
+	// Clear any existing budget for this participant
+	participantTimeouts.get(key)?.disarm();
 
-	const handle = setTimeout(async () => {
+	const giveUp = async (reason: string, budgetMs: number): Promise<void> => {
 		participantTimeouts.delete(key);
 		const pending = pendingParticipantResponses.get(groupChatId);
 		if (!pending?.has(participantName)) return; // Already responded
 
 		console.warn(
-			`[GroupChat:Debug] Participant ${participantName} timed out after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000}s - force-completing`
+			`[GroupChat:Debug] Participant ${participantName} ${reason} after ${budgetMs / 1000}s - killing and force-completing`
 		);
+
+		// Kill before reporting - see killTimedOutSession. An Auto Run participant
+		// has no group-chat process of its own (the renderer drives the batch under
+		// the agent's own session), so there is nothing to kill and nothing is: we
+		// must never take down the user's actual agent to settle a room.
+		killTimedOutSession(
+			getParticipantSessionId(groupChatId, participantName),
+			processManager,
+			`participant ${participantName}`
+		);
+
 		groupChatEmitters.emitMessage?.(groupChatId, {
 			timestamp: new Date().toISOString(),
 			from: 'system',
-			content: `⚠️ @${participantName} did not respond within ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes and has been marked as timed out.`,
+			content: `⚠️ @${participantName} ${reason} after ${budgetMs / 60000} minutes and was stopped.`,
 		});
 
 		// Log a timeout response so the moderator knows what happened
@@ -283,7 +436,7 @@ function setParticipantResponseTimeout(
 				await appendToLog(
 					chat.logPath,
 					participantName,
-					`[Timed out - no response after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes]`
+					`[Stopped - ${reason} after ${budgetMs / 60000} minutes]`
 				);
 			}
 		} catch (err) {
@@ -313,25 +466,64 @@ function setParticipantResponseTimeout(
 		}
 
 		const isLast = markParticipantResponded(groupChatId, participantName);
-		if (isLast && processManager && agentDetector) {
-			spawnModeratorSynthesis(groupChatId, processManager, agentDetector).catch((err) => {
-				logger.error('Failed to spawn moderator synthesis after participant timeout', LOG_CONTEXT, {
-					error: err,
-					groupChatId,
-					participantName,
+		if (isLast) {
+			// The room is done either way. Whether synthesis can run is a separate
+			// question from whether the room is still working, and folding the two
+			// into one condition is what left a timed-out room stuck on
+			// 'agent-working' forever: `processManager`/`agentDetector` are optional
+			// here, so an undefined one skipped the clear along with the spawn.
+			if (processManager && agentDetector) {
+				spawnModeratorSynthesis(groupChatId, processManager, agentDetector).catch((err) => {
+					logger.error(
+						'Failed to spawn moderator synthesis after participant timeout',
+						LOG_CONTEXT,
+						{
+							error: err,
+							groupChatId,
+							participantName,
+						}
+					);
+					captureException(err, {
+						operation: 'groupChat:spawnSynthesisAfterTimeout',
+						groupChatId,
+						participantName,
+					});
+					settleGroupChatToIdle(groupChatId);
 				});
-				captureException(err, {
-					operation: 'groupChat:spawnSynthesisAfterTimeout',
-					groupChatId,
-					participantName,
-				});
-				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
-			});
+			} else {
+				settleGroupChatToIdle(groupChatId);
+			}
 		}
-	}, PARTICIPANT_RESPONSE_TIMEOUT_MS);
+	};
 
-	participantTimeouts.set(key, handle);
+	// The watchdog's callbacks are sync; `giveUp` is async because it appends to
+	// the chat log. A rejection here can only come from the settle path itself, so
+	// it is reported rather than left as an unhandled rejection.
+	const fire = (reason: string, budgetMs: number): void => {
+		giveUp(reason, budgetMs).catch((err) => {
+			logger.error('Participant timeout handler failed', LOG_CONTEXT, {
+				groupChatId,
+				participantName,
+				error: err,
+			});
+			captureException(err, {
+				operation: 'groupChat:participantTimeout',
+				groupChatId,
+				participantName,
+			});
+			settleGroupChatToIdle(groupChatId);
+		});
+	};
+
+	participantTimeouts.set(
+		key,
+		createIdleWatchdog({
+			idleMs: PARTICIPANT_RESPONSE_TIMEOUT_MS,
+			maxMs: PARTICIPANT_MAX_DURATION_MS,
+			onIdle: () => fire('went silent', PARTICIPANT_RESPONSE_TIMEOUT_MS),
+			onMax: () => fire('exceeded the single-turn limit', PARTICIPANT_MAX_DURATION_MS),
+		})
+	);
 }
 
 /**
@@ -339,9 +531,9 @@ function setParticipantResponseTimeout(
  */
 function clearParticipantResponseTimeout(groupChatId: string, participantName: string): void {
 	const key = getParticipantTimeoutKey(groupChatId, participantName);
-	const handle = participantTimeouts.get(key);
-	if (handle) {
-		clearTimeout(handle);
+	const watchdog = participantTimeouts.get(key);
+	if (watchdog) {
+		watchdog.disarm();
 		participantTimeouts.delete(key);
 	}
 }
@@ -949,7 +1141,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				logger.debug(`[GroupChat:Debug] Emitted state change: moderator-thinking`);
 
 				// Start moderator timeout to prevent indefinite hanging
-				setModeratorResponseTimeout(groupChatId);
+				setModeratorResponseTimeout(groupChatId, processManager, sessionId);
 
 				// Add power block reason to prevent sleep during group chat activity
 				powerManager.addBlockReason(`groupchat:${groupChatId}`);
@@ -1005,6 +1197,54 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 	} else {
 		logger.debug(`[GroupChat:Debug] WARNING: No processManager provided, skipping spawn`);
 	}
+}
+
+/**
+ * Whether a delegation to this agent has to stand down because the agent is
+ * already working somewhere else.
+ *
+ * A group chat participant runs as its own process in the AGENT'S working
+ * directory, so delegating to an agent the user is talking to directly puts two
+ * writers in one repo. `requireIdleParticipants` (on by default) trades a
+ * skipped turn for that collision; turning it off is the deliberate override.
+ *
+ * An agent with no matching Maestro agent can't be probed and is never blocked -
+ * "unknown" must not read as "busy", or a participant whose agent was renamed
+ * would become permanently unreachable.
+ */
+function isDelegationBlockedByBusyAgent(
+	chat: { requireIdleParticipants?: boolean },
+	matchingSession: GroupChatSessionInfo | undefined
+): boolean {
+	if (!requiresIdleParticipants(chat)) return false;
+	return matchingSession?.isBusy === true;
+}
+
+/**
+ * Tells the chat (and, through the log, the moderator's next turn) which agents
+ * were left out of a delegation because they were busy. Emitted once per
+ * moderator turn rather than once per agent, so a fan-out to three busy agents
+ * is one line rather than three.
+ */
+async function reportBusySkips(
+	groupChatId: string,
+	logPath: string,
+	skipped: string[]
+): Promise<void> {
+	if (skipped.length === 0) return;
+	const names = skipped.map((name) => `@${normalizeMentionName(name)}`).join(', ');
+	const content =
+		`⏸️ Skipped ${names} - ${skipped.length === 1 ? 'that agent is' : 'those agents are'} busy with ` +
+		`their own work right now. This chat only engages agents that are free; ` +
+		`turn that off in Edit Group Chat to interrupt them anyway.`;
+	// Appended to the log as well as emitted: the moderator reads recent log lines
+	// as context, so this is how it learns the work never got handed out.
+	await appendToLog(logPath, 'system', content);
+	groupChatEmitters.emitMessage?.(groupChatId, {
+		timestamp: new Date().toISOString(),
+		from: 'system',
+		content,
+	});
 }
 
 /**
@@ -1197,6 +1437,10 @@ export async function routeModeratorResponse(
 	const participantsToRespond = new Set<string>();
 	const autoRunParticipantNames = new Set<string>();
 
+	// Agents this turn declined to engage because they were mid-turn elsewhere.
+	// Reported once after the delegation loops below.
+	const busySkippedParticipants: string[] = [];
+
 	// Use the !autorun directives already extracted above (same `message` input)
 	if (autoRunDirectives.length > 0) {
 		logger.debug(
@@ -1240,6 +1484,16 @@ export async function routeModeratorResponse(
 			autoRunParticipantNames.add(participant.name);
 
 			const matchingSession = findSessionForParticipantName(participant.name, sessions);
+
+			// An Auto Run batch runs INSIDE the user's agent, so a busy agent is an
+			// even harder conflict here than a participant spawn is.
+			if (isDelegationBlockedByBusyAgent(updatedChat, matchingSession)) {
+				logger.info(`Skipping !autorun for busy agent @${participant.name}`, LOG_CONTEXT, {
+					groupChatId,
+				});
+				busySkippedParticipants.push(participant.name);
+				continue;
+			}
 
 			if (!matchingSession?.autoRunFolderPath) {
 				console.warn(
@@ -1323,6 +1577,16 @@ export async function routeModeratorResponse(
 			const matchingSession = findSessionForParticipantName(participantName, sessions);
 			const cwd = matchingSession?.cwd || os.homedir();
 			logger.debug(`[GroupChat:Debug] CWD for participant: ${cwd}`);
+
+			// Stand down rather than run a second process in a working directory the
+			// user's own conversation is already writing to.
+			if (isDelegationBlockedByBusyAgent(updatedChat, matchingSession)) {
+				logger.info(`Skipping delegation to busy agent @${participantName}`, LOG_CONTEXT, {
+					groupChatId,
+				});
+				busySkippedParticipants.push(participantName);
+				continue;
+			}
 
 			// Resolve agent configuration
 			const agent = await agentDetector.getAgent(participant.agentId);
@@ -1489,6 +1753,11 @@ export async function routeModeratorResponse(
 		logger.debug(`[GroupChat:Debug] =================================================`);
 	}
 
+	// Tell the chat about anything that was held back because its agent was busy.
+	// Done before the lifecycle cleanup below so the note lands in the log ahead of
+	// the turn settling, whether or not any other participant was engaged.
+	await reportBusySkips(groupChatId, updatedChat.logPath, busySkippedParticipants);
+
 	// If no actionable participant work was started (all directives invalid/skipped, no mentions),
 	// clean up lifecycle state so power blocks don't leak.
 	if (participantsToRespond.size === 0) {
@@ -1499,7 +1768,13 @@ export async function routeModeratorResponse(
 		// Unknown @tokens should be treated as plain text, not as a system error.
 		// Only emit a system warning here when explicit !autorun directives were present
 		// but none could be activated.
-		if (autoRunDirectives.length > 0 && mentions.length === 0) {
+		// A busy-agent skip already explained itself above; adding this vague retry
+		// notice on top of it reads as a second, unrelated failure.
+		if (
+			autoRunDirectives.length > 0 &&
+			mentions.length === 0 &&
+			busySkippedParticipants.length === 0
+		) {
 			groupChatEmitters.emitMessage?.(groupChatId, {
 				timestamp: new Date().toISOString(),
 				from: 'system',
@@ -1802,7 +2077,7 @@ Review the agent responses above. Either:
 		logger.debug(`[GroupChat:Debug] Emitted state change: moderator-thinking`);
 
 		// Start moderator timeout to prevent indefinite hanging
-		setModeratorResponseTimeout(groupChatId);
+		setModeratorResponseTimeout(groupChatId, processManager, sessionId);
 
 		// Mark this turn so routeModeratorResponse classifies its history entry as
 		// 'synthesis'. Cleared in the catch below if the spawn never gets off the ground.

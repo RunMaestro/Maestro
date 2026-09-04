@@ -10,7 +10,7 @@ import type { Theme } from '../../../types';
 import { StagedImageDropLine, type StagedImageTileDragHandlers } from './stagedImageDrag';
 
 const TILE_SIZES = {
-	strip: { height: '4rem', maxWidth: '200px', badge: 'text-[10px] px-1.5' },
+	strip: { height: '4rem', maxWidth: '200px', badge: 'text-2xs px-1.5' },
 	large: { height: '11rem', maxWidth: '340px', badge: 'text-xs px-2' },
 } as const;
 
@@ -56,38 +56,50 @@ export const StagedImageTile = memo(function StagedImageTile({
 	const scaled = (value: string) => (scale === 1 ? value : `calc(${value} * ${scale})`);
 
 	return (
+		// The wrapper is the drag source, the drop target, AND the click target.
+		// The press has to land on a plain div for the drag to start at all (see
+		// StagedImageTileDragHandlers), which rules out wrapping the thumbnail in
+		// a <button>, so the open-in-lightbox affordance moves here and brings
+		// role/tabIndex/Enter-Space with it.
 		<div
-			className="relative group shrink-0 flex items-center justify-center transition-opacity"
+			role="button"
+			tabIndex={0}
+			aria-label={`Staged image ${slot}`}
+			className="relative group shrink-0 flex items-center justify-center transition-opacity cursor-grab active:cursor-grabbing outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
 			style={{
 				minWidth: '64px',
 				opacity: isDragging ? 0.4 : isDimmed ? 0.65 : 1,
+			}}
+			onClick={onOpen}
+			onKeyDown={(e) => {
+				if (e.key !== 'Enter' && e.key !== ' ') return;
+				e.preventDefault();
+				onOpen();
 			}}
 			{...dragHandlers}
 		>
 			<StagedImageDropLine theme={theme} side="left" isActive={dropBefore} />
 			<StagedImageDropLine theme={theme} side="right" isActive={dropAfter} />
 
-			<button
-				type="button"
-				className="p-0 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent rounded cursor-grab active:cursor-grabbing"
-				onClick={onOpen}
-			>
-				<img
-					src={image}
-					alt={`Staged image ${slot}`}
-					draggable={false}
-					className="rounded border hover:opacity-80 transition-opacity block pointer-events-none"
-					style={{
-						height: scaled(dims.height),
-						borderColor: theme.colors.border,
-						objectFit: 'contain',
-						maxWidth: scaled(dims.maxWidth),
-					}}
-				/>
-			</button>
+			{/* pointer-events-none keeps the press on the wrapper: the image's own
+			    `draggable={false}` computes `-webkit-user-drag: none`, which would
+			    stop the drag if it were ever the hit-test target. */}
+			<img
+				src={image}
+				alt=""
+				draggable={false}
+				className="rounded border group-hover:opacity-80 transition-opacity block pointer-events-none"
+				style={{
+					height: scaled(dims.height),
+					borderColor: theme.colors.border,
+					objectFit: 'contain',
+					maxWidth: scaled(dims.maxWidth),
+				}}
+			/>
 
 			<button
 				type="button"
+				draggable={false}
 				onClick={(e) => {
 					e.stopPropagation();
 					onAnnotate();
@@ -101,6 +113,7 @@ export const StagedImageTile = memo(function StagedImageTile({
 
 			<button
 				type="button"
+				draggable={false}
 				onClick={(e) => {
 					e.stopPropagation();
 					onRemove();

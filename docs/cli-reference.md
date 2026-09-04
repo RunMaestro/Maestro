@@ -238,6 +238,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | Option                            | Description                                                                                                                                                                                                                                                                | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `--new-tab`                       | Create a fresh AI tab and dispatch the prompt into it                                                                                                                                                                                                                      | -       |
+| `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                 | -       |
 | `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                   | -       |
 | `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)                                                                                                                       | -       |
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                              | -       |
@@ -292,13 +293,42 @@ Print conversation history for a desktop tab
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)
 
-| Option             | Description                                                        | Default |
-| ------------------ | ------------------------------------------------------------------ | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent) | -       |
-| `--no-switch`      | Don't switch the Maestro UI to the target agent/tab                | -       |
-| `--json`           | Output as JSON (for scripting)                                     | -       |
+| Option             | Description                                                                     | Default |
+| ------------------ | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)              | -       |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent | -       |
+| `--focus`          | Switch to the file after opening it (default)                                   | -       |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there              | -       |
+| `--json`           | Output as JSON (for scripting)                                                  | -       |
+
+## `maestro-cli open-graph [paths...]`
+
+Open the Document Graph over specific markdown files or a directory.
+
+This is a separate verb rather than an `open <surface>` entry: `open` carries a
+surface name and a tab, and a graph needs a file set.
+
+A single directory stays a directory scope, so the app scans it when it renders
+and picks up documents written since you typed the command. Any other
+combination - several paths, or any explicit file - is flattened to that exact
+list of documents. Documents in the scope that link to nothing else in it are
+drawn in an "Unlinked" band you can toggle off.
+
+| Option             | Description                                                   | Default     |
+| ------------------ | ------------------------------------------------------------- | ----------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent) | -           |
+| `--focus <path>`   | Center the graph on this document                             | most-linked |
+| `--json`           | Output as JSON (for scripting)                                | -           |
+
+```bash
+# Everything under a folder
+maestro-cli open-graph docs/
+
+# An exact set, centered on the one you want to talk about
+maestro-cli open-graph docs/a.md docs/b.md docs/c.md --focus docs/a.md
+```
 
 ## `maestro-cli open-browser <url>`
 
@@ -308,6 +338,7 @@ Open a URL as a browser tab in the Maestro desktop app
 | ------------------ | ------------------------------------------------------------------------------------------------------------- | ------- |
 | `-a, --agent <id>` | Target agent by ID (defaults to active)                                                                       | -       |
 | `--background`     | Create the tab without focusing it or switching agents (use for agent research, then close-browser when done) | -       |
+| `--focus`          | Switch to the browser tab after opening it (default)                                                          | -       |
 | `--json`           | Output as JSON (for scripting)                                                                                | -       |
 
 ## `maestro-cli open [surface]`
@@ -319,6 +350,34 @@ Open a Maestro modal or dashboard (use --list to see every surface)
 | `-t, --tab <tab>` | Deep-link to a tab within the surface                   | -       |
 | `--list`          | List every openable surface, its tabs, and its shortcut | -       |
 | `--json`          | Output as JSON (for scripting)                          | -       |
+
+## `maestro-cli image`
+
+List and save images pasted into a Maestro chat
+
+## `maestro-cli image list`
+
+List images pasted into an agent's conversation, newest first
+
+| Option               | Description                               | Default |
+| -------------------- | ----------------------------------------- | ------- |
+| `-a, --agent <id>`   | Only this agent (defaults to every agent) | -       |
+| `-t, --tab <tab-id>` | Only this AI tab                          | -       |
+| `--limit <n>`        | Maximum images to show (default: 20)      | -       |
+| `--json`             | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli image save [target]`
+
+Save a pasted image to disk (target: index, handle, or "latest")
+
+| Option                | Description                                                       | Default |
+| --------------------- | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Only this agent (defaults to every agent)                         | -       |
+| `-t, --tab <tab-id>`  | Only this AI tab                                                  | -       |
+| `-o, --output <path>` | File or directory to write (default: a generated name in the cwd) | -       |
+| `--all`               | Save every image in scope instead of just the newest              | -       |
+| `--force`             | Overwrite an existing file named by --output                      | -       |
+| `--json`              | Output as JSON (for scripting)                                    | -       |
 
 ## `maestro-cli close-browser <tab-id>`
 
@@ -339,6 +398,8 @@ Open a new terminal tab in the Maestro desktop app
 | `--shell <shell>`     | Shell binary to use (default: zsh)                                                              | -       |
 | `--name <name>`       | Display name for the tab                                                                        | -       |
 | `--command <command>` | Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts) | -       |
+| `--background`        | Create the tab without moving the view (agent and tab stay put)                                 | -       |
+| `--focus`             | Switch to the terminal tab after opening it (default)                                           | -       |
 | `--json`              | Output as JSON (for scripting)                                                                  | -       |
 
 ## `maestro-cli send-terminal [command]`
@@ -353,23 +414,37 @@ Run a command in an existing Maestro terminal tab
 | `--no-enter`         | Type the command without pressing Enter                                   | -       |
 | `--json`             | Output as JSON (for scripting)                                            | -       |
 
+## `maestro-cli read-terminal`
+
+Read a Maestro terminal tab's output
+
+| Option               | Description                                                               | Default |
+| -------------------- | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`   | Target agent by ID (defaults to active)                                   | -       |
+| `--tab <id-or-name>` | Terminal tab ID or display name (defaults to the agent's active terminal) | -       |
+| `--tail <n>`         | Return only the last N lines (default: 200)                               | -       |
+| `--json`             | Output as JSON (for scripting)                                            | -       |
+
 ## `maestro-cli refresh-files`
 
-Refresh the file tree in the Maestro desktop app
+Refresh the file tree in the Maestro desktop app (never moves the view)
 
-| Option             | Description                             | Default |
-| ------------------ | --------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active) | -       |
-| `--json`           | Output as JSON (for scripting)          | -       |
+| Option             | Description                                                               | Default |
+| ------------------ | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to active)                                   | -       |
+| `--background`     | Accepted and ignored: this refresh never moves the view or shows a notice | -       |
+| `--json`           | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli refresh-auto-run`
 
 Refresh Auto Run documents in the Maestro desktop app
 
-| Option             | Description                             | Default |
-| ------------------ | --------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active) | -       |
-| `--json`           | Output as JSON (for scripting)          | -       |
+| Option             | Description                                           | Default |
+| ------------------ | ----------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to active)               | -       |
+| `--background`     | Refresh without switching to the target agent         | -       |
+| `--focus`          | Switch to the target agent while refreshing (default) | -       |
+| `--json`           | Output as JSON (for scripting)                        | -       |
 
 ## `maestro-cli auto-run <docs>`
 
@@ -633,6 +708,8 @@ Create a new agent in the Maestro desktop app
 | `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)              | -               |
+| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                        | -               |
+| `--focus`                         | Select the new agent after creating it (default)                                                            | -               |
 | `--json`                          | Output as JSON (for scripting)                                                                              | -               |
 
 ## `maestro-cli create-group <name>`
@@ -672,6 +749,8 @@ Create a new agent in a git worktree branched off an existing parent agent
 | `-b, --branch <name>`  | Branch name for the worktree (created if it does not exist)                                                        | -       |
 | `--base-branch <name>` | Ref the new branch is based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the parent repo HEAD. | -       |
 | `-m, --message <text>` | Optional initial prompt to dispatch to the new agent after creation                                                | -       |
+| `--background`         | Create the agent without selecting it (Left Bar selection stays put)                                               | -       |
+| `--focus`              | Select the new worktree agent after creating it (default)                                                          | -       |
 | `--json`               | Output as JSON (for scripting)                                                                                     | -       |
 
 ## `maestro-cli remove-agent <agent-id>`
@@ -746,9 +825,11 @@ Focus (select) an agent in the Maestro desktop UI
 
 Switch an agent between "ai" and "terminal" mode
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option         | Description                                                                                           | Default |
+| -------------- | ----------------------------------------------------------------------------------------------------- | ------- |
+| `--background` | Refuse the switch if the agent is the one on screen, rather than changing what the user is looking at | -       |
+| `--focus`      | Switch even when the agent is the one on screen (default)                                             | -       |
+| `--json`       | Output as JSON (for scripting)                                                                        | -       |
 
 ## `maestro-cli tab`
 
@@ -758,11 +839,13 @@ Manage an agent's tabs in the desktop app
 
 Open a new tab for an agent (optionally seeded with a prompt)
 
-| Option                | Description                          | Default |
-| --------------------- | ------------------------------------ | ------- |
-| `-a, --agent <id>`    | Target agent ID                      | -       |
-| `-p, --prompt <text>` | Seed the new AI tab with this prompt | -       |
-| `--json`              | Output as JSON (for scripting)       | -       |
+| Option                | Description                                                     | Default |
+| --------------------- | --------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Target agent ID                                                 | -       |
+| `-p, --prompt <text>` | Seed the new AI tab with this prompt                            | -       |
+| `--background`        | Create the tab without moving the view (agent and tab stay put) | -       |
+| `--focus`             | Switch to the new tab after creating it (default)               | -       |
+| `--json`              | Output as JSON (for scripting)                                  | -       |
 
 ## `maestro-cli tab close <tab-id>`
 
@@ -1004,6 +1087,15 @@ Switch the active Maestro theme (applies live). Use --list to see options.
 | ------------ | ------------------------------ | ------- |
 | `-l, --list` | List available themes          | -       |
 | `--json`     | Output as JSON (for scripting) | -       |
+
+## `maestro-cli gloss [level]`
+
+Set the surface gloss level: off, sheen, strong or max (applies live). Omit the level to see the current one.
+
+| Option       | Description                                  | Default |
+| ------------ | -------------------------------------------- | ------- |
+| `-l, --list` | List the gloss levels and what each one does | -       |
+| `--json`     | Output as JSON (for scripting)               | -       |
 
 ## `maestro-cli theme`
 
@@ -1283,10 +1375,11 @@ Publish session context to GitHub gists
 
 Publish an agent's session transcript as a GitHub gist (requires running Maestro app)
 
-| Option                     | Description                             | Default |
-| -------------------------- | --------------------------------------- | ------- |
-| `-d, --description <text>` | Gist description                        | -       |
-| `-p, --public`             | Create a public gist (default: private) | -       |
+| Option                     | Description                                                                                              | Default |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- | ------- |
+| `-d, --description <text>` | Gist description                                                                                         | -       |
+| `-p, --public`             | Create a public gist (default: private)                                                                  | -       |
+| `-s, --session <id>`       | Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs | -       |
 
 ## `maestro-cli notify`
 

@@ -21,7 +21,8 @@ import { getStatusColor } from '../utils/theme';
 import { formatCost } from '../utils/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { parsePeekOutput, formatPeekLines } from '../utils/peekOutputParser';
-import { formatTimestamp } from '../../shared/formatters';
+import { formatTimestamp, formatRelativeTime } from '../../shared/formatters';
+import { DURATION_MS } from '../../shared/duration';
 import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
 import { SshRemotePill } from './ui/SshRemotePill';
@@ -38,13 +39,14 @@ interface ParticipantCardProps {
 }
 
 /**
- * Format time as relative or absolute.
+ * Recent activity uses the shared relative formatter (`just now` / `Xm ago`).
+ * Older than an hour stays a clock time so a day-old participant does not
+ * read as `23h ago` / `2d ago` (that would change the card's existing display).
  */
-function formatTime(timestamp: number): string {
-	const now = Date.now();
-	const diff = now - timestamp;
-	if (diff < 60000) return 'just now';
-	if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+function formatParticipantActivity(timestamp: number): string {
+	if (Date.now() - timestamp < DURATION_MS.hour) {
+		return formatRelativeTime(timestamp);
+	}
 	return formatTimestamp(timestamp, 'time');
 }
 
@@ -178,7 +180,7 @@ export function ParticipantCard({
 				{/* Session ID pill */}
 				{isPending ? (
 					<span
-						className="text-[10px] px-2 py-0.5 rounded-full shrink-0 italic"
+						className="text-2xs px-2 py-0.5 rounded-full shrink-0 italic"
 						style={{
 							backgroundColor: `${theme.colors.textDim}20`,
 							color: theme.colors.textDim,
@@ -190,7 +192,7 @@ export function ParticipantCard({
 				) : (
 					<button
 						onClick={copySessionId}
-						className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer shrink-0"
+						className="flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer shrink-0"
 						style={{
 							backgroundColor: `${theme.colors.accent}20`,
 							color: theme.colors.accent,
@@ -217,7 +219,7 @@ export function ParticipantCard({
 						</span>
 					)}
 					{participant.lastActivity && (
-						<span title="Last activity">{formatTime(participant.lastActivity)}</span>
+						<span title="Last activity">{formatParticipantActivity(participant.lastActivity)}</span>
 					)}
 				</div>
 				<span>{participant.agentId}</span>
@@ -227,10 +229,10 @@ export function ParticipantCard({
 			<div className="mt-2 flex items-center gap-2">
 				<div className="flex-1">
 					<div className="flex items-center justify-between mb-1">
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Context
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							{contextUsage}%
 						</span>
 					</div>
@@ -250,7 +252,7 @@ export function ParticipantCard({
 				{/* Cost pill (optional) */}
 				{participant.totalCost !== undefined && participant.totalCost > 0 && (
 					<span
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0"
 						style={{
 							backgroundColor: `${theme.colors.success}20`,
 							color: theme.colors.success,
@@ -265,7 +267,7 @@ export function ParticipantCard({
 				{showResetButton && (
 					<button
 						onClick={handleReset}
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
 							color: theme.colors.warning,
@@ -280,7 +282,7 @@ export function ParticipantCard({
 				{/* Reset in progress indicator */}
 				{isResetting && (
 					<span
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 animate-pulse"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 animate-pulse"
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
 							color: theme.colors.warning,
@@ -294,7 +296,7 @@ export function ParticipantCard({
 				{showRemoveButton && !confirmRemove && (
 					<button
 						onClick={() => setConfirmRemove(true)}
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.error}20`,
 							color: theme.colors.error,
@@ -308,7 +310,7 @@ export function ParticipantCard({
 				)}
 				{/* Remove confirmation */}
 				{confirmRemove && !isRemoving && (
-					<span className="flex items-center gap-1 text-[10px] shrink-0">
+					<span className="flex items-center gap-1 text-2xs shrink-0">
 						<button
 							onClick={handleRemove}
 							className="px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
@@ -335,7 +337,7 @@ export function ParticipantCard({
 				{/* Remove in progress indicator */}
 				{isRemoving && (
 					<span
-						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 animate-pulse"
+						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 animate-pulse"
 						style={{
 							backgroundColor: `${theme.colors.error}20`,
 							color: theme.colors.error,
@@ -348,7 +350,7 @@ export function ParticipantCard({
 				{/* Peek button - always visible */}
 				<button
 					onClick={() => setPeekOpen((v) => !v)}
-					className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+					className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 					style={{
 						backgroundColor: peekOpen ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
 						color: peekOpen ? theme.colors.accent : theme.colors.textDim,
@@ -365,7 +367,7 @@ export function ParticipantCard({
 			{peekOpen && (
 				<pre
 					ref={peekRef}
-					className="mt-2 text-[10px] leading-tight rounded p-2 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono"
+					className="mt-2 text-2xs leading-tight rounded p-2 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono"
 					style={{
 						maxHeight: '200px',
 						backgroundColor: `${theme.colors.bgMain}80`,

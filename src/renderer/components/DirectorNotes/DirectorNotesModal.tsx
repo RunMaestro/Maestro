@@ -26,9 +26,11 @@ interface DirectorNotesModalProps {
 	theme: Theme;
 	onClose: () => void;
 	// Session navigation - jumps to an agent's session tab (closes modal first)
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
+	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
+	cwd?: string;
+	projectRoot?: string;
 	onFileClick?: (path: string) => void;
 }
 
@@ -45,6 +47,8 @@ export function DirectorNotesModal({
 	onClose,
 	onResumeSession,
 	fileTree,
+	cwd,
+	projectRoot,
 	onFileClick,
 }: DirectorNotesModalProps) {
 	const { directorNotesSettings, shortcuts } = useSettings();
@@ -263,7 +267,7 @@ export function DirectorNotesModal({
 							>
 								{showGenerating ? <Spinner size={16} /> : <Icon className="w-4 h-4" />}
 								{tab.label}
-								{showGenerating && <span className="text-[10px] font-normal">generating…</span>}
+								{showGenerating && <span className="text-2xs font-normal">generating…</span>}
 							</button>
 						);
 					})}
@@ -290,6 +294,8 @@ export function DirectorNotesModal({
 								theme={theme}
 								onResumeSession={onResumeSession}
 								fileTree={fileTree}
+								cwd={cwd}
+								projectRoot={projectRoot}
 								onFileClick={onFileClick}
 								lookbackHours={lookbackHours}
 								onLookbackChange={setLookbackHours}

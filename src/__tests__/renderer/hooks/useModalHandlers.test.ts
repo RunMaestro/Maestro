@@ -1161,6 +1161,28 @@ describe('useModalHandlers', () => {
 			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 
+		it('handleClosePromptComposer focuses the group chat input while a room is open', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'chat-1' });
+			getModalActions().setPromptComposerOpen(true);
+
+			const inputRef = createInputRef();
+			const groupChatInputRef = createInputRef();
+			const { result } = renderHook(() =>
+				useModalHandlers(inputRef, createTerminalOutputRef(), undefined, groupChatInputRef)
+			);
+			act(() => {
+				result.current.handleClosePromptComposer();
+			});
+
+			act(() => {
+				vi.advanceTimersByTime(10);
+			});
+			// The agent composer isn't on screen in a room, so focusing it would
+			// drop the caret on the document instead of the room's input.
+			expect(groupChatInputRef.current!.focus).toHaveBeenCalled();
+			expect(inputRef.current!.focus).not.toHaveBeenCalled();
+		});
+
 		it('handleCloseCreatePRModal closes modal and clears session', () => {
 			const session = createMockSession();
 			getModalActions().setCreatePRSession(session);
@@ -1993,10 +2015,12 @@ describe('useModalHandlers', () => {
 			);
 
 			act(() => {
-				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1', 'My Session');
 			});
 
-			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+			// Arg 2 is `providedMessages`, left undefined so the resume reads the
+			// transcript itself; the name goes in arg 3.
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, 'My Session');
 		});
 
 		it('defers resume when on different session, then resumes after activeSession change', () => {
@@ -2014,7 +2038,7 @@ describe('useModalHandlers', () => {
 
 			// Call with sourceSessionId='session-1' while activeSession is session-2
 			act(() => {
-				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1', 'My Session');
 			});
 
 			// Should have switched to session-1
@@ -2022,8 +2046,52 @@ describe('useModalHandlers', () => {
 
 			// The setActiveSessionId triggers a store update + re-render within the same act(),
 			// which fires the pending resume effect synchronously. The resume should have been
-			// called with the deferred agentSessionId.
-			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+			// called with the deferred agentSessionId - and the name, which has to
+			// survive the agent switch because the entry that carried it is gone.
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, 'My Session');
+		});
+
+		it('leaves the active group chat when jumping to a different agent', () => {
+			const session1 = createMockSession({ id: 'session-1' });
+			const session2 = createMockSession({ id: 'session-2' });
+			useSessionStore.setState({
+				sessions: [session1, session2],
+				activeSessionId: 'session-2',
+			});
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+
+			const resumeRef = { current: vi.fn() };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
+			// Arg 2 is `providedMessages` and arg 3 the recorded session name; both
+			// are absent here because this call supplies no name.
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, undefined);
+		});
+
+		it('leaves the active group chat when the target agent is already active', () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+
+			const resumeRef = { current: vi.fn() };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1', undefined, undefined);
 		});
 
 		it('does not call resume when ref is null', () => {

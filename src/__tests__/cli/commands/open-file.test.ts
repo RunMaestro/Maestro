@@ -54,7 +54,7 @@ describe('open-file command', () => {
 
 	it('should open a valid file with explicit agent', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
-		let captured: { sessionId?: string; switchToAgent?: boolean } = {};
+		let captured: { sessionId?: string; background?: boolean; switchToAgent?: boolean } = {};
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const mockClient = {
 				sendCommand: vi.fn().mockImplementation((msg) => {
@@ -68,9 +68,65 @@ describe('open-file command', () => {
 		await openFile('/home/user/project/file.ts', { agent: 'session-123' });
 
 		expect(captured.sessionId).toBe('session-123');
+		// Unflagged: today's behaviour is preserved exactly. `--background` is
+		// additive, so an unflagged call must still switch and still focus.
+		expect(captured.background).toBe(false);
 		expect(captured.switchToAgent).toBe(true);
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Opened file.ts in Maestro'));
 		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	describe('--background vs --no-switch (they are different asks)', () => {
+		function captureMessage() {
+			vi.mocked(existsSync).mockReturnValue(true);
+			const captured: Record<string, unknown> = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((msg) => {
+						Object.assign(captured, msg);
+						return Promise.resolve({ type: 'open_file_tab_result', success: true });
+					}),
+				};
+				return action(mockClient as never);
+			});
+			return captured;
+		}
+
+		it('--background asks for the strong version and leaves --no-switch alone', async () => {
+			const msg = captureMessage();
+			await openFile('/home/user/project/file.ts', { agent: 'session-123', background: true });
+			expect(msg.background).toBe(true);
+			expect(msg.switchToAgent).toBe(true);
+		});
+
+		it('--no-switch keeps its own weaker meaning and does NOT imply background', async () => {
+			// The trap this guards: folding `--no-switch` into `--background` would
+			// silently change behaviour for everyone already passing it. It means
+			// "stay on this agent" and still activates the tab in the target.
+			const msg = captureMessage();
+			await openFile('/home/user/project/file.ts', { agent: 'session-123', switch: false });
+			expect(msg.switchToAgent).toBe(false);
+			expect(msg.background).toBe(false);
+		});
+
+		it('accepts both, since --background is strictly stronger', async () => {
+			const msg = captureMessage();
+			await openFile('/home/user/project/file.ts', {
+				agent: 'session-123',
+				background: true,
+				switch: false,
+			});
+			expect(msg.background).toBe(true);
+			expect(msg.switchToAgent).toBe(false);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('--focus is the explicit spelling of the current default', async () => {
+			const msg = captureMessage();
+			await openFile('/home/user/project/file.ts', { agent: 'session-123', focus: true });
+			expect(msg.background).toBe(false);
+			expect(msg.switchToAgent).toBe(true);
+		});
 	});
 
 	it('should resolve relative file paths to absolute', async () => {

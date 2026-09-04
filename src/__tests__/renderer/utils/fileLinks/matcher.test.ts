@@ -3,6 +3,7 @@ import {
 	buildFileTreeIndices,
 	calculateProximity,
 	findClosestMatch,
+	mergeFileTreeIndices,
 	toRelativePath,
 	validatePathReference,
 	type FileTreeIndices,
@@ -178,5 +179,42 @@ describe('toRelativePath', () => {
 		// /Users/me/projector/x.md starts with /Users/me/proj but is in a
 		// different directory; we should refuse to strip.
 		expect(toRelativePath('/Users/me/projector/x.md', '/Users/me/proj')).toBeNull();
+	});
+});
+
+describe('mergeFileTreeIndices', () => {
+	it('unions paths from every set', () => {
+		const merged = mergeFileTreeIndices(
+			indicesFrom(['Reminders.md']),
+			indicesFrom(['Claude/Reminders Archive.md'])
+		);
+		expect(merged.allPaths.has('Reminders.md')).toBe(true);
+		expect(merged.allPaths.has('Claude/Reminders Archive.md')).toBe(true);
+		expect(findClosestMatch('Claude/Reminders Archive', merged, '')).toBe(
+			'Claude/Reminders Archive.md'
+		);
+	});
+
+	it('keeps earlier sets ahead so a shared basename resolves to the first tree', () => {
+		// The Auto Run folder and the project both contain Reminders.md; with an
+		// empty cwd the shallower (Auto Run) path has to win, or clicking a
+		// playbook link opens a preview tab instead of switching documents.
+		const merged = mergeFileTreeIndices(
+			indicesFrom(['Reminders.md']),
+			indicesFrom(['Claude/.maestro/playbooks/Reminders.md'])
+		);
+		expect(merged.filenameIndex.get('Reminders.md')?.[0]).toBe('Reminders.md');
+		expect(findClosestMatch('Reminders', merged, '')).toBe('Reminders.md');
+	});
+
+	it('ignores null/undefined sets and de-duplicates repeated paths', () => {
+		const merged = mergeFileTreeIndices(
+			null,
+			indicesFrom(['Notes/Thing.md']),
+			undefined,
+			indicesFrom(['Notes/Thing.md'])
+		);
+		expect(merged.allPaths.size).toBe(1);
+		expect(merged.filenameIndex.get('Thing.md')).toEqual(['Notes/Thing.md']);
 	});
 });

@@ -461,6 +461,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					sourceSessionId={session.id}
 					sourceTabId={getActiveTab(session)?.id}
 					onSessionClick={onSessionClick}
+					// A message that LEADS with a mention is answered only by the consulted
+					// agents, so this agent never goes busy and the thinking pill (the usual
+					// home of Stop) never appears - leaving the user with nothing to press
+					// while other agents work on their behalf. Carry Stop here in exactly
+					// that case, and stay out of the way when the thinking pill is already
+					// offering it: both buttons run the same agent-level interrupt, so two
+					// of them on screen is just a second copy of one control.
+					onInterrupt={
+						thinkingItems.length > 0 || autoRunState?.isRunning ? undefined : handleInterrupt
+					}
 				/>
 			)}
 
@@ -576,7 +586,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			<div className="flex min-w-0 gap-3">
 				<div className="flex min-w-0 flex-1 flex-col">
 					<div
-						className="relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50"
+						className="chrome-raised relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50"
 						style={{
 							borderColor: showQueueingBorder ? theme.colors.warning : theme.colors.border,
 							backgroundColor: showQueueingBorder

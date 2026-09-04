@@ -147,7 +147,7 @@ function LoadBadge({ state, theme }: { state: LoadState; theme: Theme }) {
 	const Icon = state === 'active' ? Flame : state === 'warm' ? Zap : Snowflake;
 	return (
 		<span
-			className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide"
+			className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs uppercase tracking-wide"
 			style={{ color, border: `1px solid ${color}`, opacity: state === 'cold' ? 0.7 : 1 }}
 		>
 			<Icon className="w-2.5 h-2.5" />
@@ -426,7 +426,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 									<div className="font-medium truncate" title={f.session.name}>
 										{f.session.name}
 									</div>
-									<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 										{getAgentDisplayName(f.session.toolType)}
 									</div>
 								</td>
@@ -435,7 +435,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 								</td>
 								<td className="px-2 py-1.5">
 									<div>{f.aiTabCount} ai</div>
-									<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 										{f.terminalTabCount > 0 && `${f.terminalTabCount} term · `}
 										{f.filePreviewTabCount > 0 && `${f.filePreviewTabCount} file · `}
 										{f.browserTabCount > 0 && `${f.browserTabCount} web`}
@@ -444,13 +444,13 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 								</td>
 								<td className="px-2 py-1.5">
 									<div>{formatNumber(f.logCount)}</div>
-									<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 										{formatSize(f.logBytes)}
 									</div>
 								</td>
 								<td className="px-2 py-1.5">
 									<div>{formatNumber(f.fileTreeNodes)}</div>
-									<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 										{formatSize(f.fileTreeBytes)}
 									</div>
 								</td>
@@ -461,7 +461,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 									{f.processRssBytes !== undefined ? (
 										<>
 											<div>{formatSize(f.processRssBytes)}</div>
-											<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+											<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 												pid {f.processPid}
 											</div>
 										</>
@@ -506,7 +506,7 @@ function SummaryCard({
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 		>
 			<div
-				className="text-[10px] uppercase tracking-wide mb-1"
+				className="text-2xs uppercase tracking-wide mb-1"
 				style={{ color: theme.colors.textDim }}
 			>
 				{label}
@@ -514,7 +514,7 @@ function SummaryCard({
 			<div className="text-base font-semibold" style={{ color: theme.colors.textMain }}>
 				{primary}
 			</div>
-			<div className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+			<div className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
 				{secondary}
 			</div>
 		</div>
@@ -533,7 +533,7 @@ function HeaderCell({
 	const clickable = !!onClick;
 	return (
 		<th
-			className={`px-2 py-1 font-normal text-[10px] uppercase tracking-wide ${clickable ? 'cursor-pointer select-none' : ''}`}
+			className={`px-2 py-1 font-normal text-2xs uppercase tracking-wide ${clickable ? 'cursor-pointer select-none' : ''}`}
 			onClick={onClick}
 		>
 			{children}

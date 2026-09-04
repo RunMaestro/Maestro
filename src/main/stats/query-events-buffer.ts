@@ -25,7 +25,8 @@
 
 import type Database from 'better-sqlite3';
 import type { QueryEvent } from '../../shared/stats-types';
-import { generateId, normalizePath, LOG_CONTEXT, StatementCache } from './utils';
+import { generateId, LOG_CONTEXT, StatementCache } from './utils';
+import { INSERT_QUERY_EVENT_SQL, bindQueryEvent } from './query-event-insert';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 
@@ -33,11 +34,6 @@ import { captureException } from '../utils/sentry';
 export const QUERY_EVENT_BATCH_SIZE = 50;
 /** Auto-flush after this many ms since the first event in the current batch. */
 export const QUERY_EVENT_FLUSH_INTERVAL_MS = 500;
-
-const INSERT_SQL = `
-  INSERT INTO query_events (id, session_id, agent_type, source, start_time, duration, project_path, tab_id, is_remote)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`;
 
 interface PendingEvent {
 	id: string;
@@ -134,20 +130,10 @@ export function flushQueryEventsSync(): void {
 		// try that exception escapes the flush, aborts the close, and leaves the
 		// connection and the singleton's `initialized` flag alive for the rest of
 		// shutdown.
-		const stmt = stmtCache.get(db, INSERT_SQL);
+		const stmt = stmtCache.get(db, INSERT_QUERY_EVENT_SQL);
 		const tx = db.transaction(() => {
 			for (const { id, event } of events) {
-				stmt.run(
-					id,
-					event.sessionId,
-					event.agentType,
-					event.source,
-					event.startTime,
-					event.duration,
-					normalizePath(event.projectPath),
-					event.tabId ?? null,
-					event.isRemote !== undefined ? (event.isRemote ? 1 : 0) : null
-				);
+				stmt.run(...bindQueryEvent(id, event));
 			}
 		});
 		tx();

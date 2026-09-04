@@ -54,6 +54,12 @@ import {
 	clearSessionLifecycleCache,
 } from './session-lifecycle';
 import { getAggregatedStats } from './aggregations';
+import {
+	getQuerySourceTotals,
+	getQuerySourceByDay,
+	type QuerySourceTotals,
+	type QuerySourceDay,
+} from './delegation';
 import { clearOldData, exportToCsv } from './data-management';
 import {
 	insertImageAnnotation,
@@ -832,6 +838,20 @@ export class StatsDB {
 
 	getAggregatedStats(range: StatsTimeRange): StatsAggregation {
 		return getAggregatedStats(this.database, range);
+	}
+
+	/**
+	 * Interactive vs Auto Run turn counts and REAL summed durations. The Cue
+	 * half of the delegation split lives in the Cue DB; the IPC handler merges
+	 * them.
+	 */
+	getQuerySourceTotals(range: StatsTimeRange = 'all'): QuerySourceTotals {
+		return getQuerySourceTotals(this.database, range);
+	}
+
+	/** The same split, bucketed by local-time day. */
+	getQuerySourceByDay(range: StatsTimeRange = 'all'): QuerySourceDay[] {
+		return getQuerySourceByDay(this.database, range);
 	}
 
 	// ============================================================================

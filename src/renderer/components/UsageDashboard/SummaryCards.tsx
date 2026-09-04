@@ -35,18 +35,26 @@ import {
 	CalendarCheck,
 	PenLine,
 	Coins,
+	Split,
 } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import {
 	formatDurationHuman as formatDuration,
+	formatDurationWords,
+	formatElapsedTickerCompact,
 	formatNumber,
 	formatCost,
 	formatTokensCompact,
 } from '../../../shared/formatters';
 import { aggregateUsage } from '../../../shared/usageStats';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
+import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { Sparkline } from './Sparkline';
+import { DelegationSplitBar } from './DelegationSplitBar';
+import type { DelegationTotals } from '../../../shared/delegation';
+import { delegationPercent, trackedMs } from '../../../shared/delegation';
 
 type ByDayEntry = StatsAggregation['byDay'][number];
 
@@ -211,6 +219,15 @@ interface SummaryCardsProps {
 	columns?: number;
 	/** Sessions array for accurate agent count (filters terminal sessions) */
 	sessions?: Session[];
+	/**
+	 * Interactive vs autonomous split for the same range, merged across the
+	 * stats DB and the Cue DB. Omit (or pass null) to hide the ratio card - it
+	 * is the one metric here that can't be derived from `data`, since Cue runs
+	 * are not query events and per-source durations are not in the aggregation.
+	 */
+	delegation?: DelegationTotals | null;
+	/** Enable colorblind-friendly colors in the ratio card's split bar. */
+	colorBlindMode?: boolean;
 }
 
 /**
@@ -512,7 +529,7 @@ export const ContextUsageBar = memo(function ContextUsageBar({
 	return (
 		<div className="w-full" data-testid="context-usage-bar">
 			<div
-				className="flex items-center justify-between text-[10px] mb-1"
+				className="flex items-center justify-between text-2xs mb-1"
 				style={{ color: theme.colors.textDim }}
 			>
 				<span className="uppercase tracking-wide">Context</span>
@@ -584,13 +601,13 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 
 	return (
 		<div className="flex flex-col" data-testid="token-cost-badge">
-			<div className="text-[10px] uppercase tracking-wide" style={{ color: theme.colors.textDim }}>
+			<div className="text-2xs uppercase tracking-wide" style={{ color: theme.colors.textDim }}>
 				Cycle Tokens
 			</div>
 			<div className="flex items-baseline gap-2 mt-0.5">
 				<span
 					className="font-bold"
-					style={{ color: theme.colors.textMain, fontSize: '20px' }}
+					style={{ color: theme.colors.textMain, fontSize: '1.25rem' }}
 					title={`${totalTokens.toLocaleString()} tokens`}
 				>
 					{formatNumber(totalTokens)}
@@ -606,7 +623,7 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 			</div>
 			{breakdown.length > 0 && (
 				<div
-					className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[9px]"
+					className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-3xs"
 					style={{ color: theme.colors.textDim }}
 					data-testid="token-cost-breakdown"
 				>
@@ -682,7 +699,9 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 		return () => window.clearInterval(interval);
 	}, [earliestThinkingStart]);
 
-	const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+	// Seconds below a minute, humanized segments past it - a long turn reads
+	// `20m 4s`, never `1203s`. The aria label spells the units out loud.
+	const elapsedLabel = formatElapsedTickerCompact(elapsedMs);
 	const isThinking = earliestThinkingStart !== null;
 	const activeCount = activeSessions.length;
 
@@ -736,19 +755,19 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 					</div>
 					{isThinking && (
 						<div
-							className="mt-3 inline-flex items-center gap-1.5 text-[11px] animate-pulse"
+							className="mt-3 inline-flex items-center gap-1.5 text-xs-plus animate-pulse"
 							style={{ color: theme.colors.warning }}
 							data-testid="realtime-thinking-elapsed"
-							aria-label={`Thinking for ${elapsedSeconds} seconds`}
+							aria-label={`Thinking for ${formatDurationWords(elapsedMs)}`}
 						>
 							<Clock className="w-3 h-3" aria-hidden="true" />
-							Thinking: {elapsedSeconds}s
+							Thinking: {elapsedLabel}
 						</div>
 					)}
 				</div>
 			</div>
 			<div
-				className="mt-3 pt-3 border-t flex items-center gap-1.5 text-[10px]"
+				className="mt-3 pt-3 border-t flex items-center gap-1.5 text-2xs"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				data-testid="realtime-active-count"
 			>
@@ -770,6 +789,8 @@ export const SummaryCards = memo(function SummaryCards({
 	theme,
 	columns = 3,
 	sessions,
+	delegation = null,
+	colorBlindMode = false,
 }: SummaryCardsProps) {
 	// Count agent sessions (exclude terminal-only sessions) for accurate total
 	const agentCount = useMemo(() => {
@@ -793,7 +814,7 @@ export const SummaryCards = memo(function SummaryCards({
 	const openTabCount = useMemo(() => {
 		if (!sessions) return 0;
 		return sessions.reduce((total, s) => {
-			const aiCount = s.aiTabs?.length ?? 0;
+			const aiCount = visibleAiTabs(s.aiTabs).length;
 			const fileCount = s.filePreviewTabs?.length ?? 0;
 			return total + aiCount + fileCount;
 		}, 0);
@@ -815,12 +836,25 @@ export const SummaryCards = memo(function SummaryCards({
 		return { busy, idle, error };
 	}, [sessions]);
 
+	// How many agents actually did something inside the selected range. This is
+	// a different question from the status dots beside it: those are live state
+	// right now, this one moves with the range picker.
+	const activeAgentCount = useMemo(() => {
+		if (!sessions) return null;
+		return countActiveAgents(
+			sessions.filter((s) => s.toolType !== 'terminal'),
+			data.bySessionByDay
+		);
+	}, [sessions, data.bySessionByDay]);
+
 	const statusBreakdown = statusCounts ? (
 		<div
-			className="flex items-center gap-2 mt-1.5 text-[10px]"
+			className="flex items-center gap-2 mt-1.5 text-2xs"
 			style={{ color: theme.colors.textDim }}
 			data-testid="agent-status-breakdown"
-			aria-label={`${statusCounts.busy} busy, ${statusCounts.idle} idle, ${statusCounts.error} errors`}
+			aria-label={`${statusCounts.busy} busy, ${statusCounts.idle} idle, ${statusCounts.error} errors${
+				activeAgentCount !== null ? `, ${activeAgentCount} active in range` : ''
+			}`}
 		>
 			<span className="flex items-center gap-1" title={`${statusCounts.busy} busy`}>
 				<span
@@ -846,6 +880,20 @@ export const SummaryCards = memo(function SummaryCards({
 				/>
 				{statusCounts.error}
 			</span>
+			{activeAgentCount !== null && (
+				<>
+					<span style={{ opacity: 0.4 }} aria-hidden="true">
+						|
+					</span>
+					<span
+						className="tabular-nums"
+						title={`${activeAgentCount} of ${agentCount} agents ran a query in this time range`}
+						data-testid="agent-active-count"
+					>
+						{formatNumber(activeAgentCount)} active
+					</span>
+				</>
+			)}
 		</div>
 	) : null;
 
@@ -916,7 +964,7 @@ export const SummaryCards = memo(function SummaryCards({
 			extra:
 				usageAgg.totalTokens > 0 ? (
 					<div
-						className="text-[10px] mt-1 uppercase tracking-wide"
+						className="text-2xs mt-1 uppercase tracking-wide"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatTokensCompact(usageAgg.inputTokens)} in /{' '}
@@ -963,7 +1011,7 @@ export const SummaryCards = memo(function SummaryCards({
 			extra:
 				streaks.max > 0 ? (
 					<div
-						className="text-[10px] mt-1 uppercase tracking-wide"
+						className="text-2xs mt-1 uppercase tracking-wide"
 						style={{ color: theme.colors.textDim }}
 					>
 						Best: {streaks.max}d
@@ -976,7 +1024,7 @@ export const SummaryCards = memo(function SummaryCards({
 			value: bestDay ? formatNumber(bestDay.count) : '-',
 			extra: bestDay ? (
 				<div
-					className="text-[10px] mt-1 uppercase tracking-wide"
+					className="text-2xs mt-1 uppercase tracking-wide"
 					style={{ color: theme.colors.textDim }}
 				>
 					{formatShortDate(bestDay.date)}
@@ -994,6 +1042,34 @@ export const SummaryCards = memo(function SummaryCards({
 			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '-',
 		},
 	];
+
+	// Interactive vs autonomous, as a share of TIME rather than of turns: an
+	// Auto Run batch is a few long turns while an afternoon of chat is hundreds
+	// of short ones, so a turn-count ratio reports a heavily delegated range as
+	// barely delegated. Hidden entirely when the split failed to load, rather
+	// than shown as a confident "0 / 100".
+	if (delegation && trackedMs(delegation) > 0) {
+		const delegatedPct = Math.round(delegationPercent(delegation));
+		metrics.push({
+			icon: <Split className="w-4 h-4" />,
+			label: 'Interactive vs Auto',
+			value: `${100 - delegatedPct} / ${delegatedPct}`,
+			extra: (
+				<div className="mt-1.5" data-testid="summary-delegation-ratio">
+					<DelegationSplitBar
+						totals={delegation}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						mergeDelegated
+						height={4}
+					/>
+					<div className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
+						{delegatedPct}% ran without you
+					</div>
+				</div>
+			),
+		});
+	}
 
 	return (
 		<div

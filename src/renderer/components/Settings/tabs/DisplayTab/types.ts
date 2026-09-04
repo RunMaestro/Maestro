@@ -12,6 +12,8 @@ export interface FontConfigurationState {
 	customFonts: string[];
 	fontLoading: boolean;
 	fontsLoaded: boolean;
+	/** Whether `systemFonts` reflects the real machine. See fontDetection.ts. */
+	fontsReliable: boolean;
 	handleFontInteraction: () => void;
 	addCustomFont: (font: string) => void;
 	removeCustomFont: (font: string) => void;

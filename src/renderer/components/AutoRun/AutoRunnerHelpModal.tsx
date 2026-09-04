@@ -48,8 +48,9 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 			title="Auto Run Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={1008}
-			maxHeight="85vh"
+			resizeKey="auto-run-guide"
+			defaultSize={{ width: 880, height: 760 }}
+			minSize={{ width: 520, height: 400 }}
 			closeOnBackdropClick
 			zIndex={zIndex}
 			footer={
@@ -286,7 +287,7 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							<span>
 								<strong style={{ color: theme.colors.textMain }}>Quick Insert:</strong> Press{' '}
 								<kbd
-									className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+									className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,

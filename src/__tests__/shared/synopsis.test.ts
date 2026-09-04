@@ -4,10 +4,11 @@
  * Coverage:
  * - parseSynopsis: Parse synopsis response into summary and full text
  * - NOTHING_TO_REPORT: Sentinel token constant
+ * - isFailedSynopsisResponse: Provider error vs. real synopsis
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseSynopsis, NOTHING_TO_REPORT } from '../../shared/synopsis';
+import { parseSynopsis, NOTHING_TO_REPORT, isFailedSynopsisResponse } from '../../shared/synopsis';
 
 // Local alias mirroring the (now-internal) ParsedSynopsis shape returned by
 // parseSynopsis. Kept in sync with shared/synopsis.ts.
@@ -427,5 +428,37 @@ detail line two`;
 		it('should be the expected string value', () => {
 			expect(NOTHING_TO_REPORT).toBe('NOTHING_TO_REPORT');
 		});
+	});
+});
+
+describe('isFailedSynopsisResponse', () => {
+	it('treats a bare provider error as a failure', () => {
+		// `claude -p` prints the API error and exits, so the run still produces
+		// stdout. Parsed as prose it becomes the History entry for the turn.
+		expect(isFailedSynopsisResponse('Prompt is too long')).toBe(true);
+		expect(isFailedSynopsisResponse('prompt is too long: 206491 tokens > 200000 maximum')).toBe(
+			true
+		);
+	});
+
+	it('treats empty output as a failure', () => {
+		expect(isFailedSynopsisResponse('')).toBe(true);
+		expect(isFailedSynopsisResponse('   \n  ')).toBe(true);
+	});
+
+	it('does not mistake a synopsis ABOUT an error for an error', () => {
+		// The error bank matches phrases that appear legitimately in prose, so
+		// the length guard is what keeps a real synopsis out of the failure path.
+		const synopsis =
+			'**Summary:** Fixed the "Prompt is too long" failure in background synopsis runs.\n\n' +
+			'**Details:** The synopsis resumed the tab transcript on a cheap 200k model while the ' +
+			"agent itself runs Anthropic's 1M beta, so any conversation past 200k tokens failed " +
+			'to replay. The spawn now keeps the tab model whenever the cheap tier would shrink the ' +
+			'context window, and a failed run is reported as failed rather than written to History.';
+		expect(isFailedSynopsisResponse(synopsis)).toBe(false);
+	});
+
+	it('accepts an ordinary short synopsis', () => {
+		expect(isFailedSynopsisResponse('**Summary:** Rebased rc onto main.')).toBe(false);
 	});
 });
